@@ -1,7 +1,8 @@
 import { DB_VERSION, STORE_CONTRACTS } from "./db";
 import { Contract, watchStateOf } from "../../contracts";
 import { ContractFilter, ContractRepository } from "../contractRepository";
-import { closeDatabase, openDatabase } from "./manager";
+import { awaitTransaction, getAllByIndexValues, promisifyRequest } from "./idbUtils";
+import { createManagedConnection, ManagedConnection } from "./managedConnection";
 import { initDatabase } from "./schema";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 
@@ -12,35 +13,18 @@ import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
  */
 export class IndexedDBContractRepository implements ContractRepository {
     readonly version = 2 as const;
-    private db: IDBDatabase | null = null;
+    private readonly connection: ManagedConnection;
 
-    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+    constructor(dbName: string = DEFAULT_DB_NAME) {
+        this.connection = createManagedConnection(dbName, DB_VERSION, initDatabase);
+    }
 
     async clear(): Promise<void> {
         try {
             const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction([STORE_CONTRACTS], "readwrite");
-                const contractDataStore = transaction.objectStore(STORE_CONTRACTS);
-                const contractsStore = transaction.objectStore(STORE_CONTRACTS);
-
-                const contractDataRequest = contractDataStore.clear();
-                const contractsRequest = contractsStore.clear();
-
-                let completed = 0;
-                const checkComplete = () => {
-                    completed++;
-                    if (completed === 2) {
-                        resolve();
-                    }
-                };
-
-                contractDataRequest.onsuccess = checkComplete;
-                contractsRequest.onsuccess = checkComplete;
-
-                contractDataRequest.onerror = () => reject(contractDataRequest.error);
-                contractsRequest.onerror = () => reject(contractsRequest.error);
-            });
+            const transaction = db.transaction([STORE_CONTRACTS], "readwrite");
+            transaction.objectStore(STORE_CONTRACTS).clear();
+            await awaitTransaction(transaction);
         } catch (error) {
             console.error("Failed to clear contract data:", error);
             throw error;
@@ -55,11 +39,7 @@ export class IndexedDBContractRepository implements ContractRepository {
                 .objectStore(STORE_CONTRACTS);
 
             if (!filter || Object.keys(filter).length === 0) {
-                return new Promise((resolve, reject) => {
-                    const request = store.getAll();
-                    request.onerror = () => reject(request.error);
-                    request.onsuccess = () => resolve(request.result ?? []);
-                });
+                return (await promisifyRequest<Contract[]>(store.getAll())) ?? [];
             }
 
             const normalizedFilter = normalizeFilter(filter);
@@ -68,13 +48,8 @@ export class IndexedDBContractRepository implements ContractRepository {
             if (normalizedFilter.has("script")) {
                 const scripts = normalizedFilter.get("script")!;
                 const contracts = await Promise.all(
-                    scripts.map(
-                        (script) =>
-                            new Promise<Contract | undefined>((resolve, reject) => {
-                                const req = store.get(script);
-                                req.onerror = () => reject(req.error);
-                                req.onsuccess = () => resolve(req.result);
-                            }),
+                    scripts.map((script) =>
+                        promisifyRequest<Contract | undefined>(store.get(script)),
                     ),
                 );
                 return this.applyContractFilter(contracts, normalizedFilter);
@@ -82,7 +57,7 @@ export class IndexedDBContractRepository implements ContractRepository {
 
             // by state, still an index
             if (normalizedFilter.has("state")) {
-                const contracts = await this.getContractsByIndexValues(
+                const contracts = await getAllByIndexValues<Contract>(
                     store,
                     "state",
                     normalizedFilter.get("state")!,
@@ -92,7 +67,7 @@ export class IndexedDBContractRepository implements ContractRepository {
 
             // by type, still an index
             if (normalizedFilter.has("type")) {
-                const contracts = await this.getContractsByIndexValues(
+                const contracts = await getAllByIndexValues<Contract>(
                     store,
                     "type",
                     normalizedFilter.get("type")!,
@@ -101,11 +76,7 @@ export class IndexedDBContractRepository implements ContractRepository {
             }
 
             // any other filtering happens in-memory
-            const allContracts = await new Promise<Contract[]>((resolve, reject) => {
-                const request = store.getAll();
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve(request.result ?? []);
-            });
+            const allContracts = (await promisifyRequest<Contract[]>(store.getAll())) ?? [];
             return this.applyContractFilter(allContracts, normalizedFilter);
         } catch (error) {
             console.error("Failed to get contracts:", error);
@@ -116,13 +87,9 @@ export class IndexedDBContractRepository implements ContractRepository {
     async saveContract(contract: Contract): Promise<void> {
         try {
             const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction([STORE_CONTRACTS], "readwrite");
-                const store = transaction.objectStore(STORE_CONTRACTS);
-                const request = store.put(contract);
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve();
-            });
+            const transaction = db.transaction([STORE_CONTRACTS], "readwrite");
+            transaction.objectStore(STORE_CONTRACTS).put(contract);
+            await awaitTransaction(transaction);
         } catch (error) {
             console.error("Failed to save contract:", error);
             throw error;
@@ -132,41 +99,13 @@ export class IndexedDBContractRepository implements ContractRepository {
     async deleteContract(script: string): Promise<void> {
         try {
             const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction([STORE_CONTRACTS], "readwrite");
-                const store = transaction.objectStore(STORE_CONTRACTS);
-                const getRequest = store.get(script);
-
-                getRequest.onerror = () => reject(getRequest.error);
-                getRequest.onsuccess = () => {
-                    const request = store.delete(script);
-
-                    request.onerror = () => reject(request.error);
-                    request.onsuccess = () => resolve();
-                };
-            });
+            const transaction = db.transaction([STORE_CONTRACTS], "readwrite");
+            transaction.objectStore(STORE_CONTRACTS).delete(script);
+            await awaitTransaction(transaction);
         } catch (error) {
             console.error(`Failed to delete contract ${script}:`, error);
             throw error;
         }
-    }
-
-    private getContractsByIndexValues(
-        store: IDBObjectStore,
-        indexName: string,
-        values: string[],
-    ): Promise<Contract[]> {
-        if (values.length === 0) return Promise.resolve([]);
-        const index = store.index(indexName);
-        const requests = values.map(
-            (value) =>
-                new Promise<Contract[]>((resolve, reject) => {
-                    const request = index.getAll(value);
-                    request.onerror = () => reject(request.error);
-                    request.onsuccess = () => resolve(request.result ?? []);
-                }),
-        );
-        return Promise.all(requests).then((results) => results.flatMap((result) => result));
     }
 
     private applyContractFilter(
@@ -188,21 +127,12 @@ export class IndexedDBContractRepository implements ContractRepository {
         }) as Contract[];
     }
 
-    // ponytail: this caches the connection, not the open promise, and never
-    // forgets it — so once the manager closes on `versionchange`, every later
-    // transaction here throws `InvalidStateError` with no path back. Reachable
-    // only on a version increase; see `IndexedDbAssetSwapRepository.ensureDb`
-    // in the swap package for the forget-and-reopen shape to copy.
-    private async getDB(): Promise<IDBDatabase> {
-        if (this.db) return this.db;
-        this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
-        return this.db;
+    private getDB(): Promise<IDBDatabase> {
+        return this.connection.get();
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
-        if (!this.db) return;
-        await closeDatabase(this.dbName);
-        this.db = null;
+        await this.connection[Symbol.asyncDispose]();
     }
 }
 

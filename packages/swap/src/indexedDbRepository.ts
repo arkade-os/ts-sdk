@@ -1,4 +1,9 @@
-import { closeDatabase, openDatabase } from "@arkade-os/sdk";
+import {
+    awaitTransaction,
+    createManagedConnection,
+    promisifyRequest,
+    type ManagedConnection,
+} from "@arkade-os/sdk";
 import { marketsCacheKey, type AssetSwapRepository, type MarketsCacheEntry } from "./repository";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
@@ -45,65 +50,18 @@ function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTrans
     }
 }
 
-const request = <T>(req: IDBRequest<T>): Promise<T> =>
-    new Promise((resolve, reject) => {
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-    });
-
-/** A write is durable at *commit*, not at request success — quota pressure and
- * storage eviction abort a transaction whose every request already succeeded.
- * Reads may resolve on the request; writes must await this. */
-const txDone = (tx: IDBTransaction): Promise<void> =>
-    new Promise((resolve, reject) => {
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-        tx.onabort = () => reject(tx.error);
-    });
-
 /** Browser backend over the SDK's shared IndexedDB manager — the same
  * infrastructure the wallet already uses for its Boltz swap repository. */
 export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     readonly version = 3 as const;
-    // the promise, not the resolved database: openDatabase bumps a refcount on
-    // every call including cache hits, while dispose closes once, so two
-    // concurrent first calls would strand the refcount above zero and leak the
-    // connection for the process lifetime. Cleared on failure so a failed open
-    // can be retried rather than cached forever.
-    private dbPromise: Promise<IDBDatabase> | null = null;
+    private readonly connection: ManagedConnection;
 
-    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+    constructor(dbName: string = DEFAULT_DB_NAME) {
+        this.connection = createManagedConnection(dbName, DB_VERSION, initDatabase);
+    }
 
     private ensureDb(): Promise<IDBDatabase> {
-        if (this.dbPromise) return this.dbPromise;
-        const opening = openDatabase(this.dbName, DB_VERSION, initDatabase)
-            .then((db) => {
-                // A connection that goes away must be forgotten, or every later
-                // transaction throws `InvalidStateError` with no path back — the
-                // manager closes the database on `versionchange` and this cache
-                // would still hold the closed handle. Reopening either recovers
-                // (an external delete, an eviction) or fails honestly with
-                // `VersionError` when another tab upgraded past this bundle,
-                // which names the reload instead of implying a client bug.
-                const forget = () => {
-                    // identity check: a reopen may already have replaced this
-                    // promise, and nulling that one would drop a live connection
-                    if (this.dbPromise === opening) this.dbPromise = null;
-                };
-                // addEventListener, not `db.onversionchange =`: that handler is
-                // the manager's, and its close is what we want to keep. `close`
-                // fires only on ABNORMAL termination per spec — never on an
-                // explicit close() — so the two never double-fire.
-                db.addEventListener("versionchange", forget);
-                db.addEventListener("close", forget);
-                return db;
-            })
-            .catch((err) => {
-                this.dbPromise = null;
-                throw err;
-            });
-        this.dbPromise = opening;
-        return opening;
+        return this.connection.get();
     }
 
     private async readStore(name: string): Promise<IDBObjectStore> {
@@ -112,10 +70,10 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
 
     /** Every write in one place, so none of them can forget to await the
      * commit. Requests need no individual await: a failed one aborts the
-     * transaction, which `txDone` reports. */
+     * transaction, which `awaitTransaction` reports. */
     private async write(name: string, apply: (store: IDBObjectStore) => void): Promise<void> {
         const tx = (await this.ensureDb()).transaction([name], "readwrite");
-        const done = txDone(tx);
+        const done = awaitTransaction(tx);
         apply(tx.objectStore(name));
         await done;
     }
@@ -127,7 +85,7 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     }
 
     async getAllSwaps(): Promise<AssetSwap[]> {
-        return request((await this.readStore(STORE_SWAPS)).getAll());
+        return promisifyRequest((await this.readStore(STORE_SWAPS)).getAll());
     }
 
     async saveRfqSwap(record: RfqSwapRecord): Promise<void> {
@@ -137,7 +95,7 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     }
 
     async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
-        return request((await this.readStore(STORE_RFQ_SWAPS)).getAll());
+        return promisifyRequest((await this.readStore(STORE_RFQ_SWAPS)).getAll());
     }
 
     async removeRfqSwap(rfqId: string): Promise<void> {
@@ -147,7 +105,7 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     }
 
     async getScannedTxids(): Promise<Set<string>> {
-        const keys = await request((await this.readStore(STORE_SCANNED)).getAllKeys());
+        const keys = await promisifyRequest((await this.readStore(STORE_SCANNED)).getAllKeys());
         return new Set(keys as string[]);
     }
 
@@ -162,7 +120,7 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         registry: string,
     ): Promise<MarketsCacheEntry | undefined> {
         const store = await this.readStore(STORE_MARKETS);
-        return request(store.get(marketsCacheKey(network, registry)));
+        return promisifyRequest(store.get(marketsCacheKey(network, registry)));
     }
 
     async saveCachedMarkets(
@@ -181,14 +139,12 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     async clear(): Promise<void> {
         const stores = STORES.map(([name]) => name);
         const tx = (await this.ensureDb()).transaction(stores, "readwrite");
-        const done = txDone(tx);
+        const done = awaitTransaction(tx);
         for (const name of stores) tx.objectStore(name).clear();
         await done;
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
-        if (!this.dbPromise) return;
-        await closeDatabase(this.dbName);
-        this.dbPromise = null;
+        await this.connection[Symbol.asyncDispose]();
     }
 }

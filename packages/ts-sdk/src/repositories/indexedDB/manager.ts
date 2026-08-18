@@ -46,6 +46,24 @@ const dbCache = new Map<string, DBCacheEntry>();
 const refCounts = new Map<string, number>();
 
 /**
+ * Drop the bookkeeping for one open, but only while it still owns the entry.
+ *
+ * Every cleanup path below routes through this, because an open can outlive its
+ * own entry: `closeDatabase` deletes the entry synchronously and only then
+ * awaits the promise, so a caller that closes while an open is still pending
+ * lets the next `openDatabase` install a successor under the same name. The
+ * `settled` flag does not cover that — it is still false — and an unguarded
+ * delete would drop the successor's entry and refcount, leaving its connection
+ * open and untracked for the page's lifetime. Connection events (`versionchange`,
+ * `close`) can arrive equally late.
+ */
+function forget(dbName: string, promise: Promise<IDBDatabase>): void {
+    if (dbCache.get(dbName)?.promise !== promise) return;
+    dbCache.delete(dbName);
+    refCounts.delete(dbName);
+}
+
+/**
  * Opens an IndexedDB database and increments the reference count.
  * Handles global object detection and callbacks.
  *
@@ -97,10 +115,9 @@ export async function openDatabase(
 
         request.onerror = () => {
             clearBlockedTimer();
-            if (settled) return; // the maps belong to a successor now
+            if (settled) return; // this open already reported its outcome
             settled = true;
-            dbCache.delete(dbName); // Clean up on failure
-            refCounts.delete(dbName);
+            forget(dbName, dbPromise); // clean up on failure, if still ours
             reject(request.error);
         };
         request.onsuccess = () => {
@@ -118,9 +135,15 @@ export async function openDatabase(
             // (or a version upgrade in another tab) isn't blocked by this connection.
             db.onversionchange = () => {
                 db.close();
-                dbCache.delete(dbName);
-                refCounts.delete(dbName);
+                forget(dbName, dbPromise);
             };
+            // Abnormal termination — eviction, "clear site data", storage
+            // pressure — closes the connection without any explicit close() and
+            // fires this. Without it the cache keeps serving a dead handle, and
+            // a consumer's own recovery reopen cache-hits it and strands a
+            // refcount. Per spec `close` never fires for the close() above, so
+            // the two arms cannot double-forget.
+            db.addEventListener("close", () => forget(dbName, dbPromise));
             resolve(db);
         };
         request.onupgradeneeded = (event) => {
@@ -142,8 +165,7 @@ export async function openDatabase(
                 settled = true;
                 // cleared so a retry is possible at all — `openDatabase` would
                 // otherwise serve this rejected promise from the cache forever
-                dbCache.delete(dbName);
-                refCounts.delete(dbName);
+                forget(dbName, dbPromise);
                 reject(new DatabaseUpgradeBlockedError(dbName));
             }, BLOCKED_UPGRADE_TIMEOUT_MS);
         };
@@ -158,6 +180,12 @@ export async function openDatabase(
 
 /**
  * Decrements the reference count and closes the database when no references remain.
+ *
+ * Refcount contract: call once per *successful* {@link openDatabase}, never per
+ * rejection. A rejected open already cleared its own bookkeeping, so a call
+ * paired with it decrements whatever entry a successor installed under the same
+ * name. {@link createManagedConnection} honours this — it only closes while it
+ * holds a promise, and every rejection path drops that promise first.
  *
  * @param dbName The name of the database to close.
  *
