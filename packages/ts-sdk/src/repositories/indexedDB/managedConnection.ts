@@ -13,8 +13,37 @@ export class ConnectionDisposedError extends Error {
 
 /** Lazily-opened, self-healing handle on one IndexedDB database. */
 export interface ManagedConnection extends AsyncDisposable {
-    /** The open connection, opening it on first call. Rejects with
-     * {@link ConnectionDisposedError} after dispose. */
+    /**
+     * The open connection, opening it on first call.
+     *
+     * Call this once per operation and use the handle for the transaction you
+     * start right away — never store it on the repository, and never carry it
+     * across an `await`. The connection can be closed underneath you at any
+     * time (a `versionchange` from another tab, eviction, "clear site data"),
+     * after which every transaction on that handle throws `InvalidStateError`;
+     * a later `get()` transparently reopens, but only for callers that ask
+     * again. Holding the resolved database is exactly the defect this type
+     * exists to remove.
+     *
+     * ## The dispose boundary
+     *
+     * `get()` is valid only before `[Symbol.asyncDispose]`. Afterwards it
+     * rejects with {@link ConnectionDisposedError}, permanently: dispose has
+     * released this connection's single reference, and reopening would take a
+     * refcount nothing is left to release. Disposal is final by design — there
+     * is no revive; construct a new repository, which constructs a new
+     * connection, instead.
+     *
+     * Dispose neither awaits nor cancels work already in flight. A transaction
+     * started just before it can abort when the underlying handle closes, and
+     * an in-flight `get()` may resolve to a database that is closing. So
+     * sequence disposal after the operations you care about have settled —
+     * `await` the repository's outstanding calls first — rather than racing it
+     * against them.
+     *
+     * Callers must not close the database themselves; the reference this
+     * connection holds is released by its own dispose, once.
+     */
     get(): Promise<IDBDatabase>;
 }
 
