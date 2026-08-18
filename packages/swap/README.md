@@ -290,7 +290,9 @@ message anywhere: **acceptance is funding**.
   offline. The solver observes the funding on-chain, pays the invoice, and claims with the
   preimage — which lands publicly in the claim witness as the receipt. A failed swap refunds by
   covenant to the trader's address, pushable by anyone, no trader keys or state.
-- **Arkade ↔ arkade** (BTC↔asset, asset↔asset): the trader accepts a quote by creating and funding
+- **Arkade ↔ arkade** (BTC↔asset, asset↔asset): an arkade asset leg names the asset id itself —
+  `arkade:<68-hex>`, built with `arkadeAssetLeg` (the deprecated coarse `ARKADE_ASSET` is served by
+  no solver). The trader accepts a quote by creating and funding
   an **offer** (layer 1) bound to the quoted terms before `valid_until`. The offer covenant only
   releases the deposit to a fill that delivers the quoted amount, so the solver fills or nothing
   moves; an unfilled offer is cancelled cooperatively. The quote wire shape ships here; the

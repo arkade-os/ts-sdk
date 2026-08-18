@@ -55,6 +55,8 @@ export {
 } from "./watch";
 export { retireSettledOfferContracts, type OfferContractRetirer } from "./coverage";
 export {
+    // deprecated — use arkadeAssetLeg; the @deprecated that editors read is on
+    // the declaration in rfq.ts, reached through this alias
     ARKADE_ASSET,
     ARKADE_BTC,
     LIGHTNING_BTC,
@@ -66,6 +68,7 @@ export {
     SOLO_REFUND_HEADROOM_SECONDS,
     AddressMismatch,
     SwapRefusal,
+    arkadeAssetLeg,
     arkadeSwapRequest,
     assertFundable,
     assertReceivable,
