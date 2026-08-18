@@ -56,6 +56,47 @@ describe("the manager's connection cache", () => {
         await closeDatabase(dbName);
     });
 
+    it("does not drop a successor's entry when a pending open fails late", async () => {
+        // `closeDatabase` deletes the entry synchronously and only then awaits
+        // the promise, so closing while an open is still pending lets the next
+        // `openDatabase` install a successor under the same name. The failing
+        // open's cleanup must not touch it — `settled` is still false, so the
+        // identity check is the only thing standing between the successor and a
+        // connection nothing tracks.
+        const dbName = `late-failure-${Math.random()}`;
+        const external = await new Promise<IDBDatabase>((resolve, reject) => {
+            const open = indexedDB.open(dbName, 5);
+            open.onupgradeneeded = () => init(open.result);
+            open.onsuccess = () => resolve(open.result);
+            open.onerror = () => reject(open.error);
+        });
+
+        const spy = vi.spyOn(indexedDB, "open");
+        try {
+            // fails: v1 is below the existing v5. Its entry is installed now and
+            // its onerror fires later.
+            const failing = openDatabase(dbName, 1, init);
+            void closeDatabase(dbName); // deletes that entry while still pending
+            const successor = openDatabase(dbName, 5, init); // installs its own
+
+            await expect(failing).rejects.toMatchObject({ name: "VersionError" });
+            const db = await successor;
+
+            // the successor is still cached: another open cache-hits it rather
+            // than opening a second, untracked connection
+            const opensBefore = spy.mock.calls.length;
+            expect(await openDatabase(dbName, 5, init)).toBe(db);
+            expect(spy.mock.calls.length).toBe(opensBefore);
+
+            await roundTrip(db, "usable");
+            await closeDatabase(dbName);
+            await closeDatabase(dbName);
+        } finally {
+            spy.mockRestore();
+            external.close();
+        }
+    });
+
     it("does not fire the close arm for its own versionchange close", async () => {
         // The two arms forget the same entry; if `close` also fired on an
         // explicit close(), the second would drop a successor's entry.

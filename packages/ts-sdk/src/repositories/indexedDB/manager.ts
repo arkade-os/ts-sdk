@@ -46,11 +46,16 @@ const dbCache = new Map<string, DBCacheEntry>();
 const refCounts = new Map<string, number>();
 
 /**
- * Drop the bookkeeping for a connection, but only while it is still the current
- * one. Unreachable today — every removal path also kills the connection, so a
- * stale one cannot outlive its entry — but it is the precondition for adding
- * event sources like the `close` arm below, whose whole point is firing at a
- * connection the maps may already have moved past.
+ * Drop the bookkeeping for one open, but only while it still owns the entry.
+ *
+ * Every cleanup path below routes through this, because an open can outlive its
+ * own entry: `closeDatabase` deletes the entry synchronously and only then
+ * awaits the promise, so a caller that closes while an open is still pending
+ * lets the next `openDatabase` install a successor under the same name. The
+ * `settled` flag does not cover that — it is still false — and an unguarded
+ * delete would drop the successor's entry and refcount, leaving its connection
+ * open and untracked for the page's lifetime. Connection events (`versionchange`,
+ * `close`) can arrive equally late.
  */
 function forget(dbName: string, promise: Promise<IDBDatabase>): void {
     if (dbCache.get(dbName)?.promise !== promise) return;
@@ -110,10 +115,9 @@ export async function openDatabase(
 
         request.onerror = () => {
             clearBlockedTimer();
-            if (settled) return; // the maps belong to a successor now
+            if (settled) return; // this open already reported its outcome
             settled = true;
-            dbCache.delete(dbName); // Clean up on failure
-            refCounts.delete(dbName);
+            forget(dbName, dbPromise); // clean up on failure, if still ours
             reject(request.error);
         };
         request.onsuccess = () => {
@@ -161,8 +165,7 @@ export async function openDatabase(
                 settled = true;
                 // cleared so a retry is possible at all — `openDatabase` would
                 // otherwise serve this rejected promise from the cache forever
-                dbCache.delete(dbName);
-                refCounts.delete(dbName);
+                forget(dbName, dbPromise);
                 reject(new DatabaseUpgradeBlockedError(dbName));
             }, BLOCKED_UPGRADE_TIMEOUT_MS);
         };
