@@ -81,7 +81,23 @@ export interface Offer {
 /** The program + argument/key binding of an offer's contract. Single source for
  * both address derivation and cancel, so the two can never drift apart (any
  * change here changes the derived swap addresses — see the golden test). */
-function swapProgramBinding(offer: Omit<Offer, "swapPkScript">, serverPubkey: Uint8Array) {
+/** Named through the public `arkade` namespace rather than left inferred: the
+ * inferred shape reaches into the SDK's bundled chunk, which tsc refuses to
+ * emit a portable declaration for once this function is exported. */
+type SwapProgramBinding = {
+    program: ConstructorParameters<typeof arkade.ArkadeProgramScript>[0];
+    args: ConstructorParameters<typeof arkade.ArkadeProgramScript>[1];
+    keys: ConstructorParameters<typeof arkade.ArkadeProgramScript>[2];
+};
+
+/** Exported for the asset-id vector tests: the covenant is committed behind an
+ * emulator-derived key, so the pushed asset bytes never appear in a leaf script
+ * and the args are the only place the two forms are visible side by side.
+ * Deliberately absent from the package index -- not public API. */
+export function swapProgramBinding(
+    offer: Omit<Offer, "swapPkScript">,
+    serverPubkey: Uint8Array,
+): SwapProgramBinding {
     // a wrong-width script would bind a truncated makerWP into the covenant and
     // only surface as an unspendable address once the user funds it
     if (offer.makerPkScript.length !== FIELDS.makerPkScript.width) {

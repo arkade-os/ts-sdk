@@ -339,6 +339,34 @@ describe("requests", () => {
         expect(request.pair).toBe(`arkade:BTC->arkade:${USD_ID}`);
     });
 
+    /** ...and the rule that makes it work, pinned to the shared vector rather
+     * than to a fixture id. `arkadeAssetLeg` is the eighth site implementing
+     * the identity form, and the only one where a case slip is invisible: the
+     * leg still builds, still routes, and is simply never served. */
+    describe("arkadeAssetLeg, against the shared vector", () => {
+        const V = asset.ASSET_ID_VECTORS;
+        const drift = (label: string) =>
+            `asset id encoding drifted from ASSET_ID_VECTORS (${label})`;
+
+        V.valid.forEach((v) => {
+            it(`carries the identity form verbatim -- ${v.label}`, () => {
+                const leg = arkadeAssetLeg(asset.AssetId.create(V.txid_hex, v.group_index));
+                expect(leg, drift(v.label)).toBe(`arkade:${v.asset_id_hex}`);
+                expect(leg.slice("arkade:".length), drift(v.label)).toMatch(/^[0-9a-f]{68}$/);
+            });
+        });
+
+        V.invalid_identity
+            .filter((v) => v.normalizes_to !== undefined)
+            .forEach((v) => {
+                it(`normalises rather than propagating -- ${v.label}`, () => {
+                    expect(arkadeAssetLeg(asset.AssetId.fromString(v.value)), drift(v.label)).toBe(
+                        `arkade:${v.normalizes_to}`,
+                    );
+                });
+            });
+    });
+
     /** Each refusal names its own cause: neither set is degenerate, both set is
      * a real corridor with no counterparty. One shared message would tell the
      * BTC->BTC caller to wait for a solver that will never help it. */

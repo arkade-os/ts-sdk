@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
-import { ArkAddress, asset } from "@arkade-os/sdk";
-import { decodeOffer, encodeOffer, offerVtxoScript, Offer } from "../src/offer";
+import { ArkAddress, arkade, asset } from "@arkade-os/sdk";
+import { decodeOffer, encodeOffer, offerVtxoScript, swapProgramBinding, Offer } from "../src/offer";
 
 // deterministic keys -> the derived swap addresses must never drift (any
 // change to the program JSONs or the arg binding changes them); goldens from
@@ -79,6 +79,78 @@ describe("swap offer", () => {
         );
         const address = new ArkAddress(server, script.tweakedPublicKey, "tark").encode();
         expect(address).not.toBe(goldens[0][1]);
+    });
+
+    // Both asset forms live in offer.ts: the TLV carries the identity, the
+    // program args carry the txid reversed plus a numeric group index. Pinning
+    // them against the shared vector is what catches a half-applied change --
+    // fixing one form and not the other reads as a working file.
+    describe("asset id forms, against the shared vector", () => {
+        const V = asset.ASSET_ID_VECTORS;
+        const drift = (label: string) =>
+            `asset id encoding drifted from ASSET_ID_VECTORS (${label})`;
+
+        /** Push framing for a script-number stack item, per ArkadeScript's
+         * MINIMALDATA path: empty -> OP_0, 1..16 -> OP_1..OP_16, else a length
+         * prefix. The vector pins the item; the framing is the encoder's. */
+        const framed = (itemHex: string): string => {
+            const item = hex.decode(itemHex);
+            if (item.length === 0) return "00";
+            if (item.length === 1 && item[0] >= 1 && item[0] <= 16)
+                return hex.encode(Uint8Array.from([0x50 + item[0]]));
+            return hex.encode(Uint8Array.from([item.length])) + itemHex;
+        };
+
+        V.valid.forEach((v) => {
+            const assetId = asset.AssetId.create(V.txid_hex, v.group_index);
+
+            it(`TLV carries the identity form -- ${v.label}`, () => {
+                for (const [field, tag] of [
+                    ["wantAsset", 0x03],
+                    ["offerAsset", 0x0b],
+                ] as const) {
+                    const offer = { wantAmount: BigInt(50_000), [field]: assetId, ...keys };
+                    const script = offerVtxoScript(offer, server);
+                    const wire = hex.encode(
+                        encodeOffer({ ...offer, swapPkScript: script.pkScript }),
+                    );
+                    // `[tag][len BE u16][value]`, value == the identity form
+                    const record = hex.encode(Uint8Array.from([tag, 0x00, 0x22])) + v.asset_id_hex;
+                    expect(wire, drift(v.label)).toContain(record);
+                }
+            });
+
+            it(`program args carry the reversed txid and the index -- ${v.label}`, () => {
+                const { args } = swapProgramBinding(
+                    { wantAmount: BigInt(50_000), wantAsset: assetId, ...keys },
+                    server,
+                );
+
+                // Serialization order in the covenant, display order in the id.
+                // Getting this backwards makes the lookup report the asset
+                // absent, which the VERIFY turns into an unspendable contract.
+                expect(hex.encode(args.wantAssetTxid as Uint8Array), drift(v.label)).toBe(
+                    V.script_txid_hex,
+                );
+                expect(hex.encode(args.wantAssetTxid as Uint8Array), drift(v.label)).not.toBe(
+                    V.txid_hex,
+                );
+
+                // ...and the index travels as a number, so ArkadeScript encodes
+                // it as a script number -- not as the 2-byte wire blob, which
+                // coincides only at group 258 and reads as -32767 at 65535.
+                expect(args.wantAssetGroupIndex, drift(v.label)).toBe(v.group_index);
+                expect(
+                    hex.encode(arkade.ArkadeScript.encode([args.wantAssetGroupIndex as number])),
+                    drift(v.label),
+                ).toBe(framed(v.script_group_index_item_hex));
+            });
+        });
+
+        it("the identity and the covenant push are reverses, never equal", () => {
+            expect(hex.encode(hex.decode(V.txid_hex).reverse())).toBe(V.script_txid_hex);
+            expect(V.txid_hex).not.toBe(V.script_txid_hex);
+        });
     });
 
     it("rejects offers without exactly one direction at encode time", () => {
