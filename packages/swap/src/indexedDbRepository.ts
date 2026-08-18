@@ -1,4 +1,9 @@
-import { createManagedConnection, type ManagedConnection } from "@arkade-os/sdk";
+import {
+    awaitTransaction,
+    createManagedConnection,
+    promisifyRequest,
+    type ManagedConnection,
+} from "@arkade-os/sdk";
 import { marketsCacheKey, type AssetSwapRepository, type MarketsCacheEntry } from "./repository";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
@@ -45,22 +50,6 @@ function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTrans
     }
 }
 
-const request = <T>(req: IDBRequest<T>): Promise<T> =>
-    new Promise((resolve, reject) => {
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-    });
-
-/** A write is durable at *commit*, not at request success — quota pressure and
- * storage eviction abort a transaction whose every request already succeeded.
- * Reads may resolve on the request; writes must await this. */
-const txDone = (tx: IDBTransaction): Promise<void> =>
-    new Promise((resolve, reject) => {
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-        tx.onabort = () => reject(tx.error);
-    });
-
 /** Browser backend over the SDK's shared IndexedDB manager — the same
  * infrastructure the wallet already uses for its Boltz swap repository. */
 export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
@@ -81,10 +70,10 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
 
     /** Every write in one place, so none of them can forget to await the
      * commit. Requests need no individual await: a failed one aborts the
-     * transaction, which `txDone` reports. */
+     * transaction, which `awaitTransaction` reports. */
     private async write(name: string, apply: (store: IDBObjectStore) => void): Promise<void> {
         const tx = (await this.ensureDb()).transaction([name], "readwrite");
-        const done = txDone(tx);
+        const done = awaitTransaction(tx);
         apply(tx.objectStore(name));
         await done;
     }
@@ -96,7 +85,7 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     }
 
     async getAllSwaps(): Promise<AssetSwap[]> {
-        return request((await this.readStore(STORE_SWAPS)).getAll());
+        return promisifyRequest((await this.readStore(STORE_SWAPS)).getAll());
     }
 
     async saveRfqSwap(record: RfqSwapRecord): Promise<void> {
@@ -106,7 +95,7 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     }
 
     async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
-        return request((await this.readStore(STORE_RFQ_SWAPS)).getAll());
+        return promisifyRequest((await this.readStore(STORE_RFQ_SWAPS)).getAll());
     }
 
     async removeRfqSwap(rfqId: string): Promise<void> {
@@ -116,7 +105,7 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     }
 
     async getScannedTxids(): Promise<Set<string>> {
-        const keys = await request((await this.readStore(STORE_SCANNED)).getAllKeys());
+        const keys = await promisifyRequest((await this.readStore(STORE_SCANNED)).getAllKeys());
         return new Set(keys as string[]);
     }
 
@@ -131,7 +120,7 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         registry: string,
     ): Promise<MarketsCacheEntry | undefined> {
         const store = await this.readStore(STORE_MARKETS);
-        return request(store.get(marketsCacheKey(network, registry)));
+        return promisifyRequest(store.get(marketsCacheKey(network, registry)));
     }
 
     async saveCachedMarkets(
@@ -150,7 +139,7 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     async clear(): Promise<void> {
         const stores = STORES.map(([name]) => name);
         const tx = (await this.ensureDb()).transaction(stores, "readwrite");
-        const done = txDone(tx);
+        const done = awaitTransaction(tx);
         for (const name of stores) tx.objectStore(name).clear();
         await done;
     }

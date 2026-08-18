@@ -1,6 +1,7 @@
 import { DB_VERSION, STORE_CONTRACTS } from "./db";
 import { Contract, watchStateOf } from "../../contracts";
 import { ContractFilter, ContractRepository } from "../contractRepository";
+import { awaitTransaction, getAllByIndexValues, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
 import { initDatabase } from "./schema";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
@@ -21,28 +22,9 @@ export class IndexedDBContractRepository implements ContractRepository {
     async clear(): Promise<void> {
         try {
             const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction([STORE_CONTRACTS], "readwrite");
-                const contractDataStore = transaction.objectStore(STORE_CONTRACTS);
-                const contractsStore = transaction.objectStore(STORE_CONTRACTS);
-
-                const contractDataRequest = contractDataStore.clear();
-                const contractsRequest = contractsStore.clear();
-
-                let completed = 0;
-                const checkComplete = () => {
-                    completed++;
-                    if (completed === 2) {
-                        resolve();
-                    }
-                };
-
-                contractDataRequest.onsuccess = checkComplete;
-                contractsRequest.onsuccess = checkComplete;
-
-                contractDataRequest.onerror = () => reject(contractDataRequest.error);
-                contractsRequest.onerror = () => reject(contractsRequest.error);
-            });
+            const transaction = db.transaction([STORE_CONTRACTS], "readwrite");
+            transaction.objectStore(STORE_CONTRACTS).clear();
+            await awaitTransaction(transaction);
         } catch (error) {
             console.error("Failed to clear contract data:", error);
             throw error;
@@ -57,11 +39,7 @@ export class IndexedDBContractRepository implements ContractRepository {
                 .objectStore(STORE_CONTRACTS);
 
             if (!filter || Object.keys(filter).length === 0) {
-                return new Promise((resolve, reject) => {
-                    const request = store.getAll();
-                    request.onerror = () => reject(request.error);
-                    request.onsuccess = () => resolve(request.result ?? []);
-                });
+                return (await promisifyRequest<Contract[]>(store.getAll())) ?? [];
             }
 
             const normalizedFilter = normalizeFilter(filter);
@@ -70,13 +48,8 @@ export class IndexedDBContractRepository implements ContractRepository {
             if (normalizedFilter.has("script")) {
                 const scripts = normalizedFilter.get("script")!;
                 const contracts = await Promise.all(
-                    scripts.map(
-                        (script) =>
-                            new Promise<Contract | undefined>((resolve, reject) => {
-                                const req = store.get(script);
-                                req.onerror = () => reject(req.error);
-                                req.onsuccess = () => resolve(req.result);
-                            }),
+                    scripts.map((script) =>
+                        promisifyRequest<Contract | undefined>(store.get(script)),
                     ),
                 );
                 return this.applyContractFilter(contracts, normalizedFilter);
@@ -84,7 +57,7 @@ export class IndexedDBContractRepository implements ContractRepository {
 
             // by state, still an index
             if (normalizedFilter.has("state")) {
-                const contracts = await this.getContractsByIndexValues(
+                const contracts = await getAllByIndexValues<Contract>(
                     store,
                     "state",
                     normalizedFilter.get("state")!,
@@ -94,7 +67,7 @@ export class IndexedDBContractRepository implements ContractRepository {
 
             // by type, still an index
             if (normalizedFilter.has("type")) {
-                const contracts = await this.getContractsByIndexValues(
+                const contracts = await getAllByIndexValues<Contract>(
                     store,
                     "type",
                     normalizedFilter.get("type")!,
@@ -103,11 +76,7 @@ export class IndexedDBContractRepository implements ContractRepository {
             }
 
             // any other filtering happens in-memory
-            const allContracts = await new Promise<Contract[]>((resolve, reject) => {
-                const request = store.getAll();
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve(request.result ?? []);
-            });
+            const allContracts = (await promisifyRequest<Contract[]>(store.getAll())) ?? [];
             return this.applyContractFilter(allContracts, normalizedFilter);
         } catch (error) {
             console.error("Failed to get contracts:", error);
@@ -118,13 +87,9 @@ export class IndexedDBContractRepository implements ContractRepository {
     async saveContract(contract: Contract): Promise<void> {
         try {
             const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction([STORE_CONTRACTS], "readwrite");
-                const store = transaction.objectStore(STORE_CONTRACTS);
-                const request = store.put(contract);
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve();
-            });
+            const transaction = db.transaction([STORE_CONTRACTS], "readwrite");
+            transaction.objectStore(STORE_CONTRACTS).put(contract);
+            await awaitTransaction(transaction);
         } catch (error) {
             console.error("Failed to save contract:", error);
             throw error;
@@ -134,41 +99,13 @@ export class IndexedDBContractRepository implements ContractRepository {
     async deleteContract(script: string): Promise<void> {
         try {
             const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction([STORE_CONTRACTS], "readwrite");
-                const store = transaction.objectStore(STORE_CONTRACTS);
-                const getRequest = store.get(script);
-
-                getRequest.onerror = () => reject(getRequest.error);
-                getRequest.onsuccess = () => {
-                    const request = store.delete(script);
-
-                    request.onerror = () => reject(request.error);
-                    request.onsuccess = () => resolve();
-                };
-            });
+            const transaction = db.transaction([STORE_CONTRACTS], "readwrite");
+            transaction.objectStore(STORE_CONTRACTS).delete(script);
+            await awaitTransaction(transaction);
         } catch (error) {
             console.error(`Failed to delete contract ${script}:`, error);
             throw error;
         }
-    }
-
-    private getContractsByIndexValues(
-        store: IDBObjectStore,
-        indexName: string,
-        values: string[],
-    ): Promise<Contract[]> {
-        if (values.length === 0) return Promise.resolve([]);
-        const index = store.index(indexName);
-        const requests = values.map(
-            (value) =>
-                new Promise<Contract[]>((resolve, reject) => {
-                    const request = index.getAll(value);
-                    request.onerror = () => reject(request.error);
-                    request.onsuccess = () => resolve(request.result ?? []);
-                }),
-        );
-        return Promise.all(requests).then((results) => results.flatMap((result) => result));
     }
 
     private applyContractFilter(

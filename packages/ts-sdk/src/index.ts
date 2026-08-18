@@ -516,6 +516,12 @@ import {
     createManagedConnection,
     ConnectionDisposedError,
 } from "./repositories/indexedDB/managedConnection";
+import {
+    promisifyRequest,
+    awaitTransaction,
+    deleteByIndex,
+    getAllByIndexValues,
+} from "./repositories/indexedDB/idbUtils";
 import type { ManagedConnection } from "./repositories/indexedDB/managedConnection";
 import {
     WalletMessageHandler,
@@ -698,6 +704,10 @@ export {
     DatabaseUpgradeBlockedError,
     ConnectionDisposedError,
     BLOCKED_UPGRADE_TIMEOUT_MS,
+    promisifyRequest,
+    awaitTransaction,
+    deleteByIndex,
+    getAllByIndexValues,
 
     // Repositories
     IndexedDBWalletRepository,
