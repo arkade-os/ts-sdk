@@ -517,6 +517,29 @@ function isP2trPkScript(pkScript: Bytes): boolean {
  * them; its own aggregate refund uses the interactive leaf precisely because
  * it lacks this per-index constraint, see `refund.ts`), never a safety
  * assumption.
+ *
+ * WHY `>= input` AND NOT `>= the quoted amount`. This bound is CONSERVATION,
+ * not agreement: it says the spend may not skim, and says nothing about what
+ * any quote promised. That is deliberate, on both leaves, and it is a question
+ * worth answering here because the covenant reads like the natural place to
+ * pin a quote and is not.
+ *
+ *  - A QUOTE IS NOT THE COVENANT'S TO KNOW. Pinning one compiles it into the
+ *    leaf, hence into the emulator key, hence into the ADDRESS. Re-quoting
+ *    would move the address of a contract that may already be funded.
+ *  - MISFUNDING IS THE SENDER'S EXPOSURE. They chose the amount. A lockup that
+ *    over- or underpays the quote is theirs to have created, and the
+ *    counterparty's protection is to decline it — refuse the swap and let it
+ *    refund — which is an application-layer decision, taken where a quote
+ *    actually lives, and revisable without moving anyone's address.
+ *  - NOTHING IS CLAIMED WITHOUT THE PREIMAGE. Both covenant leaves sit behind
+ *    the hash condition, so an underfunded lockup cannot be claimed out from
+ *    under the counterparty on the covenant's say-so. The covenant's job is to
+ *    stop a spend that satisfies the condition from redirecting the value; it
+ *    is not to adjudicate whether the trade was fair.
+ *
+ * So a funding gate that compares a lockup against its quote belongs in the
+ * consumer, not here. `lightning-swap-service`'s `lockupIsFunded` is that gate.
  */
 function enforcePayTo(destinationPkScript: Bytes): Bytes {
     // validateOptions already checked this for both current call sites — kept
