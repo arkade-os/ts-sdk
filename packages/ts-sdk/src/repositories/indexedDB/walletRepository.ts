@@ -12,7 +12,7 @@ import {
     SerializedVtxo,
     DB_VERSION,
 } from "./db";
-import { closeDatabase, openDatabase } from "./manager";
+import { createManagedConnection, ManagedConnection } from "./managedConnection";
 import { initDatabase } from "./schema";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
@@ -23,9 +23,11 @@ import { isVtxoForScript } from "../../contracts/vtxoOwnership";
  */
 export class IndexedDBWalletRepository implements WalletRepository {
     readonly version = 1 as const;
-    private db: IDBDatabase | null = null;
+    private readonly connection: ManagedConnection;
 
-    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+    constructor(dbName: string = DEFAULT_DB_NAME) {
+        this.connection = createManagedConnection(dbName, DB_VERSION, initDatabase);
+    }
 
     async clear(): Promise<void> {
         try {
@@ -67,9 +69,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
-        if (!this.db) return;
-        await closeDatabase(this.dbName);
-        this.db = null;
+        await this.connection[Symbol.asyncDispose]();
     }
 
     async getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
@@ -449,10 +449,8 @@ export class IndexedDBWalletRepository implements WalletRepository {
         }
     }
 
-    private async getDB(): Promise<IDBDatabase> {
-        if (this.db) return this.db;
-        this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
-        return this.db;
+    private getDB(): Promise<IDBDatabase> {
+        return this.connection.get();
     }
 }
 

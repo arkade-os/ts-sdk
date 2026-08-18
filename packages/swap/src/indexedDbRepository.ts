@@ -1,4 +1,4 @@
-import { closeDatabase, openDatabase } from "@arkade-os/sdk";
+import { createManagedConnection, type ManagedConnection } from "@arkade-os/sdk";
 import { marketsCacheKey, type AssetSwapRepository, type MarketsCacheEntry } from "./repository";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
@@ -65,45 +65,14 @@ const txDone = (tx: IDBTransaction): Promise<void> =>
  * infrastructure the wallet already uses for its Boltz swap repository. */
 export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     readonly version = 3 as const;
-    // the promise, not the resolved database: openDatabase bumps a refcount on
-    // every call including cache hits, while dispose closes once, so two
-    // concurrent first calls would strand the refcount above zero and leak the
-    // connection for the process lifetime. Cleared on failure so a failed open
-    // can be retried rather than cached forever.
-    private dbPromise: Promise<IDBDatabase> | null = null;
+    private readonly connection: ManagedConnection;
 
-    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+    constructor(dbName: string = DEFAULT_DB_NAME) {
+        this.connection = createManagedConnection(dbName, DB_VERSION, initDatabase);
+    }
 
     private ensureDb(): Promise<IDBDatabase> {
-        if (this.dbPromise) return this.dbPromise;
-        const opening = openDatabase(this.dbName, DB_VERSION, initDatabase)
-            .then((db) => {
-                // A connection that goes away must be forgotten, or every later
-                // transaction throws `InvalidStateError` with no path back — the
-                // manager closes the database on `versionchange` and this cache
-                // would still hold the closed handle. Reopening either recovers
-                // (an external delete, an eviction) or fails honestly with
-                // `VersionError` when another tab upgraded past this bundle,
-                // which names the reload instead of implying a client bug.
-                const forget = () => {
-                    // identity check: a reopen may already have replaced this
-                    // promise, and nulling that one would drop a live connection
-                    if (this.dbPromise === opening) this.dbPromise = null;
-                };
-                // addEventListener, not `db.onversionchange =`: that handler is
-                // the manager's, and its close is what we want to keep. `close`
-                // fires only on ABNORMAL termination per spec — never on an
-                // explicit close() — so the two never double-fire.
-                db.addEventListener("versionchange", forget);
-                db.addEventListener("close", forget);
-                return db;
-            })
-            .catch((err) => {
-                this.dbPromise = null;
-                throw err;
-            });
-        this.dbPromise = opening;
-        return opening;
+        return this.connection.get();
     }
 
     private async readStore(name: string): Promise<IDBObjectStore> {
@@ -187,8 +156,6 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
-        if (!this.dbPromise) return;
-        await closeDatabase(this.dbName);
-        this.dbPromise = null;
+        await this.connection[Symbol.asyncDispose]();
     }
 }

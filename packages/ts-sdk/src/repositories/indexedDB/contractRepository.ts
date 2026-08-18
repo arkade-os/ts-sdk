@@ -1,7 +1,7 @@
 import { DB_VERSION, STORE_CONTRACTS } from "./db";
 import { Contract, watchStateOf } from "../../contracts";
 import { ContractFilter, ContractRepository } from "../contractRepository";
-import { closeDatabase, openDatabase } from "./manager";
+import { createManagedConnection, ManagedConnection } from "./managedConnection";
 import { initDatabase } from "./schema";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 
@@ -12,9 +12,11 @@ import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
  */
 export class IndexedDBContractRepository implements ContractRepository {
     readonly version = 2 as const;
-    private db: IDBDatabase | null = null;
+    private readonly connection: ManagedConnection;
 
-    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+    constructor(dbName: string = DEFAULT_DB_NAME) {
+        this.connection = createManagedConnection(dbName, DB_VERSION, initDatabase);
+    }
 
     async clear(): Promise<void> {
         try {
@@ -188,21 +190,12 @@ export class IndexedDBContractRepository implements ContractRepository {
         }) as Contract[];
     }
 
-    // ponytail: this caches the connection, not the open promise, and never
-    // forgets it — so once the manager closes on `versionchange`, every later
-    // transaction here throws `InvalidStateError` with no path back. Reachable
-    // only on a version increase; see `IndexedDbAssetSwapRepository.ensureDb`
-    // in the swap package for the forget-and-reopen shape to copy.
-    private async getDB(): Promise<IDBDatabase> {
-        if (this.db) return this.db;
-        this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
-        return this.db;
+    private getDB(): Promise<IDBDatabase> {
+        return this.connection.get();
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
-        if (!this.db) return;
-        await closeDatabase(this.dbName);
-        this.db = null;
+        await this.connection[Symbol.asyncDispose]();
     }
 }
 

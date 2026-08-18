@@ -513,6 +513,11 @@ import {
     BLOCKED_UPGRADE_TIMEOUT_MS,
 } from "./repositories/indexedDB/manager";
 import {
+    createManagedConnection,
+    ConnectionDisposedError,
+} from "./repositories/indexedDB/managedConnection";
+import type { ManagedConnection } from "./repositories/indexedDB/managedConnection";
+import {
     WalletMessageHandler,
     WalletNotInitializedError,
     ReadonlyWalletError,
@@ -689,7 +694,9 @@ export {
     // DB
     closeDatabase,
     openDatabase,
+    createManagedConnection,
     DatabaseUpgradeBlockedError,
+    ConnectionDisposedError,
     BLOCKED_UPGRADE_TIMEOUT_MS,
 
     // Repositories
@@ -1041,6 +1048,7 @@ export type {
     DelegateOptions,
 
     // Repositories
+    ManagedConnection,
     WalletRepository,
     ContractRepository,
     MigrationStatus,

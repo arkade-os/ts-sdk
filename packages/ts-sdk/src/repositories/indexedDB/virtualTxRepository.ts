@@ -6,7 +6,7 @@ import {
     VtxoBranch,
 } from "../virtualTxRepository";
 import { awaitTransaction, promisifyRequest } from "./idbUtils";
-import { closeDatabase, openDatabase } from "./manager";
+import { createManagedConnection, ManagedConnection } from "./managedConnection";
 import {
     initDatabaseWithIntents,
     INTENT_DB_VERSION,
@@ -24,13 +24,17 @@ import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
  */
 export class IndexedDBVirtualTxRepository implements VirtualTxRepository {
     readonly version = 1 as const;
-    private db: IDBDatabase | null = null;
-    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+    private readonly connection: ManagedConnection;
+    constructor(dbName: string = DEFAULT_DB_NAME) {
+        this.connection = createManagedConnection(
+            dbName,
+            INTENT_DB_VERSION,
+            initDatabaseWithIntents,
+        );
+    }
 
-    private async getDB(): Promise<IDBDatabase> {
-        if (!this.db)
-            this.db = await openDatabase(this.dbName, INTENT_DB_VERSION, initDatabaseWithIntents);
-        return this.db;
+    private getDB(): Promise<IDBDatabase> {
+        return this.connection.get();
     }
 
     async clear(): Promise<void> {
@@ -180,8 +184,6 @@ export class IndexedDBVirtualTxRepository implements VirtualTxRepository {
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
-        if (!this.db) return;
-        await closeDatabase(this.dbName);
-        this.db = null;
+        await this.connection[Symbol.asyncDispose]();
     }
 }

@@ -6,7 +6,7 @@ import {
     hasImpossibleSwapsFilter,
     SwapRepository,
 } from "../swap-repository";
-import { closeDatabase, openDatabase } from "@arkade-os/sdk";
+import { createManagedConnection, type ManagedConnection } from "@arkade-os/sdk";
 
 const DEFAULT_DB_NAME = "arkade-boltz-swap";
 const DB_VERSION = 2;
@@ -30,14 +30,14 @@ function asArray<T>(v: T | T[] | undefined): T[] | undefined {
 
 export class IndexedDbSwapRepository implements SwapRepository {
     readonly version = 1 as const;
-    private db: IDBDatabase | null = null;
+    private readonly connection: ManagedConnection;
 
-    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+    constructor(dbName: string = DEFAULT_DB_NAME) {
+        this.connection = createManagedConnection(dbName, DB_VERSION, initDatabase);
+    }
 
-    private async getDB(): Promise<IDBDatabase> {
-        if (this.db) return this.db;
-        this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
-        return this.db;
+    private getDB(): Promise<IDBDatabase> {
+        return this.connection.get();
     }
 
     async saveSwap<T extends BoltzSwap>(swap: T): Promise<void> {
@@ -181,8 +181,6 @@ export class IndexedDbSwapRepository implements SwapRepository {
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
-        if (!this.db) return;
-        await closeDatabase(this.dbName);
-        this.db = null;
+        await this.connection[Symbol.asyncDispose]();
     }
 }
