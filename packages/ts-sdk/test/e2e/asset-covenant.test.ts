@@ -45,6 +45,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { hex } from "@scure/base";
+import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import {
     arkade,
     networks,
@@ -65,6 +66,10 @@ const PREIMAGE_HASH = hex.decode("8739f40ec4dbf569dcb38134c6e7310908566981");
 const CARRIER_SATS = 10_000n;
 const ASSET_SUPPLY = 1_000n;
 const ASSET_LOCKED = 500n;
+/** What a shortchanging spend tries to forward instead of the whole amount. */
+const ASSET_SKIMMED = 100n;
+/** Room for a second output, so a misdirection spend is constructable at all. */
+const DUST_SATS = 330n;
 
 /**
  * The asset covenant, in its minimal form.
@@ -170,17 +175,72 @@ describe("asset-denominated non-interactive covenant", () => {
         // Fund the contract WITH THE ASSET — a sat carrier plus the asset itself.
         await alice.wallet.send({
             address: contract.address,
-            amount: Number(CARRIER_SATS),
+            // CARRIER_SATS plus a dust output's worth. The sat clause pins output
+            // 0 to exactly CARRIER_SATS, so without this surplus a spend could
+            // not build a SECOND output at all — and the misdirection cases
+            // below, which are the only ones the asset clause alone refuses,
+            // would be unconstructable.
+            amount: Number(CARRIER_SATS + DUST_SATS),
             assets: [{ assetId, amount: ASSET_LOCKED }],
         });
         // Funded and visible — the value is not needed, only the arrival.
         await waitForVtxo(indexerProvider, contract.pkScript);
 
-        // (2) THE MONEY ASSERTION. Pay the sats, keep the asset. If the emulator
-        // co-signs this, the covenant is decorative and an asset lockup can be
-        // walked off with.
+        // (2) THE MONEY ASSERTIONS — the spends only this covenant refuses.
+        //
+        // WHAT IS DELIBERATELY NOT ASSERTED HERE, because it proves nothing: a
+        // spend carrying NO asset packet at all. That is refused whatever the
+        // covenant says — the emulator stops at `vm.assetPacket == nil` before
+        // reaching an asset opcode, and arkd's own `ValidateAssetTransaction`
+        // rejects it upstream regardless. Stripping-by-omission is a protocol
+        // invariant of any asset VTXO. Asserting it reads like a covenant test
+        // and is one for free; a covenant of `INSPECTOUTASSETLOOKUP VERIFY DROP`
+        // passes it, and so does a purely decorative one.
+        //
+        // Both cases below balance: asset in equals asset out, so arkd's
+        // conservation check is satisfied and the ONLY thing left to refuse
+        // them is the covenant.
+        const elsewhere = randomP2TR();
+        const payTwo = (): TransactionOutput[] => [
+            { script: receiverPkScript, amount: CARRIER_SATS },
+            { script: elsewhere, amount: DUST_SATS },
+        ];
+
+        // (2a) MISDIRECTION. The sats go exactly where the covenant demands, and
+        // the asset goes somewhere else entirely. Refused by the output lookup's
+        // VERIFY: an output carrying none of the asset reports `0 0`, and the
+        // flag is what the VERIFY pops.
         await expect(
-            contract.functions.claim(PREIMAGE).to(receiverPkScript, CARRIER_SATS).send(),
+            contract.functions
+                .claim(PREIMAGE)
+                .withAsset({
+                    assetId,
+                    inputs: [{ vin: 0, amount: ASSET_LOCKED }],
+                    outputs: [{ vout: 1, amount: ASSET_LOCKED }],
+                })
+                .to(payTwo())
+                .send(),
+        ).rejects.toThrow();
+
+        // (2b) SHORTCHANGING, and this is the one that discriminates. The asset
+        // IS on output 0, so the presence VERIFY passes and a covenant that only
+        // checked presence would co-sign — but most of it has been skimmed to
+        // another output. Only the input-relative amount comparison
+        // (`INSPECTINASSETLOOKUP ... GREATERTHANOREQUAL`) refuses this, which is
+        // exactly the clause a decorative covenant drops.
+        await expect(
+            contract.functions
+                .claim(PREIMAGE)
+                .withAsset({
+                    assetId,
+                    inputs: [{ vin: 0, amount: ASSET_LOCKED }],
+                    outputs: [
+                        { vout: 0, amount: ASSET_SKIMMED },
+                        { vout: 1, amount: ASSET_LOCKED - ASSET_SKIMMED },
+                    ],
+                })
+                .to(payTwo())
+                .send(),
         ).rejects.toThrow();
 
         // (1) Pay the asset through, and the spend is accepted.
@@ -192,6 +252,7 @@ describe("asset-denominated non-interactive covenant", () => {
                 outputs: [{ vout: 0, amount: ASSET_LOCKED }],
             })
             .to(receiverPkScript, CARRIER_SATS)
+            .change(elsewhere)
             .send();
 
         const [vtxo] = await waitForVtxo(indexerProvider, receiverPkScript);
