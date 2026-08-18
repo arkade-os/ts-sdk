@@ -32,6 +32,10 @@ const PACKAGES = [
         order: 2,
         dependsOnSdk: true,
         bumpFlag: "--boltz-bump",
+        // Not part of bulk `all` releases for now; still releasable directly
+        // (`release.mjs boltz-swap <bump>`) and still dragged along as a
+        // dependent when `sdk` is released.
+        excludeFromAll: true,
     },
     {
         key: "swap",
@@ -340,7 +344,10 @@ function validatePreid(preid) {
 function primarySelection(target) {
     // Releasing the SDK drags every SDK-dependent package along, because each
     // would otherwise stay published against the previous SDK version.
-    if (target === "all" || target === "sdk") return ALL_KEYS;
+    if (target === "sdk") return ALL_KEYS;
+    // `all` is a bulk convenience, not an implication of the SDK bump; packages
+    // marked `excludeFromAll` opt out of it but remain releasable directly.
+    if (target === "all") return ALL_KEYS.filter((k) => !PACKAGE_BY_KEY[k].excludeFromAll);
     if (PACKAGE_BY_KEY[target]) return [target];
     die(`Invalid target: ${target}`);
 }
