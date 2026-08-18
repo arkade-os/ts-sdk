@@ -116,13 +116,22 @@ uncached discovery.
 Neither subpath adds a dependency: they take the SDK's structural `SQLExecutor` / `RealmLike`
 handles, so you pass the database you already opened.
 
+All four carry both record types: asset swaps and the monitored RFQ swaps
+(`saveRfqSwap` / `getAllRfqSwaps` / `removeRfqSwap`). Each keeps them in a store of their own — a
+second object store on IndexedDB, an `…rfq_swaps` table on SQLite, the `ArkadeRfqSwap` class on
+Realm — since the two record types have different keys and no consumer wants them interleaved.
+
 **Records are stored whole.** The SQLite and Realm backends serialize each record to **JSON** in a
-`data` column, with only `status` / `createdAt` mapped out for querying — so a field they do not
-know about survives, which is what the `quote`-shaped extension in `MIGRATION.md` relies on. JSON is
+`data` column, with only `status` / `createdAt` (and an RFQ record's `state` / `updatedAt`) mapped
+out for querying — so a field they do not know about survives, which is what the `quote`-shaped
+extension in `MIGRATION.md` relies on. It is also what keeps an RFQ record's corridor `profile`
+intact: `profile.hashlock` is a nested object holding the payment hash and any preimage material, and
+a field-mapped backend is exactly what would lose it. JSON is
 the boundary, though, and it is narrower than IndexedDB's structured clone: a `Date` in a
 consumer-added field comes back an ISO **string**, a `Set` or `Map` comes back empty, and a `bigint`
-makes `saveSwap` **throw**. `AssetSwap` itself is JSON-safe by design (amounts are strings); keep
-your own added fields that way too.
+makes `saveSwap` **throw**. `AssetSwap` and `RfqSwapRecord` are both JSON-safe by design (amounts are
+strings, binary is hex), and a corridor `profile` is plain JSON by the handler contract; keep your own
+added fields — and any corridor profile you write — that way too.
 
 ### SQLite
 
@@ -169,9 +178,15 @@ const realm = await Realm.open({
 const swaps = new RealmAssetSwapRepository(realm);
 ```
 
-Three classes land in your Realm namespace: `ArkadeAssetSwap`, `ArkadeAssetSwapScannedTxid`,
-`ArkadeAssetSwapMarketsCache`. Unlike SQLite there is no prefix option — a Realm schema name is
-baked into the schema objects you register — so reconcile against your own models by name.
+Four classes land in your Realm namespace: `ArkadeAssetSwap`, `ArkadeRfqSwap`,
+`ArkadeAssetSwapScannedTxid`, `ArkadeAssetSwapMarketsCache`. Unlike SQLite there is no prefix option
+— a Realm schema name is baked into the schema objects you register — so reconcile against your own
+models by name.
+
+`ArkadeRfqSwap` arrived after the other three. **If you already shipped them, add it and bump
+`schemaVersion` again**: Realm creates schemas at open, so a config still listing three fails on the
+first RFQ read rather than at open. SQLite needs nothing — its DDL runs `CREATE TABLE IF NOT EXISTS`
+on every init, so the table appears on the next operation.
 
 ## Creating an offer
 
@@ -721,10 +736,96 @@ scanned? })` — the server key is required because a spend is classified by reb
 - **A spend that cannot be classified is no longer restored as `fulfilled`.** It leaves the funding
   txid unanswered so a later scan decides it. Records are never written on a guess.
 - **`AssetSwap` gained `signingDescriptor?`**, and `preimageHex` now means "P that cannot be
-  re-derived" — caller-supplied, or minted for a static descriptor. The repository version stays
-  `1` — the package is unreleased, so there is no stored record to migrate — but a field-mapped
-  backend must persist the record whole: silently dropping `preimageHex` leaves a static swap
-  permanently unclaimable.
+  re-derived" — caller-supplied, or minted for a static descriptor. A field-mapped backend must
+  persist the record whole: silently dropping `preimageHex` leaves a static swap permanently
+  unclaimable.
+- **The repository interface is at version `3`.** It gained `saveRfqSwap` / `getAllRfqSwaps` /
+  `removeRfqSwap` for monitored RFQ swaps, and the IndexedDB backend a matching `rfqSwaps` object
+  store at `DB_VERSION` 2. Version `2` was the shape 0.0.5 released — swaps, scan cursor, markets,
+  with `preimageSaltHex` on the swap record — and `DB_VERSION` was 1 there, so this is the database's
+  first version increase. The bump is deliberate: an implementor must acknowledge the new methods
+  rather than silently satisfy an older shape. Existing databases upgrade in place: the new store is
+  added and the three original ones are untouched. **`DB_VERSION` 2 is a one-way door** — a browser
+  whose database has upgraded cannot be rolled back to 0.0.5, which opens it at version 1 and fails
+  `VersionError` across the whole swap store, not just the RFQ half. Store RFQ records whole for the
+  same reason as above: what is in one is what nothing else can recover — the manager's own state,
+  and, inside the corridor's `profile`, its keys and its gates.
+- **An RFQ record's keys live in its corridor's `profile`, under two keys.** `profile.signer` holds
+  `signingDescriptor` — which wallet key signs this leg, on any corridor. `profile.hashlock` holds
+  `paymentHash` (the covenant binds `hash160` of it, which is one-way) plus, **only on legs we
+  claim**, `preimageHex` or `preimageSaltHex`. The record's own half — `kind`, `lockupAddress`,
+  `amount`, the manager's state — recovers nothing on its own, so a backend that drops either nested
+  object loses the signer or the claim secret exactly as one dropping `preimageHex` used to. Two keys
+  rather than one because a hashlock belongs to a corridor and a signer does not: a corridor that
+  settles without a preimage still has a leg to sign and refund.
+
+    ```ts
+    // In. One call per leg, whatever that leg's provisioning produced — never
+    // hand-mapped: copying `signingDescriptor` and `preimageHex` across by hand
+    // drops the salt a static wallet's P derives from, and the swap is
+    // unclaimable with nothing to say so until claim time.
+    const record = createRfqSwapRecord(
+        {
+            kind: "lightning_receive",
+            lockupAddress: result.address,
+            profile: {
+                ...rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                expectedAmount: result.expectedAmount,
+                payoutAddress: result.payoutAddress,
+            },
+        },
+        swap,
+    );
+
+    // Out, and WHICH reader depends on the leg. The refund signer, on any leg:
+    const sender = await senderIdentityForSwapRecord(wallet, rfqSignerOf(record)!);
+    // P, only where we claim — `lightning_receive`, `onchain_send`:
+    const claim = rfqClaimSecretOf(record);
+    if (claim) await preimageForSwapRecord(wallet, claim); // hash-checked
+    ```
+
+- **`lightning_send` has a payment hash and no preimage**, so `rfqClaimSecretOf` answers `undefined`
+  for it. P belongs to the payee and its descriptor is a *refund* key from `provisionRefundKey`.
+  Wiring the claim helper to all three legs does not degrade gracefully: the salted arm derives
+  *some* P off the refund descriptor and the payment-hash check rejects it, so a correct record reads
+  as corrupt. That leg's reader is `rfqSignerOf`.
+- **Non-hashlock corridors carry no `profile.hashlock` at all** — no `paymentHash`, no preimage
+  material, no placeholder; the key is simply absent, which is why `rfqSecretsProfile` takes the
+  payment hash as an optional second argument. They still write `profile.signer` if their leg is one
+  this wallet signs. The three corridors shipping today all lock to a preimage, but that is a fact
+  about them and not about RFQ. A corridor needing more than one descriptor — a co-signed leg, a
+  second key for an L1 half — extends `profile.signer` rather than fabricating a hashlock.
+- **Both readers answer `undefined` only for "this corridor has no such half", and throw on a half
+  that is there and unusable.** Neither ever hands back a partial projection:
+  `preimageForSwapRecord` verifies only when the projection carries a `paymentHash`, so one missing
+  its hash would claim with an *unverified* preimage instead of failing. A thrown
+  `PreimageNotRecoverableError("malformed-record")` is a storage bug, not a protocol state — treating
+  it as "no preimage available" and falling back to a refund reads the two as the same thing.
+- **An RFQ record stores no covenant.** The tree lives in the lockup's contract row, written before
+  the address could be funded and keyed by the script its params derive — a key `createContract`
+  refuses to write unless they reproduce it. So the rebuild takes the params from the caller:
+
+    ```ts
+    const params = await lockupContractParams(
+        await wallet.getContractManager(),
+        record.lockupAddress,
+    );
+    const swap = rebuildRfqSwap(record, params);
+    ```
+
+    `lockupContractParams` throws `LockupContractMissing` when this wallet has no row for the lockup —
+    a cleared contract store, or a record from elsewhere. A consumer that would rather not depend on
+    the contract store can keep its own copy of
+    `VHTLCV2ContractHandler.serializeParams(script.options)` and pass that instead; either way the
+    params are checked against the record's `lockupAddress` before a swap is handed back, so the wrong
+    row fails at restore rather than at refund time.
+
+- **Pruning is the consumer's, and nothing here does it for you.** `shouldRetainRfqSwap(record, now)`
+  answers whether a record is still worth keeping — live swaps and `needs_counterparty` always,
+  terminal ones for `RFQ_SWAP_RETENTION_SECONDS` (30 days) after `updatedAt`. Sweep with it at boot
+  and pass the rejects to `removeRfqSwap`; skip it and a hot wallet's `rfqSwaps` store grows without
+  bound. `now` is **unix seconds**, the unit `RfqSwap.updatedAt` carries — `Date.now()` would retire
+  every terminal record after ~43 minutes.
 - **A write that gates something irreversible throws; one that follows it does not.**
   `addAssetSwap` and `updateAssetSwap` throw on a failed read or write — nothing irreversible may
   happen until the record is durable, which is why `cancelOffer` writes its `cancelling` marker

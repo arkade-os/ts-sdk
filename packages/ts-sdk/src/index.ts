@@ -506,7 +506,12 @@ import type {
 import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
 import { buildVersion, sdkVersion, FetchError } from "./utils/fetch";
-import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
+import {
+    closeDatabase,
+    openDatabase,
+    DatabaseUpgradeBlockedError,
+    BLOCKED_UPGRADE_TIMEOUT_MS,
+} from "./repositories/indexedDB/manager";
 import {
     WalletMessageHandler,
     WalletNotInitializedError,
@@ -684,6 +689,8 @@ export {
     // DB
     closeDatabase,
     openDatabase,
+    DatabaseUpgradeBlockedError,
+    BLOCKED_UPGRADE_TIMEOUT_MS,
 
     // Repositories
     IndexedDBWalletRepository,

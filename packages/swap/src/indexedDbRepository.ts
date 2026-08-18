@@ -1,14 +1,16 @@
 import { closeDatabase, openDatabase } from "@arkade-os/sdk";
 import { marketsCacheKey, type AssetSwapRepository, type MarketsCacheEntry } from "./repository";
 import type { AssetSwap } from "./store";
+import type { RfqSwapRecord } from "./rfqRecord";
 
 const DEFAULT_DB_NAME = "arkade-intents";
 /** Bump when adding an object store or index. `initDatabase` only runs inside
  * `onupgradeneeded`, which fires on a version *increase* — its contains-guard
  * cannot backfill a store into a database already open at this version, so a
  * new store added without a bump is simply missing for existing users. */
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_SWAPS = "swaps";
+const STORE_RFQ_SWAPS = "rfqSwaps";
 const STORE_SCANNED = "scannedTxids";
 const STORE_MARKETS = "markets";
 
@@ -18,11 +20,26 @@ const STORE_MARKETS = "markets";
  * the txid / cache key is supplied at put time. */
 const STORES: readonly [name: string, options?: IDBObjectStoreParameters][] = [
     [STORE_SWAPS, { keyPath: "id" }],
+    // v2. Separate from `swaps` rather than sharing it: the two record types
+    // have different keys and no consumer wants them interleaved.
+    [STORE_RFQ_SWAPS, { keyPath: "rfqId" }],
     [STORE_SCANNED],
     [STORE_MARKETS],
 ];
 
-function initDatabase(db: IDBDatabase) {
+/**
+ * @param oldVersion the version being upgraded FROM, 0 on a fresh install.
+ * @param transaction the upgrade transaction — the only way to read or rewrite
+ * existing rows during a migration.
+ *
+ * Both unused today: every version so far has only added an object store, and
+ * `createObjectStore` needs neither. Named rather than dropped because the next
+ * migration will not be additive, and a signature that takes them is what makes
+ * "cursor over v2 rows and rewrite them" a local change here.
+ */
+function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTransaction | null) {
+    void oldVersion;
+    void transaction;
     for (const [name, options] of STORES) {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, options);
     }
@@ -47,7 +64,7 @@ const txDone = (tx: IDBTransaction): Promise<void> =>
 /** Browser backend over the SDK's shared IndexedDB manager — the same
  * infrastructure the wallet already uses for its Boltz swap repository. */
 export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 2 as const;
+    readonly version = 3 as const;
     // the promise, not the resolved database: openDatabase bumps a refcount on
     // every call including cache hits, while dispose closes once, so two
     // concurrent first calls would strand the refcount above zero and leak the
@@ -58,12 +75,35 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
 
     private ensureDb(): Promise<IDBDatabase> {
-        return (this.dbPromise ??= openDatabase(this.dbName, DB_VERSION, initDatabase).catch(
-            (err) => {
+        if (this.dbPromise) return this.dbPromise;
+        const opening = openDatabase(this.dbName, DB_VERSION, initDatabase)
+            .then((db) => {
+                // A connection that goes away must be forgotten, or every later
+                // transaction throws `InvalidStateError` with no path back — the
+                // manager closes the database on `versionchange` and this cache
+                // would still hold the closed handle. Reopening either recovers
+                // (an external delete, an eviction) or fails honestly with
+                // `VersionError` when another tab upgraded past this bundle,
+                // which names the reload instead of implying a client bug.
+                const forget = () => {
+                    // identity check: a reopen may already have replaced this
+                    // promise, and nulling that one would drop a live connection
+                    if (this.dbPromise === opening) this.dbPromise = null;
+                };
+                // addEventListener, not `db.onversionchange =`: that handler is
+                // the manager's, and its close is what we want to keep. `close`
+                // fires only on ABNORMAL termination per spec — never on an
+                // explicit close() — so the two never double-fire.
+                db.addEventListener("versionchange", forget);
+                db.addEventListener("close", forget);
+                return db;
+            })
+            .catch((err) => {
                 this.dbPromise = null;
                 throw err;
-            },
-        ));
+            });
+        this.dbPromise = opening;
+        return opening;
     }
 
     private async readStore(name: string): Promise<IDBObjectStore> {
@@ -88,6 +128,22 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
 
     async getAllSwaps(): Promise<AssetSwap[]> {
         return request((await this.readStore(STORE_SWAPS)).getAll());
+    }
+
+    async saveRfqSwap(record: RfqSwapRecord): Promise<void> {
+        await this.write(STORE_RFQ_SWAPS, (store) => {
+            store.put(record);
+        });
+    }
+
+    async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
+        return request((await this.readStore(STORE_RFQ_SWAPS)).getAll());
+    }
+
+    async removeRfqSwap(rfqId: string): Promise<void> {
+        await this.write(STORE_RFQ_SWAPS, (store) => {
+            store.delete(rfqId);
+        });
     }
 
     async getScannedTxids(): Promise<Set<string>> {

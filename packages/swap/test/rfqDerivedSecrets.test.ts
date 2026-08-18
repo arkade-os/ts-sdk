@@ -33,6 +33,7 @@ import {
     InMemoryWalletRepository,
     MnemonicIdentity,
     SingleKey,
+    VHTLCV2ContractHandler,
     type IWallet,
 } from "@arkade-os/sdk";
 import {
@@ -44,9 +45,13 @@ import {
     type RfqQuote,
     type RfqTransport,
 } from "../src/rfq";
+import { createRfqSwapRecord, rebuildRfqSwap } from "../src/rfqRecord";
 import { onchainHtlcScript, paymentHashOf } from "../src/onchainHtlc";
 import { contractPreimage } from "@arkade-os/sdk";
 import { swapSecretsToRecord } from "../src/store";
+import { rfqClaimSecretOf, rfqSecretsProfile, rfqSignerOf } from "../src/rfqProfileParts";
+import { LightningSendCorridor, onchainSendProfile } from "../src/rfqCorridors";
+import { rfqCorridorHandlers, type RfqCorridorHandler } from "../src/rfqCorridor";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
@@ -88,15 +93,22 @@ const hdWallet = async (): Promise<IWallet> => {
     } as unknown as IWallet;
 };
 
-const staticWallet = (): IWallet =>
+const STATIC_WALLET_KEY = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
+
+/** @param rows collects what the entrypoint registers, for a test that needs
+ * the row's params back — what it writes is `rfqRegister.test.ts`'s subject. */
+const staticWallet = (rows: { params: Record<string, string> }[] = []): IWallet =>
     ({
-        identity: SingleKey.fromHex(
-            "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
-        ),
+        identity: SingleKey.fromHex(STATIC_WALLET_KEY),
         getAddress: async () => REFUND_ADDRESS,
         // Both entrypoints register the lockup before returning an address to
-        // fund; what they write is `rfqRegister.test.ts`'s subject.
-        getContractManager: async () => ({ createContract: async () => ({}) }),
+        // fund.
+        getContractManager: async () => ({
+            createContract: async (row: { params: Record<string, string> }) => {
+                rows.push(row);
+                return {};
+            },
+        }),
     }) as unknown as IWallet;
 
 /** Quotes back whatever the maker derived, so the flow reaches its gates. */
@@ -265,6 +277,88 @@ describe("requestLightningSend and the corridor spread", () => {
         ).rejects.toThrow(/below the invoice amount/);
     });
 });
+/**
+ * The loop a persisting consumer depends on: what the entry point hands back
+ * must rebuild the very covenant it just funded. Without it a consumer would
+ * re-fetch `getInfo()` and re-derive the tree itself, and any drift between the
+ * two derivations is a lockup nobody can spend.
+ */
+describe("treeParams round-trips to the funded script", () => {
+    it.each([
+        ["hd", async () => await hdWallet()],
+        ["static", async () => staticWallet()],
+    ] as const)("on a %s wallet", async (_kind, makeWallet) => {
+        const result = await requestLightningSend(
+            await makeWallet(),
+            "http://ark",
+            lightningTransport(),
+            { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
+        );
+
+        const rebuilt = lightningSendVtxoScript(result.treeParams);
+        expect(hex.encode(rebuilt.pkScript)).toBe(hex.encode(result.swapPkScript));
+        expect(hex.encode(rebuilt.pkScript)).toBe(hex.encode(result.script.pkScript));
+    });
+
+    it("a record plus the row this call registered rebuild the covenant that was funded", async () => {
+        // The hop the other two tests leave open: entrypoint -> script and
+        // record -> script are each covered, but the consumer writes
+        // entrypoint -> RECORD by hand. Written out longhand on purpose — this
+        // is the mapping an integrator copies, and the tree is deliberately
+        // absent from it: the covenant comes from the contract row the same
+        // call registered, so there is no second copy to drift.
+        const rows: { params: Record<string, string> }[] = [];
+        const result = await requestLightningSend(
+            staticWallet(rows),
+            "http://ark",
+            lightningTransport(),
+            { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
+        );
+
+        const record = createRfqSwapRecord(
+            {
+                kind: "lightning_send",
+                lockupAddress: result.address,
+                // One call, both corridor keys. Hand-mapping is what drops the
+                // salt on a static wallet — see the claim-secret tests below.
+                profile: rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                amount: result.fundAmount,
+            },
+            {
+                kind: "lightning_send",
+                rfqId: result.rfqId,
+                state: "pending",
+                lockupPkScript: result.swapPkScript,
+                paymentHash: result.treeParams.paymentHash,
+                refundLocktime: result.treeParams.refundLocktime,
+                createdAt: 1,
+                updatedAt: 1,
+            },
+        );
+
+        const rebuilt = rebuildRfqSwap(record, rows[0].params);
+        expect(hex.encode(rebuilt.lockupPkScript)).toBe(hex.encode(result.swapPkScript));
+        expect(rebuilt.refundLocktime).toBe(result.treeParams.refundLocktime);
+    });
+
+    it("carries the inputs no quote and no second round trip could supply", async () => {
+        const result = await requestLightningSend(
+            staticWallet(),
+            "http://ark",
+            lightningTransport(),
+            { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
+        );
+        // serverPubkey and claimDelay come from this wallet's own getInfo(),
+        // emulatorPubkey from a per-network pin, refundPkScript from decoding an
+        // address. None of them is on the quote.
+        expect(result.treeParams.serverPubkey).toHaveLength(32);
+        expect(result.treeParams.emulatorPubkey).toHaveLength(32);
+        expect(result.treeParams.claimDelay % 512).toBe(0);
+        expect(result.treeParams.refundPkScript.length).toBeGreaterThan(0);
+        expect(result.treeParams.paymentHash).toBe(INVOICE.paymentHash);
+    });
+});
+
 describe("requestLightningSend on an HD wallet", () => {
     it("returns a descriptor and no key material", async () => {
         const wallet = await hdWallet();
@@ -465,6 +559,187 @@ describe("requestOnchainSend on an HD wallet", () => {
             for (const field of Object.keys(record)) {
                 expect(["signingDescriptor", "preimageSaltHex"]).toContain(field);
             }
+        }
+    });
+});
+
+/** Every string leaf of a record, however deep the corridor nested it. */
+const stringLeaves = (value: unknown): string[] => {
+    if (typeof value === "string") return [value];
+    if (Array.isArray(value)) return value.flatMap(stringLeaves);
+    if (value && typeof value === "object") return Object.values(value).flatMap(stringLeaves);
+    return [];
+};
+
+describe("what an RFQ record stores about its corridor's keys", () => {
+    const onchainSend = (wallet: IWallet) =>
+        requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+            emulatorPubkey: EMULATOR_PUBKEY_HEX,
+            amount: 100_000,
+            amountSide: "to",
+            payoutPubkey: PAYOUT_PUBKEY,
+        });
+
+    const send = (wallet: IWallet) =>
+        requestLightningSend(wallet, "http://ark", lightningTransport(), {
+            invoice: INVOICE,
+            emulatorPubkey: EMULATOR_PUBKEY_HEX,
+        });
+
+    it("stores no secret VALUE on the derived arm, on either wallet", async () => {
+        // Asserted on values, not on names, because the name-allowlist form
+        // master uses over the flat projection cannot survive here: the onchain
+        // leg's `profile.claimKey` / `profile.refundKey` are PUBLIC 32-byte
+        // x-only keys, 64 hex each, and `paymentHash` and `preimageSaltHex` are
+        // 64 hex and public too. A "64 hex means secret" rule rejects a correct
+        // record; a walk for the actual preimage and the actual private key does
+        // not, and keeps working as corridors add fields.
+        for (const wallet of [await hdWallet(), staticWallet()]) {
+            const result = await onchainSend(wallet);
+            const record = createRfqSwapRecord(
+                {
+                    kind: "onchain_send",
+                    lockupAddress: result.address,
+                    profile: {
+                        // one P unlocks both legs, so the L1 inputs carry the
+                        // same sha256(P) the arkade lockup commits to
+                        ...rfqSecretsProfile(result.secrets, result.htlcParams.paymentHash),
+                        ...onchainSendProfile(result),
+                    },
+                },
+                {
+                    kind: "onchain_send",
+                    rfqId: result.rfqId,
+                    state: "pending",
+                    lockupPkScript: result.swapPkScript,
+                    paymentHash: result.htlcParams.paymentHash,
+                    refundLocktime: result.quote.refund_locktime,
+                    htlc: result.htlc,
+                    minConfirmations: result.minConfirmations,
+                    createdAt: 1,
+                    updatedAt: 1,
+                } as unknown as Parameters<typeof createRfqSwapRecord>[1],
+            );
+
+            const leaves = stringLeaves(record).map((s) => s.toLowerCase());
+            expect(leaves).not.toContain(hex.encode(result.secrets.preimage));
+            expect(leaves).not.toContain(STATIC_WALLET_KEY);
+
+            // then the names, scoped to the hashlock — a corridor's own keys are
+            // never in scope, which is the point of the subtree
+            const hashlock = record.profile.hashlock as Record<string, unknown>;
+            expect(hashlock.preimageHex).toBeUndefined();
+            if (result.secrets.preimageSalt) {
+                expect(hashlock.preimageSaltHex).toBe(hex.encode(result.secrets.preimageSalt));
+            } else {
+                expect(hashlock.preimageSaltHex).toBeUndefined();
+            }
+        }
+    });
+
+    it("gives a send-leg record a signer and a payment hash, and no preimage at all", async () => {
+        // `provisionRefundKey` mints no preimage: a lightning send's P belongs
+        // to the payee, and the descriptor it does provision is a REFUND key.
+        // Without this the leg's "no preimage, but yes a signer" property is
+        // stated only in prose, and the first handler copied from a claim
+        // corridor's would quietly acquire a `claimSecret`.
+        for (const wallet of [await hdWallet(), staticWallet()]) {
+            const result = await send(wallet);
+            const record = createRfqSwapRecord(
+                {
+                    kind: "lightning_send",
+                    lockupAddress: result.address,
+                    profile: rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                },
+                {
+                    kind: "lightning_send",
+                    rfqId: result.rfqId,
+                    state: "pending",
+                    lockupPkScript: result.swapPkScript,
+                    paymentHash: result.treeParams.paymentHash,
+                    refundLocktime: result.treeParams.refundLocktime,
+                    createdAt: 1,
+                    updatedAt: 1,
+                },
+            );
+
+            expect(rfqSignerOf(record)).toEqual({
+                signingDescriptor: result.secrets.descriptor,
+            });
+            expect(record.profile.hashlock).toEqual({
+                paymentHash: result.treeParams.paymentHash,
+            });
+            expect(JSON.stringify(record)).not.toContain("preimage");
+            // the reader answers "this leg has none", not a projection that
+            // would derive some P off a refund key and fail the hash check
+            expect(rfqClaimSecretOf(record)).toBeUndefined();
+        }
+    });
+});
+
+describe("a corridor with no hashlock at all", () => {
+    // The corridors shipping today all lock to a preimage; that is a fact about
+    // them, not about RFQ. This registers a throwaway handler through the
+    // registry's test seam to pin what the record promises such a corridor:
+    // `signer` alone, no `hashlock` key, and a claim reader that RETURNS
+    // undefined rather than throwing — "has none" and "came back corrupt" are
+    // different answers.
+    const KIND = "lightning_send" as const;
+
+    it("round-trips a signer with no hashlock and no preimage anywhere", async () => {
+        const result = await requestLightningSend(
+            staticWallet(),
+            "http://ark",
+            lightningTransport(),
+            { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
+        );
+        const profile = rfqSecretsProfile(result.secrets); // no payment hash
+        expect(profile.hashlock).toBeUndefined();
+
+        // Borrows the send leg's kind for one test: the handler is swapped for a
+        // hashlock-free one, since `kind` is the manager's union and only a
+        // corridor it can drive may be registered.
+        expect(rfqCorridorHandlers.unregister(KIND)).toBe(true);
+        rfqCorridorHandlers.register({
+            kind: KIND,
+            project: () => ({}),
+            hydrate: () => ({}),
+        });
+        try {
+            const record = createRfqSwapRecord(
+                {
+                    kind: KIND,
+                    lockupAddress: result.address,
+                    profile,
+                },
+                {
+                    kind: KIND,
+                    rfqId: result.rfqId,
+                    state: "pending",
+                    lockupPkScript: result.swapPkScript,
+                    // the live type still requires it; the RECORD does not, which
+                    // is the follow-up this cast marks
+                    paymentHash: result.treeParams.paymentHash,
+                    refundLocktime: result.treeParams.refundLocktime,
+                    createdAt: 1,
+                    updatedAt: 1,
+                },
+            );
+
+            expect(record.profile.hashlock).toBeUndefined();
+            expect(JSON.stringify(record)).not.toContain("preimage");
+            // a leg with no hashlock is still a leg this wallet signs
+            expect(rfqSignerOf(record)?.signingDescriptor).toBe(result.secrets.descriptor);
+            expect(rfqClaimSecretOf(record)).toBeUndefined();
+
+            const rebuilt = rebuildRfqSwap(
+                record,
+                VHTLCV2ContractHandler.serializeParams(result.script.options),
+            );
+            expect(hex.encode(rebuilt.lockupPkScript)).toBe(hex.encode(result.swapPkScript));
+        } finally {
+            rfqCorridorHandlers.unregister(KIND);
+            rfqCorridorHandlers.register(LightningSendCorridor as RfqCorridorHandler);
         }
     });
 });

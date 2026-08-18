@@ -55,12 +55,16 @@ import {
 } from "../src/rfq";
 import { onchainHtlcScript } from "../src/onchainHtlc";
 import {
+    LockupContractMissing,
     LockupRegistrationFailed,
     SWAP_LOCKUP_CONTRACT_KIND,
     SWAP_LOCKUP_CONTRACT_LABEL,
     SWAP_LOCKUP_CONTRACT_TYPE,
+    lockupContractParams,
     registerLockupContract,
 } from "../src/lockupContract";
+import { createRfqSwapRecord, rebuildRfqSwap } from "../src/rfqRecord";
+import { rfqSecretsProfile } from "../src/rfqProfileParts";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
@@ -383,6 +387,47 @@ describe("a registered lockup, against a real contract manager", () => {
         const balance = await wallet.getBalance();
         expect(balance.total).toBe(25_000);
         expect(balance.available).toBe(0);
+    });
+
+    it("hands its params back to a rebuild, which is why a record stores no tree", async () => {
+        // The loop the persistence layer rests on, end to end and through a
+        // real repository: the entrypoint writes the row, the row round-trips
+        // storage, and a record carrying no covenant of its own rebuilds the
+        // very script that was funded.
+        const { wallet } = await realWallet();
+        const swap = await lightningSend(wallet as unknown as IWallet);
+
+        const params = await lockupContractParams(await wallet.getContractManager(), swap.address);
+        const record = createRfqSwapRecord(
+            {
+                kind: "lightning_send",
+                lockupAddress: swap.address,
+                profile: rfqSecretsProfile(swap.secrets, swap.treeParams.paymentHash),
+            },
+            {
+                kind: "lightning_send",
+                rfqId: swap.rfqId,
+                state: "pending",
+                lockupPkScript: swap.swapPkScript,
+                paymentHash: swap.treeParams.paymentHash,
+                refundLocktime: swap.treeParams.refundLocktime,
+                createdAt: 1,
+                updatedAt: 1,
+            },
+        );
+
+        const rebuilt = rebuildRfqSwap(record, params);
+        expect(hex.encode(rebuilt.lockupPkScript)).toBe(hex.encode(swap.swapPkScript));
+        expect(rebuilt.refundLocktime).toBe(swap.treeParams.refundLocktime);
+    });
+
+    it("names a lockup with no row instead of rebuilding from nothing", async () => {
+        // A cleared contract store, or a record from another wallet: the money
+        // may well be at the address, but this wallet has no covenant for it.
+        const { wallet } = await realWallet();
+        await expect(
+            lockupContractParams(await wallet.getContractManager(), REFUND_ADDRESS),
+        ).rejects.toBeInstanceOf(LockupContractMissing);
     });
 
     it("survives the manager's backstop re-registering it", async () => {

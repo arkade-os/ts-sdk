@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { ArkAddress } from "@arkade-os/sdk";
+import { ArkAddress, VHTLCV2ContractHandler } from "@arkade-os/sdk";
 
 import {
     ARKADE_BTC,
@@ -24,7 +24,9 @@ import {
     onchainSendRequest,
     type RfqQuote,
 } from "../src/rfq";
-import { onchainHtlcScript, paymentHashOf } from "../src/onchainHtlc";
+import { onchainHtlcScript, paymentHashOf, type OnchainHtlc } from "../src/onchainHtlc";
+import { onchainSendProfile } from "../src/rfqCorridors";
+import { createRfqSwapRecord, rebuildRfqSwap } from "../src/rfqRecord";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
 
@@ -273,6 +275,73 @@ describe("deriveOnchainSend", () => {
         const quote = consistentQuote();
         delete quote.profile.htlc_locktime;
         expect(() => deriveOnchainSend({ quote, ...derivation() })).toThrow(/binding field/);
+    });
+
+    it("hands back the L1 network, which the ark network name does not give", () => {
+        // The mapping from `info.network` is private and lossy — signet,
+        // mutinynet and testnet4 all land on `"testnet"` — so a caller
+        // reconstructing this from context is re-deriving something it cannot
+        // see, for a field the profile needs verbatim.
+        expect(deriveOnchainSend({ quote: consistentQuote(), ...derivation() }).l1Network).toBe(
+            "regtest",
+        );
+    });
+
+    it("maps the derivation onto the profile, renames and all", () => {
+        // The three that are not a straight copy, in one place so the mapping
+        // is auditable: the L1 locktime is `htlcLocktime` on the profile
+        // (`refundLocktime` there is the arkade lockup's, another deadline
+        // entirely), the keys go to hex, and `htlcAddress` is derived — no
+        // input carries it, and it is what the rebuild checks against.
+        const derived = deriveOnchainSend({ quote: consistentQuote(), ...derivation() });
+        expect(onchainSendProfile(derived)).toEqual({
+            claimKey: hex.encode(key(5)),
+            refundKey: hex.encode(key(11)),
+            htlcLocktime: HTLC_LOCKTIME,
+            network: "regtest",
+            htlcAddress: derived.htlc.address,
+            minConfirmations: 2,
+        });
+    });
+
+    it("round-trips the L1 half from a real derivation through a record", () => {
+        // End to end over the seam the builder exists for: derive, persist,
+        // rebuild, and land on the same contract. A field mapped wrong here
+        // does not fail at the write — it fails at the restore, against an
+        // HTLC nobody funded.
+        const derived = deriveOnchainSend({ quote: consistentQuote(), ...derivation() });
+        const record = createRfqSwapRecord(
+            {
+                kind: "onchain_send",
+                lockupAddress: derived.address,
+                profile: {
+                    signer: { signingDescriptor: `tr(${hex.encode(SENDER_PUBKEY)})` },
+                    hashlock: { paymentHash: PAYMENT_HASH },
+                    ...onchainSendProfile(derived),
+                },
+            },
+            {
+                kind: "onchain_send",
+                rfqId: RFQ_ID,
+                state: "pending",
+                lockupPkScript: derived.swapPkScript,
+                paymentHash: PAYMENT_HASH,
+                refundLocktime: derived.refundLocktime,
+                htlc: derived.htlc,
+                minConfirmations: derived.minConfirmations,
+                createdAt: NOW,
+                updatedAt: NOW,
+            } as unknown as Parameters<typeof createRfqSwapRecord>[1],
+        );
+
+        const rebuilt = rebuildRfqSwap(
+            record,
+            VHTLCV2ContractHandler.serializeParams(derived.script.options),
+        ) as { htlc: OnchainHtlc; minConfirmations: number };
+
+        expect(rebuilt.htlc.address).toBe(derived.htlc.address);
+        expect(hex.encode(rebuilt.htlc.pkScript)).toBe(hex.encode(derived.htlc.pkScript));
+        expect(rebuilt.minConfirmations).toBe(2);
     });
 });
 

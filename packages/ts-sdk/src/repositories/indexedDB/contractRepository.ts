@@ -188,6 +188,11 @@ export class IndexedDBContractRepository implements ContractRepository {
         }) as Contract[];
     }
 
+    // ponytail: this caches the connection, not the open promise, and never
+    // forgets it — so once the manager closes on `versionchange`, every later
+    // transaction here throws `InvalidStateError` with no path back. Reachable
+    // only on a version increase; see `IndexedDbAssetSwapRepository.ensureDb`
+    // in the swap package for the forget-and-reopen shape to copy.
     private async getDB(): Promise<IDBDatabase> {
         if (this.db) return this.db;
         this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);

@@ -211,10 +211,19 @@ interface RfqSwapCommon {
      * manager still watches the swap on its timer, it just cannot subscribe.
      * See {@link RfqSwapManagerDeps.contracts}. */
     lockup?: RfqSwapLockup;
-    /** `sha256(P)`, hex — the quote's `payment_hash`. The claim leaf can only
+    /**
+     * `sha256(P)`, hex — the quote's `payment_hash`. The claim leaf can only
      * be spent by revealing a value that hashes to this, which is what makes a
      * settlement provable rather than reported. For an onchain send this is
-     * the SAME hash the L1 `htlc` carries: one `P` unlocks both legs. */
+     * the SAME hash the L1 `htlc` carries: one `P` unlocks both legs.
+     *
+     * True of the three corridors that exist today and only of them: a hashlock
+     * belongs to a CORRIDOR, and a banco-style one settles without any. The
+     * stored record already says so — the hash lives in `profile.hashlock`, not
+     * on `RfqSwapRecord` — and this field follows onto the per-corridor swap
+     * types when the first such corridor lands. Do not read the current shape as
+     * settled.
+     */
     paymentHash: string;
     /**
      * `refund_locktime` from the quote, unix seconds.

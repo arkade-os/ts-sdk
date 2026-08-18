@@ -70,8 +70,8 @@ for (const specifier of specifiers) {
 const stubExecutor = { run: async () => {}, get: async () => undefined, all: async () => [] };
 new SQLiteAssetSwapRepository(stubExecutor);
 new RealmAssetSwapRepository({});
-if (AssetSwapRealmSchemas.length !== 3) {
-    throw new Error(`expected 3 Realm schemas, got ${AssetSwapRealmSchemas.length}`);
+if (AssetSwapRealmSchemas.length !== 4) {
+    throw new Error(`expected 4 Realm schemas, got ${AssetSwapRealmSchemas.length}`);
 }
 
 const server = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
