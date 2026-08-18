@@ -88,6 +88,92 @@ localStorage adapter to write:
 - The `Network` type on these call sites is now `@arkade-os/solver-discovery`'s `Network`, not
   `@arkade-os/boltz-swap`'s — for the wallet's current networks they are the same strings.
 
+## 3c. RFQ swaps: persist what the manager is driving
+
+New, and not a move: RFQ swaps started by the released wallet were **never persisted anywhere**, so
+a restart lost them. `AssetSwapRepository` gains three methods for them (`version` is `3`;
+`DB_VERSION` is `2`, the database's first version increase — the `rfqSwaps` store is added and the
+three existing stores are untouched), and the wallet writes the records.
+
+- **On every manager pass that changed state**, `await repository.saveRfqSwap(record)` — build the
+  first with `createRfqSwapRecord(origin, swap)` and every later one with
+  `updateRfqSwapRecord(record, swap)`.
+- **At boot**, `getAllRfqSwaps()`, then per record `lockupContractParams(contractManager,
+  record.lockupAddress)` and `rebuildRfqSwap(record, params)`, and hand the results to
+  `RfqSwapManager.start`.
+- **Prune** with `shouldRetainRfqSwap(record, now)` → `removeRfqSwap(record.rfqId)`. `now` is unix
+  **seconds** (`Math.floor(Date.now() / 1000)`); milliseconds against a seconds window retires every
+  terminal record after ~43 minutes.
+
+### How to fill `profile`, per corridor
+
+The record's corridor half is one opaque `Record<string, unknown>` that nothing in the package, the
+repository or the store interprets — so the wallet is the only thing that can get it right, and
+nothing will tell it when it does not.
+
+- **All three corridors, first:** `...rfqSecretsProfile(result.secrets, result.treeParams.paymentHash)`.
+  One call per leg, writing two keys and only what that leg's provisioning actually produced:
+  `signer.signingDescriptor` always, `hashlock.paymentHash` whenever a payment hash is passed, and —
+  on a **claim** leg only — at most one of `preimageHex` (P itself, when the wallet cannot re-derive
+  it) or `preimageSaltHex` (the public input a static wallet's derivation needs). **Never hand-map
+  these fields.** A caller that copies `signingDescriptor` and `preimageHex` across by hand drops the
+  salt on a static wallet, and the swap is unclaimable with nothing to say so until claim time.
+- **Reading it back is two different questions, and the corridor decides which.** For the signer —
+  every leg here, since every leg is one this wallet signs — `senderIdentityForSwapRecord(wallet,
+  rfqSignerOf(record))`. For the preimage, only on a claim leg (`lightning_receive`, `onchain_send`)
+  — `rfqClaimSecretOf(record)` yields the projection and `preimageForSwapRecord(wallet, …)` yields P,
+  hash-checked. **Both readers validate**: they answer `undefined` only when the corridor has no such
+  half, and throw on a stored half that is present and unusable — so "this leg never had a preimage"
+  and "this record lost its payment hash" stay distinguishable, and the second never reaches
+  `preimageForSwapRecord`, which skips its hash check on a falsy `paymentHash`. On `lightning_send`
+  the claim reader answers `undefined`: **that leg has no local preimage** (P belongs to the payee)
+  and its descriptor is a *refund* key. Wiring the claim helper to all three legs does not degrade
+  gracefully — the salted arm derives *some* P off the refund descriptor and the payment-hash check
+  rejects it, so the wallet reads a correct record as corrupt.
+- `lightning_send` — nothing beyond `signer` and `hashlock`, and no preimage inside either. The
+  covenant describes the rest of the leg.
+- `lightning_receive` — `{ expectedAmount, payoutAddress }` off the request result.
+  `expectedAmount` is the quote's `to_amount` captured at **request** time and is the value gate;
+  `payoutAddress` is persistence-only (the rebuild never returns it), so it is there for the
+  wallet's own display and correlation.
+- `onchain_send` — build the L1 half with `onchainSendProfile(result)`, exported for this purpose.
+  Copying its fields by hand is how that half is lost: `htlcParams.refundLocktime` has to be written
+  as `htlcLocktime` because the record's `refundLocktime` is the arkade lockup's, a different
+  deadline; the keys go bytes → hex; and `htlcAddress` is a *derived* value the rebuild checks the
+  inputs against, so it is the easiest to skip and impossible to reconstruct later. Without this
+  profile a restored swap watches nothing and its L1 refund window passes unwatched.
+
+### Not every corridor has a hashlock
+
+The three corridors shipping today all lock to a preimage, so all three carry `profile.hashlock` —
+but that is a fact about them, not about RFQ. A corridor that settles without a hashlock
+(banco-style) has **no payment hash and no preimage material at all**, and its profile simply omits
+the key; there is no placeholder to fill, and a fabricated `paymentHash` would be a value nothing can
+check. It still writes `profile.signer` — signing a leg is not a hashlock question — which is exactly
+why `rfqSecretsProfile` takes the payment hash as an *optional* second argument. Worth knowing now,
+so the wallet does not grow a "every swap has a paymentHash" assumption of its own.
+
+### A partial profile throws — at boot AND at read
+
+Deliberate, and it decides how the wallet handles both a failed restore and a failed claim-secret
+read. `rebuildRfqSwap` refuses a hashlock profile with no usable `paymentHash`, a missing
+`expectedAmount`, missing L1 keys, an unusable `minConfirmations`, and inputs that do not reproduce
+`htlcAddress`. Each of those is a swap that will not restore **at all** rather than one that restores
+half-armed, since every one of them is a gate whose absence reads as "passed" rather than "failed".
+The readers behave the same way: `undefined` means "this corridor has none", a throw means "the half
+is there and unusable".
+
+### No backfill exists
+
+RFQ swaps started by the released wallet were never persisted, so the upgrade recovers none of them;
+records begin at swaps started after it. Refunds for in-flight pre-upgrade swaps stay manual. Worth
+stating plainly, because "we shipped persistence" reads as "old swaps are safe now".
+
+The interface bump costs the wallet nothing structurally — it constructs `IndexedDbAssetSwapRepository`
+rather than implementing `AssetSwapRepository`. One thing is **not** reversible: once a browser's
+database is at `DB_VERSION` 2, rolling the app back to `@arkade-os/swap@0.0.5` opens it at version 1
+and fails `VersionError` across the whole swap store, not just the RFQ half.
+
 ## 4. Not mechanical — cut with ponytail markers
 
 - **`preFeeDisplayRate`** was not ported (display-only). Keep it in the wallet (e.g. move to

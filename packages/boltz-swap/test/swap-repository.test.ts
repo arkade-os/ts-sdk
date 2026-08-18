@@ -264,4 +264,52 @@ describe("SwapRepository implementations", () => {
             ]);
         });
     });
+
+    /** The connection contract of the shared managed-connection helper, seen
+     * through this repository: a connection that goes away is forgotten and
+     * reopened instead of bricking the store until reload. */
+    describe("IndexedDbSwapRepository whose connection went away", () => {
+        const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+        it("reopens after an external delete", async () => {
+            const dbName = `swap-reopen-${Math.random()}`;
+            const repo = new IndexedDbSwapRepository(dbName);
+            await repo.saveSwap(createReverseSwap("reverse-1", "swap.created"));
+
+            await new Promise<void>((resolve, reject) => {
+                const del = indexedDB.deleteDatabase(dbName);
+                del.onsuccess = () => resolve();
+                del.onerror = () => reject(del.error);
+            });
+            await flush();
+
+            // recreated and empty, the point being that it opens one at all
+            await repo.saveSwap(createReverseSwap("reverse-2", "swap.created"));
+            expect((await repo.getAllSwaps()).map((s) => s.id)).toEqual(["reverse-2"]);
+            await repo[Symbol.asyncDispose]();
+        });
+
+        it("fails honestly, and repeatably, when another tab upgraded past it", async () => {
+            const dbName = `swap-newer-${Math.random()}`;
+            const repo = new IndexedDbSwapRepository(dbName);
+            await repo.saveSwap(createReverseSwap("reverse-1", "swap.created"));
+
+            const newer = await new Promise<IDBDatabase>((resolve, reject) => {
+                const open = indexedDB.open(dbName, 99);
+                open.onsuccess = () => resolve(open.result);
+                open.onerror = () => reject(open.error);
+            });
+            await flush();
+            try {
+                for (const attempt of [1, 2]) {
+                    await expect(
+                        repo.saveSwap(createReverseSwap(`reverse-${attempt}`, "swap.created")),
+                        `attempt ${attempt}`,
+                    ).rejects.toMatchObject({ name: "VersionError" });
+                }
+            } finally {
+                newer.close();
+            }
+        });
+    });
 });

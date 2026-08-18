@@ -38,6 +38,36 @@ export {
     InMemoryAssetSwapRepository,
 } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
+// The corridor handlers and their registry are internal — see `rfqCorridor.ts`
+// for why. What a consumer writes into `RfqSwapOrigin.profile` is these: every
+// corridor's keys through `rfqSecretsProfile`, then whatever its own leg adds.
+// The two readers are how they come back — `rfqSignerOf` for the refund signer
+// on any leg, `rfqClaimSecretOf` for the preimage on a leg we claim.
+export {
+    onchainSendProfile,
+    type LightningReceiveProfile,
+    type LightningSendProfile,
+    type OnchainSendProfile,
+} from "./rfqCorridors";
+export {
+    rfqSecretsProfile,
+    rfqClaimSecretOf,
+    rfqSignerOf,
+    type RfqClaimSecretProjection,
+    type RfqHashlockProjection,
+    type RfqSignerProjection,
+} from "./rfqProfileParts";
+export {
+    RFQ_SWAP_RETENTION_SECONDS,
+    createRfqSwapRecord,
+    rebuildRfqSwap,
+    shouldRetainRfqSwap,
+    updateRfqSwapRecord,
+    type LockupParams,
+    type PersistableRfqSwap,
+    type RfqSwapOrigin,
+    type RfqSwapRecord,
+} from "./rfqRecord";
 export {
     restoreAssetSwaps,
     classifySpend,
@@ -55,6 +85,8 @@ export {
 } from "./watch";
 export { retireSettledOfferContracts, type OfferContractRetirer } from "./coverage";
 export {
+    // deprecated — use arkadeAssetLeg; the @deprecated that editors read is on
+    // the declaration in rfq.ts, reached through this alias
     ARKADE_ASSET,
     ARKADE_BTC,
     LIGHTNING_BTC,
@@ -66,6 +98,7 @@ export {
     SOLO_REFUND_HEADROOM_SECONDS,
     AddressMismatch,
     SwapRefusal,
+    arkadeAssetLeg,
     arkadeSwapRequest,
     assertFundable,
     assertReceivable,
@@ -88,6 +121,8 @@ export {
     verifyLockupAddress,
     verifyReceiveInvoice,
     type InvoiceFacts,
+    type LightningReceiveTreeParams,
+    type LightningSendTreeParams,
     type RelaySocket,
     type RfqQuote,
     type RfqRefusalReason,
@@ -158,11 +193,14 @@ export {
     type RefundOutcome,
 } from "./refund";
 export {
+    LockupContractMissing,
     LockupRegistrationFailed,
     SWAP_LOCKUP_CONTRACT_KIND,
     SWAP_LOCKUP_CONTRACT_LABEL,
     SWAP_LOCKUP_CONTRACT_TYPE,
+    lockupContractParams,
     registerLockupContract,
+    type LockupContractReader,
     type LockupContractWriter,
 } from "./lockupContract";
 export {
@@ -186,3 +224,4 @@ export {
     type RfqSwapState,
     type SwapContractRegistry,
 } from "./swapManager";
+export { swapActivityResolver, type SwapActivityInput } from "./activity";

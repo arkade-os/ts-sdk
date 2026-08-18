@@ -42,7 +42,7 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
     });
 
     afterEach(async () => {
-        repository?.clear();
+        await repository?.clear();
         await repository?.[Symbol.asyncDispose]();
     });
 

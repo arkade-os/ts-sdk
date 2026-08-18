@@ -506,7 +506,23 @@ import type {
 import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
 import { buildVersion, sdkVersion, FetchError } from "./utils/fetch";
-import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
+import {
+    closeDatabase,
+    openDatabase,
+    DatabaseUpgradeBlockedError,
+    BLOCKED_UPGRADE_TIMEOUT_MS,
+} from "./repositories/indexedDB/manager";
+import {
+    createManagedConnection,
+    ConnectionDisposedError,
+} from "./repositories/indexedDB/managedConnection";
+import {
+    promisifyRequest,
+    awaitTransaction,
+    deleteByIndex,
+    getAllByIndexValues,
+} from "./repositories/indexedDB/idbUtils";
+import type { ManagedConnection } from "./repositories/indexedDB/managedConnection";
 import {
     WalletMessageHandler,
     WalletNotInitializedError,
@@ -684,6 +700,14 @@ export {
     // DB
     closeDatabase,
     openDatabase,
+    createManagedConnection,
+    DatabaseUpgradeBlockedError,
+    ConnectionDisposedError,
+    BLOCKED_UPGRADE_TIMEOUT_MS,
+    promisifyRequest,
+    awaitTransaction,
+    deleteByIndex,
+    getAllByIndexValues,
 
     // Repositories
     IndexedDBWalletRepository,
@@ -1034,6 +1058,7 @@ export type {
     DelegateOptions,
 
     // Repositories
+    ManagedConnection,
     WalletRepository,
     ContractRepository,
     MigrationStatus,

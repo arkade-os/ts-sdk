@@ -11,6 +11,11 @@
  * objects conforming to Realm's ObjectSchema shape. They are new, so a consumer
  * adds them to its Realm config and bumps its own `schemaVersion`; no migration
  * helper ships here.
+ *
+ * `ArkadeRfqSwap` arrived after the first three. A consumer already shipping
+ * those has to add it and bump `schemaVersion` again — Realm creates schemas on
+ * open, so a config that lists three while the code reads four fails on the
+ * fourth `realm.objects(…)` rather than at open.
  */
 
 export const ArkadeAssetSwapSchema = {
@@ -41,7 +46,22 @@ export const ArkadeAssetSwapMarketsCacheSchema = {
     },
 };
 
+/** Monitored RFQ swaps, keyed by `rfqId`. `state` and `updatedAt` are mapped out
+ * for querying and for the retention sweep (`shouldRetainRfqSwap`); the record
+ * itself goes in whole, `profile` included. */
+export const ArkadeRfqSwapSchema = {
+    name: "ArkadeRfqSwap",
+    primaryKey: "rfqId",
+    properties: {
+        rfqId: "string",
+        state: "string",
+        updatedAt: "int",
+        data: "string",
+    },
+};
+
 export const AssetSwapRealmSchemas = [
+    ArkadeRfqSwapSchema,
     ArkadeAssetSwapSchema,
     ArkadeAssetSwapScannedTxidSchema,
     ArkadeAssetSwapMarketsCacheSchema,

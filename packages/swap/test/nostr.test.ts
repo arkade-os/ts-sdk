@@ -149,6 +149,34 @@ describe("nostrRfqTransport", () => {
         await transport.close();
     });
 
+    /** Asserted behaviourally rather than by inspecting imports: this transport
+     * used to carry its own copy of the quote check, and a second copy
+     * reappearing is invisible any other way. */
+    it("rejects a quote for a pair other than the one it asked about", async () => {
+        const solverSecret = generateSecretKey();
+        const { pool, solverReplies } = fakePool(solverSecret);
+        const secretKey = generateSecretKey();
+        const transport = nostrRfqTransport({
+            relays: ["wss://x"],
+            solverPubkey: getPublicKey(solverSecret),
+            secretKey,
+            pool: pool as never,
+        });
+
+        const pending = transport.requestQuote({
+            v: 1,
+            type: "rfq_request",
+            rfq_id: "abc",
+            pair: "arkade:BTC->lightning:BTC",
+        });
+        solverReplies(getPublicKey(secretKey), {
+            ...quote("abc"),
+            pair: "arkade:BTC->onchain:BTC",
+        });
+        await expect(pending).rejects.toThrow(/not the requested/);
+        await transport.close();
+    });
+
     it("ignores a reply for a different negotiation", async () => {
         const solverSecret = generateSecretKey();
         const { pool, solverReplies } = fakePool(solverSecret);

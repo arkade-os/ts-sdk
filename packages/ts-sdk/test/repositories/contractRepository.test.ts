@@ -30,7 +30,7 @@ describe.each(contractRepositoryImplementations)("ContractRepository: $name", ({
     });
 
     afterEach(async () => {
-        repository?.clear();
+        await repository?.clear();
         await repository?.[Symbol.asyncDispose]();
     });
 

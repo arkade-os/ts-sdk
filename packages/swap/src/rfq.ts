@@ -66,6 +66,7 @@ import {
     onchainHtlcScript,
     paymentHashOf,
     type OnchainHtlc,
+    type OnchainHtlcParams,
     type OnchainNetwork,
 } from "./onchainHtlc";
 
@@ -106,14 +107,28 @@ const solverHex = (value: string, field: string): Uint8Array => {
 
 // ── Pairs ────────────────────────────────────────────────────────────────────
 
-/** Legs are `<corridor>:<asset>`; a pair is directional, `from->to`. Arkade
- * asset legs stay coarse (`arkade:ASSET`) — the exact asset ids ride the
- * request profile, mirroring how the offer TLV identifies assets. */
+/** Legs are `<corridor>:<asset>`; a pair is directional, `from->to`. */
 export const ARKADE_BTC = "arkade:BTC";
-export const ARKADE_ASSET = "arkade:ASSET";
 export const LIGHTNING_BTC = "lightning:BTC";
 
 export const ONCHAIN_BTC = "onchain:BTC";
+
+/** The arkade leg for an asset: the asset id itself, 68 lowercase hex. The id
+ * lives in the pair rather than the profile because the pair is the field both
+ * sides route and subscribe on, and a coarse leg cannot say which asset a
+ * market key is for.
+ *
+ * Taking an `AssetId` rather than a string is what enforces the case rule:
+ * `hex.decode` accepts uppercase while `hex.encode` only emits lowercase, so a
+ * value that reached us as `A1B2…` leaves here as `a1b2…`. Solvers compare pair
+ * strings byte for byte — a sender that normalised only in its key derivation
+ * would reach the right subscription and then be skipped as an unserved pair. */
+export const arkadeAssetLeg = (id: asset.AssetId): string => `arkade:${id.toString()}`;
+
+/** @deprecated The coarse asset leg. No solver serves it: `ASSET` is neither a
+ * registered ticker nor a 68-hex asset id, so a solver's market-key derivation
+ * throws on it. Use {@link arkadeAssetLeg}. Removed next major. */
+export const ARKADE_ASSET = "arkade:ASSET";
 
 export const rfqPair = (from: string, to: string): string => `${from}->${to}`;
 
@@ -223,9 +238,9 @@ export const lightningSendRequest = (input: {
 });
 
 /** The rfq_request for an arkade↔arkade swap. Exactly one side may name an
- * asset id per direction (BTC has none); the pair string stays coarse and the
- * ids ride the profile, like the offer TLV. Forward-looking: the wire shape is
- * specified, the reference solver does not serve it yet. */
+ * asset id per direction (BTC has none), and the id is the leg itself — see
+ * {@link arkadeAssetLeg}. Forward-looking: the wire shape is specified, the
+ * reference solver does not serve it yet. */
 export const arkadeSwapRequest = (input: {
     rfqId: string;
     /** Asset the trader deposits; omit when depositing BTC. */
@@ -236,23 +251,39 @@ export const arkadeSwapRequest = (input: {
     /** Integer base units of the side named by `amountSide`. */
     amount: number;
 }): Record<string, unknown> => {
-    if (Boolean(input.wantAsset) === Boolean(input.offerAsset)) {
-        throw new Error("set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC)");
+    // Both refusals say "exactly one", but the causes differ and so do the
+    // remedies: neither side named is a degenerate request, both sides named is
+    // a real corridor still waiting on a counterparty.
+    if (!input.wantAsset && !input.offerAsset) {
+        throw new Error(
+            "set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC) — " +
+                "with neither set both legs are BTC, which is not a swap",
+        );
     }
+    if (input.wantAsset && input.offerAsset) {
+        throw new Error(
+            "set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC) — " +
+                "asset->asset is nameable on the wire but no solver quotes it yet",
+        );
+    }
+    const pair = rfqPair(
+        input.offerAsset ? arkadeAssetLeg(input.offerAsset) : ARKADE_BTC,
+        input.wantAsset ? arkadeAssetLeg(input.wantAsset) : ARKADE_BTC,
+    );
+    assertPairLength(pair);
     return {
         v: 1,
         type: "rfq_request",
         rfq_id: input.rfqId,
-        pair: rfqPair(
-            input.offerAsset ? ARKADE_ASSET : ARKADE_BTC,
-            input.wantAsset ? ARKADE_ASSET : ARKADE_BTC,
-        ),
+        pair,
         amount_side: input.amountSide,
         amount: input.amount,
-        profile: {
-            ...(input.offerAsset && { offer_asset: hex.encode(input.offerAsset.serialize()) }),
-            ...(input.wantAsset && { want_asset: hex.encode(input.wantAsset.serialize()) }),
-        },
+        // The pair is the only place the asset ids appear. Repeating them here
+        // would be a key the solver's `.strict()` profile schema does not
+        // declare, and an undeclared key is `unsupported_payload` — a refusal,
+        // not an ignored extra. Empty, not absent: `profile` is required on
+        // every other request shape this wire carries.
+        profile: {},
     };
 };
 
@@ -293,6 +324,34 @@ const gateError = (reason: string, message: string): Error & { reason: string } 
 const assertFinite = (value: number | undefined, reason: string, label: string): void => {
     if (value !== undefined && !Number.isFinite(value)) {
         throw gateError(reason, `${label} is not a finite number (${String(value)})`);
+    }
+};
+
+/** The wire's cap on a pair string, mirrored so an over-long pair fails here
+ * with a reason instead of arriving as a bare `unsupported_payload`.
+ *
+ * 158 = ("lightning".length + 1 + 68) * 2 + "->".length — the longest corridor
+ * name, a full 68-hex asset id on each leg, and the arrow. The longest pair
+ * anyone can build is `arkade:<68>->arkade:<68>`, at 152 — and until the
+ * exactly-one-asset guard in {@link arkadeSwapRequest} relaxes, this package
+ * tops out at 87, so the guard is dormant on purpose.
+ *
+ * Restated rather than re-derived from this package's own corridor names: a
+ * local cap BELOW the solver's would refuse a pair the solver would have
+ * served, which is worse than the remote refusal this exists to pre-empt. The
+ * test pins the number so a drift is a failure, not a surprise.
+ *
+ * Module-level, not in `index.ts`: it mirrors a number this repo does not own,
+ * and publishing it would turn a remote edit into a semver event here. */
+export const MAX_PAIR_LENGTH = 158;
+
+/** Exported for the tests — a dormant guard still needs one, and no public
+ * entry point can reach it. Not in `index.ts`. */
+export const assertPairLength = (pair: string): void => {
+    if (pair.length > MAX_PAIR_LENGTH) {
+        throw new Error(
+            `pair is ${pair.length} characters, over the wire's ${MAX_PAIR_LENGTH}-character limit`,
+        );
     }
 };
 
@@ -383,14 +442,43 @@ export interface RfqTransport {
     close(): Promise<void>;
 }
 
-const expectQuote = (payload: unknown, rfqId: string): RfqQuote => {
-    const p = payload as { type?: string; reason?: string; rfq_id?: string } | null;
+/**
+ * Discriminate a solver reply: a refusal carries a closed-set reason and is
+ * thrown as {@link SwapRefusal}; anything that is not a quote for THIS
+ * negotiation is an error rather than a value. The `rfq_id` check is what stops
+ * a reply to one negotiation being accepted as the answer to another — on a
+ * shared relay the solver's events all arrive on the same subscription.
+ *
+ * `pair` is compared for the same reason the solver compares it byte for byte:
+ * a solver that normalises case, or quotes a market other than the one asked
+ * for, is otherwise undetectable client-side. Note the quote's pair is a
+ * constant the solver restates rather than the request's echoed back, so this
+ * binds every solver to the exact spellings this module builds.
+ *
+ * `requestedPair` is optional by value, not by parameter: callers pass a
+ * payload they built, and a payload with no `pair` is not one whose pair can be
+ * wrong. Comparing `String(undefined)` would refuse every quote.
+ *
+ * Shared with the nostr transport (`nostr.ts`), which used to carry a
+ * byte-identical copy — module-level only, never re-exported from `index.ts`.
+ */
+export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: string): RfqQuote => {
+    const p = payload as { type?: string; reason?: string; rfq_id?: string; pair?: unknown } | null;
     if (p?.type === "rfq_refusal") throw new SwapRefusal(p.reason ?? "unknown", p.rfq_id ?? rfqId);
     if (p?.type !== "rfq_quote" || p.rfq_id !== rfqId) {
         throw new Error(`unexpected reply: ${p?.type ?? "no payload"}`);
     }
+    if (requestedPair !== undefined && p.pair !== requestedPair) {
+        throw new Error(
+            `solver quoted ${JSON.stringify(p.pair)}, not the requested ${requestedPair}`,
+        );
+    }
     return payload as RfqQuote;
 };
+
+/** The pair of a request we built, when it named one. */
+export const pairOf = (payload: Record<string, unknown>): string | undefined =>
+    typeof payload.pair === "string" ? payload.pair : undefined;
 
 /** HTTP: POST /v1/swap for quotes, GET /v1/rfq/<rfq_id> for status.
  * `fetchImpl` is injectable for tests and non-global-fetch runtimes. */
@@ -425,7 +513,11 @@ export const httpTransport = (
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify(payload),
             });
-            return expectQuote(await readJson(response, "quote request"), String(payload.rfq_id));
+            return expectQuote(
+                await readJson(response, "quote request"),
+                String(payload.rfq_id),
+                pairOf(payload),
+            );
         },
         async status(rfqId) {
             const response = await fetchImpl(`${baseUrl}/v1/rfq/${rfqId}`, { method: "GET" });
@@ -528,6 +620,7 @@ export const relayTransport = (
             return expectQuote(
                 await roundTrip(payload, String(payload.rfq_id)),
                 String(payload.rfq_id),
+                pairOf(payload),
             );
         },
         async status(rfqId) {
@@ -683,6 +776,10 @@ export function lightningSendVtxoScript(params: {
     });
 }
 
+/** Every input {@link lightningSendVtxoScript} builds from. Derived from the
+ * builder rather than restated, so the two cannot drift. */
+export type LightningSendTreeParams = Parameters<typeof lightningSendVtxoScript>[0];
+
 /** The BOLT11 facts the trader read from its OWN decode — this module takes
  * the facts, not the decoder, so any wallet's existing decoder serves. */
 export interface InvoiceFacts {
@@ -757,6 +854,22 @@ export async function requestLightningSend(
     /** How the `sender` key is recovered later. Persist it with the record;
      * it holds nothing secret. */
     secrets: ProvisionedKey;
+    /**
+     * Every input the covenant was built from, as it was AT REQUEST TIME.
+     *
+     * Returned so a consumer can persist the swap without re-deriving any of
+     * it. Half of these are not on the quote: `serverPubkey` and `claimDelay`
+     * come from this wallet's own `getInfo()`, `emulatorPubkey` from a
+     * per-network pin, `refundPkScript` from decoding an address.
+     *
+     * All public. Persisting them is optional: this call also registers the
+     * lockup as a contract, and that row is where `rebuildRfqSwap` takes its
+     * covenant from — see `rfqRecord.ts`. Keep a copy only to hold a record
+     * that rebuilds without the wallet's contract store, and keep it as
+     * `VHTLCV2ContractHandler.serializeParams(script.options)`, the shape the
+     * rebuild accepts.
+     */
+    treeParams: LightningSendTreeParams;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
     // This leg is one we fund, so all it needs is the key that refunds it.
@@ -795,7 +908,9 @@ export async function requestLightningSend(
 
     const serverPubkey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
     const network = getNetwork(info.network as NetworkName);
-    const script = lightningSendVtxoScript({
+    // Named rather than inlined so the exact inputs the covenant was built from
+    // can be returned to the caller — see `treeParams` on the return type.
+    const treeParams = {
         solverPubkey: xOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime: quote.refund_locktime,
         serverPubkey,
@@ -808,7 +923,8 @@ export async function requestLightningSend(
         senderPubkey,
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
         refundPkScript: ArkAddress.decode(refundAddress).pkScript,
-    });
+    };
+    const script = lightningSendVtxoScript(treeParams);
     const address = script.address(network.hrp, serverPubkey).encode();
     verifyLockupAddress(quote, address);
     assertFundable({
@@ -834,6 +950,7 @@ export async function requestLightningSend(
         refundAddress,
         senderPubkey,
         secrets,
+        treeParams,
     };
 }
 
@@ -991,6 +1108,15 @@ export function deriveOnchainSend(input: {
      * so the row can never key on a script other than the derived one. */
     script: InstanceType<typeof VHTLC.ScriptV2>;
     htlc: OnchainHtlc;
+    /** The inputs {@link htlc} was built from. Returned because nothing else
+     * can give them back: `OnchainHtlc` exposes only derived values, and this
+     * contract is Bitcoin L1 — there is no Arkade contract row for it, so a
+     * consumer persisting the swap has no other route to rebuilding it. */
+    htlcParams: OnchainHtlcParams;
+    /** Echoed from the input, so a result is a complete description of the L1
+     * half rather than one a caller has to re-assemble from what it passed in.
+     * {@link onchainSendProfile} reads it from here. */
+    l1Network: OnchainNetwork;
     refundLocktime: number;
     htlcLocktime: number;
     minConfirmations: number;
@@ -1027,15 +1153,16 @@ export function deriveOnchainSend(input: {
     const address = script.address(input.hrp, input.serverPubkey).encode();
     verifyLockupAddress(quote, address);
 
-    const htlc = onchainHtlcScript(
-        {
-            paymentHash: input.paymentHash,
-            claimKey: input.payoutPubkey,
-            refundKey: xOnly(hex.decode(htlcPubkey), "solver L1 htlc key"),
-            refundLocktime: htlcLocktime,
-        },
-        input.l1Network,
-    );
+    // Named so the inputs can be handed back: `OnchainHtlc` carries only
+    // derived values, and unlike the Arkade lockup this HTLC has no contract
+    // row, so these are the only route to rebuilding it after a restart.
+    const htlcParams = {
+        paymentHash: input.paymentHash,
+        claimKey: input.payoutPubkey,
+        refundKey: xOnly(hex.decode(htlcPubkey), "solver L1 htlc key"),
+        refundLocktime: htlcLocktime,
+    };
+    const htlc = onchainHtlcScript(htlcParams, input.l1Network);
     if (htlc.address !== htlcAddress) throw new AddressMismatch(htlc.address, htlcAddress);
 
     return {
@@ -1043,6 +1170,8 @@ export function deriveOnchainSend(input: {
         swapPkScript: script.pkScript,
         script,
         htlc,
+        htlcParams,
+        l1Network: input.l1Network,
         refundLocktime,
         htlcLocktime,
         minConfirmations,
@@ -1100,6 +1229,30 @@ export async function requestOnchainSend(
     refundAddress: string;
     /** The EXPECTED L1 fill, derived locally — watch and claim against this. */
     htlc: OnchainHtlc;
+    /** The inputs {@link htlc} was built from — persist these to rebuild it
+     * after a restart. Nothing else gives them back: `OnchainHtlc` exposes only
+     * derived values, and this contract is Bitcoin L1, so unlike the arkade
+     * lockup there is no contract row holding its parameters. Persist
+     * `htlc.address` alongside them (`OnchainSendProfile.htlcAddress`): the
+     * rebuild checks the two against each other, which is the only check
+     * available on a leg with no second copy of its covenant.
+     *
+     * `onchainSendProfile(result)` does all of that mapping for you; prefer it
+     * to reading these fields across by hand. */
+    htlcParams: OnchainHtlcParams;
+    /**
+     * Which bitcoin network the L1 HTLC was derived for.
+     *
+     * Returned because it is NOT the ark network name and cannot be recovered
+     * from one by inspection: this call maps `info.network` through a private
+     * narrowing where signet, mutinynet and testnet4 all become `"testnet"`.
+     * A caller reconstructing it from context would be re-deriving a mapping
+     * it cannot see, and a value the profile needs verbatim.
+     */
+    l1Network: OnchainNetwork;
+    /** `profile.min_confirmations`; gates when the L1 fill becomes claimable,
+     * and part of what a restored swap needs to drive its own claim. */
+    minConfirmations: number;
     /** The VHTLC `sender` x-only key, bound into the covenant. Public. */
     senderPubkey: Uint8Array;
     /** How the preimage and the `sender` key are recovered later — map it
@@ -1180,6 +1333,9 @@ export async function requestOnchainSend(
         script: derived.script,
         refundAddress,
         htlc: derived.htlc,
+        htlcParams: derived.htlcParams,
+        l1Network: derived.l1Network,
+        minConfirmations: derived.minConfirmations,
         senderPubkey,
         secrets,
     };
@@ -1386,6 +1542,10 @@ export function receiveVtxoScript(params: {
     });
 }
 
+/** Every input {@link receiveVtxoScript} builds from; see
+ * {@link LightningSendTreeParams}. */
+export type LightningReceiveTreeParams = Parameters<typeof receiveVtxoScript>[0];
+
 /**
  * The pure core of {@link requestLightningReceive}: derive the solver-funded
  * covenant locally from the quote's binding fields plus the trader's own data
@@ -1410,6 +1570,9 @@ export function deriveLightningReceive(input: {
     /** The solver's hold invoice on `H` — what the trader pays to arm the swap. */
     invoice: string;
     refundLocktime: number;
+    /** Every input the covenant was built from — see the same field on
+     * `requestLightningSend`'s result for why a consumer needs them. */
+    treeParams: LightningReceiveTreeParams;
 } {
     const { quote } = input;
     const profile = quote.profile ?? {};
@@ -1424,7 +1587,9 @@ export function deriveLightningReceive(input: {
         throw new Error("lightning-receive quote is missing a binding field");
     }
 
-    const script = receiveVtxoScript({
+    // Named rather than inlined so the exact inputs can be handed back — see
+    // `treeParams` on the return type.
+    const treeParams = {
         solverPubkey: xOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime,
         serverPubkey: input.serverPubkey,
@@ -1434,10 +1599,11 @@ export function deriveLightningReceive(input: {
         solverRefundPkScript: solverHex(solverRefundPkScriptHex, "profile.solver_refund_pk_script"),
         payoutPubkey: input.payoutPubkey,
         payoutPkScript: ArkAddress.decode(input.payoutAddress).pkScript,
-    });
+    };
+    const script = receiveVtxoScript(treeParams);
     const address = script.address(input.hrp, input.serverPubkey).encode();
     verifyLockupAddress(quote, address);
-    return { address, swapPkScript: script.pkScript, script, invoice, refundLocktime };
+    return { address, swapPkScript: script.pkScript, script, invoice, refundLocktime, treeParams };
 }
 
 /**
@@ -1519,6 +1685,9 @@ export async function requestLightningReceive(
      * through `swapSecretsToRecord` and persist BEFORE paying the invoice.
      * Public unless `mustPersistPreimage` says the wallet could not derive P. */
     secrets: ProvisionedClaimSecret;
+    /** Every input the covenant was built from; see the same field on
+     * `requestLightningSend`'s result. */
+    treeParams: LightningReceiveTreeParams;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
     // A leg we claim: the key that receives it, and the P that unlocks it.
@@ -1596,6 +1765,7 @@ export async function requestLightningReceive(
         payoutAddress,
         payoutPubkey,
         secrets,
+        treeParams: derived.treeParams,
     };
 }
 
