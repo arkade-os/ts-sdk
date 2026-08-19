@@ -20,7 +20,9 @@ import {
     findLockupVtxos,
     isRfqTerminal,
     pushRefundWithoutReceiver,
+    readLockupFate,
     refundIfUnresolved,
+    type LockupSpendIndexer,
     type LockupVtxo,
     type RefundArkProvider,
     type RefundIndexer,
@@ -537,5 +539,108 @@ describe("refundIfUnresolved", () => {
         });
         expect(result.outcome).toBe("nothing_to_refund");
         expect(ark.submitted).toHaveLength(0);
+    });
+});
+
+describe("readLockupFate", () => {
+    const PREIMAGE = new Uint8Array(32).fill(9);
+    const PAYMENT_HASH = hex.encode(sha256(PREIMAGE));
+    const SWAP_PK_SCRIPT = p2tr(key(21));
+    const OUT_A = { txid: "b2".repeat(32), vout: 0 };
+    const OUT_B = { txid: "b3".repeat(32), vout: 1 };
+
+    /** A checkpoint spending one lockup output, as the indexer hands it back. */
+    const spendOf = (
+        out: { txid: string; vout: number },
+        witness?: Uint8Array[],
+    ): { txid: string; psbt: string } => {
+        const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
+        tx.addInput({ txid: out.txid, index: out.vout });
+        tx.addOutput({ script: REFUND_PK_SCRIPT, amount: 1_000n });
+        if (witness) tx.updateInput(0, { finalScriptWitness: witness });
+        return { txid: tx.id, psbt: base64.encode(tx.toPSBT()) };
+    };
+
+    interface FateVtxo {
+        txid: string;
+        vout: number;
+        spentBy: string;
+        isSpent?: boolean;
+        arkTxId?: string;
+    }
+
+    const fateIndexer = (
+        vtxos: FateVtxo[],
+        txs: { txid: string; psbt: string }[] = [],
+    ): LockupSpendIndexer =>
+        ({
+            async getVtxos() {
+                return { vtxos };
+            },
+            async getVirtualTxs(txids: string[]) {
+                const known = new Map(txs.map((t) => [t.txid, t.psbt]));
+                return { txs: txids.map((id) => known.get(id)).filter((psbt) => !!psbt) };
+            },
+        }) as unknown as LockupSpendIndexer;
+
+    const read = (indexer: LockupSpendIndexer) =>
+        readLockupFate(indexer, { swapPkScript: SWAP_PK_SCRIPT, paymentHash: PAYMENT_HASH });
+
+    it("names every checkpoint that spent a multi-output lockup, and the ark tx each rode", async () => {
+        const first = spendOf(OUT_A);
+        const second = spendOf(OUT_B);
+        const fate = await read(
+            fateIndexer(
+                [
+                    { ...OUT_A, spentBy: first.txid, arkTxId: "c1".repeat(32) },
+                    { ...OUT_B, spentBy: second.txid, arkTxId: "c2".repeat(32) },
+                ],
+                [first, second],
+            ),
+        );
+        expect(fate).toEqual({
+            fate: "returned",
+            spends: [
+                { checkpointTxid: first.txid, arkTxid: "c1".repeat(32) },
+                { checkpointTxid: second.txid, arkTxid: "c2".repeat(32) },
+            ],
+        });
+    });
+
+    it("still names the checkpoint when the indexer omitted the ark tx", async () => {
+        const spend = spendOf(OUT_A);
+        const fate = await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }], [spend]));
+        expect(fate).toEqual({
+            fate: "returned",
+            spends: [{ checkpointTxid: spend.txid, arkTxid: undefined }],
+        });
+    });
+
+    it("names the spend that carried the preimage too", async () => {
+        const spend = spendOf(OUT_A, [PREIMAGE]);
+        const fate = await read(
+            fateIndexer([{ ...OUT_A, spentBy: spend.txid, arkTxId: "c3".repeat(32) }], [spend]),
+        );
+        expect(fate).toEqual({
+            fate: "claimed",
+            preimage: PREIMAGE,
+            spends: [{ checkpointTxid: spend.txid, arkTxid: "c3".repeat(32) }],
+        });
+    });
+
+    it("claims no spend when the lockup is still open", async () => {
+        expect(await read(fateIndexer([{ ...OUT_A, spentBy: "" }]))).toEqual({ fate: "open" });
+    });
+
+    it("claims no spend when a spend was not named, or could not be produced", async () => {
+        const spend = spendOf(OUT_A);
+        // spent, but by nothing the indexer names
+        expect(await read(fateIndexer([{ ...OUT_A, spentBy: "", isSpent: true }]))).toEqual({
+            fate: "unknown",
+        });
+        // named, but the indexer cannot produce it
+        expect(await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }]))).toEqual({
+            fate: "unknown",
+        });
     });
 });

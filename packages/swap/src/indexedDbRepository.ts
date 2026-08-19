@@ -53,7 +53,7 @@ function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTrans
 /** Browser backend over the SDK's shared IndexedDB manager — the same
  * infrastructure the wallet already uses for its Boltz swap repository. */
 export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 3 as const;
+    readonly version = 4 as const;
     private readonly connection: ManagedConnection;
 
     constructor(dbName: string = DEFAULT_DB_NAME) {
@@ -92,6 +92,10 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         await this.write(STORE_RFQ_SWAPS, (store) => {
             store.put(record);
         });
+    }
+
+    async getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined> {
+        return promisifyRequest((await this.readStore(STORE_RFQ_SWAPS)).get(rfqId));
     }
 
     async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {

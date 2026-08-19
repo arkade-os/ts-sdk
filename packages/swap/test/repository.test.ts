@@ -308,6 +308,22 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
         expect(restored).toEqual(record);
     });
 
+    it("reads one record by key, and reports a miss as undefined", async () => {
+        await using repository = create();
+        await repository.saveRfqSwap(rfqRecord("r1"));
+        await repository.saveRfqSwap(rfqRecord("r2"));
+        expect(await repository.getRfqSwap("r2")).toEqual(rfqRecord("r2"));
+        // retention prunes terminal records, so a miss is ordinary
+        expect(await repository.getRfqSwap("gone")).toBeUndefined();
+    });
+
+    it("carries the caller's funding txid through the round trip", async () => {
+        await using repository = create();
+        const record = { ...rfqRecord("r1"), fundingArkTxid: "f0".repeat(32) };
+        await repository.saveRfqSwap(record);
+        expect(await repository.getRfqSwap("r1")).toEqual(record);
+    });
+
     it("removes an rfq swap by id and leaves the others", async () => {
         await using repository = create();
         await repository.saveRfqSwap(rfqRecord("r1"));
