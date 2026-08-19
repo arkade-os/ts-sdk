@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { RelativeTimelock, VHTLC, arkade } from "../src";
 import vhtlcFixtures from "./fixtures/vhtlc.json";
 import { hex } from "@scure/base";
+import { ArkadeScript } from "../src/arkade/script";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
 describe("VHTLC address", () => {
@@ -423,5 +424,313 @@ describe("VHTLC address", () => {
                     }),
             ).toThrow(/P2TR/);
         });
+    });
+});
+
+describe("VHTLC.ScriptV2 — asset denomination", () => {
+    const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
+    const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
+    const baseOptions = () => ({
+        preimageHash: new Uint8Array(20).fill(9),
+        sender: key(1),
+        receiver: key(2),
+        server: key(3),
+        refundLocktime: 1_800_000_000n,
+        unilateralClaimDelay: { type: "seconds" as const, value: 512n },
+        unilateralRefundDelay: { type: "seconds" as const, value: 1024n },
+        unilateralRefundWithoutReceiverDelay: { type: "seconds" as const, value: 1536n },
+    });
+
+    const receiverPkScript = p2tr(key(4));
+    const emulatorPubkey = key(5);
+    const asset = { txid: new Uint8Array(32).fill(0xab), groupIndex: 2 };
+
+    const withAsset = (extra: object = {}) =>
+        new VHTLC.ScriptV2({
+            ...baseOptions(),
+            nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+            nonInteractiveRefund: { senderPkScript: p2tr(key(6)), emulatorPubkey },
+            ...extra,
+        });
+
+    it("leaves every script byte-identical when no asset is given", () => {
+        // The compatibility property. Every contract already funded derives
+        // from the sat covenant; a change of one byte makes those underivable
+        // and therefore unspendable.
+        const sats = withAsset();
+        const explicitlyNone = withAsset({ asset: undefined });
+        expect(hex.encode(explicitlyNone.pkScript)).toBe(hex.encode(sats.pkScript));
+        expect(explicitlyNone.nonInteractiveClaimScript).toBe(sats.nonInteractiveClaimScript);
+        expect(explicitlyNone.nonInteractiveRefundScript).toBe(sats.nonInteractiveRefundScript);
+    });
+
+    it("changes ONLY the two non-interactive leaves", () => {
+        // Every other leaf is a signature path asserting nothing about value,
+        // so an asset must make no difference to them. This is what "mostly
+        // just the non-interactive paths" means, checked rather than asserted.
+        const sats = withAsset();
+        const assets = withAsset({ asset });
+
+        expect(assets.claimScript).toBe(sats.claimScript);
+        expect(assets.refundScript).toBe(sats.refundScript);
+        expect(assets.unilateralClaimScript).toBe(sats.unilateralClaimScript);
+        expect(assets.unilateralRefundScript).toBe(sats.unilateralRefundScript);
+        expect(assets.unilateralRefundWithoutReceiverScript).toBe(
+            sats.unilateralRefundWithoutReceiverScript,
+        );
+
+        // ...and the two that DO change, change.
+        expect(assets.nonInteractiveClaimScript).not.toBe(sats.nonInteractiveClaimScript);
+        expect(assets.nonInteractiveRefundScript).not.toBe(sats.nonInteractiveRefundScript);
+        // which necessarily moves the address
+        expect(hex.encode(assets.pkScript)).not.toBe(hex.encode(sats.pkScript));
+    });
+
+    it("keeps the sat covenant as the tail, so an asset contract never enforces less", () => {
+        const sats = withAsset();
+        const assets = withAsset({ asset });
+        const satCovenant = hex.encode(sats.nonInteractiveClaimArkadeScript!);
+        const assetCovenant = hex.encode(assets.nonInteractiveClaimArkadeScript!);
+        expect(assetCovenant.endsWith(satCovenant)).toBe(true);
+        expect(assetCovenant.length).toBeGreaterThan(satCovenant.length);
+    });
+
+    it("binds the asset id, so a different asset is a different contract", () => {
+        const a = withAsset({ asset });
+        const otherTxid = withAsset({ asset: { ...asset, txid: new Uint8Array(32).fill(0xcd) } });
+        const otherGroup = withAsset({ asset: { ...asset, groupIndex: 3 } });
+        expect(hex.encode(otherTxid.pkScript)).not.toBe(hex.encode(a.pkScript));
+        expect(hex.encode(otherGroup.pkScript)).not.toBe(hex.encode(a.pkScript));
+    });
+
+    it("pushes the txid REVERSED, because that is what the opcode matches", () => {
+        // `asset.txid` is CANONICAL order -- the leading 32 bytes of the serialized
+        // Asset ID -- but the introspection opcodes match those bytes reversed.
+        // Push the canonical bytes unflipped and the lookup reports the asset
+        // ABSENT (`0 0`), so
+        // the covenant fails and the contract it guards is unspendable, with
+        // nothing in the error naming the cause. Established on regtest against
+        // a real minted asset (see test/e2e/asset-covenant.test.ts).
+        const distinct = { txid: new Uint8Array(32).map((_, i) => i + 1), groupIndex: 1 };
+        const covenant = hex.encode(
+            withAsset({ asset: distinct }).nonInteractiveClaimArkadeScript!,
+        );
+        expect(covenant).toContain(hex.encode(Uint8Array.from(distinct.txid).reverse()));
+        expect(covenant).not.toContain(hex.encode(distinct.txid));
+    });
+
+    it("does not mutate the caller's asset id", () => {
+        const mine = { txid: new Uint8Array(32).map((_, i) => i + 1), groupIndex: 1 };
+        const before = hex.encode(mine.txid);
+        withAsset({ asset: mine });
+        expect(hex.encode(mine.txid)).toBe(before);
+    });
+
+    /** An asset contract whose claim leaf opts into the quoted bound. */
+    const strictClaim = (strict: object, extra: object = {}) =>
+        withAsset({
+            asset,
+            nonInteractiveClaim: { receiverPkScript, emulatorPubkey, strict },
+            ...extra,
+        });
+
+    it("derives the pkScript it derived BEFORE strict existed, for every shape", () => {
+        // GOLDEN VECTORS, and what they are compared against is the point. The
+        // sibling test asserts `strict: undefined` equals omitting it — nearly a
+        // tautology in JS, since both are `undefined` on the property. What that
+        // cannot show is that ADDING the option left the default path's BYTES
+        // alone, and those bytes ARE the address of every contract already
+        // funded.
+        //
+        // Captured from b43534b — the commit before `strict` existed — and
+        // verified identical at the commit that added it, across all seven
+        // shapes and both script versions. A change that moves the default path
+        // fails here instead of making funded contracts underivable.
+        const claimLeaf = { receiverPkScript, emulatorPubkey };
+        const refundLeaf = { senderPkScript: p2tr(key(6)), emulatorPubkey };
+        const shapes: [string, object, string, string][] = [
+            [
+                "bare",
+                {},
+                "512069be6bafd0f15802284199463ddc3fa995fd6a5ba470d9ce02a565f286492fc8",
+                "5120f2612eed370d3603672b7e256635fdb1e8fdf2636853175cc0dbec585d50679e",
+            ],
+            [
+                "claim only",
+                { nonInteractiveClaim: claimLeaf },
+                "5120bbc33adb5e0f81ad7fd3a14380cf5d552815bdadfbffeaa1ab4938c486e16bbd",
+                "51207b87979f8e028ea914a8a53e088650c99fdcf61696cf539dc1d6412bbac88deb",
+            ],
+            [
+                "refund only",
+                { nonInteractiveClaim: undefined, nonInteractiveRefund: refundLeaf },
+                "5120699c92a6ed1b32cc9ab346d17eb9960de311172388e5f6c50212e0e91984a0d0",
+                "5120915ced574d918f70128ef16160f3b72ac05dad06e27162fffb90b33f4d2ee5c2",
+            ],
+            [
+                "both leaves",
+                { nonInteractiveClaim: claimLeaf, nonInteractiveRefund: refundLeaf },
+                "5120d155531ea89a92eac969c5e5205607b9debba9a4e66453c9410e9b6ca38e4eda",
+                "5120d8880eda3ad3281604f27e5b5dcd851631acb974f9d8aecf18a9e13e3a439f5b",
+            ],
+            [
+                "asset + both",
+                { nonInteractiveClaim: claimLeaf, nonInteractiveRefund: refundLeaf, asset },
+                "5120dd8f3358c9d8300d57772c6450f1d310086d45e5903aa1808637d8dd3e5ffea0",
+                "5120869d1ad5a5bced06a50c883c718c8e25f531168a8f536469ca58e28360a87a8e",
+            ],
+            [
+                "asset + claim only",
+                { nonInteractiveClaim: claimLeaf, nonInteractiveRefund: undefined, asset },
+                "5120e2d876c066c379b809f0c52eedc1cfb0820bf02ad9c08ed01fdc61221de89bf1",
+                "5120e768c26de90c1450f06492c212c12d2d0927fbefff866b16939ecd52d3cde9f1",
+            ],
+            [
+                "asset + refund only",
+                { nonInteractiveClaim: undefined, nonInteractiveRefund: refundLeaf, asset },
+                "51201c2b6772a07dccfa83eb07210c420d73d928d72b3d03f5e88888858743cad280",
+                "5120e953cff4c35d60942bdfbd7a741d19ebbf9ebc499f381a9d16f6945bfe317d6f",
+            ],
+        ];
+        for (const [name, extra, v2, v1] of shapes) {
+            const options = { ...baseOptions(), ...extra };
+            expect(hex.encode(new VHTLC.ScriptV2(options).pkScript), `${name} (v2)`).toBe(v2);
+            expect(hex.encode(new VHTLC.Script(options).pkScript), `${name} (v1)`).toBe(v1);
+        }
+    });
+
+    it("leaves EVERY byte unchanged when strict is omitted", () => {
+        // The compatibility property the option rests on. `strict` compiles into
+        // the leaf, hence the emulator key, hence the address — so if merely
+        // ADDING the option moved the default bytes, every already-funded
+        // contract would change address.
+        const plain = withAsset({ asset });
+        const explicitlyNotStrict = withAsset({
+            asset,
+            nonInteractiveClaim: { receiverPkScript, emulatorPubkey, strict: undefined },
+        });
+        expect(hex.encode(explicitlyNotStrict.pkScript)).toBe(hex.encode(plain.pkScript));
+    });
+
+    it("ADDS the quoted bound to conservation rather than replacing it", () => {
+        // Alone, `out >= quoted` leaves everything above the quote unconstrained
+        // — an overfunded lockup's surplus could be routed anywhere. A strict
+        // claim must still carry the input comparison.
+        const built = strictClaim({
+            amount: 0x1a2b3c4d5e6f7788n,
+            assetAmount: 0x1122334455667788n,
+        });
+        const ops = ArkadeScript.decode(built.nonInteractiveClaimArkadeScript!).map((op) =>
+            op instanceof Uint8Array ? hex.encode(op) : String(op),
+        );
+        // Conservation, still there, on both quantities.
+        expect(ops).toContain("INSPECTINPUTVALUE");
+        expect(ops).toContain("INSPECTINASSETLOOKUP");
+        // ...and the quotes, added.
+        const push = (v: bigint) =>
+            hex.encode(ArkadeScript.decode(ArkadeScript.encode([v]))[0] as Uint8Array);
+        expect(ops).toContain(push(0x1a2b3c4d5e6f7788n));
+        expect(ops).toContain(push(0x1122334455667788n));
+    });
+
+    it("binds the quote to the CLAIM leaf only — the refund leaf is untouched", () => {
+        // A refund returns what arrived. If the quote reached the refund covenant,
+        // re-quoting would move where an already-funded contract can refund TO.
+        const plain = withAsset({ asset });
+        const strict = strictClaim({ amount: 5_000n, assetAmount: 7n });
+        expect(hex.encode(strict.nonInteractiveClaimArkadeScript!)).not.toBe(
+            hex.encode(plain.nonInteractiveClaimArkadeScript!),
+        );
+        expect(hex.encode(strict.nonInteractiveRefundArkadeScript!)).toBe(
+            hex.encode(plain.nonInteractiveRefundArkadeScript!),
+        );
+    });
+
+    it("refuses every way of asking for HALF the enforcement", () => {
+        // A zero bound is satisfied by every output, including one carrying none
+        // of the asset — enforcement-shaped and enforcing nothing.
+        expect(() => strictClaim({ amount: 0n, assetAmount: 1n })).toThrow(
+            /amount must be positive/,
+        );
+        expect(() => strictClaim({ amount: 1n, assetAmount: 0n })).toThrow(
+            /assetAmount must be positive/,
+        );
+        // The dangerous one: strict on the sat CARRIER while the asset — the
+        // actual amount — goes unbounded.
+        expect(() => strictClaim({ amount: 1n })).toThrow(
+            /would leave the asset amount unenforced/,
+        );
+        // ...and its mirror: an asset bound on a contract that binds no asset.
+        expect(() =>
+            withAsset({
+                nonInteractiveClaim: {
+                    receiverPkScript,
+                    emulatorPubkey,
+                    strict: { amount: 1n, assetAmount: 1n },
+                },
+            }),
+        ).toThrow(/assetAmount has no effect without asset/);
+    });
+
+    it("refuses an asset that no leaf would bind, instead of silently dropping it", () => {
+        // THE SILENT CASE. Both non-interactive leaves are optional, and they are
+        // the only ones carrying the covenant — the signature leaves assert
+        // nothing about value. So `asset` with neither leaf used to build a
+        // sat-only contract and say nothing: the caller funds it believing the
+        // asset is bound, and ANY spend satisfying the sat covenant walks off
+        // with the asset. The only outward difference is a pkScript that happens
+        // to match a non-asset address, which is not something a caller checks.
+        expect(
+            () =>
+                new VHTLC.ScriptV2({
+                    ...baseOptions(),
+                    asset,
+                }),
+        ).toThrow(/no effect without/);
+        // One leaf is enough to bind it, so neither is required individually.
+        expect(
+            () =>
+                new VHTLC.ScriptV2({
+                    ...baseOptions(),
+                    nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+                    asset,
+                }),
+        ).not.toThrow();
+        expect(
+            () =>
+                new VHTLC.ScriptV2({
+                    ...baseOptions(),
+                    nonInteractiveRefund: { senderPkScript: p2tr(key(6)), emulatorPubkey },
+                    asset,
+                }),
+        ).not.toThrow();
+    });
+
+    it("binds the asset on VHTLC.Script (v1) too, which inherits the same base", () => {
+        // The option lands on `BaseScript`, so v1 gets it. That is deliberate —
+        // the asset covenant is orthogonal to the preimage-condition fragment
+        // that is the ONLY difference between versions — but it has to be
+        // asserted, or v1 is carrying an untested money path.
+        const v1 = new VHTLC.Script({
+            ...baseOptions(),
+            nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+            asset,
+        });
+        const v1NoAsset = new VHTLC.Script({
+            ...baseOptions(),
+            nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+        });
+        expect(hex.encode(v1.pkScript)).not.toBe(hex.encode(v1NoAsset.pkScript));
+        expect(() => new VHTLC.Script({ ...baseOptions(), asset })).toThrow(/no effect without/);
+    });
+
+    it("refuses a malformed asset id rather than encoding one", () => {
+        expect(() => withAsset({ asset: { txid: new Uint8Array(31), groupIndex: 0 } })).toThrow(
+            /32 bytes/,
+        );
+        expect(() => withAsset({ asset: { ...asset, groupIndex: -1 } })).toThrow(/\[0, 65535\]/);
+        expect(() => withAsset({ asset: { ...asset, groupIndex: 0x10000 } })).toThrow(
+            /\[0, 65535\]/,
+        );
     });
 });

@@ -39,6 +39,8 @@ const HASH = "4d487dd3753a89bc9fe98401d1196523058251fc";
 
 /** `OP_1 <32-byte program>`; anything else fails `isP2trPkScript`. */
 const p2tr = (programHex: string): string => `5120${programHex}`;
+/** A genesis txid in canonical order — the leading 32 bytes of a serialized Asset ID. */
+const ASSET_TXID = "b2".repeat(32);
 const RECEIVER_PK_SCRIPT = p2tr(RECEIVER);
 const SENDER_PK_SCRIPT = p2tr(SENDER);
 
@@ -125,6 +127,121 @@ describe("VHTLCV2ContractHandler", () => {
         expect(hex.encode(VHTLCV2ContractHandler.createScript(reserialized).pkScript)).toBe(
             hex.encode(VHTLCV2ContractHandler.createScript(params).pkScript),
         );
+    });
+
+    it("round-trips the ASSET, so a re-derived contract is not silently sat-only", () => {
+        // The failure this closes was silent in the worst way. `ContractManager`
+        // re-derives a contract from these params; with no `asset` key the
+        // derivation produced the SAT-ONLY script, and registration died at
+        // `upsertContractRow` with a `Script mismatch` naming two hex strings
+        // and no cause. The same silent-drop class `validateOptions` refuses one
+        // layer up.
+        const params = fullParams({ assetTxid: ASSET_TXID, assetGroupIndex: "7" });
+        const typed = VHTLCV2ContractHandler.deserializeParams(params);
+        expect(typed.asset).toEqual({ txid: hex.decode(ASSET_TXID), groupIndex: 7 });
+        expect(VHTLCV2ContractHandler.serializeParams(typed)).toEqual(params);
+
+        // And the script it derives is the asset one, not the sat-only one —
+        // the assertion the round-trip exists for. Comparing against the same
+        // params minus the asset, so this cannot pass by both being equal.
+        const satOnly = fullParams();
+        expect(hex.encode(VHTLCV2ContractHandler.createScript(params).pkScript)).not.toBe(
+            hex.encode(VHTLCV2ContractHandler.createScript(satOnly).pkScript),
+        );
+    });
+
+    it("round-trips the STRICT claim bound, which is opt-in and therefore droppable", () => {
+        // Dropping it re-derives the DEFAULT claim covenant — weaker than the row
+        // asked for — and dies at `upsertContractRow` with an opaque `Script
+        // mismatch`. The failure is identical to the asset drop above and just as
+        // silent, which is why an opt-in field needs the round-trip most: nothing
+        // else signals its absence.
+        const params = fullParams({
+            assetTxid: ASSET_TXID,
+            assetGroupIndex: "7",
+            strictClaimAmount: "50000",
+            strictClaimAssetAmount: "1234",
+        });
+        const typed = VHTLCV2ContractHandler.deserializeParams(params);
+        expect(typed.nonInteractiveClaim?.strict).toEqual({ amount: 50_000n, assetAmount: 1234n });
+        expect(VHTLCV2ContractHandler.serializeParams(typed)).toEqual(params);
+
+        // ...and it derives a DIFFERENT script from the same contract without it.
+        const loose = fullParams({ assetTxid: ASSET_TXID, assetGroupIndex: "7" });
+        expect(hex.encode(VHTLCV2ContractHandler.createScript(params).pkScript)).not.toBe(
+            hex.encode(VHTLCV2ContractHandler.createScript(loose).pkScript),
+        );
+    });
+
+    it("refuses a strict ASSET bound with no strict sat bound", () => {
+        // Reading it as "not strict" would re-derive the default covenant. The
+        // mirror case (sats without asset, on an asset contract) is refused by
+        // the script layer's own validation, which this defers to.
+        expect(() =>
+            VHTLCV2ContractHandler.deserializeParams(
+                fullParams({
+                    assetTxid: ASSET_TXID,
+                    assetGroupIndex: "7",
+                    strictClaimAssetAmount: "1234",
+                }),
+            ),
+        ).toThrow(/without strictClaimAmount/);
+    });
+
+    it("refuses half an asset rather than deriving a sat-only script from it", () => {
+        // A txid without its group index names no asset and an index without a
+        // txid names nothing at all. Reading either as "no asset" re-derives the
+        // sat-only script — exactly the silent drop above, reached by a corrupt
+        // row instead of a missing feature.
+        for (const half of [{ assetTxid: ASSET_TXID }, { assetGroupIndex: "7" }]) {
+            expect(() => VHTLCV2ContractHandler.deserializeParams(fullParams(half))).toThrow(
+                /both be present or both absent/,
+            );
+        }
+    });
+
+    /**
+     * The one malformed group index that does not announce itself.
+     *
+     * `VHTLC.ScriptV2` already refuses a non-integer, a negative, or anything
+     * past `0xffff`, so `"abc"`, `"1.5"` and `"-1"` die one frame down with a
+     * clear message. `Number("")`, `Number(" ")` and `Number("\t")` are all
+     * **0** — a valid group index — so a blank field would name group 0 of the
+     * same genesis transaction, which is a DIFFERENT asset, and the mismatch
+     * would only surface as an opaque `Script mismatch` at registration.
+     */
+    it.each([
+        ["blank", ""],
+        ["a space", " "],
+        ["a tab", "\t"],
+        ["a leading zero", "007"],
+        ["a trailing space", "7 "],
+        ["a plus sign", "+7"],
+        ["exponent form", "1e2"],
+        ["a fraction", "1.5"],
+        ["a negative", "-1"],
+        ["not a number at all", "seven"],
+    ])("refuses %s as an asset group index", (_why, assetGroupIndex) => {
+        expect(() =>
+            VHTLCV2ContractHandler.deserializeParams(
+                fullParams({ assetTxid: ASSET_TXID, assetGroupIndex }),
+            ),
+        ).toThrow(/assetGroupIndex must be a canonical decimal integer/);
+    });
+
+    it("still accepts the boundaries of the range the script allows", () => {
+        // 0 is legitimate — the point of the check above is that a BLANK field
+        // must not become it — and 65535 is the last index a serialized Asset ID
+        // can carry.
+        for (const [raw, expected] of [
+            ["0", 0],
+            ["65535", 65_535],
+        ] as const) {
+            const typed = VHTLCV2ContractHandler.deserializeParams(
+                fullParams({ assetTxid: ASSET_TXID, assetGroupIndex: raw }),
+            );
+            expect(typed.asset?.groupIndex).toBe(expected);
+        }
     });
 
     it("round-trips a bare six-leaf contract without inventing covenant keys", () => {

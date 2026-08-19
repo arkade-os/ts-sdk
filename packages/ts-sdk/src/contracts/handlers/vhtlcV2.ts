@@ -13,6 +13,35 @@ import { assertVhtlcSpendableNow, isCltvSatisfied, isCsvSpendable, resolveRole }
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
 
 /**
+ * The stored `assetGroupIndex`, as a number, or a throw naming the row.
+ *
+ * `Number()` alone is not enough here, and it fails in exactly one direction
+ * that matters. `VHTLC.ScriptV2` already refuses a non-integer, a negative or
+ * anything past `0xffff`, so `"abc"`, `"1.5"` and `"-1"` die one frame down with
+ * a clear message. What survives is `Number("")`, `Number(" ")` and
+ * `Number("\t")` — all of which are **0**, a perfectly valid group index.
+ *
+ * A blank field therefore does not fail: it silently names group 0 of the same
+ * genesis transaction, which is a DIFFERENT asset. The contract then derives a
+ * different script from the one the row was written against, and registration
+ * dies at `upsertContractRow` with an opaque `Script mismatch` — the same
+ * silent-drop class the both-halves-or-neither check above exists to close, one
+ * value further in.
+ *
+ * Anchored and canonical: no sign, no point, no exponent, no leading zero, so a
+ * row that round-tripped through this handler's own `serializeParams` is the
+ * only shape accepted back.
+ */
+const parseGroupIndex = (raw: string): number => {
+    if (!/^(0|[1-9][0-9]*)$/.test(raw)) {
+        throw new Error(
+            `assetGroupIndex must be a canonical decimal integer, got ${JSON.stringify(raw)}`,
+        );
+    }
+    return Number(raw);
+};
+
+/**
  * Typed parameters for {@link VHTLC.ScriptV2} contracts.
  *
  * The eight mandatory fields are `VHTLCContractParams` verbatim — the two
@@ -31,10 +60,23 @@ export interface VHTLCV2ContractParams {
     unilateralClaimDelay: RelativeTimelock;
     unilateralRefundDelay: RelativeTimelock;
     unilateralRefundWithoutReceiverDelay: RelativeTimelock;
+    /**
+     * The Arkade asset the covenant leaves bind, if any.
+     *
+     * @see VHTLC.Options.asset
+     */
+    asset?: {
+        /** The asset's genesis txid, 32 bytes, canonical order — as the serialized Asset ID carries it. */
+        txid: Uint8Array;
+        /** The asset group index within that genesis transaction. */
+        groupIndex: number;
+    };
     /** @see VHTLC.Options.nonInteractiveClaim */
     nonInteractiveClaim?: {
         receiverPkScript: Uint8Array;
         emulatorPubkey: Uint8Array;
+        /** @see VHTLC.Options.nonInteractiveClaim.strict */
+        strict?: { amount: bigint; assetAmount?: bigint };
     };
     /** @see VHTLC.Options.nonInteractiveRefund */
     nonInteractiveRefund?: {
@@ -151,6 +193,17 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                 nonInteractiveClaimEmulatorPubkey: hex.encode(
                     params.nonInteractiveClaim.emulatorPubkey,
                 ),
+                // The opt-in quoted bound. Dropping it re-derives the DEFAULT
+                // claim covenant — a strictly weaker one — and registration dies
+                // at `upsertContractRow` with an opaque `Script mismatch`. Same
+                // silent-drop class as the asset keys above.
+                ...(params.nonInteractiveClaim.strict && {
+                    strictClaimAmount: params.nonInteractiveClaim.strict.amount.toString(),
+                    ...(params.nonInteractiveClaim.strict.assetAmount !== undefined && {
+                        strictClaimAssetAmount:
+                            params.nonInteractiveClaim.strict.assetAmount.toString(),
+                    }),
+                }),
             }),
             ...(params.nonInteractiveRefund && {
                 nonInteractiveRefundSenderPkScript: hex.encode(
@@ -159,6 +212,19 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                 nonInteractiveRefundEmulatorPubkey: hex.encode(
                     params.nonInteractiveRefund.emulatorPubkey,
                 ),
+            }),
+            // The asset must round-trip, and its absence here used to be silent
+            // in the worst way. `ContractManager` re-derives a contract from
+            // these params; dropping the asset derives the SAT-ONLY script, so
+            // registration died at `upsertContractRow` with a `Script mismatch`
+            // naming two hex strings and no cause. Same silent-drop class
+            // `validateOptions` refuses one layer up.
+            //
+            // Two keys rather than one blob, mirroring the script's own view of
+            // an Asset ID as a (txid, groupIndex) pair.
+            ...(params.asset && {
+                assetTxid: hex.encode(params.asset.txid),
+                assetGroupIndex: params.asset.groupIndex.toString(),
             }),
         };
     },
@@ -176,12 +242,36 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
             "nonInteractiveRefundEmulatorPubkey",
             "nonInteractiveRefund",
         );
+        // Both halves or neither: a txid without its group index names no asset,
+        // and an index without a txid names nothing at all. Either alone is a
+        // corrupt row rather than a contract that happens to lack an asset, and
+        // reading it as the latter re-derives the sat-only script — the exact
+        // silent drop this round-trip exists to close.
+        if ((params.assetTxid === undefined) !== (params.assetGroupIndex === undefined)) {
+            throw new Error(
+                "asset params are incomplete: assetTxid and assetGroupIndex must both be present or both absent",
+            );
+        }
+        if (params.strictClaimAssetAmount !== undefined && params.strictClaimAmount === undefined) {
+            throw new Error(
+                "strictClaimAssetAmount without strictClaimAmount: reading this as 'not strict' " +
+                    "would re-derive the default claim covenant, which is weaker than the row asked for",
+            );
+        }
+        const asset =
+            params.assetTxid !== undefined && params.assetGroupIndex !== undefined
+                ? {
+                      txid: hex.decode(params.assetTxid),
+                      groupIndex: parseGroupIndex(params.assetGroupIndex),
+                  }
+                : undefined;
         return {
             sender: hex.decode(params.sender),
             receiver: hex.decode(params.receiver),
             server: hex.decode(params.server),
             preimageHash: hex.decode(params.hash),
             refundLocktime: BigInt(params.refundLocktime),
+            ...(asset && { asset }),
             unilateralClaimDelay: sequenceToTimelock(Number(params.claimDelay)),
             unilateralRefundDelay: sequenceToTimelock(Number(params.refundDelay)),
             unilateralRefundWithoutReceiverDelay: sequenceToTimelock(
@@ -191,6 +281,14 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                 nonInteractiveClaim: {
                     receiverPkScript: claim.destination,
                     emulatorPubkey: claim.emulatorPubkey,
+                    ...(params.strictClaimAmount !== undefined && {
+                        strict: {
+                            amount: BigInt(params.strictClaimAmount),
+                            ...(params.strictClaimAssetAmount !== undefined && {
+                                assetAmount: BigInt(params.strictClaimAssetAmount),
+                            }),
+                        },
+                    }),
                 },
             }),
             ...(refund && {
