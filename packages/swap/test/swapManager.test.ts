@@ -44,7 +44,14 @@ import {
 import { SWAP_LOCKUP_CONTRACT_TYPE } from "../src/lockupContract";
 import { RefundNotLocallyPossibleError } from "../src/refundBlocked";
 import {
+    RFQ_SWAP_RETENTION_SECONDS,
+    createRfqSwapRecord,
+    type RfqSwapOrigin,
+    type RfqSwapRecord,
+} from "../src/rfqRecord";
+import {
     RfqSwapManager,
+    RfqSwapOriginRequired,
     isRfqSwapTerminal,
     nextOnchainAction,
     type ArkadeRefundResult,
@@ -55,6 +62,7 @@ import {
     type RfqSwapActionName,
     type AvailableRfqSwapManagerCallbacks,
     type RfqSwapManagerCallbacks,
+    type RfqSwapRecordStore,
     type RfqSwapState,
     type SwapContractRegistry,
 } from "../src/swapManager";
@@ -124,6 +132,9 @@ const LOCKUP_OUTPOINT = { txid: "99".repeat(32), vout: 0 };
 const LOCKUP_VALUE = 100_000;
 /** The txid our own receive claim comes back with. */
 const CLAIM_ARK_TXID = "ac".repeat(32);
+/** The ark transaction a lockup spend is carried by — the counterparty's, on
+ * every leg but a settled receive. */
+const ARK_TXID = "ab".repeat(32);
 
 const UNROLL = CSVMultisigTapscript.encode({
     timelock: { type: "blocks", value: BigInt(144) },
@@ -189,6 +200,10 @@ interface FakeVtxo {
      * to name. On its own it does NOT mean unspent: the wire contract permits
      * `isSpent: true` alongside it. */
     spentBy: string;
+    /** The ark transaction that spent the checkpoint `spentBy` names — what
+     * history correlates on, and what the manager stamps onto a terminal
+     * record. Optional on the wire, so its absence is a case of its own. */
+    arkTxId?: string;
     isSpent?: boolean;
     settledBy?: string;
 }
@@ -477,6 +492,7 @@ const manager = (input: {
     indexer?: LockupSpendIndexer;
     chain?: ChainSource;
     contracts?: SwapContractRegistry;
+    repository?: RfqSwapRecordStore;
     now: number | (() => number);
     spies: Spies;
     enableAutoActions?: boolean;
@@ -489,6 +505,7 @@ const manager = (input: {
             indexer: input.indexer ?? fakeIndexer({ vtxos: unspent() }),
             chain: input.chain,
             contracts: input.contracts,
+            repository: input.repository,
         },
         {
             now: typeof input.now === "function" ? input.now : () => input.now as number,
@@ -2523,5 +2540,503 @@ describe("RfqSwapManager — the lockup as a contract", () => {
 
         expect(indexer.vtxoCalls).toBe(before);
         await m.stop();
+    });
+});
+
+/**
+ * The manager as the owner of its own persistence.
+ *
+ * What a consumer used to write by hand — the restore loop, the retention
+ * pass, and a `saveSwap` that could not compose the FIRST write of a swap at
+ * all, because `createRfqSwapRecord` wants request-time facts the live record
+ * does not carry and `updateRfqSwapRecord` wants a record that does not exist
+ * yet. That origin trap is what these tests are mostly about: where the origin
+ * comes from, what happens when it cannot, and that the write it produces is
+ * the one waiters and finalization are gated on.
+ *
+ * The other half is the sink matrix. A repository and a `saveSwap` are
+ * independent options, so there are four configurations and each has a rule:
+ * both gate, either alone gates, and neither means process-local. Wiring the
+ * repository does NOT weaken `saveSwap` — a rejection from it still holds the
+ * pass back, exactly as it does today.
+ */
+describe("RfqSwapManager — manager-owned persistence", () => {
+    const LOCKUP_ADDRESS = LOCKUP.address("tark", key(3)).encode();
+    const RECEIVE_ADDRESS = RECEIVE_LOCKUP.address("tark", key(3)).encode();
+
+    const sendOrigin = (over: Partial<RfqSwapOrigin> = {}): RfqSwapOrigin => ({
+        kind: "lightning_send",
+        lockupAddress: LOCKUP_ADDRESS,
+        profile: {
+            signer: { signingDescriptor: `tr(${hex.encode(key(13))})` },
+            hashlock: { paymentHash: PAYMENT_HASH },
+        },
+        amount: LOCKUP_VALUE,
+        fundingArkTxid: "fa".repeat(32),
+        ...over,
+    });
+
+    const receiveOrigin = (): RfqSwapOrigin => ({
+        kind: "lightning_receive",
+        lockupAddress: RECEIVE_ADDRESS,
+        profile: {
+            signer: { signingDescriptor: `tr(${hex.encode(key(13))})` },
+            hashlock: { paymentHash: PAYMENT_HASH },
+            expectedAmount: LOCKUP_VALUE,
+            payoutAddress: "tark1payout",
+        },
+    });
+
+    /**
+     * A record store that can be made to fail. Typed against the production
+     * seam, so a change to `RfqSwapRecordStore` breaks this at compile time,
+     * and it counts writes — several tests turn on a write NOT having happened.
+     */
+    type FakeStore = RfqSwapRecordStore & {
+        records: Map<string, RfqSwapRecord>;
+        writes: RfqSwapRecord[];
+        removed: string[];
+        failWrite?: boolean;
+        failRead?: boolean;
+    };
+
+    const fakeStore = (seed: RfqSwapRecord[] = []): FakeStore => {
+        const store: FakeStore = {
+            records: new Map(seed.map((record) => [record.rfqId, record])),
+            writes: [],
+            removed: [],
+            async saveRfqSwap(record) {
+                if (store.failWrite) throw new Error("record store unavailable");
+                store.writes.push(record);
+                store.records.set(record.rfqId, record);
+            },
+            async getRfqSwap(rfqId) {
+                if (store.failRead) throw new Error("record store unavailable");
+                return store.records.get(rfqId);
+            },
+            async getAllRfqSwaps() {
+                if (store.failRead) throw new Error("record store unavailable");
+                return [...store.records.values()];
+            },
+            async removeRfqSwap(rfqId) {
+                store.removed.push(rfqId);
+                store.records.delete(rfqId);
+            },
+        };
+        return store;
+    };
+
+    /** The contract row registration writes before an address can be funded —
+     * which is where `restoreFromRepository` gets each covenant back from. */
+    const rowFor = (script: typeof LOCKUP, address: string): CreateContractParams => ({
+        type: SWAP_LOCKUP_CONTRACT_TYPE,
+        params: VHTLCV2ContractHandler.serializeParams(script.options),
+        script: hex.encode(script.pkScript),
+        address,
+    });
+
+    const storedSend = (over: Partial<RfqSwapRecord> = {}): RfqSwapRecord => ({
+        ...createRfqSwapRecord(sendOrigin(), lightningSwap()),
+        ...over,
+    });
+
+    /** An indexer that ends the swap `settled`, so a pass has something to
+     * write. Most tests here are about the WRITE, and a swap that stays
+     * `pending` past its first record makes none. */
+    const settlingIndexer = () =>
+        fakeIndexer({ vtxos: spentBy(CLAIM_SPEND.txid), txs: [CLAIM_SPEND] });
+
+    describe("where the first record's origin comes from", () => {
+        it("writes a swap's first record from the origin handed to addSwap", async () => {
+            const store = fakeStore();
+            const s = spies();
+            const m = manager({ repository: store, now: SAFE_NOW, spies: s });
+
+            await m.addSwap(lightningSwap(), sendOrigin());
+            await m.poll();
+
+            const record = store.records.get(RFQ_ID);
+            expect(record?.kind).toBe("lightning_send");
+            expect(record?.state).toBe("pending");
+            // The origin half is what no live swap carries and no later pass
+            // can reconstruct — the whole reason the parameter exists.
+            expect(record?.lockupAddress).toBe(LOCKUP_ADDRESS);
+            expect(record?.fundingArkTxid).toBe("fa".repeat(32));
+            expect(record?.amount).toBe(LOCKUP_VALUE);
+        });
+
+        it("resolves the origin from the store for a swap it already holds", async () => {
+            // The restart case: the consumer rebuilt the swap itself and hands
+            // it over with no origin, because the store is already the origin.
+            const store = fakeStore([storedSend()]);
+            const s = spies();
+            const m = manager({
+                indexer: settlingIndexer(),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await m.addSwap(lightningSwap({ state: "pending" }));
+            await m.poll();
+
+            expect(store.writes.at(-1)?.state).toBe("settled");
+            expect(store.writes.at(-1)?.lockupAddress).toBe(LOCKUP_ADDRESS);
+            expect(store.writes.at(-1)?.fundingArkTxid).toBe("fa".repeat(32));
+        });
+
+        it("refuses a swap the store has never seen and that carries no origin", async () => {
+            // At the DOOR, not at the first write: by then the funding is
+            // broadcast and the record would exist only in memory.
+            const store = fakeStore();
+            const s = spies();
+            const m = manager({ repository: store, now: SAFE_NOW, spies: s });
+
+            await expect(m.addSwap(lightningSwap())).rejects.toBeInstanceOf(RfqSwapOriginRequired);
+            expect(await m.hasSwap(RFQ_ID)).toBe(false);
+            expect(store.writes).toHaveLength(0);
+        });
+
+        it("applies the same rule to start(), and tracks nothing when it fails", async () => {
+            const store = fakeStore();
+            const s = spies();
+            const m = manager({ repository: store, now: SAFE_NOW, spies: s });
+
+            await expect(
+                m.start([lightningSwap(), lightningSwap({ rfqId: "b2".repeat(32) })]),
+            ).rejects.toBeInstanceOf(RfqSwapOriginRequired);
+            expect(await m.getPendingSwaps()).toHaveLength(0);
+            await m.stop();
+        });
+
+        it("leaves the parameter inert with no repository wired", async () => {
+            const s = spies();
+            const m = manager({ now: SAFE_NOW, spies: s });
+
+            await m.addSwap(lightningSwap());
+
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
+        });
+    });
+
+    describe("the write, and what it gates", () => {
+        it("persists the new state on any pass that changed one", async () => {
+            const store = fakeStore();
+            const s = spies();
+            const m = manager({
+                indexer: settlingIndexer(),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await m.addSwap(lightningSwap(), sendOrigin());
+            await m.poll();
+
+            expect(store.records.get(RFQ_ID)?.state).toBe("settled");
+        });
+
+        it("holds waiters and finalization back when the canonical write fails", async () => {
+            const store = fakeStore();
+            store.failWrite = true;
+            const failures: string[] = [];
+            const s = spies();
+            const m = manager({
+                indexer: settlingIndexer(),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+            m.onSwapFailed((_swap, error) => failures.push(error.message));
+            const completed: string[] = [];
+            m.onSwapCompleted((swap) => completed.push(swap.rfqId));
+
+            await m.addSwap(lightningSwap(), sendOrigin());
+            await m.poll();
+
+            expect(failures.some((message) => message.includes("record store"))).toBe(true);
+            expect(completed).toHaveLength(0);
+            // Still monitored, so the next pass retries the write.
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
+            // And the secondary sink never saw a state the record of record
+            // refused: projecting it would put `saveSwap` ahead of the store.
+            expect(s.saved).toHaveLength(0);
+
+            store.failWrite = false;
+            await m.poll();
+
+            expect(store.records.get(RFQ_ID)?.state).toBe("settled");
+            expect(completed).toEqual([RFQ_ID]);
+            expect(s.saved).toContain("settled");
+        });
+
+        it("still lets a rejected saveSwap hold the pass back, repository or not", async () => {
+            // The regression guard for the one thing this item could plausibly
+            // have weakened. `saveSwap` is a second sink now, not a demoted
+            // one: both writes gate.
+            const store = fakeStore();
+            const s = spies();
+            s.callbacks.saveSwap = async () => {
+                throw new Error("secondary sink unavailable");
+            };
+            const completed: string[] = [];
+            const m = manager({
+                indexer: settlingIndexer(),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+            m.onSwapCompleted((swap) => completed.push(swap.rfqId));
+
+            await m.addSwap(lightningSwap(), sendOrigin());
+            await m.poll();
+
+            // The canonical write DID land — it runs first and succeeded.
+            expect(store.records.get(RFQ_ID)?.state).toBe("settled");
+            expect(completed).toHaveLength(0);
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
+        });
+
+        it("keeps state process-local when neither sink is wired", async () => {
+            const swap = lightningSwap();
+            const completed: string[] = [];
+            const m = new RfqSwapManager(
+                { indexer: fakeIndexer({ vtxos: spentBy(CLAIM_SPEND.txid), txs: [CLAIM_SPEND] }) },
+                { now: () => SAFE_NOW },
+            );
+            m.setCallbacks({ refundArkade: async () => null });
+            m.onSwapCompleted((s) => completed.push(s.rfqId));
+
+            await m.addSwap(swap);
+            await m.poll();
+
+            expect(swap.state).toBe("settled");
+            expect(completed).toEqual([RFQ_ID]);
+        });
+    });
+
+    describe("restoreFromRepository", () => {
+        const contractsFor = (...rows: CreateContractParams[]) =>
+            fakeContracts({ preexisting: rows });
+
+        it("rebuilds every stored record and drives it", async () => {
+            const store = fakeStore([storedSend()]);
+            const s = spies();
+            const m = manager({
+                indexer: settlingIndexer(),
+                contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            const result = await m.restoreFromRepository();
+
+            expect(result.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
+            expect(result.failed).toHaveLength(0);
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
+
+            await m.poll();
+
+            expect(store.records.get(RFQ_ID)?.state).toBe("settled");
+        });
+
+        it("carries a restored swap's origin, so its record can be rewritten", async () => {
+            // The store losing a record mid-life is the case the in-memory
+            // origin map exists for: without it the next write would have
+            // nothing to build a create from.
+            const store = fakeStore([storedSend()]);
+            const s = spies();
+            const m = manager({
+                indexer: settlingIndexer(),
+                contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await m.restoreFromRepository();
+            store.records.clear();
+            await m.poll();
+
+            expect(store.records.get(RFQ_ID)?.lockupAddress).toBe(LOCKUP_ADDRESS);
+            // And it is a CLEAN origin, not the old record spread whole: a
+            // stale `blockedReason` carried through would read as a live
+            // refusal on a swap that is running.
+            expect(store.records.get(RFQ_ID)?.blockedReason).toBeUndefined();
+        });
+
+        it("reports a record it cannot rebuild without stranding the others", async () => {
+            const orphan = {
+                ...createRfqSwapRecord(receiveOrigin(), receiveSwap()),
+                rfqId: "b2".repeat(32),
+            };
+            const store = fakeStore([storedSend(), orphan]);
+            const s = spies();
+            const m = manager({
+                // Only the send lockup has a row; the receive one has none.
+                contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            const result = await m.restoreFromRepository();
+
+            expect(result.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
+            expect(result.failed.map((failure) => failure.rfqId)).toEqual(["b2".repeat(32)]);
+            expect(result.failed[0].error.name).toBe("LockupContractMissing");
+            // Kept in the store: the record is fine, the wallet's copy of the
+            // covenant is what is missing.
+            expect(store.removed).toHaveLength(0);
+        });
+
+        it("takes the covenant from an override instead of the contract store", async () => {
+            const store = fakeStore([storedSend()]);
+            const s = spies();
+            const m = manager({ repository: store, now: SAFE_NOW, spies: s });
+
+            const result = await m.restoreFromRepository({
+                params: async () => VHTLCV2ContractHandler.serializeParams(LOCKUP.options),
+            });
+
+            expect(result.restored).toHaveLength(1);
+        });
+
+        it("refuses when there is no covenant source at all", async () => {
+            const store = fakeStore([storedSend()]);
+            const s = spies();
+            const m = manager({ repository: store, now: SAFE_NOW, spies: s });
+
+            await expect(m.restoreFromRepository()).rejects.toThrow(/contracts/);
+        });
+
+        it("refuses when no repository is wired", async () => {
+            const s = spies();
+            const m = manager({ now: SAFE_NOW, spies: s });
+
+            await expect(m.restoreFromRepository()).rejects.toThrow(/repository/);
+        });
+    });
+
+    describe("retention", () => {
+        const LONG_AGO = SAFE_NOW - RFQ_SWAP_RETENTION_SECONDS - 1;
+
+        it("drops a terminal record past the window and keeps a fresh one", async () => {
+            const store = fakeStore([
+                storedSend({ state: "settled", updatedAt: LONG_AGO }),
+                storedSend({ rfqId: "b2".repeat(32), state: "settled", updatedAt: SAFE_NOW - 10 }),
+            ]);
+            const s = spies();
+            const m = manager({ repository: store, now: SAFE_NOW, spies: s });
+
+            expect(await m.pruneRetiredSwaps()).toEqual([RFQ_ID]);
+            expect([...store.records.keys()]).toEqual(["b2".repeat(32)]);
+        });
+
+        it("never drops needs_counterparty, however old", async () => {
+            // The money is still at the lockup and the counterparty's move is
+            // still what ends the swap — `shouldRetainRfqSwap` encodes this and
+            // the manager defers to it rather than restating the rule.
+            const store = fakeStore([
+                storedSend({ state: "needs_counterparty", updatedAt: LONG_AGO }),
+            ]);
+            const s = spies();
+            const m = manager({ repository: store, now: SAFE_NOW, spies: s });
+
+            expect(await m.pruneRetiredSwaps()).toEqual([]);
+            expect(store.records.has(RFQ_ID)).toBe(true);
+        });
+
+        it("prunes before the rebuild, so a retired record costs no lookup", async () => {
+            const contracts = fakeContracts({ preexisting: [rowFor(LOCKUP, LOCKUP_ADDRESS)] });
+            const store = fakeStore([storedSend({ state: "settled", updatedAt: LONG_AGO })]);
+            const s = spies();
+            const m = manager({
+                contracts,
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            const result = await m.restoreFromRepository();
+
+            expect(result.pruned).toEqual([RFQ_ID]);
+            expect(result.restored).toHaveLength(0);
+            expect(result.failed).toHaveLength(0);
+        });
+
+        it("is a no-op with no repository wired", async () => {
+            const s = spies();
+            const m = manager({ now: SAFE_NOW, spies: s });
+            expect(await m.pruneRetiredSwaps()).toEqual([]);
+        });
+    });
+
+    describe("stamping the spend that ended the swap", () => {
+        it("records the ark transactions the chain read named", async () => {
+            const store = fakeStore();
+            const s = spies();
+            const swap = lightningSwap();
+            const m = manager({
+                indexer: fakeIndexer({
+                    vtxos: [{ ...LOCKUP_OUTPOINT, spentBy: CLAIM_SPEND.txid, arkTxId: ARK_TXID }],
+                    txs: [CLAIM_SPEND],
+                }),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await m.addSwap(swap, sendOrigin());
+            await m.poll();
+
+            expect(swap.state).toBe("settled");
+            // The counterparty's transaction — nothing local produced it, so no
+            // other field on the record can name it.
+            expect(swap.lockupSpendArkTxids).toEqual([ARK_TXID]);
+            expect(store.records.get(RFQ_ID)?.lockupSpendArkTxids).toEqual([ARK_TXID]);
+        });
+
+        it("stamps nothing when the indexer named the checkpoint but not the ark tx", async () => {
+            // `LockupSpend.arkTxid` is optional, and a checkpoint txid is not
+            // what history correlates on. Fewer txids beats a wrong one.
+            const store = fakeStore();
+            const s = spies();
+            const swap = lightningSwap();
+            const m = manager({
+                indexer: settlingIndexer(),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await m.addSwap(swap, sendOrigin());
+            await m.poll();
+
+            expect(swap.state).toBe("settled");
+            expect(swap.lockupSpendArkTxids).toBeUndefined();
+        });
+
+        it("survives the record round trip", async () => {
+            const store = fakeStore([
+                storedSend({
+                    state: "settled",
+                    updatedAt: SAFE_NOW - 10,
+                    lockupSpendArkTxids: [ARK_TXID],
+                }),
+            ]);
+            const s = spies();
+            const m = manager({
+                contracts: fakeContracts({ preexisting: [rowFor(LOCKUP, LOCKUP_ADDRESS)] }),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            const result = await m.restoreFromRepository();
+
+            expect(result.restored[0].lockupSpendArkTxids).toEqual([ARK_TXID]);
+        });
     });
 });

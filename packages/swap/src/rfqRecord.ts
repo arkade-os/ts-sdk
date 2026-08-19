@@ -37,13 +37,10 @@
  */
 import { ArkAddress, VHTLCV2ContractHandler, type VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
-import {
-    isRfqSwapTerminal,
-    type LightningReceiveSwap,
-    type LightningSendSwap,
-    type OnchainSendSwap,
-    type RfqSwapState,
-} from "./swapManager";
+import type { LightningReceiveSwap, LightningSendSwap, OnchainSendSwap } from "./swapManager";
+// From the vocabulary module, not from `swapManager`: the manager persists
+// through this file, so a runtime edge back to it would close a cycle.
+import { isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
 import { rfqCorridorHandlers } from "./rfqCorridor";
 import "./rfqCorridors";
 
@@ -147,6 +144,10 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
     createdAt: number;
     updatedAt: number;
     refundArkTxid?: string;
+    /** The ark transactions that spent the lockup, stamped by the manager from
+     * the chain read that ended the swap. See
+     * `RfqSwapCommon.lockupSpendArkTxids`. */
+    lockupSpendArkTxids?: string[];
     failure?: string;
     blockedReason?: string;
 }
@@ -167,6 +168,9 @@ const managerState = (swap: PersistableRfqSwap) => ({
     createdAt: swap.createdAt,
     updatedAt: swap.updatedAt,
     ...(swap.refundArkTxid ? { refundArkTxid: swap.refundArkTxid } : {}),
+    ...(swap.lockupSpendArkTxids?.length
+        ? { lockupSpendArkTxids: [...swap.lockupSpendArkTxids] }
+        : {}),
     ...(swap.failure ? { failure: swap.failure } : {}),
     ...(swap.blockedReason ? { blockedReason: swap.blockedReason } : {}),
 });
@@ -238,6 +242,7 @@ export function updateRfqSwapRecord(
     assertSameSwap(record, swap);
     const {
         refundArkTxid: _refundArkTxid,
+        lockupSpendArkTxids: _lockupSpendArkTxids,
         failure: _failure,
         blockedReason: _blockedReason,
         ...origin
@@ -250,6 +255,30 @@ export function updateRfqSwapRecord(
         ...origin,
         ...managerState(swap),
         profile: { ...record.profile, ...handler.project(swap) },
+    };
+}
+
+/**
+ * The immutable half of a stored record, on its own.
+ *
+ * A record IS an origin plus manager state, so `record` where an
+ * {@link RfqSwapOrigin} is wanted type-checks — and is a bug. Spread into
+ * {@link createRfqSwapRecord} it carries the OLD state's `failure`,
+ * `blockedReason` and `refundArkTxid` past `managerState`, which omits a field
+ * the live swap no longer has and therefore cannot clear one. That is the same
+ * trap {@link updateRfqSwapRecord} strips those three fields to avoid; this is
+ * how a caller holding only a record gets an origin that is safe to keep.
+ *
+ * What `RfqSwapManager.restoreFromRepository` remembers for each record it
+ * rebuilds, so a later write can create the record again if the store lost it.
+ */
+export function rfqSwapOriginOf(record: RfqSwapRecord): RfqSwapOrigin {
+    return {
+        kind: record.kind,
+        lockupAddress: record.lockupAddress,
+        profile: { ...record.profile },
+        ...(record.amount !== undefined ? { amount: record.amount } : {}),
+        ...(record.fundingArkTxid ? { fundingArkTxid: record.fundingArkTxid } : {}),
     };
 }
 
@@ -302,6 +331,9 @@ export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): Per
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
         ...(record.refundArkTxid ? { refundArkTxid: record.refundArkTxid } : {}),
+        ...(record.lockupSpendArkTxids?.length
+            ? { lockupSpendArkTxids: [...record.lockupSpendArkTxids] }
+            : {}),
         ...(record.failure ? { failure: record.failure } : {}),
         ...(record.blockedReason ? { blockedReason: record.blockedReason } : {}),
     };

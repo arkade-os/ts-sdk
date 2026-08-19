@@ -14,8 +14,9 @@
  *
  * The shape is deliberately the one `packages/boltz-swap`'s `SwapManager`
  * arrived at — monitor a set, act automatically through injected callbacks,
- * persist through an injected `saveSwap`, expose events plus a promise-based
- * escape hatch. Three things are different, each for a reason:
+ * persist through an injected `saveSwap` or a repository of its own, expose
+ * events plus a promise-based escape hatch. Three things are different, each
+ * for a reason:
  *
  * - **The solver is never asked.** This manager holds no `RfqTransport` at
  *   all: every fact it acts on is read from chain. What became of the
@@ -91,91 +92,30 @@ import {
     findLockupVtxos,
     readLockupFate,
     type LockupFate,
+    type LockupSpend,
     type LockupSpendIndexer,
     type LockupVtxo,
 } from "./refund";
-import { registerLockupContract } from "./lockupContract";
+import { lockupContractParams, registerLockupContract } from "./lockupContract";
+import {
+    createRfqSwapRecord,
+    rebuildRfqSwap,
+    rfqSwapOriginOf,
+    shouldRetainRfqSwap,
+    updateRfqSwapRecord,
+    type LockupParams,
+    type RfqSwapOrigin,
+    type RfqSwapRecord,
+} from "./rfqRecord";
 import { RefundNotLocallyPossibleError } from "./refundBlocked";
+import { isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
 
 // ── Records ──────────────────────────────────────────────────────────────────
 
-/**
- * Where a monitored swap stands.
- *
- * `claimable` and `claimed` are the states of a swap the TRADER has something
- * to claim on: the L1 fill on an onchain send, and the solver-funded lockup on
- * a receive. Only `lightning_send` has neither — there the solver claims the
- * lockup, and the trader's only move is the refund.
- */
-export type RfqSwapState =
-    /** Live; nothing actionable yet. On a receive leg this covers the whole
-     * stretch before the solver funds anything. */
-    | "pending"
-    /** There is something for the trader to take, and the window to take it is
-     * open: the confirmed L1 fill on an onchain send, or a lockup funded for at
-     * least `expectedAmount` on a receive. */
-    | "claimable"
-    /**
-     * The trader's claim has been made — its L1 broadcast on an onchain send,
-     * its Arkade submission on a receive.
-     *
-     * **On a receive this is a local belief and not a chain fact**, which is
-     * why it is not terminal: `settled` is the chain's answer, and `refunded`
-     * is still reachable from here if the claim never lands and the solver
-     * takes the lockup back.
-     */
-    | "claimed"
-    /**
-     * This wallet will not act, and only the counterparty can change that.
-     *
-     * On a send leg: the Arkade refund cannot be pushed from here — no secrets
-     * on the record, a descriptor from another seed, or nothing wired to act —
-     * so the lockup comes back only if the counterparty claims it or the wallet
-     * that can sign it is restored. On a receive leg: the trader holds no
-     * refund at all, so this is a lockup that cannot be claimed — funded for
-     * less than the swap agreed (publishing `P` for it is the whole attack
-     * `LockupAmountMismatchError` exists to refuse), or one whose claim window
-     * shut unclaimed. {@link RfqSwapCommon.blockedReason} says which.
-     *
-     * **Not terminal, and not a dead end.** The money is still at the lockup,
-     * so the counterparty's move is still observable and still ends the swap;
-     * and the refusal is re-checked every pass, so restoring the right wallet,
-     * wiring the callbacks, or the solver topping the lockup up returns the
-     * swap to `pending` and resumes the normal drive. For an onchain-send swap
-     * it says nothing about the L1 half, which keeps being driven and claimed.
-     */
-    | "needs_counterparty"
-    /**
-     * Terminal: the lockup was spent by a hash-verified claim. Read off chain,
-     * never reported.
-     *
-     * On a send leg that claim is the counterparty's, and it is proof the
-     * counterparty completed its side. On a receive leg it is the TRADER's own
-     * — matched by the hash and not by our txid, so a claim that lands without
-     * us still counts (see {@link RfqSwapManager}).
-     */
-    | "settled"
-    /**
-     * Terminal: the lockup was spent by something other than a claim.
-     *
-     * On a send leg that is the money coming back, by the solver's hand or the
-     * trader's. **On a receive leg it is a LOSS**: the lockup was the solver's
-     * money, every non-claim leaf is the solver's, and a swap that ends here
-     * ended with the trader's incoming payment never arriving. It is also where
-     * a receive swap ends when its window closes with nothing left to observe —
-     * see {@link RfqSwapManager}.
-     */
-    | "refunded"
-    /** Terminal: an action failed and its window closed. */
-    | "failed";
-
-/** The states after which the manager stops monitoring a swap. Deliberately
- * without `needs_counterparty`: retiring on it would unwatch a funded lockup
- * whose claim is still the thing that ends the swap. */
-export const RFQ_SWAP_TERMINAL_STATES = ["settled", "refunded", "failed"] as const;
-
-export const isRfqSwapTerminal = (state: RfqSwapState): boolean =>
-    (RFQ_SWAP_TERMINAL_STATES as readonly string[]).includes(state);
+// Re-exported so this module stays the one place a consumer imports the swap
+// vocabulary from; the definitions live in `rfqSwapState.ts` because the record
+// layer needs them too and must not import the manager at runtime.
+export { RFQ_SWAP_TERMINAL_STATES, isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
 
 /**
  * What the manager needs to register a swap's lockup with the wallet, so the
@@ -239,6 +179,27 @@ interface RfqSwapCommon {
     updatedAt: number;
     /** Set once the trader's own `refundWithoutReceiver` push landed. */
     refundArkTxid?: string;
+    /**
+     * The ark transactions that SPENT the lockup, stamped from the chain read
+     * that ended the swap — `LockupFate.spends`, whichever verdict it reached.
+     *
+     * The counterparty's move, on every leg but one: a solver claim on a send,
+     * a solver reclaim on a receive, and — the exception — the trader's own
+     * claim when a receive settles. What they have in common is that no local
+     * action produced them, so nothing else on this record can name them:
+     * {@link refundArkTxid} names only a push this wallet made, and
+     * `claimArkTxid` only a submission it made.
+     *
+     * Stamped so a terminal record answers "which transaction ended this" from
+     * storage. Without it the only source is another read of the lockup — a
+     * network round trip per terminal swap, which is what activity correlation
+     * has to pay on the offline-first path where it is least affordable.
+     *
+     * Absent when the swap ended without a chain verdict, or when the indexer
+     * named the checkpoint but not the ark transaction — the same `arkTxid`
+     * `LockupSpend` declares optional, for the same reason.
+     */
+    lockupSpendArkTxids?: string[];
     /** Why `state` is `failed`. */
     failure?: string;
     /** Why `state` is `needs_counterparty`. Distinct from {@link failure},
@@ -309,12 +270,14 @@ export interface LightningReceiveSwap extends RfqSwapCommon {
  * A monitored swap.
  *
  * This is a live record, not a serialization format: `lockupPkScript` and
- * `htlc` hold derived `Uint8Array`s, and
- * {@link RfqSwapManagerCallbacks.saveSwap} is where a caller projects it into
- * whatever it stores. Rebuild it on restart the way it was made —
- * `lightningSendVtxoScript` / `receiveVtxoScript` / `onchainHtlcScript` over
- * the quote's binding fields — and hand the result to
- * {@link RfqSwapManager.start}.
+ * `htlc` hold derived `Uint8Array`s, and `RfqSwapRecord` is its storable
+ * projection. Give the manager a {@link RfqSwapManagerDeps.repository} and it
+ * writes and rebuilds these itself, through
+ * {@link RfqSwapManager.restoreFromRepository}. A caller keeping its own store
+ * projects it in {@link RfqSwapManagerCallbacks.saveSwap} instead, rebuilds it
+ * on restart the way it was made — `lightningSendVtxoScript` /
+ * `receiveVtxoScript` / `onchainHtlcScript` over the quote's binding fields —
+ * and hands the result to {@link RfqSwapManager.start}.
  *
  * **`onchain:BTC->arkade:BTC` is deliberately not a member yet.** Its Arkade
  * half is the same solver-funded lockup as {@link LightningReceiveSwap}'s, but
@@ -477,15 +440,34 @@ export interface RfqSwapManagerCallbacks {
      * call belongs here.
      */
     canRefundArkade?: (swap: RfqSwap) => Promise<{ ok: true } | { ok: false; reason: string }>;
-    /** Persist the record. Called after any pass that changed it. */
+    /**
+     * Persist the record. Called after any pass that changed it.
+     *
+     * With {@link RfqSwapManagerDeps.repository} wired this is the SECOND
+     * write of the pass, not the only one: the manager writes the canonical
+     * `RfqSwapRecord` itself and then calls this. Both must succeed for the
+     * pass to count as persisted, so a rejection here still holds waiters and
+     * finalization back exactly as it does without a repository. A consumer
+     * whose `saveSwap` writes that same repository by hand should
+     * drop the duplicate when it wires the dep, and keep this for genuinely
+     * secondary sinks: metrics, a cache, a second store.
+     */
     saveSwap: (swap: RfqSwap) => Promise<void>;
 }
 
 /**
  * What {@link RfqSwapManager.setCallbacks} accepts: the full contract, minus
- * the two claims that are already kind-gated at dispatch. A consumer driving
- * only lightning sends reaches neither, and stubbing them to throw is not a
- * contract — it is a lie the compiler waves through.
+ * the two claims that are already kind-gated at dispatch, and minus
+ * `saveSwap`. A consumer driving only lightning sends reaches neither claim,
+ * and stubbing them to throw is not a contract — it is a lie the compiler
+ * waves through.
+ *
+ * `saveSwap` is optional for the same reason one step removed: with
+ * {@link RfqSwapManagerDeps.repository} wired the manager writes the record
+ * itself, so a consumer with no second sink has nothing to put here, and a
+ * no-op stub would be that same lie. Omitting BOTH is the documented
+ * process-local mode: state is kept in memory and dies with the process,
+ * which is what a manager with no callbacks at all already does today.
  *
  * The strict {@link RfqSwapManagerCallbacks} is untouched and still means
  * "fully wired", so a helper that takes one and calls `claimOnchain` keeps its
@@ -497,9 +479,9 @@ export interface RfqSwapManagerCallbacks {
  */
 export type AvailableRfqSwapManagerCallbacks = Omit<
     RfqSwapManagerCallbacks,
-    "claimOnchain" | "claimLockup"
+    "claimOnchain" | "claimLockup" | "saveSwap"
 > &
-    Partial<Pick<RfqSwapManagerCallbacks, "claimOnchain" | "claimLockup">>;
+    Partial<Pick<RfqSwapManagerCallbacks, "claimOnchain" | "claimLockup" | "saveSwap">>;
 
 /** The actions the manager executes on a caller's behalf. */
 export type RfqSwapActionName = "claimOnchain" | "claimLockup" | "refundArkade";
@@ -549,6 +531,83 @@ export type SwapContractRegistry = Pick<
     "createContract" | "getContracts" | "onContractEvent" | "setContractWatchState"
 >;
 
+/**
+ * The record store the manager writes to, narrowed to the four RFQ methods —
+ * the same seam style as {@link LockupSpendIndexer} and
+ * {@link SwapContractRegistry}, and satisfied structurally by a real
+ * `AssetSwapRepository`.
+ *
+ * Narrowed rather than imported whole so this module keeps no runtime edge to
+ * `repository.ts`, and so a caller with a different backing store — a server
+ * process holding many wallets' records in one table — can satisfy it without
+ * implementing the offer-swap and markets halves it has no use for.
+ */
+export interface RfqSwapRecordStore {
+    saveRfqSwap(record: RfqSwapRecord): Promise<void>;
+    getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined>;
+    getAllRfqSwaps(): Promise<RfqSwapRecord[]>;
+    removeRfqSwap(rfqId: string): Promise<void>;
+}
+
+/**
+ * A swap was handed to the manager with a repository wired, no origin, and no
+ * record already in the store.
+ *
+ * Thrown at the door rather than at the first write, because the write happens
+ * a pass later and by then the funding is broadcast: a swap admitted here and
+ * refused at `save` would be monitored, acted on, and unwritable — the record
+ * would exist only in memory while its lockup held money, and a restart would
+ * lose it. The remedy is to pass the origin, which the caller has: it is what
+ * the request entrypoint returned.
+ */
+export class RfqSwapOriginRequired extends Error {
+    /** The swap that could not be admitted. */
+    readonly rfqId: string;
+    constructor(rfqId: string) {
+        super(
+            `rfq swap ${rfqId} has no stored record and no origin was supplied; pass the ` +
+                `request-time origin as addSwap's second argument so its first record can be ` +
+                `written`,
+        );
+        this.name = "RfqSwapOriginRequired";
+        this.rfqId = rfqId;
+    }
+}
+
+/** One stored record that could not be turned back into a live swap. */
+export interface RfqRestoreFailure {
+    rfqId: string;
+    /** Why — a covenant that does not derive the funded address, a lockup with
+     * no contract row, a corridor with no handler registered. */
+    error: Error;
+}
+
+export interface RfqRestoreOptions {
+    /**
+     * Where each record's covenant parameters come from. Defaults to the
+     * lockup's own contract row, read through
+     * {@link RfqSwapManagerDeps.contracts}.
+     *
+     * Override it when the covenant lives somewhere else — a consumer keeping
+     * its own copy of `VHTLCV2ContractHandler.serializeParams(...)`, or a
+     * process with no contract manager at all. Whatever it returns is still
+     * checked against the record's funded address by `rebuildRfqSwap`, so an
+     * override cannot produce a swap watching the wrong covenant.
+     */
+    params?: (record: RfqSwapRecord) => Promise<LockupParams>;
+}
+
+/** What {@link RfqSwapManager.restoreFromRepository} did. Every stored record
+ * is in exactly one of the three lists. */
+export interface RfqRestoreResult {
+    /** Rebuilt: monitored, or kept as finished when already terminal. */
+    restored: RfqSwap[];
+    /** Kept in the store, but not rebuildable right now. */
+    failed: RfqRestoreFailure[];
+    /** Removed: terminal and past `RFQ_SWAP_RETENTION_SECONDS`. */
+    pruned: string[];
+}
+
 /** The observation seams. None is owned by the manager, and none holds keys —
  * same philosophy as `onchainHtlc.ts`'s `ChainSource`. There is no
  * `RfqTransport` here on purpose: nothing this manager decides depends on the
@@ -560,6 +619,24 @@ export interface RfqSwapManagerDeps {
     /** L1 access. Required to monitor onchain-send swaps; a lightning-only
      * caller can leave it out. */
     chain?: ChainSource;
+    /**
+     * Where the manager persists RFQ swap records, when a caller wants it to.
+     *
+     * Wiring it makes the repository the CANONICAL sink: every pass that
+     * changed a swap is written here as an {@link RfqSwapRecord}, and
+     * {@link RfqSwapManager.restoreFromRepository} reads it back. That removes
+     * the origin trap a caller otherwise hits assembling the write by hand —
+     * `updateRfqSwapRecord` needs the existing record and
+     * `createRfqSwapRecord` needs request-time facts the live swap does not
+     * carry, so the first write of a swap cannot be composed from the swap
+     * alone. The manager resolves that itself, which is what
+     * {@link RfqSwapManager.addSwap}'s `origin` parameter is for.
+     *
+     * Optional, like every other dep here: without it the manager persists
+     * through {@link RfqSwapManagerCallbacks.saveSwap} exactly as before, and
+     * without either it keeps its state in memory.
+     */
+    repository?: RfqSwapRecordStore;
     /**
      * The wallet's contract manager, when there is one. Optional in the same
      * way {@link chain} is: a caller with no wallet, or one that only wants the
@@ -717,7 +794,20 @@ export class RfqSwapManager {
         string,
         Set<{ resolve: (v: RfqSwapOutcome) => void; reject: (e: Error) => void }>
     >();
-    /** Records changed during the current pass, flushed through `saveSwap`. */
+    /**
+     * The request-time origin of each swap the manager may have to CREATE a
+     * record for, by rfqId.
+     *
+     * Needed only for a swap the store has never seen: once a record exists,
+     * `updateRfqSwapRecord` carries the origin half through and the map is
+     * redundant. It is kept anyway for the swap's whole life, so a record the
+     * store loses between passes is rewritten rather than lost — and dropped
+     * by {@link removeSwap} and by retention, which are the two places a swap
+     * stops being this manager's business.
+     */
+    private readonly origins = new Map<string, RfqSwapOrigin>();
+    /** Records changed during the current pass, flushed to the repository and
+     * through `saveSwap`. */
     private readonly dirty = new Set<string>();
     /** Race guard: one action at a time per swap. */
     private readonly inProgress = new Set<string>();
@@ -770,6 +860,142 @@ export class RfqSwapManager {
     }
 
     /**
+     * Rebuild every stored swap and take over monitoring them.
+     *
+     * The composition a consumer otherwise writes by hand, and the one place
+     * all four pieces meet: retention decides what to keep
+     * (`shouldRetainRfqSwap`), the lockup's contract row supplies the covenant
+     * (`lockupContractParams`), `rebuildRfqSwap` turns a record back into a
+     * live swap, and each rebuilt swap arrives with its own origin, so nothing
+     * is asked of the caller.
+     *
+     * **Deliberately not part of {@link start}.** A consumer that wants to
+     * look at its records — count them, show them, prune and stop — is not
+     * forced to start driving money to do it. Call this first and `start()`
+     * after; a manager already running polls the restored swaps at once.
+     *
+     * Retention runs BEFORE the rebuild, so a record past
+     * `RFQ_SWAP_RETENTION_SECONDS` costs no contract lookup on its way to being
+     * dropped.
+     *
+     * **A record that cannot be rebuilt is reported, never swallowed and never
+     * fatal.** `rebuildRfqSwap` throws by design when the covenant params do
+     * not derive the funded address, and `lockupContractParams` throws
+     * `LockupContractMissing` when the wallet has no row for the lockup — both
+     * say something true about that one record, and neither is a reason to
+     * strand the others. They come back in {@link RfqRestoreResult.failed}.
+     */
+    async restoreFromRepository(options: RfqRestoreOptions = {}): Promise<RfqRestoreResult> {
+        const repository = this.requireRepository("restoreFromRepository");
+        const params = options.params ?? this.paramsFromContracts();
+
+        // One read for both halves: retention and the rebuild want the same
+        // records, and asking twice would let a write between the two reads
+        // hand the rebuild a record retention had already dropped.
+        const records = await repository.getAllRfqSwaps();
+        const pruned = await this.dropRetired(repository, records);
+        const retired = new Set(pruned);
+
+        const restored: RfqSwap[] = [];
+        const failed: RfqRestoreFailure[] = [];
+        for (const record of records) {
+            if (retired.has(record.rfqId)) continue;
+            let swap: RfqSwap;
+            try {
+                swap = rebuildRfqSwap(record, await params(record));
+            } catch (error) {
+                failed.push({
+                    rfqId: record.rfqId,
+                    error: error instanceof Error ? error : new Error(errorMessage(error)),
+                });
+                continue;
+            }
+            this.origins.set(record.rfqId, rfqSwapOriginOf(record));
+            if (isRfqSwapTerminal(swap.state)) this.finished.set(swap.rfqId, swap);
+            else this.track(swap);
+            restored.push(swap);
+        }
+
+        // One concurrent sweep rather than a poll per swap as they are added:
+        // a restore is the case with the most swaps and the most already past a
+        // deadline, and serialising it would make the last one wait out all the
+        // others' network round trips.
+        if (this.running) {
+            await Promise.allSettled(
+                restored
+                    .filter((swap) => this.monitored.has(swap.rfqId))
+                    .map((swap) => this.pollSwap(swap)),
+            );
+        }
+        return { restored, failed, pruned };
+    }
+
+    /**
+     * Drop stored records that are terminal and past
+     * `RFQ_SWAP_RETENTION_SECONDS`, and return their ids.
+     *
+     * `needs_counterparty` is never dropped, however old: the money is still at
+     * the lockup and the counterparty's move still ends the swap. That rule
+     * lives in `shouldRetainRfqSwap`, which this defers to rather than
+     * restating.
+     *
+     * Public because retention is a caller's cadence, not the manager's: a
+     * long-lived process wants it on a timer of its own, a mobile app wants it
+     * at boot. {@link restoreFromRepository} runs it first, so the boot path
+     * needs no separate call.
+     */
+    async pruneRetiredSwaps(): Promise<string[]> {
+        const repository = this.deps.repository;
+        if (!repository) return [];
+        return this.dropRetired(repository, await repository.getAllRfqSwaps());
+    }
+
+    private async dropRetired(
+        repository: RfqSwapRecordStore,
+        records: readonly RfqSwapRecord[],
+    ): Promise<string[]> {
+        const now = this.config.now();
+        const dropped: string[] = [];
+        for (const record of records) {
+            if (shouldRetainRfqSwap(record, now)) continue;
+            await repository.removeRfqSwap(record.rfqId);
+            // The in-memory copies go with it. `finished` is only there so a
+            // late `waitForSwapCompletion` can answer, and answering from a
+            // record the store has just dropped is the one thing retention is
+            // meant to stop growing.
+            this.finished.delete(record.rfqId);
+            this.origins.delete(record.rfqId);
+            dropped.push(record.rfqId);
+        }
+        return dropped;
+    }
+
+    private requireRepository(method: string): RfqSwapRecordStore {
+        const repository = this.deps.repository;
+        if (!repository) {
+            throw new Error(
+                `${method} needs a record store; pass one as RfqSwapManagerDeps.repository`,
+            );
+        }
+        return repository;
+    }
+
+    /** The default covenant source: the wallet's own contract row for each
+     * lockup, which is where registration put it before the address could be
+     * funded. */
+    private paramsFromContracts(): (record: RfqSwapRecord) => Promise<LockupParams> {
+        const contracts = this.deps.contracts;
+        if (!contracts) {
+            throw new Error(
+                "restoreFromRepository needs the covenant parameters: wire " +
+                    "RfqSwapManagerDeps.contracts so each lockup's contract row can be read, or " +
+                    "pass options.params",
+            );
+        }
+        return (record) => lockupContractParams(contracts, record.lockupAddress);
+    }
+
+    /**
      * Load records and begin monitoring. Runs one pass immediately — a caller
      * resuming after a restart may be well past a deadline already — then
      * every `pollIntervalMs`. Records that are already terminal are kept only
@@ -778,8 +1004,17 @@ export class RfqSwapManager {
      * Calling it again while running loads the records and returns rather than
      * re-arming — dropping them silently would strand a funded swap on a
      * caller's harmless double-start.
+     *
+     * The signature is unchanged with a {@link RfqSwapManagerDeps.repository}
+     * wired; the origins are resolved from the store instead, by the same rule
+     * {@link addSwap} applies. A swap the store has never seen throws
+     * {@link RfqSwapOriginRequired} — hand that one to `addSwap` with its
+     * origin, or restore the whole set with {@link restoreFromRepository},
+     * which needs no caller input at all. Every swap is checked before any is
+     * tracked, so a bad one in the list does not leave a half-loaded manager.
      */
     async start(swaps: readonly RfqSwap[] = []): Promise<void> {
+        for (const swap of swaps) await this.admit(swap);
         for (const swap of swaps) {
             if (isRfqSwapTerminal(swap.state)) this.finished.set(swap.rfqId, swap);
             else this.track(swap);
@@ -813,15 +1048,60 @@ export class RfqSwapManager {
         this.unsubscribeContracts = null;
     }
 
-    /** Begin monitoring a swap. Polled immediately when the manager is running,
-     * so a just-funded swap does not wait out a whole interval. */
-    async addSwap(swap: RfqSwap): Promise<void> {
+    /**
+     * Begin monitoring a swap. Polled immediately when the manager is running,
+     * so a just-funded swap does not wait out a whole interval.
+     *
+     * `origin` is the request-time half a live swap cannot carry — the corridor,
+     * the funded address, the corridor's profile, the funding txid — and it is
+     * what lets the manager write this swap's FIRST record. Supply it whenever
+     * a {@link RfqSwapManagerDeps.repository} is wired and the swap is new. It
+     * may be omitted for a swap the store already holds a record for, which is
+     * then read to confirm it; omitting it for one the store has never seen
+     * throws {@link RfqSwapOriginRequired} rather than admitting a swap whose
+     * record could never be written. With no repository wired the parameter is
+     * inert.
+     */
+    async addSwap(swap: RfqSwap, origin?: RfqSwapOrigin): Promise<void> {
+        await this.admit(swap, origin);
         if (isRfqSwapTerminal(swap.state)) {
             this.finished.set(swap.rfqId, swap);
             return;
         }
         this.track(swap);
         if (this.running) await this.pollSwap(swap);
+    }
+
+    /**
+     * Settle where this swap's record will come from, before it is monitored.
+     *
+     * Three ways it can be answered, in order: the caller passed an origin, one
+     * is already remembered from an earlier `addSwap`, or the store holds a
+     * record — which is the origin, already written. Only the last costs a read,
+     * and only when the first two are absent.
+     */
+    private async admit(swap: RfqSwap, origin?: RfqSwapOrigin): Promise<void> {
+        if (origin) {
+            this.origins.set(swap.rfqId, origin);
+            // An origin means a swap the caller is introducing, so the first
+            // pass writes it whether or not anything changed. Waiting for a
+            // change would leave a funded lockup with no record at all for as
+            // long as it sat `pending` — which is most of a swap's life, and
+            // exactly the stretch a restart has to survive.
+            if (this.deps.repository && !isRfqSwapTerminal(swap.state)) {
+                this.dirty.add(swap.rfqId);
+            }
+            return;
+        }
+        const repository = this.deps.repository;
+        if (!repository || this.origins.has(swap.rfqId)) return;
+        // A read that THROWS is a storage failure, not a miss, and is left to
+        // propagate: admitting the swap would monitor something whose record
+        // may or may not exist, and the caller can retry — or pass the origin,
+        // which skips this read entirely.
+        const stored = await repository.getRfqSwap(swap.rfqId);
+        if (!stored) throw new RfqSwapOriginRequired(swap.rfqId);
+        this.origins.set(swap.rfqId, rfqSwapOriginOf(stored));
     }
 
     /** Forget a swap entirely, monitored or finished.
@@ -846,6 +1126,7 @@ export class RfqSwapManager {
         }
         this.waiters.delete(rfqId);
         this.dirty.delete(rfqId);
+        this.origins.delete(rfqId);
     }
 
     /** Every swap still being monitored. */
@@ -1092,13 +1373,14 @@ export class RfqSwapManager {
             // that awaits completion and then reads its own storage must not
             // find the record still saying `pending`.
             //
-            // And nothing observable happens unless that write SUCCEEDED. A
-            // rejected `saveSwap` used to settle waiters and finalize anyway,
-            // so a caller saw a swap complete that its own storage had never
-            // recorded — and on restart the manager re-drove the stale record,
-            // replaying action callbacks for a swap the caller already treated
-            // as done. Leaving it dirty and monitored makes the next pass
-            // retry the write instead.
+            // And nothing observable happens unless that write SUCCEEDED —
+            // every write of it, the canonical record and `saveSwap` alike
+            // (see `save`). A rejected `saveSwap` used to settle waiters and
+            // finalize anyway, so a caller saw a swap complete that its own
+            // storage had never recorded — and on restart the manager re-drove
+            // the stale record, replaying action callbacks for a swap the
+            // caller already treated as done. Leaving it dirty and monitored
+            // makes the next pass retry the write instead.
             const persisted = this.dirty.has(swap.rfqId) ? await this.save(swap) : true;
             if (persisted) {
                 this.dirty.delete(swap.rfqId);
@@ -1137,6 +1419,10 @@ export class RfqSwapManager {
             fate = { fate: "unknown" };
         }
         if (fate.fate === "claimed" || fate.fate === "returned") {
+            // Stamped before the state change, so the write that `setState`
+            // makes dirty carries the spend with it — one write, not two, and
+            // no window in which a terminal record names no ending transaction.
+            this.stampLockupSpends(swap, fate.spends);
             this.setState(swap, fate.fate === "claimed" ? "settled" : "refunded");
             return;
         }
@@ -1591,6 +1877,27 @@ export class RfqSwapManager {
         this.setState(swap, traderClaimTxid(swap) ? "claimed" : "pending");
     }
 
+    /**
+     * Record which ark transactions ended the lockup.
+     *
+     * Only the ones the indexer actually named: `LockupSpend.arkTxid` is
+     * optional, and a checkpoint txid is not what history correlates on — a
+     * record carrying one would name a transaction the wallet's own activity
+     * never shows. Fewer txids is the right failure here.
+     *
+     * Assigned rather than merged: the fate is one read of the whole lockup,
+     * so it is the complete answer for this swap, and a swap only reaches a
+     * verdict once.
+     */
+    private stampLockupSpends(swap: RfqSwap, spends: readonly LockupSpend[]): void {
+        const arkTxids = spends
+            .map((spend) => spend.arkTxid)
+            .filter((txid): txid is string => txid !== undefined);
+        if (arkTxids.length === 0) return;
+        swap.lockupSpendArkTxids = arkTxids;
+        this.touch(swap);
+    }
+
     private touch(swap: RfqSwap): void {
         swap.updatedAt = this.config.now();
         this.dirty.add(swap.rfqId);
@@ -1624,9 +1931,29 @@ export class RfqSwapManager {
         notify(this.actionExecutedListeners, (listener) => listener(swap, action));
     }
 
-    /** Whether the record is now persisted — false only when `saveSwap` threw. */
+    /**
+     * Flush a changed record to every sink that is wired, and say whether all
+     * of them took it.
+     *
+     * Up to two writes, in this order: the canonical `RfqSwapRecord` to
+     * {@link RfqSwapManagerDeps.repository}, then
+     * {@link RfqSwapManagerCallbacks.saveSwap}. Both gate — a rejection from
+     * either leaves the record dirty and monitored, so waiters stay unsettled
+     * and a terminal swap is not finalized until the write it claims lands.
+     * That is exactly today's rule for `saveSwap`, applied to whichever sinks
+     * exist; wiring the repository does not weaken it.
+     *
+     * The canonical write goes FIRST and a failure there skips the second.
+     * `saveSwap` is a projection of the record, and projecting a state the
+     * record of record has just refused would leave the secondary sink ahead
+     * of the primary — the one ordering that survives no restart.
+     *
+     * With neither wired the state is process-local, which is what a manager
+     * with no callbacks has always done.
+     */
     private async save(swap: RfqSwap): Promise<boolean> {
-        if (!this.callbacks) return true;
+        if (!(await this.saveRecord(swap))) return false;
+        if (!this.callbacks?.saveSwap) return true;
         try {
             await this.callbacks.saveSwap(swap);
             return true;
@@ -1640,6 +1967,38 @@ export class RfqSwapManager {
             this.emitFailed(swap, error);
             return false;
         }
+    }
+
+    /** The canonical write. True when there is no repository to write to. */
+    private async saveRecord(swap: RfqSwap): Promise<boolean> {
+        const repository = this.deps.repository;
+        if (!repository) return true;
+        try {
+            // Read-then-write per pass rather than caching the record: the
+            // store is the system of record, and a consumer that edited a
+            // record's origin half — a `fundingArkTxid` learned late, a
+            // corridor field its own code owns — must not have that edit
+            // overwritten by a copy this manager took at boot.
+            const stored = await repository.getRfqSwap(swap.rfqId);
+            const record = stored
+                ? updateRfqSwapRecord(stored, swap)
+                : createRfqSwapRecord(this.originOrThrow(swap), swap);
+            await repository.saveRfqSwap(record);
+            return true;
+        } catch (error) {
+            this.emitFailed(swap, error);
+            return false;
+        }
+    }
+
+    private originOrThrow(swap: RfqSwap): RfqSwapOrigin {
+        const origin = this.origins.get(swap.rfqId);
+        // Unreachable through `addSwap`/`start`/`restoreFromRepository`, all of
+        // which settle the origin before the swap is tracked. Reachable if the
+        // store dropped the record after admission, which is why the write path
+        // says so instead of assuming.
+        if (!origin) throw new RfqSwapOriginRequired(swap.rfqId);
+        return origin;
     }
 
     /**
