@@ -200,6 +200,50 @@ describe("VHTLCV2ContractHandler", () => {
         }
     });
 
+    /**
+     * The one malformed group index that does not announce itself.
+     *
+     * `VHTLC.ScriptV2` already refuses a non-integer, a negative, or anything
+     * past `0xffff`, so `"abc"`, `"1.5"` and `"-1"` die one frame down with a
+     * clear message. `Number("")`, `Number(" ")` and `Number("\t")` are all
+     * **0** — a valid group index — so a blank field would name group 0 of the
+     * same genesis transaction, which is a DIFFERENT asset, and the mismatch
+     * would only surface as an opaque `Script mismatch` at registration.
+     */
+    it.each([
+        ["blank", ""],
+        ["a space", " "],
+        ["a tab", "\t"],
+        ["a leading zero", "007"],
+        ["a trailing space", "7 "],
+        ["a plus sign", "+7"],
+        ["exponent form", "1e2"],
+        ["a fraction", "1.5"],
+        ["a negative", "-1"],
+        ["not a number at all", "seven"],
+    ])("refuses %s as an asset group index", (_why, assetGroupIndex) => {
+        expect(() =>
+            VHTLCV2ContractHandler.deserializeParams(
+                fullParams({ assetTxid: ASSET_TXID, assetGroupIndex }),
+            ),
+        ).toThrow(/assetGroupIndex must be a canonical decimal integer/);
+    });
+
+    it("still accepts the boundaries of the range the script allows", () => {
+        // 0 is legitimate — the point of the check above is that a BLANK field
+        // must not become it — and 65535 is the last index a serialized Asset ID
+        // can carry.
+        for (const [raw, expected] of [
+            ["0", 0],
+            ["65535", 65_535],
+        ] as const) {
+            const typed = VHTLCV2ContractHandler.deserializeParams(
+                fullParams({ assetTxid: ASSET_TXID, assetGroupIndex: raw }),
+            );
+            expect(typed.asset?.groupIndex).toBe(expected);
+        }
+    });
+
     it("round-trips a bare six-leaf contract without inventing covenant keys", () => {
         const params = {
             sender: SENDER,

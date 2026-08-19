@@ -13,6 +13,35 @@ import { assertVhtlcSpendableNow, isCltvSatisfied, isCsvSpendable, resolveRole }
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
 
 /**
+ * The stored `assetGroupIndex`, as a number, or a throw naming the row.
+ *
+ * `Number()` alone is not enough here, and it fails in exactly one direction
+ * that matters. `VHTLC.ScriptV2` already refuses a non-integer, a negative or
+ * anything past `0xffff`, so `"abc"`, `"1.5"` and `"-1"` die one frame down with
+ * a clear message. What survives is `Number("")`, `Number(" ")` and
+ * `Number("\t")` — all of which are **0**, a perfectly valid group index.
+ *
+ * A blank field therefore does not fail: it silently names group 0 of the same
+ * genesis transaction, which is a DIFFERENT asset. The contract then derives a
+ * different script from the one the row was written against, and registration
+ * dies at `upsertContractRow` with an opaque `Script mismatch` — the same
+ * silent-drop class the both-halves-or-neither check above exists to close, one
+ * value further in.
+ *
+ * Anchored and canonical: no sign, no point, no exponent, no leading zero, so a
+ * row that round-tripped through this handler's own `serializeParams` is the
+ * only shape accepted back.
+ */
+const parseGroupIndex = (raw: string): number => {
+    if (!/^(0|[1-9][0-9]*)$/.test(raw)) {
+        throw new Error(
+            `assetGroupIndex must be a canonical decimal integer, got ${JSON.stringify(raw)}`,
+        );
+    }
+    return Number(raw);
+};
+
+/**
  * Typed parameters for {@link VHTLC.ScriptV2} contracts.
  *
  * The eight mandatory fields are `VHTLCContractParams` verbatim — the two
@@ -233,7 +262,7 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
             params.assetTxid !== undefined && params.assetGroupIndex !== undefined
                 ? {
                       txid: hex.decode(params.assetTxid),
-                      groupIndex: Number(params.assetGroupIndex),
+                      groupIndex: parseGroupIndex(params.assetGroupIndex),
                   }
                 : undefined;
         return {
