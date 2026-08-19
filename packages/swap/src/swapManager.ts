@@ -426,9 +426,12 @@ export interface RfqSwapManagerCallbacks {
      * checks, one of which is load-bearing — do not drop the inner one because
      * the outer one exists.
      *
-     * Required rather than optional, like {@link claimOnchain}: a receive swap
-     * monitored with nothing wired to claim it is a swap that quietly expires,
-     * and a compile error is the right way to learn that.
+     * Required here, like {@link claimOnchain}: a receive swap monitored with
+     * nothing wired to claim it is a swap that quietly expires, and a compile
+     * error is the right way to learn that. A consumer that drives only the
+     * kinds needing neither installs
+     * {@link AvailableRfqSwapManagerCallbacks} instead and takes the runtime
+     * refusal in its place.
      */
     claimLockup: (
         swap: LightningReceiveSwap,
@@ -461,6 +464,26 @@ export interface RfqSwapManagerCallbacks {
     /** Persist the record. Called after any pass that changed it. */
     saveSwap: (swap: RfqSwap) => Promise<void>;
 }
+
+/**
+ * What {@link RfqSwapManager.setCallbacks} accepts: the full contract, minus
+ * the two claims that are already kind-gated at dispatch. A consumer driving
+ * only lightning sends reaches neither, and stubbing them to throw is not a
+ * contract — it is a lie the compiler waves through.
+ *
+ * The strict {@link RfqSwapManagerCallbacks} is untouched and still means
+ * "fully wired", so a helper that takes one and calls `claimOnchain` keeps its
+ * guarantee. Only the parameter widens, which every existing caller satisfies.
+ *
+ * The compile-time guarantee this trades away is bought back at runtime: a
+ * kind whose claim is missing blocks — non-terminal, re-evaluated every pass,
+ * and lifted the moment `setCallbacks` supplies it.
+ */
+export type AvailableRfqSwapManagerCallbacks = Omit<
+    RfqSwapManagerCallbacks,
+    "claimOnchain" | "claimLockup"
+> &
+    Partial<Pick<RfqSwapManagerCallbacks, "claimOnchain" | "claimLockup">>;
 
 /** The actions the manager executes on a caller's behalf. */
 export type RfqSwapActionName = "claimOnchain" | "claimLockup" | "refundArkade";
@@ -607,7 +630,7 @@ const notify = <T extends (...args: never[]) => void>(
 export class RfqSwapManager {
     private readonly deps: RfqSwapManagerDeps;
     private readonly config: Required<Omit<RfqSwapManagerConfig, "events">>;
-    private callbacks: RfqSwapManagerCallbacks | null = null;
+    private callbacks: AvailableRfqSwapManagerCallbacks | null = null;
 
     private readonly swapUpdateListeners = new Set<SwapUpdateListener>();
     private readonly swapCompletedListeners = new Set<SwapCompletedListener>();
@@ -703,8 +726,10 @@ export class RfqSwapManager {
         }
     }
 
-    /** Wire the money-moving half. Without it the manager only watches. */
-    setCallbacks(callbacks: RfqSwapManagerCallbacks): void {
+    /** Wire the money-moving half. Without it the manager only watches. The
+     * two claims may be omitted for a consumer that drives no kind reaching
+     * them — see {@link AvailableRfqSwapManagerCallbacks}. */
+    setCallbacks(callbacks: AvailableRfqSwapManagerCallbacks): void {
         this.callbacks = callbacks;
     }
 
@@ -1246,7 +1271,7 @@ export class RfqSwapManager {
             }
         }
 
-        if (!this.callbacks) {
+        if (!this.callbacks || !this.callbacks.claimLockup) {
             // Checked BEFORE the label, unlike the auto-actions case below: a
             // wallet with nothing wired cannot claim by hand off `claimable`
             // either, so reporting the lockup as claimable would name an action
@@ -1255,7 +1280,9 @@ export class RfqSwapManager {
             // same wiring gap, and lifted the moment `setCallbacks` runs.
             return this.block(
                 swap,
-                "no callbacks are wired, so this wallet cannot claim the lockup",
+                this.callbacks
+                    ? "no claimLockup callback is wired, so this wallet cannot claim the lockup"
+                    : "no callbacks are wired, so this wallet cannot claim the lockup",
             );
         }
 
@@ -1344,8 +1371,23 @@ export class RfqSwapManager {
             // step 2 skipped this branch on it; a blocked swap keeps the txid
             // while the label defers, and re-broadcasting would publish P twice.
             if (swap.claimTxid) return "continue";
+            // Half-wired: callbacks installed, this one absent. Blocked rather
+            // than labelled `claimable`, for the reason `claimIfFunded` gives —
+            // and NOT failed, unlike the missing-`ChainSource` case above:
+            // `chain` is constructor-injected and can never arrive late, while
+            // `setCallbacks` exists precisely so a callback can, and a terminal
+            // state would foreclose the wiring this whole relaxation is for.
+            // Fully unwired keeps reporting `claimable`, which is the
+            // documented manual mode.
+            if (this.callbacks && !this.callbacks.claimOnchain) {
+                this.block(
+                    swap,
+                    "no claimOnchain callback is wired, so this wallet cannot claim the L1 fill",
+                );
+                return "handled";
+            }
             this.setOnchainState(swap, "claimable");
-            if (!this.config.enableAutoActions || !this.callbacks) return "handled";
+            if (!this.config.enableAutoActions || !this.callbacks?.claimOnchain) return "handled";
             try {
                 const { txid } = await this.callbacks.claimOnchain(swap, phase.utxo);
                 swap.claimTxid = txid;

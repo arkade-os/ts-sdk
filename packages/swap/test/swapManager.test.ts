@@ -53,6 +53,7 @@ import {
     type OnchainSendSwap,
     type RfqSwap,
     type RfqSwapActionName,
+    type AvailableRfqSwapManagerCallbacks,
     type RfqSwapManagerCallbacks,
     type RfqSwapState,
     type SwapContractRegistry,
@@ -479,6 +480,9 @@ const manager = (input: {
     now: number | (() => number);
     spies: Spies;
     enableAutoActions?: boolean;
+    /** What to install instead of the full spy set — a half-wired
+     * installation, which only the relaxed type makes expressible. */
+    install?: AvailableRfqSwapManagerCallbacks;
 }): RfqSwapManager => {
     const m = new RfqSwapManager(
         {
@@ -492,8 +496,18 @@ const manager = (input: {
             events: { onActionExecuted: (_s, a) => input.spies.actions.push(a) },
         },
     );
-    m.setCallbacks(input.spies.callbacks);
+    m.setCallbacks(input.install ?? input.spies.callbacks);
     return m;
+};
+
+/** The spy set minus one claim. */
+const without = (
+    s: Spies,
+    key: "claimOnchain" | "claimLockup",
+): AvailableRfqSwapManagerCallbacks => {
+    const relaxed: AvailableRfqSwapManagerCallbacks = { ...s.callbacks };
+    delete relaxed[key];
+    return relaxed;
 };
 
 describe("nextOnchainAction", () => {
@@ -1540,6 +1554,89 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
  * So the state has to be reported without retrying, without `onSwapFailed`,
  * and — the item-5 interaction — without unwatching the contract.
  */
+describe("RfqSwapManager — a kind whose claim was never wired", () => {
+    const BEFORE_DEADLINE = REFUND_LOCKTIME - 3600;
+    const fundedIndexer = () =>
+        fakeIndexer({ vtxos: unspent(), funded: [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }] });
+
+    it("drives a lightning send with neither claim wired, which used not to compile", async () => {
+        const s = spies();
+        const swap = lightningSwap();
+        const m = manager({
+            now: REFUND_LOCKTIME + 60,
+            spies: s,
+            install: { refundArkade: s.callbacks.refundArkade, saveSwap: s.callbacks.saveSwap },
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("refunded");
+        expect(s.refunds).toEqual([RFQ_ID]);
+    });
+
+    it("blocks a receive swap on the missing claimLockup, naming the wiring", async () => {
+        const s = spies();
+        const swap = receiveSwap();
+        const m = manager({
+            indexer: fundedIndexer(),
+            now: BEFORE_DEADLINE,
+            spies: s,
+            install: without(s, "claimLockup"),
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/no claimLockup callback is wired/);
+        expect(s.lockupClaims).toHaveLength(0);
+    });
+
+    it("blocks a claimable fill on the missing claimOnchain, and lifts once it is wired", async () => {
+        // Non-terminal is the whole point: `setCallbacks` is installable late
+        // by design, so a terminal state here would foreclose the wiring this
+        // relaxation exists for.
+        const s = spies();
+        const swap = onchainSwap();
+        const m = manager({
+            chain: fakeChain({ utxos: [FILL], mtp: SAFE_NOW }),
+            now: SAFE_NOW,
+            spies: s,
+            install: without(s, "claimOnchain"),
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/no claimOnchain callback is wired/);
+        expect(isRfqSwapTerminal(swap.state)).toBe(false);
+        expect(s.claims).toHaveLength(0);
+
+        m.setCallbacks(s.callbacks);
+        await m.poll();
+
+        expect(s.claims).toHaveLength(1);
+        expect(swap.state).toBe("claimed");
+        expect(swap.claimTxid).toBe("dd".repeat(32));
+    });
+
+    it("keeps reporting a claimable fill when nothing at all is wired", async () => {
+        // The check targets the half-wired case only. Fully unwired is the
+        // documented manual mode: report `claimable`, act by hand.
+        const swap = onchainSwap();
+        const m = new RfqSwapManager(
+            {
+                indexer: fakeIndexer({ vtxos: unspent() }),
+                chain: fakeChain({ utxos: [FILL], mtp: SAFE_NOW }),
+            },
+            { now: () => SAFE_NOW },
+        );
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("claimable");
+    });
+});
+
 describe("RfqSwapManager — a refund this wallet cannot make", () => {
     const cannotSign = () =>
         new RefundNotLocallyPossibleError(
