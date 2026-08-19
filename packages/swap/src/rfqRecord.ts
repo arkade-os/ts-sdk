@@ -118,12 +118,26 @@ export interface RfqSwapOrigin {
      * its state: `signer` (which wallet key signs this leg) and, on a corridor
      * locked to a preimage, `hashlock` — see `rfqProfileParts.ts`, and write
      * both with `rfqSecretsProfile` rather than by hand.
+     *
+     * Not a consumer scratchpad: every write merges it as `{ ...profile,
+     * ...handler.project(swap) }`, so a consumer key colliding with one the
+     * handler projects is silently overwritten on every pass.
      */
     profile: Record<string, unknown>;
 
     /** Consumer display metadata. The rebuild ignores it — `RfqSwapCommon`
      * carries no amount of its own. */
     amount?: number;
+
+    /**
+     * The ark transaction that funded {@link lockupAddress}.
+     *
+     * Origin, not manager state: the caller broadcasts the funding and knows
+     * its txid, while the manager watches the lockup by script and never
+     * learns it. So it is written once at record creation, like {@link amount},
+     * and no corridor `project` emits it.
+     */
+    fundingArkTxid?: string;
 }
 
 /** The stored record: the origin plus the manager's mutable state. */

@@ -186,6 +186,7 @@ export {
     readLockupFate,
     refundIfUnresolved,
     type LockupFate,
+    type LockupSpend,
     type LockupSpendIndexer,
     type LockupVtxo,
     type RefundArkProvider,

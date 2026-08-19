@@ -38,7 +38,7 @@ const INSERT_CHUNK = 500;
  * write chain is keyed by that object, and a per-repository literal splits it.
  */
 export class SQLiteAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 3 as const;
+    readonly version = 4 as const;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly swaps: string;
@@ -143,6 +143,15 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
                 [record.rfqId, record.state, record.updatedAt, JSON.stringify(record)],
             );
         });
+    }
+
+    async getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined> {
+        await this.ensureInit();
+        const row = await this.db.get<{ data: string }>(
+            `SELECT data FROM ${this.rfqSwaps} WHERE rfq_id = ?`,
+            [rfqId],
+        );
+        return row ? (JSON.parse(row.data) as RfqSwapRecord) : undefined;
     }
 
     async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {

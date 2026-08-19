@@ -308,16 +308,25 @@ export type LockupSpendIndexer = Pick<RestIndexerProvider, "getVtxos" | "getVirt
  * What chain data says became of a swap lockup — the whole answer, with no
  * solver involvement and nothing taken on the solver's word.
  */
+export interface LockupSpend {
+    /** What the vtxo's `spentBy` names — the checkpoint, never the ark
+     * transaction. */
+    checkpointTxid: string;
+    /** The ark transaction that spent the above checkpoint output. What
+     * history correlation matches on; absent when the indexer omitted it. */
+    arkTxid?: string;
+}
+
 export type LockupFate =
     /** At least one output at the lockup is still unspent. Not over. */
     | { fate: "open" }
     /** Spent by a witness carrying a preimage that HASHES to the quote's
      * `payment_hash`. Only the claim leaf can reveal one, and the only
      * legitimate way the solver obtains it is by completing its side. */
-    | { fate: "claimed"; preimage: Uint8Array }
+    | { fate: "claimed"; preimage: Uint8Array; spends: readonly LockupSpend[] }
     /** Fully spent, and nothing that spent it revealed a matching preimage —
      * so the money went back to the trader. See {@link readLockupFate}. */
-    | { fate: "returned" }
+    | { fate: "returned"; spends: readonly LockupSpend[] }
     /** Nothing was learned: no outputs visible, an output spent by nothing the
      * indexer names, a spend it could not produce, or a blob that would not
      * decode. Never an answer. */
@@ -392,7 +401,7 @@ export async function readLockupFate(
     const all = vtxos ?? [];
     if (all.length === 0) return { fate: "unknown" };
 
-    const spentBy = new Set<string>();
+    const spentBy = new Map<string, LockupSpend>();
     let everySpendNamed = true;
     for (const vtxo of all) {
         // Unions all three spend facts rather than trusting `spentBy` alone:
@@ -408,13 +417,18 @@ export async function readLockupFate(
         // checkpoint per input, and that checkpoint's single input is the one
         // holding the lockup's `tapLeafScript`. The ark transaction spends the
         // checkpoint, not the lockup, so it is the wrong place to look.
-        if (vtxo.spentBy) spentBy.add(vtxo.spentBy);
+        if (vtxo.spentBy)
+            spentBy.set(vtxo.spentBy, {
+                checkpointTxid: vtxo.spentBy,
+                arkTxid: vtxo.arkTxId,
+            });
         // Spent, but by nothing this can go and read. No witness to verify, so
         // this output can never contribute proof either way.
         else everySpendNamed = false;
     }
 
-    const { txs } = await indexer.getVirtualTxs([...spentBy]);
+    const spends = [...spentBy.values()];
+    const { txs } = await indexer.getVirtualTxs([...spentBy.keys()]);
     const observed = new Set<string>();
     for (const raw of txs) {
         let tx: Transaction;
@@ -437,7 +451,7 @@ export async function readLockupFate(
             if (!all.some((vtxo) => vtxo.txid === txid && vtxo.vout === spent.index)) continue;
             for (const candidate of candidateWitnessItems(tx, i)) {
                 if (hashesTo(candidate, input.paymentHash)) {
-                    return { fate: "claimed", preimage: candidate };
+                    return { fate: "claimed", preimage: candidate, spends };
                 }
             }
         }
@@ -445,7 +459,7 @@ export async function readLockupFate(
 
     // Only a lockup whose every spend was actually seen can be called returned.
     return everySpendNamed && observed.size === spentBy.size
-        ? { fate: "returned" }
+        ? { fate: "returned", spends }
         : { fate: "unknown" };
 }
 

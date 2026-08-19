@@ -437,6 +437,15 @@ describe("updateRfqSwapRecord", () => {
         expect(recovered.lockupAddress).toBe(sendOrigin.lockupAddress);
     });
 
+    it("carries the caller's funding txid, which no corridor projects", () => {
+        const origin = { ...sendOrigin, fundingArkTxid: "f0".repeat(32) };
+        const record = createRfqSwapRecord(origin, swapOf(origin));
+        expect(record.fundingArkTxid).toBe("f0".repeat(32));
+        expect(updateRfqSwapRecord(record, swapOf(origin, "settled")).fundingArkTxid).toBe(
+            "f0".repeat(32),
+        );
+    });
+
     it("keeps a rebuilt covenant identical across a state change", () => {
         const record = createRfqSwapRecord(sendOrigin, swapOf(sendOrigin));
         const moved = updateRfqSwapRecord(record, swapOf(sendOrigin, "settled"));

@@ -33,7 +33,7 @@ const MARKETS = "ArkadeAssetSwapMarketsCache";
  * consumer owns the Realm lifecycle — `[Symbol.asyncDispose]` is a no-op.
  */
 export class RealmAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 3 as const;
+    readonly version = 4 as const;
 
     constructor(private readonly realm: RealmLike) {}
 
@@ -71,6 +71,13 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
                 "modified",
             );
         });
+    }
+
+    async getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined> {
+        const [found] = [
+            ...this.realm.objects<{ data: string }>(RFQ_SWAPS).filtered("rfqId == $0", rfqId),
+        ];
+        return found ? (JSON.parse(found.data) as RfqSwapRecord) : undefined;
     }
 
     async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {

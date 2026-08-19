@@ -117,7 +117,7 @@ Neither subpath adds a dependency: they take the SDK's structural `SQLExecutor` 
 handles, so you pass the database you already opened.
 
 All four carry both record types: asset swaps and the monitored RFQ swaps
-(`saveRfqSwap` / `getAllRfqSwaps` / `removeRfqSwap`). Each keeps them in a store of their own — a
+(`saveRfqSwap` / `getRfqSwap` / `getAllRfqSwaps` / `removeRfqSwap`). Each keeps them in a store of their own — a
 second object store on IndexedDB, an `…rfq_swaps` table on SQLite, the `ArkadeRfqSwap` class on
 Realm — since the two record types have different keys and no consumer wants them interleaved.
 
@@ -656,6 +656,23 @@ through their stored `preimageHex` or their HD descriptor, and `DB_VERSION` is u
 ## Breaking changes on this branch (pre-release migration notes)
 
 Notes from before 0.0.1, kept for consumers who tracked the branch.
+
+- **The repository interface is at version `4`.** It gained
+  `getRfqSwap(rfqId): Promise<RfqSwapRecord | undefined>` — every backend is already keyed by
+  `rfqId`, so a consumer updating one record no longer scans them all. A miss returns `undefined`;
+  retention prunes terminal records, so absence is ordinary. All four in-tree backends implement it
+  and `DB_VERSION` is unchanged; a custom implementor adds the two-line read and bumps its own
+  `version` to `4`.
+- **`RfqSwapOrigin` gained `fundingArkTxid?`** — the ark transaction that funded the lockup. It is
+  origin, not manager state: the caller broadcasts the funding and knows the txid, while the manager
+  watches the lockup by script and never learns it. Optional and stored whole, so no migration.
+  Consumers stashing it in `profile` should move it: `profile` is merged as
+  `{ ...profile, ...handler.project(swap) }` on every write, so a key a corridor also projects is
+  silently overwritten.
+- **`readLockupFate` names the spends it observed.** `claimed` and `returned` now carry
+  `spends: readonly LockupSpend[]`, one per spent lockup output, with the `checkpointTxid` that
+  `spentBy` names and the `arkTxid` that rode it. History correlation wants `arkTxid`; the
+  checkpoint txid is the wrong value to correlate on alone. `unknown` and `open` claim no spend.
 
 - **Every derived address changed again, in both corridors — the unilateral ladder was re-spaced.**
   `unilateralRefundDelay` now sits **level with** `claimDelay` instead of one 512s step above it,

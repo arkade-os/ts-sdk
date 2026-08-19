@@ -31,10 +31,11 @@ export const marketsCacheKey = (network: string, registry: string) =>
  * subset queries.
  */
 export interface AssetSwapRepository extends AsyncDisposable {
-    /** 3 adds the RFQ methods below. 2 was the released shape — swaps, scan
-     * cursor, markets, with `preimageSaltHex` on the swap record — so an
-     * implementor built against that cannot satisfy this one silently. */
-    readonly version: 3;
+    /** 4 adds `getRfqSwap`. 3 added the other RFQ methods below; 2 was the
+     * released shape — swaps, scan cursor, markets, with `preimageSaltHex` on
+     * the swap record — so an implementor built against either cannot satisfy
+     * this one silently. */
+    readonly version: 4;
 
     /** Insert or replace a swap by id. Store the record whole: `preimageHex`
      * and `preimageSaltHex` both leave the swap unclaimable if a field-mapped
@@ -61,6 +62,9 @@ export interface AssetSwapRepository extends AsyncDisposable {
      * as a refund that cannot be signed, long after the write.
      */
     saveRfqSwap(record: RfqSwapRecord): Promise<void>;
+    /** One record by key. `undefined` on a miss — retention prunes terminal
+     * records, so absence is ordinary and not an error. */
+    getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined>;
     /** Every stored RFQ swap record, in no particular order. */
     getAllRfqSwaps(): Promise<RfqSwapRecord[]>;
     /** Drop one, once it is past retention — see `shouldRetainRfqSwap`. */
@@ -78,7 +82,7 @@ export interface AssetSwapRepository extends AsyncDisposable {
 }
 
 export class InMemoryAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 3 as const;
+    readonly version = 4 as const;
     private readonly swaps = new Map<string, AssetSwap>();
     private readonly rfqSwaps = new Map<string, RfqSwapRecord>();
     private readonly scanned = new Set<string>();
@@ -94,6 +98,10 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
 
     async saveRfqSwap(record: RfqSwapRecord): Promise<void> {
         this.rfqSwaps.set(record.rfqId, record);
+    }
+
+    async getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined> {
+        return this.rfqSwaps.get(rfqId);
     }
 
     async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
