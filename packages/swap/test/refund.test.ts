@@ -607,6 +607,29 @@ describe("readLockupFate", () => {
         });
     });
 
+    it("keeps each output's own ark tx when only one of them has it", async () => {
+        // The shape a single hoisted `arkTxid` would get wrong: two outputs,
+        // one named, one not.
+        const first = spendOf(OUT_A);
+        const second = spendOf(OUT_B);
+        const fate = await read(
+            fateIndexer(
+                [
+                    { ...OUT_A, spentBy: first.txid },
+                    { ...OUT_B, spentBy: second.txid, arkTxId: "c4".repeat(32) },
+                ],
+                [first, second],
+            ),
+        );
+        expect(fate).toEqual({
+            fate: "returned",
+            spends: [
+                { checkpointTxid: first.txid, arkTxid: undefined },
+                { checkpointTxid: second.txid, arkTxid: "c4".repeat(32) },
+            ],
+        });
+    });
+
     it("still names the checkpoint when the indexer omitted the ark tx", async () => {
         const spend = spendOf(OUT_A);
         const fate = await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }], [spend]));

@@ -147,11 +147,11 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
 
     async getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined> {
         await this.ensureInit();
-        const rows = await this.db.all<{ data: string }>(
+        const row = await this.db.get<{ data: string }>(
             `SELECT data FROM ${this.rfqSwaps} WHERE rfq_id = ?`,
             [rfqId],
         );
-        return rows.length > 0 ? (JSON.parse(rows[0].data) as RfqSwapRecord) : undefined;
+        return row ? (JSON.parse(row.data) as RfqSwapRecord) : undefined;
     }
 
     async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
