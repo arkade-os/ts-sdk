@@ -573,6 +573,21 @@ terminal: the lockup stays funded and watched, a solver claim still ends the swa
 `pending`. The manager reports the same state when nothing is wired to act (`enableAutoActions:
 false`, or no callbacks) and the window has passed.
 
+**The two claim callbacks may be omitted.** `setCallbacks` accepts
+`AvailableRfqSwapManagerCallbacks` — the full contract with `claimOnchain` and `claimLockup`
+optional — so a consumer driving only lightning sends installs neither instead of stubbing them to
+throw. Dispatch is already kind-gated, so neither is reachable there. `refundArkade` and `saveSwap`
+stay required.
+
+`RfqSwapManagerCallbacks` itself is unchanged and still means "fully wired", so a helper taking one
+and calling `claimOnchain` keeps its guarantee; only the parameter widens, which every existing
+caller satisfies. What moves from compile time to runtime is bought back as a **block**: a kind
+whose claim is missing reports `needs_counterparty` naming the gap, non-terminal and re-evaluated
+every pass, lifted the moment `setCallbacks` supplies it. Not `failed` — `setCallbacks` is
+installable late by design, and a terminal state would foreclose the late wiring this exists for.
+A manager with *no* callbacks at all keeps today's manual mode on the L1 half: it reports
+`claimable` and you act by hand.
+
 `preimageForSwapRecord` is the read path to wire, not a hand-rolled `contractPreimage` call: it
 knows which of the record's fields are derivation inputs, and it verifies the result against
 `paymentHash`. A caller that forgets to pass the salt gets a _wrong_ preimage from a wallet that can
@@ -657,6 +672,11 @@ through their stored `preimageHex` or their HD descriptor, and `DB_VERSION` is u
 
 Notes from before 0.0.1, kept for consumers who tracked the branch.
 
+- **`setCallbacks` takes `AvailableRfqSwapManagerCallbacks`** — `RfqSwapManagerCallbacks` with the
+  two kind-gated claims optional. Nothing breaks: the strict interface is untouched and the widened
+  parameter accepts every existing caller. A consumer driving one kind stops stubbing the claims it
+  cannot reach; in exchange, a missing claim blocks at runtime (`needs_counterparty`, non-terminal)
+  instead of being unrepresentable.
 - **The repository interface is at version `4`.** It gained
   `getRfqSwap(rfqId): Promise<RfqSwapRecord | undefined>` — every backend is already keyed by
   `rfqId`, so a consumer updating one record no longer scans them all. A miss returns `undefined`;
@@ -872,4 +892,5 @@ scanned? })` — the server key is required because a spend is classified by reb
   receive swap monitored with nothing wired to claim it expires quietly, and a compile error is the
   right way to learn a corridor was added. A caller with only send swaps can satisfy it with a stub
   that throws. `RfqSwapActionName` gains `"claimLockup"`, so an exhaustive `switch` over it needs a
-  new arm.
+  new arm. **Superseded:** such a caller now installs `AvailableRfqSwapManagerCallbacks` and omits
+  both — see above.
