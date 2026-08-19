@@ -1,0 +1,123 @@
+{
+    "version": 1,
+    "note": "Source of truth for the Arkade Asset ID encodings. See ts-sdk plans/asset-id-shared-vectors.md.",
+    "txid_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    "script_txid_hex": "201f1e1d1c1b1a191817161514131211100f0e0d0c0b0a090807060504030201",
+    "valid": [
+        {
+            "label": "group 0 (issuance mints this one)",
+            "group_index": 0,
+            "asset_id_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f200000",
+            "script_group_index_item_hex": ""
+        },
+        {
+            "label": "group 1 \u2014 high byte zero, so endianness bugs hide here",
+            "group_index": 1,
+            "asset_id_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f200100",
+            "script_group_index_item_hex": "01"
+        },
+        {
+            "label": "endianness discriminator (gidx 258 = 0x0102)",
+            "group_index": 258,
+            "asset_id_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f200201",
+            "script_group_index_item_hex": "0201"
+        },
+        {
+            "label": "upper bound \u2014 script number needs a third byte, the u16 blob does not",
+            "group_index": 65535,
+            "asset_id_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20ffff",
+            "script_group_index_item_hex": "ffff00"
+        }
+    ],
+    "invalid_identity": [
+        {
+            "label": "uppercase",
+            "value": "0102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F200201",
+            "why": "identity is lowercase-only",
+            "normalizes_to": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f200201"
+        },
+        {
+            "label": "too short",
+            "value": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2002",
+            "why": "33 bytes; the identity is 34"
+        },
+        {
+            "label": "non-hex",
+            "value": "z102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f200201",
+            "why": "ASCII hex only"
+        }
+    ],
+    "invalid_decode": [
+        {
+            "label": "empty",
+            "value": "",
+            "expected_error": "missing asset id"
+        },
+        {
+            "label": "too short",
+            "value": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2002",
+            "expected_error": "invalid asset id length"
+        },
+        {
+            "label": "too long",
+            "value": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f200201ff",
+            "expected_error": "invalid asset id length"
+        },
+        {
+            "label": "non-hex",
+            "value": "z102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f200201",
+            "expected_error": "invalid asset id format"
+        },
+        {
+            "label": "zero txid",
+            "value": "00000000000000000000000000000000000000000000000000000000000000000201",
+            "expected_error": "empty txid"
+        }
+    ],
+    "invalid_construction": [
+        {
+            "label": "missing txid",
+            "txid_hex": "",
+            "group_index": 0,
+            "expected_error": "missing txid"
+        },
+        {
+            "label": "non-hex txid",
+            "txid_hex": "z102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "group_index": 0,
+            "expected_error": "invalid txid format"
+        },
+        {
+            "label": "txid too long",
+            "txid_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021",
+            "group_index": 0,
+            "expected_error": "invalid txid length"
+        },
+        {
+            "label": "txid too short",
+            "txid_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e",
+            "group_index": 0,
+            "expected_error": "invalid txid length"
+        },
+        {
+            "label": "zero txid",
+            "txid_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+            "group_index": 0,
+            "expected_error": "empty txid"
+        },
+        {
+            "label": "gidx out of range",
+            "txid_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "group_index": 65536,
+            "expected_error": "invalid group index",
+            "outside_uint16": true
+        },
+        {
+            "label": "gidx negative",
+            "txid_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "group_index": -1,
+            "expected_error": "invalid group index",
+            "outside_uint16": true
+        }
+    ]
+}
