@@ -193,6 +193,7 @@ export {
     type RefundIndexer,
     type RefundOutcome,
 } from "./refund";
+export { arkadeRefunder, type ArkadeRefunderDeps } from "./arkadeRefunder";
 export {
     LockupContractMissing,
     LockupRegistrationFailed,
@@ -226,4 +227,9 @@ export {
     type RfqSwapState,
     type SwapContractRegistry,
 } from "./swapManager";
-export { swapActivityResolver, type SwapActivityInput } from "./activity";
+export {
+    rfqSwapActivityInputs,
+    swapActivityResolver,
+    type RfqSwapActivityDeps,
+    type SwapActivityInput,
+} from "./activity";

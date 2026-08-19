@@ -398,12 +398,14 @@ export type ArkadeRefundResult = { arkTxid: string; amount: number } | null;
 /**
  * The money-moving half, injected. The manager decides when; these do it.
  *
- * Neither action gets a retry loop of its own here — see the module doc. Do
- * NOT wire `refundArkade` to `refundIfUnresolved`: that function is the
+ * Neither action gets a retry loop of its own here — see the module doc. Take
+ * `arkadeRefunder` for `refundArkade` rather than assembling it: it composes
+ * the atomic push (`findLockupVtxos` + `senderIdentityForSwapRecord` +
+ * `pushRefundWithoutReceiver`) and keeps the three rules below structural.
+ *
+ * Do NOT wire `refundArkade` to `refundIfUnresolved`: that function is the
  * single-swap version of this whole class and brings its own status polling
- * and its own MTP retry loop, which would nest inside the manager's. Wire it
- * to `findLockupVtxos` + `pushRefundWithoutReceiver`, which is the atomic push
- * `refundIfUnresolved` itself calls.
+ * and its own MTP retry loop, which would nest inside the manager's.
  *
  * Resolve the sender key through `senderIdentityForSwapRecord`: it is
  * what turns "this wallet cannot sign this swap" into

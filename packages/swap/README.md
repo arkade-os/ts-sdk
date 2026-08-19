@@ -588,6 +588,23 @@ installable late by design, and a terminal state would foreclose the late wiring
 A manager with *no* callbacks at all keeps today's manual mode on the L1 half: it reports
 `claimable` and you act by hand.
 
+**Take `arkadeRefunder` rather than assembling `refundArkade` by hand.** It composes the atomic
+push and keeps the three rules the manager relies on structural instead of documented — an empty
+lockup returns `null`, and both `RefundNotLocallyPossibleError` and `LockupNeedsRecoveryError`
+propagate untouched.
+
+```ts
+manager.setCallbacks({
+    // `repository` is how it reaches `profile.signer`: the live swap the manager
+    // passes carries no descriptor, so the refund key is resolved by `rfqId`.
+    refundArkade: arkadeRefunder({ ark, indexer, wallet, repository }),
+    saveSwap,
+});
+```
+
+Keep the covenant on the swap (`request*`'s `script`, as a record's `lockup`): the refund is built
+from it, and a swap carrying only `lockupPkScript` is refused rather than pushed.
+
 `preimageForSwapRecord` is the read path to wire, not a hand-rolled `contractPreimage` call: it
 knows which of the record's fields are derivation inputs, and it verifies the result against
 `paymentHash`. A caller that forgets to pass the salt gets a _wrong_ preimage from a wallet that can
@@ -672,6 +689,15 @@ through their stored `preimageHex` or their HD descriptor, and `DB_VERSION` is u
 
 Notes from before 0.0.1, kept for consumers who tracked the branch.
 
+- **`arkadeRefunder({ ark, indexer, wallet, repository })` ships the `refundArkade` wiring** that
+  was prose in two places. New export, nothing removed.
+- **`rfqSwapActivityInputs({ repository, indexer })` derives `SwapActivityInput[]` from the record
+  store** — the correlation helper `activity.ts` promised. `SwapActivityInput["kind"]` is now
+  `RfqSwapRecord["kind"]` rather than a literal union repeating it; source-compatible. Corridor
+  handlers gained an optional `activityTxids(profile)` so a leg's own claim txid comes from the
+  handler instead of a kind switch. The `indexer` is optional and consulted only for what a record
+  cannot answer: a record predating `fundingArkTxid`, and the counterparty's spend on a swap no
+  refund of ours ended. An unreachable indexer costs that record its extra txids, never a throw.
 - **`setCallbacks` takes `AvailableRfqSwapManagerCallbacks`** — `RfqSwapManagerCallbacks` with the
   two kind-gated claims optional. Nothing breaks: the strict interface is untouched and the widened
   parameter accepts every existing caller. A consumer driving one kind stops stubbing the claims it

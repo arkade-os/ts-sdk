@@ -1,23 +1,31 @@
-import type { ActivityResolver, ArkTransaction, GroupMembership } from "@arkade-os/sdk";
-import type { RfqSwapState } from "./swapManager";
+import {
+    ArkAddress,
+    type ActivityResolver,
+    type ArkTransaction,
+    type GroupMembership,
+} from "@arkade-os/sdk";
+import { hex } from "@scure/base";
+import { isRfqSwapTerminal, type RfqSwapState } from "./swapManager";
+import type { LockupSpendIndexer } from "./refund";
+import { rfqCorridorHandlers } from "./rfqCorridor";
+// Side-effecting, as in `rfqRecord.ts`: the type-only import below erases, so
+// nothing else here would register the handlers this reads.
+import "./rfqCorridors";
+import type { AssetSwapRepository } from "./repository";
+import type { RfqSwapRecord } from "./rfqRecord";
 
 /**
  * One swap, flattened to what grouping needs: an identity, a corridor, an
  * outcome, and every Arkade transaction that belongs to it.
  *
  * Deliberately not a stored swap record itself — resolution should stay
- * testable with plain data rather than a repository. A correlation helper
- * that derives these from the record store and the funding lockup's VTXOs
- * lands separately.
+ * testable with plain data rather than a repository. {@link rfqSwapActivityInputs}
+ * derives these from the record store and, where a record cannot answer, the
+ * funding lockup's VTXOs.
  */
 export interface SwapActivityInput {
     rfqId: string;
-    /**
-     * Literal union rather than `RfqSwapRecord["kind"]` — `RfqSwapRecord` lives
-     * only on the unmerged rfq-persistence branch, not on master. Reconcile
-     * with `RfqSwapRecord["kind"]` once that branch lands.
-     */
-    kind: "lightning_send" | "lightning_receive" | "onchain_send";
+    kind: RfqSwapRecord["kind"];
     state: RfqSwapState;
     /** Funding, claim and refund txids, in whatever order. */
     txids: readonly string[];
@@ -111,4 +119,92 @@ export function swapActivityResolver(deps: {
             ];
         },
     };
+}
+
+export interface RfqSwapActivityDeps {
+    repository: Pick<AssetSwapRepository, "getAllRfqSwaps">;
+    /**
+     * Consulted only for what a record cannot answer: a record written before
+     * `fundingArkTxid` existed, and the counterparty's spend on a swap that
+     * ended without a refund of ours.
+     *
+     * Optional because the stored fields are the primary source — cheaper, and
+     * they work offline, which is the resolver's whole posture. An indexer that
+     * throws costs that record its extra txids and nothing else.
+     */
+    indexer?: LockupSpendIndexer;
+}
+
+/**
+ * Every stored RFQ swap, flattened into what {@link swapActivityResolver}
+ * groups on.
+ *
+ * The txids come from four places, in order of preference: the record's own
+ * `fundingArkTxid` and `refundArkTxid`, the corridor's `activityTxids` (the
+ * receive leg's Arkade claim, the onchain leg's L1 one), and — only when the
+ * first two cannot answer — one read of the lockup's VTXOs.
+ *
+ * A missing txid costs an activity a row, never a wrong one: a swap that
+ * contributes fewer txids simply leaves those transactions ungrouped, which is
+ * what they already are.
+ */
+export async function rfqSwapActivityInputs(
+    deps: RfqSwapActivityDeps,
+): Promise<SwapActivityInput[]> {
+    const records = await deps.repository.getAllRfqSwaps();
+    return Promise.all(records.map((record) => activityInputOf(record, deps.indexer)));
+}
+
+async function activityInputOf(
+    record: RfqSwapRecord,
+    indexer?: LockupSpendIndexer,
+): Promise<SwapActivityInput> {
+    const txids = new Set<string>();
+    if (record.fundingArkTxid) txids.add(record.fundingArkTxid);
+    if (record.refundArkTxid) txids.add(record.refundArkTxid);
+    const handler = rfqCorridorHandlers.getOrThrow(record.kind);
+    for (const txid of handler.activityTxids?.(record.profile) ?? []) txids.add(txid);
+
+    // The counterparty's spend is what ended a swap the trader did not refund
+    // itself — a solver claim on a send leg, a solver reclaim on a receive one.
+    const spendUnknown = isRfqSwapTerminal(record.state) && !record.refundArkTxid;
+    if (indexer && (!record.fundingArkTxid || spendUnknown)) {
+        for (const txid of await lockupTxids(indexer, record, !record.fundingArkTxid)) {
+            txids.add(txid);
+        }
+    }
+
+    return { rfqId: record.rfqId, kind: record.kind, state: record.state, txids: [...txids] };
+}
+
+/** One read of everything at the lockup: the transactions that funded it, and
+ * the ark transactions that spent it. Ask-the-indexer, don't-trust-local-state
+ * — the same posture `readLockupFate` establishes, and the same seam. */
+async function lockupTxids(
+    indexer: LockupSpendIndexer,
+    record: RfqSwapRecord,
+    wantFunding: boolean,
+): Promise<string[]> {
+    let script: string;
+    try {
+        script = hex.encode(ArkAddress.decode(record.lockupAddress).pkScript);
+    } catch {
+        return []; // an address that will not decode names no lockup to read
+    }
+    try {
+        const { vtxos } = await indexer.getVtxos({ scripts: [script] });
+        const out: string[] = [];
+        for (const vtxo of vtxos ?? []) {
+            // The transaction that CREATED the output is the funding.
+            if (wantFunding) out.push(vtxo.txid);
+            // `spentBy` names the checkpoint; `arkTxId` names the ark
+            // transaction, which is the one history carries.
+            if (vtxo.arkTxId) out.push(vtxo.arkTxId);
+        }
+        return out;
+    } catch {
+        // Offline-first: fewer txids, never a throw that sinks every other
+        // record's activity along with this one's.
+        return [];
+    }
 }

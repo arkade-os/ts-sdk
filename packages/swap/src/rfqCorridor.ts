@@ -80,6 +80,18 @@ export interface RfqCorridorHandler<P extends Record<string, unknown> = Record<s
     claimSecret?(profile: P): RfqClaimSecretProjection;
 
     /**
+     * The corridor's own transaction ids off its profile — the ones that are
+     * this leg's alone, like the receive leg's `claimArkTxid` or the onchain
+     * leg's L1 `claimTxid`. Whatever the record's common half already carries
+     * (`fundingArkTxid`, `refundArkTxid`) is read there, not here.
+     *
+     * Answered by the handler rather than by a kind switch in `activity.ts`,
+     * so a corridor added later contributes its txids without any edit
+     * outside this file. Omit it for a corridor with none.
+     */
+    activityTxids?(profile: P): readonly string[];
+
+    /**
      * Rebuild the corridor's live fields from what was stored.
      *
      * Throw rather than defaulting when something required is missing: a swap
