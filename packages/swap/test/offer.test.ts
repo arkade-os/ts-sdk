@@ -92,7 +92,9 @@ describe("swap offer", () => {
 
         /** Push framing for a script-number stack item, per ArkadeScript's
          * MINIMALDATA path: empty -> OP_0, 1..16 -> OP_1..OP_16, else a length
-         * prefix. The vector pins the item; the framing is the encoder's. */
+         * prefix. The vector pins the item; the framing is the encoder's.
+         * Scoped to non-negative script numbers, which never encode a single
+         * zero byte -- that would be OP_0 here, not a data push. */
         const framed = (itemHex: string): string => {
             const item = hex.decode(itemHex);
             if (item.length === 0) return "00";

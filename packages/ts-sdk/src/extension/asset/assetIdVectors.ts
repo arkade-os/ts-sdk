@@ -87,4 +87,4 @@ function deepFreeze<T>(value: T): T {
  * expect(AssetId.create(txid_hex, valid[0].group_index).toString()).toBe(valid[0].asset_id_hex)
  * ```
  */
-export const ASSET_ID_VECTORS: AssetIdVectors = /* @__PURE__ */ deepFreeze(raw as AssetIdVectors);
+export const ASSET_ID_VECTORS: AssetIdVectors = deepFreeze(raw as AssetIdVectors);

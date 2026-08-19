@@ -59,6 +59,11 @@
             "expected_error": "invalid asset id length"
         },
         {
+            "label": "too long",
+            "value": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f200201ff",
+            "expected_error": "invalid asset id length"
+        },
+        {
             "label": "non-hex",
             "value": "z102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f200201",
             "expected_error": "invalid asset id format"
