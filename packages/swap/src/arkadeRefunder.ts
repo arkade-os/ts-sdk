@@ -58,7 +58,11 @@ export function arkadeRefunder(
             // A wiring mistake, not a swap outcome: `lockup` is optional only
             // because the manager can still watch without it, and no refund can
             // be built from the pkScript alone. Keep `request*`'s `script` on
-            // the swap.
+            // the swap. Untyped on purpose: the manager retries this once a
+            // poll and ends the swap `failed` at the deadline (see
+            // `RfqSwapManagerCallbacks.refundArkade`), which is the loud
+            // outcome a wiring mistake deserves — not the quiet permanent
+            // refusal a typed error would produce.
             throw new Error(
                 `swap ${swap.rfqId} carries no lockup covenant, so its refund cannot be built`,
             );
@@ -80,6 +84,13 @@ export function arkadeRefunder(
             );
         }
 
+        // The `?? {}` is a refusal, not a default: a record with no
+        // `profile.signer` reaches `senderIdentityForSwapRecord` without a
+        // `signingDescriptor`, which is what turns it into the same typed
+        // `RefundNotLocallyPossibleError("no-secrets")` thrown above. Written
+        // this way rather than as a second explicit throw so that the one place
+        // deciding what "this wallet cannot sign this swap" means stays
+        // `senderIdentityForSwapRecord`.
         const sender = await senderIdentityForSwapRecord(deps.wallet, rfqSignerOf(record) ?? {});
         return pushRefundWithoutReceiver(deps.ark, { script, sender, vtxos });
     };

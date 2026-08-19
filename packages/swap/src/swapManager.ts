@@ -445,10 +445,24 @@ export interface RfqSwapManagerCallbacks {
             partiallyClaimed: boolean;
         },
     ) => Promise<{ arkTxid: string; amount: number }>;
-    /** Push `refundWithoutReceiver` for every output at the lockup. See
+    /**
+     * Push `refundWithoutReceiver` for every output at the lockup. See
      * `pushRefundWithoutReceiver`; return `null` for an empty lockup. Never
      * called for a {@link LightningReceiveSwap} — that leg's refund leaf is the
-     * solver's. */
+     * solver's.
+     *
+     * Only {@link RefundNotLocallyPossibleError} is read as permanent. Every
+     * other throw is treated as transient and RETRIED once a poll: each attempt
+     * reports through `onSwapFailed` unwrapped, and the swap ends `failed` only
+     * past `refundLocktime + REFUND_MTP_LAG_SECONDS`. That is deliberate for a
+     * genuinely transient failure — `LockupNeedsRecoveryError` is the
+     * case it is built for, since recovery is something the caller can perform
+     * while the window is still open — but it means a wiring mistake that
+     * throws unconditionally does not read as `needs_counterparty`. It reports
+     * once a poll for the rest of the refund window and then ends `failed`.
+     * Throw {@link RefundNotLocallyPossibleError} for anything this wallet will
+     * never be able to do.
+     */
     refundArkade: (swap: RfqSwap) => Promise<ArkadeRefundResult>;
     /**
      * Whether a local refund is possible at all — the record's secrets, against
