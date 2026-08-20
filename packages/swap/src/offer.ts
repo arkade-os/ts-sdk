@@ -33,6 +33,7 @@ import {
     getNetwork,
     resolveEmulatorPubkey,
     toXOnlySignerHex,
+    type ArkTxInput,
     type IWallet,
     type NetworkName,
 } from "@arkade-os/sdk";
@@ -584,5 +585,128 @@ export async function cancelOffer(
             await retireOfferContract(contractManager, swaps, hex.encode(offer.swapPkScript));
         }
     }
+    return txid;
+}
+
+/**
+ * Fill an offer — the TAKER's side, and the counterpart to {@link createOffer}.
+ *
+ * The covenant's `fulfill` leaf is signed by the server alone and constrains the
+ * spend to pay output 0 at least `wantAmount` to the maker's witness program, so
+ * a taker cannot take the deposit without delivering. This composes that spend;
+ * it does not weaken or reinterpret the covenant.
+ *
+ * Unlike {@link cancelOffer} this writes NO local swap record. A taker filling
+ * someone else's offer has no row to update — the repository dance there belongs
+ * to the funder, whose swap it is. The maker learns the outcome from the chain
+ * (`classifySpend`), which is the design § 7.2 of the RFQ protocol describes.
+ *
+ * `fund` is required and explicit rather than selected here. Coin selection is
+ * the caller's: only they know which coins are reserved for other flows, and a
+ * helper that picked for them would spend a corridor's float out from under it.
+ * The coins become inputs 1..n and are signed with the wallet's identity.
+ *
+ * `payoutScript` is where the taker's proceeds land — the deposit it just took,
+ * plus any surplus over `wantAmount`. Defaults to the wallet's own address.
+ *
+ * Racing a cancel is a NORMAL outcome, not a failure: cancel is a 2-of-2 of the
+ * funder and the server and does not involve the taker, so a funder may cancel
+ * between this reading the deposit and broadcasting. That surfaces the same way
+ * cancel's own race does — "no spendable VTXO at the swap address" — and a
+ * caller should treat it as "the offer is gone", not as an error to retry.
+ */
+export async function fillOffer(
+    wallet: IWallet,
+    arkServerUrl: string,
+    offerHex: string,
+    opts: {
+        /** Coins the taker supplies to pay `wantAmount`. Become inputs 1..n. */
+        fund: ArkTxInput[];
+        /** Where the taker's proceeds land. Defaults to the wallet's own address. */
+        payoutScript?: Uint8Array;
+        /** Selects the deposit when the swap address holds more than one. */
+        fundingTxid?: string;
+        /** The funded address, to pin the server key the covenant was built with. */
+        swapAddress?: string;
+    },
+): Promise<string> {
+    const { fund, payoutScript, fundingTxid, swapAddress } = opts;
+    const offer = decodeOffer(hex.decode(offerHex));
+
+    // An asset want needs the taker to say which of its inputs carry the asset
+    // and how much, and needs asset change when they carry more than
+    // `wantAmount`. Guessing either produces a spend the covenant rejects for
+    // reasons the error does not explain, so this refuses rather than tries.
+    if (offer.wantAsset) {
+        throw new Error(
+            "fillOffer does not yet support an asset want: the covenant checks the asset at output 0 " +
+                "(INSPECTOUTASSETLOOKUP), which needs an explicit input->output asset binding from the caller",
+        );
+    }
+    if (fund.length === 0) {
+        throw new Error("fillOffer needs coins to pay wantAmount with — `fund` is empty");
+    }
+
+    const contractManager = await wallet.getContractManager();
+    const client = await arkade.Arkade.connect({
+        arkade: new RestArkProvider(arkServerUrl),
+        indexer: new RestIndexerProvider(arkServerUrl),
+        identity: wallet.identity,
+        contractManager,
+    });
+
+    // Rebuilt with the OFFER's keys, not the client's, for the same reason
+    // cancelOffer does it: the derived script must match the funded address
+    // exactly or `getUtxos` silently returns nothing and the failure reads as
+    // "no deposit" rather than "wrong key".
+    const serverKey = swapAddress ? ArkAddress.decode(swapAddress).serverPubKey : client.serverKey;
+    const { program, args, keys } = swapProgramBinding(offer, serverKey);
+    const rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
+    if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {
+        throw new Error(
+            "rebuilt covenant does not match the offer's swapPkScript — the server " +
+                "signing key has likely rotated since funding; pass swapAddress (the " +
+                "funded address) to pin the original key",
+        );
+    }
+    const contract = new arkade.ArkadeContract(client, program, args, keys);
+
+    const [vtxos, takerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
+    if (!fundingTxid && vtxos.length > 1) {
+        // Identical offers share one address, so guessing would fill an
+        // arbitrary deposit while the caller believes it filled a specific one.
+        throw new Error(
+            "multiple spendable deposits at the swap address — pass fundingTxid to select one",
+        );
+    }
+    const vtxo = fundingTxid ? vtxos.find((v) => v.txid === fundingTxid) : vtxos[0];
+    if (!vtxo) throw new Error("no spendable VTXO at the swap address");
+
+    const payout = payoutScript ?? ArkAddress.decode(takerAddress).pkScript;
+    const fill = contract.functions
+        .fulfill()
+        .from({ txid: vtxo.txid, vout: vtxo.vout, value: vtxo.value })
+        .fund(fund)
+        // Output 0, and the order is not cosmetic: the covenant inspects output
+        // 0 specifically, so this must be the first `to`.
+        .to(offer.makerPkScript, offer.wantAmount)
+        // The taker's proceeds — the deposit it just took, plus any surplus of
+        // its own funding over `wantAmount`.
+        .change(payout);
+
+    // A deposit that IS an asset (`offerAsset`) carries it on the covenant
+    // input; move it to the taker rather than letting it vanish. Distinct from
+    // the `wantAsset` case refused above: this asset is not what the covenant
+    // checks, it is what the taker is being paid.
+    for (const a of vtxo.assets ?? []) {
+        fill.withAsset({
+            assetId: a.assetId,
+            inputs: [{ vin: 0, amount: BigInt(a.amount) }],
+            // vout 1 — output 0 is the maker's, which on a BTC want carries no asset.
+            outputs: [{ vout: 1, amount: BigInt(a.amount) }],
+        });
+    }
+
+    const { txid } = await fill.send();
     return txid;
 }
