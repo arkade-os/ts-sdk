@@ -177,227 +177,213 @@ describe("deprecated-signer migration (real rotation)", () => {
 
     // ── 2. VTXO, no cutoff → DUE_NOW → cooperative migration ─────────────────
     for (const useMnemonic of [false, true]) {
-        it(
-            `migrates a real VTXO with no cutoff (DUE_NOW) - ${useMnemonic ? "mnemonic" : "singleKey"}`,
-            { timeout: 240_000 },
-            async () => {
-                const { wallet, vtxoManager, contractManager, amount, stale, fromX, toX } =
-                    await fundVtxoUnderAThenRotate(A_SEC, useMnemonic);
-                try {
-                    // Check contracts before migration
-                    const before = await contractManager.getContracts();
-                    expect(before.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
-                    expect(before.filter((c) => c.type === "boarding")).toHaveLength(1);
-                    expect(before.filter((c) => c.type === "default")).toHaveLength(1);
-                    expect(before.filter((c) => c.state === "active")).toHaveLength(2);
-                    expect(before).toHaveLength(2);
+        it(`migrates a real VTXO with no cutoff (DUE_NOW) - ${useMnemonic ? "mnemonic" : "singleKey"}`, {
+            timeout: 240_000,
+        }, async () => {
+            const { wallet, vtxoManager, contractManager, amount, stale, fromX, toX } =
+                await fundVtxoUnderAThenRotate(A_SEC, useMnemonic);
+            try {
+                // Check contracts before migration
+                const before = await contractManager.getContracts();
+                expect(before.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
+                expect(before.filter((c) => c.type === "boarding")).toHaveLength(1);
+                expect(before.filter((c) => c.type === "default")).toHaveLength(1);
+                expect(before.filter((c) => c.state === "active")).toHaveLength(2);
+                expect(before).toHaveLength(2);
 
-                    const status = await vtxoManager.getDeprecatedSignerStatus();
-                    expect(status).toHaveLength(1);
-                    expect(status[0]).toMatchObject({
-                        signerPubKey: fromX,
-                        status: "DUE_NOW",
-                        vtxoCount: 1,
-                        totalValue: amount,
-                    });
-                    expect(status[0].cutoffDate).toBeUndefined();
+                const status = await vtxoManager.getDeprecatedSignerStatus();
+                expect(status).toHaveLength(1);
+                expect(status[0]).toMatchObject({
+                    signerPubKey: fromX,
+                    status: "DUE_NOW",
+                    vtxoCount: 1,
+                    totalValue: amount,
+                });
+                expect(status[0].cutoffDate).toBeUndefined();
 
-                    const balanceBefore = await wallet.getBalance();
-                    const report = await vtxoManager.migrateDeprecatedSignerVtxos();
-                    expect(report.rotated).toBe(true);
-                    // VTXO leg ran through the send path; `txid` is the Ark
-                    // transaction id from send, NOT a settle commitment txid.
-                    expect(report.vtxos?.txid).toBeDefined();
-                    expect(report.vtxos?.error).toBeUndefined();
-                    expect(report.boarding).toBeUndefined();
-                    expect(report.skipped).toBeUndefined();
-                    expect(report.expired).toEqual([]);
-                    expect(report.vtxos?.migrated.map((m) => `${m.txid}:${m.vout}`)).toContain(
-                        stale,
-                    );
+                const balanceBefore = await wallet.getBalance();
+                const report = await vtxoManager.migrateDeprecatedSignerVtxos();
+                expect(report.rotated).toBe(true);
+                // VTXO leg ran through the send path; `txid` is the Ark
+                // transaction id from send, NOT a settle commitment txid.
+                expect(report.vtxos?.txid).toBeDefined();
+                expect(report.vtxos?.error).toBeUndefined();
+                expect(report.boarding).toBeUndefined();
+                expect(report.skipped).toBeUndefined();
+                expect(report.expired).toEqual([]);
+                expect(report.vtxos?.migrated.map((m) => `${m.txid}:${m.vout}`)).toContain(stale);
 
-                    // Wallet re-derived onto the active (B) signer; nothing left under A.
-                    expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
-                    // The migration's spend reaches the repository via a fresh
-                    // indexer sync that lags the just-submitted ark tx (the sync
-                    // re-writes VTXO rows indexer-wins), so poll until no
-                    // spendable VTXO remains under the deprecated signer.
-                    const postStatus = await poll(async () => {
-                        const s = await vtxoManager.getDeprecatedSignerStatus();
-                        return s.some((x) => x.signerPubKey === fromX && x.vtxoCount > 0)
-                            ? null
-                            : s;
-                    });
-                    expect(
-                        postStatus.some((s) => s.signerPubKey === fromX && s.vtxoCount > 0),
-                    ).toBe(false);
+                // Wallet re-derived onto the active (B) signer; nothing left under A.
+                expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
+                // The migration's spend reaches the repository via a fresh
+                // indexer sync that lags the just-submitted ark tx (the sync
+                // re-writes VTXO rows indexer-wins), so poll until no
+                // spendable VTXO remains under the deprecated signer.
+                const postStatus = await poll(async () => {
+                    const s = await vtxoManager.getDeprecatedSignerStatus();
+                    return s.some((x) => x.signerPubKey === fromX && x.vtxoCount > 0) ? null : s;
+                });
+                expect(postStatus.some((s) => s.signerPubKey === fromX && s.vtxoCount > 0)).toBe(
+                    false,
+                );
 
-                    const balanceAfter = await poll(async () => {
-                        const b = await wallet.getBalance();
-                        return b.available === balanceBefore.available ? b : null;
-                    });
-                    expect(balanceAfter.available).toBe(balanceBefore.available);
+                const balanceAfter = await poll(async () => {
+                    const b = await wallet.getBalance();
+                    return b.available === balanceBefore.available ? b : null;
+                });
+                expect(balanceAfter.available).toBe(balanceBefore.available);
 
-                    // Check contracts after migration
-                    const after = await contractManager.getContracts();
-                    expect(after.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
-                    expect(after.filter((c) => c.params.serverPubKey === B_PUB)).toHaveLength(2);
-                    expect(after.filter((c) => c.type === "boarding")).toHaveLength(2);
-                    expect(after.filter((c) => c.type === "default")).toHaveLength(2);
-                    expect(after.filter((c) => c.state === "active")).toHaveLength(4);
-                    expect(after).toHaveLength(4);
-                } finally {
-                    await wallet.dispose();
-                }
-            },
-        );
+                // Check contracts after migration
+                const after = await contractManager.getContracts();
+                expect(after.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
+                expect(after.filter((c) => c.params.serverPubKey === B_PUB)).toHaveLength(2);
+                expect(after.filter((c) => c.type === "boarding")).toHaveLength(2);
+                expect(after.filter((c) => c.type === "default")).toHaveLength(2);
+                expect(after.filter((c) => c.state === "active")).toHaveLength(4);
+                expect(after).toHaveLength(4);
+            } finally {
+                await wallet.dispose();
+            }
+        });
     }
 
     // ── 3. VTXO, future cutoff → MIGRATABLE → cooperative migration ──────────
     for (const useMnemonic of [false, true]) {
-        it(
-            `migrates a real VTXO before its cutoff (MIGRATABLE) ${useMnemonic ? "with" : "without"} mnemonic`,
-            { timeout: 240_000 },
-            async () => {
-                const cutoff = Math.floor(Date.now() / 1000) + 86_400; // +1 day
-                const { wallet, vtxoManager, contractManager, amount, stale, fromX, toX } =
-                    await fundVtxoUnderAThenRotate(
-                        {
-                            priv: A_SEC,
-                            cutoffDate: cutoff,
-                        },
-                        useMnemonic,
-                    );
-                try {
-                    // Check contracts before migration
-                    const before = await contractManager.getContracts();
-                    expect(before.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
-                    expect(before.filter((c) => c.type === "boarding")).toHaveLength(1);
-                    expect(before.filter((c) => c.type === "default")).toHaveLength(1);
-                    expect(before.filter((c) => c.state === "active")).toHaveLength(2);
-                    expect(before).toHaveLength(2);
+        it(`migrates a real VTXO before its cutoff (MIGRATABLE) ${useMnemonic ? "with" : "without"} mnemonic`, {
+            timeout: 240_000,
+        }, async () => {
+            const cutoff = Math.floor(Date.now() / 1000) + 86_400; // +1 day
+            const { wallet, vtxoManager, contractManager, amount, stale, fromX, toX } =
+                await fundVtxoUnderAThenRotate(
+                    {
+                        priv: A_SEC,
+                        cutoffDate: cutoff,
+                    },
+                    useMnemonic,
+                );
+            try {
+                // Check contracts before migration
+                const before = await contractManager.getContracts();
+                expect(before.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
+                expect(before.filter((c) => c.type === "boarding")).toHaveLength(1);
+                expect(before.filter((c) => c.type === "default")).toHaveLength(1);
+                expect(before.filter((c) => c.state === "active")).toHaveLength(2);
+                expect(before).toHaveLength(2);
 
-                    const status = await vtxoManager.getDeprecatedSignerStatus();
-                    expect(status).toHaveLength(1);
-                    expect(status[0]).toMatchObject({
-                        signerPubKey: fromX,
-                        status: "MIGRATABLE",
-                        vtxoCount: 1,
-                        totalValue: amount,
-                    });
-                    expect(status[0].cutoffDate).toBe(BigInt(cutoff));
-                    expect(status[0].secondsUntilCutoff).toBeGreaterThan(0);
+                const status = await vtxoManager.getDeprecatedSignerStatus();
+                expect(status).toHaveLength(1);
+                expect(status[0]).toMatchObject({
+                    signerPubKey: fromX,
+                    status: "MIGRATABLE",
+                    vtxoCount: 1,
+                    totalValue: amount,
+                });
+                expect(status[0].cutoffDate).toBe(BigInt(cutoff));
+                expect(status[0].secondsUntilCutoff).toBeGreaterThan(0);
 
-                    const balanceBefore = await wallet.getBalance();
-                    const report = await vtxoManager.migrateDeprecatedSignerVtxos();
-                    expect(report.rotated).toBe(true);
-                    // VTXO leg send id (not a settle commitment txid).
-                    expect(report.vtxos?.txid).toBeDefined();
-                    expect(report.vtxos?.error).toBeUndefined();
-                    expect(report.boarding).toBeUndefined();
-                    expect(report.skipped).toBeUndefined();
-                    expect(report.expired).toEqual([]);
-                    expect(report.vtxos?.migrated.map((m) => `${m.txid}:${m.vout}`)).toContain(
-                        stale,
-                    );
-                    // The migrated ref carries the advertised cutoff.
-                    expect(report.vtxos?.migrated[0].cutoffDate).toBe(BigInt(cutoff));
+                const balanceBefore = await wallet.getBalance();
+                const report = await vtxoManager.migrateDeprecatedSignerVtxos();
+                expect(report.rotated).toBe(true);
+                // VTXO leg send id (not a settle commitment txid).
+                expect(report.vtxos?.txid).toBeDefined();
+                expect(report.vtxos?.error).toBeUndefined();
+                expect(report.boarding).toBeUndefined();
+                expect(report.skipped).toBeUndefined();
+                expect(report.expired).toEqual([]);
+                expect(report.vtxos?.migrated.map((m) => `${m.txid}:${m.vout}`)).toContain(stale);
+                // The migrated ref carries the advertised cutoff.
+                expect(report.vtxos?.migrated[0].cutoffDate).toBe(BigInt(cutoff));
 
-                    expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
-                    // The migration's spend reaches the repository via a fresh
-                    // indexer sync that lags the just-submitted ark tx (the sync
-                    // re-writes VTXO rows indexer-wins), so poll until no
-                    // spendable VTXO remains under the deprecated signer.
-                    const postStatus = await poll(async () => {
-                        const s = await vtxoManager.getDeprecatedSignerStatus();
-                        return s.some((x) => x.signerPubKey === fromX && x.vtxoCount > 0)
-                            ? null
-                            : s;
-                    });
-                    expect(
-                        postStatus.some((s) => s.signerPubKey === fromX && s.vtxoCount > 0),
-                    ).toBe(false);
+                expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
+                // The migration's spend reaches the repository via a fresh
+                // indexer sync that lags the just-submitted ark tx (the sync
+                // re-writes VTXO rows indexer-wins), so poll until no
+                // spendable VTXO remains under the deprecated signer.
+                const postStatus = await poll(async () => {
+                    const s = await vtxoManager.getDeprecatedSignerStatus();
+                    return s.some((x) => x.signerPubKey === fromX && x.vtxoCount > 0) ? null : s;
+                });
+                expect(postStatus.some((s) => s.signerPubKey === fromX && s.vtxoCount > 0)).toBe(
+                    false,
+                );
 
-                    const balanceAfter = await poll(async () => {
-                        const b = await wallet.getBalance();
-                        return b.available === balanceBefore.available ? b : null;
-                    });
-                    expect(balanceAfter.available).toBe(balanceBefore.available);
+                const balanceAfter = await poll(async () => {
+                    const b = await wallet.getBalance();
+                    return b.available === balanceBefore.available ? b : null;
+                });
+                expect(balanceAfter.available).toBe(balanceBefore.available);
 
-                    // Check contracts after migration
-                    const after = await contractManager.getContracts();
-                    expect(after.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
-                    expect(after.filter((c) => c.params.serverPubKey === B_PUB)).toHaveLength(2);
-                    expect(after.filter((c) => c.type === "boarding")).toHaveLength(2);
-                    expect(after.filter((c) => c.type === "default")).toHaveLength(2);
-                    expect(after.filter((c) => c.state === "active")).toHaveLength(4);
-                } finally {
-                    await wallet.dispose();
-                }
-            },
-        );
+                // Check contracts after migration
+                const after = await contractManager.getContracts();
+                expect(after.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
+                expect(after.filter((c) => c.params.serverPubKey === B_PUB)).toHaveLength(2);
+                expect(after.filter((c) => c.type === "boarding")).toHaveLength(2);
+                expect(after.filter((c) => c.type === "default")).toHaveLength(2);
+                expect(after.filter((c) => c.state === "active")).toHaveLength(4);
+            } finally {
+                await wallet.dispose();
+            }
+        });
     }
 
     // ── 4. VTXO, past cutoff → EXPIRED → no cooperative settle ───────────────
     for (const useMnemonic of [false, true]) {
-        it(
-            "does not cooperatively settle a VTXO past its cutoff (EXPIRED)",
-            { timeout: 240_000 },
-            async () => {
-                const cutoff = Math.floor(Date.now() / 1000) - 86_400; // -1 day
-                const { wallet, vtxoManager, contractManager, amount, stale, fromX, toX } =
-                    await fundVtxoUnderAThenRotate(
-                        {
-                            priv: A_SEC,
-                            cutoffDate: cutoff,
-                        },
-                        useMnemonic,
-                    );
-                try {
-                    // Check contracts before migration
-                    const before = await contractManager.getContracts();
-                    expect(before.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
-                    expect(before.filter((c) => c.type === "boarding")).toHaveLength(1);
-                    expect(before.filter((c) => c.type === "default")).toHaveLength(1);
-                    expect(before.filter((c) => c.state === "active")).toHaveLength(2);
-                    expect(before).toHaveLength(2);
+        it("does not cooperatively settle a VTXO past its cutoff (EXPIRED)", {
+            timeout: 240_000,
+        }, async () => {
+            const cutoff = Math.floor(Date.now() / 1000) - 86_400; // -1 day
+            const { wallet, vtxoManager, contractManager, amount, stale, fromX, toX } =
+                await fundVtxoUnderAThenRotate(
+                    {
+                        priv: A_SEC,
+                        cutoffDate: cutoff,
+                    },
+                    useMnemonic,
+                );
+            try {
+                // Check contracts before migration
+                const before = await contractManager.getContracts();
+                expect(before.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
+                expect(before.filter((c) => c.type === "boarding")).toHaveLength(1);
+                expect(before.filter((c) => c.type === "default")).toHaveLength(1);
+                expect(before.filter((c) => c.state === "active")).toHaveLength(2);
+                expect(before).toHaveLength(2);
 
-                    const status = await vtxoManager.getDeprecatedSignerStatus();
-                    expect(status).toHaveLength(1);
-                    expect(status[0]).toMatchObject({
-                        signerPubKey: fromX,
-                        status: "EXPIRED",
-                        vtxoCount: 1,
-                        totalValue: amount,
-                    });
-                    expect(status[0].cutoffDate).toBe(BigInt(cutoff));
-                    expect(status[0].secondsUntilCutoff).toBeLessThanOrEqual(0);
+                const status = await vtxoManager.getDeprecatedSignerStatus();
+                expect(status).toHaveLength(1);
+                expect(status[0]).toMatchObject({
+                    signerPubKey: fromX,
+                    status: "EXPIRED",
+                    vtxoCount: 1,
+                    totalValue: amount,
+                });
+                expect(status[0].cutoffDate).toBe(BigInt(cutoff));
+                expect(status[0].secondsUntilCutoff).toBeLessThanOrEqual(0);
 
-                    // Cooperative migration is closed past the cutoff: the wallet still
-                    // re-derives its receive state to the active signer, but no settle is
-                    // submitted — the stale VTXO is reported as expired (it recovers via
-                    // the server batch sweep, not a cooperative settle).
-                    const report = await vtxoManager.migrateDeprecatedSignerVtxos();
-                    expect(report.rotated).toBe(true);
-                    expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
-                    // Past cutoff: no migratable inputs → neither leg, global skip.
-                    expect(report.vtxos).toBeUndefined();
-                    expect(report.boarding).toBeUndefined();
-                    expect(report.skipped).toBe("no-deprecated-vtxos");
-                    expect(report.expired.map((m) => `${m.txid}:${m.vout}`)).toContain(stale);
+                // Cooperative migration is closed past the cutoff: the wallet still
+                // re-derives its receive state to the active signer, but no settle is
+                // submitted — the stale VTXO is reported as expired (it recovers via
+                // the server batch sweep, not a cooperative settle).
+                const report = await vtxoManager.migrateDeprecatedSignerVtxos();
+                expect(report.rotated).toBe(true);
+                expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
+                // Past cutoff: no migratable inputs → neither leg, global skip.
+                expect(report.vtxos).toBeUndefined();
+                expect(report.boarding).toBeUndefined();
+                expect(report.skipped).toBe("no-deprecated-vtxos");
+                expect(report.expired.map((m) => `${m.txid}:${m.vout}`)).toContain(stale);
 
-                    // Check contracts after migration
-                    const after = await contractManager.getContracts();
-                    expect(after.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
-                    expect(after.filter((c) => c.params.serverPubKey === B_PUB)).toHaveLength(2);
-                    expect(after.filter((c) => c.type === "boarding")).toHaveLength(2);
-                    expect(after.filter((c) => c.type === "default")).toHaveLength(2);
-                    expect(after.filter((c) => c.state === "active")).toHaveLength(4);
-                } finally {
-                    await wallet.dispose();
-                }
-            },
-        );
+                // Check contracts after migration
+                const after = await contractManager.getContracts();
+                expect(after.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
+                expect(after.filter((c) => c.params.serverPubKey === B_PUB)).toHaveLength(2);
+                expect(after.filter((c) => c.type === "boarding")).toHaveLength(2);
+                expect(after.filter((c) => c.type === "default")).toHaveLength(2);
+                expect(after.filter((c) => c.state === "active")).toHaveLength(4);
+            } finally {
+                await wallet.dispose();
+            }
+        });
     }
 
     // ── 5. Boarding UTXO, no cutoff → DUE_NOW → cooperative migration ───────
@@ -408,108 +394,106 @@ describe("deprecated-signer migration (real rotation)", () => {
     // deprecated-key signature; this test proves the fixture supplies it and that
     // the SDK threads the old input script into a migration output under B.
     for (const useMnemonic of [false, true]) {
-        it(
-            "migrates a real boarding UTXO with no cutoff (DUE_NOW)",
-            { timeout: 240_000 },
-            async () => {
-                const fromX = await xonly(A_SEC);
-                const toX = await xonly(B_SEC);
+        it("migrates a real boarding UTXO with no cutoff (DUE_NOW)", {
+            timeout: 240_000,
+        }, async () => {
+            const fromX = await xonly(A_SEC);
+            const toX = await xonly(B_SEC);
 
-                const wallet = await makeWallet(useMnemonic);
-                try {
-                    // Check contracts after migration
-                    const contractManager = await wallet.getContractManager();
-                    const before = await contractManager.getContracts();
-                    expect(before.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
-                    expect(before.filter((c) => c.type === "boarding")).toHaveLength(1);
-                    expect(before.filter((c) => c.type === "default")).toHaveLength(1);
-                    expect(before.filter((c) => c.state === "active")).toHaveLength(2);
-                    expect(before).toHaveLength(2);
+            const wallet = await makeWallet(useMnemonic);
+            try {
+                // Check contracts after migration
+                const contractManager = await wallet.getContractManager();
+                const before = await contractManager.getContracts();
+                expect(before.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
+                expect(before.filter((c) => c.type === "boarding")).toHaveLength(1);
+                expect(before.filter((c) => c.type === "default")).toHaveLength(1);
+                expect(before.filter((c) => c.state === "active")).toHaveLength(2);
+                expect(before).toHaveLength(2);
 
-                    expect(hex.encode(wallet.arkServerPublicKey)).toBe(fromX);
+                expect(hex.encode(wallet.arkServerPublicKey)).toBe(fromX);
 
-                    // Fund a real confirmed boarding UTXO under A (no VTXO — isolates
-                    // the boarding-input migration path from the VTXO one).
-                    const amount = 100_000;
-                    faucetOnchain(await wallet.getBoardingAddress(), amount);
-                    await waitFor(
-                        async () => {
-                            const u = await wallet.getBoardingUtxos();
-                            return u.length >= 1 && u.every((c) => c.status.confirmed);
-                        },
-                        { timeout: 30_000, interval: 2000 },
-                    );
-                    const boarding = await wallet.getBoardingUtxos();
-                    expect(boarding).toHaveLength(1);
-                    expect(boarding[0].value).toBe(amount);
+                // Fund a real confirmed boarding UTXO under A (no VTXO — isolates
+                // the boarding-input migration path from the VTXO one).
+                const amount = 100_000;
+                faucetOnchain(await wallet.getBoardingAddress(), amount);
+                await waitFor(
+                    async () => {
+                        const u = await wallet.getBoardingUtxos();
+                        return u.length >= 1 && u.every((c) => c.status.confirmed);
+                    },
+                    { timeout: 30_000, interval: 2000 },
+                );
+                const boarding = await wallet.getBoardingUtxos();
+                expect(boarding).toHaveLength(1);
+                expect(boarding[0].value).toBe(amount);
 
-                    await rotateArkdSigner({
-                        activeSignerPriv: B_SEC,
-                        deprecatedSigners: [A_SEC],
-                    });
+                await rotateArkdSigner({
+                    activeSignerPriv: B_SEC,
+                    deprecatedSigners: [A_SEC],
+                });
 
-                    const vtxoManager = await wallet.getVtxoManager();
+                const vtxoManager = await wallet.getVtxoManager();
 
-                    // Wait for the wallet to re-track the boarding UTXO after arkd's
-                    // restart (its SSE subscription reconnects) before discovery /
-                    // migration, so this doesn't race the reconnect.
-                    await poll(async () => {
-                        const s = await vtxoManager.getDeprecatedSignerStatus();
-                        return s.some((x) => x.vtxoCount > 0 || x.boardingCount > 0) ? s : null;
-                    });
+                // Wait for the wallet to re-track the boarding UTXO after arkd's
+                // restart (its SSE subscription reconnects) before discovery /
+                // migration, so this doesn't race the reconnect.
+                await poll(async () => {
+                    const s = await vtxoManager.getDeprecatedSignerStatus();
+                    return s.some((x) => x.vtxoCount > 0 || x.boardingCount > 0) ? s : null;
+                });
 
-                    // Discovery (REAL): the stale boarding UTXO under A is DUE_NOW.
-                    const status = await vtxoManager.getDeprecatedSignerStatus();
-                    expect(status).toHaveLength(1);
-                    expect(status[0]).toMatchObject({
-                        signerPubKey: fromX,
-                        status: "DUE_NOW",
-                        vtxoCount: 0,
-                        totalValue: 0,
-                        boardingCount: 1,
-                        boardingValue: amount,
-                    });
-                    expect(status[0].cutoffDate).toBeUndefined();
+                // Discovery (REAL): the stale boarding UTXO under A is DUE_NOW.
+                const status = await vtxoManager.getDeprecatedSignerStatus();
+                expect(status).toHaveLength(1);
+                expect(status[0]).toMatchObject({
+                    signerPubKey: fromX,
+                    status: "DUE_NOW",
+                    vtxoCount: 0,
+                    totalValue: 0,
+                    boardingCount: 1,
+                    boardingValue: amount,
+                });
+                expect(status[0].cutoffDate).toBeUndefined();
 
-                    // Per the arkd reference (TestDeprecatedSignerKey / "boarding"), a
-                    // boarding UTXO locked to a not-yet-expired deprecated signer must
-                    // still be cooperatively settleable — exactly like a VTXO. The
-                    // wallet rotates its receive state to the active signer, then
-                    // migrates the boarding input into a fresh VTXO under B.
-                    const stale = `${boarding[0].txid}:${boarding[0].vout}`;
-                    const report = await vtxoManager.migrateDeprecatedSignerVtxos();
-                    expect(report.rotated).toBe(true);
-                    expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
-                    // Boarding migrates through its OWN settle leg (separate from
-                    // the send-based VTXO leg); its txid is a settle commitment.
-                    expect(report.vtxos).toBeUndefined();
-                    expect(report.boarding?.txid).toBeDefined();
-                    expect(report.boarding?.error).toBeUndefined();
-                    expect(report.boarding?.skipped).toBeUndefined();
-                    expect(report.skipped).toBeUndefined();
-                    expect(report.expired).toEqual([]);
-                    expect(report.boarding?.migrated.map((m) => `${m.txid}:${m.vout}`)).toContain(
-                        stale,
-                    );
+                // Per the arkd reference (TestDeprecatedSignerKey / "boarding"), a
+                // boarding UTXO locked to a not-yet-expired deprecated signer must
+                // still be cooperatively settleable — exactly like a VTXO. The
+                // wallet rotates its receive state to the active signer, then
+                // migrates the boarding input into a fresh VTXO under B.
+                const stale = `${boarding[0].txid}:${boarding[0].vout}`;
+                const report = await vtxoManager.migrateDeprecatedSignerVtxos();
+                expect(report.rotated).toBe(true);
+                expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
+                // Boarding migrates through its OWN settle leg (separate from
+                // the send-based VTXO leg); its txid is a settle commitment.
+                expect(report.vtxos).toBeUndefined();
+                expect(report.boarding?.txid).toBeDefined();
+                expect(report.boarding?.error).toBeUndefined();
+                expect(report.boarding?.skipped).toBeUndefined();
+                expect(report.skipped).toBeUndefined();
+                expect(report.expired).toEqual([]);
+                expect(report.boarding?.migrated.map((m) => `${m.txid}:${m.vout}`)).toContain(
+                    stale,
+                );
 
-                    // The migration settle spends the boarding UTXO on-chain; its
-                    // disappearance from deprecated-signer discovery depends on the
-                    // commitment tx confirming + being indexed, so we don't assert it
-                    // here (the reference only asserts the settle succeeds). The
-                    // deterministic post-conditions — receive state moved to B and the
-                    // boarding outpoint reported as migrated — are checked above.
+                // The migration settle spends the boarding UTXO on-chain; its
+                // disappearance from deprecated-signer discovery depends on the
+                // commitment tx confirming + being indexed, so we don't assert it
+                // here (the reference only asserts the settle succeeds). The
+                // deterministic post-conditions — receive state moved to B and the
+                // boarding outpoint reported as migrated — are checked above.
 
-                    // Check contracts after migration
-                    const after = await contractManager.getContracts();
-                    expect(after.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
-                    expect(after.filter((c) => c.params.serverPubKey === B_PUB)).toHaveLength(2);
-                    expect(after.filter((c) => c.type === "boarding")).toHaveLength(2);
-                    expect(after.filter((c) => c.type === "default")).toHaveLength(2);
-                    expect(after.filter((c) => c.state === "active")).toHaveLength(4);
-                } finally {
-                    await wallet.dispose();
-                }
-            },
-        );
+                // Check contracts after migration
+                const after = await contractManager.getContracts();
+                expect(after.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
+                expect(after.filter((c) => c.params.serverPubKey === B_PUB)).toHaveLength(2);
+                expect(after.filter((c) => c.type === "boarding")).toHaveLength(2);
+                expect(after.filter((c) => c.type === "default")).toHaveLength(2);
+                expect(after.filter((c) => c.state === "active")).toHaveLength(4);
+            } finally {
+                await wallet.dispose();
+            }
+        });
     }
 });

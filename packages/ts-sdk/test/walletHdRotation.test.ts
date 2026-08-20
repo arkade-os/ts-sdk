@@ -1753,7 +1753,6 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
     function foreignUnrollScript(
         wallet: Awaited<ReturnType<typeof makeStaticBatchWallet>>["wallet"],
     ) {
-        // prettier-ignore
         return CSVMultisigTapscript.encode({
             ...wallet.serverUnrollScript.params,
             pubkeys: [new Uint8Array(32).fill(9)],
