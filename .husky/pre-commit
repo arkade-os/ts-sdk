@@ -1,2 +1,3 @@
-pnpm lint
-pnpm test:unit
+pnpm exec prettier --check config
+pnpm --filter="...[HEAD]" run --if-present lint
+pnpm --filter="...[HEAD]" run --if-present test:unit
