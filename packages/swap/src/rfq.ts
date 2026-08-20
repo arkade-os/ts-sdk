@@ -151,7 +151,8 @@ export type RfqRefusalReason =
     | "exposure_cap"
     | "invoice_expired"
     | "quote_conflict"
-    | "pricing_unavailable";
+    | "pricing_unavailable"
+    | "rate_limited";
 
 /** Lifecycle vocabulary; states after which nothing more will happen. */
 export const RFQ_TERMINAL_STATES = ["settled", "refused", "expired", "refunded", "stuck"] as const;
