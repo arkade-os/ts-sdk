@@ -78,6 +78,7 @@ import type { VirtualCoin } from "../wallet";
 import { getNormalizedVtxos, hasTerminalSpend } from "../wallet";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
+import { toXOnly } from "../utils/keys";
 import {
     assertSubmittedArkTxid,
     buildOffchainTx,
@@ -316,7 +317,7 @@ export class Arkade {
     /** Connect and resolve the server key, checkpoint closure and (if present) the co-signer key. */
     static async connect(opts: ArkadeConnectOptions): Promise<Arkade> {
         const info = await opts.arkade.getInfo();
-        const serverKey = hex.decode(info.signerPubkey).slice(1);
+        const serverKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
         const checkpoint = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
         const network = opts.network ?? DEFAULT_NETWORK;
 
@@ -338,8 +339,7 @@ export class Arkade {
         // and the builder can identify which inputs the wallet signs.
         let userKey: Uint8Array | undefined;
         if (opts.identity) {
-            const pub = await opts.identity.xOnlyPublicKey();
-            userKey = pub.length === 33 ? pub.slice(1) : pub;
+            userKey = toXOnly(await opts.identity.xOnlyPublicKey(), "identity key");
         }
 
         return new Arkade({
