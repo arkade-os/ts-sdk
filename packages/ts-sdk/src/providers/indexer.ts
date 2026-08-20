@@ -103,6 +103,12 @@ export type PaginationOptions = {
     pageSize?: number;
 };
 
+/**
+ * Page size {@link RestIndexerProvider.getVtxos} uses when the caller named no
+ * pagination of its own and it pages the query out itself.
+ */
+export const DEFAULT_VTXO_PAGE_SIZE = 500;
+
 export enum IndexerTxType {
     INDEXER_TX_TYPE_UNSPECIFIED = 0,
     INDEXER_TX_TYPE_RECEIVED = 1,
@@ -716,19 +722,46 @@ export class RestIndexerProvider implements IndexerProvider {
             throw new Error("before must be greater than after");
         }
 
+        // A caller that named no page is asking for the whole answer, but the
+        // server answers with one page of its own choosing, so returning it
+        // verbatim hands back a silent prefix. Page it out here instead: the
+        // result is complete, and `page` is dropped because nothing is left to
+        // ask for.
+        if (opts?.pageIndex === undefined && opts?.pageSize === undefined) {
+            const all: VirtualCoin[] = [];
+            for (let pageIndex = 0; ; pageIndex++) {
+                const { vtxos, page } = await this.fetchVtxosPage({
+                    ...(opts as GetVtxosOptions),
+                    pageIndex,
+                    pageSize: DEFAULT_VTXO_PAGE_SIZE,
+                });
+                all.push(...vtxos);
+                // A short page is the last one; a provider that omits `page`
+                // entirely never paged in the first place.
+                if (!page || vtxos.length < DEFAULT_VTXO_PAGE_SIZE) break;
+            }
+            return { vtxos: all };
+        }
+
+        return this.fetchVtxosPage(opts);
+    }
+
+    private async fetchVtxosPage(
+        opts?: GetVtxosOptions,
+    ): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }> {
         let url = `${this.serverUrl}/v1/indexer/vtxos`;
         const params = new URLSearchParams();
 
         // Handle scripts with multi collection format
-        if (hasScripts) {
-            opts!.scripts!.forEach((script) => {
+        if (opts?.scripts?.length) {
+            opts.scripts.forEach((script) => {
                 params.append("scripts", script);
             });
         }
 
         // Handle outpoints with multi collection format
-        if (hasOutpoints) {
-            opts!.outpoints!.forEach((outpoint) => {
+        if (opts?.outpoints?.length) {
+            opts.outpoints.forEach((outpoint) => {
                 params.append("outpoints", `${outpoint.txid}:${outpoint.vout}`);
             });
         }
