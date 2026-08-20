@@ -1,6 +1,7 @@
 export {
     createOffer,
     cancelOffer,
+    fillOffer,
     encodeOffer,
     decodeOffer,
     offerVtxoScript,
