@@ -640,6 +640,8 @@ swap's *first* record cannot be built from the swap alone. `addSwap`'s `origin` 
 facts arrive, and the manager keeps them for the swap's life. Omit it and one of two things
 happens: the store already holds a record, which *is* the origin, and it is read back; or it does
 not, and you get `RfqSwapOriginRequired` at the door rather than an unwritable record a pass later.
+An origin whose `kind` or `lockupAddress` is not this swap's is refused at that same door, for the
+same reason: the write that would catch it happens a pass later, with the funding broadcast.
 `start(swaps)` applies the same rule and is otherwise unchanged. Restored swaps carry their own.
 
 `restoreFromRepository` returns three disjoint lists, and every stored record is in exactly one.

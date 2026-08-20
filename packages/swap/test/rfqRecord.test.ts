@@ -527,7 +527,12 @@ describe("rfqSwapOriginOf", () => {
         expect(rebuilt.lockupSpendArkTxids).toBeUndefined();
     });
 
-    it("copies the profile rather than aliasing it", () => {
+    it("gives the profile its own top-level object, so a new key does not reach the record", () => {
+        // A shallow copy, deliberately: `profile` is `Record<string, unknown>`
+        // and a consumer owns what goes in it, so `structuredClone` would trade
+        // a nested-aliasing edge case for a throw on any function or class
+        // instance a consumer stored. `createRfqSwapRecord` spreads it the same
+        // way; this is the module's posture, not an oversight here.
         const origin = rfqSwapOriginOf(ended);
         origin.profile.injected = true;
         expect(ended.profile.injected).toBeUndefined();

@@ -98,6 +98,7 @@ import {
 } from "./refund";
 import { lockupContractParams, registerLockupContract } from "./lockupContract";
 import {
+    assertSameSwap,
     createRfqSwapRecord,
     rebuildRfqSwap,
     rfqSwapOriginOf,
@@ -541,6 +542,12 @@ export type SwapContractRegistry = Pick<
  * `repository.ts`, and so a caller with a different backing store — a server
  * process holding many wallets' records in one table — can satisfy it without
  * implementing the offer-swap and markets halves it has no use for.
+ *
+ * Expect TWO calls per dirty swap per poll: `getRfqSwap` then `saveRfqSwap`.
+ * The read is deliberate — the store is the system of record, so a consumer's
+ * own edit to a record's origin half must not be overwritten by a copy the
+ * manager took at boot — but a backend where a keyed read is expensive should
+ * know it is on the write path, not just the restore path.
  */
 export interface RfqSwapRecordStore {
     saveRfqSwap(record: RfqSwapRecord): Promise<void>;
@@ -964,7 +971,17 @@ export class RfqSwapManager {
             // record the store has just dropped is the one thing retention is
             // meant to stop growing.
             this.finished.delete(record.rfqId);
-            this.origins.delete(record.rfqId);
+            // The origin outlives the record for a swap still being monitored.
+            // A stored record can be terminal and retention-aged while its swap
+            // is still tracked: `save` counts a pass as persisted only when
+            // BOTH sinks took it, so a canonical write that landed alongside a
+            // `saveSwap` that keeps rejecting leaves the swap dirty and
+            // monitored with a terminal record ageing behind it. Dropping the
+            // origin there would leave the next pass unable to recreate the
+            // record it just deleted — `originOrThrow` throwing
+            // `RfqSwapOriginRequired` every poll, for a swap the manager is
+            // otherwise driving correctly.
+            if (!this.monitored.has(record.rfqId)) this.origins.delete(record.rfqId);
             dropped.push(record.rfqId);
         }
         return dropped;
@@ -1082,6 +1099,14 @@ export class RfqSwapManager {
      */
     private async admit(swap: RfqSwap, origin?: RfqSwapOrigin): Promise<void> {
         if (origin) {
+            // Checked here, not left to the first write. A `kind` or
+            // `lockupAddress` that disagrees is a programming error either way,
+            // but at the write it surfaces a pass later — the swap monitored,
+            // the funding broadcast — and then keeps surfacing, since the write
+            // path retries a dirty record every poll and this throw is
+            // deterministic. Refusing at the door is the same trade
+            // `RfqSwapOriginRequired` already makes for the missing-origin case.
+            assertSameSwap(origin, swap);
             this.origins.set(swap.rfqId, origin);
             // An origin means a swap the caller is introducing, so the first
             // pass writes it whether or not anything changed. Waiting for a

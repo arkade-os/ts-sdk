@@ -2697,6 +2697,39 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(store.writes).toHaveLength(0);
         });
 
+        it("refuses an origin belonging to a different corridor, at the same door", async () => {
+            // Left to the first write this surfaces a pass later, with the swap
+            // monitored and the funding broadcast — and then keeps surfacing,
+            // since the write path retries a dirty record every poll and the
+            // mismatch throws deterministically. A receive origin projected off
+            // a send swap also writes `expectedAmount: undefined` over the
+            // caller's own value, so the record would be wrong, not just late.
+            const store = fakeStore();
+            const s = spies();
+            const m = manager({ repository: store, now: SAFE_NOW, spies: s });
+
+            await expect(m.addSwap(lightningSwap(), receiveOrigin())).rejects.toThrow(
+                /lightning_receive origin paired with a lightning_send swap/,
+            );
+            expect(await m.hasSwap(RFQ_ID)).toBe(false);
+            expect(store.writes).toHaveLength(0);
+        });
+
+        it("refuses an origin naming a lockup this swap does not watch", async () => {
+            // The quieter half of the same check: the record stores no
+            // `lockupPkScript`, so a restore would derive one from this address
+            // and watch a covenant the swap never had.
+            const store = fakeStore();
+            const s = spies();
+            const m = manager({ repository: store, now: SAFE_NOW, spies: s });
+
+            await expect(
+                m.addSwap(lightningSwap(), sendOrigin({ lockupAddress: RECEIVE_ADDRESS })),
+            ).rejects.toThrow(/not the same swap/);
+            expect(await m.hasSwap(RFQ_ID)).toBe(false);
+            expect(store.writes).toHaveLength(0);
+        });
+
         it("applies the same rule to start(), and tracks nothing when it fails", async () => {
             const store = fakeStore();
             const s = spies();
@@ -2964,6 +2997,49 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(result.pruned).toEqual([RFQ_ID]);
             expect(result.restored).toHaveLength(0);
             expect(result.failed).toHaveLength(0);
+        });
+
+        it("keeps a still-monitored swap's origin, so the next pass can rewrite its record", async () => {
+            // The reachable orphan: `save` counts a pass as persisted only when
+            // BOTH sinks took it, so a canonical write that landed beside a
+            // `saveSwap` that keeps rejecting leaves the swap monitored and
+            // dirty with a TERMINAL record ageing behind it. Retention judges
+            // the stored record, so it retires one the manager is still
+            // driving — and dropping the origin with it would leave every
+            // later pass throwing `RfqSwapOriginRequired` for a swap that was
+            // otherwise fine.
+            const store = fakeStore();
+            const s = spies();
+            s.callbacks.saveSwap = async () => {
+                throw new Error("secondary sink unavailable");
+            };
+            const failures: string[] = [];
+            const m = manager({
+                indexer: settlingIndexer(),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+            m.onSwapFailed((_swap, error) => failures.push(error.message));
+
+            await m.addSwap(lightningSwap(), sendOrigin());
+            await m.poll();
+            expect(store.records.get(RFQ_ID)?.state).toBe("settled");
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
+
+            // The stored record ages past the window while its swap is still
+            // monitored, and retention takes it.
+            store.records.get(RFQ_ID)!.updatedAt = LONG_AGO;
+            expect(await m.pruneRetiredSwaps()).toEqual([RFQ_ID]);
+
+            s.callbacks.saveSwap = async () => {};
+            await m.poll();
+
+            // Recreated from the origin the manager kept, rather than spinning
+            // on a swap whose record could never be written again.
+            expect(store.records.get(RFQ_ID)?.state).toBe("settled");
+            expect(store.records.get(RFQ_ID)?.lockupAddress).toBe(LOCKUP_ADDRESS);
+            expect(failures.some((message) => message.includes("origin"))).toBe(false);
         });
 
         it("is a no-op with no repository wired", async () => {

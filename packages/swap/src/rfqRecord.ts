@@ -179,8 +179,13 @@ const managerState = (swap: PersistableRfqSwap) => ({
  * The origin and the live swap must be halves of one swap.
  *
  * They arrive separately — the origin written from the request result, the swap
- * built by the entry point — and these two functions are the only place both are
- * in hand, so they are the only place the pairing can be checked at all.
+ * built by the entry point — and the record functions below are where both are
+ * in hand, so that is where the pairing can be checked at all.
+ *
+ * Exported so `RfqSwapManager.addSwap` can run the same check at admission
+ * rather than at the first write. The write happens a pass later, by which time
+ * the funding is broadcast and the swap is monitored — the same argument
+ * `RfqSwapOriginRequired` makes for refusing a missing origin at the door.
  *
  * Neither mismatch is loud on its own. A `kind` that disagrees runs the wrong
  * handler's `project`, which casts on kind: a receive origin projected off a
@@ -190,7 +195,7 @@ const managerState = (swap: PersistableRfqSwap) => ({
  * {@link rebuildRfqSwap} derives one from `lockupAddress`, and the restored swap
  * watches a covenant that is not the one this swap was monitoring.
  */
-function assertSameSwap(origin: RfqSwapOrigin, swap: PersistableRfqSwap): void {
+export function assertSameSwap(origin: RfqSwapOrigin, swap: PersistableRfqSwap): void {
     if (origin.kind !== swap.kind) {
         throw new Error(
             `rfq swap record is a ${origin.kind} origin paired with a ${swap.kind} swap`,
