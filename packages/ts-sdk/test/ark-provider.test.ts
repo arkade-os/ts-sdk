@@ -135,16 +135,36 @@ describe("RestArkProvider.getTransactionsStream", () => {
         expect(value.sweepTx.spentVtxos[0].outpoint.txid).toBe("cd".repeat(32));
     });
 
-    it("leaves sweptVtxos absent on the frames that carry none", async () => {
-        const value = await yieldFrame({
-            arkTx: {
+    // The two pre-existing arms now run through the same mapper as sweepTx:
+    // assert the whole frame, so a change to the shared mapping cannot quietly
+    // reshape them, and that neither grows a sweptVtxos the server never sent.
+    it.each(["commitmentTx", "arkTx"] as const)(
+        "maps a %s frame unchanged, with no sweptVtxos to carry",
+        async (arm) => {
+            const checkpointTxs = { ["12".repeat(32)]: { txid: "12".repeat(32), tx: "0201" } };
+            const value = await yieldFrame({
+                [arm]: {
+                    txid: "ab".repeat(32),
+                    tx: "0200",
+                    spentVtxos: [vtxo("cd".repeat(32))],
+                    spendableVtxos: [vtxo("ef".repeat(32))],
+                    checkpointTxs,
+                },
+            });
+
+            expect(Object.keys(value)).toEqual([arm]);
+            expect(value[arm]).toEqual({
                 txid: "ab".repeat(32),
                 tx: "0200",
-                spentVtxos: [],
-                spendableVtxos: [],
-            },
-        });
-
-        expect(value.arkTx).not.toHaveProperty("sweptVtxos");
-    });
+                spentVtxos: [
+                    expect.objectContaining({ outpoint: { txid: "cd".repeat(32), vout: 0 } }),
+                ],
+                spendableVtxos: [
+                    expect.objectContaining({ outpoint: { txid: "ef".repeat(32), vout: 0 } }),
+                ],
+                checkpointTxs,
+            });
+            expect(value[arm]).not.toHaveProperty("sweptVtxos");
+        },
+    );
 });
