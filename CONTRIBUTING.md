@@ -12,11 +12,19 @@ pnpm run test:integration              # Every package, end-to-end
 pnpm run test:integration:ts-sdk       # ts-sdk only
 pnpm run test:integration:boltz-swap   # boltz-swap only
 pnpm run test:integration:swap         # swap only
+pnpm run test:integration:swap-rfq     # swap's RFQ corridor only
 ```
+
+Each package's stack is configured by its own env file — `packages/<pkg>/.env.regtest` — except
+`swap-rfq`, which is a second profile of the `swap` package configured by
+`packages/swap/.env.regtest.rfq`. The two swap corridors need opposite arkd timelock *types* —
+block-typed for offers, seconds-typed for RFQ — and one arkd cannot serve both, so each profile gets
+its own stack. They share ports, so only one can be up at a time locally; CI runs them as separate
+matrix jobs.
 
 ### Per-package stack control
 
-Replace `:ts-sdk` with `:boltz-swap` or `:swap` for the other packages.
+Replace `:ts-sdk` with `:boltz-swap`, `:swap`, or `:swap-rfq` for the other packages.
 
 ```bash
 pnpm run regtest:up:ts-sdk
@@ -54,7 +62,11 @@ pnpm run release:dry-run -- sdk patch         # Preview without changes
 pnpm run release:cleanup                      # Auto-detect dirty release artifacts
 ```
 
-Tags are `@arkade-os/<package>/<version>` — e.g. `@arkade-os/sdk/0.4.57` (no `v<version>`).
+Tags are `<package-name>/<version>` — e.g. `@arkade-os/sdk/0.4.57` (no `v<version>`).
+
+Bumps accept `patch | minor | major | prepatch | preminor | premajor | prerelease` or a literal
+semver such as `0.5.0-beta.0`. Prerelease bumps require `--preid alpha|beta|rc|next`, and publish
+under a matching npm dist-tag — never `latest`.
 
 Releasing SDK implies a dependent release of every package that depends on it via `workspace:*`
 (`boltz-swap` and `swap`), because pnpm rewrites `workspace:*` to an exact version on publish, so a
@@ -63,6 +75,12 @@ with `--boltz-bump` / `--swap-bump <bump-or-version>`.
 
 The script runs tests, builds, commits, tags, publishes to npm (requires local npm credentials),
 and pushes commit + tags to `origin`.
+
+`release:cleanup` restores the selected package manifests and deletes the matching **local** tags —
+nothing else. It never deletes remote tags and never resets commits, so if the release commit was
+already created, inspect `git log` and undo it yourself (e.g. `git reset --hard HEAD~1`) before
+retrying. With no target it auto-detects from release state or dirty manifests; pass one to narrow
+it (`pnpm run release:cleanup -- sdk`).
 
 Stable versions must be released from `master`; prereleases may come from any branch.
 `--allow-any-branch` is the escape hatch for a stable release off a feature branch — the release

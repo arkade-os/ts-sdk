@@ -62,6 +62,7 @@ export {
     RFQ_SWAP_RETENTION_SECONDS,
     createRfqSwapRecord,
     rebuildRfqSwap,
+    rfqSwapOriginOf,
     shouldRetainRfqSwap,
     updateRfqSwapRecord,
     type LockupParams,
@@ -194,6 +195,7 @@ export {
     type RefundIndexer,
     type RefundOutcome,
 } from "./refund";
+export { arkadeRefunder, type ArkadeRefunderDeps } from "./arkadeRefunder";
 export {
     LockupContractMissing,
     LockupRegistrationFailed,
@@ -208,6 +210,7 @@ export {
 export {
     RFQ_SWAP_TERMINAL_STATES,
     RfqSwapManager,
+    RfqSwapOriginRequired,
     isRfqSwapTerminal,
     nextOnchainAction,
     type ArkadeRefundResult,
@@ -216,6 +219,9 @@ export {
     type LightningSendSwap,
     type OnchainSendAction,
     type OnchainSendSwap,
+    type RfqRestoreFailure,
+    type RfqRestoreOptions,
+    type RfqRestoreResult,
     type RfqSwap,
     type RfqSwapActionName,
     type RfqSwapLockup,
@@ -224,7 +230,13 @@ export {
     type RfqSwapManagerDeps,
     type RfqSwapManagerEvents,
     type RfqSwapOutcome,
+    type RfqSwapRecordStore,
     type RfqSwapState,
     type SwapContractRegistry,
 } from "./swapManager";
-export { swapActivityResolver, type SwapActivityInput } from "./activity";
+export {
+    rfqSwapActivityInputs,
+    swapActivityResolver,
+    type RfqSwapActivityDeps,
+    type SwapActivityInput,
+} from "./activity";

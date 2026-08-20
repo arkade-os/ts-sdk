@@ -1,6 +1,17 @@
 import { describe, it, expect } from "vitest";
 import type { ArkTransaction } from "@arkade-os/sdk";
-import { swapActivityResolver, type SwapActivityInput } from "../src/activity";
+import {
+    rfqSwapActivityInputs,
+    swapActivityResolver,
+    type SwapActivityInput,
+} from "../src/activity";
+import { InMemoryAssetSwapRepository } from "../src/repository";
+import type { LockupSpendIndexer } from "../src/refund";
+import type { RfqSwapRecord } from "../src/rfqRecord";
+import { lightningSendVtxoScript } from "../src/rfq";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { hex } from "@scure/base";
 
 const tx = (arkTxid: string): ArkTransaction =>
     ({
@@ -130,5 +141,175 @@ describe("swapActivityResolver", () => {
         const resolver = swapActivityResolver({ listSwaps: async () => [] });
 
         expect(resolver.resolve(tx("fund"))).toBeUndefined();
+    });
+});
+
+describe("rfqSwapActivityInputs", () => {
+    const key = (fill: number) => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
+    const p2tr = (program: Uint8Array) => Uint8Array.from([0x51, 0x20, ...program]);
+    /** A real lockup address: the helper decodes it to ask the indexer, so a
+     * made-up one would exercise the wrong branch. */
+    const LOCKUP_ADDRESS = lightningSendVtxoScript({
+        solverPubkey: key(1),
+        serverPubkey: key(3),
+        paymentHash: hex.encode(sha256(new Uint8Array(32).fill(7))),
+        refundLocktime: 1_800_000_000,
+        claimDelay: 4096,
+        emulatorPubkey: key(9),
+        refundPkScript: p2tr(key(5)),
+        senderPubkey: key(13),
+        receiverPkScript: p2tr(key(1)),
+    })
+        .address("tark", key(3))
+        .encode();
+
+    const record = (over: Partial<RfqSwapRecord> = {}): RfqSwapRecord => ({
+        rfqId: "r1",
+        kind: "lightning_send",
+        state: "settled",
+        lockupAddress: LOCKUP_ADDRESS,
+        profile: {
+            signer: { signingDescriptor: `tr(${"a7".repeat(32)})` },
+            hashlock: { paymentHash: "d4".repeat(32) },
+        },
+        createdAt: 1,
+        updatedAt: 1,
+        ...over,
+    });
+
+    const storeOf = async (...records: RfqSwapRecord[]) => {
+        const repository = new InMemoryAssetSwapRepository();
+        for (const r of records) await repository.saveRfqSwap(r);
+        return repository;
+    };
+
+    /** Everything at the lockup, as the fate read shapes it. */
+    const fakeIndexer = (
+        vtxos: { txid: string; arkTxId?: string }[],
+        over: { fail?: boolean } = {},
+    ) =>
+        ({
+            async getVtxos() {
+                if (over.fail) throw new Error("indexer unreachable");
+                return { vtxos };
+            },
+        }) as unknown as LockupSpendIndexer;
+
+    it("flattens a send record's own txids without asking anyone", async () => {
+        const repository = await storeOf(
+            record({ state: "refunded", fundingArkTxid: "fund", refundArkTxid: "refund" }),
+        );
+        expect(await rfqSwapActivityInputs({ repository })).toEqual([
+            { rfqId: "r1", kind: "lightning_send", state: "refunded", txids: ["fund", "refund"] },
+        ]);
+    });
+
+    it("takes each corridor's own claim txid from its handler", async () => {
+        const repository = await storeOf(
+            record({
+                rfqId: "receive",
+                kind: "lightning_receive",
+                fundingArkTxid: "fund",
+                profile: {
+                    signer: { signingDescriptor: `tr(${"a7".repeat(32)})` },
+                    hashlock: { paymentHash: "d4".repeat(32) },
+                    expectedAmount: 1000,
+                    payoutAddress: "tark1qpayout",
+                    claimArkTxid: "claim",
+                },
+            }),
+        );
+        const [input] = await rfqSwapActivityInputs({ repository });
+        expect(input.txids).toEqual(["fund", "claim"]);
+    });
+
+    it("reads the counterparty's spend off the lockup when no refund of ours ended it", async () => {
+        // `settled` means the SOLVER claimed: the transaction that closed the
+        // swap is one no record of ours carries.
+        const repository = await storeOf(record({ fundingArkTxid: "fund" }));
+        const [input] = await rfqSwapActivityInputs({
+            repository,
+            indexer: fakeIndexer([{ txid: "fund", arkTxId: "solver-claim" }]),
+        });
+        expect(input.txids).toEqual(["fund", "solver-claim"]);
+    });
+
+    it("recovers the funding txid of a record written before the field existed", async () => {
+        const repository = await storeOf(record({ state: "pending" }));
+        const [input] = await rfqSwapActivityInputs({
+            repository,
+            indexer: fakeIndexer([{ txid: "fund" }]),
+        });
+        expect(input.txids).toEqual(["fund"]);
+    });
+
+    it("asks nobody when the record answers on its own", async () => {
+        let calls = 0;
+        const counting = {
+            async getVtxos() {
+                calls += 1;
+                return { vtxos: [] };
+            },
+        } as unknown as LockupSpendIndexer;
+        const repository = await storeOf(
+            record({ state: "refunded", fundingArkTxid: "fund", refundArkTxid: "refund" }),
+        );
+        await rfqSwapActivityInputs({ repository, indexer: counting });
+        expect(calls).toBe(0);
+    });
+
+    it("takes the counterparty's spend off the record with no indexer wired at all", async () => {
+        // The offline-first case `lockupSpendArkTxids` exists for: the manager
+        // stamped the solver's claim when it ended the swap, so the txid that
+        // closed it is already stored and nothing has to go to the network.
+        const repository = await storeOf(
+            record({ fundingArkTxid: "fund", lockupSpendArkTxids: ["solver-claim"] }),
+        );
+        const [input] = await rfqSwapActivityInputs({ repository });
+        expect(input.txids).toEqual(["fund", "solver-claim"]);
+    });
+
+    it("asks nobody when the record's own stamp names the spend that ended it", async () => {
+        let calls = 0;
+        const counting = {
+            async getVtxos() {
+                calls += 1;
+                return { vtxos: [] };
+            },
+        } as unknown as LockupSpendIndexer;
+        const repository = await storeOf(
+            record({ fundingArkTxid: "fund", lockupSpendArkTxids: ["solver-claim"] }),
+        );
+        await rfqSwapActivityInputs({ repository, indexer: counting });
+        expect(calls).toBe(0);
+    });
+
+    it("still reads the lockup when the stamp is absent, which is what makes it a fallback", async () => {
+        // A record written before the manager owned persistence carries no
+        // stamp, so the indexer is still the only source for its spend.
+        const repository = await storeOf(record({ fundingArkTxid: "fund" }));
+        const [input] = await rfqSwapActivityInputs({
+            repository,
+            indexer: fakeIndexer([{ txid: "fund", arkTxId: "solver-claim" }]),
+        });
+        expect(input.txids).toEqual(["fund", "solver-claim"]);
+    });
+
+    it("degrades to fewer txids when the indexer is unreachable, never to a throw", async () => {
+        const repository = await storeOf(record({ fundingArkTxid: "fund" }));
+        const [input] = await rfqSwapActivityInputs({
+            repository,
+            indexer: fakeIndexer([], { fail: true }),
+        });
+        expect(input.txids).toEqual(["fund"]);
+    });
+
+    it("groups what it produced, which is the whole point", async () => {
+        const repository = await storeOf(
+            record({ state: "refunded", fundingArkTxid: "fund", refundArkTxid: "refund" }),
+        );
+        const resolver = await preparedResolver(await rfqSwapActivityInputs({ repository }));
+        expect(resolver.resolve(tx("fund"))?.[0].groupId).toBe("swap:r1");
+        expect(resolver.resolve(tx("refund"))?.[0].groupId).toBe("swap:r1");
     });
 });

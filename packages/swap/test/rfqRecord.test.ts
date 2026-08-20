@@ -16,6 +16,7 @@ import {
     RFQ_SWAP_RETENTION_SECONDS,
     createRfqSwapRecord,
     rebuildRfqSwap,
+    rfqSwapOriginOf,
     shouldRetainRfqSwap,
     updateRfqSwapRecord,
     type LockupParams,
@@ -486,5 +487,74 @@ describe("shouldRetainRfqSwap", () => {
         // A swap created long ago but settled a moment ago is fresh history.
         const record = at("settled", 10 * RFQ_SWAP_RETENTION_SECONDS);
         expect(shouldRetainRfqSwap(record, 10 * RFQ_SWAP_RETENTION_SECONDS + 1)).toBe(true);
+    });
+});
+
+/**
+ * The origin projection, and why it is not just `record`.
+ *
+ * A record IS an origin plus manager state, so passing one where an origin is
+ * wanted type-checks — and quietly carries the old state's `failure`,
+ * `blockedReason` and `refundArkTxid` into the next `createRfqSwapRecord`,
+ * where `managerState` cannot clear them because it omits what the live swap
+ * no longer has. That is the same trap `updateRfqSwapRecord` strips those
+ * fields to avoid, and this is the other half of it.
+ */
+describe("rfqSwapOriginOf", () => {
+    const ended: RfqSwapRecord = {
+        ...createRfqSwapRecord(sendOrigin, swapOf(sendOrigin)),
+        state: "failed",
+        failure: "the push was refused",
+        blockedReason: "no signer for this descriptor",
+        refundArkTxid: "ff".repeat(32),
+        lockupSpendArkTxids: ["ab".repeat(32)],
+    };
+
+    it("keeps every request-time fact", () => {
+        const origin = rfqSwapOriginOf(ended);
+        expect(origin.kind).toBe("lightning_send");
+        expect(origin.lockupAddress).toBe(SEND_LOCKUP.address);
+        expect(origin.amount).toBe(sendOrigin.amount);
+        expect(signerOf(origin).signingDescriptor).toBe(signerOf(ended).signingDescriptor);
+    });
+
+    it("drops the manager's state, so a re-create cannot resurrect it", () => {
+        const rebuilt = createRfqSwapRecord(rfqSwapOriginOf(ended), swapOf(sendOrigin));
+        expect(rebuilt.state).toBe("pending");
+        expect(rebuilt.failure).toBeUndefined();
+        expect(rebuilt.blockedReason).toBeUndefined();
+        expect(rebuilt.refundArkTxid).toBeUndefined();
+        expect(rebuilt.lockupSpendArkTxids).toBeUndefined();
+    });
+
+    it("gives the profile its own top-level object, so a new key does not reach the record", () => {
+        // A shallow copy, deliberately: `profile` is `Record<string, unknown>`
+        // and a consumer owns what goes in it, so `structuredClone` would trade
+        // a nested-aliasing edge case for a throw on any function or class
+        // instance a consumer stored. `createRfqSwapRecord` spreads it the same
+        // way; this is the module's posture, not an oversight here.
+        const origin = rfqSwapOriginOf(ended);
+        origin.profile.injected = true;
+        expect(ended.profile.injected).toBeUndefined();
+    });
+});
+
+describe("the spend that ended the swap", () => {
+    it("round-trips through the record and back onto the live swap", () => {
+        const spends = ["ab".repeat(32), "cd".repeat(32)];
+        const swap = { ...swapOf(sendOrigin, "settled"), lockupSpendArkTxids: spends };
+        const record = createRfqSwapRecord(sendOrigin, swap);
+        expect(record.lockupSpendArkTxids).toEqual(spends);
+        expect(rebuildRfqSwap(record, paramsOf(sendOrigin)).lockupSpendArkTxids).toEqual(spends);
+    });
+
+    it("is cleared by an update whose swap no longer carries it", () => {
+        // Same rule as `failure` and `blockedReason`: the mutable half is
+        // REPLACED, so a field the live swap dropped leaves the record.
+        const record = createRfqSwapRecord(sendOrigin, {
+            ...swapOf(sendOrigin, "settled"),
+            lockupSpendArkTxids: ["ab".repeat(32)],
+        });
+        expect(updateRfqSwapRecord(record, swapOf(sendOrigin)).lockupSpendArkTxids).toBeUndefined();
     });
 });
