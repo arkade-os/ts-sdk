@@ -189,6 +189,21 @@ export interface ArkInfo {
      */
     vtxoTreeExpiry?: bigint;
     /**
+     * Weight budget an ark transaction must stay under; the server answers
+     * `TX_TOO_LARGE` past it.
+     *
+     * `undefined` when not advertised — never coerce to `0n`, which reads as a
+     * server that accepts no transaction at all.
+     */
+    maxTxWeight?: bigint;
+    /**
+     * Maximum OP_RETURN outputs the server accepts per transaction.
+     *
+     * `undefined` when not advertised — never coerce to `0n`, which reads as a
+     * server that forbids them outright.
+     */
+    maxOpReturnOutputs?: bigint;
+    /**
      * Maximum boarding input amount.
      *
      * @remarks
@@ -474,6 +489,12 @@ export class RestArkProvider implements ArkProvider {
             unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
             vtxoTreeExpiry:
                 fromServer.vtxoTreeExpiry != null ? BigInt(fromServer.vtxoTreeExpiry) : undefined,
+            maxTxWeight:
+                fromServer.maxTxWeight != null ? BigInt(fromServer.maxTxWeight) : undefined,
+            maxOpReturnOutputs:
+                fromServer.maxOpReturnOutputs != null
+                    ? BigInt(fromServer.maxOpReturnOutputs)
+                    : undefined,
             utxoMaxAmount: BigInt(fromServer.utxoMaxAmount ?? -1),
             utxoMinAmount: BigInt(fromServer.utxoMinAmount ?? 0),
             version: fromServer.version ?? "",

@@ -111,6 +111,38 @@ describe("serializeArkInfoSnapshot / hydrateArkInfo", () => {
         expect(() => parseStoredArkInfoSnapshot(raw)).not.toThrow();
         expect(hydrateArkInfo(parseStoredArkInfoSnapshot(raw)).vtxoTreeExpiry).toBeUndefined();
     });
+
+    it("round-trips the transaction limits when advertised", () => {
+        const info = makeArkInfo({ maxTxWeight: 40_000n, maxOpReturnOutputs: 3n });
+        const snapshot = serializeArkInfoSnapshot(info, 1);
+        expect(snapshot.arkInfo.maxTxWeight).toBe("40000");
+        expect(snapshot.arkInfo.maxOpReturnOutputs).toBe("3");
+        expect(hydrateArkInfo(snapshot)).toEqual({ ...info, serviceStatus: {} });
+    });
+
+    it("keeps the transaction limits undefined when not advertised — never 0n", () => {
+        // 0n would read as a server that accepts no transaction and forbids
+        // OP_RETURN outright, which is the opposite of "did not say".
+        const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 1);
+        expect(hydrateArkInfo(snapshot).maxTxWeight).toBeUndefined();
+        expect(hydrateArkInfo(snapshot).maxOpReturnOutputs).toBeUndefined();
+    });
+
+    it("accepts a snapshot written before the transaction limits existed", () => {
+        const raw = JSON.parse(
+            JSON.stringify(
+                serializeArkInfoSnapshot(
+                    makeArkInfo({ maxTxWeight: 40_000n, maxOpReturnOutputs: 3n }),
+                    1,
+                ),
+            ),
+        );
+        delete raw.arkInfo.maxTxWeight;
+        delete raw.arkInfo.maxOpReturnOutputs;
+        const hydrated = hydrateArkInfo(parseStoredArkInfoSnapshot(raw));
+        expect(hydrated.maxTxWeight).toBeUndefined();
+        expect(hydrated.maxOpReturnOutputs).toBeUndefined();
+    });
 });
 
 describe("parseStoredArkInfoSnapshot", () => {

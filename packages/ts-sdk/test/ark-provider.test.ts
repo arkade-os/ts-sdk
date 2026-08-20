@@ -74,3 +74,31 @@ describe("RestArkProvider.getEventStream", () => {
         await pending.catch(() => {});
     });
 });
+
+describe("RestArkProvider.getInfo transaction limits", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    const infoResponse = (body: Record<string, unknown>) => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => ({ ok: true, json: async () => body })),
+        );
+        return new RestArkProvider("http://ark.test").getInfo();
+    };
+
+    it("reads maxTxWeight and maxOpReturnOutputs off the wire", async () => {
+        const info = await infoResponse({ maxTxWeight: "40000", maxOpReturnOutputs: "3" });
+        expect(info.maxTxWeight).toBe(40_000n);
+        expect(info.maxOpReturnOutputs).toBe(3n);
+    });
+
+    it("leaves them undefined when the operator advertises neither", async () => {
+        // 0n would read as a weight budget of nothing and OP_RETURN forbidden,
+        // which an older arkd is not saying.
+        const info = await infoResponse({});
+        expect(info.maxTxWeight).toBeUndefined();
+        expect(info.maxOpReturnOutputs).toBeUndefined();
+    });
+});
