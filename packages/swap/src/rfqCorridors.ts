@@ -100,6 +100,8 @@ export const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfil
     // We are the claimant here, so the preimage material on the hashlock is
     // ours to use.
     claimSecret: (profile) => ({ ...profile.signer, ...profile.hashlock }),
+
+    activityTxids: (profile) => (profile.claimArkTxid ? [profile.claimArkTxid] : []),
 };
 
 /** `arkade:BTC->onchain:BTC`. */
@@ -257,6 +259,11 @@ export const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
     // The trader claims the L1 HTLC with P, so this leg's preimage material is
     // ours.
     claimSecret: (profile) => ({ ...profile.signer, ...profile.hashlock }),
+
+    // Our own L1 claim only. `funding` is the SOLVER's fill into the HTLC —
+    // not a transaction of ours, so grouping it would claim a row this wallet
+    // never made.
+    activityTxids: (profile) => (profile.claimTxid ? [profile.claimTxid] : []),
 };
 
 rfqCorridorHandlers.register(LightningSendCorridor as RfqCorridorHandler);
