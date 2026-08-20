@@ -131,6 +131,7 @@ export {
     type RfqTransport,
 } from "./rfq";
 export {
+    LOCKTIME_THRESHOLD,
     ONCHAIN_DUST_SATS,
     ONCHAIN_SECONDS_PER_BLOCK,
     awaitOnchainFill,

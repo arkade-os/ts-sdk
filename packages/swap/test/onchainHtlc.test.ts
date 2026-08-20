@@ -14,6 +14,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import * as btc from "@scure/btc-signer";
 
 import {
+    LOCKTIME_THRESHOLD,
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     awaitOnchainFill,
     buildHtlcClaim,
@@ -109,6 +110,24 @@ describe("onchainHtlcScript — golden", () => {
                 "bitcoin",
             ),
         ).toThrow(/positive/);
+    });
+
+    it("rejects a height-shaped refundLocktime, and accepts the boundary itself", () => {
+        // Below BIP65's threshold consensus reads the value as a block height,
+        // so the refund leaf would mature at block ~500 million. 500_000_000 is
+        // 1985-07-05 — a timestamp, and the last value that is one.
+        const params = (refundLocktime: number) => ({
+            paymentHash: PAYMENT_HASH,
+            claimKey: key(1),
+            refundKey: key(3),
+            refundLocktime,
+        });
+        expect(() => onchainHtlcScript(params(499_999_999), "bitcoin")).toThrow(
+            /below LOCKTIME_THRESHOLD/,
+        );
+        expect(onchainHtlcScript(params(LOCKTIME_THRESHOLD), "bitcoin").refundLocktime).toBe(
+            LOCKTIME_THRESHOLD,
+        );
     });
 
     it("rejects a network it cannot build for, rather than defaulting to mainnet", () => {
