@@ -164,10 +164,21 @@ async function activityInputOf(
     if (record.refundArkTxid) txids.add(record.refundArkTxid);
     const handler = rfqCorridorHandlers.getOrThrow(record.kind);
     for (const txid of handler.activityTxids?.(record.profile) ?? []) txids.add(txid);
+    // The manager stamps these from the chain read that ended the swap, which
+    // is why this field exists at all: without it the counterparty's spend
+    // costs a lockup read per terminal swap, on the path least able to afford
+    // one. Drained before the fallback below, so a record that already knows
+    // never reaches the network.
+    for (const txid of record.lockupSpendArkTxids ?? []) txids.add(txid);
 
     // The counterparty's spend is what ended a swap the trader did not refund
     // itself — a solver claim on a send leg, a solver reclaim on a receive one.
-    const spendUnknown = isRfqSwapTerminal(record.state) && !record.refundArkTxid;
+    // Unknown only when neither the trader's own refund nor the manager's stamp
+    // names it.
+    const spendUnknown =
+        isRfqSwapTerminal(record.state) &&
+        !record.refundArkTxid &&
+        !record.lockupSpendArkTxids?.length;
     if (indexer && (!record.fundingArkTxid || spendUnknown)) {
         for (const txid of await lockupTxids(indexer, record, !record.fundingArkTxid)) {
             txids.add(txid);

@@ -61,6 +61,7 @@ export {
     RFQ_SWAP_RETENTION_SECONDS,
     createRfqSwapRecord,
     rebuildRfqSwap,
+    rfqSwapOriginOf,
     shouldRetainRfqSwap,
     updateRfqSwapRecord,
     type LockupParams,
@@ -208,6 +209,7 @@ export {
 export {
     RFQ_SWAP_TERMINAL_STATES,
     RfqSwapManager,
+    RfqSwapOriginRequired,
     isRfqSwapTerminal,
     nextOnchainAction,
     type ArkadeRefundResult,
@@ -216,6 +218,9 @@ export {
     type LightningSendSwap,
     type OnchainSendAction,
     type OnchainSendSwap,
+    type RfqRestoreFailure,
+    type RfqRestoreOptions,
+    type RfqRestoreResult,
     type RfqSwap,
     type RfqSwapActionName,
     type RfqSwapLockup,
@@ -224,6 +229,7 @@ export {
     type RfqSwapManagerDeps,
     type RfqSwapManagerEvents,
     type RfqSwapOutcome,
+    type RfqSwapRecordStore,
     type RfqSwapState,
     type SwapContractRegistry,
 } from "./swapManager";

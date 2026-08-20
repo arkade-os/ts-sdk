@@ -258,6 +258,43 @@ describe("rfqSwapActivityInputs", () => {
         expect(calls).toBe(0);
     });
 
+    it("takes the counterparty's spend off the record with no indexer wired at all", async () => {
+        // The offline-first case `lockupSpendArkTxids` exists for: the manager
+        // stamped the solver's claim when it ended the swap, so the txid that
+        // closed it is already stored and nothing has to go to the network.
+        const repository = await storeOf(
+            record({ fundingArkTxid: "fund", lockupSpendArkTxids: ["solver-claim"] }),
+        );
+        const [input] = await rfqSwapActivityInputs({ repository });
+        expect(input.txids).toEqual(["fund", "solver-claim"]);
+    });
+
+    it("asks nobody when the record's own stamp names the spend that ended it", async () => {
+        let calls = 0;
+        const counting = {
+            async getVtxos() {
+                calls += 1;
+                return { vtxos: [] };
+            },
+        } as unknown as LockupSpendIndexer;
+        const repository = await storeOf(
+            record({ fundingArkTxid: "fund", lockupSpendArkTxids: ["solver-claim"] }),
+        );
+        await rfqSwapActivityInputs({ repository, indexer: counting });
+        expect(calls).toBe(0);
+    });
+
+    it("still reads the lockup when the stamp is absent, which is what makes it a fallback", async () => {
+        // A record written before the manager owned persistence carries no
+        // stamp, so the indexer is still the only source for its spend.
+        const repository = await storeOf(record({ fundingArkTxid: "fund" }));
+        const [input] = await rfqSwapActivityInputs({
+            repository,
+            indexer: fakeIndexer([{ txid: "fund", arkTxId: "solver-claim" }]),
+        });
+        expect(input.txids).toEqual(["fund", "solver-claim"]);
+    });
+
     it("degrades to fewer txids when the indexer is unreachable, never to a throw", async () => {
         const repository = await storeOf(record({ fundingArkTxid: "fund" }));
         const [input] = await rfqSwapActivityInputs({

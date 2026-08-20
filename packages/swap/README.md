@@ -576,8 +576,8 @@ false`, or no callbacks) and the window has passed.
 **The two claim callbacks may be omitted.** `setCallbacks` accepts
 `AvailableRfqSwapManagerCallbacks` — the full contract with `claimOnchain` and `claimLockup`
 optional — so a consumer driving only lightning sends installs neither instead of stubbing them to
-throw. Dispatch is already kind-gated, so neither is reachable there. `refundArkade` and `saveSwap`
-stay required.
+throw. Dispatch is already kind-gated, so neither is reachable there. `saveSwap` is optional too
+(see below); `refundArkade` stays required.
 
 `RfqSwapManagerCallbacks` itself is unchanged and still means "fully wired", so a helper taking one
 and calling `claimOnchain` keeps its guarantee; only the parameter widens, which every existing
@@ -604,6 +604,71 @@ manager.setCallbacks({
 
 Keep the covenant on the swap (`request*`'s `script`, as a record's `lockup`): the refund is built
 from it, and a swap carrying only `lockupPkScript` is refused rather than pushed.
+
+### Let the manager own the records
+
+Give `RfqSwapManager` a `repository` and it persists RFQ swaps itself — the restore loop, the
+retention pass and every write, none of which a consumer has to compose:
+
+```ts
+const manager = new RfqSwapManager({
+    indexer,
+    contracts: await wallet.getContractManager(),
+    repository, // any AssetSwapRepository
+});
+manager.setCallbacks({ refundArkade, claimLockup });
+
+// Rebuild what was stored: retention first, then each record's covenant from
+// its own contract row, then `rebuildRfqSwap`. No caller input at all.
+const { restored, failed, pruned } = await manager.restoreFromRepository();
+await manager.start();
+
+// A NEW swap arrives with the request-time half a live record cannot carry.
+await manager.addSwap(swap, {
+    kind: "lightning_send",
+    lockupAddress: request.lockupAddress,
+    profile: rfqSecretsProfile(secrets, paymentHash),
+    fundingArkTxid,
+    amount,
+});
+```
+
+That second argument is the whole point. Composing the write by hand runs into an **origin trap**:
+`updateRfqSwapRecord(record, swap)` needs the record that does not exist yet, and
+`createRfqSwapRecord(origin, swap)` needs request-time facts the live swap never carried — so a
+swap's *first* record cannot be built from the swap alone. `addSwap`'s `origin` is where those
+facts arrive, and the manager keeps them for the swap's life. Omit it and one of two things
+happens: the store already holds a record, which *is* the origin, and it is read back; or it does
+not, and you get `RfqSwapOriginRequired` at the door rather than an unwritable record a pass later.
+An origin whose `kind` or `lockupAddress` is not this swap's is refused at that same door, for the
+same reason: the write that would catch it happens a pass later, with the funding broadcast.
+`start(swaps)` applies the same rule and is otherwise unchanged. Restored swaps carry their own.
+
+`restoreFromRepository` returns three disjoint lists, and every stored record is in exactly one.
+A record that cannot be rebuilt — no contract row (`LockupContractMissing`), covenant params that
+do not derive the funded address, a corridor with no handler — lands in `failed` with its error and
+stays in the store; it never strands the others and it is never silently dropped. `pruned` names
+what retention removed: terminal and more than `RFQ_SWAP_RETENTION_SECONDS` past `updatedAt`, never
+`needs_counterparty`. Retention runs first, so a retired record costs no contract lookup on its way
+out; `pruneRetiredSwaps()` is public for a process that wants it on its own cadence. Pass
+`{ params }` to take covenants from somewhere other than the contract store.
+
+**Two sinks, and both gate.** With a repository wired the canonical `RfqSwapRecord` is written
+first, then `saveSwap` if one is installed, and the pass counts as persisted only when both
+succeeded — which is exactly today's rule for `saveSwap`, applied to whichever sinks exist. A
+rejection from either leaves the record dirty and monitored, so waiters stay unsettled and a
+terminal swap is not finalized until the write it claims lands. A failed canonical write skips
+`saveSwap` entirely: projecting a state the record of record has just refused would put the
+secondary sink ahead of the primary. If your `saveSwap` writes that same repository by hand, delete
+the duplicate when you wire the dep — otherwise every pass writes twice — and keep the callback for
+genuinely secondary sinks. With neither wired, state stays in memory and dies with the process.
+
+**Terminal records name the transaction that ended them.** `RfqSwap.lockupSpendArkTxids` is
+stamped from the chain read that resolved the swap — the solver's claim on a send leg, its reclaim
+on a receive one, the trader's own claim when a receive settles. Nothing local produces those
+transactions, so no other field can name them, and without the stamp the only way to find them is
+another lockup read per terminal swap. Absent when the indexer named the checkpoint but not the ark
+transaction: fewer txids beats a wrong one.
 
 `preimageForSwapRecord` is the read path to wire, not a hand-rolled `contractPreimage` call: it
 knows which of the record's fields are derivation inputs, and it verifies the result against
@@ -689,6 +754,31 @@ through their stored `preimageHex` or their HD descriptor, and `DB_VERSION` is u
 
 Notes from before 0.0.1, kept for consumers who tracked the branch.
 
+- **`RfqSwapManager` can own its own persistence.** New optional
+  `RfqSwapManagerDeps.repository`, new `restoreFromRepository()` and `pruneRetiredSwaps()`, and
+  `addSwap(swap, origin?)` gains an optional second argument. Nothing narrows and nothing is
+  removed, so no existing caller changes: without a repository the manager persists through
+  `saveSwap` exactly as before. Two things to know if you wire it. `saveSwap` becomes a **second**
+  sink rather than the only one — it still gates waiters and finalization, so its semantics are
+  unchanged, but a callback that writes the same repository by hand now double-writes and should
+  drop the duplicate. And `addSwap` for a swap the store has never seen throws
+  `RfqSwapOriginRequired` unless you pass its origin, which is the only way its first record can be
+  written at all.
+- **`saveSwap` is optional at installation**, alongside the two claims — the same
+  `AvailableRfqSwapManagerCallbacks` relaxation extended one field. Omit it with a repository wired
+  and the record store is the only sink; omit both and state is process-local, which is what a
+  manager with no callbacks already did.
+- **`RfqSwap` and `RfqSwapRecord` gained `lockupSpendArkTxids?: string[]`** — the ark transactions
+  that spent the lockup, stamped by the manager from the chain read that ended the swap. Optional
+  and additive: no repository version bump, and a backend storing records whole already carries it.
+- **`RfqSwapState`, `RFQ_SWAP_TERMINAL_STATES` and `isRfqSwapTerminal` moved to
+  `src/rfqSwapState.ts`** so the record layer can read them without importing the manager at
+  runtime. `swapManager.ts` re-exports all three and the package entry point is unchanged, so no
+  import path breaks.
+- **`rfqSwapOriginOf(record)` is new** — a record's immutable half on its own. A record *is* an
+  origin plus manager state, so passing one where an origin is wanted type-checks and quietly
+  carries the old `failure`, `blockedReason` and `refundArkTxid` past `managerState`, which can
+  only set those fields and never clear them. Use this instead of spreading the record.
 - **`arkadeRefunder({ ark, indexer, wallet, repository })` ships the `refundArkade` wiring** that
   was prose in two places. New export, nothing removed.
 - **`rfqSwapActivityInputs({ repository, indexer })` derives `SwapActivityInput[]` from the record
@@ -881,14 +971,18 @@ scanned? })` — the server key is required because a spend is classified by reb
     the contract store can keep its own copy of
     `VHTLCV2ContractHandler.serializeParams(script.options)` and pass that instead; either way the
     params are checked against the record's `lockupAddress` before a swap is handed back, so the wrong
-    row fails at restore rather than at refund time.
+    row fails at restore rather than at refund time. **Superseded** for a consumer that wires
+    `RfqSwapManagerDeps.repository`: `restoreFromRepository()` is this loop, over every stored
+    record, with retention in front of it.
 
-- **Pruning is the consumer's, and nothing here does it for you.** `shouldRetainRfqSwap(record, now)`
-  answers whether a record is still worth keeping — live swaps and `needs_counterparty` always,
-  terminal ones for `RFQ_SWAP_RETENTION_SECONDS` (30 days) after `updatedAt`. Sweep with it at boot
-  and pass the rejects to `removeRfqSwap`; skip it and a hot wallet's `rfqSwaps` store grows without
-  bound. `now` is **unix seconds**, the unit `RfqSwap.updatedAt` carries — `Date.now()` would retire
-  every terminal record after ~43 minutes.
+- **Pruning is the consumer's unless the manager holds the repository.** `shouldRetainRfqSwap(record,
+  now)` answers whether a record is still worth keeping — live swaps and `needs_counterparty`
+  always, terminal ones for `RFQ_SWAP_RETENTION_SECONDS` (30 days) after `updatedAt`. Sweep with it
+  at boot and pass the rejects to `removeRfqSwap`; skip it and a hot wallet's `rfqSwaps` store grows
+  without bound. `now` is **unix seconds**, the unit `RfqSwap.updatedAt` carries — `Date.now()` would
+  retire every terminal record after ~43 minutes. **Superseded** for a consumer that wires
+  `RfqSwapManagerDeps.repository`: `pruneRetiredSwaps()` is that sweep, and
+  `restoreFromRepository()` runs it first.
 - **A write that gates something irreversible throws; one that follows it does not.**
   `addAssetSwap` and `updateAssetSwap` throw on a failed read or write — nothing irreversible may
   happen until the record is durable, which is why `cancelOffer` writes its `cancelling` marker
