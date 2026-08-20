@@ -31,7 +31,7 @@ pnpm run build            # Build all packages (ts-sdk first, then the plugins)
 pnpm test                 # Run all unit and integration tests
 pnpm run test:unit        # Run unit tests across packages
 pnpm run test:integration # Run integration tests across packages against regtest
-pnpm run lint             # Check formatting (prettier)
+pnpm run lint             # Check formatting (biome)
 ```
 
 ### Running a single test
