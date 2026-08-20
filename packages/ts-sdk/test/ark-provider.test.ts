@@ -74,3 +74,77 @@ describe("RestArkProvider.getEventStream", () => {
         await pending.catch(() => {});
     });
 });
+
+describe("RestArkProvider.getTransactionsStream", () => {
+    beforeEach(() => {
+        MockEventSource.reset();
+        vi.stubGlobal("EventSource", MockEventSource);
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    const vtxo = (txid: string) => ({
+        outpoint: { txid, vout: 0 },
+        amount: "1000",
+        script: "51200000",
+        createdAt: "1700000000",
+        expiresAt: null,
+        commitmentTxids: [],
+        isPreconfirmed: false,
+        isSwept: false,
+        isUnrolled: false,
+        isSpent: false,
+        spentBy: "",
+    });
+
+    /** Drive one frame through the stream and return whatever it yielded. */
+    const yieldFrame = async (frame: unknown) => {
+        const provider = new RestArkProvider("http://localhost:7070");
+        const ac = new AbortController();
+        const stream = provider.getTransactionsStream(ac.signal);
+        const next = stream.next();
+        await vi.waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+        MockEventSource.instances[0].emitMessage(JSON.stringify(frame));
+        const result = await next;
+        ac.abort();
+        await stream.return?.(undefined);
+        return result.value;
+    };
+
+    it("yields a sweep_tx frame with the outpoints it swept", async () => {
+        const value = await yieldFrame({
+            sweepTx: {
+                txid: "ab".repeat(32),
+                tx: "0200",
+                spentVtxos: [vtxo("cd".repeat(32))],
+                spendableVtxos: [],
+                sweptVtxos: [{ txid: "ef".repeat(32), vout: 1 }],
+            },
+        });
+
+        expect(value).toEqual({
+            sweepTx: expect.objectContaining({
+                txid: "ab".repeat(32),
+                sweptVtxos: [{ txid: "ef".repeat(32), vout: 1 }],
+            }),
+        });
+        expect(value.sweepTx.spentVtxos[0].outpoint.txid).toBe("cd".repeat(32));
+    });
+
+    it("leaves sweptVtxos absent on the frames that carry none", async () => {
+        const value = await yieldFrame({
+            arkTx: {
+                txid: "ab".repeat(32),
+                tx: "0200",
+                spentVtxos: [],
+                spendableVtxos: [],
+            },
+        });
+
+        expect(value.arkTx).not.toHaveProperty("sweptVtxos");
+    });
+});

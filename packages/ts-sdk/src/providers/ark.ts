@@ -2,6 +2,7 @@ import { TxTreeNode } from "../tree/txTree";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
+import type { Outpoint } from "../wallet";
 import { eventSourceIterator, isEventSourceError } from "./utils";
 import {
     isEventSourceUnavailableError,
@@ -232,6 +233,23 @@ export interface TxNotification {
 
     /** Optional checkpoint transactions associated with the notification. */
     checkpointTxs?: Record<string, { txid: string; tx: string }>;
+
+    /**
+     * Outpoints the transaction swept. Populated on a `sweepTx` notification;
+     * outpoints rather than virtual outputs, because a swept output is gone —
+     * the server has nothing left to describe beyond where it was.
+     */
+    sweptVtxos?: Outpoint[];
+}
+
+/**
+ * One frame of {@link ArkProvider.getTransactionsStream}. Exactly one arm is
+ * set; an unrecognized frame is dropped rather than yielded.
+ */
+export interface TxNotificationEvent {
+    commitmentTx?: TxNotification;
+    arkTx?: TxNotification;
+    sweepTx?: TxNotification;
 }
 
 export interface ArkProvider {
@@ -277,10 +295,7 @@ export interface ArkProvider {
     getEventStream(signal: AbortSignal, topics: string[]): AsyncIterableIterator<SettlementEvent>;
 
     /** Stream transaction notifications emitted by the Arkade server. */
-    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
-        commitmentTx?: TxNotification;
-        arkTx?: TxNotification;
-    }>;
+    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<TxNotificationEvent>;
 
     /** Fetch pending transactions for a signed get-pending-tx intent. */
     getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]>;
@@ -754,10 +769,7 @@ export class RestArkProvider implements ArkProvider {
         return gen;
     }
 
-    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
-        commitmentTx?: TxNotification;
-        arkTx?: TxNotification;
-    }> {
+    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<TxNotificationEvent> {
         const url = `${this.serverUrl}/v1/txs`;
         let iterator: ReturnType<typeof eventSourceIterator> | null = null;
         const closeIterator = () => iterator?.close();
@@ -976,29 +988,17 @@ export class RestArkProvider implements ArkProvider {
 
     protected parseTransactionNotification(
         data: ProtoTypes.GetTransactionsStreamResponse,
-    ): { commitmentTx?: TxNotification; arkTx?: TxNotification } | null {
+    ): TxNotificationEvent | null {
         if (data.commitmentTx) {
-            return {
-                commitmentTx: {
-                    txid: data.commitmentTx.txid,
-                    tx: data.commitmentTx.tx,
-                    spentVtxos: data.commitmentTx.spentVtxos.map(mapVtxo),
-                    spendableVtxos: data.commitmentTx.spendableVtxos.map(mapVtxo),
-                    checkpointTxs: data.commitmentTx.checkpointTxs,
-                },
-            };
+            return { commitmentTx: mapTxNotification(data.commitmentTx) };
         }
 
         if (data.arkTx) {
-            return {
-                arkTx: {
-                    txid: data.arkTx.txid,
-                    tx: data.arkTx.tx,
-                    spentVtxos: data.arkTx.spentVtxos.map(mapVtxo),
-                    spendableVtxos: data.arkTx.spendableVtxos.map(mapVtxo),
-                    checkpointTxs: data.arkTx.checkpointTxs,
-                },
-            };
+            return { arkTx: mapTxNotification(data.arkTx) };
+        }
+
+        if (data.sweepTx) {
+            return { sweepTx: mapTxNotification(data.sweepTx) };
         }
 
         // Skip heartbeat events
@@ -1137,21 +1137,19 @@ namespace ProtoTypes {
         heartbeat?: Heartbeat;
     }
 
+    export interface TxNotificationData {
+        txid: string;
+        tx: string;
+        spentVtxos: VtxoData[];
+        spendableVtxos: VtxoData[];
+        checkpointTxs?: Record<string, { txid: string; tx: string }>;
+        sweptVtxos?: { txid: string; vout: number }[];
+    }
+
     export interface GetTransactionsStreamResponse {
-        commitmentTx?: {
-            txid: string;
-            tx: string;
-            spentVtxos: VtxoData[];
-            spendableVtxos: VtxoData[];
-            checkpointTxs?: Record<string, { txid: string; tx: string }>;
-        };
-        arkTx?: {
-            txid: string;
-            tx: string;
-            spentVtxos: VtxoData[];
-            spendableVtxos: VtxoData[];
-            checkpointTxs?: Record<string, { txid: string; tx: string }>;
-        };
+        commitmentTx?: TxNotificationData;
+        arkTx?: TxNotificationData;
+        sweepTx?: TxNotificationData;
         heartbeat?: Heartbeat;
     }
 
@@ -1202,6 +1200,17 @@ export function isFetchTimeoutError(err: any): boolean {
     };
 
     return checkError(err) || checkError((err as any).cause);
+}
+
+function mapTxNotification(data: ProtoTypes.TxNotificationData): TxNotification {
+    return {
+        txid: data.txid,
+        tx: data.tx,
+        spentVtxos: data.spentVtxos.map(mapVtxo),
+        spendableVtxos: data.spendableVtxos.map(mapVtxo),
+        checkpointTxs: data.checkpointTxs,
+        ...(data.sweptVtxos ? { sweptVtxos: data.sweptVtxos } : {}),
+    };
 }
 
 function mapVtxo(vtxo: ProtoTypes.VtxoData): Vtxo {
