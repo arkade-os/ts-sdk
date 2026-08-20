@@ -10,8 +10,8 @@
  * uncompressed key, stripped of one byte, yields a plausible 32-byte value
  * that is not the key, which surfaces as an address nobody funded.
  *
- * The result may alias `key` rather than copy it; callers that mutate their
- * input must copy first.
+ * The result may alias `key` rather than copy it; callers that mutate either
+ * value after normalization should copy first.
  *
  * @param key - 32-byte x-only or 33-byte compressed public key
  * @param label - Name used in the error, e.g. `"ark signer key"`
