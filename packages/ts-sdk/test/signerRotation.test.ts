@@ -111,6 +111,10 @@ describe("signerRotation - classification", () => {
     it("rejects malformed signer key lengths", () => {
         expect(() => toXOnlySignerHex("aabb")).toThrow(/invalid signer pubkey length/);
     });
+
+    it("rejects malformed compressed signer key prefixes", () => {
+        expect(() => toXOnlySignerHex("00" + "aa".repeat(32))).toThrow(/signer key/);
+    });
 });
 
 describe("RestArkProvider.getInfo - deprecated signer parsing", () => {

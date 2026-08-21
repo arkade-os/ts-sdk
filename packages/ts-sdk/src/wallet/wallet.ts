@@ -89,6 +89,7 @@ import {
     submitOffchainTx,
     type OffchainTxSigner,
 } from "../utils/arkTransaction";
+import { toXOnly } from "../utils/keys";
 import {
     byValueDescending,
     DEFAULT_RENEWAL_CONFIG,
@@ -233,16 +234,6 @@ export const MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD = 1_000;
 // Kept so existing wallets can still discover and spend VTXOs sent to the
 // legacy address after arkd starts advertising a different delay.
 const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
-
-// Normalize a server signer pubkey to the x-only (32-byte) form script
-// encoding requires (CSVMultisigTapscript.encode throws on anything else).
-// A 33-byte compressed key drops its parity prefix; a 32-byte key is already
-// x-only. Mirrors the setup path's `hex.decode(info.signerPubkey).slice(1)`.
-function toXOnlyPubKey(pubkey: Uint8Array): Uint8Array {
-    if (pubkey.length === 33) return pubkey.slice(1);
-    if (pubkey.length === 32) return pubkey;
-    throw new Error(`invalid signer pubkey length: expected 32 or 33, got ${pubkey.length}`);
-}
 
 function delayToTimelock(delay: bigint): RelativeTimelock {
     return {
@@ -1036,17 +1027,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
         };
 
         // Generate tapscripts for offchain and boarding address
-        const serverPubKey = hex.decode(info.signerPubkey).slice(1);
+        const serverPubKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
 
         const delegatePubKey = config.delegateProvider
             ? await config.delegateProvider
                   .getDelegateInfo()
-                  .then((info) => hex.decode(info.pubkey).slice(1))
+                  .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
                   .catch(() => undefined)
             : config.delegatorProvider
               ? await config.delegatorProvider
                     .getDelegateInfo()
-                    .then((info) => hex.decode(info.pubkey).slice(1))
+                    .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
                     .catch(() => undefined)
               : undefined;
 
@@ -2673,7 +2664,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * the stable public API.
      */
     async rotateServerSigner(newServerPubKey: Bytes, checkpointTapscript: string): Promise<void> {
-        const xonly = toXOnlyPubKey(newServerPubKey);
+        const xonly = toXOnly(newServerPubKey, "ark signer key");
 
         // Decode and validate the new epoch's checkpoint script FIRST, before
         // any persistence. The checkpoint script is server-controlled state the
@@ -2945,9 +2936,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // snapshot rather than `this.offchainTapscript.options.serverPubKey`
         // avoids mixing a stale instance signer with fresh history.
         const arkInfo = await this.arkProvider.getInfo();
-        const currentSignerPubKey = toXOnlyPubKey(hex.decode(arkInfo.signerPubkey));
+        const currentSignerPubKey = toXOnly(hex.decode(arkInfo.signerPubkey), "ark signer key");
         const deprecatedSignerPubKeys = arkInfo.deprecatedSigners.map((s) =>
-            toXOnlyPubKey(hex.decode(s.pubkey)),
+            toXOnly(hex.decode(s.pubkey), "deprecated signer key"),
         );
 
         const deps: DiscoveryDeps = {
@@ -3241,7 +3232,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
         // parse the server forfeit address
         // server is expecting funds to be sent to this address
-        const forfeitPubkey = hex.decode(setup.info.forfeitPubkey).slice(1);
+        const forfeitPubkey = toXOnly(hex.decode(setup.info.forfeitPubkey), "forfeit key");
         const forfeitAddress = Address(setup.network).decode(setup.info.forfeitAddress);
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
@@ -4217,9 +4208,11 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     throw new Error("Sweep tap tree root not set");
                 }
 
-                const xOnlyPublicKeys = event.cosignersPublicKeys.map((k) => k.slice(2));
+                const xOnlyPublicKeys = event.cosignersPublicKeys.map((k) =>
+                    hex.encode(toXOnly(hex.decode(k), "cosigner key")),
+                );
                 const signerPublicKey = await session.getPublicKey();
-                const xonlySignerPublicKey = signerPublicKey.subarray(1);
+                const xonlySignerPublicKey = toXOnly(signerPublicKey, "signer key");
 
                 if (!xOnlyPublicKeys.includes(hex.encode(xonlySignerPublicKey))) {
                     // not a cosigner, skip the signing

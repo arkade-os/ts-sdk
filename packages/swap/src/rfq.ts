@@ -54,6 +54,7 @@ import {
     asset,
     getNetwork,
     resolveEmulatorPubkey,
+    toXOnly,
     type IWallet,
     type NetworkName,
 } from "@arkade-os/sdk";
@@ -84,15 +85,6 @@ import {
 } from "@arkade-os/sdk";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
-
-/** Drop the prefix of a 33-byte compressed key; pass an x-only key through. */
-const xOnly = (key: Uint8Array, label: string): Uint8Array => {
-    if (key.length === 32) return key;
-    if (key.length !== 33 || (key[0] !== 0x02 && key[0] !== 0x03)) {
-        throw new Error(`${label} is not a compressed or x-only public key`);
-    }
-    return key.slice(1);
-};
 
 /** Decode a solver-supplied hex field, turning a malformed value (odd length,
  * non-hex chars) into a solver-blaming diagnostic instead of a bare
@@ -907,17 +899,17 @@ export async function requestLightningSend(
         );
     }
 
-    const serverPubkey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
+    const serverPubkey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
     const network = getNetwork(info.network as NetworkName);
     // Named rather than inlined so the exact inputs the covenant was built from
     // can be returned to the caller — see `treeParams` on the return type.
     const treeParams = {
-        solverPubkey: xOnly(hex.decode(quote.solver_pubkey), "solver key"),
+        solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime: quote.refund_locktime,
         serverPubkey,
         paymentHash: params.invoice.paymentHash,
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
-        emulatorPubkey: xOnly(
+        emulatorPubkey: toXOnly(
             hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
             "emulator signer key",
         ),
@@ -1141,7 +1133,7 @@ export function deriveOnchainSend(input: {
     }
 
     const script = lightningSendVtxoScript({
-        solverPubkey: xOnly(hex.decode(quote.solver_pubkey), "solver key"),
+        solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime,
         serverPubkey: input.serverPubkey,
         paymentHash: input.paymentHash,
@@ -1160,7 +1152,7 @@ export function deriveOnchainSend(input: {
     const htlcParams = {
         paymentHash: input.paymentHash,
         claimKey: input.payoutPubkey,
-        refundKey: xOnly(hex.decode(htlcPubkey), "solver L1 htlc key"),
+        refundKey: toXOnly(hex.decode(htlcPubkey), "solver L1 htlc key"),
         refundLocktime: htlcLocktime,
     };
     const htlc = onchainHtlcScript(htlcParams, input.l1Network);
@@ -1296,8 +1288,8 @@ export async function requestOnchainSend(
         quote,
         paymentHash,
         payoutPubkey: params.payoutPubkey,
-        serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: xOnly(
+        serverPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+        emulatorPubkey: toXOnly(
             hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
             "emulator signer key",
         ),
@@ -1591,7 +1583,7 @@ export function deriveLightningReceive(input: {
     // Named rather than inlined so the exact inputs can be handed back — see
     // `treeParams` on the return type.
     const treeParams = {
-        solverPubkey: xOnly(hex.decode(quote.solver_pubkey), "solver key"),
+        solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime,
         serverPubkey: input.serverPubkey,
         paymentHash: input.paymentHash,
@@ -1729,8 +1721,8 @@ export async function requestLightningReceive(
         paymentHash,
         payoutPubkey,
         payoutAddress,
-        serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: xOnly(
+        serverPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+        emulatorPubkey: toXOnly(
             hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
             "emulator signer key",
         ),
@@ -1818,7 +1810,7 @@ export function deriveOnchainReceive(input: {
     }
 
     const script = receiveVtxoScript({
-        solverPubkey: xOnly(hex.decode(quote.solver_pubkey), "solver key"),
+        solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime,
         serverPubkey: input.serverPubkey,
         paymentHash: input.paymentHash,
@@ -1834,7 +1826,7 @@ export function deriveOnchainReceive(input: {
     const htlc = onchainHtlcScript(
         {
             paymentHash: input.paymentHash,
-            claimKey: xOnly(hex.decode(claimPubkey), "solver L1 claim key"),
+            claimKey: toXOnly(hex.decode(claimPubkey), "solver L1 claim key"),
             refundKey: input.refundPubkey,
             refundLocktime: htlcLocktime,
         },
@@ -1944,8 +1936,8 @@ export async function requestOnchainReceive(
         payoutPubkey,
         payoutAddress,
         refundPubkey: params.refundPubkey,
-        serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: xOnly(
+        serverPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+        emulatorPubkey: toXOnly(
             hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
             "emulator signer key",
         ),

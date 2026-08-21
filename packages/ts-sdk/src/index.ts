@@ -505,6 +505,7 @@ import type {
 } from "./contracts/types";
 import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
+import { toXOnly } from "./utils/keys";
 import { buildVersion, sdkVersion, FetchError } from "./utils/fetch";
 import {
     closeDatabase,
@@ -749,6 +750,7 @@ export {
     TxWeightEstimator,
     timelockToSequence,
     sequenceToTimelock,
+    toXOnly,
 
     // Errors
     ArkError,
