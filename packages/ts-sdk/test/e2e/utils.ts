@@ -34,6 +34,7 @@ import type { ExtensionPacket } from "../../src/extension";
 import { hex } from "@scure/base";
 
 export const arkdExec = "docker exec -t arkd";
+export const ARK_SERVER_URL = process.env.ARK_SERVER_URL ?? "http://localhost:7070";
 
 // Regtest Esplora REST API base URL. The arkade-regtest stack runs mempool,
 // which serves the Esplora-compatible REST API under `/api` (the web UI lives
@@ -110,7 +111,7 @@ export async function createTestArkWallet(opts?: {
 
     const wallet = await Wallet.create({
         identity,
-        arkServerUrl: "http://localhost:7070",
+        arkServerUrl: ARK_SERVER_URL,
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
