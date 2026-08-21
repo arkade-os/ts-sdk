@@ -152,6 +152,69 @@ describe("RestIndexerProvider", () => {
             expect(mockFetch).not.toHaveBeenCalled();
         });
 
+        it("pages an unpaged query to exhaustion", async () => {
+            // The server answers with a page of its own choosing, so returning
+            // its first one verbatim hands the caller a silent prefix.
+            const vtxo = (txid: string) => ({
+                outpoint: { txid, vout: 0 },
+                amount: "1000",
+                script: "51200000",
+                createdAt: "1700000000",
+                expiresAt: null,
+                commitmentTxids: [],
+                isPreconfirmed: false,
+                isSwept: false,
+                isUnrolled: false,
+                isSpent: false,
+                spentBy: "",
+            });
+            const fullPage = Array.from({ length: 500 }, (_, i) => vtxo(`page0-${i}`));
+            mockFetch
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () =>
+                        Promise.resolve({
+                            vtxos: fullPage,
+                            page: { current: 0, next: 1, total: 2 },
+                        }),
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () =>
+                        Promise.resolve({
+                            vtxos: [vtxo("page1-0")],
+                            page: { current: 1, next: 1, total: 2 },
+                        }),
+                });
+
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const result = await provider.getVtxos({ scripts: ["script-a"] });
+
+            expect(mockFetch).toHaveBeenCalledTimes(2);
+            expect(result.vtxos).toHaveLength(501);
+            expect(result.vtxos[500].txid).toBe("page1-0");
+            // Nothing is left to ask for, so there is no cursor to hand back.
+            expect(result.page).toBeUndefined();
+
+            const pages = mockFetch.mock.calls.map((call: [string]) =>
+                new URL(call[0]).searchParams.get("page.index"),
+            );
+            expect(pages).toEqual(["0", "1"]);
+        });
+
+        it("leaves a caller-named page alone, cursor included", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ vtxos: [], page: { current: 2, next: 3, total: 9 } }),
+            });
+
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const result = await provider.getVtxos({ scripts: ["script-a"], pageIndex: 2 });
+
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(result.page).toEqual({ current: 2, next: 3, total: 9 });
+        });
+
         it("rejects invalid before/after bounds", async () => {
             const provider = new RestIndexerProvider("http://localhost:7070");
 
