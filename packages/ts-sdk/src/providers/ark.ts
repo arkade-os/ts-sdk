@@ -2,6 +2,7 @@ import { TxTreeNode } from "../tree/txTree";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
+import type { Outpoint } from "../wallet";
 import { eventSourceIterator, isEventSourceError } from "./utils";
 import {
     isEventSourceUnavailableError,
@@ -234,6 +235,30 @@ export interface TxNotification {
     checkpointTxs?: Record<string, { txid: string; tx: string }>;
 }
 
+/**
+ * A `sweepTx` notification. Only a sweep carries swept outpoints, so only this
+ * arm declares them: reading `sweptVtxos` off another arm is a type error, and
+ * a sweep handler never has to narrow the field it came for.
+ */
+export interface SweepTxNotification extends TxNotification {
+    /**
+     * Outpoints the transaction swept — outpoints rather than virtual outputs,
+     * because a swept output is gone: the server has nothing left to describe
+     * beyond where it was. Empty when the sweep touched none of them.
+     */
+    sweptVtxos: Outpoint[];
+}
+
+/**
+ * One frame of {@link ArkProvider.getTransactionsStream}. Exactly one arm is
+ * set; an unrecognized frame is dropped rather than yielded.
+ */
+export interface TxNotificationEvent {
+    commitmentTx?: TxNotification;
+    arkTx?: TxNotification;
+    sweepTx?: SweepTxNotification;
+}
+
 export interface ArkProvider {
     /** Fetch Arkade server configuration and fee settings. */
     getInfo(): Promise<ArkInfo>;
@@ -277,10 +302,7 @@ export interface ArkProvider {
     getEventStream(signal: AbortSignal, topics: string[]): AsyncIterableIterator<SettlementEvent>;
 
     /** Stream transaction notifications emitted by the Arkade server. */
-    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
-        commitmentTx?: TxNotification;
-        arkTx?: TxNotification;
-    }>;
+    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<TxNotificationEvent>;
 
     /** Fetch pending transactions for a signed get-pending-tx intent. */
     getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]>;
@@ -754,10 +776,7 @@ export class RestArkProvider implements ArkProvider {
         return gen;
     }
 
-    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
-        commitmentTx?: TxNotification;
-        arkTx?: TxNotification;
-    }> {
+    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<TxNotificationEvent> {
         const url = `${this.serverUrl}/v1/txs`;
         let iterator: ReturnType<typeof eventSourceIterator> | null = null;
         const closeIterator = () => iterator?.close();
@@ -976,27 +995,22 @@ export class RestArkProvider implements ArkProvider {
 
     protected parseTransactionNotification(
         data: ProtoTypes.GetTransactionsStreamResponse,
-    ): { commitmentTx?: TxNotification; arkTx?: TxNotification } | null {
+    ): TxNotificationEvent | null {
         if (data.commitmentTx) {
-            return {
-                commitmentTx: {
-                    txid: data.commitmentTx.txid,
-                    tx: data.commitmentTx.tx,
-                    spentVtxos: data.commitmentTx.spentVtxos.map(mapVtxo),
-                    spendableVtxos: data.commitmentTx.spendableVtxos.map(mapVtxo),
-                    checkpointTxs: data.commitmentTx.checkpointTxs,
-                },
-            };
+            return { commitmentTx: mapTxNotification(data.commitmentTx) };
         }
 
         if (data.arkTx) {
+            return { arkTx: mapTxNotification(data.arkTx) };
+        }
+
+        if (data.sweepTx) {
+            // proto3 omits an empty repeated field, so an absent `swept_vtxos`
+            // means the sweep took nothing — not that the frame is silent.
             return {
-                arkTx: {
-                    txid: data.arkTx.txid,
-                    tx: data.arkTx.tx,
-                    spentVtxos: data.arkTx.spentVtxos.map(mapVtxo),
-                    spendableVtxos: data.arkTx.spendableVtxos.map(mapVtxo),
-                    checkpointTxs: data.arkTx.checkpointTxs,
+                sweepTx: {
+                    ...mapTxNotification(data.sweepTx),
+                    sweptVtxos: data.sweepTx.sweptVtxos ?? [],
                 },
             };
         }
@@ -1137,21 +1151,19 @@ namespace ProtoTypes {
         heartbeat?: Heartbeat;
     }
 
+    export interface TxNotificationData {
+        txid: string;
+        tx: string;
+        spentVtxos: VtxoData[];
+        spendableVtxos: VtxoData[];
+        checkpointTxs?: Record<string, { txid: string; tx: string }>;
+        sweptVtxos?: { txid: string; vout: number }[];
+    }
+
     export interface GetTransactionsStreamResponse {
-        commitmentTx?: {
-            txid: string;
-            tx: string;
-            spentVtxos: VtxoData[];
-            spendableVtxos: VtxoData[];
-            checkpointTxs?: Record<string, { txid: string; tx: string }>;
-        };
-        arkTx?: {
-            txid: string;
-            tx: string;
-            spentVtxos: VtxoData[];
-            spendableVtxos: VtxoData[];
-            checkpointTxs?: Record<string, { txid: string; tx: string }>;
-        };
+        commitmentTx?: TxNotificationData;
+        arkTx?: TxNotificationData;
+        sweepTx?: TxNotificationData;
         heartbeat?: Heartbeat;
     }
 
@@ -1202,6 +1214,16 @@ export function isFetchTimeoutError(err: any): boolean {
     };
 
     return checkError(err) || checkError((err as any).cause);
+}
+
+function mapTxNotification(data: ProtoTypes.TxNotificationData): TxNotification {
+    return {
+        txid: data.txid,
+        tx: data.tx,
+        spentVtxos: data.spentVtxos.map(mapVtxo),
+        spendableVtxos: data.spendableVtxos.map(mapVtxo),
+        checkpointTxs: data.checkpointTxs,
+    };
 }
 
 function mapVtxo(vtxo: ProtoTypes.VtxoData): Vtxo {
