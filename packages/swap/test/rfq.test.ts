@@ -565,7 +565,9 @@ describe("relayTransport", () => {
                 constructor() {
                     super(reply);
                 }
-            } as unknown as new (url: string) => RelaySocket,
+            } as unknown as new (
+                url: string,
+            ) => RelaySocket,
             timeoutMs: 1000,
         });
 

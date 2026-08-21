@@ -590,28 +590,26 @@ describe("ArkadeSwaps", () => {
                 expect(balanceAfter.available).toBeLessThan(balanceBefore.available - amount);
             });
 
-            it(
-                "should send a Lightning payment with minimal amount",
-                { timeout: 30_000 },
-                async () => {
-                    const { min: amount } = await swaps.getLimits();
-                    const fundAmount = amount + 10;
-                    await fundWallet(fundAmount);
-                    const balanceBefore = await wallet.getBalance();
-                    const { invoice, r_hash } = await getNewLightningInvoice(amount);
+            it("should send a Lightning payment with minimal amount", {
+                timeout: 30_000,
+            }, async () => {
+                const { min: amount } = await swaps.getLimits();
+                const fundAmount = amount + 10;
+                await fundWallet(fundAmount);
+                const balanceBefore = await wallet.getBalance();
+                const { invoice, r_hash } = await getNewLightningInvoice(amount);
 
-                    const result = await swaps.sendLightningPayment({ invoice });
+                const result = await swaps.sendLightningPayment({ invoice });
 
-                    const preimageHash = hex.encode(sha256(hex.decode(result.preimage)));
+                const preimageHash = hex.encode(sha256(hex.decode(result.preimage)));
 
-                    expect(result.amount).toBeGreaterThan(amount);
-                    expect(result.txid).toHaveLength(64);
-                    expect(r_hash).toBe(preimageHash);
-                    expect(balanceBefore.available).toEqual(fundAmount);
-                    const balanceAfter = await wallet.getBalance();
-                    expect(balanceAfter.available).toBeLessThan(balanceBefore.available - amount);
-                },
-            );
+                expect(result.amount).toBeGreaterThan(amount);
+                expect(result.txid).toHaveLength(64);
+                expect(r_hash).toBe(preimageHash);
+                expect(balanceBefore.available).toEqual(fundAmount);
+                const balanceAfter = await wallet.getBalance();
+                expect(balanceAfter.available).toBeLessThan(balanceBefore.available - amount);
+            });
         });
 
         describe("createSubmarineSwap", () => {
@@ -684,31 +682,29 @@ describe("ArkadeSwaps", () => {
         });
 
         describe("refundVHTLC", () => {
-            it(
-                "should automatically refund failed submarine swap",
-                { timeout: 120_000 },
-                async () => {
-                    const amount = 1000;
-                    const fundAmount = amount + 10;
-                    await fundWallet(fundAmount);
+            it("should automatically refund failed submarine swap", {
+                timeout: 120_000,
+            }, async () => {
+                const amount = 1000;
+                const fundAmount = amount + 10;
+                await fundWallet(fundAmount);
 
-                    const res = await getNewLightningInvoice(amount);
-                    await cancelInvoice(res.r_hash);
+                const res = await getNewLightningInvoice(amount);
+                await cancelInvoice(res.r_hash);
 
-                    await expect(
-                        swaps.sendLightningPayment({
-                            invoice: res.invoice,
-                        }),
-                    ).rejects.toThrow();
+                await expect(
+                    swaps.sendLightningPayment({
+                        invoice: res.invoice,
+                    }),
+                ).rejects.toThrow();
 
-                    await sleep(1000);
+                await sleep(1000);
 
-                    const swapHistory = await swaps.getSwapHistory();
-                    expect(swapHistory.length).toBeGreaterThanOrEqual(1);
-                    const failedSwap = swapHistory[0] as BoltzSubmarineSwap;
-                    expect(failedSwap.status).toBe("invoice.failedToPay");
-                },
-            );
+                const swapHistory = await swaps.getSwapHistory();
+                expect(swapHistory.length).toBeGreaterThanOrEqual(1);
+                const failedSwap = swapHistory[0] as BoltzSubmarineSwap;
+                expect(failedSwap.status).toBe("invoice.failedToPay");
+            });
 
             it.skip("should recover swept VHTLCs", { timeout: 120_000 }, async () => {
                 const amount = 1000;
@@ -752,84 +748,82 @@ describe("ArkadeSwaps", () => {
     // ==========================================
 
     describe("Submarine Recovery", () => {
-        it(
-            "should inspect, scan, and recover funds stranded at a failed submarine swap's VHTLC",
-            { timeout: 30_000 },
-            async () => {
-                const amount = 1000;
-                const fundAmount = amount + 100;
-                await fundWallet(fundAmount);
+        it("should inspect, scan, and recover funds stranded at a failed submarine swap's VHTLC", {
+            timeout: 30_000,
+        }, async () => {
+            const amount = 1000;
+            const fundAmount = amount + 100;
+            await fundWallet(fundAmount);
 
-                // Cancel the invoice so any payment attempt by Boltz fails.
-                const { invoice, r_hash } = await getNewLightningInvoice(amount);
-                await cancelInvoice(r_hash);
+            // Cancel the invoice so any payment attempt by Boltz fails.
+            const { invoice, r_hash } = await getNewLightningInvoice(amount);
+            await cancelInvoice(r_hash);
 
-                // Use createSubmarineSwap directly so sendLightningPayment's
-                // catch-block auto-refund doesn't pre-empt us — we want the
-                // funds to remain stranded at the VHTLC so the recovery APIs
-                // have something to act on.
-                const pendingSwap = await swaps.createSubmarineSwap({
-                    invoice,
-                });
-                const balanceBeforeLockup = await wallet.getBalance();
+            // Use createSubmarineSwap directly so sendLightningPayment's
+            // catch-block auto-refund doesn't pre-empt us — we want the
+            // funds to remain stranded at the VHTLC so the recovery APIs
+            // have something to act on.
+            const pendingSwap = await swaps.createSubmarineSwap({
+                invoice,
+            });
+            const balanceBeforeLockup = await wallet.getBalance();
 
-                expect(pendingSwap.response.address).toBeDefined();
+            expect(pendingSwap.response.address).toBeDefined();
 
-                await wallet.send({
-                    address: pendingSwap.response.address!,
-                    amount: pendingSwap.response.expectedAmount,
-                });
+            await wallet.send({
+                address: pendingSwap.response.address!,
+                amount: pendingSwap.response.expectedAmount,
+            });
 
-                // Boltz tries to pay the cancelled invoice → invoice.failedToPay.
-                // Sync the local repo so the recovery APIs see the new status.
-                await waitForSwapStatus(pendingSwap.id, "invoice.failedToPay", 10_000);
-                await swaps.refreshSwapsStatus();
+            // Boltz tries to pay the cancelled invoice → invoice.failedToPay.
+            // Sync the local repo so the recovery APIs see the new status.
+            await waitForSwapStatus(pendingSwap.id, "invoice.failedToPay", 10_000);
+            await swaps.refreshSwapsStatus();
 
-                const failedSwap = (await swaps.getSwapHistory()).find(
-                    (s): s is BoltzSubmarineSwap => s.id === pendingSwap.id,
-                );
-                expect(failedSwap?.status).toBe("invoice.failedToPay");
+            const failedSwap = (await swaps.getSwapHistory()).find(
+                (s): s is BoltzSubmarineSwap => s.id === pendingSwap.id,
+            );
+            expect(failedSwap?.status).toBe("invoice.failedToPay");
 
-                // inspectSubmarineRecovery: pre-CLTV failure with a regular
-                // spendable VTXO at the lockup is recoverable via Boltz 3-of-3.
-                const info = await swaps.inspectSubmarineRecovery(failedSwap!);
-                expect(info.status).toBe("recoverable");
-                expect(info.swap.id).toBe(pendingSwap.id);
-                expect(info.vtxoCount).toBeGreaterThanOrEqual(1);
-                expect(info.amountSats).toBeGreaterThanOrEqual(pendingSwap.response.expectedAmount);
+            // inspectSubmarineRecovery: pre-CLTV failure with a regular
+            // spendable VTXO at the lockup is recoverable via Boltz 3-of-3.
+            const info = await swaps.inspectSubmarineRecovery(failedSwap!);
+            expect(info.status).toBe("recoverable");
+            expect(info.swap.id).toBe(pendingSwap.id);
+            expect(info.vtxoCount).toBeGreaterThanOrEqual(1);
+            expect(info.amountSats).toBeGreaterThanOrEqual(pendingSwap.response.expectedAmount);
 
-                // scanRecoverableSubmarineSwaps: bulk scan should also flag it
-                // as recoverable.
-                const scan = await swaps.scanRecoverableSubmarineSwaps();
-                const scanEntry = scan.find((s) => s.swap.id === pendingSwap.id);
-                expect(scanEntry?.status).toBe("recoverable");
-                expect(scanEntry?.vtxoCount).toBeGreaterThanOrEqual(1);
+            // scanRecoverableSubmarineSwaps: bulk scan should also flag it
+            // as recoverable.
+            const scan = await swaps.scanRecoverableSubmarineSwaps();
+            const scanEntry = scan.find((s) => s.swap.id === pendingSwap.id);
+            expect(scanEntry?.status).toBe("recoverable");
+            expect(scanEntry?.vtxoCount).toBeGreaterThanOrEqual(1);
 
-                // recoverAllSubmarineFunds: sweep the VHTLC and report success
-                // through the per-swap result aggregator.
-                const results = await swaps.recoverAllSubmarineFunds([failedSwap!]);
-                expect(results).toHaveLength(1);
-                expect(results[0]).toMatchObject({
-                    swapId: pendingSwap.id,
-                    recovered: true,
-                    skipped: false,
-                });
-                expect(results[0].error).toBeUndefined();
+            // recoverAllSubmarineFunds: sweep the VHTLC and report success
+            // through the per-swap result aggregator.
+            const results = await swaps.recoverAllSubmarineFunds([failedSwap!]);
+            expect(results).toHaveLength(1);
+            expect(results[0]).toMatchObject({
+                swapId: pendingSwap.id,
+                recovered: true,
+                skipped: false,
+            });
+            expect(results[0].error).toBeUndefined();
 
-                // Funds should land back in the wallet.
-                await waitForBalance(
-                    () => wallet.getBalance(),
-                    balanceBeforeLockup.available - 200,
-                    5_000,
-                );
+            // Funds should land back in the wallet.
+            await waitForBalance(
+                () => wallet.getBalance(),
+                balanceBeforeLockup.available - 200,
+                5_000,
+            );
 
-                // Post-recovery: the lockup VTXO is now spent, so a fresh
-                // inspect classifies the swap as already_spent.
-                const post = await swaps.inspectSubmarineRecovery(failedSwap!);
-                expect(post.status).toBe("already_spent");
-                expect(post.vtxoCount).toBe(0);
-            },
-        );
+            // Post-recovery: the lockup VTXO is now spent, so a fresh
+            // inspect classifies the swap as already_spent.
+            const post = await swaps.inspectSubmarineRecovery(failedSwap!);
+            expect(post.status).toBe("already_spent");
+            expect(post.vtxoCount).toBe(0);
+        });
     });
 
     // ==========================================
@@ -927,78 +921,74 @@ describe("ArkadeSwaps", () => {
                 expect(response.amountToPay).toBeGreaterThan(amountSats);
             });
 
-            it(
-                "should perform Ark to Btc chain swap successfully",
-                { timeout: 10_000 },
-                async () => {
-                    const amountSats = 21000;
-                    const fundAmount = amountSats + 2100;
-                    const btcAddress = await getBtcAddress();
-                    await fundWallet(fundAmount);
-                    const initialArkBalance = await wallet.getBalance();
-                    const initialBtcTxs = await getBtcAddressTxs(btcAddress);
+            it("should perform Ark to Btc chain swap successfully", {
+                timeout: 10_000,
+            }, async () => {
+                const amountSats = 21000;
+                const fundAmount = amountSats + 2100;
+                const btcAddress = await getBtcAddress();
+                await fundWallet(fundAmount);
+                const initialArkBalance = await wallet.getBalance();
+                const initialBtcTxs = await getBtcAddressTxs(btcAddress);
 
-                    const { arkAddress, amountToPay, pendingSwap } = await swaps.arkToBtc({
-                        receiverLockAmount: amountSats,
-                        btcAddress,
-                    });
+                const { arkAddress, amountToPay, pendingSwap } = await swaps.arkToBtc({
+                    receiverLockAmount: amountSats,
+                    btcAddress,
+                });
 
-                    await wallet.send({
-                        address: arkAddress,
-                        amount: amountToPay,
-                    });
+                await wallet.send({
+                    address: arkAddress,
+                    amount: amountToPay,
+                });
 
-                    await swaps.waitAndClaimBtc(pendingSwap);
-                    await waitForBtcTxConfirmation(btcAddress);
+                await swaps.waitAndClaimBtc(pendingSwap);
+                await waitForBtcTxConfirmation(btcAddress);
 
-                    expect(pendingSwap.type).toEqual("chain");
-                    expect(pendingSwap.toAddress).toEqual(btcAddress);
-                    expect(pendingSwap.request.to).toEqual("BTC");
-                    expect(pendingSwap.request.from).toEqual("ARK");
-                    expect(pendingSwap.request.refundPublicKey).toEqual(aliceCompressedPubKey);
+                expect(pendingSwap.type).toEqual("chain");
+                expect(pendingSwap.toAddress).toEqual(btcAddress);
+                expect(pendingSwap.request.to).toEqual("BTC");
+                expect(pendingSwap.request.from).toEqual("ARK");
+                expect(pendingSwap.request.refundPublicKey).toEqual(aliceCompressedPubKey);
 
-                    const finalArkBalance = await wallet.getBalance();
-                    expect(finalArkBalance.available).toBeLessThan(initialArkBalance.available);
+                const finalArkBalance = await wallet.getBalance();
+                expect(finalArkBalance.available).toBeLessThan(initialArkBalance.available);
 
-                    const finalBtcTxs = await getBtcAddressTxs(btcAddress);
-                    expect(initialBtcTxs).toEqual(0);
-                    expect(finalBtcTxs).toEqual(1);
+                const finalBtcTxs = await getBtcAddressTxs(btcAddress);
+                expect(initialBtcTxs).toEqual(0);
+                expect(finalBtcTxs).toEqual(1);
 
-                    const { status } = await swaps.getSwapStatus(pendingSwap.id);
-                    expect(status).toEqual("transaction.claimed");
-                },
-            );
+                const { status } = await swaps.getSwapStatus(pendingSwap.id);
+                expect(status).toEqual("transaction.claimed");
+            });
 
-            it(
-                "should perform a Ark to Btc chain swap with minimal amount",
-                { timeout: 10_000 },
-                async () => {
-                    const { min: amountSats } = await swaps.getLimits("ARK", "BTC");
-                    const fundAmount = amountSats + 2100;
-                    const btcAddress = await getBtcAddress();
-                    await fundWallet(fundAmount);
+            it("should perform a Ark to Btc chain swap with minimal amount", {
+                timeout: 10_000,
+            }, async () => {
+                const { min: amountSats } = await swaps.getLimits("ARK", "BTC");
+                const fundAmount = amountSats + 2100;
+                const btcAddress = await getBtcAddress();
+                await fundWallet(fundAmount);
 
-                    const { arkAddress, amountToPay, pendingSwap } = await swaps.arkToBtc({
-                        receiverLockAmount: amountSats,
-                        btcAddress,
-                    });
+                const { arkAddress, amountToPay, pendingSwap } = await swaps.arkToBtc({
+                    receiverLockAmount: amountSats,
+                    btcAddress,
+                });
 
-                    await wallet.send({
-                        address: arkAddress,
-                        amount: amountToPay,
-                    });
+                await wallet.send({
+                    address: arkAddress,
+                    amount: amountToPay,
+                });
 
-                    await swaps.waitAndClaimBtc(pendingSwap);
-                    await waitForBtcTxConfirmation(btcAddress);
+                await swaps.waitAndClaimBtc(pendingSwap);
+                await waitForBtcTxConfirmation(btcAddress);
 
-                    expect(pendingSwap.type).toEqual("chain");
-                    expect(pendingSwap.request.to).toEqual("BTC");
-                    expect(pendingSwap.request.from).toEqual("ARK");
+                expect(pendingSwap.type).toEqual("chain");
+                expect(pendingSwap.request.to).toEqual("BTC");
+                expect(pendingSwap.request.from).toEqual("ARK");
 
-                    const { status } = await swaps.getSwapStatus(pendingSwap.id);
-                    expect(status).toEqual("transaction.claimed");
-                },
-            );
+                const { status } = await swaps.getSwapStatus(pendingSwap.id);
+                expect(status).toEqual("transaction.claimed");
+            });
         });
 
         describe("createChainSwap (Ark to Btc)", () => {
@@ -1083,43 +1073,41 @@ describe("ArkadeSwaps", () => {
                 expect(btcBalance).toBeGreaterThan(0);
             });
 
-            it(
-                "should automatically refund if Ark to Btc chain swap fails",
-                { timeout: 10_000 },
-                async () => {
-                    const amountSats = 21000;
-                    const fundAmount = 23000;
-                    const sendAmount = 10000;
-                    await fundWallet(fundAmount);
-                    const toAddress = await getBtcAddress();
+            it("should automatically refund if Ark to Btc chain swap fails", {
+                timeout: 10_000,
+            }, async () => {
+                const amountSats = 21000;
+                const fundAmount = 23000;
+                const sendAmount = 10000;
+                await fundWallet(fundAmount);
+                const toAddress = await getBtcAddress();
 
-                    const swap = await swaps.createChainSwap({
-                        to: "BTC",
-                        from: "ARK",
-                        feeSatsPerByte: 1,
-                        senderLockAmount: amountSats,
-                        toAddress,
-                    });
+                const swap = await swaps.createChainSwap({
+                    to: "BTC",
+                    from: "ARK",
+                    feeSatsPerByte: 1,
+                    senderLockAmount: amountSats,
+                    toAddress,
+                });
 
-                    await wallet.send({
-                        address: swap.response.lockupDetails.lockupAddress,
-                        amount: sendAmount,
-                    });
+                await wallet.send({
+                    address: swap.response.lockupDetails.lockupAddress,
+                    amount: sendAmount,
+                });
 
-                    await waitForSwapStatus(swap.id, "transaction.lockupFailed");
+                await waitForSwapStatus(swap.id, "transaction.lockupFailed");
 
-                    const afterSwapBalance = await wallet.getBalance();
+                const afterSwapBalance = await wallet.getBalance();
 
-                    await swaps.refundArk(swap);
+                await swaps.refundArk(swap);
 
-                    await waitForBalance(() => wallet.getBalance(), fundAmount, 2000);
+                await waitForBalance(() => wallet.getBalance(), fundAmount, 2000);
 
-                    const afterRefundBalance = await wallet.getBalance();
+                const afterRefundBalance = await wallet.getBalance();
 
-                    expect(afterSwapBalance.available).toEqual(fundAmount - sendAmount);
-                    expect(afterRefundBalance.available).toEqual(fundAmount);
-                },
-            );
+                expect(afterSwapBalance.available).toEqual(fundAmount - sendAmount);
+                expect(afterRefundBalance.available).toEqual(fundAmount);
+            });
         });
     });
 
@@ -1168,22 +1156,20 @@ describe("ArkadeSwaps", () => {
                 );
             });
 
-            it(
-                "should perform Btc to Ark chain swap successfully",
-                { timeout: 10_000 },
-                async () => {
-                    const amountSats = 21000;
-                    const { btcAddress, amountToPay, pendingSwap } = await swaps.btcToArk({
-                        receiverLockAmount: amountSats,
-                    });
+            it("should perform Btc to Ark chain swap successfully", {
+                timeout: 10_000,
+            }, async () => {
+                const amountSats = 21000;
+                const { btcAddress, amountToPay, pendingSwap } = await swaps.btcToArk({
+                    receiverLockAmount: amountSats,
+                });
 
-                    await fundBtcAddress(btcAddress, amountToPay);
-                    await swaps.waitAndClaimArk(pendingSwap);
+                await fundBtcAddress(btcAddress, amountToPay);
+                await swaps.waitAndClaimArk(pendingSwap);
 
-                    const balance = await wallet.getBalance();
-                    expect(balance.available).toEqual(amountSats);
-                },
-            );
+                const balance = await wallet.getBalance();
+                expect(balance.available).toEqual(amountSats);
+            });
 
             it("should help Boltz claim the HTLC", { timeout: 20_000 }, async () => {
                 const amountSats = 21000;
@@ -1203,22 +1189,20 @@ describe("ArkadeSwaps", () => {
                 await waitForBtcTxClaimed(btcAddress);
             });
 
-            it(
-                "should perform Btc to Ark chain swap with minimal amount",
-                { timeout: 10_000 },
-                async () => {
-                    const { min: amountSats } = await swaps.getLimits("BTC", "ARK");
-                    const { btcAddress, amountToPay, pendingSwap } = await swaps.btcToArk({
-                        receiverLockAmount: amountSats,
-                    });
+            it("should perform Btc to Ark chain swap with minimal amount", {
+                timeout: 10_000,
+            }, async () => {
+                const { min: amountSats } = await swaps.getLimits("BTC", "ARK");
+                const { btcAddress, amountToPay, pendingSwap } = await swaps.btcToArk({
+                    receiverLockAmount: amountSats,
+                });
 
-                    await fundBtcAddress(btcAddress, amountToPay);
-                    await swaps.waitAndClaimArk(pendingSwap);
+                await fundBtcAddress(btcAddress, amountToPay);
+                await swaps.waitAndClaimArk(pendingSwap);
 
-                    const balance = await wallet.getBalance();
-                    expect(balance.available).toEqual(amountSats);
-                },
-            );
+                const balance = await wallet.getBalance();
+                expect(balance.available).toEqual(amountSats);
+            });
         });
 
         describe("createChainSwap (Btc to Ark)", () => {
@@ -1326,29 +1310,27 @@ describe("ArkadeSwaps", () => {
                 expect(result[0]).toEqual(pendingSwap);
             });
 
-            it(
-                "should save submarine swap when sending lightning payment",
-                { timeout: 30_000 },
-                async () => {
-                    const amount = 1000;
-                    const fundAmount = amount + 10;
-                    await fundWallet(fundAmount);
-                    const { invoice } = await getNewLightningInvoice(amount);
+            it("should save submarine swap when sending lightning payment", {
+                timeout: 30_000,
+            }, async () => {
+                const amount = 1000;
+                const fundAmount = amount + 10;
+                await fundWallet(fundAmount);
+                const { invoice } = await getNewLightningInvoice(amount);
 
-                    await swaps.sendLightningPayment({ invoice });
+                await swaps.sendLightningPayment({ invoice });
 
-                    const pendingSwaps = await swaps.getPendingSubmarineSwaps();
-                    expect(pendingSwaps).toHaveLength(0);
+                const pendingSwaps = await swaps.getPendingSubmarineSwaps();
+                expect(pendingSwaps).toHaveLength(0);
 
-                    const swapHistory = await swaps.getSwapHistory();
-                    expect(swapHistory.length).toBeGreaterThanOrEqual(1);
+                const swapHistory = await swaps.getSwapHistory();
+                expect(swapHistory.length).toBeGreaterThanOrEqual(1);
 
-                    const swap = swapHistory[0] as BoltzSubmarineSwap;
-                    expect(swap.status).toBe("transaction.claimed");
-                    expect(swap.request.invoice).toBe(invoice);
-                    expect(swap.type).toBe("submarine");
-                },
-            );
+                const swap = swapHistory[0] as BoltzSubmarineSwap;
+                expect(swap.status).toBe("transaction.claimed");
+                expect(swap.request.invoice).toBe(invoice);
+                expect(swap.type).toBe("submarine");
+            });
         });
 
         describe("getPendingChainSwaps", () => {
@@ -1390,29 +1372,27 @@ describe("ArkadeSwaps", () => {
                 expect(result).toEqual([]);
             });
 
-            it(
-                "should return all swaps sorted by creation date (newest first)",
-                { timeout: 10_000 },
-                async () => {
-                    const { invoice: invoice1 } = await getNewLightningInvoice(1000);
+            it("should return all swaps sorted by creation date (newest first)", {
+                timeout: 10_000,
+            }, async () => {
+                const { invoice: invoice1 } = await getNewLightningInvoice(1000);
 
-                    await swaps.createSubmarineSwap({ invoice: invoice1 });
-                    await sleep(1000);
-                    await swaps.createReverseSwap({ amount: 2000 });
-                    await sleep(1000);
-                    await swaps.createReverseSwap({ amount: 3000 });
+                await swaps.createSubmarineSwap({ invoice: invoice1 });
+                await sleep(1000);
+                await swaps.createReverseSwap({ amount: 2000 });
+                await sleep(1000);
+                await swaps.createReverseSwap({ amount: 3000 });
 
-                    const result = await swaps.getSwapHistory();
-                    expect(result).toHaveLength(3);
-                    expect(result[0].type).toBe("reverse");
-                    expect(result[1].type).toBe("reverse");
-                    expect(result[2].type).toBe("submarine");
+                const result = await swaps.getSwapHistory();
+                expect(result).toHaveLength(3);
+                expect(result[0].type).toBe("reverse");
+                expect(result[1].type).toBe("reverse");
+                expect(result[2].type).toBe("submarine");
 
-                    for (let i = 0; i < result.length - 1; i++) {
-                        expect(result[i].createdAt).toBeGreaterThanOrEqual(result[i + 1].createdAt);
-                    }
-                },
-            );
+                for (let i = 0; i < result.length - 1; i++) {
+                    expect(result[i].createdAt).toBeGreaterThanOrEqual(result[i + 1].createdAt);
+                }
+            });
 
             it("should handle mixed swap types and statuses correctly", async () => {
                 const { invoice } = await getNewLightningInvoice(1000);
@@ -1433,51 +1413,49 @@ describe("ArkadeSwaps", () => {
     // ==========================================
 
     describe("Default wallet settings (VtxoManager enabled)", () => {
-        it(
-            "should receive from Lightning with VtxoManager enabled",
-            { timeout: 15_000 },
-            async () => {
-                const defaultWallet = await Wallet.create({
-                    identity: SingleKey.fromPrivateKey(schnorr.utils.randomSecretKey()),
-                    arkServerUrl: arkUrl,
-                    storage: createWalletStorage(),
-                    // no settlementConfig — VtxoManager enabled by default
+        it("should receive from Lightning with VtxoManager enabled", {
+            timeout: 15_000,
+        }, async () => {
+            const defaultWallet = await Wallet.create({
+                identity: SingleKey.fromPrivateKey(schnorr.utils.randomSecretKey()),
+                arkServerUrl: arkUrl,
+                storage: createWalletStorage(),
+                // no settlementConfig — VtxoManager enabled by default
+            });
+
+            try {
+                const defaultSwaps = new ArkadeSwaps({
+                    wallet: defaultWallet,
+                    swapProvider,
+                    arkProvider: new RestArkProvider(arkUrl),
+                    indexerProvider: new RestIndexerProvider(arkUrl),
+                    swapManager: false,
                 });
 
-                try {
-                    const defaultSwaps = new ArkadeSwaps({
-                        wallet: defaultWallet,
-                        swapProvider,
-                        arkProvider: new RestArkProvider(arkUrl),
-                        indexerProvider: new RestIndexerProvider(arkUrl),
-                        swapManager: false,
-                    });
+                const amount = 1000;
+                const pendingSwap = await defaultSwaps.createReverseSwap({
+                    amount,
+                });
 
-                    const amount = 1000;
-                    const pendingSwap = await defaultSwaps.createReverseSwap({
-                        amount,
-                    });
+                sleep(1000).then(() =>
+                    payInvoice(pendingSwap.response.invoice).catch((err) =>
+                        console.error("Error paying invoice:", err),
+                    ),
+                );
 
-                    sleep(1000).then(() =>
-                        payInvoice(pendingSwap.response.invoice).catch((err) =>
-                            console.error("Error paying invoice:", err),
-                        ),
-                    );
+                const result = await defaultSwaps.waitAndClaim(pendingSwap);
+                expect(result).toHaveProperty("txid");
+                expect(result.txid).toHaveLength(64);
 
-                    const result = await defaultSwaps.waitAndClaim(pendingSwap);
-                    expect(result).toHaveProperty("txid");
-                    expect(result.txid).toHaveLength(64);
-
-                    // With VtxoManager enabled, the just-claimed VTXO can
-                    // briefly disappear from available balance while it's
-                    // being re-registered into the next settlement round.
-                    // Poll instead of asserting on a single snapshot.
-                    await waitForBalance(() => defaultWallet.getBalance(), 1, 10_000);
-                } finally {
-                    await defaultWallet.dispose();
-                }
-            },
-        );
+                // With VtxoManager enabled, the just-claimed VTXO can
+                // briefly disappear from available balance while it's
+                // being re-registered into the next settlement round.
+                // Poll instead of asserting on a single snapshot.
+                await waitForBalance(() => defaultWallet.getBalance(), 1, 10_000);
+            } finally {
+                await defaultWallet.dispose();
+            }
+        });
 
         // TODO: The Indexer Issue
         //
@@ -1503,71 +1481,69 @@ describe("ArkadeSwaps", () => {
         // When generateBlocks(10) runs, the round triggers mid-batch, giving VtxoManager's SSE time to auto-register the
         // settled VTXO for a second round before all 10 blocks are mined. In isolation (no prior block offset),
         // only one round triggers and the VTXO settles cleanly.
-        it.skip(
-            "should send to Lightning with VtxoManager enabled",
-            { timeout: 45_000 },
-            async () => {
-                // When VtxoManager is enabled, its SSE subscription causes
-                // the ARK server to auto-include new VTXOs in the next
-                // scheduled round. We must let that round complete (by
-                // generating blocks) before spending the resulting VTXOs.
-                const defaultWallet = await Wallet.create({
-                    identity: SingleKey.fromPrivateKey(schnorr.utils.randomSecretKey()),
-                    arkServerUrl: arkUrl,
-                    storage: createWalletStorage(),
-                    // default settlementConfig — VtxoManager starts enabled
+        it.skip("should send to Lightning with VtxoManager enabled", {
+            timeout: 45_000,
+        }, async () => {
+            // When VtxoManager is enabled, its SSE subscription causes
+            // the ARK server to auto-include new VTXOs in the next
+            // scheduled round. We must let that round complete (by
+            // generating blocks) before spending the resulting VTXOs.
+            const defaultWallet = await Wallet.create({
+                identity: SingleKey.fromPrivateKey(schnorr.utils.randomSecretKey()),
+                arkServerUrl: arkUrl,
+                storage: createWalletStorage(),
+                // default settlementConfig — VtxoManager starts enabled
+            });
+
+            try {
+                const defaultSwaps = new ArkadeSwaps({
+                    wallet: defaultWallet,
+                    swapProvider,
+                    arkProvider: new RestArkProvider(arkUrl),
+                    indexerProvider: new RestIndexerProvider(arkUrl),
+                    swapManager: false,
                 });
 
-                try {
-                    const defaultSwaps = new ArkadeSwaps({
-                        wallet: defaultWallet,
-                        swapProvider,
-                        arkProvider: new RestArkProvider(arkUrl),
-                        indexerProvider: new RestIndexerProvider(arkUrl),
-                        swapManager: false,
-                    });
+                // Fund the wallet via the shared funded wallet
+                const amount = 1000;
+                const fundAmount = amount + 10;
+                await fundedWallet.send({
+                    address: await defaultWallet.getAddress(),
+                    amount: fundAmount,
+                });
+                await waitForBalance(() => defaultWallet.getBalance(), fundAmount, 5_000);
 
-                    // Fund the wallet via the shared funded wallet
-                    const amount = 1000;
-                    const fundAmount = amount + 10;
-                    await fundedWallet.send({
-                        address: await defaultWallet.getAddress(),
-                        amount: fundAmount,
-                    });
-                    await waitForBalance(() => defaultWallet.getBalance(), fundAmount, 5_000);
+                // Let the server's scheduled round process the auto-
+                // registered VTXO (ARKD_ROUND_INTERVAL=10 blocks).
+                // We poll for settled state rather than sleeping a fixed
+                // duration — on slow CI the round can take longer than
+                // 3 s, leaving VTXOs preconfirmed and causing arkd to
+                // reject the PSBT with INVALID_PSBT_INPUT (5): missing
+                // tapscript spend sig.
+                await sleep(1000);
+                await generateBlocks(10);
+                await waitForSettled(() => defaultWallet.getVtxos(), 15_000);
 
-                    // Let the server's scheduled round process the auto-
-                    // registered VTXO (ARKD_ROUND_INTERVAL=10 blocks).
-                    // We poll for settled state rather than sleeping a fixed
-                    // duration — on slow CI the round can take longer than
-                    // 3 s, leaving VTXOs preconfirmed and causing arkd to
-                    // reject the PSBT with INVALID_PSBT_INPUT (5): missing
-                    // tapscript spend sig.
-                    await sleep(1000);
-                    await generateBlocks(10);
-                    await waitForSettled(() => defaultWallet.getVtxos(), 15_000);
+                // VtxoManager's SSE may have triggered an additional
+                // auto-settlement round, leaving stale VTXOs in the
+                // delta-sync cache.  Clear the cursors so the next
+                // getVtxos() does a full bootstrap and sees only the
+                // current indexer state.
+                await defaultWallet.clearSyncCursor();
 
-                    // VtxoManager's SSE may have triggered an additional
-                    // auto-settlement round, leaving stale VTXOs in the
-                    // delta-sync cache.  Clear the cursors so the next
-                    // getVtxos() does a full bootstrap and sees only the
-                    // current indexer state.
-                    await defaultWallet.clearSyncCursor();
+                const { invoice } = await getNewLightningInvoice(amount);
+                const result = await defaultSwaps.sendLightningPayment({
+                    invoice,
+                });
 
-                    const { invoice } = await getNewLightningInvoice(amount);
-                    const result = await defaultSwaps.sendLightningPayment({
-                        invoice,
-                    });
+                expect(result.txid).toHaveLength(64);
 
-                    expect(result.txid).toHaveLength(64);
-
-                    const balance = await defaultWallet.getBalance();
-                    expect(balance.available).toBeLessThan(fundAmount);
-                } finally {
-                    await defaultWallet.dispose();
-                }
-            },
-        );
+                const balance = await defaultWallet.getBalance();
+                expect(balance.available).toBeLessThan(fundAmount);
+            } finally {
+                await defaultWallet.dispose();
+            }
+        });
     });
 
     describe("Deprecated-signer VHTLC reconstruction", () => {
