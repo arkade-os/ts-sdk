@@ -124,4 +124,82 @@ describe("EsploraProvider", () => {
             );
         });
     });
+
+    describe("getChainTip", () => {
+        const mockBlocks = [
+            { id: "tip-hash", height: 800000, mediantime: 1700000000 },
+            { id: "prev-hash", height: 799999, mediantime: 1699999000 },
+        ];
+        const expectedTip = { hash: "tip-hash", height: 800000, time: 1700000000 };
+
+        it("should fetch the tip from /blocks", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: () => Promise.resolve(mockBlocks),
+            });
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const tip = await provider.getChainTip();
+
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(mockFetch).toHaveBeenCalledWith("http://localhost:3000/blocks");
+            expect(tip).toEqual(expectedTip);
+        });
+
+        it("should fall back to /v1/blocks when /blocks returns 404", async () => {
+            mockFetch
+                .mockResolvedValueOnce({
+                    ok: false,
+                    status: 404,
+                    statusText: "Not Found",
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    status: 200,
+                    json: () => Promise.resolve(mockBlocks),
+                });
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const tip = await provider.getChainTip();
+
+            expect(mockFetch).toHaveBeenNthCalledWith(1, "http://localhost:3000/blocks");
+            expect(mockFetch).toHaveBeenNthCalledWith(2, "http://localhost:3000/v1/blocks");
+            expect(tip).toEqual(expectedTip);
+        });
+
+        it("should throw when the /v1/blocks fallback also fails", async () => {
+            mockFetch
+                .mockResolvedValueOnce({
+                    ok: false,
+                    status: 404,
+                    statusText: "Not Found",
+                })
+                .mockResolvedValueOnce({
+                    ok: false,
+                    status: 404,
+                    statusText: "Not Found",
+                });
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            await expect(provider.getChainTip()).rejects.toThrow(
+                "Failed to get chain tip: Not Found",
+            );
+            expect(mockFetch).toHaveBeenCalledTimes(2);
+        });
+
+        it("should not fall back on non-404 errors", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: false,
+                status: 503,
+                statusText: "Service Unavailable",
+            });
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            await expect(provider.getChainTip()).rejects.toThrow(
+                "Failed to get chain tip: Service Unavailable",
+            );
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+        });
+    });
 });
