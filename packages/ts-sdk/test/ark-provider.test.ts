@@ -135,9 +135,24 @@ describe("RestArkProvider.getTransactionsStream", () => {
         expect(value.sweepTx.spentVtxos[0].outpoint.txid).toBe("cd".repeat(32));
     });
 
+    // proto3 omits an empty repeated field: a sweep that took none of our
+    // outputs still has to answer `sweptVtxos`, or every consumer narrows.
+    it("gives a sweep_tx frame that swept nothing an empty sweptVtxos", async () => {
+        const value = await yieldFrame({
+            sweepTx: {
+                txid: "ab".repeat(32),
+                tx: "0200",
+                spentVtxos: [],
+                spendableVtxos: [],
+            },
+        });
+
+        expect(value.sweepTx.sweptVtxos).toEqual([]);
+    });
+
     // The two pre-existing arms now run through the same mapper as sweepTx:
     // assert the whole frame, so a change to the shared mapping cannot quietly
-    // reshape them, and that neither grows a sweptVtxos the server never sent.
+    // reshape them. `sweptVtxos` is off their type; this guards the runtime.
     it.each(["commitmentTx", "arkTx"] as const)(
         "maps a %s frame unchanged, with no sweptVtxos to carry",
         async (arm) => {

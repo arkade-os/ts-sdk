@@ -233,13 +233,20 @@ export interface TxNotification {
 
     /** Optional checkpoint transactions associated with the notification. */
     checkpointTxs?: Record<string, { txid: string; tx: string }>;
+}
 
+/**
+ * A `sweepTx` notification. Only a sweep carries swept outpoints, so only this
+ * arm declares them: reading `sweptVtxos` off another arm is a type error, and
+ * a sweep handler never has to narrow the field it came for.
+ */
+export interface SweepTxNotification extends TxNotification {
     /**
-     * Outpoints the transaction swept. Populated on a `sweepTx` notification;
-     * outpoints rather than virtual outputs, because a swept output is gone —
-     * the server has nothing left to describe beyond where it was.
+     * Outpoints the transaction swept — outpoints rather than virtual outputs,
+     * because a swept output is gone: the server has nothing left to describe
+     * beyond where it was. Empty when the sweep touched none of them.
      */
-    sweptVtxos?: Outpoint[];
+    sweptVtxos: Outpoint[];
 }
 
 /**
@@ -249,7 +256,7 @@ export interface TxNotification {
 export interface TxNotificationEvent {
     commitmentTx?: TxNotification;
     arkTx?: TxNotification;
-    sweepTx?: TxNotification;
+    sweepTx?: SweepTxNotification;
 }
 
 export interface ArkProvider {
@@ -998,7 +1005,14 @@ export class RestArkProvider implements ArkProvider {
         }
 
         if (data.sweepTx) {
-            return { sweepTx: mapTxNotification(data.sweepTx) };
+            // proto3 omits an empty repeated field, so an absent `swept_vtxos`
+            // means the sweep took nothing — not that the frame is silent.
+            return {
+                sweepTx: {
+                    ...mapTxNotification(data.sweepTx),
+                    sweptVtxos: data.sweepTx.sweptVtxos ?? [],
+                },
+            };
         }
 
         // Skip heartbeat events
@@ -1209,7 +1223,6 @@ function mapTxNotification(data: ProtoTypes.TxNotificationData): TxNotification 
         spentVtxos: data.spentVtxos.map(mapVtxo),
         spendableVtxos: data.spendableVtxos.map(mapVtxo),
         checkpointTxs: data.checkpointTxs,
-        ...(data.sweptVtxos ? { sweptVtxos: data.sweptVtxos } : {}),
     };
 }
 
