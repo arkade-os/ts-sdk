@@ -213,6 +213,8 @@ import {
     SignedIntent,
     Output,
     TxNotification,
+    TxNotificationEvent,
+    SweepTxNotification,
     BatchFinalizationEvent,
     BatchFinalizedEvent,
     BatchFailedEvent,
@@ -300,6 +302,7 @@ import {
     Tx,
     Vtxo,
     PaginationOptions,
+    DEFAULT_VTXO_PAGE_SIZE,
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,
@@ -505,6 +508,7 @@ import type {
 } from "./contracts/types";
 import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
+import { toXOnly } from "./utils/keys";
 import { buildVersion, sdkVersion, FetchError } from "./utils/fetch";
 import {
     closeDatabase,
@@ -605,6 +609,7 @@ export {
     FetchError,
     RestIndexerProvider,
     RestEmulatorProvider,
+    DEFAULT_VTXO_PAGE_SIZE,
 
     // Script-related
     ArkAddress,
@@ -749,6 +754,7 @@ export {
     TxWeightEstimator,
     timelockToSequence,
     sequenceToTimelock,
+    toXOnly,
 
     // Errors
     ArkError,
@@ -899,6 +905,8 @@ export type {
     SignedIntent,
     Output,
     TxNotification,
+    TxNotificationEvent,
+    SweepTxNotification,
     ExplorerTransaction,
     ElectrumTransactionHistory,
     ElectrumBlockHeader,

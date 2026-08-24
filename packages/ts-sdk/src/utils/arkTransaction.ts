@@ -18,6 +18,7 @@ import { Transaction } from "./transaction";
 import { ArkAddress } from "../script/address";
 import { Extension } from "../extension";
 import { ServerResponseMismatchError } from "../providers/errors";
+import { toXOnly } from "./keys";
 
 export type ArkTxInput = {
     // the script used to spend the virtual output
@@ -702,11 +703,7 @@ export async function submitOffchainTx(
             );
         }
         const finalArkTx = Transaction.fromPSBT(base64.decode(response.finalArkTx));
-        const serverPubkeyHex = hex.encode(
-            verify.serverPubkey.length === 33
-                ? verify.serverPubkey.subarray(1)
-                : verify.serverPubkey,
-        );
+        const serverPubkeyHex = hex.encode(toXOnly(verify.serverPubkey, "server key"));
         for (let i = 0; i < offchainTx.arkTx.inputsLength; i++) {
             assertServerSignedLeaf(
                 finalArkTx,
