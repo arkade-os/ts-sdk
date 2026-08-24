@@ -13,6 +13,7 @@
  * against covclaimd's before production use (see the package README).
  */
 import { base64 } from "@scure/base";
+import { gcm } from "@noble/ciphers/aes.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -33,7 +34,7 @@ export interface ClaimPacketInput {
 }
 
 /**
- * Seal a preimage to covclaimd. WebCrypto AES-GCM, hence async.
+ * Seal a preimage to covclaimd.
  *
  * The ephemeral key and nonce are generated here and CANNOT be supplied by a
  * caller. That is the point of this signature: AES-GCM under a repeated
@@ -72,20 +73,7 @@ export async function sealWithEntropy(
     const key = hkdf(sha256, sharedX, ephemeralPub, HKDF_INFO, 32);
 
     if (nonce.length !== 12) throw new Error("nonce must be 12 bytes");
-    const aesKey = await crypto.subtle.importKey("raw", key as BufferSource, "AES-GCM", false, [
-        "encrypt",
-    ]);
-    const sealed = new Uint8Array(
-        await crypto.subtle.encrypt(
-            {
-                name: "AES-GCM",
-                iv: nonce as BufferSource,
-                additionalData: ephemeralPub as BufferSource,
-            },
-            aesKey,
-            input.preimage as BufferSource,
-        ),
-    );
+    const sealed = gcm(key, nonce, ephemeralPub).encrypt(input.preimage);
 
     const packet = new Uint8Array(33 + 12 + sealed.length);
     packet.set(ephemeralPub, 0);
