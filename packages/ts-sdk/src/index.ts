@@ -606,6 +606,7 @@ export {
     FetchError,
     RestIndexerProvider,
     RestEmulatorProvider,
+    DEFAULT_VTXO_PAGE_SIZE,
 
     // Script-related
     ArkAddress,
@@ -914,7 +915,6 @@ export type {
     TreeSignatureEvent,
     ScheduledSession,
     PaginationOptions,
-    DEFAULT_VTXO_PAGE_SIZE,
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,

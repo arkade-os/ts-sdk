@@ -746,6 +746,11 @@ export class RestIndexerProvider implements IndexerProvider {
         return this.fetchVtxosPage(opts);
     }
 
+    /**
+     * Fetch a single page of vtxos. Callers paging to exhaustion get no
+     * deliberate inter-page backoff here: `indexerFetch` already enforces
+     * politeness through the rate gate, so don't add a redundant sleep.
+     */
     private async fetchVtxosPage(
         opts?: GetVtxosOptions,
     ): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }> {

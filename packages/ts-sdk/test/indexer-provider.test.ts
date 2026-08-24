@@ -215,6 +215,44 @@ describe("RestIndexerProvider", () => {
             expect(result.page).toEqual({ current: 2, next: 3, total: 9 });
         });
 
+        it("propagates a server error on a later page of an unpaged query", async () => {
+            const vtxo = (txid: string) => ({
+                outpoint: { txid, vout: 0 },
+                amount: "1000",
+                script: "51200000",
+                createdAt: "1700000000",
+                expiresAt: null,
+                commitmentTxids: [],
+                isPreconfirmed: false,
+                isSwept: false,
+                isUnrolled: false,
+                isSpent: false,
+                spentBy: "",
+            });
+            const fullPage = Array.from({ length: 500 }, (_, i) => vtxo(`page0-${i}`));
+            mockFetch
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () =>
+                        Promise.resolve({
+                            vtxos: fullPage,
+                            page: { current: 0, next: 1, total: 2 },
+                        }),
+                })
+                .mockResolvedValueOnce({
+                    ok: false,
+                    statusText: "Internal Server Error",
+                });
+
+            const provider = new RestIndexerProvider("http://localhost:7070");
+
+            // A partial result must never surface as if it were complete.
+            await expect(provider.getVtxos({ scripts: ["script-a"] })).rejects.toThrow(
+                "Failed to fetch vtxos: Internal Server Error",
+            );
+            expect(mockFetch).toHaveBeenCalledTimes(2);
+        });
+
         it("rejects invalid before/after bounds", async () => {
             const provider = new RestIndexerProvider("http://localhost:7070");
 
