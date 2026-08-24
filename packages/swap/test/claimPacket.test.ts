@@ -4,7 +4,7 @@
  * covclaimd's reference vectors before production use (see the README and
  * TODO(claim-packet-vectors) in the source).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 
@@ -76,6 +76,27 @@ describe("sealClaimPacket", () => {
                 new Uint8Array(11),
             ),
         ).rejects.toThrow(/12 bytes/);
+    });
+
+    // Hermes has no `crypto.subtle`; the suite otherwise runs only where it exists.
+    it("seals without crypto.subtle", async () => {
+        const { getRandomValues } = globalThis.crypto;
+        vi.stubGlobal("crypto", {
+            getRandomValues: getRandomValues.bind(globalThis.crypto),
+        });
+        const packet = await (async () => {
+            try {
+                expect(globalThis.crypto.subtle).toBeUndefined();
+                return await sealClaimPacket({
+                    preimage: PREIMAGE,
+                    covclaimdPubkey: COVCLAIMD_PK,
+                });
+            } finally {
+                vi.unstubAllGlobals();
+            }
+        })();
+        const opened = await openClaimPacket(packet.ciphertext, COVCLAIMD_SK);
+        expect(hex.encode(opened)).toBe(hex.encode(PREIMAGE));
     });
 
     it("fresh randomness per packet: two seals of the same P differ", async () => {

@@ -7,6 +7,11 @@ Node-specific APIs, so it runs in Node, the browser, and React Native alike. Fou
 ship — in-memory (anywhere, nothing outlives the process), IndexedDB (browser), SQLite and Realm
 (React Native, on subpath entry points) — see "Storage backends" below.
 
+The one global the core API requires is `crypto.getRandomValues`. Node and browsers have it;
+React Native does not, so install `react-native-get-random-values` (or `expo-crypto`) and import
+it before this package. `crypto.subtle` is not used. `EventSource` and `WebSocket` are needed only
+by the watch and relay transports, both of which take an injected implementation.
+
 ## Roles
 
 Arkade Intents names two participants:

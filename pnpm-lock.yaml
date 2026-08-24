@@ -97,6 +97,9 @@ importers:
       '@arkade-os/solver-discovery':
         specifier: 0.2.3
         version: 0.2.3
+      '@noble/ciphers':
+        specifier: 2.1.1
+        version: 2.1.1
       '@noble/curves':
         specifier: 2.0.1
         version: 2.0.1
@@ -1602,6 +1605,7 @@ packages:
   '@xmldom/xmldom@0.8.13':
     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   abort-controller@3.0.0:
     resolution: {integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==}
