@@ -183,3 +183,41 @@ describe("RestArkProvider.getTransactionsStream", () => {
         },
     );
 });
+
+describe("RestArkProvider.getInfo transaction limits", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    const infoResponse = (body: Record<string, unknown>) => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => ({ ok: true, json: async () => body })),
+        );
+        return new RestArkProvider("http://ark.test").getInfo();
+    };
+
+    it("reads maxTxWeight and maxOpReturnOutputs off the wire", async () => {
+        const info = await infoResponse({ maxTxWeight: "40000", maxOpReturnOutputs: "3" });
+        expect(info.maxTxWeight).toBe(40_000n);
+        expect(info.maxOpReturnOutputs).toBe(3n);
+    });
+
+    it("leaves them undefined when the operator advertises neither", async () => {
+        // 0n would read as a weight budget of nothing and OP_RETURN forbidden,
+        // which an older arkd is not saying.
+        const info = await infoResponse({});
+        expect(info.maxTxWeight).toBeUndefined();
+        expect(info.maxOpReturnOutputs).toBeUndefined();
+    });
+
+    it("reads a server-emitted zero as unadvertised, not as a limit of nothing", async () => {
+        // Both fields are non-optional int64 on GetInfoResponse and the gateway
+        // marshals with EmitUnpopulated, so an arkd that carries them without
+        // configuring them sends "0" rather than omitting them. That is the same
+        // statement as omitting them, and must not surface as 0n.
+        const info = await infoResponse({ maxTxWeight: "0", maxOpReturnOutputs: "0" });
+        expect(info.maxTxWeight).toBeUndefined();
+        expect(info.maxOpReturnOutputs).toBeUndefined();
+    });
+});
