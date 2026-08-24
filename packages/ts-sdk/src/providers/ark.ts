@@ -192,15 +192,17 @@ export interface ArkInfo {
      * Weight budget an ark transaction must stay under; the server answers
      * `TX_TOO_LARGE` past it.
      *
-     * `undefined` when not advertised — never coerce to `0n`, which reads as a
-     * server that accepts no transaction at all.
+     * `undefined` when not advertised — a server that omits the field and one
+     * that sends `0` both mean "no limit stated". Never `0n`, which would read
+     * as a server that accepts no transaction at all.
      */
     maxTxWeight?: bigint;
     /**
      * Maximum OP_RETURN outputs the server accepts per transaction.
      *
-     * `undefined` when not advertised — never coerce to `0n`, which reads as a
-     * server that forbids them outright.
+     * `undefined` when not advertised — a server that omits the field and one
+     * that sends `0` both mean "no limit stated". Never `0n`, which would read
+     * as a server that forbids them outright.
      */
     maxOpReturnOutputs?: bigint;
     /**
@@ -299,6 +301,24 @@ export interface ArkProvider {
 
     /** Fetch pending transactions for a signed get-pending-tx intent. */
     getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]>;
+}
+
+/**
+ * Reads a transaction limit the operator advertises on `GetInfo`.
+ *
+ * `max_tx_weight` and `max_op_return_outputs` are non-optional `int64` in
+ * `GetInfoResponse`, and the gateway marshals with EmitUnpopulated, so an arkd
+ * carrying the fields but not configuring them sends `"0"` instead of omitting
+ * them. Field absent (an arkd predating them) and field zero are the same
+ * statement — the operator did not advertise a limit — so both answer
+ * `undefined`. `0n` would read as a server that accepts no transaction at all
+ * and forbids OP_RETURN outright, which is the opposite of "did not say".
+ * NArk reads the same zero as unset (`SpendingService.GetMaxOpReturnOutputs`).
+ */
+function advertisedLimit(fromServer: unknown): bigint | undefined {
+    if (fromServer == null) return undefined;
+    const limit = BigInt(fromServer as string | number | bigint);
+    return limit > 0n ? limit : undefined;
 }
 
 /**
@@ -489,12 +509,8 @@ export class RestArkProvider implements ArkProvider {
             unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
             vtxoTreeExpiry:
                 fromServer.vtxoTreeExpiry != null ? BigInt(fromServer.vtxoTreeExpiry) : undefined,
-            maxTxWeight:
-                fromServer.maxTxWeight != null ? BigInt(fromServer.maxTxWeight) : undefined,
-            maxOpReturnOutputs:
-                fromServer.maxOpReturnOutputs != null
-                    ? BigInt(fromServer.maxOpReturnOutputs)
-                    : undefined,
+            maxTxWeight: advertisedLimit(fromServer.maxTxWeight),
+            maxOpReturnOutputs: advertisedLimit(fromServer.maxOpReturnOutputs),
             utxoMaxAmount: BigInt(fromServer.utxoMaxAmount ?? -1),
             utxoMinAmount: BigInt(fromServer.utxoMinAmount ?? 0),
             version: fromServer.version ?? "",

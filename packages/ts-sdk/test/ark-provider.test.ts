@@ -101,4 +101,14 @@ describe("RestArkProvider.getInfo transaction limits", () => {
         expect(info.maxTxWeight).toBeUndefined();
         expect(info.maxOpReturnOutputs).toBeUndefined();
     });
+
+    it("reads a server-emitted zero as unadvertised, not as a limit of nothing", async () => {
+        // Both fields are non-optional int64 on GetInfoResponse and the gateway
+        // marshals with EmitUnpopulated, so an arkd that carries them without
+        // configuring them sends "0" rather than omitting them. That is the same
+        // statement as omitting them, and must not surface as 0n.
+        const info = await infoResponse({ maxTxWeight: "0", maxOpReturnOutputs: "0" });
+        expect(info.maxTxWeight).toBeUndefined();
+        expect(info.maxOpReturnOutputs).toBeUndefined();
+    });
 });
