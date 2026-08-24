@@ -152,6 +152,147 @@ describe("RestIndexerProvider", () => {
             expect(mockFetch).not.toHaveBeenCalled();
         });
 
+        it("pages an unpaged query to exhaustion", async () => {
+            // The server answers with a page of its own choosing, so returning
+            // its first one verbatim hands the caller a silent prefix.
+            const vtxo = (txid: string) => ({
+                outpoint: { txid, vout: 0 },
+                amount: "1000",
+                script: "51200000",
+                createdAt: "1700000000",
+                expiresAt: null,
+                commitmentTxids: [],
+                isPreconfirmed: false,
+                isSwept: false,
+                isUnrolled: false,
+                isSpent: false,
+                spentBy: "",
+            });
+            const fullPage = Array.from({ length: 500 }, (_, i) => vtxo(`page0-${i}`));
+            // The server clamps page.index=0 to page 1 and echoes the 1-based
+            // page in `current`; `next` points at the following page until the
+            // last one, where it pins at `total`.
+            mockFetch
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () =>
+                        Promise.resolve({
+                            vtxos: fullPage,
+                            page: { current: 1, next: 2, total: 2 },
+                        }),
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () =>
+                        Promise.resolve({
+                            vtxos: [vtxo("page1-0")],
+                            page: { current: 2, next: 2, total: 2 },
+                        }),
+                });
+
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const result = await provider.getVtxos({ scripts: ["script-a"] });
+
+            expect(mockFetch).toHaveBeenCalledTimes(2);
+            expect(result.vtxos).toHaveLength(501);
+            expect(result.vtxos[500].txid).toBe("page1-0");
+            // Nothing is left to ask for, so there is no cursor to hand back.
+            expect(result.page).toBeUndefined();
+
+            const pages = mockFetch.mock.calls.map((call: [string]) =>
+                new URL(call[0]).searchParams.get("page.index"),
+            );
+            expect(pages).toEqual(["0", "2"]);
+        });
+
+        it("stops on a terminal page of exactly DEFAULT_VTXO_PAGE_SIZE vtxos", async () => {
+            // A full page is not proof of another one: when the server says
+            // this is the last page (current >= total), the loop must stop
+            // rather than fire a request that comes back empty.
+            const vtxo = (txid: string) => ({
+                outpoint: { txid, vout: 0 },
+                amount: "1000",
+                script: "51200000",
+                createdAt: "1700000000",
+                expiresAt: null,
+                commitmentTxids: [],
+                isPreconfirmed: false,
+                isSwept: false,
+                isUnrolled: false,
+                isSpent: false,
+                spentBy: "",
+            });
+            const fullPage = Array.from({ length: 500 }, (_, i) => vtxo(`only-${i}`));
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () =>
+                    Promise.resolve({
+                        vtxos: fullPage,
+                        // The server clamps page.index=0 to page 1 and echoes
+                        // the 1-based page: current 1 of 1, next pinned at 1.
+                        page: { current: 1, next: 1, total: 1 },
+                    }),
+            });
+
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const result = await provider.getVtxos({ scripts: ["script-a"] });
+
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(result.vtxos).toHaveLength(500);
+            expect(result.page).toBeUndefined();
+        });
+
+        it("leaves a caller-named page alone, cursor included", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ vtxos: [], page: { current: 2, next: 3, total: 9 } }),
+            });
+
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const result = await provider.getVtxos({ scripts: ["script-a"], pageIndex: 2 });
+
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(result.page).toEqual({ current: 2, next: 3, total: 9 });
+        });
+
+        it("propagates a server error on a later page of an unpaged query", async () => {
+            const vtxo = (txid: string) => ({
+                outpoint: { txid, vout: 0 },
+                amount: "1000",
+                script: "51200000",
+                createdAt: "1700000000",
+                expiresAt: null,
+                commitmentTxids: [],
+                isPreconfirmed: false,
+                isSwept: false,
+                isUnrolled: false,
+                isSpent: false,
+                spentBy: "",
+            });
+            const fullPage = Array.from({ length: 500 }, (_, i) => vtxo(`page0-${i}`));
+            mockFetch
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () =>
+                        Promise.resolve({
+                            vtxos: fullPage,
+                            page: { current: 0, next: 1, total: 2 },
+                        }),
+                })
+                .mockResolvedValueOnce({
+                    ok: false,
+                    statusText: "Internal Server Error",
+                });
+
+            const provider = new RestIndexerProvider("http://localhost:7070");
+
+            // A partial result must never surface as if it were complete.
+            await expect(provider.getVtxos({ scripts: ["script-a"] })).rejects.toThrow(
+                "Failed to fetch vtxos: Internal Server Error",
+            );
+            expect(mockFetch).toHaveBeenCalledTimes(2);
+        });
+
         it("rejects invalid before/after bounds", async () => {
             const provider = new RestIndexerProvider("http://localhost:7070");
 

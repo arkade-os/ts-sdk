@@ -302,6 +302,7 @@ import {
     Tx,
     Vtxo,
     PaginationOptions,
+    DEFAULT_VTXO_PAGE_SIZE,
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,
@@ -608,6 +609,7 @@ export {
     FetchError,
     RestIndexerProvider,
     RestEmulatorProvider,
+    DEFAULT_VTXO_PAGE_SIZE,
 
     // Script-related
     ArkAddress,
