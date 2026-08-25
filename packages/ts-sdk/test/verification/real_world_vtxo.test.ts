@@ -16,8 +16,8 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     reconstructAndValidateVtxoDAG,
     ChainTxType,
-    type IndexerProvider,
-    type OnchainProvider,
+    type VerificationIndexerProvider,
+    type VerificationOnchainProvider,
 } from "../../src/tree/vtxoDAGVerification.js";
 import {
     TEST_PRIVKEYS,
@@ -36,13 +36,13 @@ describe("Production Audit: Signet-Structured VTXO Validation", () => {
      */
     it("should verify a 3-depth chain matching signet Ark structure", async () => {
         // Simulate a realistic commitment → tree node → VTXO leaf chain
-        const commitmentTxid = fakeCommitmentTxid(42);
         const rootScript = makeP2TRScript(0);
 
         // Create a commitment tx (on-chain anchor)
         const commitmentRaw = createVirtualTx(fakeCommitmentTxid(99), 0, [
             { amount: 500000n, script: rootScript },
         ]);
+        const commitmentTxid = commitmentRaw.txid;
 
         // Level 1: Tree node spending from commitment
         const treeNode = createVirtualTx(
@@ -71,7 +71,7 @@ describe("Production Audit: Signet-Structured VTXO Validation", () => {
         ]);
 
         // Mock providers
-        const indexer: IndexerProvider = {
+        const indexer: VerificationIndexerProvider = {
             getBatchVtxos: vi.fn().mockResolvedValue([
                 {
                     chain: [
@@ -101,7 +101,7 @@ describe("Production Audit: Signet-Structured VTXO Validation", () => {
             }),
         };
 
-        const onchain: OnchainProvider = {
+        const onchain: VerificationOnchainProvider = {
             getRawTransaction: vi.fn().mockResolvedValue(hex.encode(commitmentRaw.tx.toBytes())),
             getTxStatus: vi
                 .fn()
@@ -125,12 +125,12 @@ describe("Production Audit: Signet-Structured VTXO Validation", () => {
     });
 
     it("should verify a chain with checkpoint transaction", async () => {
-        const commitmentTxid = fakeCommitmentTxid(50);
         const rootScript = makeP2TRScript(0);
 
         const commitmentRaw = createVirtualTx(fakeCommitmentTxid(98), 0, [
             { amount: 100000n, script: rootScript },
         ]);
+        const commitmentTxid = commitmentRaw.txid;
 
         // Checkpoint spending from commitment
         const checkpoint = createVirtualTx(
@@ -157,7 +157,7 @@ describe("Production Audit: Signet-Structured VTXO Validation", () => {
             { script: makeP2TRScript(1), amount: 100000n },
         ]);
 
-        const indexer: IndexerProvider = {
+        const indexer: VerificationIndexerProvider = {
             getBatchVtxos: vi.fn().mockResolvedValue([
                 {
                     chain: [
@@ -187,7 +187,7 @@ describe("Production Audit: Signet-Structured VTXO Validation", () => {
             }),
         };
 
-        const onchain: OnchainProvider = {
+        const onchain: VerificationOnchainProvider = {
             getRawTransaction: vi.fn().mockResolvedValue(hex.encode(commitmentRaw.tx.toBytes())),
             getTxStatus: vi.fn().mockResolvedValue({ confirmed: true, blockHeight: 200000 }),
             broadcastTransaction: vi.fn(),

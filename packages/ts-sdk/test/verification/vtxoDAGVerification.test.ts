@@ -219,10 +219,10 @@ describe("VTXO DAG Verification", () => {
 
     describe("Tier 1 Tasks", () => {
         it("should reconstruct and validate a simple signed DAG", async () => {
-            const commitmentTxid = fakeCommitmentTxid(2);
             const commitmentRaw = createVirtualTx(fakeCommitmentTxid(3), 0, [
                 { amount: 100000n, script: makeP2TRScript(1) },
             ]);
+            const commitmentTxid = commitmentRaw.txid;
             onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
             onchain.confirmedTxids.add(commitmentTxid);
 
@@ -259,19 +259,22 @@ describe("VTXO DAG Verification", () => {
             expect(result.valid).toBe(true);
         });
 
-        it("should fail with INVALID_SIGNATURE on tamper", async () => {
-            const commitmentTxid = fakeCommitmentTxid(6);
-            const commitmentRaw = createVirtualTx(fakeCommitmentTxid(7), 0, [{ amount: 100000n }]);
+        it("should fail with INVALID_VOUT when outpoint vout does not exist", async () => {
+            const commitmentRaw = createVirtualTx(fakeCommitmentTxid(3), 0, [
+                { amount: 100000n, script: makeP2TRScript(1) },
+            ]);
+            const commitmentTxid = commitmentRaw.txid;
             onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
             onchain.confirmedTxids.add(commitmentTxid);
 
-            const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }]);
-            signVirtualTx(vtxoTx.tx, 0, TEST_PRIVKEYS[0], [
-                { script: makeP2TRScript(0), amount: 100000n },
-            ]);
+            const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
+                parentScript: makeP2TRScript(1),
+                tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[1]),
+            });
 
-            const input = vtxoTx.tx.getInput(0);
-            input.tapKeySig![0] ^= 0x01;
+            signVirtualTx(vtxoTx.tx, 0, TEST_PRIVKEYS[1], [
+                { script: makeP2TRScript(1), amount: 100000n },
+            ]);
 
             indexer.chain = [
                 {
@@ -289,11 +292,49 @@ describe("VTXO DAG Verification", () => {
             ];
             indexer.virtualTxs.set(vtxoTx.txid, base64.encode(vtxoTx.tx.toPSBT()));
 
-            // Verify that it fails due to the root anchor mismatch or signature tamper.
-            // Note: In Step 8 order, Taproot Tweak is verified before Signatures.
+            // vtxoTx only has 1 output (index 0). vout: 1 must be rejected!
+            await expect(
+                reconstructAndValidateVtxoDAG({ txid: vtxoTx.txid, vout: 1 }, indexer, onchain),
+            ).rejects.toThrow(/INVALID_VOUT/);
+        });
+
+        it("should fail with INVALID_SIGNATURE on tamper", async () => {
+            const commitmentRaw = createVirtualTx(fakeCommitmentTxid(7), 0, [{ amount: 100000n }]);
+            const commitmentTxid = commitmentRaw.txid;
+            onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
+            onchain.confirmedTxids.add(commitmentTxid);
+
+            const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
+                parentScript: makeP2TRScript(0),
+                tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[0]),
+            });
+            signVirtualTx(vtxoTx.tx, 0, TEST_PRIVKEYS[0], [
+                { script: makeP2TRScript(0), amount: 100000n },
+            ]);
+
+            const tampered = Uint8Array.from(vtxoTx.tx.getInput(0).tapKeySig!);
+            tampered[0] ^= 0x01;
+            vtxoTx.tx.updateInput(0, { tapKeySig: tampered });
+
+            indexer.chain = [
+                {
+                    txid: vtxoTx.txid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.ARK,
+                    spends: [commitmentTxid],
+                },
+                {
+                    txid: commitmentTxid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.COMMITMENT,
+                    spends: [],
+                },
+            ];
+            indexer.virtualTxs.set(vtxoTx.txid, base64.encode(vtxoTx.tx.toPSBT()));
+
             await expect(
                 reconstructAndValidateVtxoDAG({ txid: vtxoTx.txid, vout: 0 }, indexer, onchain),
-            ).rejects.toThrow(/INVALID_TAPROOT_TWEAK|INVALID_SIGNATURE/);
+            ).rejects.toThrow(/INVALID_SIGNATURE/);
         });
     });
 
@@ -304,15 +345,11 @@ describe("VTXO DAG Verification", () => {
             const validArkScript = hex.decode(`0190b27520${hex.encode(userKey)}ac`);
 
             const tr = p2tr(internalKey, { script: validArkScript }, undefined, true);
-            const commitmentTxid = fakeCommitmentTxid(10);
-            onchain.txs.set(
-                commitmentTxid,
-                hex.encode(
-                    createVirtualTx(fakeCommitmentTxid(11), 0, [
-                        { amount: 100000n, script: tr.script },
-                    ]).tx.toBytes(),
-                ),
-            );
+            const commitmentRaw = createVirtualTx(fakeCommitmentTxid(11), 0, [
+                { amount: 100000n, script: tr.script },
+            ]);
+            const commitmentTxid = commitmentRaw.txid;
+            onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
             onchain.confirmedTxids.add(commitmentTxid);
 
             const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
@@ -357,15 +394,11 @@ describe("VTXO DAG Verification", () => {
             const badExitScript = hex.decode("0000");
 
             const tr = p2tr(internalKey, { script: badExitScript }, undefined, true);
-            const commitmentTxid = fakeCommitmentTxid(14);
-            onchain.txs.set(
-                commitmentTxid,
-                hex.encode(
-                    createVirtualTx(fakeCommitmentTxid(15), 0, [
-                        { amount: 100000n, script: tr.script },
-                    ]).tx.toBytes(),
-                ),
-            );
+            const commitmentRaw = createVirtualTx(fakeCommitmentTxid(15), 0, [
+                { amount: 100000n, script: tr.script },
+            ]);
+            const commitmentTxid = commitmentRaw.txid;
+            onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
             onchain.confirmedTxids.add(commitmentTxid);
 
             const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
@@ -417,15 +450,11 @@ describe("VTXO DAG Verification", () => {
             ]);
 
             const tr = p2tr(internalKey, { script: csvScript }, undefined, true);
-            const commitmentTxid = fakeCommitmentTxid(20);
-            onchain.txs.set(
-                commitmentTxid,
-                hex.encode(
-                    createVirtualTx(fakeCommitmentTxid(21), 0, [
-                        { amount: 100000n, script: tr.script },
-                    ]).tx.toBytes(),
-                ),
-            );
+            const commitmentRaw = createVirtualTx(fakeCommitmentTxid(21), 0, [
+                { amount: 100000n, script: tr.script },
+            ]);
+            const commitmentTxid = commitmentRaw.txid;
+            onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
             onchain.confirmedTxids.add(commitmentTxid);
 
             const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
@@ -689,10 +718,10 @@ describe("VTXO DAG Verification", () => {
             );
 
             // ── Set up the on-chain commitment ─────────────────────────────
-            const commitmentTxid = fakeCommitmentTxid(30);
             const commitmentOut = createVirtualTx(fakeCommitmentTxid(31), 0, [
                 { amount: 50000n, script: tr.script },
             ]);
+            const commitmentTxid = commitmentOut.txid;
             onchain.txs.set(commitmentTxid, hex.encode(commitmentOut.tx.toBytes()));
             onchain.confirmedTxids.add(commitmentTxid);
             onchain.chainHeight = 800200; // Past the refund timeout

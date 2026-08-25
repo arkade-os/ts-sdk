@@ -16,7 +16,8 @@
  * ============================================================================
  */
 
-import { type OnchainProvider } from "../tree/vtxoDAGVerification.js";
+import { base64 } from "@scure/base";
+import { type VerificationOnchainProvider } from "../tree/vtxoDAGVerification.js";
 
 /** Simplified Bitcoin RPC Result. */
 export interface RpcResult<T> {
@@ -59,8 +60,9 @@ export class BitcoinRpcError extends Error {
     }
 }
 
-export class BitcoinRpcProvider implements OnchainProvider {
+export class BitcoinRpcProvider implements VerificationOnchainProvider {
     private rpcId = 1;
+    private txIndexChecked: boolean | null = null;
 
     constructor(
         public readonly url: string = "http://localhost:18443",
@@ -72,7 +74,7 @@ export class BitcoinRpcProvider implements OnchainProvider {
      * Internal JSON-RPC caller.
      */
     private async call<T>(method: string, params: any[] = []): Promise<T> {
-        const auth = Buffer.from(`${this.user}:${this.pass}`).toString("base64");
+        const auth = base64.encode(new TextEncoder().encode(`${this.user}:${this.pass}`));
 
         const response = await fetch(this.url, {
             method: "POST",
@@ -133,42 +135,67 @@ export class BitcoinRpcProvider implements OnchainProvider {
     }
 
     /**
-     * Returns the raw transaction hex.
+     * Checks if Bitcoin Core has txindex enabled and synced.
      */
-    async getRawTransaction(txid: string): Promise<string> {
-        // getrawtransaction txid [verbose=false]
-        return await this.call<string>("getrawtransaction", [txid, false]);
+    async isTxIndexEnabled(): Promise<boolean> {
+        if (this.txIndexChecked !== null) return this.txIndexChecked;
+        try {
+            const indexInfo = await this.call<Record<string, { synced: boolean }>>("getindexinfo");
+            this.txIndexChecked = Boolean(indexInfo?.txindex?.synced);
+            return this.txIndexChecked;
+        } catch {
+            // If getindexinfo is unsupported, fall back to true (assume regtest/configured node)
+            this.txIndexChecked = true;
+            return true;
+        }
+    }
+
+    /**
+     * Returns the raw transaction hex.
+     * @param txid Transaction ID in hex.
+     * @param blockhash Optional block hash where transaction was confirmed (required if txindex=0).
+     */
+    async getRawTransaction(txid: string, blockhash?: string): Promise<string> {
+        const params: (string | boolean)[] = [txid, false];
+        if (blockhash) params.push(blockhash);
+        return await this.call<string>("getrawtransaction", params);
     }
 
     /**
      * Check if a transaction is confirmed and at what depth.
+     * @param txid Transaction ID in hex.
+     * @param blockhash Optional block hash where transaction was confirmed.
      */
-    async getTxStatus(txid: string): Promise<{
+    async getTxStatus(
+        txid: string,
+        blockhash?: string,
+    ): Promise<{
         confirmed: boolean;
         blockHeight?: number;
         blockTime?: number;
     }> {
         try {
-            // getrawtransaction txid [verbose=true]
-            const tx = await this.call<VerboseTx>("getrawtransaction", [txid, true]);
+            // getrawtransaction txid [verbose=true] [blockhash]
+            const params: (string | boolean)[] = [txid, true];
+            if (blockhash) params.push(blockhash);
+            const tx = await this.call<VerboseTx>("getrawtransaction", params);
 
             const confirmations = tx.confirmations ?? 0;
             const confirmed = confirmations > 0;
-
-            // Bitcoin Core verbose output doesn't directly return block height,
-            // but we can infer it or assume it's part of the metadata if needed.
-            // (For verification, 'confirmed' and 'confirmations' are the key metrics).
 
             return {
                 confirmed,
                 blockTime: tx.blocktime,
             };
         } catch (e) {
-            // If tx is not found in mempool or blockchain
-            if (
-                e instanceof BitcoinRpcError &&
-                (e.code === -5 || e.message.includes("No such mempool transaction"))
-            ) {
+            if (e instanceof BitcoinRpcError && e.code === -5) {
+                // If the error explicitly asks to activate -txindex, throw so caller knows index is missing
+                if (e.message.includes("activate -txindex") && !blockhash) {
+                    throw new BitcoinRpcError(
+                        `Bitcoin Core requires -txindex to query historical transactions without blockhash for ${txid}`,
+                        -5,
+                    );
+                }
                 return { confirmed: false };
             }
             throw e;
@@ -178,8 +205,14 @@ export class BitcoinRpcProvider implements OnchainProvider {
     /**
      * Helper to verify commitment depth (Tier 1 Task 3).
      */
-    async verifyCommitmentDepth(txid: string, minConfirmations: number = 1): Promise<boolean> {
-        const tx = await this.call<VerboseTx>("getrawtransaction", [txid, true]);
+    async verifyCommitmentDepth(
+        txid: string,
+        minConfirmations: number = 1,
+        blockhash?: string,
+    ): Promise<boolean> {
+        const params: (string | boolean)[] = [txid, true];
+        if (blockhash) params.push(blockhash);
+        const tx = await this.call<VerboseTx>("getrawtransaction", params);
         const confirmations = tx.confirmations ?? 0;
         return confirmations >= minConfirmations;
     }

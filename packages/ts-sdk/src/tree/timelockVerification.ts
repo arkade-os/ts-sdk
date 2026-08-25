@@ -190,12 +190,16 @@ function scriptNumToInt(bytes: Uint8Array): number | null {
 
     let result = 0;
     for (let i = 0; i < bytes.length; i++) {
-        result |= bytes[i] << (8 * i);
+        if (i === bytes.length - 1) {
+            // Mask out the sign bit (0x80) on the last byte for magnitude
+            result += (bytes[i] & 0x7f) * Math.pow(256, i);
+        } else {
+            result += bytes[i] * Math.pow(256, i);
+        }
     }
 
     // Sign bit is the MSB of the last byte
     if (bytes[bytes.length - 1] & 0x80) {
-        result &= ~(0x80 << (8 * (bytes.length - 1)));
         result = -result;
     }
 

@@ -22,9 +22,16 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
 import { type DAGNode, VtxoVerificationError } from "./vtxoDAGVerification.js";
 import { taprootTweakPubkey } from "@scure/btc-signer/utils.js";
+import { tapLeafHash } from "@scure/btc-signer/payment.js";
 
 // SIGHASH_DEFAULT (0x00) is the standard for Taproot key-path spends in Ark
 const SIGHASH_DEFAULT = 0x00;
+
+function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+}
 
 /**
  * Recursively verifies signatures for the entire DAG.
@@ -124,10 +131,8 @@ export function verifyNodeSignature(node: DAGNode): void {
     const prevScripts = prevOuts.map((o) => o.script);
     const prevAmounts = prevOuts.map((o) => o.amount);
 
-    // Using the internal preimage method from btc-signer
-    // Note: we cast because we know it exists in the runtime but might not be
-    // exported in early TS definitions or is marked private.
-    const sighash = (tx as any).preimageWitnessV1(
+    // Using the public preimageWitnessV1 method from btc-signer
+    const sighash = tx.preimageWitnessV1(
         0, // input index
         prevScripts,
         sighashType,
@@ -159,17 +164,75 @@ export function verifyNodeSignature(node: DAGNode): void {
 }
 
 /**
- * Verifies script-path signatures if present.
- * (Less common for standard VTXOs, but supported for completeness).
+ * Verifies script-path signatures if present (BIP 342).
  */
 function verifyNodeScriptPathSignature(node: DAGNode): void {
-    // TODO: Implement tapScriptSig verification if needed for specific Ark policies.
-    // Standard tree and ark transactions use key-path aggregated signatures.
-    throw new VtxoVerificationError(
-        `Script-path spends are not yet implemented in Tier 1 verification`,
-        "UNSUPPORTED_SPEND_PATH",
-        { txid: node.txid },
-    );
+    const { tx, txid } = node;
+    const input = tx.getInput(0);
+    const prevOuts = getPrevOutsForNode(node);
+    const prevScripts = prevOuts.map((o) => o.script);
+    const prevAmounts = prevOuts.map((o) => o.amount);
+
+    const tapScriptSig = input.tapScriptSig;
+    if (!tapScriptSig || tapScriptSig.length === 0) {
+        return;
+    }
+
+    const tapLeafScript = input.tapLeafScript || [];
+
+    for (const [keyInfo, sig] of tapScriptSig as any[]) {
+        const pubkey = keyInfo.pubKey;
+        const leafHash = keyInfo.leafHash;
+
+        // Find the corresponding tapLeafScript
+        let matchingScript: Uint8Array | undefined;
+        let leafVer = 0xc0;
+
+        for (const leaf of tapLeafScript) {
+            const scriptWithVer = leaf[1];
+            if (scriptWithVer && scriptWithVer.length > 0) {
+                const script = scriptWithVer.slice(0, -1);
+                const ver = scriptWithVer[scriptWithVer.length - 1];
+                const hash = tapLeafHash(script, ver);
+                if (equalBytes(hash, leafHash)) {
+                    matchingScript = script;
+                    leafVer = ver;
+                    break;
+                }
+            }
+        }
+
+        if (!matchingScript) {
+            continue;
+        }
+
+        let signature = sig;
+        let sighashType = SIGHASH_DEFAULT;
+
+        if (sig.length === 65) {
+            signature = sig.slice(0, 64);
+            sighashType = sig[64];
+        }
+
+        const sighash = tx.preimageWitnessV1(
+            0,
+            prevScripts,
+            sighashType,
+            prevAmounts,
+            undefined,
+            matchingScript,
+            leafVer,
+        );
+
+        const isValid = schnorr.verify(signature, sighash, pubkey);
+        if (!isValid) {
+            throw new VtxoVerificationError(
+                `Invalid script-path signature in transaction ${txid}`,
+                "INVALID_SIGNATURE",
+                { txid },
+            );
+        }
+    }
 }
 
 /**
@@ -205,14 +268,4 @@ function getPrevOutsForNode(node: DAGNode): { script: Uint8Array; amount: bigint
             amount: ancestorOutput.amount,
         },
     ];
-}
-
-// Helper to generate a dummy P2TR script for public keys (useful for test mocks)
-export function getTaprootOutputScript(_vout: number): Uint8Array {
-    // OP_1 (0x51) + PUSH32 (0x20) + 32-byte witness program
-    const script = new Uint8Array(34);
-    script[0] = 0x51;
-    script[1] = 0x20;
-    // ... fill ...
-    return script;
 }

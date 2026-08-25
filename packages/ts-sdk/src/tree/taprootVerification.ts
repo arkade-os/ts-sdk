@@ -11,23 +11,8 @@
 import { hex } from "@scure/base";
 import { taprootTweakPubkey, tagSchnorr, compareBytes } from "@scure/btc-signer/utils.js";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
-import { sha256 } from "@noble/hashes/sha2.js";
+import { Script } from "@scure/btc-signer/script.js";
 import { VtxoVerificationError, type DAGNode } from "./vtxoDAGVerification.js";
-
-/**
- * Compute the txid of a Transaction (including unsigned PSBTs).
- * @scure/btc-signer@1.x throws "Transaction is not finalized" when accessing
- * `.id` on unsigned transactions. We compute manually:
- * txid = REVERSE(SHA256d(non-witness serialization)).
- */
-function computeTxid(node: DAGNode): string {
-    const rawBytes = node.tx.toBytes(true, false);
-    const hash1 = sha256(rawBytes);
-    const hash2 = sha256(hash1);
-    const reversed = new Uint8Array(hash2);
-    reversed.reverse();
-    return hex.encode(reversed);
-}
 
 /**
  * BIP 341 TapBranch hash: H_TapBranch(min(a,b) || max(a,b))
@@ -59,7 +44,7 @@ export function verifyNodeTaproot(node: DAGNode): void {
 
     if (!internalKey) {
         throw new VtxoVerificationError(
-            `Transaction ${computeTxid(node)} is missing tapInternalKey (BIP 341 violation)`,
+            `Transaction ${node.txid} is missing tapInternalKey (BIP 341 violation)`,
             "MISSING_TAPROOT_METADATA",
         );
     }
@@ -72,7 +57,7 @@ export function verifyNodeTaproot(node: DAGNode): void {
 
         if (!equalBytes(witnessUtxo.script, expectedScript)) {
             throw new VtxoVerificationError(
-                `Invalid Taproot Tweak for transaction ${computeTxid(node)}`,
+                `Invalid Taproot Tweak for transaction ${node.txid}`,
                 "INVALID_TAPROOT_TWEAK",
             );
         }
@@ -91,10 +76,10 @@ export function verifyNodeTaproot(node: DAGNode): void {
             const leafVersion = scriptWithVersion[scriptWithVersion.length - 1];
 
             // 2a. Verify Merkle Proof
-            verifyMerkleProof(merkleRoot, script, cb, computeTxid(node), leafVersion);
+            verifyMerkleProof(merkleRoot, script, cb, node.txid, leafVersion);
 
             // 2b. Enforce Ark Exit Policy
-            verifyArkExitPolicy(script, computeTxid(node));
+            verifyArkExitPolicy(script, node.txid);
         }
     }
 }
@@ -104,17 +89,14 @@ function verifyMerkleProof(
     script: Uint8Array,
     cb: any,
     txid: string,
-    providedVersion: number,
+    providedVersion: number = 0xc0,
 ): void {
-    // btc-signer might pass cb as a decoded object or raw bytes
-    // If it's the decoded object from psbt.js, we need to re-encode or access properties
     let controlBlock: Uint8Array;
     if (cb instanceof Uint8Array) {
         controlBlock = cb;
-    } else if (cb.internalKey && cb.merklePath) {
-        // It's a decoded control block object
-        // We can manually reconstruct the parts or use the properties
-        const leafVersion = providedVersion & 0xfe;
+    } else if (cb && typeof cb === "object" && cb.internalKey && cb.merklePath) {
+        // It's a decoded control block object from btc-signer psbt.js
+        const leafVersion = (cb.leafVersion ?? providedVersion) & 0xfe;
         const leafHash = tapLeafHash(script, leafVersion);
 
         let currentHash = leafHash;
@@ -129,6 +111,8 @@ function verifyMerkleProof(
             );
         }
         return;
+    } else if (typeof cb === "string") {
+        controlBlock = hex.decode(cb);
     } else {
         throw new VtxoVerificationError(
             `Invalid control block format in ${txid}`,
@@ -136,7 +120,6 @@ function verifyMerkleProof(
         );
     }
 
-    // Raw bytes path (fallback)
     if (controlBlock.length < 33) {
         throw new VtxoVerificationError(
             `Invalid control block length in ${txid}`,
@@ -149,6 +132,13 @@ function verifyMerkleProof(
 
     let currentHash = leafHash;
     const numSteps = (controlBlock.length - 33) / 32;
+
+    if (numSteps < 0 || !Number.isInteger(numSteps)) {
+        throw new VtxoVerificationError(
+            `Invalid control block length in ${txid}`,
+            "INVALID_MERKLE_PROOF",
+        );
+    }
 
     for (let i = 0; i < numSteps; i++) {
         const branch = controlBlock.slice(33 + i * 32, 33 + (i + 1) * 32);
@@ -163,10 +153,12 @@ function verifyMerkleProof(
     }
 }
 
-import { Script } from "@scure/btc-signer/script.js";
-
 function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
-    let decoded: (string | number | Uint8Array)[];
+    if (!script || script.length === 0) {
+        throw new VtxoVerificationError(`Empty tapleaf script in ${txid}`, "SECURITY_VIOLATION");
+    }
+
+    let decoded: (string | number | bigint | Uint8Array)[];
     try {
         decoded = Script.decode(script);
     } catch (e) {
@@ -176,17 +168,28 @@ function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
         );
     }
 
-    // 1. Structural Liveness - Ensure there are no top-level logic bypasses
-    // such as a simple OP_TRUE that makes the entire script trivial to spend.
-    if (decoded.length === 1 && (decoded[0] === 1 || decoded[0] === "TRUE")) {
+    // 1. Structural Liveness - Ensure there are no trivial scripts (e.g. OP_TRUE, OP_1, OP_NOP)
+    if (
+        decoded.length === 0 ||
+        (decoded.length === 1 &&
+            (decoded[0] === 1 ||
+                decoded[0] === 1n ||
+                decoded[0] === "TRUE" ||
+                decoded[0] === "NOP" ||
+                (decoded[0] instanceof Uint8Array && decoded[0].length === 0)))
+    ) {
         throw new VtxoVerificationError(
-            `Forbidden trivial script (OP_TRUE) in ${txid}`,
+            `Forbidden trivial script in ${txid}`,
             "SECURITY_VIOLATION",
         );
     }
 
-    // ── Standard Ark Exit Policy ──
-    // Check for presence of CHECKSEQUENCEVERIFY and CHECKSIG in a valid sequence.
+    // ── Key Presence Verification ──
+    const hasKey = decoded.some(
+        (item) => item instanceof Uint8Array && (item.length === 32 || item.length === 33),
+    );
+
+    // ── Standard Ark Exit Policy & Collaborative Leaves ──
     const hasCSV = decoded.some((op) => op === "CHECKSEQUENCEVERIFY");
     const hasCheckSig = decoded.some((op) => op === "CHECKSIG" || op === "CHECKSIGVERIFY");
 
@@ -196,11 +199,12 @@ function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
     );
     const hasCLTV = decoded.some((op) => op === "CHECKLOCKTIMEVERIFY");
 
-    const isArkStandard = hasCSV && hasCheckSig;
-    const isSwapClaim = hasHash && hasCheckSig;
-    const isSwapRefund = hasCLTV && hasCheckSig;
+    const isArkStandard = hasCSV && hasCheckSig && hasKey;
+    const isSwapClaim = hasHash && hasCheckSig && hasKey;
+    const isSwapRefund = hasCLTV && hasCheckSig && hasKey;
+    const isCollaborativeMultisig = hasCheckSig && hasKey;
 
-    if (!isArkStandard && !isSwapClaim && !isSwapRefund) {
+    if (!isArkStandard && !isSwapClaim && !isSwapRefund && !isCollaborativeMultisig) {
         throw new VtxoVerificationError(
             `Tapleaf script in ${txid} does not follow Ark or HTLC exit policies`,
             "INVALID_ARK_SCRIPT",

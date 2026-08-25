@@ -1,33 +1,40 @@
-import crypto from "node:crypto";
+import { pbkdf2 } from "@noble/hashes/pbkdf2.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { randomBytes } from "@noble/hashes/utils.js";
 
 /**
- * Mock Authenticator for the Arkade SDK.
- * Implements PBKDF2 as requested for robust wallet key derivation.
+ * Wallet Authenticator for the Arkade SDK.
+ * Implements PBKDF2 for robust wallet key derivation.
  */
-export class MockWalletAuthenticator {
+export class WalletAuthenticator {
     private static readonly ITERATIONS = 100000;
     private static readonly KEY_LENGTH = 32; // 256 bits for AES-256
-    private static readonly DIGEST = "sha256";
 
     /**
-     * Derives a High-Entropy Master Key from a simple password and salt.
+     * Derives a High-Entropy Master Key from a password and salt.
      *
      * @param password User's secret password.
-     * @param salt Cryptographic salt (should be unique per wallet).
-     * @returns Derived Buffer key.
+     * @param salt Cryptographic salt (must be at least 16 bytes).
+     * @returns Derived 32-byte Uint8Array key.
      */
-    static deriveMasterKey(password: string, salt: Buffer): Buffer {
+    static deriveMasterKey(password: string, salt: Uint8Array): Uint8Array {
         if (salt.length < 16) {
             throw new Error("Security Error: Robust salt must be at least 16 bytes.");
         }
 
-        return crypto.pbkdf2Sync(password, salt, this.ITERATIONS, this.KEY_LENGTH, this.DIGEST);
+        const passwordBytes = new TextEncoder().encode(password);
+        return pbkdf2(sha256, passwordBytes, salt, {
+            c: this.ITERATIONS,
+            dkLen: this.KEY_LENGTH,
+        });
     }
 
     /**
      * Helper to generate a new robust random salt.
      */
-    static generateRandomSalt(length = 32): Buffer {
-        return crypto.randomBytes(length);
+    static generateRandomSalt(length = 32): Uint8Array {
+        return randomBytes(length);
     }
 }
+
+export { WalletAuthenticator as MockWalletAuthenticator };

@@ -198,14 +198,10 @@ export function verifyNodeHashPreimages(
         for (const condition of conditions) {
             const hashHex = hex.encode(condition.expectedHash);
 
-            // If no preimage was supplied, we fail by default for security.
-            // HTLC verification should not be skipped if the logic requires it.
+            // A hash leaf that this party cannot claim is not a verification failure.
+            // Only a supplied preimage that fails the hash lock is a violation.
             if (!witnessPreimages || !witnessPreimages.has(hashHex)) {
-                throw new VtxoVerificationError(
-                    `Hash condition (${condition.opcode}) found in ${node.txid} but no preimage was supplied for verification`,
-                    "MISSING_HASH_PREIMAGE",
-                    { txid: node.txid, hash: hashHex },
-                );
+                continue;
             }
 
             const preimage = witnessPreimages.get(hashHex)!;

@@ -10,7 +10,7 @@ import {
     MockIndexerProvider,
     MockOnchainProvider,
 } from "./vtxoDAGVerification.test.js";
-import { StorageProvider, ChainTxType } from "../../src/tree/vtxoDAGVerification.js";
+import { VerificationStorageProvider, ChainTxType } from "../../src/tree/vtxoDAGVerification.js";
 import {
     onReceiveVtxo,
     getBroadcastSequence,
@@ -18,8 +18,9 @@ import {
     extractExitSequence,
     executeSovereignExit,
 } from "../../src/storage/sovereignStorage.js";
+import { MockWalletAuthenticator } from "../../src/utils/authenticator.js";
 
-class MockStorageProvider implements StorageProvider {
+class MockStorageProvider implements VerificationStorageProvider {
     private store: Map<string, string> = new Map();
 
     async setItem(key: string, value: string): Promise<void> {
@@ -35,30 +36,26 @@ class MockStorageProvider implements StorageProvider {
     }
 }
 
-import { setStorageMasterKey } from "../../src/storage/sovereignStorage.js";
-import { MockWalletAuthenticator } from "../../src/utils/authenticator.js";
-
 describe("Tier 3: Sovereign Unilateral Exit Storage", () => {
     let indexer: MockIndexerProvider;
     let onchain: MockOnchainProvider;
     let storage: MockStorageProvider;
+    let masterKey: Uint8Array;
 
     beforeEach(async () => {
         indexer = new MockIndexerProvider();
         onchain = new MockOnchainProvider();
         storage = new MockStorageProvider();
 
-        // 🛡️ Security Protocol: Derive master key via PBKDF2 and inject into context
-        const salt = Buffer.alloc(32, 0x55); // Stable salt for testing
-        const masterKey = MockWalletAuthenticator.deriveMasterKey("test-password-123", salt);
-        setStorageMasterKey(masterKey);
+        const salt = new Uint8Array(32).fill(0x55);
+        masterKey = MockWalletAuthenticator.deriveMasterKey("test-password-123", salt);
     });
 
     it("should successfully extract and store an exit sequence from a valid DAG", async () => {
-        const commitmentTxid = fakeCommitmentTxid(2);
         const commitmentRaw = createVirtualTx(fakeCommitmentTxid(3), 0, [
             { amount: 100000n, script: makeP2TRScript(1) },
         ]);
+        const commitmentTxid = commitmentRaw.txid;
         onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
         onchain.confirmedTxids.add(commitmentTxid);
 
@@ -89,14 +86,14 @@ describe("Tier 3: Sovereign Unilateral Exit Storage", () => {
 
         const outpoint = { txid: vtxoTx.txid, vout: 0 };
 
-        const result = await onReceiveVtxo(outpoint, indexer, onchain, storage);
+        const result = await onReceiveVtxo(outpoint, indexer, onchain, storage, masterKey);
         if (!result.success) console.error("Test 1 error:", result.error);
         expect(result.success).toBe(true);
         expect(result.diagnostics).toContain(
             ` Local sovereign exit data secured for ${vtxoTx.txid}`,
         );
 
-        const broadcastSequence = await getBroadcastSequence(vtxoTx.txid, storage);
+        const broadcastSequence = await getBroadcastSequence(vtxoTx.txid, storage, masterKey);
 
         // With a 1-node DAG, the extracted path has exactly 1 tx
         expect(broadcastSequence).toHaveLength(1);
@@ -135,6 +132,7 @@ describe("Tier 3: Sovereign Unilateral Exit Storage", () => {
             indexer,
             onchain,
             storage,
+            masterKey,
         );
 
         expect(result.success).toBe(false);
@@ -145,11 +143,10 @@ describe("Tier 3: Sovereign Unilateral Exit Storage", () => {
     });
 
     it("should independently execute a sovereign exit natively using the local Bitcoin node", async () => {
-        // Rely on setup from Test 1 that saves data automatically
-        const commitmentTxid = fakeCommitmentTxid(2);
         const commitmentRaw = createVirtualTx(fakeCommitmentTxid(3), 0, [
             { amount: 100000n, script: makeP2TRScript(1) },
         ]);
+        const commitmentTxid = commitmentRaw.txid;
         onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
         onchain.confirmedTxids.add(commitmentTxid);
 
@@ -178,10 +175,10 @@ describe("Tier 3: Sovereign Unilateral Exit Storage", () => {
         indexer.virtualTxs.set(vtxoTx.txid, base64.encode(vtxoTx.tx.toPSBT()));
 
         // Stage 1: The user initially receives the Vtxo while online, natively storing it.
-        await onReceiveVtxo({ txid: vtxoTx.txid, vout: 0 }, indexer, onchain, storage);
+        await onReceiveVtxo({ txid: vtxoTx.txid, vout: 0 }, indexer, onchain, storage, masterKey);
 
         // Stage 2: Simulating ASP crash entirely. No indexer queries made here.
-        const result = await executeSovereignExit(vtxoTx.txid, storage, onchain);
+        const result = await executeSovereignExit(vtxoTx.txid, storage, onchain, masterKey);
 
         expect(result.success).toBe(true);
         expect(result.broadcastedTxids).toHaveLength(1);
@@ -192,21 +189,20 @@ describe("Tier 3: Sovereign Unilateral Exit Storage", () => {
     });
 
     it("should ensure data is encrypted in repose (Forensics Protection)", async () => {
-        // 1. Setup a valid recibo
-        const commitmentTxid = fakeCommitmentTxid(500);
+        // 1. Setup a valid receipt
+        const commitmentRaw = createVirtualTx(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            0,
+            [{ amount: 100000n, script: makeP2TRScript(1) }],
+        );
+        const commitmentTxid = commitmentRaw.txid;
+        onchain.confirmedTxids.add(commitmentTxid);
+        onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
+
         const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
             parentScript: makeP2TRScript(1),
             tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[1]),
         });
-        onchain.confirmedTxids.add(commitmentTxid);
-        onchain.txs.set(
-            commitmentTxid,
-            hex.encode(
-                createVirtualTx("00", 0, [
-                    { amount: 100000n, script: makeP2TRScript(1) },
-                ]).tx.toBytes(),
-            ),
-        );
 
         indexer.chain = [
             {
@@ -235,10 +231,11 @@ describe("Tier 3: Sovereign Unilateral Exit Storage", () => {
             indexer,
             onchain,
             storage,
+            masterKey,
         );
         expect(result.success, `onReceiveVtxo failed: ${result.error}`).toBe(true);
 
-        // 3. Inspect raw storage (Caja Gris)
+        // 3. Inspect raw storage
         const rawSaved = await storage.getItem(`arkade_exit_data_${vtxoTx.txid}`);
 
         // The data must NOT be readable JSON, it must be a Base64-encoded binary (encrypted)
