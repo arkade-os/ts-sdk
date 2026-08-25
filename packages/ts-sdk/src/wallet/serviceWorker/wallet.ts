@@ -395,6 +395,12 @@ interface ServiceWorkerWalletOptions {
     storage?: StorageConfig;
     /** Identity used to derive addresses and optionally sign operations. */
     identity: ReadonlyIdentity | Identity;
+    /**
+     * The worker's custom `MessageBus.buildServices` loads the signing identity
+     * internally. Only the public identity crosses `postMessage`; page-side
+     * direct signing is disabled. Requires `walletMode: "static"`.
+     */
+    workerOwnedIdentity?: boolean;
     /** Optional delegation service URL. */
     delegateUrl?: string;
     /** @deprecated alias for @see ServiceWorkerWalletOptions.delegateUrl */
@@ -1555,6 +1561,19 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 }
 
+function workerOwnedPageIdentity(identity: ReadonlyIdentity): Identity {
+    const unavailable = () => {
+        throw new Error("signing is owned by the service worker");
+    };
+    return {
+        xOnlyPublicKey: () => identity.xOnlyPublicKey(),
+        compressedPublicKey: () => identity.compressedPublicKey(),
+        signerSession: unavailable,
+        signMessage: async () => unavailable(),
+        sign: async () => unavailable(),
+    };
+}
+
 export class ServiceWorkerWallet
     extends ServiceWorkerReadonlyWallet
     implements IWallet, HDWalletCapable, HDAllocationCapable
@@ -1564,6 +1583,7 @@ export class ServiceWorkerWallet
     public readonly identity: Identity;
     private readonly _assetManager: IAssetManager;
     private readonly hasDelegate: boolean;
+    private readonly workerOwnedIdentity: boolean;
 
     protected constructor(
         public readonly serviceWorker: ServiceWorker,
@@ -1572,6 +1592,7 @@ export class ServiceWorkerWallet
         contractRepository: ContractRepository,
         messageTag: string,
         hasDelegate: boolean,
+        workerOwnedIdentity = false,
     ) {
         super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
         this.identity = identity;
@@ -1582,6 +1603,7 @@ export class ServiceWorkerWallet
             messageTag,
         );
         this.hasDelegate = hasDelegate;
+        this.workerOwnedIdentity = workerOwnedIdentity;
     }
 
     get assetManager(): IAssetManager {
@@ -1589,7 +1611,9 @@ export class ServiceWorkerWallet
     }
 
     protected async serializeIdentity(): Promise<SerializedIdentity> {
-        return serializeSigningIdentity(this.identity);
+        return this.workerOwnedIdentity
+            ? serializeReadonlyIdentity(this.identity)
+            : serializeSigningIdentity(this.identity);
     }
 
     static async create(options: ServiceWorkerWalletCreateOptions): Promise<ServiceWorkerWallet> {
@@ -1610,13 +1634,25 @@ export class ServiceWorkerWallet
         const contractRepository =
             options.storage?.contractRepository ?? new IndexedDBContractRepository();
 
-        if (!isSigningIdentity(options.identity)) {
+        const workerOwnedIdentity = options.workerOwnedIdentity === true;
+        if (
+            workerOwnedIdentity &&
+            options.walletMode !== undefined &&
+            options.walletMode !== "static"
+        ) {
+            throw new Error("worker-owned identities require walletMode: 'static'");
+        }
+        if (!workerOwnedIdentity && !isSigningIdentity(options.identity)) {
             throw new Error(
                 "ServiceWorkerWallet.create() requires a signing Identity; got a ReadonlyIdentity",
             );
         }
-        const identity: Identity = options.identity;
-        const serializedWallet = serializeSigningIdentity(identity);
+        const identity: Identity = workerOwnedIdentity
+            ? workerOwnedPageIdentity(options.identity)
+            : (options.identity as Identity);
+        const serializedWallet = workerOwnedIdentity
+            ? await serializeReadonlyIdentity(options.identity)
+            : serializeSigningIdentity(identity);
 
         const messageTag = options.walletUpdaterTag ?? DEFAULT_MESSAGE_TAG;
 
@@ -1628,6 +1664,7 @@ export class ServiceWorkerWallet
             contractRepository,
             messageTag,
             !!(options.delegateUrl || options.delegatorUrl),
+            workerOwnedIdentity,
         );
 
         // INIT_WALLET retains the legacy `key` payload for wire compatibility
@@ -1670,7 +1707,7 @@ export class ServiceWorkerWallet
             indexerUrl: options.indexerUrl,
             esploraUrl: options.esploraUrl,
             settlementConfig: options.settlementConfig,
-            walletMode: options.walletMode,
+            walletMode: workerOwnedIdentity ? "static" : options.walletMode,
             watcherConfig: options.watcherConfig,
             lookAheadWindow: options.lookAheadWindow,
             minBatchExpirySeconds: options.minBatchExpirySeconds,

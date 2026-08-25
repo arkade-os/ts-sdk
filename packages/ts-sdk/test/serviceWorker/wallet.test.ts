@@ -9,6 +9,7 @@ import {
     MnemonicIdentity,
     SeedIdentity,
     ReadonlyDescriptorIdentity,
+    Transaction,
     type ContractSyncState,
 } from "../../src";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
@@ -1747,6 +1748,49 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
                 storage: storage(),
             }),
         ).rejects.toThrow(/requires a signing Identity/);
+    });
+
+    it("supports a static worker-owned signer without posting private key material", async () => {
+        const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+        const readonly = await signing.toReadonly();
+        const { serviceWorker } = await setup(readonly);
+
+        const wallet = await ServiceWorkerWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity: readonly,
+            workerOwnedIdentity: true,
+            storage: storage(),
+        });
+
+        expect(getInitConfigWallet(serviceWorker)).toEqual({
+            type: "readonly-single-key",
+            publicKey: hex.encode(await readonly.compressedPublicKey()),
+        });
+        expect(getInitializeMessage(serviceWorker).config.walletMode).toBe("static");
+        expect(JSON.stringify(getInitializeMessage(serviceWorker))).not.toContain(
+            TEST_PRIVATE_KEY_HEX,
+        );
+        await expect(wallet.identity.sign(new Transaction())).rejects.toThrow(
+            "owned by the service worker",
+        );
+    });
+
+    it("rejects non-static worker-owned signer configuration", async () => {
+        const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+        const readonly = await signing.toReadonly();
+        const { serviceWorker } = await setup(readonly);
+
+        await expect(
+            ServiceWorkerWallet.create({
+                serviceWorker: serviceWorker as any,
+                arkServerUrl: "https://ark.test",
+                identity: readonly,
+                workerOwnedIdentity: true,
+                walletMode: "hd",
+                storage: storage(),
+            }),
+        ).rejects.toThrow("walletMode: 'static'");
     });
 });
 
