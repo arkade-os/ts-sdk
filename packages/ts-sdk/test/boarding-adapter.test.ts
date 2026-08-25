@@ -1,18 +1,27 @@
-import { base64 } from "@scure/base";
+import { base64, hex } from "@scure/base";
+import { sha256 } from "@scure/btc-signer/utils.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { describe, expect, it, vi } from "vitest";
+vi.mock("../src/tree/validation", () => ({
+    validateVtxoTxGraph: vi.fn(),
+    validateConnectorsTxGraph: vi.fn(),
+}));
 import { Intent, type SignedIntent } from "../src/intent";
 import { Transaction } from "../src/utils/transaction";
 import type { BoardingSigningAdapter, PreparedBoardingRegistration } from "../src/wallet/boarding";
 import { Wallet } from "../src/wallet/wallet";
 import { createBoardingProgramScript } from "../src/script/boarding";
 import { extendCoinWithTapscript } from "../src/wallet/utils";
+import { InputSignerRouter } from "../src/wallet/inputSignerRouter";
+import { networks } from "../src/networks";
+import { SingleKey } from "../src/identity/singleKey";
 
 const ready: PreparedBoardingRegistration = {
     status: "ready",
     handle: "opaque-runtime-handle",
     registerExpireAt: Math.floor(Date.now() / 1000) + 60,
 };
+const privateKey = (fill: number) => new Uint8Array(32).fill(fill);
 
 function proof(message: Intent.RegisterMessage | Intent.DeleteMessage): SignedIntent<any> {
     return { proof: base64.encode(new Transaction().toPSBT()), message };
@@ -202,6 +211,88 @@ describe("named boarding adapter lifecycle seam", () => {
 
         await expect(wallet.assertNamedBoardingCooperativeWindow([matured])).rejects.toThrow(
             "recovery window",
+        );
+    });
+
+    it("passes the exact validated batch expiry to final submission", async () => {
+        const signingAdapter = adapter();
+        const wallet = walletWith(signingAdapter);
+        const boardingIdentity = SingleKey.fromPrivateKey(privateKey(1));
+        const script = createBoardingProgramScript(
+            {
+                name: "vault-board-v2",
+                boardingPubKey: await boardingIdentity.xOnlyPublicKey(),
+                cosignerPubKey: signingAdapter.publicKey,
+                recoveryPubKey: await SingleKey.fromPrivateKey(privateKey(4)).xOnlyPublicKey(),
+            },
+            await SingleKey.fromPrivateKey(privateKey(3)).xOnlyPublicKey(),
+            { type: "blocks", value: 100n },
+        );
+        const input = extendCoinWithTapscript(script, {
+            txid: "11".repeat(32),
+            vout: 0,
+            value: 10_000,
+            status: { confirmed: true, block_height: 999, block_time: 1 },
+        });
+        Object.assign(wallet, {
+            _boardingTapscript: script,
+            network: networks.regtest,
+            arkProvider: {
+                confirmRegistration: vi.fn(),
+                submitTreeNonces: vi.fn(),
+            },
+            onchainProvider: { getChainTip: vi.fn().mockResolvedValue({ height: 1_000 }) },
+            forfeitPubkey: new Uint8Array(32).fill(3),
+            forfeitOutputScript: new Uint8Array([0x51]),
+            _signerRouter: new InputSignerRouter({
+                identity: boardingIdentity,
+                contractRepository: { getContracts: async () => [] } as never,
+                boardingPkScript: script.pkScript,
+            }),
+        });
+
+        const intentId = "intent-1";
+        const batchExpiry = 100n;
+        const commitment = new Transaction({ allowUnknownOutputs: true });
+        commitment.addInput({
+            txid: input.txid,
+            index: input.vout,
+            witnessUtxo: { script: script.pkScript, amount: BigInt(input.value) },
+        });
+        commitment.addOutput({ script: new Uint8Array([0x51]), amount: 9_000n });
+        const commitmentPsbt = base64.encode(commitment.toPSBT());
+        const session = {
+            getPublicKey: vi.fn().mockResolvedValue(hex.decode("02" + "55".repeat(32))),
+            init: vi.fn(),
+            getNonces: vi.fn().mockResolvedValue({}),
+        } as never;
+        const handler = wallet.createBatchHandler(
+            intentId,
+            [input],
+            [],
+            session,
+            ready,
+            script.pkScript,
+        );
+
+        await handler.onBatchStarted({
+            id: "batch-1",
+            intentIdHashes: [hex.encode(sha256(new TextEncoder().encode(intentId)))],
+            batchExpiry,
+        } as never);
+        await handler.onTreeSigningStarted(
+            {
+                id: "batch-1",
+                cosignersPublicKeys: ["02" + "55".repeat(32)],
+                unsignedCommitmentTx: commitmentPsbt,
+            } as never,
+            { leaves: () => [], iterator: function* () {} } as never,
+        );
+        await handler.onBatchFinalization({ commitmentTx: commitmentPsbt } as never);
+
+        expect(signingAdapter.submitCommitment).toHaveBeenCalledOnce();
+        expect(vi.mocked(signingAdapter.submitCommitment).mock.calls[0][0].validatedBatch).toEqual(
+            expect.objectContaining({ batchId: "batch-1", batchExpiry }),
         );
     });
 });

@@ -4353,6 +4353,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // Assigned only after the tree it commits to has been validated, so it
         // always names a commitment tx this handler has checked.
         let validatedCommitmentTxid: string | undefined;
+        let validatedBatchExpiry: bigint | undefined;
         let validatedBoardingBatch: ValidatedBoardingBatch | undefined;
         return {
             onBatchStarted: async (event: BatchStartedEvent): Promise<{ skip: boolean }> => {
@@ -4377,6 +4378,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     event.batchExpiry,
                     resolveBatchExpiryPolicy(this.network, this.batchExpiryPolicy),
                 );
+                validatedBatchExpiry = event.batchExpiry;
 
                 await this.arkProvider.confirmRegistration(intentId);
 
@@ -4434,8 +4436,12 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
                 validatedCommitmentTxid = commitmentTx.id;
                 if (boardingRegistration) {
+                    if (validatedBatchExpiry === undefined) {
+                        throw new Error("named boarding batch expiry was not validated");
+                    }
                     validatedBoardingBatch = {
                         batchId: event.id,
+                        batchExpiry: validatedBatchExpiry,
                         unsignedCommitmentTx: event.unsignedCommitmentTx,
                         vtxoTree: snapshotTxTree(vtxoTree),
                         expectedRecipients: expectedRecipients.map((recipient) => ({

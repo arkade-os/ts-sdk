@@ -17,6 +17,7 @@ export type BoardingPreparationResult =
 
 export interface ValidatedBoardingBatch {
     batchId: string;
+    batchExpiry: bigint;
     unsignedCommitmentTx: string;
     vtxoTree: readonly TxTreeNode[];
     expectedRecipients: readonly Recipient[];
