@@ -142,7 +142,7 @@ export function signVirtualTx(
 ) {
     const scripts = prevOuts.map((o) => o.script);
     const amounts = prevOuts.map((o) => o.amount);
-    const sighash = (tx as any).preimageWitnessV1(inputIndex, scripts, 0, amounts);
+    const sighash = tx.preimageWitnessV1(inputIndex, scripts, 0, amounts);
 
     const input = tx.getInput(inputIndex);
     const merkleRoot = input.tapMerkleRoot || new Uint8Array(0);

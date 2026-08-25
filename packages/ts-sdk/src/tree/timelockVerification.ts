@@ -146,7 +146,7 @@ export function extractTimelockConstraints(node: DAGNode): TimelockConstraints {
  * where <value> is either a small integer (OP_1..OP_16) or a byte push.
  */
 function extractTimelockOpcodes(
-    decoded: (string | number | Uint8Array)[],
+    decoded: (string | number | bigint | Uint8Array)[],
     csvValues: number[],
     cltvValues: number[],
 ): void {
@@ -167,12 +167,15 @@ function extractTimelockOpcodes(
 
 /**
  * Resolves a script element to a numeric value.
- * Handles OP_0..OP_16 (decoded as numbers by btc-signer), and byte pushes
+ * Handles OP_0..OP_16 (decoded as numbers/bigints by btc-signer), and byte pushes
  * (decoded as Uint8Array, interpreted as little-endian ScriptNum).
  */
-function resolveScriptNumber(element: string | number | Uint8Array): number | null {
+function resolveScriptNumber(element: string | number | bigint | Uint8Array): number | null {
     if (typeof element === "number") {
         return element;
+    }
+    if (typeof element === "bigint") {
+        return Number(element);
     }
     if (element instanceof Uint8Array) {
         return scriptNumToInt(element);

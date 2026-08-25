@@ -180,7 +180,7 @@ function verifyNodeScriptPathSignature(node: DAGNode): void {
 
     const tapLeafScript = input.tapLeafScript || [];
 
-    for (const [keyInfo, sig] of tapScriptSig as any[]) {
+    for (const [keyInfo, sig] of tapScriptSig) {
         const pubkey = keyInfo.pubKey;
         const leafHash = keyInfo.leafHash;
 
@@ -245,7 +245,7 @@ function getPrevOutsForNode(node: DAGNode): { script: Uint8Array; amount: bigint
     if (!node.ancestor) {
         // This is the anchoring node spending from the commitment transaction.
         // The context was injected by reconstructAndValidateVtxoDAG.
-        const context = (node as any).prevOutContext;
+        const context = node.prevOutContext;
         if (!context) {
             throw new Error(
                 "Commitment output context missing for anchoring node signature verification",

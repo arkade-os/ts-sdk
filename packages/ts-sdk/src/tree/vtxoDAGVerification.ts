@@ -137,6 +137,9 @@ export interface DAGNode {
 
     /** The output index in the ancestor that this node spends. */
     ancestorOutputIndex: number | null;
+
+    /** Commitment batch output context for the anchoring leaf node. */
+    prevOutContext?: { script: Uint8Array; amount: bigint };
 }
 
 /** Validation result for the DAG. */
@@ -380,6 +383,10 @@ export async function reconstructAndValidateVtxoDAG(
             );
         }
 
+        if (tx.inputsLength !== 1) {
+            throw Errors.INVALID_INPUT_COUNT(link.txid, tx.inputsLength);
+        }
+
         if (computeTxid(tx) !== link.txid) throw Errors.TXID_MISMATCH(link.txid, computeTxid(tx));
         txMap.set(link.txid, { tx, rawPsbt, chainTx: link });
     }
@@ -497,8 +504,15 @@ export async function reconstructAndValidateVtxoDAG(
         );
     }
     const batchOutput = commitmentTx.getOutput(batchOutputIndex);
+    if (!batchOutput || !batchOutput.script || batchOutput.amount === undefined) {
+        throw new VtxoVerificationError(
+            `Commitment ${actualCommitmentTxid} output ${batchOutputIndex} is missing script or amount`,
+            "MALFORMED_ANCHOR_OUTPUT",
+            { commitmentTxid: actualCommitmentTxid, outputIndex: batchOutputIndex },
+        );
+    }
 
-    (anchoringLeaf as any).prevOutContext = {
+    anchoringLeaf.prevOutContext = {
         script: batchOutput.script,
         amount: batchOutput.amount,
     };
@@ -643,7 +657,7 @@ function validateDAGChaining(
             );
 
             // Verify anchoring leaf amount against commitment
-            const anchorPrevOut = (node as any).prevOutContext;
+            const anchorPrevOut = node.prevOutContext;
             if (anchorPrevOut) {
                 let anchorOutputsSum = 0n;
                 for (let i = 0; i < node.tx.outputsLength; i++) {
@@ -992,7 +1006,7 @@ export async function verifyVtxoComplete(
     // Phase 2: On-chain anchoring verification (throttled)
     // COMPLIANCE TASK 3.1: Live verification of depth, scripts, and amounts against on-chain data.
     const onchainStatus = await globalOnchainLimiter.run(async () => {
-        const anchor = (dagResult.anchoringLeaf as any).prevOutContext;
+        const anchor = dagResult.anchoringLeaf.prevOutContext;
         if (!anchor || anchor.amount === undefined || anchor.script === undefined) {
             // Fallback to simple confirmation check if structural data is missing
             // (Should not happen in a valid Phase 1 result)
