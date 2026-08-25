@@ -176,6 +176,15 @@ import {
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./signingErrors";
+import {
+    type BoardingSigningAdapter,
+    type BoardingPreparationResult,
+    type PreparedBoardingRegistration,
+    type ValidatedBoardingBatch,
+} from "./boarding";
+import { BoardingProgramScript, createBoardingProgramScript } from "../script/boarding";
+
+type BoardingScript = DefaultVtxo.Script | BoardingProgramScript;
 
 export const getArkadeServerUrl = ({ arkServerUrl }: { arkServerUrl?: string }) =>
     arkServerUrl || DEFAULT_ARKADE_SERVER_URL;
@@ -191,6 +200,36 @@ function intentProofJobs(coins: ReadonlyArray<{ tapTree: Bytes }>): InputSigning
         lookupScript: VtxoScript.decode(coin.tapTree).pkScript,
     }));
     return [{ index: 0, lookupScript: coinJobs[0].lookupScript }, ...coinJobs];
+}
+
+function coinUsesScript(coin: { tapTree: Bytes }, script: Bytes): boolean {
+    try {
+        return equalBytes(VtxoScript.decode(coin.tapTree).pkScript, script);
+    } catch {
+        return false;
+    }
+}
+
+function customBoardingProofIndexes(coins: ExtendedCoin[], script: Bytes): number[] {
+    const indexes = coins.flatMap((coin, index) =>
+        coinUsesScript(coin, script) ? [index + 1] : [],
+    );
+    if (indexes.includes(1)) indexes.unshift(0);
+    return indexes;
+}
+
+function isCanonicalTxid(txid: string): boolean {
+    return /^[0-9a-f]{64}$/.test(txid);
+}
+
+function snapshotTxTree(tree: TxTree) {
+    return [...tree.iterator()].map((node) => ({
+        txid: node.root.id,
+        tx: base64.encode(node.root.toPSBT()),
+        children: Object.fromEntries(
+            [...node.children.entries()].map(([index, child]) => [index, child.root.id]),
+        ),
+    }));
 }
 
 // `send` takes either a recipient list or an options object, told apart by
@@ -635,7 +674,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * is explicitly allocated. Static / `auto` wallets never rotate it, so
      * it stays the index-0 baseline for their lifetime.
      */
-    protected _boardingTapscript: DefaultVtxo.Script;
+    protected _boardingTapscript: BoardingScript;
 
     /**
      * Backing field for the active server signer (x-only, 32 bytes). Read via
@@ -727,7 +766,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
-        boardingTapscript: DefaultVtxo.Script,
+        boardingTapscript: BoardingScript,
         readonly dustAmount: bigint,
         public readonly walletRepository: WalletRepository,
         public readonly contractRepository: ContractRepository,
@@ -860,7 +899,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * address is explicitly allocated. Single-valued for static / `auto`
      * wallets.
      */
-    get boardingTapscript(): DefaultVtxo.Script {
+    get boardingTapscript(): BoardingScript {
         return this._boardingTapscript;
     }
 
@@ -1020,12 +1059,26 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
 
-        // create boarding timelock
-        const boardingTimelock: RelativeTimelock = config.boardingTimelock ?? {
+        const operatorBoardingTimelock: RelativeTimelock = {
             value: info.boardingExitDelay,
             type: info.boardingExitDelay < 512n ? "blocks" : "seconds",
         };
-
+        if (config.boardingProgram) {
+            if (!config.boardingTimelock) {
+                throw new Error("named boarding program requires a pinned boarding delay");
+            }
+            if (
+                config.boardingTimelock.type !== operatorBoardingTimelock.type ||
+                config.boardingTimelock.value !== operatorBoardingTimelock.value
+            ) {
+                throw new Error("named boarding program delay must match the Operator policy");
+            }
+        }
+        // Named programs are constructed only from the live, app-pinned
+        // Operator policy. The override remains available to standard wallets.
+        const boardingTimelock: RelativeTimelock = config.boardingProgram
+            ? operatorBoardingTimelock
+            : (config.boardingTimelock ?? operatorBoardingTimelock);
         // Generate tapscripts for offchain and boarding address
         const serverPubKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
 
@@ -1049,19 +1102,25 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const offchainTapscript = !delegatePubKey
             ? new DefaultVtxo.Script(offchainOptions)
             : new DelegateVtxo.Script({ ...offchainOptions, delegatePubKey });
-        // Source the boarding script from the registered `boarding` handler so
-        // wallet setup derives it through the contract type rather than ad-hoc
-        // construction. The handler returns a DefaultVtxo.Script byte-identical
-        // to the previous inline construction for equivalent params (the CSV
-        // timelock round-trips through the same BIP68 sequence encoding the
-        // script bytes already use), so getBoardingAddress() and pkScript are
-        // unchanged. Contract-manager initialization persists a matching
-        // `boarding` contract from these same params.
-        const boardingTapscript = BoardingContractHandler.createScript({
-            pubKey: hex.encode(pubKey),
-            serverPubKey: hex.encode(serverPubKey),
-            csvTimelock: timelockToSequence(boardingTimelock).toString(),
-        });
+        // Standard boarding remains handler-backed. Named programs are release-
+        // pinned scripts derived from explicit role keys and the live Operator
+        // policy; they are deliberately not serialized as legacy boarding rows.
+        const boardingTapscript = config.boardingProgram
+            ? (() => {
+                  if (!equalBytes(config.boardingProgram.boardingPubKey, pubKey)) {
+                      throw new Error("boarding program key does not match wallet identity");
+                  }
+                  return createBoardingProgramScript(
+                      config.boardingProgram,
+                      serverPubKey,
+                      boardingTimelock,
+                  );
+              })()
+            : BoardingContractHandler.createScript({
+                  pubKey: hex.encode(pubKey),
+                  serverPubKey: hex.encode(serverPubKey),
+                  csvTimelock: timelockToSequence(boardingTimelock).toString(),
+              });
 
         return {
             arkProvider,
@@ -1592,9 +1651,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * discovery / spending must enumerate them all, not just the current one
      * (plan §6-III.1). Deduplicated by scriptPubKey.
      *
-     * Always includes the index-0 baseline (identity x-only key), which covers
-     * the degenerate equal-delay case where the index-0 boarding row is
-     * coalesced onto a `default` row and so isn't a `boarding`-typed contract.
+     * Standard programs always include the index-0 baseline (identity x-only
+     * key). A named static program includes only its active configured script;
+     * it never interprets legacy boarding rows as instances of that program.
      *
      * @param allowedSigners - Optional set of x-only-hex server keys whose
      *   persisted boarding rows are included. Defaults to `{current x-only
@@ -1603,24 +1662,27 @@ export class ReadonlyWallet implements IReadonlyWallet {
      *   reach old-signer boarding addresses. The index-0 baseline and the
      *   current display tapscript are always included regardless of the set.
      */
-    protected async getBoardingTapscripts(
-        allowedSigners?: Set<string>,
-    ): Promise<DefaultVtxo.Script[]> {
-        const byScript = new Map<string, DefaultVtxo.Script>();
-        const add = (s: DefaultVtxo.Script) => byScript.set(hex.encode(s.pkScript), s);
+    protected async getBoardingTapscripts(allowedSigners?: Set<string>): Promise<BoardingScript[]> {
+        const byScript = new Map<string, BoardingScript>();
+        const add = (s: BoardingScript) => byScript.set(hex.encode(s.pkScript), s);
 
         const boardingCsv =
             this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
         // Index-0 baseline boarding (identity x-only key) — always in scope.
-        add(
-            new DefaultVtxo.Script({
-                pubKey: await this.identity.xOnlyPublicKey(),
-                serverPubKey: this.boardingTapscript.options.serverPubKey,
-                csvTimelock: boardingCsv,
-            }),
-        );
+        if (!(this.boardingTapscript instanceof BoardingProgramScript)) {
+            add(
+                new DefaultVtxo.Script({
+                    pubKey: await this.identity.xOnlyPublicKey(),
+                    serverPubKey: this.boardingTapscript.options.serverPubKey,
+                    csvTimelock: boardingCsv,
+                }),
+            );
+        }
         // Current display boarding tapscript (may be a rotated index).
         add(this.boardingTapscript);
+        if (this.boardingTapscript instanceof BoardingProgramScript) {
+            return [...byScript.values()];
+        }
         // Every persisted boarding contract — current + historical rotated.
         // Read the contract repository directly (not via getContractManager)
         // so fund discovery doesn't force contract-manager initialization as a
@@ -2183,26 +2245,28 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // already-registered default/delegate one stays first-wins as that type
         // (degenerate boardingExitDelay == a baseline timelock; sound servers
         // keep them distinct).
-        for (const serverPubKey of baselineSigners) {
-            const baselineBoarding = new DefaultVtxo.Script({
-                pubKey: baselinePubkey,
-                serverPubKey,
-                csvTimelock: boardingCsvTimelock,
-            });
-            const boardingScriptHex = hex.encode(baselineBoarding.pkScript);
-            if (seenBaselineScripts.has(boardingScriptHex)) continue;
-            seenBaselineScripts.add(boardingScriptHex);
-            await ensureWalletContract(manager, {
-                type: "boarding",
-                params: {
-                    pubKey: hex.encode(baselineBoarding.options.pubKey),
-                    serverPubKey: hex.encode(serverPubKey),
-                    csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
-                },
-                script: boardingScriptHex,
-                address: baselineBoarding.address(this.network.hrp, serverPubKey).encode(),
-                state: "active",
-            });
+        if (!(this.boardingTapscript instanceof BoardingProgramScript)) {
+            for (const serverPubKey of baselineSigners) {
+                const baselineBoarding = new DefaultVtxo.Script({
+                    pubKey: baselinePubkey,
+                    serverPubKey,
+                    csvTimelock: boardingCsvTimelock,
+                });
+                const boardingScriptHex = hex.encode(baselineBoarding.pkScript);
+                if (seenBaselineScripts.has(boardingScriptHex)) continue;
+                seenBaselineScripts.add(boardingScriptHex);
+                await ensureWalletContract(manager, {
+                    type: "boarding",
+                    params: {
+                        pubKey: hex.encode(baselineBoarding.options.pubKey),
+                        serverPubKey: hex.encode(serverPubKey),
+                        csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
+                    },
+                    script: boardingScriptHex,
+                    address: baselineBoarding.address(this.network.hrp, serverPubKey).encode(),
+                    state: "active",
+                });
+            }
         }
 
         return manager;
@@ -2407,7 +2471,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * boarding contract has been persisted. External code must treat
      * `boardingTapscript` as read-only.
      */
-    setBoardingTapscriptForRotation(tapscript: DefaultVtxo.Script): void {
+    setBoardingTapscriptForRotation(tapscript: BoardingScript): void {
         this._boardingTapscript = tapscript;
         // Let live subscribers (the incoming-funds onchain watcher) widen to
         // the freshly allocated boarding address. Harmless at boot — the
@@ -2713,6 +2777,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // Re-check under the serialization barrier: a prior queued rotation may
         // have already applied this signer.
         if (equalBytes(xonly, this.arkServerPublicKey)) return;
+        if (this._boardingTapscript instanceof BoardingProgramScript) {
+            throw new Error("Operator signer changed; the named boarding program must be replaced");
+        }
 
         const manager = await this.getContractManager();
 
@@ -3027,7 +3094,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
-        boardingTapscript: DefaultVtxo.Script,
+        boardingTapscript: BoardingScript,
         serverUnrollScript: CSVMultisigTapscript.Type,
         readonly forfeitOutputScript: Bytes,
         readonly forfeitPubkey: Bytes,
@@ -3047,6 +3114,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
         /** Overrides for the checkpoint exit delay bounds; defaults derive from `network`. */
         protected readonly checkpointExitDelayPolicy?: Partial<CheckpointExitDelayPolicy>,
+        protected readonly boardingSigningAdapter?: BoardingSigningAdapter,
     ) {
         super(
             identity,
@@ -3229,6 +3297,57 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         }
 
         const setup = await ReadonlyWallet.setupWalletConfig(config, pubkey);
+        if (setup.boardingTapscript instanceof BoardingProgramScript) {
+            if (!config.boardingSigningAdapter) {
+                throw new Error("named boarding program requires a signing adapter");
+            }
+            if (
+                !equalBytes(
+                    config.boardingSigningAdapter.publicKey,
+                    setup.boardingTapscript.program.cosignerPubKey,
+                )
+            ) {
+                throw new Error("boarding signing adapter key does not match program");
+            }
+            if (
+                config.settlementConfig !== false &&
+                config.settlementConfig?.boardingUtxoSweep !== false
+            ) {
+                throw new Error(
+                    "named boarding program requires boardingUtxoSweep:false; use explicit recovery",
+                );
+            }
+            const boardingSettleAddress =
+                config.settlementConfig === false
+                    ? undefined
+                    : config.settlementConfig?.boardingSettleAddress;
+            if (
+                config.settlementConfig === false ||
+                !boardingSettleAddress ||
+                config.settlementConfig.autoRenewVtxos !== false ||
+                config.settlementConfig.maxBoardingInputsPerSettle !== 1 ||
+                config.settlementConfig.deprecatedSignerMigration !== false
+            ) {
+                throw new Error(
+                    "named boarding program requires a pinned destination, one input per settle, and automatic VTXO renewal/migration disabled",
+                );
+            }
+            let decodedDestination: ArkAddress;
+            try {
+                decodedDestination = ArkAddress.decode(boardingSettleAddress);
+            } catch {
+                throw new Error("named boarding destination must be an Arkade address");
+            }
+            assertRecipientArkAddress(boardingSettleAddress, decodedDestination, {
+                hrp: setup.network.hrp,
+                signerSet: {
+                    active: hex.encode(setup.serverPubKey),
+                    deprecated: new Map(),
+                },
+            });
+        } else if (config.boardingSigningAdapter) {
+            throw new Error("boarding signing adapter requires a named boarding program");
+        }
 
         // parse the server forfeit address
         // server is expecting funds to be sent to this address
@@ -3261,6 +3380,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // after the contract manager has registered the wallet's
         // baseline contracts.
         const boot = await WalletReceiveRotator.resolveBoot(config, setup);
+        if (setup.boardingTapscript instanceof BoardingProgramScript && boot?.provider) {
+            throw new Error("named boarding programs currently require static wallet mode");
+        }
 
         const wallet = new Wallet(
             config.identity,
@@ -3293,6 +3415,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     : {}),
             },
             checkpointExitDelayOverrides,
+            config.boardingSigningAdapter,
         );
         wallet._serverInfoSource = setup.serverInfoSource;
         // The response cleared construction validation — network/signer in
@@ -3752,6 +3875,27 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             outputs.push(Extension.create([assetPacket]).txOut());
         }
 
+        const customBoardingIndexes =
+            this._boardingTapscript instanceof BoardingProgramScript
+                ? customBoardingProofIndexes(params.inputs, this._boardingTapscript.pkScript)
+                : [];
+        let boardingRegistration: PreparedBoardingRegistration | undefined;
+        if (customBoardingIndexes.length > 0) {
+            if (!this.boardingSigningAdapter) {
+                throw new Error("named boarding signing adapter is unavailable");
+            }
+            const prepared = await this.prepareNamedBoardingRegistration(
+                params.inputs,
+                recipients,
+                customBoardingIndexes,
+            );
+            if (typeof prepared === "string") {
+                await this.updateDbAfterSettle(params.inputs, prepared);
+                return prepared;
+            }
+            boardingRegistration = prepared;
+        }
+
         // session holds the state of the musig2 signing process of the virtual output tree
         let session: SignerSession | undefined;
         const signingPublicKeys: string[] = [];
@@ -3760,15 +3904,17 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             signingPublicKeys.push(hex.encode(await session.getPublicKey()));
         }
 
-        const [intent, deleteIntent] = await Promise.all([
-            this.makeRegisterIntentSignature(
-                params.inputs,
-                outputs,
-                onchainOutputIndexes,
-                signingPublicKeys,
-            ),
-            this.makeDeleteIntentSignature(params.inputs),
-        ]);
+        const intentPromise = this.makeRegisterIntentSignature(
+            params.inputs,
+            outputs,
+            onchainOutputIndexes,
+            signingPublicKeys,
+            undefined,
+            boardingRegistration?.registerExpireAt,
+        );
+        const [intent, deleteIntent] = boardingRegistration
+            ? [await intentPromise, undefined]
+            : await Promise.all([intentPromise, this.makeDeleteIntentSignature(params.inputs)]);
 
         // Client-side intent key: the intent proof's txid (NArk parity).
         // Falls back to a deterministic outpoint digest if the special
@@ -3782,13 +3928,18 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 .sort()
                 .join("|");
         }
-        await this.persistIntentSnapshot(
-            intentTxId,
-            "waiting_to_submit",
-            intent,
-            deleteIntent,
-            params.inputs,
-        );
+        const persistIntent = (state: ArkIntentState, patch?: Partial<ArkIntent>) =>
+            boardingRegistration
+                ? Promise.resolve()
+                : this.persistIntentSnapshot(
+                      intentTxId,
+                      state,
+                      intent,
+                      deleteIntent!,
+                      params.inputs,
+                      patch,
+                  );
+        await persistIntent("waiting_to_submit");
 
         const topics = [
             ...signingPublicKeys,
@@ -3843,22 +3994,32 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 yield* stream;
             })();
 
-            const intentId = await this.safeRegisterIntent(intent, params.inputs);
-
-            await this.persistIntentSnapshot(
-                intentTxId,
-                "waiting_for_batch",
+            const intentId = await this.safeRegisterIntent(
                 intent,
-                deleteIntent,
                 params.inputs,
-                { intentId },
+                boardingRegistration,
+                customBoardingIndexes,
             );
+
+            await persistIntent("waiting_for_batch", { intentId });
 
             // SDK-owned intent persistence runs from the awaited batch hooks;
             // the caller's eventCallback stays purely observational.
             const handler = wrapHandlerWithIntentPersistence(
-                this.createBatchHandler(intentId, params.inputs, recipients, session),
-                { intentRepository: this.intentRepository, intentTxId },
+                boardingRegistration
+                    ? this.createBatchHandler(
+                          intentId,
+                          params.inputs,
+                          recipients,
+                          session,
+                          boardingRegistration,
+                          this._boardingTapscript.pkScript,
+                      )
+                    : this.createBatchHandler(intentId, params.inputs, recipients, session),
+                {
+                    intentRepository: boardingRegistration ? undefined : this.intentRepository,
+                    intentTxId,
+                },
             );
 
             const commitmentTxid = await Batch.join(primedStream, handler, {
@@ -3893,35 +4054,29 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 // rotation) threw. The settlement stands — never delete or cancel
                 // it. Re-persist the terminal success in case the hook's write
                 // failed; persistIntentSnapshot no-ops if it already landed.
-                await this.persistIntentSnapshot(
-                    intentTxId,
-                    "batch_succeeded",
-                    intent,
-                    deleteIntent,
-                    params.inputs,
-                    { commitmentTransactionId: committedTxid },
-                );
+                await persistIntent("batch_succeeded", {
+                    commitmentTransactionId: committedTxid,
+                });
+                throw error;
+            }
+            if (boardingRegistration) {
+                // The next SDK-owned periodic pass asks the runtime whether a
+                // registered attempt can be released. Never infer that here:
+                // this error may be a lost register or final response.
                 throw error;
             }
             // Pre-commit failure: release the server intent so the next settle
             // doesn't hit "duplicated input", and record the cancellation.
             const inputIds = params.inputs.map((i) => `${i.txid}:${i.vout}`).join(",");
-            await this.arkProvider.deleteIntent(deleteIntent).catch((e) => {
+            await this.arkProvider.deleteIntent(deleteIntent!).catch((e) => {
                 console.warn(
                     `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
                     e,
                 );
             });
-            await this.persistIntentSnapshot(
-                intentTxId,
-                "cancelled",
-                intent,
-                deleteIntent,
-                params.inputs,
-                {
-                    cancellationReason: error instanceof Error ? error.message : String(error),
-                },
-            );
+            await persistIntent("cancelled", {
+                cancellationReason: error instanceof Error ? error.message : String(error),
+            });
             throw error;
         } finally {
             // Clear state first so a synchronous handler firing from abort()
@@ -3979,6 +4134,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         expectedRecipients: Recipient[],
         connectorsGraph?: TxTree,
         validatedCommitmentTxid?: string,
+        boardingRegistration?: PreparedBoardingRegistration,
+        customBoardingScript?: Bytes,
+        validatedBoardingBatch?: ValidatedBoardingBatch,
     ) {
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
@@ -3998,6 +4156,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             validateBatchRecipientsWithoutTree(settlementPsbt, expectedRecipients, this.network);
         }
         let hasBoardingUtxos = false;
+        const customBoardingInputIndexes: number[] = [];
 
         let connectorIndex = 0;
 
@@ -4035,6 +4194,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     // arkd to reject it as "not a wallet script". Fail early.
                     if (!settlementPsbt.getInput(i).tapScriptSig?.length) {
                         throw new Error(await this.unsignableBoardingInputError(input, script));
+                    }
+                    if (customBoardingScript && equalBytes(script, customBoardingScript)) {
+                        customBoardingInputIndexes.push(i);
                     }
                     hasBoardingUtxos = true;
                     break;
@@ -4110,6 +4272,33 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             signedForfeits.push(base64.encode(forfeitTx.toPSBT()));
         }
 
+        if (boardingRegistration) {
+            if (
+                !this.boardingSigningAdapter ||
+                !validatedBoardingBatch ||
+                customBoardingInputIndexes.length === 0
+            ) {
+                throw new Error("named boarding finalization lacks validated batch evidence");
+            }
+            await this.assertNamedBoardingCooperativeWindow(inputs);
+            let result;
+            try {
+                result = await this.boardingSigningAdapter.submitCommitment({
+                    handle: boardingRegistration.handle,
+                    psbt: base64.encode(settlementPsbt.toPSBT()),
+                    inputIndexes: customBoardingInputIndexes,
+                    signedForfeits,
+                    validatedBatch: validatedBoardingBatch,
+                });
+            } catch {
+                throw new Error("named boarding finalization outcome is ambiguous");
+            }
+            if (result.status === "ambiguous") {
+                throw new Error("named boarding finalization outcome is ambiguous");
+            }
+            return;
+        }
+
         if (signedForfeits.length > 0 || hasBoardingUtxos) {
             await this.arkProvider.submitSignedForfeitTxs(
                 signedForfeits,
@@ -4157,11 +4346,14 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         inputs: ExtendedCoin[],
         expectedRecipients: Recipient[],
         session?: SignerSession,
+        boardingRegistration?: PreparedBoardingRegistration,
+        customBoardingScript?: Bytes,
     ): Batch.Handler {
         let sweepTapTreeRoot: Uint8Array | undefined;
         // Assigned only after the tree it commits to has been validated, so it
         // always names a commitment tx this handler has checked.
         let validatedCommitmentTxid: string | undefined;
+        let validatedBoardingBatch: ValidatedBoardingBatch | undefined;
         return {
             onBatchStarted: async (event: BatchStartedEvent): Promise<{ skip: boolean }> => {
                 const utf8IntentId = new TextEncoder().encode(intentId);
@@ -4241,6 +4433,17 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 }
 
                 validatedCommitmentTxid = commitmentTx.id;
+                if (boardingRegistration) {
+                    validatedBoardingBatch = {
+                        batchId: event.id,
+                        unsignedCommitmentTx: event.unsignedCommitmentTx,
+                        vtxoTree: snapshotTxTree(vtxoTree),
+                        expectedRecipients: expectedRecipients.map((recipient) => ({
+                            ...recipient,
+                            assets: recipient.assets?.map((asset) => ({ ...asset })),
+                        })),
+                    };
+                }
 
                 await session.init(vtxoTree, sweepTapTreeRoot, sharedOutput.amount);
 
@@ -4287,6 +4490,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     expectedRecipients,
                     connectorTree,
                     validatedCommitmentTxid,
+                    boardingRegistration,
+                    customBoardingScript,
+                    validatedBoardingBatch,
                 );
             },
         };
@@ -4376,10 +4582,105 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         return signed as Transaction;
     }
 
+    private async assertNamedBoardingCooperativeWindow(
+        inputs: SettleParams["inputs"],
+    ): Promise<void> {
+        if (!(this._boardingTapscript instanceof BoardingProgramScript)) return;
+        const timelock = this._boardingTapscript.options.csvTimelock;
+        const chainTip =
+            timelock.type === "blocks" ? await this.onchainProvider.getChainTip() : undefined;
+        for (const input of inputs) {
+            if (
+                typeof input === "string" ||
+                isVirtualCoin(input) ||
+                !coinUsesScript(input, this._boardingTapscript.pkScript)
+            ) {
+                continue;
+            }
+            if (hasBoardingTxExpired(input, timelock, chainTip?.height)) {
+                throw new Error("named boarding input reached its recovery window");
+            }
+        }
+    }
+
+    private async prepareNamedBoardingRegistration(
+        inputs: ExtendedCoin[],
+        recipients: Recipient[],
+        boardingInputIndexes: number[],
+    ): Promise<PreparedBoardingRegistration | string> {
+        if (!this.boardingSigningAdapter) {
+            throw new Error("named boarding signing adapter is unavailable");
+        }
+        for (let pass = 0; pass < 2; pass++) {
+            const result = await this.boardingSigningAdapter.prepareRegistration({
+                inputs: inputs.map((input) => ({ txid: input.txid, vout: input.vout })),
+                recipients: recipients.map((recipient) => ({ ...recipient })),
+            });
+            if (result.status === "blocked") {
+                throw new Error(`named boarding is blocked: ${result.reason}`);
+            }
+            if (result.status === "finalized") {
+                if (!isCanonicalTxid(result.commitmentTxid)) {
+                    throw new Error("boarding adapter returned invalid finalized result");
+                }
+                return result.commitmentTxid;
+            }
+            if (result.status === "ready") {
+                if (
+                    !result.handle ||
+                    !Number.isSafeInteger(result.registerExpireAt) ||
+                    result.registerExpireAt <= Math.floor(Date.now() / 1000)
+                ) {
+                    throw new Error("boarding adapter returned invalid registration preparation");
+                }
+                return result;
+            }
+            if (
+                !result.handle ||
+                !Number.isSafeInteger(result.deleteExpireAt) ||
+                result.deleteExpireAt <= Math.floor(Date.now() / 1000)
+            ) {
+                throw new Error("boarding adapter returned invalid release preparation");
+            }
+            if (!(await this.submitNamedBoardingRelease(inputs, boardingInputIndexes, result))) {
+                throw new Error("named boarding release outcome is ambiguous");
+            }
+        }
+        throw new Error("named boarding did not become ready after confirmed release");
+    }
+
     async safeRegisterIntent(
         intent: SignedIntent<Intent.RegisterMessage>,
         inputs: ExtendedCoin[],
+        boardingRegistration?: PreparedBoardingRegistration,
+        boardingInputIndexes: number[] = [],
     ): Promise<string> {
+        if (boardingRegistration) {
+            if (!this.boardingSigningAdapter) {
+                throw new Error("named boarding signing adapter is unavailable");
+            }
+            let result;
+            try {
+                result = await this.boardingSigningAdapter.registerIntent({
+                    handle: boardingRegistration.handle,
+                    psbt: intent.proof,
+                    inputIndexes: boardingInputIndexes,
+                    message: intent.message,
+                });
+            } catch {
+                throw new Error("named boarding registration outcome is ambiguous");
+            }
+            if (result.status === "ambiguous") {
+                throw new Error("named boarding registration outcome is ambiguous");
+            }
+            if (result.status === "definitely_not_submitted") {
+                throw new Error("named boarding registration was not submitted");
+            }
+            if (!result.intentId) {
+                throw new Error("named boarding registration outcome is ambiguous");
+            }
+            return result.intentId;
+        }
         try {
             return await this.arkProvider.registerIntent(intent);
         } catch (error) {
@@ -4406,18 +4707,35 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         }
     }
 
+    private async submitNamedBoardingRelease(
+        inputs: ExtendedCoin[],
+        boardingInputIndexes: number[],
+        prepared: Extract<BoardingPreparationResult, { status: "release_required" }>,
+    ): Promise<boolean> {
+        if (!this.boardingSigningAdapter) return false;
+        const intent = await this.makeDeleteIntentSignature(inputs, prepared.deleteExpireAt);
+        const result = await this.boardingSigningAdapter.releaseIntent({
+            handle: prepared.handle,
+            psbt: intent.proof,
+            inputIndexes: boardingInputIndexes,
+            message: intent.message,
+        });
+        return result.status === "released";
+    }
+
     async makeRegisterIntentSignature(
         coins: ExtendedCoin[],
         outputs: TransactionOutput[],
         onchainOutputsIndexes: number[],
         cosignerPubKeys: string[],
         validAt?: number,
+        expireAt?: number,
     ): Promise<SignedIntent<Intent.RegisterMessage>> {
         const message: Intent.RegisterMessage = {
             type: "register",
             onchain_output_indexes: onchainOutputsIndexes,
             valid_at: validAt ? Math.floor(validAt) : 0,
-            expire_at: 0,
+            expire_at: expireAt ? Math.floor(expireAt) : 0,
             cosigners_public_keys: cosignerPubKeys,
         };
 
@@ -4432,10 +4750,11 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
     async makeDeleteIntentSignature(
         coins: ExtendedCoin[],
+        expireAt?: number,
     ): Promise<SignedIntent<Intent.DeleteMessage>> {
         const message: Intent.DeleteMessage = {
             type: "delete",
-            expire_at: 0,
+            expire_at: expireAt ? Math.floor(expireAt) : 0,
         };
 
         const proof = Intent.create(message, coins, []);

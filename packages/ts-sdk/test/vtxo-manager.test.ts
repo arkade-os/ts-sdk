@@ -2839,6 +2839,69 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         expect(call.outputs[0].amount).toBe(10_000n - 200n);
     });
 
+    it("caps economically viable boarding inputs rather than the pre-fee prefix", async () => {
+        const tiny = makeUnexpiredUtxo(100);
+        const normal = makeUnexpiredUtxo(10_000, 1);
+        const wallet = buildWallet([tiny, normal], []);
+        (wallet.arkProvider.getInfo as any).mockResolvedValue({
+            fees: { intentFee: { onchainInput: "200.0" } },
+        });
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            maxBoardingInputsPerSettle: 1,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([tiny, normal]);
+
+        const call = (wallet.settle as any).mock.calls[0][0];
+        expect(call.inputs).toEqual([normal]);
+    });
+
+    it("uses the pinned destination only for a cycle containing boarding inputs", async () => {
+        const pinned =
+            "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
+        const boarding = makeUnexpiredUtxo(10_000);
+        const boardingWallet = buildWallet([boarding], []);
+        const boardingManager = new VtxoManager(boardingWallet, undefined, {
+            boardingUtxoSweep: false,
+            boardingSettleAddress: pinned,
+        });
+        boardingManager.dispose();
+
+        await (boardingManager as any).runPeriodicSettle([boarding]);
+        expect((boardingWallet.settle as any).mock.calls[0][0].outputs[0].address).toBe(pinned);
+
+        const vtxo = makeExpiringVtxo(5_000);
+        const renewalWallet = buildWallet([], [vtxo]);
+        const ownAddress = await renewalWallet.getAddress();
+        const renewalManager = new VtxoManager(renewalWallet, undefined, {
+            boardingUtxoSweep: false,
+            boardingSettleAddress: pinned,
+        });
+        renewalManager.dispose();
+
+        await (renewalManager as any).runPeriodicSettle([]);
+        expect((renewalWallet.settle as any).mock.calls[0][0].outputs[0].address).toBe(ownAddress);
+    });
+
+    it("can disable automatic VTXO renewal without disabling boarding", async () => {
+        const boarding = makeUnexpiredUtxo(10_000);
+        const vtxo = makeExpiringVtxo(5_000);
+        const wallet = buildWallet([boarding], [vtxo]);
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            autoRenewVtxos: false,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([boarding]);
+
+        expect((wallet.settle as any).mock.calls[0][0].inputs).toEqual([boarding]);
+        expect(wallet.getSpendableVtxos).not.toHaveBeenCalled();
+    });
+
     it("settles VTXOs alone when no unsettled boarding UTXOs are present", async () => {
         const vtxo = makeExpiringVtxo(5_000);
         // No boarding UTXOs at all.

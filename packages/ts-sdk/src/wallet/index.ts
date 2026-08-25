@@ -31,6 +31,23 @@ export {
     type ActivityResolver,
 } from "./activity";
 import { DelegateProvider } from "../providers/delegate";
+import type { BoardingProgram } from "../script/boarding";
+import type { BoardingSigningAdapter } from "./boarding";
+
+export type {
+    BoardingSigningAdapter,
+    PreparedBoardingRegistration,
+    BoardingPreparationResult,
+    ValidatedBoardingBatch,
+} from "./boarding";
+export type { BoardingProgram } from "../script/boarding";
+export {
+    BoardingProgramScript,
+    createBoardingProgramScript,
+    VAULT_BOARDING_PROGRAM,
+} from "../script/boarding";
+export { recoverBoardingProgram } from "./boardingRecovery";
+export type { RecoverBoardingProgramParams } from "./boardingRecovery";
 
 /**
  * Wallet receive-address strategy.
@@ -105,6 +122,8 @@ export interface BaseWalletConfig {
     arkServerPublicKey?: string;
     /** Relative timelock applied to boarding scripts. */
     boardingTimelock?: RelativeTimelock;
+    /** Optional named boarding contract validated against live Operator facts. */
+    boardingProgram?: BoardingProgram;
     /** Relative timelock applied to unilateral exit paths. */
     exitTimelock?: RelativeTimelock;
     /**
@@ -207,6 +226,9 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
 export interface WalletConfig extends ReadonlyWalletConfig {
     /** Signing identity used to authorize transactions. */
     identity: Identity;
+
+    /** External signer/submission seam for a named boarding program. */
+    boardingSigningAdapter?: BoardingSigningAdapter;
 
     /**
      * Legacy renewal configuration.

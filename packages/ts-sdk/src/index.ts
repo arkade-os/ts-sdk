@@ -436,6 +436,20 @@ export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
 export * from "./extension/emulator";
+export {
+    BoardingProgramScript,
+    createBoardingProgramScript,
+    VAULT_BOARDING_PROGRAM,
+} from "./script/boarding";
+export type { BoardingProgram } from "./script/boarding";
+export type {
+    BoardingSigningAdapter,
+    PreparedBoardingRegistration,
+    BoardingPreparationResult,
+    ValidatedBoardingBatch,
+} from "./wallet/boarding";
+export { recoverBoardingProgram } from "./wallet/boardingRecovery";
+export type { RecoverBoardingProgramParams } from "./wallet/boardingRecovery";
 
 // BIP21 codec (reused by the payment rails) + the modular payment router.
 export * from "./utils/bip21";

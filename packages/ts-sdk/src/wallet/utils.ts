@@ -11,7 +11,7 @@ import { isTapscriptDeriving } from "../contracts/types";
 import { contractHandlers } from "../contracts/handlers";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
-import { VtxoScript } from "../script/base";
+import { VtxoScript, type TapLeafScript } from "../script/base";
 import type { ReadonlyWallet } from "./wallet";
 import { classifyAgainstSignerSet, type SignerSet } from "./signerRotation";
 import { hex } from "@scure/base";
@@ -38,7 +38,7 @@ export function getDustAmount(wallet: IWallet): bigint {
  * each UTXO is extended with the tapscript of its own address (plan §6-III.2).
  */
 export function extendCoinWithTapscript(
-    boardingTapscript: DefaultVtxo.Script,
+    boardingTapscript: VtxoScript & { forfeit(): TapLeafScript },
     utxo: Coin,
 ): ExtendedCoin {
     return {

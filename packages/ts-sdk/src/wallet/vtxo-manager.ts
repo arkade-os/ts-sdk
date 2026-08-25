@@ -527,6 +527,15 @@ export interface SettlementConfig {
      * @defaultValue `true`
      */
     deprecatedSignerMigration?: boolean;
+
+    /** Arkade destination used by automatic boarding instead of wallet.getAddress(). */
+    boardingSettleAddress?: string;
+
+    /** Include near-expiry VTXOs in the automatic boarding pass. */
+    autoRenewVtxos?: boolean;
+
+    /** Maximum confirmed boarding inputs consumed by one automatic settle. */
+    maxBoardingInputsPerSettle?: number;
 }
 
 /**
@@ -558,11 +567,15 @@ export const DEFAULT_RENEWAL_CONFIG: Required<Omit<RenewalConfig, "enabled">> = 
  * })
  * ```
  */
-export const DEFAULT_SETTLEMENT_CONFIG: Required<SettlementConfig> = {
+export const DEFAULT_SETTLEMENT_CONFIG: Required<
+    Omit<SettlementConfig, "boardingSettleAddress">
+> & { boardingSettleAddress?: string } = {
     vtxoThreshold: DEFAULT_THRESHOLD_SECONDS,
     boardingUtxoSweep: true,
     pollIntervalMs: 60_000,
     deprecatedSignerMigration: true,
+    autoRenewVtxos: true,
+    maxBoardingInputsPerSettle: Number.MAX_SAFE_INTEGER,
 };
 
 /**
@@ -2718,7 +2731,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 }
 
                 const msSinceLastRenewal = Date.now() - this.lastRenewalTimestamp;
+                const autoRenewVtxos =
+                    this.settlementConfig !== false &&
+                    (this.settlementConfig.autoRenewVtxos ??
+                        DEFAULT_SETTLEMENT_CONFIG.autoRenewVtxos);
                 const shouldRenew =
+                    autoRenewVtxos &&
                     !this.renewalInProgress &&
                     msSinceLastRenewal >= VtxoManager.RENEWAL_COOLDOWN_MS;
 
@@ -3008,6 +3026,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * DeleteIntent retries on every 60s poll.
      */
     private async runPeriodicSettle(boardingUtxos: ExtendedCoin[]): Promise<void> {
+        if (this.settlementConfig === false) return;
         // Exclude expired boarding inputs — those should be swept, not settled.
         // If we can't determine expired status, bail out entirely to avoid
         // accidentally settling expired inputs (which would conflict with sweep).
@@ -3027,19 +3046,29 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             throw e instanceof Error ? e : new Error(String(e));
         }
 
-        const unsettledBoarding = boardingUtxos.filter(
-            (u) =>
-                u.status.confirmed &&
-                !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`) &&
-                !expiredSet.has(`${u.txid}:${u.vout}`),
-        );
+        const maxBoardingInputs =
+            this.settlementConfig.maxBoardingInputsPerSettle ??
+            DEFAULT_SETTLEMENT_CONFIG.maxBoardingInputsPerSettle;
+        if (!Number.isSafeInteger(maxBoardingInputs) || maxBoardingInputs < 1) {
+            throw new Error("maxBoardingInputsPerSettle must be a positive safe integer");
+        }
+        const unsettledBoarding = boardingUtxos
+            .filter(
+                (u) =>
+                    u.status.confirmed &&
+                    !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`) &&
+                    !expiredSet.has(`${u.txid}:${u.vout}`),
+            )
+            .sort((a, b) => a.txid.localeCompare(b.txid) || a.vout - b.vout);
 
         // Collect near-expiry VTXOs unless the event-driven path is mid-renewal.
         // Skipping when renewalInProgress avoids double-submitting the same VTXOs.
         let expiringVtxos: NormalizedExtendedVirtualCoin[] = [];
         // Fetched here rather than at the top of the method so a boarding-only pass stays offline.
         let now: TimeHeight | undefined;
-        if (!this.renewalInProgress) {
+        const automaticVtxoRenewal =
+            this.settlementConfig.autoRenewVtxos ?? DEFAULT_SETTLEMENT_CONFIG.autoRenewVtxos;
+        if (automaticVtxoRenewal && !this.renewalInProgress) {
             try {
                 now = await fetchTimeHeight(this.wallet);
                 expiringVtxos = await this.selectExpiringVtxos(undefined, now);
@@ -3085,6 +3114,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const filteredBoarding: ExtendedCoin[] = [];
         for (const u of unsettledBoarding) {
+            if (filteredBoarding.length >= maxBoardingInputs) break;
             const inputFee = estimator.evalOnchainInput({
                 amount: BigInt(u.value),
             });
@@ -3145,7 +3175,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             await this.rotateForRecoverableInputs([...filteredBoarding, ...filteredVtxos], info);
         }
 
-        const arkAddress = await this.wallet.getAddress();
+        const arkAddress =
+            filteredBoarding.length > 0
+                ? (this.settlementConfig.boardingSettleAddress ?? (await this.wallet.getAddress()))
+                : await this.wallet.getAddress();
 
         const outputFee = estimator.evalOffchainOutput({
             amount: totalAmount,
