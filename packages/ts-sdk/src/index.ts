@@ -596,7 +596,6 @@ export {
     DelegatorManagerImpl,
     RestDelegateProvider,
     RestDelegatorProvider,
-
     // Providers
     ESPLORA_URL,
     EsploraProvider,
@@ -610,7 +609,6 @@ export {
     RestIndexerProvider,
     RestEmulatorProvider,
     DEFAULT_VTXO_PAGE_SIZE,
-
     // Script-related
     ArkAddress,
     DefaultVtxo,
@@ -619,13 +617,11 @@ export {
     VHTLC,
     assembleBtcdTaprootTree,
     scriptFromTapLeafScript,
-
     // Enums
     TxType,
     IndexerTxType,
     ChainTxType,
     SettlementEventType,
-
     // Service Worker
     setupServiceWorker,
     MessageBus,
@@ -644,7 +640,6 @@ export {
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
     DEFAULT_MESSAGE_TIMEOUTS,
-
     // Tapscript
     decodeTapscript,
     MultisigTapscript,
@@ -653,7 +648,6 @@ export {
     ConditionMultisigTapscript,
     CLTVMultisigTapscript,
     TapTreeCoder,
-
     // Arkade PSBT fields
     ArkPsbtFieldKey,
     ArkPsbtFieldKeyType,
@@ -680,19 +674,15 @@ export {
     getRandomId,
     buildVersion,
     sdkVersion,
-
     // Asset utilities
     createAssetPacket,
     selectCoinsWithAsset,
     selectVirtualCoins,
-
     // Arknote
     ArkNote,
-
     // ArkadeCash
     ArkadeCash,
     ArkadeCashCreateError,
-
     // Network
     getNetwork,
     networks,
@@ -701,7 +691,6 @@ export {
     BITCOIN_EMULATOR_PUBKEY,
     MUTINYNET_EMULATOR_PUBKEY,
     REGTEST_EMULATOR_PUBKEY,
-
     // DB
     closeDatabase,
     openDatabase,
@@ -713,7 +702,6 @@ export {
     awaitTransaction,
     deleteByIndex,
     getAllByIndexValues,
-
     // Repositories
     IndexedDBWalletRepository,
     IndexedDBContractRepository,
@@ -733,16 +721,12 @@ export {
     rollbackMigration,
     WalletRepositoryImpl,
     ContractRepositoryImpl,
-
     // Intent proof
     Intent,
-
     // BIP-322 message signing
     BIP322,
-
     // TxTree
     TxTree,
-
     // Anchor
     P2A,
     Unroll,
@@ -755,7 +739,6 @@ export {
     timelockToSequence,
     sequenceToTimelock,
     toXOnly,
-
     // Errors
     ArkError,
     ArkErrorName,
@@ -766,7 +749,6 @@ export {
     isRetryableProviderError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
-
     // Batch session
     Batch,
     validateVtxoTxGraph,
@@ -793,14 +775,12 @@ export {
     isSubdust,
     isExpired,
     getSequence,
-
     // VTXO capability predicates
     canRecoverOnchain,
     canSpendOffchain,
     hasTerminalSpend,
     isPastExpiry,
     isVirtualCoin,
-
     // Contracts
     ContractManager,
     ContractWatcher,
@@ -828,7 +808,6 @@ export {
     // Contract handler authoring helpers (spending-path selection)
     isCsvSpendable,
     isCltvSatisfied,
-
     // Assets
     ReadonlyAssetManager,
     AssetManager,
@@ -866,7 +845,6 @@ export type {
     VerifyServerSignatures,
     TapLeaves,
     IncomingFunds,
-
     // Identity options
     SeedIdentityOptions,
     MnemonicOptions,
@@ -890,12 +868,10 @@ export type {
     Vtxo,
     VtxoChain,
     Tx,
-
     // Emulator types
     EmulatorProvider,
     EmulatorInfo,
     ConnectorTreeNode,
-
     // Provider types
     OnchainProvider,
     ArkProvider,
@@ -924,22 +900,18 @@ export type {
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,
-
     // Network types
     Network,
     NetworkName,
-
     // Script types
     ArkTapscript,
     RelativeTimelock,
     EncodedVtxoScript,
     TapLeafScript,
-
     // Tree types
     SignerSession,
     TreeNonces,
     TreePartialSigs,
-
     // Wallet types
     GetVtxosFilter,
     BoardingUtxoGroup,
@@ -959,13 +931,11 @@ export type {
     SignerStatus,
     SignerClassification,
     SignerSet,
-
     // Provider availability
     ProviderKind,
     ServerInfoSource,
     ProviderConnectionState,
     ContractSyncState,
-
     // Asset types
     IReadonlyAssetManager,
     IAssetManager,
@@ -979,21 +949,16 @@ export type {
     AssetDetails,
     AssetMetadata,
     KnownMetadata,
-
     // Musig2 types
     Nonces,
     PartialSig,
-
     // Arkade PSBT field coder
     ArkPsbtFieldCoder,
-
     // TxTree
     TxTreeNode,
-
     // Anchor
     AnchorBumper,
     VSize,
-
     // Unilateral exit packages
     ExitCaptureMode,
     ExitChainResolver,
@@ -1008,10 +973,8 @@ export type {
     ExitOptions,
     ExecutorEvent,
     ExitFeeWallet,
-
     // Storage
     StorageConfig,
-
     // Contract types
     Contract,
     ContractVtxo,
@@ -1044,19 +1007,16 @@ export type {
     ScanResult,
     ScanContractsOptions,
     HandlerError,
-
     // Service Worker types
     MessageHandler,
     RequestEnvelope,
     ResponseEnvelope,
     MessageTimeouts,
     ServiceWorkerWalletMode,
-
     // Arkade types
     ArkadeBatchInput,
     ArkadeExtendedCoin,
     ArkadeExtendedVirtualCoin,
-
     // Delegate types (Delegator* aliases deprecated)
     IDelegateManager,
     IDelegatorManager,
@@ -1064,7 +1024,6 @@ export type {
     DelegatorProvider,
     DelegateInfo,
     DelegateOptions,
-
     // Repositories
     ManagedConnection,
     WalletRepository,

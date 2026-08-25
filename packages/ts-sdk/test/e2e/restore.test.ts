@@ -47,98 +47,95 @@ import {
 describe("Wallet.restore()", () => {
     beforeEach(beforeEachFaucet, 20000);
 
-    it(
-        "recovers HD-rotated funds a fresh same-seed repo cannot see without restore()",
-        { timeout: 120000 },
-        async () => {
-            const mnemonic = generateMnemonic(wordlist);
-            const GAP_INDEX = 5; // > lookAheadWindow (1), < restore gapLimit (20)
-            const AMOUNT = 50_000; // small: two sends must fit the per-test faucet budget
-            const totalFunded = 2 * AMOUNT;
+    it("recovers HD-rotated funds a fresh same-seed repo cannot see without restore()", {
+        timeout: 120000,
+    }, async () => {
+        const mnemonic = generateMnemonic(wordlist);
+        const GAP_INDEX = 5; // > lookAheadWindow (1), < restore gapLimit (20)
+        const AMOUNT = 50_000; // small: two sends must fit the per-test faucet budget
+        const totalFunded = 2 * AMOUNT;
 
-            // ── Wallet A: HD mode, the "issuer" ───────────────────────────
-            // lookAheadWindow: 1 keeps the band tight; A is only used to fund
-            // the index-0 baseline and to derive the deep index-5 address.
-            const a = await createTestArkWalletFromMnemonic(mnemonic, undefined, "hd", 1);
+        // ── Wallet A: HD mode, the "issuer" ───────────────────────────
+        // lookAheadWindow: 1 keeps the band tight; A is only used to fund
+        // the index-0 baseline and to derive the deep index-5 address.
+        const a = await createTestArkWalletFromMnemonic(mnemonic, undefined, "hd", 1);
 
-            // Wrap A in try/finally so a failed assertion can't leak A's
-            // watcher/state into later e2e files.
+        // Wrap A in try/finally so a failed assertion can't leak A's
+        // watcher/state into later e2e files.
+        try {
+            // Derive the index-5 receive address up front, off the baseline
+            // (index-0) tapscript. `buildReceiveContract` rebuilds it under
+            // the index-5 leaf key and encodes the ark address — the same
+            // primitive the look-ahead and restore gap-scan use.
+            const provider = await HDDescriptorProvider.create(
+                a.identity as unknown as HDCapableIdentity,
+                createSharedRepos().walletRepository,
+            );
+            const { params } = buildReceiveContract(
+                a.wallet.offchainTapscript,
+                provider.materializeDescriptorAt(GAP_INDEX),
+                a.wallet.network.hrp,
+                false,
+            );
+            const gapAddress = params.address;
+
+            // Fund the index-0 baseline (a fresh same-seed wallet covers
+            // this) and wait for A to see it, confirming the send landed.
+            const baselineAddress = await a.wallet.getAddress();
+            expect(baselineAddress).toBeDefined();
+            faucetOffchain(baselineAddress!, AMOUNT);
+            await waitFor(async () => (await a.wallet.getVtxos()).length > 0, {
+                timeout: 60_000,
+                interval: 1_000,
+            });
+
+            // Fund the deep index-5 address. These funds live at a script
+            // that a fresh same-seed wallet's baseline + [0, 1] look-ahead
+            // band cannot reach.
+            faucetOffchain(gapAddress, AMOUNT);
+
+            // Wallet A cannot watch index-5, so poll the indexer directly
+            // for the gap script: restore() reads the same indexer, and if
+            // the send were not yet indexed its gap scan would miss the
+            // funds and the recovery assertion would flake.
+            const indexer = new RestIndexerProvider("http://localhost:7070");
+            await waitFor(
+                async () => (await indexer.getVtxos({ scripts: [params.script] })).vtxos.length > 0,
+                { timeout: 60_000, interval: 1_000 },
+            );
+
+            // ── Wallet B: same seed, HD mode, FRESH separate repos ────────
+            const freshRepos = createSharedRepos();
+            const b = await createTestArkWalletFromMnemonic(mnemonic, freshRepos, "hd", 1);
+
+            // Wrap B in try/finally too — guarantee b.dispose() runs even
+            // if a B-side assertion throws.
             try {
-                // Derive the index-5 receive address up front, off the baseline
-                // (index-0) tapscript. `buildReceiveContract` rebuilds it under
-                // the index-5 leaf key and encodes the ark address — the same
-                // primitive the look-ahead and restore gap-scan use.
-                const provider = await HDDescriptorProvider.create(
-                    a.identity as unknown as HDCapableIdentity,
-                    createSharedRepos().walletRepository,
-                );
-                const { params } = buildReceiveContract(
-                    a.wallet.offchainTapscript,
-                    provider.materializeDescriptorAt(GAP_INDEX),
-                    a.wallet.network.hrp,
-                    false,
-                );
-                const gapAddress = params.address;
+                // B's baseline + [0, 1] band covers index-0 only (index-1 is
+                // unfunded, so the band never slides toward index-5). It can
+                // credit the index-0 funds but never the index-5 funds — so
+                // `before` is strictly LESS than the full funded total.
+                const before = (await b.wallet.getBalance()).total;
+                expect(before).toBeLessThan(totalFunded);
 
-                // Fund the index-0 baseline (a fresh same-seed wallet covers
-                // this) and wait for A to see it, confirming the send landed.
-                const baselineAddress = await a.wallet.getAddress();
-                expect(baselineAddress).toBeDefined();
-                faucetOffchain(baselineAddress!, AMOUNT);
-                await waitFor(async () => (await a.wallet.getVtxos()).length > 0, {
-                    timeout: 60_000,
-                    interval: 1_000,
-                });
+                // ── restore() must scan the HD index range and register the
+                //    index-5 contract the baseline + band missed ──────────────
+                await b.wallet.restore();
 
-                // Fund the deep index-5 address. These funds live at a script
-                // that a fresh same-seed wallet's baseline + [0, 1] look-ahead
-                // band cannot reach.
-                faucetOffchain(gapAddress, AMOUNT);
+                const after = (await b.wallet.getBalance()).total;
+                // restore() is load-bearing: it raised B's balance by
+                // discovering the gapped (index-5) contract. Offchain receive
+                // loses no value, so B recovers the full funded total.
+                expect(after).toBeGreaterThan(before);
+                expect(after).toBeGreaterThanOrEqual(totalFunded);
 
-                // Wallet A cannot watch index-5, so poll the indexer directly
-                // for the gap script: restore() reads the same indexer, and if
-                // the send were not yet indexed its gap scan would miss the
-                // funds and the recovery assertion would flake.
-                const indexer = new RestIndexerProvider("http://localhost:7070");
-                await waitFor(
-                    async () =>
-                        (await indexer.getVtxos({ scripts: [params.script] })).vtxos.length > 0,
-                    { timeout: 60_000, interval: 1_000 },
-                );
-
-                // ── Wallet B: same seed, HD mode, FRESH separate repos ────────
-                const freshRepos = createSharedRepos();
-                const b = await createTestArkWalletFromMnemonic(mnemonic, freshRepos, "hd", 1);
-
-                // Wrap B in try/finally too — guarantee b.dispose() runs even
-                // if a B-side assertion throws.
-                try {
-                    // B's baseline + [0, 1] band covers index-0 only (index-1 is
-                    // unfunded, so the band never slides toward index-5). It can
-                    // credit the index-0 funds but never the index-5 funds — so
-                    // `before` is strictly LESS than the full funded total.
-                    const before = (await b.wallet.getBalance()).total;
-                    expect(before).toBeLessThan(totalFunded);
-
-                    // ── restore() must scan the HD index range and register the
-                    //    index-5 contract the baseline + band missed ──────────────
-                    await b.wallet.restore();
-
-                    const after = (await b.wallet.getBalance()).total;
-                    // restore() is load-bearing: it raised B's balance by
-                    // discovering the gapped (index-5) contract. Offchain receive
-                    // loses no value, so B recovers the full funded total.
-                    expect(after).toBeGreaterThan(before);
-                    expect(after).toBeGreaterThanOrEqual(totalFunded);
-
-                    const vtxosAfter = await b.wallet.getVtxos();
-                    expect(vtxosAfter.length).toBeGreaterThan(0);
-                } finally {
-                    await b.wallet.dispose();
-                }
+                const vtxosAfter = await b.wallet.getVtxos();
+                expect(vtxosAfter.length).toBeGreaterThan(0);
             } finally {
-                await a.wallet.dispose();
+                await b.wallet.dispose();
             }
-        },
-    );
+        } finally {
+            await a.wallet.dispose();
+        }
+    });
 });

@@ -35,7 +35,7 @@ them. Core capabilities flow from `ts-sdk` outward to plugins.
 ```bash
 pnpm run build       # Build all packages — ts-sdk must build before boltz-swap
 pnpm run test:unit   # All unit tests
-pnpm run lint        # Check formatting (prettier)
+pnpm run lint        # Check formatting (biome)
 pnpm -C packages/ts-sdk vitest run test/wallet.test.ts   # Single test file
 ```
 
