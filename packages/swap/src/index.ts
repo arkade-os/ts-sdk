@@ -243,13 +243,9 @@ export {
 export {
     createSwapClient,
     type LightningReceiveQuote,
-    type LightningReceiveQuoteInput,
     type LightningSendQuote,
-    type LightningSendQuoteInput,
     type OnchainSendQuote,
-    type OnchainSendQuoteInput,
     type SpotQuote,
-    type SpotQuoteInput,
     type SwapClient,
     type SwapClientDeps,
     type SwapQuote,

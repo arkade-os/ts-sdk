@@ -1,31 +1,8 @@
 /**
- * One entry point over both swap families.
- *
- * The package's two halves are complete on their own: the RFQ corridors
- * (`requestLightningSend` / `requestLightningReceive` / `requestOnchainSend`,
- * driven by `RfqSwapManager`) and the arkade↔arkade offer flow (`createOffer`,
- * watched by `watchOfferSwaps`). What a wallet had to write itself was the
- * dispatch between them, the funding step each one expects, the record/origin
- * assembly `addSwap` needs, and the callback wiring the manager's README
- * documents as prose. That glue is this module.
- *
- * **The backend is chosen by the market, not by the caller.** A market with a
- * non-arkade leg carries an RFQ rendezvous (its card's `discovery_pubkey` +
- * `transports`), so its quote is a solver round trip; a spot arkade↔arkade
- * market carries a price feed and no rendezvous, so its quote resolves
- * client-side and the offer covenant is the whole protocol — the solver fills
- * from the arkd stream without ever being contacted. Swapping a backend is a
- * card change, never a client change.
- *
- * The corridor fields are read off the market at runtime rather than through
- * `@arkade-os/solver-discovery`'s types, which at 0.1.x predate corridor
- * markets. A pre-corridor index simply has no such fields, so every market in
- * it dispatches spot — the correct reading of that data, not a fallback.
- *
- * `onchain_receive` is deliberately absent: `RfqSwapManager` does not drive
- * that leg yet, and a facade quoting what nothing can monitor would be
- * offering a swap it cannot finish. Quote it directly with
- * `requestOnchainReceive` until the manager grows the fourth kind.
+ * One client over both swap families: RFQ corridors (driven by
+ * `RfqSwapManager`) and arkade↔arkade offers (watched by `watchOfferSwaps`).
+ * The market picks the backend: a non-arkade leg means RFQ over its card's
+ * rendezvous, two arkade legs mean a card-priced offer covenant.
  */
 import { hex } from "@scure/base";
 import {
@@ -65,7 +42,7 @@ import {
     type RfqSwapManagerCallbacks,
     type RfqSwapManagerDeps,
 } from "./swapManager";
-import type { RfqSwapOrigin } from "./rfqRecord";
+import { createRfqSwapRecord, type RfqSwapOrigin } from "./rfqRecord";
 import type { RefundArkProvider } from "./refund";
 import { rfqClaimSecretOf, rfqSecretsProfile } from "./rfqProfileParts";
 import { onchainSendProfile } from "./rfqCorridors";
@@ -73,65 +50,67 @@ import { arkadeRefunder } from "./arkadeRefunder";
 import { pushClaim } from "./claim";
 import type { ChainSource } from "./onchainHtlc";
 
-// ── Dispatch: what kind of swap a market sells ───────────────────────────────
+type SideCorridor = "arkade" | "lightning" | "onchain";
 
-/** The corridor-qualified read of a market, tolerant of pre-corridor data. */
-const corridorOf = (market: DiscoveredMarket): "spot" | "lightning" | "onchain" => {
+// read at runtime: solver-discovery 0.1.x types predate corridor markets
+const sideCorridorsOf = (market: DiscoveredMarket): { base: SideCorridor; quote: SideCorridor } => {
+    const read = (value: unknown): SideCorridor =>
+        value === "lightning" || value === "onchain" ? value : "arkade";
     const m = market as { base_corridor?: string; quote_corridor?: string };
-    const side = [m.base_corridor, m.quote_corridor].find((c) => c && c !== "arkade");
-    if (side === "lightning" || side === "onchain") return side;
-    return "spot";
+    return { base: read(m.base_corridor), quote: read(m.quote_corridor) };
 };
 
-// ── Quote inputs, one member per swap kind ──────────────────────────────────
+const resolveKind = (
+    market: DiscoveredMarket,
+    give: "base" | "quote",
+): "spot" | "ln_send" | "ln_receive" | "onchain_send" | "onchain_receive" => {
+    const corridors = sideCorridorsOf(market);
+    const giveCorridor = corridors[give];
+    const receiveCorridor = corridors[give === "base" ? "quote" : "base"];
+    if (giveCorridor === "arkade" && receiveCorridor === "arkade") return "spot";
+    if (receiveCorridor === "lightning") return "ln_send";
+    if (giveCorridor === "lightning") return "ln_receive";
+    if (receiveCorridor === "onchain") return "onchain_send";
+    return "onchain_receive";
+};
 
-export interface SpotQuoteInput {
-    kind: "spot";
-    /** Which side the trader deposits. */
+export interface SwapQuoteInput {
+    /** Which side of the market the trader deposits. */
     give: "base" | "quote";
-    /** Display amount ("0.01") or atomic bigint of the given side. */
-    giveAmount: string | number | bigint;
-}
-
-export interface LightningSendQuoteInput {
-    kind: "ln_send";
-    /** From the caller's own BOLT11 decoder — facts, not a decoder. */
-    invoice: InvoiceFacts;
-}
-
-export interface LightningReceiveQuoteInput {
-    kind: "ln_receive";
-    amount: number;
-    amountSide: "from" | "to";
-    /** covclaimd's 33-byte compressed pubkey. */
-    covclaimdPubkey: Uint8Array;
-    /** The caller's own decoder, applied to the SOLVER's hold invoice. */
-    decodeInvoice: (bolt11: string) => InvoiceFacts;
+    /** Size on the named side ("give" = exact-in, "receive" = exact-out).
+     * Spot: display string or atomic bigint; corridors: sats. A lightning
+     * send takes its amount from the invoice instead. */
+    amount?: string | number | bigint;
+    amountOn?: "give" | "receive";
+    /** Required when the receive side is lightning. */
+    invoice?: InvoiceFacts;
+    /** Trader's x-only L1 claim key; required when the receive side is onchain. */
+    payoutPubkey?: Uint8Array;
+    preimage?: Uint8Array;
     maxPayAmount?: number;
 }
 
-export interface OnchainSendQuoteInput {
-    kind: "onchain_send";
-    amount: number;
-    amountSide: "from" | "to";
-    /** Trader's x-only L1 key that will claim the HTLC. */
-    payoutPubkey: Uint8Array;
-    preimage?: Uint8Array;
-}
+const need = <T>(value: T | undefined, what: string, leg: string): T => {
+    if (value === undefined) throw new Error(`a ${leg} quote needs ${what}`);
+    return value;
+};
 
-export type SwapQuoteInput =
-    | SpotQuoteInput
-    | LightningSendQuoteInput
-    | LightningReceiveQuoteInput
-    | OnchainSendQuoteInput;
-
-// ── Quotes, carrying exactly what accept() needs ─────────────────────────────
+const corridorAmount = (
+    input: SwapQuoteInput,
+    leg: string,
+): { amount: number; amountSide: "from" | "to" } => {
+    const raw = need(input.amount, "an amount", leg);
+    const amountOn = need(input.amountOn, "amountOn ('give' or 'receive')", leg);
+    const amount = Number(raw);
+    if (!Number.isSafeInteger(amount) || amount <= 0) {
+        throw new Error(`a ${leg} amount must be a positive integer of sats, got ${String(raw)}`);
+    }
+    return { amount, amountSide: amountOn === "give" ? "from" : "to" };
+};
 
 export interface SpotQuote {
     kind: "spot";
     market: DiscoveredMarket;
-    /** Client-side pre-commitment plan: `receive.atomic` is the covenant's
-     * wantAmount, `deposit` what the funding tx must put in. */
     plan: OfferPlan;
 }
 
@@ -145,7 +124,7 @@ export interface LightningReceiveQuote {
     kind: "ln_receive";
     market: DiscoveredMarket;
     request: Awaited<ReturnType<typeof requestLightningReceive>>;
-    /** The solver's hold invoice — show it to the payer. */
+    /** The solver's hold invoice, for the payer. */
     invoice: string;
 }
 
@@ -157,34 +136,27 @@ export interface OnchainSendQuote {
 
 export type SwapQuote = SpotQuote | LightningSendQuote | LightningReceiveQuote | OnchainSendQuote;
 
-// ── The one swap union both watchers feed ───────────────────────────────────
-
 export type UnifiedSwap = { family: "offer"; swap: AssetSwap } | { family: "rfq"; swap: RfqSwap };
 
 export interface SwapClientDeps {
     wallet: IWallet;
+    /** Drops once IWallet exposes the server connection (arkade-os/ts-sdk#734). */
     arkServerUrl: string;
-    /** One repository backs both stores (`AssetSwap` rows and RFQ records). */
     repository: AssetSwapRepository;
-    /**
-     * The RFQ transport for a corridor market — read the card's `transports`
-     * (`nostrRfqTransport`), or pin one (`httpTransport`) for a solver you
-     * already know. Never called for a spot market.
-     */
+    /** Never called for a spot market. */
     transportFor: (market: DiscoveredMarket) => RfqTransport;
-    /** Registry discovery config, minus the repository (wired here). */
     discovery: Omit<DiscoverMarketsOptions, "repository">;
-    /** L1 access; required only to drive onchain-send swaps. */
+    /** BOLT11 decoder for the solver's hold invoice; required to quote lightning receives. */
+    decodeInvoice?: (bolt11: string) => InvoiceFacts;
+    /** covclaimd's 33-byte compressed pubkey — the lightning-receive claim
+     * packet seals to it; required to quote lightning receives. */
+    covclaimdPubkey?: Uint8Array;
+    /** L1 access; required to quote onchain sends. */
     chain?: ChainSource;
-    /**
-     * The L1 claim callback (fee rate and L1 signing are environment-specific;
-     * see `claimOnchainFill`). Without it an onchain send still watches and
-     * refunds — the manager reports the claim as blocked instead of taking it.
-     */
+    /** L1 claim callback (fee rate and signing are environment-specific);
+     * without it the manager reports onchain claims as blocked. */
     claimOnchain?: RfqSwapManagerCallbacks["claimOnchain"];
-    /** Co-signer key override, forwarded to every derivation. */
     emulatorPubkey?: string;
-    /** Injectable for tests; defaults constructed from `arkServerUrl`. */
     ark?: RefundArkProvider;
     indexer?: RestIndexerProvider;
 }
@@ -192,7 +164,6 @@ export interface SwapClientDeps {
 export interface SwapClient {
     markets(useCache?: boolean): Promise<DiscoveredMarket[]>;
     quote(market: DiscoveredMarket, input: SwapQuoteInput): Promise<SwapQuote>;
-    /** Fund/arm the quoted swap and hand it to the right watcher. */
     accept(quote: SwapQuote): Promise<UnifiedSwap>;
     /** Spot only: the covenant's cooperative reclaim. */
     cancel(fundingTxid: string): Promise<void>;
@@ -200,7 +171,6 @@ export interface SwapClient {
     onUpdate(listener: (swap: UnifiedSwap) => void): () => void;
     start(): Promise<void>;
     stop(): Promise<void>;
-    /** The composed manager, for callers needing the finer-grained surface. */
     readonly manager: RfqSwapManager;
 }
 
@@ -209,9 +179,7 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
     const ark = deps.ark ?? new RestArkProvider(arkServerUrl);
     const indexer = deps.indexer ?? new RestIndexerProvider(arkServerUrl);
 
-    // `contracts` is filled in at start(): getting the contract manager is
-    // async and the constructor is not. The manager holds deps by reference,
-    // so the late write is seen by restore and every later pass.
+    // contracts is filled in at start(); the manager holds deps by reference
     const managerDeps: RfqSwapManagerDeps = { indexer, chain: deps.chain, repository };
     const manager = new RfqSwapManager(managerDeps);
 
@@ -221,17 +189,12 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
             try {
                 listener(swap);
             } catch {
-                // a consumer's callback is not this client's correctness
+                // a listener must not derail the state machine
             }
         }
     };
     manager.onSwapUpdate((swap) => notify({ family: "rfq", swap }));
 
-    /**
-     * The receive-leg claim, assembled from the record: the descriptor and
-     * preimage live in `profile` (never on the live swap), so both are
-     * resolved by rfqId at claim time — nothing secret is held here.
-     */
     const claimLockup: RfqSwapManagerCallbacks["claimLockup"] = async (
         swap,
         vtxos,
@@ -264,78 +227,87 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
 
     let watcher: OfferSwapWatcher | undefined;
 
-    const requireCorridor = (
-        market: DiscoveredMarket,
-        expected: "lightning" | "onchain",
-        kind: string,
-    ): RfqTransport => {
-        const corridor = corridorOf(market);
-        if (corridor !== expected) {
-            throw new Error(
-                `a ${kind} quote needs a ${expected}-corridor market; this market is ${corridor}`,
-            );
-        }
-        return transportFor(market);
-    };
-
     const quote = async (market: DiscoveredMarket, input: SwapQuoteInput): Promise<SwapQuote> => {
-        switch (input.kind) {
+        const kind = resolveKind(market, input.give);
+        switch (kind) {
             case "spot": {
-                const corridor = corridorOf(market);
-                if (corridor !== "spot") {
-                    throw new Error(
-                        `a spot quote needs an arkade↔arkade market; this market is ${corridor}-corridor`,
-                    );
-                }
+                const raw = need(input.amount, "an amount", kind);
+                const amountOn = need(input.amountOn, "amountOn ('give' or 'receive')", kind);
                 const plan = await quoteOffer(market, {
                     give: input.give,
-                    giveAmount: input.giveAmount,
-                    // one fetch seam for the whole client: the same override
-                    // discovery uses prices the spot quotes
+                    ...(amountOn === "give" ? { giveAmount: raw } : { wantAmount: raw }),
                     fetchImpl: deps.discovery.fetchImpl,
                 });
-                return { kind: "spot", market, plan };
+                return { kind, market, plan };
             }
             case "ln_send": {
-                const transport = requireCorridor(market, "lightning", "ln_send");
-                const request = await requestLightningSend(wallet, arkServerUrl, transport, {
-                    invoice: input.invoice,
-                    emulatorPubkey: deps.emulatorPubkey,
-                });
-                return { kind: "ln_send", market, request };
+                // inputs validated before transportFor opens a connection
+                const invoice = need(input.invoice, "the invoice to pay", kind);
+                const request = await requestLightningSend(
+                    wallet,
+                    arkServerUrl,
+                    transportFor(market),
+                    { invoice, emulatorPubkey: deps.emulatorPubkey },
+                );
+                return { kind, market, request };
             }
             case "ln_receive": {
-                const transport = requireCorridor(market, "lightning", "ln_receive");
-                const request = await requestLightningReceive(wallet, arkServerUrl, transport, {
-                    amount: input.amount,
-                    amountSide: input.amountSide,
-                    covclaimdPubkey: input.covclaimdPubkey,
-                    decodeInvoice: input.decodeInvoice,
+                const params = {
+                    ...corridorAmount(input, kind),
+                    covclaimdPubkey: need(deps.covclaimdPubkey, "deps.covclaimdPubkey", kind),
+                    decodeInvoice: need(deps.decodeInvoice, "deps.decodeInvoice", kind),
                     maxPayAmount: input.maxPayAmount,
                     emulatorPubkey: deps.emulatorPubkey,
-                });
-                return { kind: "ln_receive", market, request, invoice: request.invoice };
+                };
+                const request = await requestLightningReceive(
+                    wallet,
+                    arkServerUrl,
+                    transportFor(market),
+                    params,
+                );
+                return { kind, market, request, invoice: request.invoice };
             }
             case "onchain_send": {
-                const transport = requireCorridor(market, "onchain", "onchain_send");
-                const request = await requestOnchainSend(wallet, arkServerUrl, transport, {
-                    amount: input.amount,
-                    amountSide: input.amountSide,
-                    payoutPubkey: input.payoutPubkey,
+                // without L1 access the manager would fail the swap after funding
+                need(deps.chain, "deps.chain (L1 access)", kind);
+                const params = {
+                    ...corridorAmount(input, kind),
+                    payoutPubkey: need(input.payoutPubkey, "a payoutPubkey", kind),
                     preimage: input.preimage,
                     emulatorPubkey: deps.emulatorPubkey,
-                });
-                return { kind: "onchain_send", market, request };
+                };
+                const request = await requestOnchainSend(
+                    wallet,
+                    arkServerUrl,
+                    transportFor(market),
+                    params,
+                );
+                return { kind, market, request };
             }
+            case "onchain_receive":
+                throw new Error(
+                    "onchain->arkade is not driven by RfqSwapManager yet; " +
+                        "quote it directly with requestOnchainReceive",
+                );
         }
     };
 
-    /** The RFQ swap + origin pair `addSwap` needs, from a request result. */
     const admit = async (swap: RfqSwap, origin: RfqSwapOrigin): Promise<UnifiedSwap> => {
         await manager.addSwap(swap, origin);
         const unified: UnifiedSwap = { family: "rfq", swap };
         notify(unified);
         return unified;
+    };
+
+    // record (and its secrets) at rest before funding broadcasts: a crash in
+    // between leaves a restorable pending record, never funded money without one
+    const fundPersisted = async (
+        swap: LightningSendSwap | OnchainSendSwap,
+        origin: RfqSwapOrigin,
+        funding: { address: string; amount: number },
+    ): Promise<string> => {
+        await repository.saveRfqSwap(createRfqSwapRecord(origin, swap));
+        return wallet.send({ address: funding.address, amount: funding.amount });
     };
 
     const accept = async (accepted: SwapQuote): Promise<UnifiedSwap> => {
@@ -344,8 +316,7 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
             case "spot": {
                 const { plan } = accepted;
                 const depositIsBtc = plan.deposit.asset.id === BTC_ASSET_ID;
-                // keyed on the RECEIVE side: the covenant binds what the fill
-                // must deliver, the deposit is whatever the funding tx carries
+                // keyed on the receive side: the covenant binds what the fill delivers
                 const offer = await createOffer(wallet, arkServerUrl, {
                     wantAmount: plan.receive.atomic,
                     ...(plan.receive.asset.id === BTC_ASSET_ID
@@ -355,7 +326,7 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
                 });
                 const txid = await wallet.send({
                     address: offer.address,
-                    // asset deposits ride the SDK's dust-sat carrier when omitted
+                    // asset deposits ride the SDK's dust-sat carrier
                     amount: depositIsBtc ? Number(plan.deposit.atomic) : undefined,
                     assets: depositIsBtc
                         ? undefined
@@ -382,34 +353,32 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
             }
             case "ln_send": {
                 const { request } = accepted;
-                const txid = await wallet.send({
-                    address: request.address,
-                    amount: request.fundAmount,
-                });
                 const swap: LightningSendSwap = {
                     kind: "lightning_send",
                     rfqId: request.rfqId,
                     state: "pending",
                     lockupPkScript: request.swapPkScript,
                     lockup: { script: request.script, address: request.address },
-                    // the trader's OWN decode, bound into the covenant — never
-                    // the solver's echo
+                    // the trader's own decode, never the solver's echo
                     paymentHash: request.treeParams.paymentHash,
                     refundLocktime: request.treeParams.refundLocktime,
                     createdAt: now,
                     updatedAt: now,
                 };
-                return admit(swap, {
+                const origin: RfqSwapOrigin = {
                     kind: "lightning_send",
                     lockupAddress: request.address,
                     profile: rfqSecretsProfile(request.secrets, swap.paymentHash),
-                    fundingArkTxid: txid,
+                    amount: request.fundAmount,
+                };
+                const txid = await fundPersisted(swap, origin, {
+                    address: request.address,
                     amount: request.fundAmount,
                 });
+                return admit(swap, { ...origin, fundingArkTxid: txid });
             }
             case "ln_receive": {
-                // nothing to fund: the payer pays the invoice, the solver
-                // funds the lockup, and the manager claims it with P
+                // nothing to fund: the solver funds the lockup once the invoice is paid
                 const { request } = accepted;
                 const paymentHash = hex.encode(request.secrets.paymentHash);
                 const swap: LightningReceiveSwap = {
@@ -437,10 +406,6 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
             }
             case "onchain_send": {
                 const { request } = accepted;
-                const txid = await wallet.send({
-                    address: request.address,
-                    amount: request.fundAmount,
-                });
                 const paymentHash = hex.encode(request.secrets.paymentHash);
                 const swap: OnchainSendSwap = {
                     kind: "onchain_send",
@@ -455,16 +420,20 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
                     createdAt: now,
                     updatedAt: now,
                 };
-                return admit(swap, {
+                const origin: RfqSwapOrigin = {
                     kind: "onchain_send",
                     lockupAddress: request.address,
                     profile: {
                         ...rfqSecretsProfile(request.secrets, paymentHash),
                         ...onchainSendProfile(request),
                     },
-                    fundingArkTxid: txid,
+                    amount: request.fundAmount,
+                };
+                const txid = await fundPersisted(swap, origin, {
+                    address: request.address,
                     amount: request.fundAmount,
                 });
+                return admit(swap, { ...origin, fundingArkTxid: txid });
             }
         }
     };
@@ -478,17 +447,17 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
             const swaps = await getAssetSwaps(repository);
             const swap = swaps.find((s) => s.id === fundingTxid);
             if (!swap) throw new Error(`no offer swap with funding txid ${fundingTxid}`);
-            // leave 'pending' before spending so the watcher cannot read the
-            // cancel spend as a fulfillment
+            if (swap.status !== "pending") {
+                throw new Error(`offer swap ${fundingTxid} is ${swap.status}, not cancellable`);
+            }
+            // written before spending so the watcher cannot read the cancel as a fill
             await updateAssetSwap(repository, fundingTxid, { status: "cancelling" });
             await cancelOffer(wallet, arkServerUrl, swap.offerHex, {
                 repository,
                 fundingTxid,
             });
         },
-        // Offer swaps come back whole (the store retains terminal rows); RFQ
-        // swaps come back live — terminal RFQ history stays readable through
-        // `repository.getAllRfqSwaps()`.
+        // live RFQ swaps only; terminal history stays on repository.getAllRfqSwaps()
         swaps: async () => {
             const offers = await getAssetSwaps(repository);
             const rfq = await manager.getPendingSwaps();

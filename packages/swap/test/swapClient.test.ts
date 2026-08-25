@@ -14,9 +14,7 @@ const key = (seed: string) => schnorr.getPublicKey(hex.decode(seed.repeat(32)));
 const SERVER_KEY = key("11");
 const FUNDING_TXID = "ab".repeat(32);
 
-/** A corridor market as a 0.2.x index publishes it. The 0.1.x types carry no
- * corridor fields, so they ride in as extra properties — exactly the shape the
- * client's runtime dispatch reads. */
+// a corridor market as a 0.2.x index publishes it (0.1.x types lack the fields)
 const lnMarket = {
     ...btcUsd,
     pair: "BTC/lightning:BTC",
@@ -47,45 +45,56 @@ const makeClient = (over: Partial<Parameters<typeof createSwapClient>[0]> = {}) 
     return { client, repository, transportFor, feed };
 };
 
-describe("createSwapClient — the market picks the backend", () => {
+describe("createSwapClient — the market and the given side name the swap", () => {
     it("quotes a spot market client-side, contacting no solver", async () => {
         const { client, transportFor, feed } = makeClient();
         const quote = await client.quote(btcUsd, {
-            kind: "spot",
             give: "base",
-            giveAmount: "0.01",
+            amount: "0.01",
+            amountOn: "give",
         });
         if (quote.kind !== "spot") throw new Error("expected a spot quote");
-        // priced from the card's own feed; nothing RFQ was even constructed
         expect(feed).toHaveBeenCalledOnce();
         expect(transportFor).not.toHaveBeenCalled();
         expect(quote.plan.deposit.atomic).toBe(BigInt(1_000_000)); // 0.01 BTC
         expect(quote.plan.receive.atomic).toBeGreaterThan(BigInt(0));
     });
 
-    it("refuses a corridor quote on a spot market, and a spot quote on a corridor one", async () => {
+    it("requires what the resolved leg needs, not a kind tag", async () => {
         const { client } = makeClient();
+        await expect(client.quote(lnMarket, { give: "base" })).rejects.toThrow(
+            /ln_send quote needs the invoice/,
+        );
         await expect(
-            client.quote(btcUsd, { kind: "ln_send", invoice: {} as never }),
-        ).rejects.toThrow(/lightning-corridor market/);
+            client.quote(lnMarket, { give: "quote", amount: 1000, amountOn: "receive" }),
+        ).rejects.toThrow(/deps.covclaimdPubkey/);
+        await expect(client.quote(btcUsd, { give: "base" })).rejects.toThrow(
+            /spot quote needs an amount/,
+        );
+    });
+
+    it("refuses an onchain send without L1 access, before anything is derived or funded", async () => {
+        const { client, transportFor } = makeClient(); // no deps.chain
+        const onchainMarket = {
+            ...lnMarket,
+            pair: "BTC/onchain:BTC",
+            quote_corridor: "onchain",
+        } as typeof lnMarket;
         await expect(
-            client.quote(lnMarket, { kind: "spot", give: "base", giveAmount: "1" }),
-        ).rejects.toThrow(/arkade↔arkade market/);
-        await expect(
-            client.quote(lnMarket, {
-                kind: "onchain_send",
-                amount: 1,
-                amountSide: "to",
+            client.quote(onchainMarket, {
+                give: "base",
+                amount: 10_000,
+                amountOn: "receive",
                 payoutPubkey: key("aa"),
             }),
-        ).rejects.toThrow(/onchain-corridor market/);
+        ).rejects.toThrow(/deps.chain/);
+        expect(transportFor).not.toHaveBeenCalled();
     });
 
     it("asks transportFor for the rendezvous only once the market is a corridor one", async () => {
         const { client, transportFor } = makeClient();
-        // the stub transport throws, proving dispatch reached the RFQ path
         await expect(
-            client.quote(lnMarket, { kind: "ln_send", invoice: {} as never }),
+            client.quote(lnMarket, { give: "base", invoice: {} as never }),
         ).rejects.toThrow(/transport built/);
         expect(transportFor).toHaveBeenCalledWith(lnMarket);
     });
@@ -116,7 +125,6 @@ describe("createSwapClient — one update stream over both families", () => {
             createdAt: 1_700_000_000_000,
         };
 
-        // wallet stub: the contract-event seam and an address for the server key
         const callbacks = new Set<(event: unknown) => void>();
         const wallet = {
             getAddress: async () => new ArkAddress(SERVER_KEY, key("66"), "tark").encode(),
@@ -170,5 +178,27 @@ describe("createSwapClient — one update stream over both families", () => {
         const offerUpdates = updates.filter((u) => u.family === "offer");
         expect(offerUpdates.length).toBeGreaterThan(0);
         expect((offerUpdates.at(-1)!.swap as AssetSwap).status).toBe("fulfilled");
+    });
+});
+
+describe("createSwapClient — cancel", () => {
+    it("refuses to cancel a swap that left pending, keeping its status", async () => {
+        const { client, repository } = makeClient();
+        await addAssetSwap(repository, {
+            id: FUNDING_TXID,
+            fromAsset: "btc",
+            toAsset: ASSET_ID,
+            fromAmount: "10000",
+            toAmount: "992",
+            swapAddress: "",
+            swapPkScript: "51",
+            offerHex: "00",
+            fundingTxid: FUNDING_TXID,
+            status: "fulfilled",
+            createdAt: 1,
+        });
+        await expect(client.cancel(FUNDING_TXID)).rejects.toThrow(/fulfilled, not cancellable/);
+        const [stored] = await getAssetSwaps(repository);
+        expect(stored.status).toBe("fulfilled");
     });
 });
