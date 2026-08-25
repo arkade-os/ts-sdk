@@ -1037,3 +1037,12 @@ export type {
     VirtualTx,
     VtxoBranch,
 };
+
+// ─── Client-Side VTXO & Sovereign Exit Verification Pipeline ─────────────────
+export * from "./tree/vtxoDAGVerification.js";
+export * from "./tree/taprootVerification.js";
+export * from "./tree/timelockVerification.js";
+export * from "./tree/hashPreimageVerification.js";
+export * from "./tree/signatureVerification.js";
+export * from "./storage/sovereignStorage.js";
+export * from "./providers/bitcoinRpc.js";
