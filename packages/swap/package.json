@@ -65,7 +65,8 @@
         "test:unit": "vitest run --exclude test/e2e",
         "test:integration": "vitest run test/e2e/** --exclude test/e2e/rfq*.test.ts",
         "test:integration:rfq": "vitest run test/e2e/rfq*.test.ts",
-        "smoke:dist": "node scripts/smoke-dist.mjs"
+        "smoke:dist": "node scripts/smoke-dist.mjs",
+        "check:discovery": "node scripts/check-market-discovery.mjs"
     },
     "keywords": [
         "arkade",
