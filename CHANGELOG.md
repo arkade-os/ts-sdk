@@ -27,6 +27,15 @@ style and have not been backfilled.
   existed, and the watcher reads spending transactions from the indexer
   (`getVirtualTxs`); neither is answerable from the server info alone.
   (#734)
+- **`Arkade.arkProvider` narrowed to `ArkadeServerProvider`.** The
+  provider a connected client exposes now types `submitTx`/`finalizeTx`
+  as optional, mirroring what `Arkade.connect` accepts. Reaching
+  through the field to broadcast — `client.arkProvider.submitTx(...)`
+  — no longer compiles. Broadcast through the transaction builder's
+  `.send()`, which runs the same submit/finalize behind an explicit
+  capability check, or keep your own reference to the provider you
+  handed `connect`. Type-only: the field still holds that provider
+  untouched, so there is no runtime or on-disk effect. (#734)
 
 ### Features
 
@@ -55,8 +64,12 @@ style and have not been backfilled.
   spend.
   That lets a caller already holding the server info connect with
   `arkade: { getInfo: async () => info }` and no provider of its own,
-  and without a second `/v1/info` round-trip. A widening, so every
-  existing `Arkade.connect` call still type-checks. (#734)
+  and without a second `/v1/info` round-trip. A widening on the input,
+  so every existing `Arkade.connect` call still type-checks; the
+  matching narrowing on the `Arkade.arkProvider` field it hands back is
+  listed under Breaking Changes above. The shape is exported as
+  `ArkadeServerProvider`, so a caller building a derivation-only client
+  has a name to import. (#734)
 
 ## [0.4.23] - 2026-05-04
 
