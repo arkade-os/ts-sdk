@@ -206,6 +206,19 @@ describe("ServiceWorkerReadonlyWallet", () => {
         );
     });
 
+    it("stops an initialized worker when no wallet proxy remains", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.tag === "STOP_MESSAGE_BUS" ? { id: message.id, tag: "STOP_MESSAGE_BUS" } : null,
+        );
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        await ServiceWorkerReadonlyWallet.stop(serviceWorker as any);
+
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ tag: "STOP_MESSAGE_BUS" }),
+        );
+    });
+
     it("returns boarding UTXOs from BOARDING_UTXOS payload", async () => {
         const utxos = [{ txid: "tx", vout: 0, value: 1, status: { confirmed: true } }];
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({

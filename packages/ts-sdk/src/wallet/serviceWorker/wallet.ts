@@ -709,6 +709,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         return wallet;
     }
 
+    /** Stop an initialized worker wallet when no page-side proxy remains. */
+    static async stop(serviceWorker: ServiceWorker, timeoutMs = 2000): Promise<void> {
+        await stopMessageBus(serviceWorker, timeoutMs);
+    }
+
     /**
      * Simplified setup method that handles service worker registration
      * and wallet initialization automatically.
@@ -1029,7 +1034,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
     /** Stop the worker-local wallet and every MessageBus handler. */
     async dispose(): Promise<void> {
-        await stopMessageBus(this.serviceWorker, this.messageBusTimeoutMs);
+        await ServiceWorkerReadonlyWallet.stop(this.serviceWorker, this.messageBusTimeoutMs);
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
