@@ -718,13 +718,17 @@ const wallet = await Wallet.create({
 })
 
 // Get fee information from the server
-const { fees: feeInfo } = await wallet.arkProvider.getInfo();
+const { fees: feeInfo } = await wallet.getArkadeInfo();
 
 const exitTxid = await new Ramps(wallet).offboard(
   'bc1p...',
   feeInfo
 );
 ```
+
+`getArkadeInfo()` is part of the `IReadonlyWallet` interface, so the same call works on the
+service-worker and Expo wallets too. It answers with the server's live `ArkadeInfo`, falling back
+to the snapshot persisted at wallet construction when the server is unreachable.
 
 ### Unilateral Exit
 

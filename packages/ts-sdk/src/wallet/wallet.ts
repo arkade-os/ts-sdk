@@ -8,7 +8,7 @@ import { DefaultVtxo } from "../script/default";
 import { DEFAULT_ARKADE_SERVER_URL, getNetwork, Network, NetworkName } from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
-    ArkInfo,
+    ArkadeInfo,
     ArkProvider,
     BatchFinalizationEvent,
     BatchStartedEvent,
@@ -724,6 +724,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly identity: ReadonlyIdentity,
         readonly network: Network,
         readonly onchainProvider: OnchainProvider,
+        readonly arkProvider: ArkProvider,
         readonly indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -765,7 +766,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * x-only hex of the operator's deprecated signer keys (from
-     * `ArkInfo.deprecatedSigners`), cached for the OFFLINE read/watch paths.
+     * `ArkadeInfo.deprecatedSigners`), cached for the OFFLINE read/watch paths.
      * The boarding watch/history surfaces ({@link getBoardingAddresses},
      * {@link getBoardingTxs}) fan out over {current} ∪ this set so a deposit at
      * a boarding address minted under a now-rotated operator signer keeps being
@@ -851,6 +852,27 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     get arkServerPublicKey(): Bytes {
         return this._arkServerPublicKey;
+    }
+
+    /**
+     * Server info for the Arkade server this wallet is connected to, resolved
+     * exactly as construction resolves it: live wins, a retryable failure
+     * falls back to the snapshot persisted at boot, a terminal one propagates.
+     *
+     * Live rather than the pinned boot snapshot because the fields callers
+     * come here for — `signerPubkey`, `checkpointTapscript`, `fees` — are the
+     * ones a mid-session rotation moves, and a covenant built against a
+     * superseded signer is unspendable. The wallet's own derived state
+     * ({@link arkServerPublicKey}, {@link dustAmount}) stays pinned to its
+     * current epoch, so the two can legitimately disagree inside a rotation
+     * window.
+     *
+     * @returns The Arkade server's info
+     * @see ArkadeInfo
+     */
+    async getArkadeInfo(): Promise<ArkadeInfo> {
+        const { info } = await resolveArkInfo(this.arkProvider, this.walletRepository);
+        return info;
     }
 
     /**
@@ -1103,6 +1125,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             config.identity,
             setup.network,
             setup.onchainProvider,
+            setup.arkProvider,
             setup.indexerProvider,
             setup.serverPubKey,
             setup.offchainTapscript,
@@ -2315,7 +2338,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             const newActive = toXOnlySignerHex(info.signerPubkey);
             const current = toXOnlySignerHex(hex.encode(this.arkServerPublicKey));
             if (newActive !== current) {
-                // `onServerInfoChanged` delivers the full refreshed `ArkInfo`, so
+                // `onServerInfoChanged` delivers the full refreshed `ArkadeInfo`, so
                 // the new epoch's checkpoint script is in hand — thread it
                 // through so the rotated wallet builds checkpoints against the
                 // new server signer. A bad/empty value throws here and is caught
@@ -2428,7 +2451,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     /**
      * Output script for checkpoint transactions, decoded from the server's
      * `checkpointTapscript`. Server-controlled state: pinned at construction
-     * and re-sourced from a fresh `ArkInfo` on server-signer rotation. Read it
+     * and re-sourced from a fresh `ArkadeInfo` on server-signer rotation. Read it
      * through {@link serverUnrollScript}; write it only through
      * {@link setServerUnrollScriptForRotation}.
      */
@@ -2441,7 +2464,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     /**
      * @internal Sole write path for `serverUnrollScript` after construction.
      * Called by {@link Wallet._doRotateServerSigner} with the checkpoint script
-     * sourced from the fresh `ArkInfo` that triggered the rotation, so the send
+     * sourced from the fresh `ArkadeInfo` that triggered the rotation, so the send
      * path builds checkpoints against the new server epoch. External code must
      * treat `serverUnrollScript` as read-only.
      */
@@ -3023,7 +3046,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         identity: Identity,
         network: Network,
         onchainProvider: OnchainProvider,
-        readonly arkProvider: ArkProvider,
+        arkProvider: ArkProvider,
         indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -3052,6 +3075,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             identity,
             network,
             onchainProvider,
+            arkProvider,
             indexerProvider,
             arkServerPublicKey,
             offchainTapscript,
@@ -3384,6 +3408,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             readonlyIdentity,
             this.network,
             this.onchainProvider,
+            this.arkProvider,
             this.indexerProvider,
             this.arkServerPublicKey,
             this.offchainTapscript,
@@ -4633,7 +4658,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * before a signer rotation was built under the old key, so rebuilding
      * against the current key alone would leave it pending forever.
      */
-    private checkpointUnrollCandidates(info: ArkInfo): CSVMultisigTapscript.Type[] {
+    private checkpointUnrollCandidates(info: ArkadeInfo): CSVMultisigTapscript.Type[] {
         const current = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
         const candidates = [this._serverUnrollScript, current];
         for (const deprecated of signerSetFromInfo(info).deprecated.keys()) {

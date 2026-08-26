@@ -247,6 +247,26 @@ describe("ServiceWorkerReadonlyWallet", () => {
         );
     });
 
+    it("round-trips GET_ARKADE_INFO, bigints intact", async () => {
+        // The worker holds the wallet that owns the connection; the page asks
+        // for it. `ArkadeInfo` crosses raw — structuredClone carries bigints,
+        // so nothing on this path stringifies them.
+        const info = { network: "regtest", signerPubkey: "02ab", unilateralExitDelay: 4096n };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.type === "GET_ARKADE_INFO"
+                ? { id: message.id, tag: messageTag, type: "ARKADE_INFO", payload: { info } }
+                : null,
+        );
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await expect(wallet.getArkadeInfo()).resolves.toEqual(info);
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: "GET_ARKADE_INFO" }),
+        );
+    });
+
     it("rejects when the response contains an error", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
             id: message.id,

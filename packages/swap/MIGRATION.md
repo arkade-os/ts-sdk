@@ -82,6 +82,18 @@ localStorage adapter to write:
   and `request*(wallet, arkUrl, emulatorPubkey, transport, params)` →
   `request*(wallet, arkUrl, transport, params)`. The SDK resolves the key from its per-network
   pin; `params.emulatorPubkey` overrides it (see the README).
+- The Arkade server URL positional is gone from those same five entrypoints:
+  `createOffer(wallet, arkUrl, params)` → `createOffer(wallet, params)`, and
+  `request*(wallet, arkUrl, transport, params)` → `request*(wallet, transport, params)` for
+  `requestLightningSend`, `requestLightningReceive`, `requestOnchainSend` and
+  `requestOnchainReceive`. Each reads the server's info from the wallet itself — the new
+  `wallet.getArkadeInfo()` on `IReadonlyWallet` — instead of building a `RestArkProvider` from a
+  URL, so a caller holding a wallet holds everything these need and pays no second `/v1/info`
+  round-trip. `cancelOffer(wallet, arkUrl, offerHex, opts)` and
+  `watchOfferSwaps({ wallet, arkServerUrl, repository })` keep theirs: cancel broadcasts
+  (`submitTx`/`finalizeTx`) and falls back to the indexer for a deposit made before contract
+  registration existed, and the watcher reads spending transactions from the indexer
+  (`getVirtualTxs`) — neither is answerable from the server info alone.
 - `createOffer` no longer returns `payload`; it returns the send-ready `extension` instead. In
   `providers/assetSwaps.tsx`: `extensions: [{ type: OFFER_PACKET_TYPE, payload: offer.payload }]`
   → `extensions: [offer.extension]` (the `OFFER_PACKET_TYPE` import can go).

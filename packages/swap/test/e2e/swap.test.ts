@@ -113,7 +113,7 @@ describe("maker-side swap loop (regtest)", () => {
 
     it("derives, funds, and restores a pending offer from chain data alone", async () => {
         // no override — asserts the default pin matches the regtest stack
-        offer = await createOffer(wallet, ARK_URL, {
+        offer = await createOffer(wallet, {
             wantAmount: WANT_AMOUNT,
             wantAsset,
         });
@@ -279,7 +279,7 @@ describe("maker-side swap loop (regtest)", () => {
         });
 
         try {
-            const second = await createOffer(wallet, ARK_URL, {
+            const second = await createOffer(wallet, {
                 wantAmount: WANT_AMOUNT + BigInt(1),
                 wantAsset,
             });

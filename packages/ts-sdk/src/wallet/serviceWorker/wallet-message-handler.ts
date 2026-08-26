@@ -1,4 +1,4 @@
-import { ArkProvider, SettlementEvent } from "../../providers/ark";
+import { ArkadeInfo, ArkProvider, SettlementEvent } from "../../providers/ark";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { WalletRepository } from "../../repositories";
 import type {
@@ -189,6 +189,17 @@ export type RequestGetBoardingAddress = RequestEnvelope & {
 export type ResponseGetBoardingAddress = ResponseEnvelope & {
     type: "BOARDING_ADDRESS";
     payload: { address: string };
+};
+
+export type RequestGetArkadeInfo = RequestEnvelope & { type: "GET_ARKADE_INFO" };
+// `ArkadeInfo` is bigint-heavy and crosses the boundary raw: the channel is
+// `postMessage`/structuredClone, which is bigint-safe, and `GET_BALANCE` below
+// already relies on that for `Asset.amount`. Do NOT route it through the
+// `arkInfoSnapshot` serializer — that shape is the persistence cache and drops
+// `serviceStatus`.
+export type ResponseGetArkadeInfo = ResponseEnvelope & {
+    type: "ARKADE_INFO";
+    payload: { info: ArkadeInfo };
 };
 
 export type RequestGetBalance = RequestEnvelope & { type: "GET_BALANCE" };
@@ -756,6 +767,7 @@ export type WalletUpdaterRequest =
     | RequestSendBitcoin
     | RequestGetAddress
     | RequestGetBoardingAddress
+    | RequestGetArkadeInfo
     | RequestGetBalance
     | RequestGetVtxos
     | RequestGetSpendableVtxos
@@ -806,6 +818,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseSendBitcoin
         | ResponseGetAddress
         | ResponseGetBoardingAddress
+        | ResponseGetArkadeInfo
         | ResponseGetBalance
         | ResponseGetVtxos
         | ResponseGetSpendableVtxos
@@ -1017,6 +1030,14 @@ export class WalletMessageHandler
                         id,
                         type: "BOARDING_ADDRESS",
                         payload: { address },
+                    });
+                }
+                case "GET_ARKADE_INFO": {
+                    const info = await this.readonlyWallet.getArkadeInfo();
+                    return this.tagged({
+                        id,
+                        type: "ARKADE_INFO",
+                        payload: { info },
                     });
                 }
                 case "GET_BALANCE": {

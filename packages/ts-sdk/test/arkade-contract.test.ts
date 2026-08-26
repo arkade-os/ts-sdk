@@ -215,6 +215,84 @@ describe("arkade.Arkade / ArkadeContract", () => {
         expect(overridden.address).not.toBe(defaulted.address);
     });
 
+    // A client connected for derivation/registration alone — `getInfo` and
+    // nothing else. This is the shape `@arkade-os/swap`'s createOffer uses now
+    // that it sources the server info from `wallet.getArkadeInfo()` instead of
+    // building a provider from a URL.
+    describe("a getInfo-only `arkade` provider", () => {
+        const exitProgram = {
+            version: 0,
+            params: ["server", "user"],
+            functions: { exit: { tapscript: { signers: ["$server", "$user"] } } },
+        } satisfies arkade.Program;
+
+        const userKey = xOnly();
+        const identity = {
+            xOnlyPublicKey: async () => userKey,
+            sign: async (tx: any) => tx,
+        } as any;
+
+        async function connectInfoOnly(contractManager?: unknown) {
+            const { arkProvider } = stubProviders(server, emulatorKey);
+            return arkade.Arkade.connect({
+                arkade: { getInfo: arkProvider.getInfo },
+                identity,
+                network: networks.regtest,
+                contractManager: contractManager as any,
+            });
+        }
+
+        it("derives the same contract as one connected with a full provider", async () => {
+            const { arkProvider, indexer, emulator } = stubProviders(server, emulatorKey);
+            const full = await arkade.Arkade.connect({
+                arkade: arkProvider,
+                emulator,
+                indexer,
+                identity,
+                network: networks.regtest,
+                emulatorPubkey: "02" + hex.encode(emulatorKey),
+            });
+            const lean = await connectInfoOnly();
+
+            expect(lean.contract(exitProgram).address).toBe(full.contract(exitProgram).address);
+            expect(hex.encode(lean.serverKey)).toBe(hex.encode(full.serverKey));
+        });
+
+        it("registers through the contract manager without touching the network", async () => {
+            const created: Record<string, unknown>[] = [];
+            const ark = await connectInfoOnly({
+                createContract: async (params: Record<string, unknown>) => {
+                    created.push(params);
+                    return params;
+                },
+            });
+            const contract = ark.contract(exitProgram);
+            await contract.register({ label: "lean" });
+
+            expect(created).toHaveLength(1);
+            expect(created[0]).toMatchObject({
+                type: "arkade",
+                script: hex.encode(contract.pkScript),
+                address: contract.address,
+                label: "lean",
+            });
+        });
+
+        it("refuses to broadcast, before signing anything", async () => {
+            const ark = await connectInfoOnly();
+            const contract = ark.contract(exitProgram);
+            const out = new Uint8Array([0x51, 0x20, ...receiver]);
+
+            await expect(
+                contract.functions
+                    .exit()
+                    .from({ txid: COIN.txid, vout: COIN.vout, value: COIN.value })
+                    .to(out, AMOUNT)
+                    .send(),
+            ).rejects.toThrow(/submitTx.*finalizeTx/);
+        });
+    });
+
     it("resolveAsm substitutes $params and passes opcodes through", () => {
         const bytes = arkade.resolveAsm(["HASH160", "$hash", "EQUAL"], { hash: HASH });
         // HASH160 (0xa9) <push20> <hash> EQUAL (0x87)

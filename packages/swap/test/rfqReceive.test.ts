@@ -16,22 +16,6 @@ import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 
-const state = vi.hoisted(() => ({
-    arkInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
-}));
-
-vi.mock("@arkade-os/sdk", async (importOriginal) => {
-    const mod = await importOriginal<typeof import("@arkade-os/sdk")>();
-    return {
-        ...mod,
-        RestArkProvider: class {
-            async getInfo() {
-                return state.arkInfo;
-            }
-        },
-    };
-});
-
 import {
     ArkAddress,
     DescriptorIdentity,
@@ -84,7 +68,13 @@ const HTLC_CLAIM_PUBKEY = key(11);
 const COVCLAIMD_PK = secp256k1.getPublicKey(new Uint8Array(32).fill(0x22), true);
 const PAYOUT_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
 
-state.arkInfo.signerPubkey = hex.encode(SERVER);
+/** What every wallet below answers `getArkadeInfo()` with: the server info the
+ * receive flows used to fetch over the wire, now sourced off the wallet. */
+const ARK_INFO = {
+    signerPubkey: hex.encode(SERVER),
+    unilateralExitDelay: 4096,
+    network: "regtest",
+};
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
@@ -603,6 +593,7 @@ const hdWallet = async (
     return {
         identity,
         getAddress: async () => PAYOUT_ADDRESS,
+        getArkadeInfo: async () => ARK_INFO,
         getContractManager: async () => ({ createContract }),
         getCurrentSigningDescriptor: () => provider.getCurrentSigningDescriptor(),
         getNextSigningDescriptor: () => provider.getNextSigningDescriptor(),
@@ -627,6 +618,7 @@ const staticWallet = (createContract: () => Promise<unknown> = async () => ({}))
             "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
         ),
         getAddress: async () => PAYOUT_ADDRESS,
+        getArkadeInfo: async () => ARK_INFO,
         getContractManager: async () => ({ createContract }),
     }) as unknown as IWallet;
 
@@ -676,7 +668,7 @@ const lightningReceiveFlow = async (
         seen,
         createContract,
         run: () =>
-            requestLightningReceive(wallet, "http://ark", transport, {
+            requestLightningReceive(wallet, transport, {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 5_000,
                 amountSide: "from",
@@ -1011,7 +1003,7 @@ describe("requestOnchainReceive on an HD wallet", () => {
             async close() {},
         };
 
-        const result = await requestOnchainReceive(wallet, "http://ark", transport, {
+        const result = await requestOnchainReceive(wallet, transport, {
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
             amount: 100_000,
             amountSide: "from",

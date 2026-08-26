@@ -15,7 +15,7 @@ import type {
     Recipient,
     SendParams,
 } from "..";
-import type { SettlementEvent } from "../../providers/ark";
+import type { ArkadeInfo, SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
 import type { HDAllocationCapable, HDWalletCapable } from "../hdWalletCapable";
 import type { IContractManager } from "../../contracts/contractManager";
@@ -300,6 +300,10 @@ export class ExpoWallet implements IWallet, HDWalletCapable, HDAllocationCapable
 
     getBoardingAddress(): Promise<string> {
         return this.wallet.getBoardingAddress();
+    }
+
+    getArkadeInfo(): Promise<ArkadeInfo> {
+        return this.wallet.getArkadeInfo();
     }
 
     getBalance(): Promise<WalletBalance> {

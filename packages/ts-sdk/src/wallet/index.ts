@@ -1,5 +1,5 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
-import { ArkProvider, Output, SettlementEvent } from "../providers/ark";
+import { ArkadeInfo, ArkProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity, ReadonlyIdentity } from "../identity";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { RelativeTimelock } from "../script/tapscript";
@@ -1073,6 +1073,20 @@ export interface IReadonlyWallet {
 
     /** @returns Onchain boarding address used to move funds into Arkade. */
     getBoardingAddress(): Promise<string>;
+
+    /**
+     * Server info for the Arkade server this wallet is connected to — network,
+     * signer key, delays, dust, fees and limits.
+     *
+     * The wallet is the single place that knows which server it speaks to, so
+     * a plugin needs only the wallet, never a server URL of its own. Live info
+     * wins; when the server is unreachable this falls back to the snapshot
+     * persisted at construction, so an offline wallet still answers.
+     *
+     * @returns The Arkade server's info
+     * @see ArkadeInfo
+     */
+    getArkadeInfo(): Promise<ArkadeInfo>;
 
     /** @returns The wallet's combined onchain and offchain balance. */
     getBalance(): Promise<WalletBalance>;

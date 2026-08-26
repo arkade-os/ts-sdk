@@ -391,6 +391,58 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         expect(await loadArkInfoSnapshot(repos.walletRepository)).toBeNull();
     });
 
+    it("getArkadeInfo reports the server's CURRENT info, not the boot snapshot", async () => {
+        // The fields callers come here for — signerPubkey, checkpointTapscript,
+        // fees — are the ones a mid-session rotation moves. Pinning to boot
+        // would hand a plugin a superseded signer to build a covenant against.
+        const repos = {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        };
+        let served = makeArkInfo();
+        const wallet = await createWallet(async () => served, repos);
+        expect((await wallet.getArkadeInfo()).digest).toBe("digest-abc");
+
+        served = makeArkInfo({ digest: "digest-rotated" });
+        expect((await wallet.getArkadeInfo()).digest).toBe("digest-rotated");
+        // The wallet's own pinned epoch is untouched by the read.
+        expect(wallet.dustAmount).toBe(makeArkInfo().dust);
+    });
+
+    it("getArkadeInfo falls back to the cached snapshot when the operator goes away", async () => {
+        const repos = {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        };
+        const info = makeArkInfo();
+        let reachable = true;
+        const wallet = await createWallet(async () => {
+            if (!reachable) throw new ProviderUnavailableError("operator down");
+            return info;
+        }, repos);
+
+        reachable = false;
+        // Boot persisted the snapshot, so an offline read still answers —
+        // minus serviceStatus, which is live health and deliberately uncached.
+        expect(await wallet.getArkadeInfo()).toEqual({ ...info, serviceStatus: {} });
+    });
+
+    it("getArkadeInfo propagates a terminal failure rather than serving the cache", async () => {
+        const repos = {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        };
+        const terminal = new Error("400 bad request");
+        let live = true;
+        const wallet = await createWallet(async () => {
+            if (!live) throw terminal;
+            return makeArkInfo();
+        }, repos);
+
+        live = false;
+        await expect(wallet.getArkadeInfo()).rejects.toBe(terminal);
+    });
+
     it("full Wallet.create does not cache a live response with invalid checkpoint metadata", async () => {
         const walletRepository = new InMemoryWalletRepository();
         const contractRepository = new InMemoryContractRepository();

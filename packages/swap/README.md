@@ -12,6 +12,19 @@ React Native does not, so install `react-native-get-random-values` (or `expo-cry
 it before this package. `crypto.subtle` is not used. `EventSource` and `WebSocket` are needed only
 by the watch and relay transports, both of which take an injected implementation.
 
+**The covenant-deriving entry points need a wallet and nothing else.** `createOffer`,
+`requestLightningSend`, `requestLightningReceive`, `requestOnchainSend` and
+`requestOnchainReceive` take their server facts from `wallet.getArkadeInfo()`: the network and
+signer key, plus the unilateral-exit delay for the four `request*` calls. The wallet is the single
+place that knows which server it speaks to, so there is no URL to thread through and no second
+`/v1/info` round-trip.
+
+The two calls that still take a URL do more than derive.
+`cancelOffer(wallet, arkServerUrl, …)` broadcasts the refund (`submitTx`/`finalizeTx`) and falls
+back to the indexer for a deposit made before contract registration existed;
+`watchOfferSwaps({ wallet, arkServerUrl, … })` reads spending transactions from the indexer
+(`getVirtualTxs`). Neither is answerable from the server info alone.
+
 ## Roles
 
 Arkade Intents names two participants:
@@ -200,11 +213,11 @@ the rest:
 
 ```ts
 // BTC -> asset
-const o = await createOffer(wallet, ARK, { wantAmount: 1000n, wantAsset });
+const o = await createOffer(wallet, { wantAmount: 1000n, wantAsset });
 await wallet.send({ address: o.address, amount: 1000, extensions: [o.extension] });
 
 // asset -> BTC (the sats are the VTXO carrier for the asset)
-const o = await createOffer(wallet, ARK, { wantAmount: 1000n, offerAsset });
+const o = await createOffer(wallet, { wantAmount: 1000n, offerAsset });
 await wallet.send({
     address: o.address,
     amount: 500,
@@ -322,7 +335,7 @@ message anywhere: **acceptance is funding**.
 import { httpTransport, requestLightningSend } from "@arkade-os/swap";
 
 // invoice facts from YOUR OWN decoder — the module takes facts, not a decoder
-const swap = await requestLightningSend(wallet, arkServerUrl, httpTransport(solverUrl), {
+const swap = await requestLightningSend(wallet, httpTransport(solverUrl), {
     invoice: { raw: bolt11, paymentHash, amountSats, expiresAt },
 });
 // quote verified against the LOCAL derivation and gated; now fund and go offline:
@@ -395,7 +408,7 @@ import {
     swapSecretsToRecord,
 } from "@arkade-os/swap";
 
-const swap = await requestOnchainSend(wallet, arkServerUrl, httpTransport(solverUrl), {
+const swap = await requestOnchainSend(wallet, httpTransport(solverUrl), {
     amount: 100_000,
     amountSide: "to",
     payoutPubkey,

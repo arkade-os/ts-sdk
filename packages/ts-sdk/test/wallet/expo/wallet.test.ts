@@ -36,6 +36,7 @@ const createWalletStub = () => ({
     },
     getAddress: vi.fn().mockResolvedValue("arkade1-address"),
     getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
+    getArkadeInfo: vi.fn().mockResolvedValue({ network: "regtest", dust: 1n }),
     getBalance: vi.fn().mockResolvedValue({ offchain: 1, onchain: 2 }),
     getVtxos: vi.fn().mockResolvedValue([{ txid: "v1" }]),
     getBoardingUtxos: vi.fn().mockResolvedValue([{ txid: "u1" }]),
@@ -164,6 +165,10 @@ describe("ExpoWallet", () => {
 
         await expect(wallet.getAddress()).resolves.toBe("arkade1-address");
         await expect(wallet.getBoardingAddress()).resolves.toBe("bc1-boarding");
+        await expect(wallet.getArkadeInfo()).resolves.toEqual({
+            network: "regtest",
+            dust: 1n,
+        });
         await expect(wallet.getBalance()).resolves.toEqual({
             offchain: 1,
             onchain: 2,

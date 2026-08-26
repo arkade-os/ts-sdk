@@ -245,6 +245,27 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
+    it("handles GET_ARKADE_INFO messages", async () => {
+        // bigints ride the postMessage boundary unserialized — the payload is
+        // the wallet's own ArkadeInfo, not a snapshot-shaped copy of it.
+        const info = { network: "regtest", signerPubkey: "02ab", dust: 1000n };
+        (updater as any).readonlyWallet = {
+            getArkadeInfo: vi.fn().mockResolvedValue(info),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_ARKADE_INFO",
+        } as any);
+
+        expect(response).toEqual({
+            tag: updater.messageTag,
+            id: "1",
+            type: "ARKADE_INFO",
+            payload: { info },
+        });
+    });
+
     it("handles GET_BALANCE messages", async () => {
         (updater as any).readonlyWallet = {};
         const balance = {

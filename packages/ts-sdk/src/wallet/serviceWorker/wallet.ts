@@ -18,7 +18,7 @@ import {
     Recipient,
     SendParams,
 } from "..";
-import { SettlementEvent } from "../../providers/ark";
+import { ArkadeInfo, SettlementEvent } from "../../providers/ark";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
 import { hex } from "@scure/base";
 import {
@@ -41,6 +41,7 @@ import {
     RequestCreateContract,
     RequestDeleteContract,
     RequestGetAddress,
+    RequestGetArkadeInfo,
     RequestGetBalance,
     RequestGetBoardingAddress,
     RequestGetBoardingUtxos,
@@ -65,6 +66,7 @@ import {
     RequestUpdateContract,
     ResponseAnnotateVtxos,
     ResponseGetAddress,
+    ResponseGetArkadeInfo,
     ResponseGetBalance,
     ResponseGetBoardingAddress,
     ResponseGetBoardingUtxos,
@@ -189,6 +191,7 @@ export type ServiceWorkerWalletMode = "auto" | "static" | "hd";
 export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // Fast reads — fail quickly
     GET_ADDRESS: 10_000,
+    GET_ARKADE_INFO: 10_000,
     GET_BALANCE: 10_000,
     GET_BOARDING_ADDRESS: 10_000,
     GET_STATUS: 10_000,
@@ -254,6 +257,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
 
 const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_ADDRESS",
+    "GET_ARKADE_INFO",
     "GET_BALANCE",
     "GET_BOARDING_ADDRESS",
     "GET_BOARDING_UTXOS",
@@ -1035,6 +1039,26 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             return (response as ResponseGetBoardingAddress).payload.address;
         } catch (error) {
             throw new Error(`Failed to get boarding address: ${error}`);
+        }
+    }
+
+    /**
+     * Delegated to the worker, which holds the wallet that owns the connection.
+     * `ArkadeInfo` crosses the boundary raw — structuredClone carries its
+     * bigints, exactly as `GET_BALANCE` below relies on for asset amounts.
+     */
+    async getArkadeInfo(): Promise<ArkadeInfo> {
+        const message: RequestGetArkadeInfo = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_ARKADE_INFO",
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetArkadeInfo).payload.info;
+        } catch (error) {
+            throw new Error(`Failed to get arkade info: ${error}`);
         }
     }
 

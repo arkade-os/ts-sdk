@@ -7,6 +7,57 @@ This file covers the **0.4.x** line. Pre-0.4 release history (0.3.x and
 earlier) lives in `git log` — those entries were not written in this
 style and have not been backfilled.
 
+## [Unreleased]
+
+### Breaking Changes
+
+- **`@arkade-os/swap`: the `arkServerUrl` positional is gone from the
+  five covenant-deriving entrypoints.** `createOffer(wallet, params)`,
+  and `requestLightningSend` / `requestLightningReceive` /
+  `requestOnchainSend` / `requestOnchainReceive` as
+  `request*(wallet, transport, params)`. Each reads the server's
+  network and signer key — and, for the four `request*` calls, its
+  unilateral-exit delay — from `wallet.getArkadeInfo()`
+  instead of building a `RestArkProvider` from a URL, so a caller
+  holding a wallet holds everything these need and pays no second
+  `/v1/info` round-trip. Drop the argument at every call site; nothing
+  else about these calls changed. `cancelOffer` and `watchOfferSwaps`
+  keep theirs — cancel broadcasts (`submitTx`/`finalizeTx`) and falls
+  back to the indexer for a deposit made before contract registration
+  existed, and the watcher reads spending transactions from the indexer
+  (`getVirtualTxs`); neither is answerable from the server info alone.
+  (#734)
+
+### Features
+
+- **`IReadonlyWallet.getArkadeInfo()`.** The wallet is the single place
+  that knows which Arkade server it speaks to, so a plugin needs only
+  the wallet, never a server URL of its own. It answers with the live
+  `ArkadeInfo` and falls back to the snapshot persisted at wallet
+  construction when the server is unreachable, so an offline wallet
+  still answers; implemented across the standard, service-worker and
+  Expo wallets. Additive for consumers, but **third-party `IWallet` /
+  `IReadonlyWallet` implementations must add the method** — a
+  compile-time break for external implementers only, with no runtime
+  or on-disk effect. (#734)
+- **`ArkInfo` renamed to `ArkadeInfo`.** The type name now matches the
+  product and the accessor that returns it. `ArkInfo` is kept as a
+  deprecated alias (`export type ArkInfo = ArkadeInfo`), both are
+  exported from `@arkade-os/sdk`, and every existing import keeps
+  resolving — nothing to change today. (#734)
+- **`ArkadeConnectOptions.arkade` widened: only `getInfo` is
+  required.** `submitTx` / `finalizeTx` are optional now — `getInfo` is
+  what resolves the server key and checkpoint closure, which is all a
+  client needs to derive, register and inspect contracts. A client
+  built without the two broadcast methods throws at `.send()` on the
+  pure-tapscript path — the same deferred, explicit failure an absent
+  `indexer` gives `getUtxos()` and an absent `emulator` gives a covenant
+  spend.
+  That lets a caller already holding the server info connect with
+  `arkade: { getInfo: async () => info }` and no provider of its own,
+  and without a second `/v1/info` round-trip. A widening, so every
+  existing `Arkade.connect` call still type-checks. (#734)
+
 ## [0.4.23] - 2026-05-04
 
 ### Breaking Changes

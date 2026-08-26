@@ -49,7 +49,6 @@ import { hex } from "@scure/base";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import {
     ArkAddress,
-    RestArkProvider,
     VHTLC,
     asset,
     getNetwork,
@@ -817,7 +816,6 @@ export interface InvoiceFacts {
  */
 export async function requestLightningSend(
     wallet: IWallet,
-    arkServerUrl: string,
     transport: RfqTransport,
     params: {
         invoice: InvoiceFacts;
@@ -852,7 +850,7 @@ export async function requestLightningSend(
      *
      * Returned so a consumer can persist the swap without re-deriving any of
      * it. Half of these are not on the quote: `serverPubkey` and `claimDelay`
-     * come from this wallet's own `getInfo()`, `emulatorPubkey` from a
+     * come from this wallet's own `getArkadeInfo()`, `emulatorPubkey` from a
      * per-network pin, `refundPkScript` from decoding an address.
      *
      * All public. Persisting them is optional: this call also registers the
@@ -869,10 +867,7 @@ export async function requestLightningSend(
     // No preimage: a lightning send's P belongs to the payee.
     const secrets = await provisionRefundKey(wallet);
     const senderPubkey = secrets.pubkey;
-    const [info, refundAddress] = await Promise.all([
-        new RestArkProvider(arkServerUrl).getInfo(),
-        wallet.getAddress(),
-    ]);
+    const [info, refundAddress] = await Promise.all([wallet.getArkadeInfo(), wallet.getAddress()]);
 
     const quote = await transport.requestQuote(
         lightningSendRequest({ rfqId, invoice: params.invoice.raw, refundAddress, senderPubkey }),
@@ -1195,7 +1190,6 @@ export function deriveOnchainSend(input: {
  */
 export async function requestOnchainSend(
     wallet: IWallet,
-    arkServerUrl: string,
     transport: RfqTransport,
     params: {
         amount: number;
@@ -1266,10 +1260,7 @@ export async function requestOnchainSend(
     }
     const paymentHash = hex.encode(secrets.paymentHash);
     const senderPubkey = secrets.pubkey;
-    const [info, refundAddress] = await Promise.all([
-        new RestArkProvider(arkServerUrl).getInfo(),
-        wallet.getAddress(),
-    ]);
+    const [info, refundAddress] = await Promise.all([wallet.getArkadeInfo(), wallet.getAddress()]);
 
     const quote = await transport.requestQuote(
         onchainSendRequest({
@@ -1632,7 +1623,6 @@ export function deriveLightningReceive(input: {
  */
 export async function requestLightningReceive(
     wallet: IWallet,
-    arkServerUrl: string,
     transport: RfqTransport,
     params: {
         amount: number;
@@ -1693,10 +1683,7 @@ export async function requestLightningReceive(
     const preimage = secrets.preimage;
     const paymentHash = hex.encode(secrets.paymentHash);
     const payoutPubkey = secrets.pubkey;
-    const [info, payoutAddress] = await Promise.all([
-        new RestArkProvider(arkServerUrl).getInfo(),
-        wallet.getAddress(),
-    ]);
+    const [info, payoutAddress] = await Promise.all([wallet.getArkadeInfo(), wallet.getAddress()]);
     const claimPacket = await sealClaimPacket({
         preimage,
         covclaimdPubkey: params.covclaimdPubkey,
@@ -1860,7 +1847,6 @@ export function deriveOnchainReceive(input: {
  */
 export async function requestOnchainReceive(
     wallet: IWallet,
-    arkServerUrl: string,
     transport: RfqTransport,
     params: {
         amount: number;
@@ -1906,10 +1892,7 @@ export async function requestOnchainReceive(
     const preimage = secrets.preimage;
     const paymentHash = hex.encode(secrets.paymentHash);
     const payoutPubkey = secrets.pubkey;
-    const [info, payoutAddress] = await Promise.all([
-        new RestArkProvider(arkServerUrl).getInfo(),
-        wallet.getAddress(),
-    ]);
+    const [info, payoutAddress] = await Promise.all([wallet.getArkadeInfo(), wallet.getAddress()]);
     const claimPacket = await sealClaimPacket({
         preimage,
         covclaimdPubkey: params.covclaimdPubkey,

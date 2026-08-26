@@ -168,7 +168,7 @@ export interface DeprecatedSigner {
 
 export type ServiceStatus = Record<string, string>;
 
-export interface ArkInfo {
+export interface ArkadeInfo {
     boardingExitDelay: bigint;
     checkpointTapscript: string;
     deprecatedSigners: DeprecatedSigner[];
@@ -225,6 +225,9 @@ export interface ArkInfo {
     vtxoMinAmount: bigint;
 }
 
+/** @deprecated alias for @see ArkadeInfo */
+export type ArkInfo = ArkadeInfo;
+
 /** Signed intent payload sent to the Arkade server. */
 export interface SignedIntent<T extends Intent.Message> {
     /** Base64-encoded signed proof transaction. */
@@ -278,7 +281,7 @@ export interface TxNotificationEvent {
 
 export interface ArkProvider {
     /** Fetch Arkade server configuration and fee settings. */
-    getInfo(): Promise<ArkInfo>;
+    getInfo(): Promise<ArkadeInfo>;
 
     /** Submit a signed Arkade transaction and its checkpoint transactions. */
     submitTx(
@@ -371,7 +374,7 @@ export class RestArkProvider implements ArkProvider {
      */
     private _digest = "";
 
-    private _serverInfoListeners = new Set<(info: ArkInfo) => void>();
+    private _serverInfoListeners = new Set<(info: ArkadeInfo) => void>();
 
     /**
      * Subscribe to server-info changes. Fired when a request is rejected with
@@ -379,14 +382,14 @@ export class RestArkProvider implements ArkProvider {
      * can re-derive signer-dependent state mid-session without polling. Returns
      * an unsubscribe function.
      */
-    onServerInfoChanged(listener: (info: ArkInfo) => void): () => void {
+    onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void {
         this._serverInfoListeners.add(listener);
         return () => {
             this._serverInfoListeners.delete(listener);
         };
     }
 
-    private emitServerInfoChanged(info: ArkInfo): void {
+    private emitServerInfoChanged(info: ArkadeInfo): void {
         for (const listener of this._serverInfoListeners) {
             try {
                 listener(info);
@@ -473,7 +476,7 @@ export class RestArkProvider implements ArkProvider {
         );
     }
 
-    async getInfo(): Promise<ArkInfo> {
+    async getInfo(): Promise<ArkadeInfo> {
         const url = `${this.serverUrl}/v1/info`;
         // Wait + report (see rateGate): shares an origin, and a limiter, with
         // the indexer.
@@ -492,7 +495,7 @@ export class RestArkProvider implements ArkProvider {
             handleError(errorText, `Failed to get server info: ${response.statusText}`);
         }
         const fromServer = await response.json();
-        const info: ArkInfo = {
+        const info: ArkadeInfo = {
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
             checkpointTapscript: fromServer.checkpointTapscript ?? "",
             deprecatedSigners:
