@@ -41,13 +41,13 @@ const SERVER = key(3);
 /** The two halves a consumer holds: the row's params, and the address that was
  * funded. Built the way the entry points build them, so the fixture exercises
  * the real `serializeParams` round trip rather than a hand-written record. */
-const lockupOf = (script: ReturnType<typeof lightningReceiveContract>) => ({
-    params: VHTLCV2ContractHandler.serializeParams(script.options),
-    address: script.address("tark", SERVER).encode(),
+const lockupOf = (contract: ReturnType<typeof lightningReceiveContract>) => ({
+    params: VHTLCV2ContractHandler.serializeParams(contract.options),
+    address: contract.address("tark", SERVER).encode(),
     // The live swap watches this, and the record stores only the address it
     // decodes from — so a fixture that let the two disagree would be a swap no
     // consumer could build.
-    pkScript: script.pkScript,
+    pkScript: contract.pkScript,
 });
 
 const SEND_LOCKUP = lockupOf(

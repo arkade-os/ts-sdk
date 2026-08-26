@@ -525,7 +525,7 @@ export interface RfqSwapManagerConfig {
 
 /** The contract-manager surface this needs, narrowed for injection — the same
  * seam style as {@link LockupSpendIndexer} and `refund.ts`'s
- * {@link RefundOperatorProvider}, and satisfied structurally by a real
+ * `RefundIndexer`, and satisfied structurally by a real
  * `ContractManager` (`await wallet.getContractManager()`). */
 export type SwapContractRegistry = Pick<
     IContractManager,

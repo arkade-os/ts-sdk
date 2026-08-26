@@ -45,7 +45,7 @@ import {
     CSVMultisigTapscript,
     ConditionWitness,
     type Identity,
-    RestArkProvider,
+    type ArkProvider,
     RestIndexerProvider,
     Transaction,
     VHTLC,
@@ -120,10 +120,6 @@ export async function awaitRfqResolution(
 }
 
 // ── The refundWithoutReceiver push ───────────────────────────────────────────
-
-/** The Ark surface the refund push needs — narrower than a full provider, and
- * satisfied by {@link RestArkProvider}. Same seam style as `RestoreIndexer`. */
-export type RefundOperatorProvider = Pick<RestArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
 
 /** The indexer surface the lockup lookup needs. */
 export type RefundIndexer = Pick<RestIndexerProvider, "getVtxos">;
@@ -503,9 +499,9 @@ export async function readLockupFate(
  * would be worse still: it would report success over money that never moved.
  */
 export async function pushRefundWithoutReceiver(
-    operator: RefundOperatorProvider,
+    operator: ArkProvider,
     input: {
-        script: InstanceType<typeof VHTLC.ScriptV2>;
+        contract: InstanceType<typeof VHTLC.ScriptV2>;
         /** The `sender` signer. Build it from the swap record with
          * {@link senderIdentityForSwapRecord} — on an HD wallet that resolves
          * from the seed, with no stored key bytes anywhere, and every way the
@@ -524,12 +520,12 @@ export async function pushRefundWithoutReceiver(
     if (swept.length > 0) {
         throw new LockupNeedsRecoveryError(
             swept.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
-            input.script.options.refundLocktime,
+            input.contract.options.refundLocktime,
         );
     }
 
     const refundPkScript =
-        input.refundPkScript ?? input.script.options.nonInteractiveRefund?.senderPkScript;
+        input.refundPkScript ?? input.contract.options.nonInteractiveRefund?.senderPkScript;
     if (!refundPkScript) {
         throw new Error(
             "no refund destination: the contract carries no nonInteractiveRefund leaf, so pass refundPkScript explicitly",
@@ -544,8 +540,8 @@ export async function pushRefundWithoutReceiver(
         throw new Error("invalid checkpointTapscript from the Arkade server");
     }
 
-    const leaf = input.script.refundWithoutReceiver();
-    const tapTree = input.script.encode();
+    const leaf = input.contract.refundWithoutReceiver();
+    const tapTree = input.contract.encode();
     const amount = input.vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
 
     // buildOffchainTx reads the CLTV out of this leaf and sets the ark tx's
@@ -657,11 +653,11 @@ export type RefundOutcome =
  */
 export async function refundIfUnresolved(
     transport: RfqTransport,
-    operator: RefundOperatorProvider,
+    operator: ArkProvider,
     indexer: RefundIndexer,
     input: {
         rfqId: string;
-        script: InstanceType<typeof VHTLC.ScriptV2>;
+        contract: InstanceType<typeof VHTLC.ScriptV2>;
         /** @see pushRefundWithoutReceiver */
         sender: Identity;
         /** `refund_locktime` from the quote, unix seconds. */
@@ -685,11 +681,11 @@ export async function refundIfUnresolved(
         if (status && isResolved(status.state)) return { outcome: "resolved", status };
 
         if (now() >= input.refundLocktime) {
-            const vtxos = await findLockupVtxos(indexer, input.script.pkScript);
+            const vtxos = await findLockupVtxos(indexer, input.contract.pkScript);
             if (vtxos.length === 0) return { outcome: "nothing_to_refund", status };
             try {
                 const pushed = await pushRefundWithoutReceiver(operator, {
-                    script: input.script,
+                    contract: input.contract,
                     sender: input.sender,
                     vtxos,
                     refundPkScript: input.refundPkScript,

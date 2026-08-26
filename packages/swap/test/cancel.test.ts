@@ -65,9 +65,9 @@ const binding: Omit<Offer, "swapPkScript"> = {
     makerPublicKey: hex.decode("3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1"),
     emulatorPubkey: hex.decode("466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"),
 };
-const script = offerContract(binding, fundedServerKey);
-const offerHex = hex.encode(encodeOffer({ ...binding, swapPkScript: script.pkScript }));
-const fundedAddress = new ArkAddress(fundedServerKey, script.tweakedPublicKey, "tark").encode();
+const contract = offerContract(binding, fundedServerKey);
+const offerHex = hex.encode(encodeOffer({ ...binding, swapPkScript: contract.pkScript }));
+const fundedAddress = new ArkAddress(fundedServerKey, contract.tweakedPublicKey, "tark").encode();
 
 const setContractWatchState = vi.fn(async (_script: string, _watch: string) => {});
 const contractManager = { marker: "the wallet's manager", setContractWatchState };
@@ -85,7 +85,7 @@ const pendingSwap = (over: Partial<AssetSwap> = {}): AssetSwap => ({
     fromAmount: "10000",
     toAmount: "50000",
     swapAddress: fundedAddress,
-    swapPkScript: hex.encode(script.pkScript),
+    swapPkScript: hex.encode(contract.pkScript),
     offerHex,
     fundingTxid: "a".repeat(64),
     status: "pending",
@@ -194,7 +194,7 @@ describe("cancelOffer coverage", () => {
         const [cancelled] = await getAssetSwaps(repository);
         expect(cancelled.status).toBe("cancelled");
         expect(setContractWatchState.mock.calls).toEqual([
-            [hex.encode(script.pkScript), "retained"],
+            [hex.encode(contract.pkScript), "retained"],
         ]);
     });
 

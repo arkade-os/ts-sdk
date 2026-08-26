@@ -10,12 +10,12 @@ import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { CSVMultisigTapscript, SingleKey, Transaction, type IWallet } from "@arkade-os/sdk";
+import { CSVMultisigTapscript, SingleKey, Transaction, type ArkProvider, type IWallet } from "@arkade-os/sdk";
 
 import { lightningSendContract } from "../src/rfq";
 import { arkadeRefunder } from "../src/arkadeRefunder";
 import { RefundNotLocallyPossibleError } from "../src/refundBlocked";
-import { LockupNeedsRecoveryError, type RefundOperatorProvider } from "../src/refund";
+import { LockupNeedsRecoveryError } from "../src/refund";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import type { RfqSwapRecord } from "../src/rfqRecord";
 import type { LightningSendSwap } from "../src/swapManager";
@@ -48,7 +48,7 @@ const CHECKPOINT_TAPSCRIPT = hex.encode(
     }).script,
 );
 
-const fakeArk = (): RefundOperatorProvider =>
+const fakeArk = (): ArkProvider =>
     ({
         getInfo: async () => ({ checkpointTapscript: CHECKPOINT_TAPSCRIPT }),
         submitTx: async (tx: string, checkpoints: string[]) => ({
@@ -57,7 +57,7 @@ const fakeArk = (): RefundOperatorProvider =>
             signedCheckpointTxs: checkpoints,
         }),
         finalizeTx: async () => {},
-    }) as unknown as RefundOperatorProvider;
+    }) as unknown as ArkProvider;
 
 /** The lockup as the indexer reports it: `getVtxos` is asked twice, once per
  * filter, and only the spendable half answers unless a test says otherwise. */

@@ -30,6 +30,7 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
+    type ArkProvider,
     type Identity,
     type VHTLC,
     claimWithPreimageIdentity,
@@ -40,14 +41,10 @@ import {
     LockupNeedsRecoveryError,
     findLockupVtxos,
     type LockupVtxo,
-    type RefundOperatorProvider,
     type RefundIndexer,
 } from "./refund";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** The Ark surface the claim push needs — the same seam the refund push uses. */
-export type ClaimOperatorProvider = RefundOperatorProvider;
 
 /**
  * The lockup is funded for less than the swap agreed.
@@ -121,10 +118,10 @@ const assertFiniteAmount = (value: number, reason: string, label: string): void 
  * solver refunds hours later" into an immediate failure.
  */
 export async function pushClaim(
-    operator: ClaimOperatorProvider,
+    operator: ArkProvider,
     input: {
         /** The receive-direction covenant (see `lightningReceiveContract`). */
-        script: InstanceType<typeof VHTLC.ScriptV2>;
+        contract: InstanceType<typeof VHTLC.ScriptV2>;
         /** The trader's `receiver` signer. Build it from the swap's `secrets`
          * with `contractSigner` — on an HD wallet that resolves
          * from the seed, with no stored key bytes anywhere. */
@@ -151,7 +148,7 @@ export async function pushClaim(
     if (swept.length > 0) {
         throw new LockupNeedsRecoveryError(
             swept.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
-            input.script.options.refundLocktime,
+            input.contract.options.refundLocktime,
         );
     }
 
@@ -171,7 +168,7 @@ export async function pushClaim(
         }
     }
 
-    const committed = input.script.options.preimageHash;
+    const committed = input.contract.options.preimageHash;
     if (hex.encode(ripemd160(sha256(input.preimage))) !== hex.encode(committed)) {
         throw new Error("preimage does not match the covenant's payment hash");
     }
@@ -184,8 +181,8 @@ export async function pushClaim(
         throw new Error("invalid checkpointTapscript from the Arkade server");
     }
 
-    const leaf = input.script.claim();
-    const tapTree = input.script.encode();
+    const leaf = input.contract.claim();
+    const tapTree = input.contract.encode();
 
     // The core primitive owns build → sign → submit → match → finalize; this
     // module supplies only what is swap-specific: the claim leaf, the preimage
@@ -205,7 +202,7 @@ export async function pushClaim(
         // nothing about the output set.
         outputs: [{ script: input.destinationPkScript, amount: BigInt(locked) }],
         operatorUnrollScript,
-        verifyServerSignatures: { serverPubkey: input.script.options.server },
+        verifyServerSignatures: { serverPubkey: input.contract.options.server },
     });
     return { txid, amount: locked };
 }
@@ -252,7 +249,7 @@ export async function awaitLockupFunding(
  */
 export async function claimReceiveLockup(
     indexer: RefundIndexer,
-    operator: ClaimOperatorProvider,
+    operator: ArkProvider,
     input: Parameters<typeof pushClaim>[1] & {
         /** The covenant's scriptPubKey, from the request flow's `swapPkScript`. */
         swapPkScript: Uint8Array;
@@ -265,7 +262,7 @@ export async function claimReceiveLockup(
         deadline: input.deadline,
     });
     return pushClaim(operator, {
-        script: input.script,
+        contract: input.contract,
         receiver: input.receiver,
         preimage: input.preimage,
         vtxos,

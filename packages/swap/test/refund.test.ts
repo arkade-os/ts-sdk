@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { CSVMultisigTapscript, SingleKey, Transaction } from "@arkade-os/sdk";
+import { CSVMultisigTapscript, SingleKey, Transaction, type ArkProvider } from "@arkade-os/sdk";
 
 import { lightningSendContract, type RfqStatus, type RfqTransport } from "../src/rfq";
 import {
@@ -24,7 +24,6 @@ import {
     refundIfUnresolved,
     type LockupSpendIndexer,
     type LockupVtxo,
-    type RefundOperatorProvider,
     type RefundIndexer,
 } from "../src/refund";
 
@@ -67,9 +66,9 @@ const VTXOS: LockupVtxo[] = [
 
 /** A scripted arkd: echoes back the checkpoints it was handed (as a real one
  * does, plus its own signature) and reports the ark txid it was submitted.
- * Typed against the production contract so a change to RefundOperatorProvider
+ * Typed against the production contract so a change to ArkProvider
  * breaks the fake at compile time. */
-type FakeArk = RefundOperatorProvider & {
+type FakeArk = ArkProvider & {
     submitted: { tx: string; checkpoints: string[] }[];
     finalized: { txid: string; checkpoints: string[] }[];
 };
@@ -153,10 +152,10 @@ const spentLeafOf = (psbt: string): string => {
 
 describe("pushRefundWithoutReceiver", () => {
     it("spends the refundWithoutReceiver leaf, signed by the trader's own sender key", async () => {
-        const script = swapScript();
+        const contract = swapScript();
         const ark = fakeArk();
         await pushRefundWithoutReceiver(ark, {
-            script,
+            contract: contract,
             sender: SENDER,
             vtxos: VTXOS,
         });
@@ -164,7 +163,7 @@ describe("pushRefundWithoutReceiver", () => {
         expect(ark.submitted).toHaveLength(1);
         // Not `refund` (needs the solver) and not a unilateral leaf (needs an
         // exit): the CLTV leaf is the only one a stranded trader can drive.
-        expect(spentLeafOf(ark.submitted[0].tx)).toBe(script.refundWithoutReceiverScript);
+        expect(spentLeafOf(ark.submitted[0].tx)).toBe(contract.refundWithoutReceiverScript);
 
         // SingleKey.sign() swallows "No inputs signed", so an unsigned tx would
         // otherwise sail through to submitTx and be rejected only server-side.
@@ -177,7 +176,7 @@ describe("pushRefundWithoutReceiver", () => {
     it("carries the CLTV locktime and an nLockTime-enabling sequence", async () => {
         const ark = fakeArk();
         await pushRefundWithoutReceiver(ark, {
-            script: swapScript(),
+            contract: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
         });
@@ -193,7 +192,7 @@ describe("pushRefundWithoutReceiver", () => {
     it("returns every funded output to the contract's own committed destination", async () => {
         const ark = fakeArk();
         const result = await pushRefundWithoutReceiver(ark, {
-            script: swapScript(),
+            contract: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
         });
@@ -213,7 +212,7 @@ describe("pushRefundWithoutReceiver", () => {
         const ark = fakeArk();
         const elsewhere = p2tr(key(21));
         await pushRefundWithoutReceiver(ark, {
-            script: swapScript(),
+            contract: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
             refundPkScript: elsewhere,
@@ -225,7 +224,7 @@ describe("pushRefundWithoutReceiver", () => {
     it("refuses an empty lockup instead of pushing an inputless transaction", async () => {
         await expect(
             pushRefundWithoutReceiver(fakeArk(), {
-                script: swapScript(),
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: [],
             }),
@@ -248,7 +247,7 @@ describe("pushRefundWithoutReceiver", () => {
             ];
             await expect(
                 pushRefundWithoutReceiver(ark, {
-                    script: swapScript(),
+                    contract: swapScript(),
                     sender: SENDER,
                     vtxos: swept,
                 }),
@@ -262,7 +261,7 @@ describe("pushRefundWithoutReceiver", () => {
                 { txid: "33".repeat(32), vout: 2, value: 5_000, recoverable: true },
             ];
             const error: unknown = await pushRefundWithoutReceiver(fakeArk(), {
-                script: swapScript(),
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: swept,
             }).then(
@@ -292,7 +291,7 @@ describe("pushRefundWithoutReceiver", () => {
             ];
             await expect(
                 pushRefundWithoutReceiver(ark, {
-                    script: swapScript(),
+                    contract: swapScript(),
                     sender: SENDER,
                     vtxos: mixed,
                 }),
@@ -304,7 +303,7 @@ describe("pushRefundWithoutReceiver", () => {
             const ark = fakeArk();
             const live: LockupVtxo[] = VTXOS.map((v) => ({ ...v, recoverable: false }));
             await pushRefundWithoutReceiver(ark, {
-                script: swapScript(),
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: live,
             });
@@ -319,7 +318,7 @@ describe("pushRefundWithoutReceiver", () => {
         // malformed stand-in would prove nothing: signing would fail anyway.)
         const capture = fakeArk();
         await pushRefundWithoutReceiver(capture, {
-            script: swapScript(),
+            contract: swapScript(),
             sender: SENDER,
             vtxos: [{ txid: "33".repeat(32), vout: 0, value: 7_000, recoverable: false }],
         });
@@ -328,7 +327,7 @@ describe("pushRefundWithoutReceiver", () => {
         const ark = fakeArk({ checkpointsFor: () => [foreignCheckpoint] });
         await expect(
             pushRefundWithoutReceiver(ark, {
-                script: swapScript(),
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: [VTXOS[0]],
             }),
@@ -339,7 +338,7 @@ describe("pushRefundWithoutReceiver", () => {
     it("reports a malformed checkpointTapscript rather than failing deep in the builder", async () => {
         await expect(
             pushRefundWithoutReceiver(fakeArk({ checkpointTapscript: "00" }), {
-                script: swapScript(),
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: VTXOS,
             }),
@@ -349,10 +348,10 @@ describe("pushRefundWithoutReceiver", () => {
 
 describe("findLockupVtxos", () => {
     it("asks for the lockup script and returns every spendable output", async () => {
-        const script = swapScript();
+        const contract = swapScript();
         const indexer = fakeIndexer(VTXOS);
-        expect(await findLockupVtxos(indexer, script.pkScript)).toHaveLength(2);
-        expect(indexer.scripts[0]).toEqual([hex.encode(script.pkScript)]);
+        expect(await findLockupVtxos(indexer, contract.pkScript)).toHaveLength(2);
+        expect(indexer.scripts[0]).toEqual([hex.encode(contract.pkScript)]);
     });
 
     /** Filter-aware, unlike `fakeIndexer`: the two sets are disjoint here, which
@@ -372,17 +371,17 @@ describe("findLockupVtxos", () => {
         // Visible is NOT the same as refundable: a swept output must be
         // recovered before any offchain spend, which
         // `pushRefundWithoutReceiver` enforces rather than discovers.
-        const script = swapScript();
+        const contract = swapScript();
         const swept = { txid: "cc".repeat(32), vout: 1, value: 4_000, recoverable: false };
-        const found = await findLockupVtxos(byFilterIndexer([], [swept]), script.pkScript);
+        const found = await findLockupVtxos(byFilterIndexer([], [swept]), contract.pkScript);
         expect(found).toEqual([{ ...swept, recoverable: true }]);
     });
 
     it("merges both sets and marks which outputs were swept", async () => {
-        const script = swapScript();
+        const contract = swapScript();
         const live = { txid: "aa".repeat(32), vout: 0, value: 1_000, recoverable: false };
         const swept = { txid: "bb".repeat(32), vout: 2, value: 2_000, recoverable: false };
-        const found = await findLockupVtxos(byFilterIndexer([live], [swept]), script.pkScript);
+        const found = await findLockupVtxos(byFilterIndexer([live], [swept]), contract.pkScript);
         expect(found).toEqual([
             { ...live, recoverable: false },
             { ...swept, recoverable: true },
@@ -393,9 +392,9 @@ describe("findLockupVtxos", () => {
         // Disjoint today, but double-counting would add the same outpoint to
         // the refund's aggregate output twice and build a transaction that
         // cannot be signed.
-        const script = swapScript();
+        const contract = swapScript();
         const both = { txid: "dd".repeat(32), vout: 0, value: 7_000, recoverable: false };
-        const found = await findLockupVtxos(byFilterIndexer([both], [both]), script.pkScript);
+        const found = await findLockupVtxos(byFilterIndexer([both], [both]), contract.pkScript);
         expect(found).toHaveLength(1);
         expect(found[0]!.recoverable).toBe(false);
     });
@@ -426,7 +425,7 @@ describe("awaitRfqResolution", () => {
 describe("refundIfUnresolved", () => {
     const baseInput = () => ({
         rfqId: RFQ_ID,
-        script: swapScript(),
+        contract: swapScript(),
         sender: SENDER,
         refundLocktime: REFUND_LOCKTIME,
         pollMs: 1,

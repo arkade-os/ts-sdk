@@ -170,7 +170,6 @@ export {
     awaitLockupFunding,
     claimReceiveLockup,
     pushClaim,
-    type ClaimOperatorProvider,
 } from "./claim";
 export {
     RefundNotLocallyPossibleError,
@@ -191,7 +190,6 @@ export {
     type LockupSpend,
     type LockupSpendIndexer,
     type LockupVtxo,
-    type RefundOperatorProvider,
     type RefundIndexer,
     type RefundOutcome,
 } from "./refund";

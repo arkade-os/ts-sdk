@@ -18,6 +18,7 @@ import {
     SingleKey,
     Transaction,
     getArkPsbtFields,
+    type ArkProvider,
 } from "@arkade-os/sdk";
 
 import { lightningReceiveContract } from "../src/rfq";
@@ -26,7 +27,6 @@ import {
     awaitLockupFunding,
     claimReceiveLockup,
     pushClaim,
-    type ClaimOperatorProvider,
 } from "../src/claim";
 import { LockupNeedsRecoveryError, type LockupVtxo, type RefundIndexer } from "../src/refund";
 
@@ -71,7 +71,7 @@ const VTXOS: LockupVtxo[] = [
 const EXPECTED_AMOUNT = 100_000;
 
 /** A scripted arkd, same contract as refund.test.ts's. */
-type FakeArk = ClaimOperatorProvider & {
+type FakeArk = ArkProvider & {
     submitted: { tx: string; checkpoints: string[] }[];
     finalized: { txid: string; checkpoints: string[] }[];
 };
@@ -126,10 +126,10 @@ const spentLeafOf = (psbt: string): string => {
 
 describe("pushClaim", () => {
     it("spends the claim leaf, signed by the trader's receiver key, preimage attached", async () => {
-        const script = swapScript();
+        const contract = swapScript();
         const operator = fakeOperator();
         const result = await pushClaim(operator, {
-            script,
+            contract: contract,
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: VTXOS,
@@ -140,7 +140,7 @@ describe("pushClaim", () => {
         expect(operator.submitted).toHaveLength(1);
         // The exact leaf bytes, control block stripped — the claim leaf and no
         // other.
-        expect(spentLeafOf(operator.submitted[0]!.tx)).toBe(script.claimScript);
+        expect(spentLeafOf(operator.submitted[0]!.tx)).toBe(contract.claimScript);
         // One aggregate output to the trader's destination, for the full amount.
         const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0]!.tx));
         expect(tx.outputsLength).toBeGreaterThan(0);
@@ -161,7 +161,7 @@ describe("pushClaim", () => {
         // A signer that records whether the ConditionWitness field was already
         // present AT SIGN TIME: it must not be, or the signature covers a
         // different payload than the one submitted.
-        const script = swapScript();
+        const contract = swapScript();
         let fieldPresentAtSignTime = false;
         const probe = {
             ...RECEIVER,
@@ -176,7 +176,7 @@ describe("pushClaim", () => {
             },
         };
         await pushClaim(fakeOperator(), {
-            script,
+            contract: contract,
             receiver: probe,
             preimage: PREIMAGE,
             vtxos: VTXOS,
@@ -190,7 +190,7 @@ describe("pushClaim", () => {
         const operator = fakeOperator();
         await expect(
             pushClaim(operator, {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: new Uint8Array(32).fill(8),
                 vtxos: VTXOS,
@@ -204,7 +204,7 @@ describe("pushClaim", () => {
     it("refuses a swept output rather than submitting a spend that cannot succeed", async () => {
         await expect(
             pushClaim(fakeOperator(), {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "33".repeat(32), vout: 0, value: 5_000, recoverable: true }],
@@ -221,7 +221,7 @@ describe("pushClaim", () => {
         const operator = fakeOperator();
         await expect(
             pushClaim(operator, {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "44".repeat(32), vout: 0, value: 330, recoverable: false }],
@@ -242,7 +242,7 @@ describe("pushClaim", () => {
         const operator = fakeOperator();
         await expect(
             pushClaim(operator, {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "44".repeat(32), vout: 0, value: 330, recoverable: false }],
@@ -257,7 +257,7 @@ describe("pushClaim", () => {
         const operator = fakeOperator();
         await expect(
             pushClaim(operator, {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "44".repeat(32), vout: 0, value: Number.NaN, recoverable: false }],
@@ -272,7 +272,7 @@ describe("pushClaim", () => {
         // VTXOS is 60_000 + 40_000: neither output covers the amount alone.
         const split = fakeOperator();
         await pushClaim(split, {
-            script: swapScript(),
+            contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: VTXOS,
@@ -283,7 +283,7 @@ describe("pushClaim", () => {
 
         const over = fakeOperator();
         const result = await pushClaim(over, {
-            script: swapScript(),
+            contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: VTXOS,
@@ -296,7 +296,7 @@ describe("pushClaim", () => {
     it("claims the remainder of a partially-claimed lockup regardless of the amount", async () => {
         const operator = fakeOperator();
         const result = await pushClaim(operator, {
-            script: swapScript(),
+            contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: [{ txid: "55".repeat(32), vout: 0, value: 1_000, recoverable: false }],
@@ -309,7 +309,7 @@ describe("pushClaim", () => {
         // Including one whose record predates the field: `P` is already
         // public, so refusing here would strand the remainder for nothing.
         const older = await pushClaim(fakeOperator(), {
-            script: swapScript(),
+            contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: [{ txid: "55".repeat(32), vout: 0, value: 1_000, recoverable: false }],
@@ -323,7 +323,7 @@ describe("pushClaim", () => {
     it("refuses a swept output before the amount is even considered", async () => {
         await expect(
             pushClaim(fakeOperator(), {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "33".repeat(32), vout: 0, value: 330, recoverable: true }],
@@ -339,7 +339,7 @@ describe("pushClaim", () => {
         const operator = fakeOperator({ cosign: false });
         await expect(
             pushClaim(operator, {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: VTXOS,
@@ -354,7 +354,7 @@ describe("pushClaim", () => {
         const operator = fakeOperator({ finalTx: () => undefined });
         await expect(
             pushClaim(operator, {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: VTXOS,
@@ -368,7 +368,7 @@ describe("pushClaim", () => {
     it("throws on nothing to claim", async () => {
         await expect(
             pushClaim(fakeOperator(), {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [],
@@ -396,7 +396,7 @@ describe("awaitLockupFunding + claimReceiveLockup", () => {
         const indexer = indexerOver([[], VTXOS]);
         const operator = fakeOperator();
         const result = await claimReceiveLockup(indexer, operator, {
-            script: swapScript(),
+            contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
             swapPkScript: swapScript().pkScript,

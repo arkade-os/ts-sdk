@@ -15,11 +15,10 @@
  * the second as `needs_recovery`, and catching either here would turn a state
  * the trader must act on into a retry that grinds the window away.
  */
-import type { IWallet } from "@arkade-os/sdk";
+import type { ArkProvider, IWallet } from "@arkade-os/sdk";
 import {
     findLockupVtxos,
     pushRefundWithoutReceiver,
-    type RefundOperatorProvider,
     type RefundIndexer,
 } from "./refund";
 import { RefundNotLocallyPossibleError, senderIdentityForSwapRecord } from "./refundBlocked";
@@ -28,7 +27,7 @@ import type { AssetSwapRepository } from "./repository";
 import type { ArkadeRefundResult, RfqSwap } from "./swapManager";
 
 export interface ArkadeRefunderDeps {
-    operator: RefundOperatorProvider;
+    operator: ArkProvider;
     indexer: RefundIndexer;
     /** Asked for the descriptor's signer; never asked to mint a key. */
     wallet: IWallet;
@@ -53,8 +52,8 @@ export function arkadeRefunder(
     deps: ArkadeRefunderDeps,
 ): (swap: RfqSwap) => Promise<ArkadeRefundResult> {
     return async (swap) => {
-        const script = swap.lockup?.script;
-        if (!script) {
+        const contract = swap.lockup?.script;
+        if (!contract) {
             // A wiring mistake, not a swap outcome: `lockup` is optional only
             // because the manager can still watch without it, and no refund can
             // be built from the pkScript alone. Keep `request*`'s `script` on
@@ -92,6 +91,6 @@ export function arkadeRefunder(
         // deciding what "this wallet cannot sign this swap" means stays
         // `senderIdentityForSwapRecord`.
         const sender = await senderIdentityForSwapRecord(deps.wallet, rfqSignerOf(record) ?? {});
-        return pushRefundWithoutReceiver(deps.operator, { script, sender, vtxos });
+        return pushRefundWithoutReceiver(deps.operator, { contract, sender, vtxos });
     };
 }

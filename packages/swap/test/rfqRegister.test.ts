@@ -97,7 +97,7 @@ const INVOICE = {
 const lightningTransport = (): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
-        const script = lightningSendContract({
+        const contract = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
             operatorPubkey: SERVER,
@@ -120,7 +120,7 @@ const lightningTransport = (): RfqTransport => ({
             refund_locktime: REFUND_LOCKTIME,
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
-                lockup_address: script.address("tark", SERVER).encode(),
+                lockup_address: contract.address("tark", SERVER).encode(),
             },
         } satisfies RfqQuote;
     },
