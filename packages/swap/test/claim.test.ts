@@ -84,7 +84,7 @@ const operatorCosign = async (psbt: string): Promise<string> =>
 
 /** A scripted arkd that countersigns like the real one — `pushClaim` verifies
  * those signatures before finalizing, so a mute fake would prove nothing. */
-const fakeArk = (
+const fakeOperator = (
     over: {
         checkpointsFor?: (submitted: string[]) => string[];
         /** Answer without countersigning, as a server that never signed. */
@@ -127,8 +127,8 @@ const spentLeafOf = (psbt: string): string => {
 describe("pushClaim", () => {
     it("spends the claim leaf, signed by the trader's receiver key, preimage attached", async () => {
         const script = swapScript();
-        const ark = fakeArk();
-        const result = await pushClaim(ark, {
+        const operator = fakeOperator();
+        const result = await pushClaim(operator, {
             script,
             receiver: RECEIVER,
             preimage: PREIMAGE,
@@ -137,24 +137,24 @@ describe("pushClaim", () => {
             expectedAmount: EXPECTED_AMOUNT,
         });
 
-        expect(ark.submitted).toHaveLength(1);
+        expect(operator.submitted).toHaveLength(1);
         // The exact leaf bytes, control block stripped — the claim leaf and no
         // other.
-        expect(spentLeafOf(ark.submitted[0]!.tx)).toBe(script.claimScript);
+        expect(spentLeafOf(operator.submitted[0]!.tx)).toBe(script.claimScript);
         // One aggregate output to the trader's destination, for the full amount.
-        const arkTx = Transaction.fromPSBT(base64.decode(ark.submitted[0]!.tx));
-        expect(arkTx.outputsLength).toBeGreaterThan(0);
-        expect(hex.encode(arkTx.getOutput(0)!.script!)).toBe(hex.encode(DESTINATION_PK_SCRIPT));
-        expect(arkTx.getOutput(0)!.amount).toBe(BigInt(100_000));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0]!.tx));
+        expect(tx.outputsLength).toBeGreaterThan(0);
+        expect(hex.encode(tx.getOutput(0)!.script!)).toBe(hex.encode(DESTINATION_PK_SCRIPT));
+        expect(tx.getOutput(0)!.amount).toBe(BigInt(100_000));
         expect(result.amount).toBe(100_000);
         // The preimage rides the condition-witness field on the ark
         // transaction, attached after signing…
-        const conditionFields = getArkPsbtFields(arkTx, 0, ConditionWitness);
+        const conditionFields = getArkPsbtFields(tx, 0, ConditionWitness);
         expect(conditionFields).toHaveLength(1);
         expect(hex.encode(conditionFields[0]![0]!)).toBe(hex.encode(PREIMAGE));
         // …and finalize got the checkpoints back signed.
-        expect(ark.finalized).toHaveLength(1);
-        expect(ark.finalized[0]!.txid).toBe(result.txid);
+        expect(operator.finalized).toHaveLength(1);
+        expect(operator.finalized[0]!.txid).toBe(result.txid);
     });
 
     it("attaches the preimage only after signing — the server's INVALID_SIGNATURE ordering", async () => {
@@ -175,7 +175,7 @@ describe("pushClaim", () => {
                 return RECEIVER.sign(tx, inputIndexes);
             },
         };
-        await pushClaim(fakeArk(), {
+        await pushClaim(fakeOperator(), {
             script,
             receiver: probe,
             preimage: PREIMAGE,
@@ -187,9 +187,9 @@ describe("pushClaim", () => {
     });
 
     it("refuses a preimage that cannot open the script, before signing anything", async () => {
-        const ark = fakeArk();
+        const operator = fakeOperator();
         await expect(
-            pushClaim(ark, {
+            pushClaim(operator, {
                 script: swapScript(),
                 receiver: RECEIVER,
                 preimage: new Uint8Array(32).fill(8),
@@ -198,12 +198,12 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(/does not match/);
-        expect(ark.submitted).toHaveLength(0);
+        expect(operator.submitted).toHaveLength(0);
     });
 
     it("refuses a swept output rather than submitting a spend that cannot succeed", async () => {
         await expect(
-            pushClaim(fakeArk(), {
+            pushClaim(fakeOperator(), {
                 script: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
@@ -218,9 +218,9 @@ describe("pushClaim", () => {
     // only the value says anything is wrong. Claiming anyway publishes `P` and
     // lets the solver settle the payer's HTLC in full.
     it("refuses a lockup funded below the agreed amount, with nothing signed or submitted", async () => {
-        const ark = fakeArk();
+        const operator = fakeOperator();
         await expect(
-            pushClaim(ark, {
+            pushClaim(operator, {
                 script: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
@@ -230,7 +230,7 @@ describe("pushClaim", () => {
             }),
         ).rejects.toThrow(LockupAmountMismatchError);
         // `P` reaches the Ark server at submit, so this is the whole guarantee.
-        expect(ark.submitted).toHaveLength(0);
+        expect(operator.submitted).toHaveLength(0);
     });
 
     // NaN and undefined fail every comparison, so an unchecked one does not
@@ -239,9 +239,9 @@ describe("pushClaim", () => {
         ["NaN", Number.NaN],
         ["missing from an older record", undefined as unknown as number],
     ])("refuses an expectedAmount that is %s instead of comparing against it", async (_, bad) => {
-        const ark = fakeArk();
+        const operator = fakeOperator();
         await expect(
-            pushClaim(ark, {
+            pushClaim(operator, {
                 script: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
@@ -250,13 +250,13 @@ describe("pushClaim", () => {
                 expectedAmount: bad,
             }),
         ).rejects.toMatchObject({ reason: "invalid_gate_input" });
-        expect(ark.submitted).toHaveLength(0);
+        expect(operator.submitted).toHaveLength(0);
     });
 
     it("refuses a lockup whose indexed value is not a number", async () => {
-        const ark = fakeArk();
+        const operator = fakeOperator();
         await expect(
-            pushClaim(ark, {
+            pushClaim(operator, {
                 script: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
@@ -265,12 +265,12 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toMatchObject({ reason: "lockup_malformed" });
-        expect(ark.submitted).toHaveLength(0);
+        expect(operator.submitted).toHaveLength(0);
     });
 
     it("sums across outputs and tolerates overfunding", async () => {
         // VTXOS is 60_000 + 40_000: neither output covers the amount alone.
-        const split = fakeArk();
+        const split = fakeOperator();
         await pushClaim(split, {
             script: swapScript(),
             receiver: RECEIVER,
@@ -281,7 +281,7 @@ describe("pushClaim", () => {
         });
         expect(split.submitted).toHaveLength(1);
 
-        const over = fakeArk();
+        const over = fakeOperator();
         const result = await pushClaim(over, {
             script: swapScript(),
             receiver: RECEIVER,
@@ -294,8 +294,8 @@ describe("pushClaim", () => {
     });
 
     it("claims the remainder of a partially-claimed lockup regardless of the amount", async () => {
-        const ark = fakeArk();
-        const result = await pushClaim(ark, {
+        const operator = fakeOperator();
+        const result = await pushClaim(operator, {
             script: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
@@ -308,7 +308,7 @@ describe("pushClaim", () => {
 
         // Including one whose record predates the field: `P` is already
         // public, so refusing here would strand the remainder for nothing.
-        const older = await pushClaim(fakeArk(), {
+        const older = await pushClaim(fakeOperator(), {
             script: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
@@ -322,7 +322,7 @@ describe("pushClaim", () => {
 
     it("refuses a swept output before the amount is even considered", async () => {
         await expect(
-            pushClaim(fakeArk(), {
+            pushClaim(fakeOperator(), {
                 script: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
@@ -336,9 +336,9 @@ describe("pushClaim", () => {
     // Not a guard on `P` — that reached the server at submit — but on being
     // told the claim landed when nothing was co-signed.
     it("refuses to finalize a claim the server did not co-sign", async () => {
-        const ark = fakeArk({ cosign: false });
+        const operator = fakeOperator({ cosign: false });
         await expect(
-            pushClaim(ark, {
+            pushClaim(operator, {
                 script: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
@@ -347,13 +347,13 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(/not signed by the server/);
-        expect(ark.finalized).toHaveLength(0);
+        expect(operator.finalized).toHaveLength(0);
     });
 
     it("fails closed when the server returns no final ark tx to check", async () => {
-        const ark = fakeArk({ finalTx: () => undefined });
+        const operator = fakeOperator({ finalTx: () => undefined });
         await expect(
-            pushClaim(ark, {
+            pushClaim(operator, {
                 script: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
@@ -362,12 +362,12 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(/no final ark tx to verify/);
-        expect(ark.finalized).toHaveLength(0);
+        expect(operator.finalized).toHaveLength(0);
     });
 
     it("throws on nothing to claim", async () => {
         await expect(
-            pushClaim(fakeArk(), {
+            pushClaim(fakeOperator(), {
                 script: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
@@ -394,8 +394,8 @@ describe("awaitLockupFunding + claimReceiveLockup", () => {
 
     it("waits for the lockup, then claims it in one call", async () => {
         const indexer = indexerOver([[], VTXOS]);
-        const ark = fakeArk();
-        const result = await claimReceiveLockup(indexer, ark, {
+        const operator = fakeOperator();
+        const result = await claimReceiveLockup(indexer, operator, {
             script: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
@@ -404,7 +404,7 @@ describe("awaitLockupFunding + claimReceiveLockup", () => {
             expectedAmount: EXPECTED_AMOUNT,
             pollMs: 1,
         });
-        expect(ark.submitted).toHaveLength(1);
+        expect(operator.submitted).toHaveLength(1);
         expect(result.amount).toBe(100_000);
     });
 

@@ -86,7 +86,7 @@ const waitFor = async (
 const indexer = new RestIndexerProvider(ARK_URL);
 let wallet: Wallet;
 let emulatorPubkey: Uint8Array;
-let serverPubkey: Uint8Array;
+let operatorPubkey: Uint8Array;
 let claimDelay: number;
 let hrp: string;
 
@@ -109,7 +109,7 @@ const stubTransport = (): RfqTransport => ({
         const script = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime,
-            operatorPubkey: serverPubkey,
+            operatorPubkey: operatorPubkey,
             paymentHash: PAYMENT_HASH,
             claimDelay,
             emulatorPubkey,
@@ -129,7 +129,7 @@ const stubTransport = (): RfqTransport => ({
             refund_locktime: refundLocktime,
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
-                lockup_address: script.address(hrp, serverPubkey).encode(),
+                lockup_address: script.address(hrp, operatorPubkey).encode(),
             },
         } satisfies RfqQuote;
     },
@@ -142,7 +142,7 @@ const stubTransport = (): RfqTransport => ({
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: ARK_URL,
+        operatorUrl: ARK_URL,
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -163,7 +163,7 @@ beforeAll(async () => {
     // The stub solver has to derive the same script the maker will, so it needs
     // the same server-derived inputs `requestLightningSend` reads for itself.
     const info = await new RestArkProvider(ARK_URL).getInfo();
-    serverPubkey = xOnly(hex.decode(info.signerPubkey));
+    operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     hrp = ArkAddress.decode(address).hrp;
 
