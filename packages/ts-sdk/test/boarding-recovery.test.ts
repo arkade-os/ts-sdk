@@ -16,7 +16,7 @@ const operatorPubKey = SingleKey.fromPrivateKey(privateKey(3)).xOnlyPublicKey();
 async function fixture() {
     const operator = await operatorPubKey;
     const program = {
-        name: "vault-board-v2" as const,
+        name: "example-board-v1" as const,
         boardingPubKey: await SingleKey.fromPrivateKey(privateKey(1)).xOnlyPublicKey(),
         cosignerPubKey: await SingleKey.fromPrivateKey(privateKey(2)).xOnlyPublicKey(),
         recoveryPubKey: await recoveryIdentity.xOnlyPublicKey(),

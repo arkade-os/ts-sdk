@@ -188,7 +188,7 @@ describe("named boarding adapter lifecycle seam", () => {
         const delay = { type: "seconds", value: 512n } as const;
         const script = createBoardingProgramScript(
             {
-                name: "vault-board-v2",
+                name: "example-board-v1",
                 boardingPubKey: key(1),
                 cosignerPubKey: key(2),
                 recoveryPubKey: key(4),
@@ -220,7 +220,7 @@ describe("named boarding adapter lifecycle seam", () => {
         const boardingIdentity = SingleKey.fromPrivateKey(privateKey(1));
         const script = createBoardingProgramScript(
             {
-                name: "vault-board-v2",
+                name: "example-board-v1",
                 boardingPubKey: await boardingIdentity.xOnlyPublicKey(),
                 cosignerPubKey: signingAdapter.publicKey,
                 recoveryPubKey: await SingleKey.fromPrivateKey(privateKey(4)).xOnlyPublicKey(),
