@@ -72,7 +72,7 @@ const repository = new InMemoryAssetSwapRepository();
 let wallet: Wallet;
 // the key the covenants are funded against — restore classifies each spend by
 // the covenant leaf it took, so it has to rebuild the same script
-let serverPubkey: Uint8Array;
+let operatorPubkey: Uint8Array;
 
 beforeAll(async () => {
     wallet = await Wallet.create({
@@ -97,7 +97,7 @@ beforeAll(async () => {
     execCommand(`${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`);
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
 
-    serverPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;
+    operatorPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;
 }, 120_000);
 
 describe("maker-side swap loop (regtest)", () => {
@@ -138,7 +138,7 @@ describe("maker-side swap loop (regtest)", () => {
         // Pending deposits have no spend to classify; serverPubkey is required
         // by the restore API but does not affect this assertion.
         const { restored, scannedTxids } = await restoreAssetSwaps(indexer, history, new Set(), {
-            serverPubkey,
+            serverPubkey: operatorPubkey,
         });
 
         expect(scannedTxids).toEqual([fundingTxid]);
@@ -242,7 +242,7 @@ describe("maker-side swap loop (regtest)", () => {
             redeemTxid: cancelTxid,
             createdAt: Math.floor(Date.now() / 1000),
         });
-        const { restored } = await restoreAssetSwaps(indexer, history, new Set(), { serverPubkey });
+        const { restored } = await restoreAssetSwaps(indexer, history, new Set(), { serverPubkey: operatorPubkey });
         expect(restored).toHaveLength(1);
         expect(restored[0]).toMatchObject({
             status: "cancelled",
