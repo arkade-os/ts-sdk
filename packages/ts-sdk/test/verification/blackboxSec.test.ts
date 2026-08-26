@@ -284,7 +284,7 @@ describe("Black Box Security Audit: Malicious ASP Resilience", () => {
 
         await expect(
             reconstructAndValidateVtxoDAG({ txid: fakeRoot, vout: 0 }, indexer, onchain),
-        ).rejects.toThrow(/CYCLE_DETECTED|INPUT_CHAIN_BREAK|TXID_MISMATCH/);
+        ).rejects.toThrow(/CYCLE_DETECTED|INPUT_CHAIN_BREAK|TXID_MISMATCH|MISSING_TX/);
     });
 
     it("ORPHAN / DISTRACTION: should reject a payload containing unreachable corrupted sub-graphs", async () => {

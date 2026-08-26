@@ -169,6 +169,10 @@ function extractTimelockOpcodes(
  * Resolves a script element to a numeric value.
  * Handles OP_0..OP_16 (decoded as numbers/bigints by btc-signer), and byte pushes
  * (decoded as Uint8Array, interpreted as little-endian ScriptNum).
+ *
+ * NOTE: BIP 68 CSV values fit in 16 bits (0..65535) and CLTV values fit in 32 bits (<= 2^32 - 1).
+ * Both are strictly well within JS Number.MAX_SAFE_INTEGER (2^53 - 1). Values exceeding safe integer
+ * bounds return null to prevent precision loss on large numbers.
  */
 export function resolveScriptNumber(element: string | number | bigint | Uint8Array): number | null {
     if (typeof element === "number") {

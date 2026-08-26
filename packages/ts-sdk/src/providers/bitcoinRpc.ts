@@ -176,6 +176,7 @@ export class BitcoinRpcProvider implements VerificationOnchainProvider {
         blockHeight?: number;
         blockTime?: number;
         blockHash?: string;
+        confirmations?: number;
     }> {
         try {
             // getrawtransaction txid [verbose=true] [blockhash]
@@ -205,6 +206,7 @@ export class BitcoinRpcProvider implements VerificationOnchainProvider {
                 blockHeight,
                 blockTime: tx.blocktime,
                 blockHash: tx.blockhash,
+                confirmations,
             };
         } catch (e) {
             if (e instanceof BitcoinRpcError && e.code === -5) {
@@ -215,7 +217,7 @@ export class BitcoinRpcProvider implements VerificationOnchainProvider {
                         -5,
                     );
                 }
-                return { confirmed: false };
+                return { confirmed: false, confirmations: 0 };
             }
             throw e;
         }

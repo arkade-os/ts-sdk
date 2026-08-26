@@ -109,15 +109,18 @@ describe("Production Audit: Signet-Structured VTXO Validation", () => {
             broadcastTransaction: vi.fn(),
         };
 
-        // Execute verification pipeline
+        // Execute verification pipeline with commitmentTxid for privacy mode
         const result = await reconstructAndValidateVtxoDAG(
             { txid: vtxoLeaf.txid, vout: 0 },
             indexer,
             onchain,
+            undefined,
+            commitmentTxid,
         );
 
         // Assertions
         expect(result.valid).toBe(true);
+        expect(indexer.getBatchVtxos).toHaveBeenCalledWith(commitmentTxid);
         expect(result.commitmentTxid).toBe(commitmentTxid);
         expect(result.vtxoRoot.txid).toBe(vtxoLeaf.txid);
         expect(result.anchoringLeaf.txid).toBe(treeNode.txid);
@@ -197,9 +200,12 @@ describe("Production Audit: Signet-Structured VTXO Validation", () => {
             { txid: vtxo.txid, vout: 0 },
             indexer,
             onchain,
+            undefined,
+            commitmentTxid,
         );
 
         expect(result.valid).toBe(true);
+        expect(indexer.getBatchVtxos).toHaveBeenCalledWith(commitmentTxid);
         expect(result.checkpointValidations.length).toBeGreaterThan(0);
     });
 });

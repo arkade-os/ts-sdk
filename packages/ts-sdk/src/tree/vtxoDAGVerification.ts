@@ -94,6 +94,7 @@ export interface VerificationOnchainProvider {
         blockHeight?: number;
         blockTime?: number;
         blockHash?: string;
+        confirmations?: number;
     }>;
     /** Get current blockchain tip info (optional — needed for timelock validation). */
     getBlockchainInfo?(): Promise<{ height: number; medianTime: number }>;
@@ -290,6 +291,8 @@ export const BATCH_OUTPUT_VTXO_INDEX = 0;
  * @param vtxoRootOutpoint  The user's starting VTXO Root outpoint to verify.
  * @param indexer           An IndexerProvider implementation (e.g. RestIndexerProvider).
  * @param onchain           An OnchainProvider implementation (e.g. EsploraProvider).
+ * @param witnessPreimages  Optional map of witness hashes to preimages for HTLC validation.
+ * @param commitmentTxid    Optional commitment txid for privacy-preserving batch lookup.
  * @throws VtxoVerificationError on any structural inconsistency.
  * @returns A DAGValidationResult with the full reconstructed + validated DAG.
  */
@@ -298,6 +301,7 @@ export async function reconstructAndValidateVtxoDAG(
     indexer: IndexerProvider,
     onchain: OnchainProvider,
     witnessPreimages?: Map<string, Uint8Array>,
+    commitmentTxid?: string,
 ): Promise<DAGValidationResult> {
     const diagnostics: string[] = [];
 
@@ -328,8 +332,16 @@ export async function reconstructAndValidateVtxoDAG(
         diagnostics.push(`  → Direct mode: fetched chain with ${chain.length} links`);
     } else if (indexer.getBatchVtxos) {
         // Privacy-preserving mode: fetch batch and filter locally
-        diagnostics.push(`  → Privacy mode: fetching all chains in batch`);
-        const allChains = await indexer.getBatchVtxos(vtxoRootOutpoint.txid);
+        if (!commitmentTxid) {
+            throw new VtxoVerificationError(
+                "Privacy-preserving verification (getBatchVtxos) requires commitmentTxid to fetch batch VTXOs without revealing the specific VTXO outpoint",
+                "INVALID_PROVIDER",
+            );
+        }
+        diagnostics.push(
+            `  → Privacy mode: fetching all chains in batch for commitment ${commitmentTxid}`,
+        );
+        const allChains = await indexer.getBatchVtxos(commitmentTxid);
 
         const vtxoChain = allChains.find((vc) =>
             vc.chain.some((link) => link.txid === vtxoRootOutpoint.txid),
@@ -385,6 +397,10 @@ export async function reconstructAndValidateVtxoDAG(
             );
         }
 
+        // In the current Ark protocol design, all virtual transactions (tree nodes and checkpoint nodes)
+        // are strictly single-input transactions spending from their direct ancestor in the DAG.
+        // Future protocol revisions supporting multi-input consolidation would relax this specifically
+        // for checkpoint/consolidation nodes.
         if (tx.inputsLength !== 1) {
             throw Errors.INVALID_INPUT_COUNT(link.txid, tx.inputsLength);
         }
@@ -591,12 +607,24 @@ async function fetchAllVirtualTxs(
             );
         }
 
-        for (let j = 0; j < batch.length; j++) {
-            const rawPsbt = txs[j];
-            if (!rawPsbt) {
-                throw Errors.MISSING_TX(batch[j]);
+        // Zero-trust: map raw PSBTs by their computed txid rather than assuming positional 1-to-1 array alignment
+        for (const rawPsbt of txs) {
+            if (!rawPsbt) continue;
+            try {
+                const txBytes = typeof rawPsbt === "string" ? base64.decode(rawPsbt) : rawPsbt;
+                const tx = Transaction.fromPSBT(txBytes, { allowUnknownOutputs: true });
+                const computedId = computeTxid(tx);
+                result.set(computedId, rawPsbt);
+            } catch {
+                // If decoding fails here, it will be caught when validating requested batch txids below
             }
-            result.set(batch[j], rawPsbt);
+        }
+
+        // Verify every requested txid in the batch was returned
+        for (const requestedTxid of batch) {
+            if (!result.has(requestedTxid)) {
+                throw Errors.MISSING_TX(requestedTxid);
+            }
         }
     }
 
@@ -641,6 +669,11 @@ export function findLeafInDAG(node: DAGNode): DAGNode {
  *   2. For every other node: its input[0] must reference an output on its ancestor,
  *      and the sum of its outputs must equal that ancestor output's amount.
  *   3. No virtual transaction introduces new value or leaks value (conservation).
+ *
+ * NOTE (Zero-Fee Invariant): Virtual transactions in an Ark DAG are off-chain presigned
+ * transitions and pay zero miner fees directly. Sats are strictly conserved at every level of the
+ * tree (sum of child outputs === ancestor output amount). Any on-chain fees required during a
+ * sovereign unilateral exit are provided via anchor outputs / CPFP or dedicated fee inputs.
  *
  * Recursively validates that every child's input[0] correctly references
  * the parent's output at the expected index, and that the sum of child
@@ -937,16 +970,18 @@ async function verifyOnchainAnchoring(
         );
     }
 
-    if (minConfirmations > 1 && status.blockHeight !== undefined && onchain.getBlockchainInfo) {
+    let depth = status.confirmations;
+    if (depth === undefined && status.blockHeight !== undefined && onchain.getBlockchainInfo) {
         const chainInfo = await onchain.getBlockchainInfo();
-        const depth = chainInfo.height - status.blockHeight + 1;
-        if (depth < minConfirmations) {
-            throw new VtxoVerificationError(
-                `Commitment transaction ${commitmentTxid} is confirmed at depth ${depth}, which is less than requested minConfirmations ${minConfirmations}`,
-                "COMMITMENT_NOT_CONFIRMED",
-                { commitmentTxid, minConfirmations, depth },
-            );
-        }
+        depth = chainInfo.height - status.blockHeight + 1;
+    }
+
+    if (depth !== undefined && depth < minConfirmations) {
+        throw new VtxoVerificationError(
+            `Commitment transaction ${commitmentTxid} is confirmed at depth ${depth}, which is less than requested minConfirmations ${minConfirmations}`,
+            "COMMITMENT_NOT_CONFIRMED",
+            { commitmentTxid, minConfirmations, depth },
+        );
     }
 
     // 2. Fetch raw transaction to verify output script and amount
@@ -1018,6 +1053,8 @@ async function verifyOnchainAnchoring(
  * @param indexer       VerificationIndexerProvider.
  * @param onchain       VerificationOnchainProvider.
  * @param minConfirmations  Minimum on-chain confirmations (default: 1).
+ * @param witnessPreimages  Optional map of witness hashes to preimages for HTLC validation.
+ * @param commitmentTxid    Optional commitment txid for privacy-preserving batch lookup.
  * @returns The full validation result.
  */
 export async function verifyVtxoComplete(
@@ -1026,13 +1063,19 @@ export async function verifyVtxoComplete(
     onchain: VerificationOnchainProvider,
     minConfirmations: number = 1,
     witnessPreimages?: Map<string, Uint8Array>,
-): Promise<DAGValidationResult & { onchainStatus: { confirmed: boolean; blockHeight?: number } }> {
+    commitmentTxid?: string,
+): Promise<
+    DAGValidationResult & {
+        onchainStatus: { confirmed: boolean; blockHeight?: number; confirmations?: number };
+    }
+> {
     // Phase 1: DAG reconstruction + structural validation
     const dagResult = await reconstructAndValidateVtxoDAG(
         vtxoOutpoint,
         indexer,
         onchain,
         witnessPreimages,
+        commitmentTxid,
     );
 
     // Phase 2: On-chain anchoring verification (throttled)

@@ -18,7 +18,7 @@ import {
     extractExitSequence,
     executeSovereignExit,
 } from "../../src/storage/sovereignStorage.js";
-import { MockWalletAuthenticator } from "../../src/utils/authenticator.js";
+import { WalletAuthenticator } from "../../src/utils/authenticator.js";
 import { StorageCrypto } from "../../src/utils/cryptoUtils.js";
 
 class MockStorageProvider implements VerificationStorageProvider {
@@ -48,8 +48,8 @@ describe("Tier 3: Sovereign Unilateral Exit Storage", () => {
         onchain = new MockOnchainProvider();
         storage = new MockStorageProvider();
 
-        const salt = new Uint8Array(32).fill(0x55);
-        masterKey = MockWalletAuthenticator.deriveMasterKey("test-password-123", salt);
+        const salt = new Uint8Array(16).fill(0xaa);
+        masterKey = WalletAuthenticator.deriveMasterKey("test-password-123", salt);
     });
 
     it("should successfully extract and store an exit sequence from a valid DAG", async () => {

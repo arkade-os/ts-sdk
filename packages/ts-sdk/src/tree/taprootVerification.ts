@@ -190,18 +190,31 @@ function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
     }
 
     // ── Key Presence Verification ──
-    const hasKey = decoded.some(
+    const keys = decoded.filter(
         (item) => item instanceof Uint8Array && (item.length === 32 || item.length === 33),
     );
+    const hasKey = keys.length > 0;
 
-    // ── Structural Signature & Key Policy ──
-    // Enforce that the script contains a public key and a signature check (CHECKSIG / CHECKSIGVERIFY).
-    // Timelock (CSV/CLTV) and preimage satisfiability are validated separately by their respective modules.
-    const hasCheckSig = decoded.some((op) => op === "CHECKSIG" || op === "CHECKSIGVERIFY");
+    // ── Standard Ark Exit Policy & Collaborative Leaves ──
+    const hasCSV = decoded.some((op) => op === "CHECKSEQUENCEVERIFY");
+    const hasCLTV = decoded.some((op) => op === "CHECKLOCKTIMEVERIFY");
+    const hasCheckSig = decoded.some(
+        (op) => op === "CHECKSIG" || op === "CHECKSIGVERIFY" || op === "CHECKSIGADD",
+    );
+    const hasHash = decoded.some(
+        (op) => op === "SHA256" || op === "HASH160" || op === "RIPEMD160" || op === "HASH256",
+    );
 
-    if (!hasCheckSig || !hasKey) {
+    const isArkStandard = hasCSV && hasCheckSig && hasKey;
+    const isSwapClaim = hasHash && hasCheckSig && hasKey;
+    const isSwapRefund = (hasCLTV || hasCSV) && hasCheckSig && hasKey;
+    // Collaborative / forfeit multisig MUST require at least 2 distinct pubkeys (e.g. Alice + Server)
+    // A single 1-of-1 pubkey without a CSV timelock is NOT a valid Ark exit or forfeit policy.
+    const isCollaborativeMultisig = keys.length >= 2 && hasCheckSig;
+
+    if (!isArkStandard && !isSwapClaim && !isSwapRefund && !isCollaborativeMultisig) {
         throw new VtxoVerificationError(
-            `Tapleaf script in ${txid} violates structural key/signature policy: must contain a valid pubkey and CHECKSIG/CHECKSIGVERIFY`,
+            `Tapleaf script in ${txid} does not follow Ark exit policy (CSV+CHECKSIG), Swap policy (HTLC), or Collaborative Multisig (>=2 keys)`,
             "INVALID_ARK_SCRIPT",
         );
     }

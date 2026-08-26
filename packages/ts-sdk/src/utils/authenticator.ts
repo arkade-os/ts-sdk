@@ -36,5 +36,3 @@ export class WalletAuthenticator {
         return randomBytes(length);
     }
 }
-
-export { WalletAuthenticator as MockWalletAuthenticator };
