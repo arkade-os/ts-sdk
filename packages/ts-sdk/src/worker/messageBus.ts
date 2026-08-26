@@ -476,8 +476,16 @@ export class MessageBus {
         }
 
         if (tag === STOP_MESSAGE_BUS) {
-            this.deliverResponse(event.source, { id, tag }, { id, tag });
-            await this.stop();
+            try {
+                await this.stop();
+                this.deliverResponse(event.source, { id, tag }, { id, tag });
+            } catch (error) {
+                this.deliverResponse(
+                    event.source,
+                    { id, tag, error: toError(error) },
+                    { id, tag },
+                );
+            }
             return;
         }
 

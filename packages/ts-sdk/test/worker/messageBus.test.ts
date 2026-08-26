@@ -179,6 +179,55 @@ describe("MessageBus PING/PONG", () => {
             expect.any(Function),
         );
     });
+
+    it("does not acknowledge STOP_MESSAGE_BUS before handler teardown finishes", async () => {
+        let finishStop!: () => void;
+        const handler = new TestHandler();
+        handler.stop.mockImplementation(
+            () =>
+                new Promise<void>((resolve) => {
+                    finishStop = resolve;
+                }),
+        );
+        await createAndInitBus({ handlers: [handler] });
+        const postMessage = vi.fn();
+
+        const stopping = messageHandler({
+            data: { id: "stop-deferred", tag: "STOP_MESSAGE_BUS" },
+            source: { postMessage },
+            waitUntil: (promise) => promise,
+        });
+        await Promise.resolve();
+        expect(postMessage).not.toHaveBeenCalled();
+
+        finishStop();
+        await stopping;
+        expect(postMessage).toHaveBeenCalledWith({
+            id: "stop-deferred",
+            tag: "STOP_MESSAGE_BUS",
+        });
+    });
+
+    it("returns a STOP_MESSAGE_BUS error when handler teardown fails", async () => {
+        const handler = new TestHandler();
+        handler.stop.mockRejectedValue(new Error("teardown failed"));
+        await createAndInitBus({ handlers: [handler] });
+        const postMessage = vi.fn();
+
+        await messageHandler({
+            data: { id: "stop-failed", tag: "STOP_MESSAGE_BUS" },
+            source: { postMessage },
+            waitUntil: (promise) => promise,
+        });
+
+        expect(postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                id: "stop-failed",
+                tag: "STOP_MESSAGE_BUS",
+                error: expect.objectContaining({ message: "teardown failed" }),
+            }),
+        );
+    });
 });
 
 describe("MessageBus delivery guarantees (issue #448)", () => {
