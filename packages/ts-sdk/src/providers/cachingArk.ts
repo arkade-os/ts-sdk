@@ -6,7 +6,7 @@ import {
     PendingTx,
     SettlementEvent,
     SignedIntent,
-    TxNotification,
+    TxNotificationEvent,
 } from "./ark";
 
 const DEFAULT_TTL_MS = 60_000;
@@ -18,6 +18,8 @@ type ServerInfoEventSource = Partial<{
 /**
  * Decorates an {@link ArkProvider}, caching {@link ArkProvider.getInfo} for
  * `ttlMs` (default 60s). Other provider methods pass through.
+ * Expired-cache refresh failures propagate; persisted wallet boot fallback
+ * lives in `arkInfoSnapshot`.
  */
 export class CachingArkProvider implements ArkProvider {
     private cached?: ArkInfo;
@@ -92,10 +94,7 @@ export class CachingArkProvider implements ArkProvider {
         return this.inner.getEventStream(signal, topics);
     }
 
-    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
-        commitmentTx?: TxNotification;
-        arkTx?: TxNotification;
-    }> {
+    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<TxNotificationEvent> {
         return this.inner.getTransactionsStream(signal);
     }
 

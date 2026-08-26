@@ -234,7 +234,8 @@ const wallet = await Wallet.create({ identity, arkProvider })
 Only `getInfo()` is cached; all other Ark provider methods pass through. The cache expires
 after the TTL and updates when the inner provider reports server-info changes, including
 signer rotation. Wrapping `RestArkProvider` preserves its `serverUrl`, so `Wallet.create`
-can still derive the default indexer URL.
+can still derive the default indexer URL. Expired refresh failures propagate;
+wallet boot fallback lives in the persisted ArkInfo snapshot.
 
 ### Onchain Providers
 
