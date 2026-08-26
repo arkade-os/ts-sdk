@@ -35,6 +35,7 @@ import {
     toXOnlySignerHex,
     type ArkadeInfo,
     type IWallet,
+    type Network,
     type NetworkName,
 } from "@arkade-os/sdk";
 
@@ -302,6 +303,7 @@ export const OFFER_CONTRACT_KIND = "asset-swap-offer";
 async function registerOfferContract(
     wallet: IWallet,
     info: ArkadeInfo,
+    network: Network,
     binding: Omit<Offer, "swapPkScript">,
     serverPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
@@ -319,7 +321,7 @@ async function registerOfferContract(
         // without this the row's `address` would be derived against the SDK's
         // default network while its script is right — a row that disagrees with
         // the address the user is about to fund
-        network: getNetwork(info.network as NetworkName),
+        network,
         contractManager,
     });
     const contract = new arkade.ArkadeContract(client, program, args, keys);
@@ -414,7 +416,7 @@ export async function createOffer(
     const script = offerVtxoScript(binding, serverPubKey);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
 
-    await registerOfferContract(wallet, info, binding, serverPubKey, script.pkScript);
+    await registerOfferContract(wallet, info, network, binding, serverPubKey, script.pkScript);
 
     const payload = encodeOffer(offer);
     return {
@@ -483,9 +485,14 @@ export async function createOffer(
  *
  * Keeps an `arkServerUrl`, unlike {@link createOffer}: this call broadcasts.
  * `submitTx`/`finalizeTx` and the unregistered-offer VTXO read are provider
- * calls, and no wallet interface hands a provider out — a service-worker
- * wallet holds none page-side at all. `wallet.getArkadeInfo()` retires the URL
- * only where server *info* was all it ever bought.
+ * calls, and `wallet.getArkadeInfo()` retires the URL only where server *info*
+ * was all it ever bought.
+ *
+ * This is a missing seam, not a rule. `IReadonlyWallet` already hands out one
+ * provider-backed collaborator — `getContractManager()`, which the
+ * service-worker wallet answers with an RPC proxy over a worker that holds the
+ * real thing. The same shape would serve the broadcast and indexer halves; it
+ * just does not exist yet. Until it does, this call needs a URL.
  */
 export async function cancelOffer(
     wallet: IWallet,

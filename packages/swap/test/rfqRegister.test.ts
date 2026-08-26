@@ -20,7 +20,6 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     ProviderUnavailableError,
-    ReadonlySingleKey,
     ReadonlyWallet,
     SingleKey,
     VHTLCV2ContractHandler,

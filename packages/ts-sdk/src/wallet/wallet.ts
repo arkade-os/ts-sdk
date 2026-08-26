@@ -724,7 +724,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly identity: ReadonlyIdentity,
         readonly network: Network,
         readonly onchainProvider: OnchainProvider,
-        readonly arkProvider: ArkProvider,
+        protected readonly arkProvider: ArkProvider,
         readonly indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -862,10 +862,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Live rather than the pinned boot snapshot because the fields callers
      * come here for — `signerPubkey`, `checkpointTapscript`, `fees` — are the
      * ones a mid-session rotation moves, and a covenant built against a
-     * superseded signer is unspendable. The wallet's own derived state
-     * ({@link arkServerPublicKey}, {@link dustAmount}) stays pinned to its
-     * current epoch, so the two can legitimately disagree inside a rotation
-     * window.
+     * superseded signer is unspendable.
+     *
+     * Reading does NOT re-pin the wallet: {@link arkServerPublicKey},
+     * {@link dustAmount} and the tapscripts move only through
+     * `handleServerInfoChanged`/`rotateServerSigner`, driven by the provider's
+     * own `onServerInfoChanged`. So inside a rotation window this can report
+     * epoch N+1 while the wallet is still spending on epoch N. That gap is
+     * known: closing it means feeding this result into the rotation path, which
+     * is a write on a read and wants its own review.
      *
      * @returns The Arkade server's info
      * @see ArkadeInfo
@@ -3041,6 +3046,13 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     };
 
     public readonly settlementConfig: SettlementConfig | false;
+
+    /**
+     * Re-widened to public: a full wallet's provider is part of its API
+     * (`ExpoWallet` and the delegate manager read it), while `ReadonlyWallet`
+     * keeps it protected so a readonly view cannot hand out `submitTx`.
+     */
+    declare readonly arkProvider: ArkProvider;
 
     protected constructor(
         identity: Identity,

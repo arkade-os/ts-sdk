@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
@@ -63,11 +63,11 @@ const arkInfo = () => ({
     vtxoMinAmount: 0n,
 });
 
-const state = vi.hoisted(() => ({
+const state = {
     created: [] as Record<string, unknown>[],
     watched: [] as [string, string][],
     createContract: undefined as ((params: Record<string, unknown>) => unknown) | undefined,
-}));
+};
 
 const contractManager = {
     createContract: async (params: Record<string, unknown>) => {

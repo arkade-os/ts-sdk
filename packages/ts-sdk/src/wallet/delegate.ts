@@ -1,7 +1,7 @@
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import {
     ArkAddress,
-    ArkInfo,
+    ArkadeInfo,
     ArkProvider,
     Asset,
     decodeTapscript,
@@ -229,7 +229,7 @@ export type DelegatorManagerImpl = DelegateManagerImpl;
 async function delegate(
     identity: Identity,
     delegateProvider: DelegateProvider,
-    arkInfo: ArkInfo,
+    arkInfo: ArkadeInfo,
     delegateInfo: DelegateInfo,
     vtxos: NormalizedExtendedVirtualCoin[],
     destinationScript: Bytes,

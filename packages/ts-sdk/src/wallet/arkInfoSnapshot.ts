@@ -1,4 +1,4 @@
-import type { ArkInfo, ArkProvider, FeeInfo } from "../providers/ark";
+import type { ArkadeInfo, ArkProvider, FeeInfo } from "../providers/ark";
 import { isRetryableProviderError } from "../providers/availability";
 import { ProviderUnavailableError } from "../providers/errors";
 import type { WalletRepository } from "../repositories/walletRepository";
@@ -12,7 +12,7 @@ import { updateWalletState } from "../utils/syncCursors";
 export const ARK_INFO_SNAPSHOT_KEY = "arkInfoSnapshot";
 
 /**
- * A JSON-safe, versioned cache of the operator's {@link ArkInfo} metadata,
+ * A JSON-safe, versioned cache of the operator's {@link ArkadeInfo} metadata,
  * persisted so a previously synced wallet can still construct — derive its
  * network, signer-dependent scripts, address parameters, dust/fee policy, and
  * delays — while the operator's live `getInfo` is unreachable.
@@ -21,7 +21,7 @@ export const ARK_INFO_SNAPSHOT_KEY = "arkInfoSnapshot";
  * and interpret locally persisted state. Cooperative operations that need the
  * operator must revalidate live metadata or fail with a typed unavailable error.
  *
- * `bigint` fields are stored as decimal strings; `ArkInfo.serviceStatus` is
+ * `bigint` fields are stored as decimal strings; `ArkadeInfo.serviceStatus` is
  * deliberately not cached (it is live operator-health state, not static
  * construction metadata) and is rehydrated as `{}`.
  */
@@ -78,8 +78,8 @@ export class MalformedArkInfoSnapshotError extends Error {
 
 const CURRENT_VERSION = 1 as const;
 
-/** Convert a live {@link ArkInfo} into its JSON-safe snapshot form. */
-export function serializeArkInfoSnapshot(info: ArkInfo, savedAt: number): StoredArkInfoSnapshot {
+/** Convert a live {@link ArkadeInfo} into its JSON-safe snapshot form. */
+export function serializeArkInfoSnapshot(info: ArkadeInfo, savedAt: number): StoredArkInfoSnapshot {
     return {
         version: CURRENT_VERSION,
         savedAt,
@@ -122,11 +122,11 @@ export function serializeArkInfoSnapshot(info: ArkInfo, savedAt: number): Stored
 }
 
 /**
- * Rehydrate an {@link ArkInfo} from a validated snapshot. Decimal strings
+ * Rehydrate an {@link ArkadeInfo} from a validated snapshot. Decimal strings
  * become `bigint`; `serviceStatus` is reset to `{}` (never cached — see
  * {@link StoredArkInfoSnapshot}).
  */
-export function hydrateArkInfo(snapshot: StoredArkInfoSnapshot): ArkInfo {
+export function hydrateArkInfo(snapshot: StoredArkInfoSnapshot): ArkadeInfo {
     const a = snapshot.arkInfo;
     return {
         boardingExitDelay: BigInt(a.boardingExitDelay),
@@ -297,7 +297,7 @@ export async function loadArkInfoSnapshot(
  */
 export async function saveArkInfoSnapshot(
     repo: WalletRepository,
-    info: ArkInfo,
+    info: ArkadeInfo,
     savedAt: number,
 ): Promise<void> {
     const snapshot = serializeArkInfoSnapshot(info, savedAt);
@@ -310,11 +310,11 @@ export async function saveArkInfoSnapshot(
     }));
 }
 
-/** Where the {@link ArkInfo} used to construct a wallet came from. */
+/** Where the {@link ArkadeInfo} used to construct a wallet came from. */
 export type ServerInfoSource = "live" | "cache";
 
 export interface ResolvedArkInfo {
-    info: ArkInfo;
+    info: ArkadeInfo;
     /** `live` when fetched from the operator, `cache` when hydrated offline. */
     source: ServerInfoSource;
     /**
@@ -346,7 +346,7 @@ export async function resolveArkInfo(
     arkProvider: Pick<ArkProvider, "getInfo">,
     walletRepository: WalletRepository,
 ): Promise<ResolvedArkInfo> {
-    let info: ArkInfo;
+    let info: ArkadeInfo;
     try {
         info = await arkProvider.getInfo();
     } catch (err) {
@@ -374,7 +374,7 @@ export async function resolveArkInfo(
  */
 export async function saveValidatedArkInfoSnapshot(
     repo: WalletRepository,
-    info: ArkInfo,
+    info: ArkadeInfo,
     savedAt: number,
 ): Promise<void> {
     try {

@@ -191,7 +191,6 @@ export type ServiceWorkerWalletMode = "auto" | "static" | "hd";
 export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // Fast reads — fail quickly
     GET_ADDRESS: 10_000,
-    GET_ARKADE_INFO: 10_000,
     GET_BALANCE: 10_000,
     GET_BOARDING_ADDRESS: 10_000,
     GET_STATUS: 10_000,
@@ -206,6 +205,9 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     ADVANCE_SIGNING_DESCRIPTOR_WATERMARK: 10_000,
 
     // Medium reads — may involve indexer queries
+    // GET_ARKADE_INFO is a live `/v1/info` fetch queued behind the same
+    // per-origin rate gate as the indexer, not a repository read.
+    GET_ARKADE_INFO: 20_000,
     GET_VTXOS: 20_000,
     GET_SPENDABLE_VTXOS: 20_000,
     GET_BOARDING_UTXOS: 20_000,

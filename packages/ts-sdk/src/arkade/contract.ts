@@ -221,6 +221,16 @@ export type CallableFunctions = Record<
 
 // --- Arkade client ---------------------------------------------------------
 
+/**
+ * What {@link Arkade} needs from the Arkade server.
+ *
+ * Only `getInfo` is required — see {@link ArkadeConnectOptions.arkade} for why.
+ * Named so a caller building a derivation-only client has a type to import
+ * rather than reaching into the options bag.
+ */
+export type ArkadeServerProvider = Pick<ArkProvider, "getInfo"> &
+    Partial<Pick<ArkProvider, "submitTx" | "finalizeTx">>;
+
 /** Options for {@link Arkade.connect}. */
 export interface ArkadeConnectOptions {
     /**
@@ -235,7 +245,7 @@ export interface ArkadeConnectOptions {
      * holds the server info (`wallet.getArkadeInfo()`) connect without a
      * provider of its own, and without a second `/v1/info` round-trip.
      */
-    arkade: Pick<ArkProvider, "getInfo"> & Partial<Pick<ArkProvider, "submitTx" | "finalizeTx">>;
+    arkade: ArkadeServerProvider;
     /**
      * The co-signing (introspector/emulator) service. Optional: only required for
      * contracts whose functions have an `arkadeScript` (covenant paths). Pure
@@ -277,7 +287,7 @@ export interface ArkadeConnectOptions {
  * so spinning up contracts is synchronous.
  */
 export class Arkade {
-    readonly arkProvider: ArkadeConnectOptions["arkade"];
+    readonly arkProvider: ArkadeServerProvider;
     /** The co-signing service, or undefined for emulator-less (pure tapscript) usage. */
     readonly emulator: EmulatorProvider | undefined;
     readonly network: Network;
@@ -302,7 +312,7 @@ export class Arkade {
     readonly contractManager?: IContractManager;
 
     private constructor(fields: {
-        arkProvider: ArkadeConnectOptions["arkade"];
+        arkProvider: ArkadeServerProvider;
         emulator: EmulatorProvider | undefined;
         network: Network;
         serverKey: Uint8Array;
