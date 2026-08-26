@@ -194,9 +194,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
 
     it("dispose stops the worker-local MessageBus", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
-            message.tag === "STOP_MESSAGE_BUS"
-                ? { id: message.id, tag: "STOP_MESSAGE_BUS" }
-                : null,
+            message.tag === "STOP_MESSAGE_BUS" ? { id: message.id, tag: "STOP_MESSAGE_BUS" } : null,
         );
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 

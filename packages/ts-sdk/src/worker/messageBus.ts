@@ -480,11 +480,7 @@ export class MessageBus {
                 await this.stop();
                 this.deliverResponse(event.source, { id, tag }, { id, tag });
             } catch (error) {
-                this.deliverResponse(
-                    event.source,
-                    { id, tag, error: toError(error) },
-                    { id, tag },
-                );
+                this.deliverResponse(event.source, { id, tag, error: toError(error) }, { id, tag });
             }
             return;
         }
