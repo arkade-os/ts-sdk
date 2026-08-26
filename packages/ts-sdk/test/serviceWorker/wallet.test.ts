@@ -266,6 +266,25 @@ describe("ServiceWorkerReadonlyWallet", () => {
         );
     });
 
+    it("keeps a worker-side typed error reachable as `cause`", async () => {
+        // The worker's resolveArkInfo distinguishes offline (retry) from a
+        // corrupt cache (re-onboard); structuredClone drops the prototype, so
+        // `name` on the cause is the only thing a caller can branch on.
+        const worker = new Error("no cached snapshot");
+        worker.name = "ProviderUnavailableError";
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.type === "GET_ARKADE_INFO"
+                ? { id: message.id, tag: messageTag, error: worker }
+                : null,
+        );
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const err = await wallet.getArkadeInfo().catch((e: unknown) => e as Error);
+        expect((err.cause as Error).name).toBe("ProviderUnavailableError");
+    });
+
     it("rejects when the response contains an error", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
             id: message.id,

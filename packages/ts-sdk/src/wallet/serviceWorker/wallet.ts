@@ -1059,7 +1059,14 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             const response = await this.sendMessage(message);
             return (response as ResponseGetArkadeInfo).payload.info;
         } catch (error) {
-            throw new Error(`Failed to get arkade info: ${error}`);
+            // Keep the original reachable as `cause`. Unlike its siblings, this
+            // call reaches `resolveArkInfo` in the worker, which distinguishes
+            // `ProviderUnavailableError` (offline — retry) from
+            // `MalformedArkInfoSnapshotError` (corrupt cache — re-onboard).
+            // structuredClone drops the prototype, so `instanceof` cannot
+            // survive the boundary either way, but `cause.name` does — and
+            // stringifying into the message would lose even that.
+            throw new Error(`Failed to get arkade info: ${error}`, { cause: error });
         }
     }
 
