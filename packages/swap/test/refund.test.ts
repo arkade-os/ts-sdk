@@ -533,10 +533,15 @@ describe("refundIfUnresolved", () => {
 
     it("reports an empty lockup instead of failing", async () => {
         const operator = fakeOperator();
-        const result = await refundIfUnresolved(fakeTransport(["stuck"]), operator, fakeIndexer([]), {
-            ...baseInput(),
-            now: () => REFUND_LOCKTIME + 1,
-        });
+        const result = await refundIfUnresolved(
+            fakeTransport(["stuck"]),
+            operator,
+            fakeIndexer([]),
+            {
+                ...baseInput(),
+                now: () => REFUND_LOCKTIME + 1,
+            },
+        );
         expect(result.outcome).toBe("nothing_to_refund");
         expect(operator.submitted).toHaveLength(0);
     });
