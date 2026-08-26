@@ -172,6 +172,8 @@ type Initialize = {
     };
 };
 
+export const STOP_MESSAGE_BUS = "STOP_MESSAGE_BUS" as const;
+
 export class MessageBus {
     private handlers: Map<string, MessageHandler>;
     private tickIntervalMs: number;
@@ -470,6 +472,12 @@ export class MessageBus {
 
         if (tag === "PING") {
             this.deliverResponse(event.source, { id, tag: "PONG" }, { id, tag: "PONG" });
+            return;
+        }
+
+        if (tag === STOP_MESSAGE_BUS) {
+            this.deliverResponse(event.source, { id, tag }, { id, tag });
+            await this.stop();
             return;
         }
 

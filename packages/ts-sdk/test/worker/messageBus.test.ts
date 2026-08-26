@@ -160,6 +160,25 @@ describe("MessageBus PING/PONG", () => {
 
         await bus.stop();
     });
+
+    it("acknowledges STOP_MESSAGE_BUS and stops every handler", async () => {
+        const handler = new TestHandler();
+        const bus = await createAndInitBus({ handlers: [handler] });
+        const postMessage = vi.fn();
+
+        await messageHandler({
+            data: { id: "stop-1", tag: "STOP_MESSAGE_BUS" },
+            source: { postMessage },
+            waitUntil: (promise) => promise,
+        });
+
+        expect(postMessage).toHaveBeenCalledWith({ id: "stop-1", tag: "STOP_MESSAGE_BUS" });
+        expect(handler.stop).toHaveBeenCalledOnce();
+        expect((self as unknown as StubbedSelf).removeEventListener).toHaveBeenCalledWith(
+            "message",
+            expect.any(Function),
+        );
+    });
 });
 
 describe("MessageBus delivery guarantees (issue #448)", () => {

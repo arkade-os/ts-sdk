@@ -35,6 +35,7 @@ import { resolveDescriptorSigner } from "../hdWalletCapable";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { setupServiceWorker } from "../../worker/browser/utils";
+import { STOP_MESSAGE_BUS } from "../../worker/messageBus";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../../repositories";
 import {
     RequestClear,
@@ -533,6 +534,28 @@ const initializeMessageBus = (
     });
 };
 
+const stopMessageBus = (serviceWorker: ServiceWorker, timeoutMs = 2000) => {
+    const command = { tag: STOP_MESSAGE_BUS, id: getRandomId() };
+    return new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+            navigator.serviceWorker.removeEventListener("message", onMessage);
+            clearTimeout(timeoutId);
+        };
+        const onMessage = (event: MessageEvent) => {
+            const response = event.data;
+            if (response?.id !== command.id || response?.tag !== STOP_MESSAGE_BUS) return;
+            cleanup();
+            response.error ? reject(response.error) : resolve();
+        };
+        const timeoutId = setTimeout(() => {
+            cleanup();
+            reject(new ServiceWorkerTimeoutError("MessageBus stop timed out"));
+        }, timeoutMs);
+        navigator.serviceWorker.addEventListener("message", onMessage);
+        serviceWorker.postMessage(command);
+    });
+};
+
 export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
@@ -1002,6 +1025,15 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 `Service worker identity mismatch: expected ${expected}, got ${actual}`,
             );
         }
+    }
+
+    /** Stop the worker-local wallet and every MessageBus handler. */
+    async dispose(): Promise<void> {
+        await stopMessageBus(this.serviceWorker, this.messageBusTimeoutMs);
+    }
+
+    async [Symbol.asyncDispose](): Promise<void> {
+        await this.dispose();
     }
 
     /** This tells the service worker to wipe all locally persisted wallet data. */
