@@ -212,7 +212,11 @@ function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
     const isArkStandard = hasCSV && hasCheckSig && hasKey;
     const isSwapClaim = hasHash && hasCheckSig && hasKey;
     const isSwapRefund = (hasCLTV || hasCSV) && hasCheckSig && hasKey;
-    // Collaborative / forfeit multisig MUST require at least 2 distinct pubkeys (e.g. Alice + Server)
+    // Collaborative / forfeit multisig MUST require at least 2 distinct pubkeys (e.g. Alice + Server).
+    // Note (Protocol Invariant): Forfeit scripts and collaborative leaves intentionally carry no CSV timelock.
+    // In the Ark protocol, collaborative spends and forfeit clauses require 2-of-2 co-signing by both the
+    // user and the ASP (mutual consent), enabling instant off-chain transitions and immediate forfeit sweeps
+    // upon settlement without requiring an on-chain delay.
     // A single 1-of-1 pubkey or duplicate keys (e.g. <aspKey> OP_CHECKSIG <aspKey> OP_CHECKSIGADD)
     // without a CSV timelock is NOT a valid Ark exit or forfeit policy.
     const isCollaborativeMultisig = distinctKeys.size >= 2 && hasCheckSig;
