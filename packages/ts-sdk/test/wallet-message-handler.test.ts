@@ -246,8 +246,7 @@ describe("WalletMessageHandler handleMessage", () => {
     });
 
     it("handles GET_ARKADE_INFO messages", async () => {
-        // bigints ride the postMessage boundary unserialized — the payload is
-        // the wallet's own ArkadeInfo, not a snapshot-shaped copy of it.
+        // Worker-side half of the same guard — see `ResponseGetArkadeInfo`.
         const info = { network: "regtest", signerPubkey: "02ab", dust: 1000n };
         (updater as any).readonlyWallet = {
             getArkadeInfo: vi.fn().mockResolvedValue(info),

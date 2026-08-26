@@ -1046,8 +1046,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Delegated to the worker, which holds the wallet that owns the connection.
-     * `ArkadeInfo` crosses the boundary raw — structuredClone carries its
-     * bigints, exactly as `GET_BALANCE` below relies on for asset amounts.
+     * The payload crosses raw — see {@link ResponseGetArkadeInfo} for why.
      */
     async getArkadeInfo(): Promise<ArkadeInfo> {
         const message: RequestGetArkadeInfo = {

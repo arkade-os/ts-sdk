@@ -5,7 +5,12 @@ import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, equalBytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
-import { DEFAULT_ARKADE_SERVER_URL, getNetwork, Network, NetworkName } from "../networks";
+import {
+    DEFAULT_ARKADE_SERVER_URL,
+    Network,
+    NetworkName,
+    networkFromArkadeInfo,
+} from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
     ArkadeInfo,
@@ -724,7 +729,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly identity: ReadonlyIdentity,
         readonly network: Network,
         readonly onchainProvider: OnchainProvider,
-        protected readonly arkProvider: ArkProvider,
+        /**
+         * Narrowed to what a readonly wallet legitimately needs — the only use
+         * here is {@link getArkadeInfo}. `protected` stops an outside caller
+         * reaching it; the `Pick` stops this class growing a use for
+         * `submitTx`. `Wallet` re-widens both below.
+         */
+        protected readonly arkProvider: Pick<ArkProvider, "getInfo">,
         readonly indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -866,11 +877,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
      *
      * Reading does NOT re-pin the wallet: {@link arkServerPublicKey},
      * {@link dustAmount} and the tapscripts move only through
-     * `handleServerInfoChanged`/`rotateServerSigner`, driven by the provider's
-     * own `onServerInfoChanged`. So inside a rotation window this can report
-     * epoch N+1 while the wallet is still spending on epoch N. That gap is
-     * known: closing it means feeding this result into the rotation path, which
-     * is a write on a read and wants its own review.
+     * `handleServerInfoChanged`/`rotateServerSigner`. So inside a rotation
+     * window this can report epoch N+1 while the wallet still spends on epoch
+     * N — a known gap (#734), not a guarantee to rely on.
      *
      * @returns The Arkade server's info
      * @see ArkadeInfo
@@ -986,7 +995,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             lastOnlineAt: serverInfoLastOnlineAt,
         } = await resolveArkInfo(arkProvider, walletRepository);
 
-        const network = getNetwork(info.network as NetworkName);
+        const network = networkFromArkadeInfo(info);
 
         // Guard: detect identity/server network mismatch for seed-based identities.
         // A mainnet descriptor (xpub, coin type 0) connected to a testnet server

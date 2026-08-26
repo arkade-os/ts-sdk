@@ -248,9 +248,8 @@ describe("ServiceWorkerReadonlyWallet", () => {
     });
 
     it("round-trips GET_ARKADE_INFO, bigints intact", async () => {
-        // The worker holds the wallet that owns the connection; the page asks
-        // for it. `ArkadeInfo` crosses raw — structuredClone carries bigints,
-        // so nothing on this path stringifies them.
+        // Guards the wire-format decision documented on `ResponseGetArkadeInfo`:
+        // a serializer inserted on either side would fail this deep-compare.
         const info = { network: "regtest", signerPubkey: "02ab", unilateralExitDelay: 4096n };
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
             message.type === "GET_ARKADE_INFO"

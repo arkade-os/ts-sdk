@@ -280,6 +280,7 @@ import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
 import {
     getNetwork,
+    networkFromArkadeInfo,
     networks,
     Network,
     NetworkName,
@@ -686,6 +687,7 @@ export {
     ArkadeCashCreateError,
     // Network
     getNetwork,
+    networkFromArkadeInfo,
     networks,
     defaultEmulatorPubkey,
     resolveEmulatorPubkey,

@@ -51,11 +51,10 @@ import {
     ArkAddress,
     VHTLC,
     asset,
-    getNetwork,
+    networkFromArkadeInfo,
     resolveEmulatorPubkey,
     toXOnly,
     type IWallet,
-    type NetworkName,
 } from "@arkade-os/sdk";
 
 import {
@@ -895,7 +894,7 @@ export async function requestLightningSend(
     }
 
     const serverPubkey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
-    const network = getNetwork(info.network as NetworkName);
+    const network = networkFromArkadeInfo(info);
     // Named rather than inlined so the exact inputs the covenant was built from
     // can be returned to the caller — see `treeParams` on the return type.
     const treeParams = {
@@ -1274,7 +1273,7 @@ export async function requestOnchainSend(
         }),
     );
 
-    const network = getNetwork(info.network as NetworkName);
+    const network = networkFromArkadeInfo(info);
     const derived = deriveOnchainSend({
         quote,
         paymentHash,
@@ -1702,7 +1701,7 @@ export async function requestLightningReceive(
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
-    const network = getNetwork(info.network as NetworkName);
+    const network = networkFromArkadeInfo(info);
     const derived = deriveLightningReceive({
         quote,
         paymentHash,
@@ -1912,7 +1911,7 @@ export async function requestOnchainReceive(
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
-    const network = getNetwork(info.network as NetworkName);
+    const network = networkFromArkadeInfo(info);
     const derived = deriveOnchainReceive({
         quote,
         paymentHash,

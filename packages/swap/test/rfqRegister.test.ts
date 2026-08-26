@@ -61,15 +61,6 @@ const PAYOUT_PUBKEY = key(15);
 const HTLC_PUBKEY = key(11);
 const REFUND_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
 
-/** What a fake wallet answers `getArkadeInfo()` with — the server's info now
- * comes from the wallet rather than a URL, and these three fields are all
- * these entrypoints read off it. */
-const ARK_INFO = {
-    signerPubkey: hex.encode(SERVER),
-    unilateralExitDelay: 4096,
-    network: "regtest",
-};
-
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
 const REFUND_LOCKTIME = NOW + 60 * 24 * 3600;
@@ -181,7 +172,7 @@ const recordingWallet = (
         // identity is not a wallet these entrypoints can serve.
         identity: SingleKey.fromRandomBytes(),
         getAddress: async () => REFUND_ADDRESS,
-        getArkadeInfo: async () => ARK_INFO,
+        getArkadeInfo: async () => arkInfo(),
         getContractManager: async () => ({
             createContract: async (params: Record<string, unknown>) => {
                 if (createContract) return createContract(params);

@@ -88,10 +88,8 @@ export interface OfferSwapWatcher {
 
 export interface WatchOfferSwapsParams {
     wallet: IWallet;
-    /** Same URL `cancelOffer` takes; used to read a spending tx when the exact
-     * classifier cannot answer. `createOffer` no longer needs one — it reads
-     * the server off the wallet — but `getVirtualTxs` has no wallet-level seam
-     * yet, so this one stays. */
+    /** Same URL `cancelOffer` takes, and for the same reason — see its doc.
+     * Used to read a spending tx when the exact classifier cannot answer. */
     arkServerUrl: string;
     repository: AssetSwapRepository;
     /** Called after a change is persisted. A notification, not a store. */

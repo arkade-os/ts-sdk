@@ -8,6 +8,10 @@ import { updateWalletState } from "../utils/syncCursors";
  * Key under {@link WalletState.settings} holding the cached server-info
  * snapshot. Namespaced so it coexists with unrelated settings keys
  * (`hasPendingTx`, `vtxoCursorMigrated`, …).
+ *
+ * The string is PERSISTED. Renaming the surrounding `ArkInfo*` symbols to
+ * `Arkade*` must leave this value alone — changing it orphans every cached
+ * snapshot already on disk and silently forces a live-only boot.
  */
 export const ARK_INFO_SNAPSHOT_KEY = "arkInfoSnapshot";
 

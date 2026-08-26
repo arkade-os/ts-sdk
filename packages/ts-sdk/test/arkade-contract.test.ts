@@ -12,6 +12,7 @@ import {
     VtxoScript,
     type EmulatorInfo,
     type EmulatorProvider,
+    type Identity,
 } from "../src";
 
 function xOnly(): Uint8Array {
@@ -132,13 +133,13 @@ describe("arkade.Arkade / ArkadeContract", () => {
     const receiver = xOnly(); // 32-byte witness program
     const args = { hash: HASH, receiver, amount: AMOUNT };
 
-    async function connect(identity?: unknown) {
+    async function connect(identity?: Identity) {
         const { arkProvider, indexer, emulator, captured } = stubProviders(server, emulatorKey);
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
             indexer,
-            identity: identity as any,
+            identity,
             network: networks.regtest,
             // connect() takes the co-signer key from the network, not from the
             // emulator's own getInfo, so this fixture key has to come in as the
