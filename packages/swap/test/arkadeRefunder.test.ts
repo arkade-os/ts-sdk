@@ -48,7 +48,7 @@ const CHECKPOINT_TAPSCRIPT = hex.encode(
     }).script,
 );
 
-const fakeArk = (): RefundOperatorProvider =>
+const fakeOperator = (): RefundOperatorProvider =>
     ({
         getInfo: async () => ({ checkpointTapscript: CHECKPOINT_TAPSCRIPT }),
         submitTx: async (tx: string, checkpoints: string[]) => ({
@@ -114,7 +114,7 @@ const refunderWith = async (
     const stored = input.stored === null ? undefined : (input.stored ?? (await record()));
     if (stored) await repository.saveRfqSwap(stored);
     return arkadeRefunder({
-        operator: fakeArk(),
+        operator: fakeOperator(),
         indexer: input.indexer ?? fakeIndexer({ spendable: FUNDED }),
         wallet: input.wallet ?? walletFor(),
         repository,

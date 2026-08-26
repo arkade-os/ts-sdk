@@ -514,8 +514,10 @@ export async function cancelOffer(
 
     // Rebuild the contract with the offer's own keys (not the client's) so the
     // derived script matches the funded swap address exactly.
-    const serverKey = swapAddress ? ArkAddress.decode(swapAddress).serverPubKey : client.serverKey;
-    const { program, args, keys } = swapProgramBinding(offer, serverKey);
+    const operatorPubkey = swapAddress
+        ? ArkAddress.decode(swapAddress).serverPubKey
+        : client.serverKey;
+    const { program, args, keys } = swapProgramBinding(offer, operatorPubkey);
     // the offer's TLV pins the script the deposit was funded to; if the rebuild
     // disagrees, this server key is not the one the covenant was built with
     // (rotated since funding, or a wrong swapAddress) — getUtxos would just
