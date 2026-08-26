@@ -68,10 +68,10 @@ export function computeTxid(tx: Transaction): string {
  */
 export interface VerificationIndexerProvider {
     /** Get all VTXO chains associated with a specific commitment batch (Privacy Mode). */
-    getBatchVtxos(commitmentTxid: string): Promise<VtxoChain[]>;
+    getBatchVtxos?(commitmentTxid: string): Promise<VtxoChain[]>;
 
     /** Get the specific chain for a VTXO outpoint. */
-    getVtxoChain?(txid: string, vout: number): Promise<VtxoChain>;
+    getVtxoChain?(vtxo: Outpoint): Promise<VtxoChain>;
 
     /** Fetch raw virtual transaction PSBTs (base64-encoded). */
     getVirtualTxs(txids: string[]): Promise<{ txs: string[] }>;
@@ -320,11 +320,8 @@ export async function reconstructAndValidateVtxoDAG(
     let chain: ChainTx[];
 
     if (indexer.getVtxoChain) {
-        // Direct mode: fetch the specific VTXO chain (supporting Outpoint object and (txid, vout) signatures)
-        const vtxoChain: VtxoChain =
-            indexer.getVtxoChain.length === 1
-                ? await (indexer.getVtxoChain as any)(vtxoRootOutpoint)
-                : await indexer.getVtxoChain(vtxoRootOutpoint.txid, vtxoRootOutpoint.vout);
+        // Direct mode: fetch the specific VTXO chain
+        const vtxoChain: VtxoChain = await indexer.getVtxoChain(vtxoRootOutpoint);
         if (!vtxoChain || !vtxoChain.chain || vtxoChain.chain.length === 0) {
             throw Errors.EMPTY_CHAIN(vtxoRootOutpoint);
         }

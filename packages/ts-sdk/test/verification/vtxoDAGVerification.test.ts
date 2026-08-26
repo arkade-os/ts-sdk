@@ -914,7 +914,7 @@ describe("VTXO DAG Verification", () => {
             expect(confirmedDiag).toBe(`✓ Commitment tx ${commitmentTxid} confirmed`);
         });
 
-        it("should support 1-argument getVtxoChain based on function arity", async () => {
+        it("should support Outpoint parameter in getVtxoChain", async () => {
             const commitmentRaw = createVirtualTx(fakeCommitmentTxid(12), 0, [
                 { amount: 100000n, script: makeP2TRScript(0) },
             ]);
@@ -989,6 +989,56 @@ describe("VTXO DAG Verification", () => {
             ]);
 
             const commitmentRaw = createVirtualTx(fakeCommitmentTxid(13), 0, [
+                { amount: 100000n, script: tr.script },
+            ]);
+            const commitmentTxid = commitmentRaw.txid;
+            onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
+            onchain.confirmedTxids.add(commitmentTxid);
+
+            const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
+                parentScript: tr.script,
+                tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[1]),
+                tapLeafScript: tr.tapLeafScript,
+                tapMerkleRoot: tr.tapMerkleRoot,
+            });
+
+            indexer.chain = [
+                {
+                    txid: vtxoTx.txid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.ARK,
+                    spends: [commitmentTxid],
+                },
+                {
+                    txid: commitmentTxid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.COMMITMENT,
+                    spends: [],
+                },
+            ];
+            indexer.virtualTxs.set(vtxoTx.txid, base64.encode(vtxoTx.tx.toPSBT()));
+
+            await expect(
+                reconstructAndValidateVtxoDAG({ txid: vtxoTx.txid, vout: 0 }, indexer, onchain),
+            ).rejects.toThrow("INVALID_ARK_SCRIPT");
+        });
+
+        it("Finding C (Residual): should reject multisig script containing duplicate keys with distinct size < 2", async () => {
+            const aspPubkey = schnorr.getPublicKey(TEST_PRIVKEYS[0]);
+            // Duplicate keys in multisig: <aspKey> CHECKSIG <aspKey> CHECKSIGADD OP_2 OP_NUMEQUAL (2 keys in array, but only 1 distinct key)
+            const duplicateKeyScript = Script.encode([
+                aspPubkey,
+                "CHECKSIG",
+                aspPubkey,
+                "CHECKSIGADD",
+                2,
+                "NUMEQUAL",
+            ]);
+            const tr = p2tr(schnorr.getPublicKey(TEST_PRIVKEYS[1]), [
+                { script: duplicateKeyScript, leafVersion: 0xc0 },
+            ]);
+
+            const commitmentRaw = createVirtualTx(fakeCommitmentTxid(133), 0, [
                 { amount: 100000n, script: tr.script },
             ]);
             const commitmentTxid = commitmentRaw.txid;

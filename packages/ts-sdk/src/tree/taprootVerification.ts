@@ -191,9 +191,13 @@ function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
 
     // ── Key Presence Verification ──
     const keys = decoded.filter(
-        (item) => item instanceof Uint8Array && (item.length === 32 || item.length === 33),
+        (item): item is Uint8Array =>
+            item instanceof Uint8Array && (item.length === 32 || item.length === 33),
     );
     const hasKey = keys.length > 0;
+
+    // ── Key Deduplication & Distinct Pubkey Analysis ──
+    const distinctKeys = new Set(keys.map((k) => hex.encode(k)));
 
     // ── Standard Ark Exit Policy & Collaborative Leaves ──
     const hasCSV = decoded.some((op) => op === "CHECKSEQUENCEVERIFY");
@@ -209,12 +213,13 @@ function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
     const isSwapClaim = hasHash && hasCheckSig && hasKey;
     const isSwapRefund = (hasCLTV || hasCSV) && hasCheckSig && hasKey;
     // Collaborative / forfeit multisig MUST require at least 2 distinct pubkeys (e.g. Alice + Server)
-    // A single 1-of-1 pubkey without a CSV timelock is NOT a valid Ark exit or forfeit policy.
-    const isCollaborativeMultisig = keys.length >= 2 && hasCheckSig;
+    // A single 1-of-1 pubkey or duplicate keys (e.g. <aspKey> OP_CHECKSIG <aspKey> OP_CHECKSIGADD)
+    // without a CSV timelock is NOT a valid Ark exit or forfeit policy.
+    const isCollaborativeMultisig = distinctKeys.size >= 2 && hasCheckSig;
 
     if (!isArkStandard && !isSwapClaim && !isSwapRefund && !isCollaborativeMultisig) {
         throw new VtxoVerificationError(
-            `Tapleaf script in ${txid} does not follow Ark exit policy (CSV+CHECKSIG), Swap policy (HTLC), or Collaborative Multisig (>=2 keys)`,
+            `Tapleaf script in ${txid} does not follow Ark exit policy (CSV+CHECKSIG), Swap policy (HTLC), or Collaborative Multisig (>=2 distinct keys)`,
             "INVALID_ARK_SCRIPT",
         );
     }
