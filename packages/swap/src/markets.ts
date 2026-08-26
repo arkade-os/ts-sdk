@@ -34,6 +34,8 @@ import { BTC_ASSET_ID } from "./store";
  * and fill is the solver's risk to manage, not the user's to prepay. */
 export const QUOTE_OPTIONS = { safetyBps: 0 } as const;
 
+type FeedFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 /** Feed fetcher with a short per-URL TTL cache. A quote UI refetches the
  * market's price feed on every debounced keystroke, and public feeds
  * (CoinGecko) rate-limit that burst hard enough that big amounts reliably die
@@ -45,10 +47,7 @@ export const QUOTE_OPTIONS = { safetyBps: 0 } as const;
  * Keyed on the request URL, so it assumes a market's feed URL is stable and
  * amount-invariant (true today); a cache-busting nonce would silently make it
  * a no-op — the flat-feedCalls swap test guards against that regressing. */
-export const makeCachedFeedFetch = (
-    ttlMs = 30_000,
-    fetchImpl: typeof fetch = fetch,
-): typeof fetch => {
+export const makeCachedFeedFetch = (ttlMs = 30_000, fetchImpl: FeedFetch = fetch): FeedFetch => {
     const cache = new Map<string, { at: number; body: string }>();
     // requests that have been sent but not yet answered, so a burst that starts
     // inside one round trip collapses to a single upstream call — without this
