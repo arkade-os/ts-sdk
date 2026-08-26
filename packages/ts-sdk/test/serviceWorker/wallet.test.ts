@@ -250,10 +250,22 @@ describe("ServiceWorkerReadonlyWallet", () => {
     it("round-trips GET_ARKADE_INFO, bigints intact", async () => {
         // Guards the wire-format decision documented on `ResponseGetArkadeInfo`:
         // a serializer inserted on either side would fail this deep-compare.
+        //
+        // Cloned for real here rather than through the harness's
+        // `structuredCloneResponse`, which returns success responses by
+        // reference — without this the payload would never cross a clone
+        // boundary and the bigint claim would rest on the object identity the
+        // stub happens to preserve. Scoped to this test: the shared helper is
+        // used by responses carrying spies, which do not clone.
         const info = { network: "regtest", signerPubkey: "02ab", unilateralExitDelay: 4096n };
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
             message.type === "GET_ARKADE_INFO"
-                ? { id: message.id, tag: messageTag, type: "ARKADE_INFO", payload: { info } }
+                ? structuredClone({
+                      id: message.id,
+                      tag: messageTag,
+                      type: "ARKADE_INFO",
+                      payload: { info },
+                  })
                 : null,
         );
 
