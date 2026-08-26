@@ -915,7 +915,7 @@ export async function requestLightningSend(
         ),
         senderPubkey,
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
-        refundPkScript: ArkAddress.decode(refundAddress).pkScript,
+        refundPkScript: secrets.pkScript,
     };
     const script = lightningSendVtxoScript(treeParams);
     const address = script.address(network.hrp, serverPubkey).encode();

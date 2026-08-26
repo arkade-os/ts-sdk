@@ -345,17 +345,23 @@ describe("page-side and worker-side wallets answer identically", () => {
 });
 
 describe("contract secrets behind the service worker", () => {
-    it("allocates over the bus and hands back a descriptor that signs", async () => {
+    it("reuses the identity key — no bus allocation, descriptor and pubkey are identity's", async () => {
+        // provisionRefundKey no longer calls the allocator: it resolves via
+        // wallet.identity, so GET_NEXT_SIGNING_DESCRIPTOR never crosses the bus.
         const { sw, identity } = await hdPair();
 
-        const { descriptor, pubkey } = await provisionRefundKey(sw as unknown as IWallet);
+        const { descriptor, pubkey, pkScript } = await provisionRefundKey(sw as unknown as IWallet);
 
-        // Allocation really crossed the bus rather than being answered locally.
-        expect((sw.serviceWorker as any).postMessage).toHaveBeenCalledWith(
+        // No allocation message over the bus.
+        expect((sw.serviceWorker as any).postMessage).not.toHaveBeenCalledWith(
             expect.objectContaining({ type: "GET_NEXT_SIGNING_DESCRIPTOR" }),
         );
-        expect(hex.encode(pubkey)).toBe(hex.encode(deriveDescriptorLeafPubKey(descriptor)));
-        expect(hex.encode(pubkey)).not.toBe(hex.encode(await identity.xOnlyPublicKey()));
+        // The descriptor is the wallet's bare identity descriptor.
+        expect(descriptor).toBe(`tr(${hex.encode(await identity.xOnlyPublicKey())})`);
+        expect(hex.encode(pubkey)).toBe(hex.encode(await identity.xOnlyPublicKey()));
+        // pkScript is returned (non-empty bytes from the wallet's address).
+        expect(pkScript).toBeInstanceOf(Uint8Array);
+        expect(pkScript.length).toBeGreaterThan(0);
 
         const signer = await contractSigner(sw as unknown as IWallet, descriptor);
         await expect(signsUnderDescriptorKey(signer, descriptor)).resolves.toBe(true);

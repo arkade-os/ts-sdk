@@ -41,6 +41,7 @@ import {
     isHDWalletCapable,
 } from "./hdWalletCapable";
 import type { IWallet } from ".";
+import { ArkAddress } from "../script/address";
 
 /**
  * Domain separator for the preimage derivation.
@@ -137,6 +138,13 @@ export interface ProvisionedKey {
      * artifact; {@link contractSigner} resolves it back to a signer.
      */
     descriptor: string;
+    /**
+     * The Ark scriptPubKey that corresponds to this key — the pkScript of the
+     * wallet's current receive address. Returned alongside {@link pubkey} so
+     * callers building the lockup script do not need a separate
+     * {@link IWallet.getAddress} round-trip or an `ArkAddress.decode` call.
+     */
+    pkScript: Uint8Array;
 }
 
 /** A claim key together with the preimage it claims with. */
@@ -194,9 +202,21 @@ async function provisionDescriptor(wallet: IWallet): Promise<string> {
  * them widens the gap a seed-only restore scan sees.
  */
 export async function provisionRefundKey(wallet: IWallet): Promise<ProvisionedKey> {
-    const descriptor = await provisionDescriptor(wallet);
+    const descriptor = await identityDescriptor(wallet.identity);
     const signer = await contractSigner(wallet, descriptor);
-    return { descriptor, pubkey: await signer.xOnlyPublicKey() };
+    const pubkey = await signer.xOnlyPublicKey();
+    // Sanity: the descriptor and the wallet's current identity must name the same key.
+    // A divergence here would mean the lockup's refund path and the refund destination
+    // are controlled by different keys — the user could not recover the funds.
+    const identityPubkey = await wallet.identity.xOnlyPublicKey();
+    if (!equalBytes(pubkey, identityPubkey)) {
+        throw new Error(
+            "provisionRefundKey: descriptor pubkey does not match wallet identity — " +
+                "the refund key and the refund address would be on different keys",
+        );
+    }
+    const { pkScript } = ArkAddress.decode(await wallet.getAddress());
+    return { descriptor, pubkey, pkScript };
 }
 
 /**
@@ -228,7 +248,13 @@ export async function provisionClaimSecret(
         // Refused before an HD index is consumed.
         throw new Error(`preimage must be 32 bytes, got ${opts.preimage.length}`);
     }
-    const { descriptor, pubkey } = await provisionRefundKey(wallet);
+    // provisionClaimSecret allocates a fresh HD index so each artifact's preimage
+    // is uniquely derivable from the seed. provisionRefundKey now reuses the
+    // identity key (no index bump); the two have diverged in allocation strategy,
+    // so provisionClaimSecret calls provisionDescriptor directly.
+    const descriptor = await provisionDescriptor(wallet);
+    const signer = await contractSigner(wallet, descriptor);
+    const pubkey = await signer.xOnlyPublicKey();
     const claim = async (): Promise<
         Pick<ProvisionedClaimSecret, "preimage" | "preimageSalt" | "mustPersistPreimage">
     > => {
@@ -251,7 +277,7 @@ export async function provisionClaimSecret(
             // absorb. A wallet that does not hold the key, or holds it and
             // cannot sign at all, must propagate: degrading those to a stored
             // preimage would fund a leg nothing can spend and report success.
-            // `provisionRefundKey` resolved a signer moments ago, so reaching
+            // The provisioning signer resolved a signer moments ago, so reaching
             // here means the signer changed under us.
             if (cause instanceof ForeignDescriptorError || cause instanceof WalletCannotSignError) {
                 throw cause;
