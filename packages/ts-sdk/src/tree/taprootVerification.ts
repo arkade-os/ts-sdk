@@ -202,9 +202,10 @@ function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
     // ── Standard Ark Exit Policy & Collaborative Leaves ──
     const hasCSV = decoded.some((op) => op === "CHECKSEQUENCEVERIFY");
     const hasCLTV = decoded.some((op) => op === "CHECKLOCKTIMEVERIFY");
-    const hasCheckSig = decoded.some(
+    const checkSigOps = decoded.filter(
         (op) => op === "CHECKSIG" || op === "CHECKSIGVERIFY" || op === "CHECKSIGADD",
     );
+    const hasCheckSig = checkSigOps.length > 0;
     const hasHash = decoded.some(
         (op) => op === "SHA256" || op === "HASH160" || op === "RIPEMD160" || op === "HASH256",
     );
@@ -212,18 +213,23 @@ function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
     const isArkStandard = hasCSV && hasCheckSig && hasKey;
     const isSwapClaim = hasHash && hasCheckSig && hasKey;
     const isSwapRefund = (hasCLTV || hasCSV) && hasCheckSig && hasKey;
-    // Collaborative / forfeit multisig MUST require at least 2 distinct pubkeys (e.g. Alice + Server).
+    // Collaborative / forfeit multisig MUST require at least 2 distinct pubkeys AND at least 2 signature checks (e.g. Alice + Server).
     // Note (Protocol Invariant): Forfeit scripts and collaborative leaves intentionally carry no CSV timelock.
     // In the Ark protocol, collaborative spends and forfeit clauses require 2-of-2 co-signing by both the
     // user and the ASP (mutual consent), enabling instant off-chain transitions and immediate forfeit sweeps
     // upon settlement without requiring an on-chain delay.
-    // A single 1-of-1 pubkey or duplicate keys (e.g. <aspKey> OP_CHECKSIG <aspKey> OP_CHECKSIGADD)
-    // without a CSV timelock is NOT a valid Ark exit or forfeit policy.
-    const isCollaborativeMultisig = distinctKeys.size >= 2 && hasCheckSig;
+    //
+    // A single 1-of-1 pubkey, duplicate keys (e.g. <aspKey> CHECKSIG <aspKey> CHECKSIGADD), or decorative
+    // second keys without actual signature verification (e.g. <pk1> DROP <pk2> CHECKSIG) lacking a CSV
+    // timelock is NOT a valid Ark exit or forfeit policy.
+    //
+    // WARNING: Structural opcode topology check enforces that both distinct keys and multiple signature-checking
+    // operations are present to prevent 1-of-1 CSV bypass.
+    const isCollaborativeMultisig = distinctKeys.size >= 2 && checkSigOps.length >= 2;
 
     if (!isArkStandard && !isSwapClaim && !isSwapRefund && !isCollaborativeMultisig) {
         throw new VtxoVerificationError(
-            `Tapleaf script in ${txid} does not follow Ark exit policy (CSV+CHECKSIG), Swap policy (HTLC), or Collaborative Multisig (>=2 distinct keys)`,
+            `Tapleaf script in ${txid} does not follow Ark exit policy (CSV+CHECKSIG), Swap policy (HTLC), or Collaborative Multisig (>=2 distinct keys and >=2 signature checks)`,
             "INVALID_ARK_SCRIPT",
         );
     }

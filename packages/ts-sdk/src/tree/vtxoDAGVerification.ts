@@ -845,9 +845,13 @@ function validateCheckpoints(
 
         // 2. Validate expiry coherence ─────────────────────────────────────
         //
-        // The checkpoint's expiresAt must not outlive:
-        //   - ancestor's expiresAt
-        //   - batch root expiresAt
+        // Protocol Invariant (Checkpoint Expiry Ordering):
+        // Checkpoints are intermediate off-chain states designed to protect against ASP griefing.
+        // If an ancestor transaction or the batch root commitment expires, the ASP can unilaterally
+        // sweep the expired ancestor outpoint on-chain, immediately invalidating all descendant
+        // checkpoints. Therefore, a checkpoint cannot outlive its spending ancestor or the commitment root:
+        //   – checkpoint.expiresAt <= ancestor.expiresAt
+        //   – checkpoint.expiresAt <= batchRoot.expiresAt
         //
         const checkpointExpiry = parseExpiry(node.chainTx.expiresAt);
 
@@ -973,11 +977,13 @@ async function verifyOnchainAnchoring(
         depth = chainInfo.height - status.blockHeight + 1;
     }
 
-    if (depth !== undefined && depth < minConfirmations) {
+    const effectiveDepth = depth ?? (status.confirmed ? 1 : 0);
+
+    if (effectiveDepth < minConfirmations) {
         throw new VtxoVerificationError(
-            `Commitment transaction ${commitmentTxid} is confirmed at depth ${depth}, which is less than requested minConfirmations ${minConfirmations}`,
+            `Commitment transaction ${commitmentTxid} is confirmed at depth ${effectiveDepth}, which is less than requested minConfirmations ${minConfirmations}`,
             "COMMITMENT_NOT_CONFIRMED",
-            { commitmentTxid, minConfirmations, depth },
+            { commitmentTxid, minConfirmations, depth: effectiveDepth },
         );
     }
 
@@ -1080,18 +1086,40 @@ export async function verifyVtxoComplete(
     const onchainStatus = await globalOnchainLimiter.run(async () => {
         const anchor = dagResult.anchoringLeaf.prevOutContext;
         if (!anchor || anchor.amount === undefined || anchor.script === undefined) {
-            // Fallback to simple confirmation check if structural data is missing
-            // (Should not happen in a valid Phase 1 result)
-            return onchain
-                .getTxStatus(dagResult.commitmentTxid, dagResult.commitmentBlockHash)
-                .then((status) => {
-                    if (!status.confirmed)
-                        throw new VtxoVerificationError(
-                            "Commitment not confirmed",
-                            "COMMITMENT_NOT_CONFIRMED",
-                        );
-                    return status;
-                });
+            // Fallback to confirmation check if structural data is missing
+            const status = await onchain.getTxStatus(
+                dagResult.commitmentTxid,
+                dagResult.commitmentBlockHash,
+            );
+            if (!status.confirmed) {
+                throw new VtxoVerificationError(
+                    `Commitment transaction ${dagResult.commitmentTxid} is not confirmed on-chain (min: ${minConfirmations})`,
+                    "COMMITMENT_NOT_CONFIRMED",
+                    { commitmentTxid: dagResult.commitmentTxid, minConfirmations },
+                );
+            }
+            let depth = status.confirmations;
+            if (
+                depth === undefined &&
+                status.blockHeight !== undefined &&
+                onchain.getBlockchainInfo
+            ) {
+                const chainInfo = await onchain.getBlockchainInfo();
+                depth = chainInfo.height - status.blockHeight + 1;
+            }
+            const effectiveDepth = depth ?? (status.confirmed ? 1 : 0);
+            if (effectiveDepth < minConfirmations) {
+                throw new VtxoVerificationError(
+                    `Commitment transaction ${dagResult.commitmentTxid} is confirmed at depth ${effectiveDepth}, which is less than requested minConfirmations ${minConfirmations}`,
+                    "COMMITMENT_NOT_CONFIRMED",
+                    {
+                        commitmentTxid: dagResult.commitmentTxid,
+                        minConfirmations,
+                        depth: effectiveDepth,
+                    },
+                );
+            }
+            return status;
         }
 
         return verifyOnchainAnchoring(

@@ -19,7 +19,7 @@ import { Transaction } from "@scure/btc-signer/transaction.js";
 import { hex, base64 } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { taprootTweakPubkey, taprootTweakPrivKey } from "@scure/btc-signer/utils.js";
-import { p2tr } from "@scure/btc-signer/payment.js";
+import { p2tr, tapLeafHash } from "@scure/btc-signer/payment.js";
 import { Script, OP } from "@scure/btc-signer/script.js";
 import {
     reconstructAndValidateVtxoDAG,
@@ -42,6 +42,7 @@ import {
     verifyPreimage,
     verifyNodeHashPreimages,
 } from "../../src/tree/hashPreimageVerification.js";
+import { verifyNodeSignature } from "../../src/tree/signatureVerification.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import { hex as _hex } from "@scure/base";
@@ -1265,6 +1266,168 @@ describe("VTXO DAG Verification", () => {
             // minConfirmations = 3 should fail
             await expect(
                 verifyVtxoComplete({ txid: vtxoTx.txid, vout: 0 }, indexer, customOnchain, 3),
+            ).rejects.toThrow("COMMITMENT_NOT_CONFIRMED");
+        });
+
+        it("Finding C (Decorative Key): should reject 2-key script with only 1 CHECKSIG operation (<pk1> DROP <pk2> CHECKSIG)", async () => {
+            const pk1 = schnorr.getPublicKey(TEST_PRIVKEYS[0]);
+            const pk2 = schnorr.getPublicKey(TEST_PRIVKEYS[1]);
+            // Decorative second key script: <pk1> OP_DROP <pk2> OP_CHECKSIG (2 distinct keys, but only 1 CHECKSIG)
+            const decorativeScript = Script.encode([pk1, "DROP", pk2, "CHECKSIG"]);
+            const tr = p2tr(
+                schnorr.getPublicKey(TEST_PRIVKEYS[2]),
+                [{ script: decorativeScript, leafVersion: 0xc0 }],
+                undefined,
+                true,
+            );
+
+            const commitmentRaw = createVirtualTx(fakeCommitmentTxid(134), 0, [
+                { amount: 100000n, script: tr.script },
+            ]);
+            const commitmentTxid = commitmentRaw.txid;
+            onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
+            onchain.confirmedTxids.add(commitmentTxid);
+
+            const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
+                parentScript: tr.script,
+                tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[2]),
+                tapLeafScript: tr.tapLeafScript,
+                tapMerkleRoot: tr.tapMerkleRoot,
+            });
+
+            indexer.chain = [
+                {
+                    txid: vtxoTx.txid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.ARK,
+                    spends: [commitmentTxid],
+                },
+                {
+                    txid: commitmentTxid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.COMMITMENT,
+                    spends: [],
+                },
+            ];
+            indexer.virtualTxs.set(vtxoTx.txid, base64.encode(vtxoTx.tx.toPSBT()));
+
+            await expect(
+                reconstructAndValidateVtxoDAG({ txid: vtxoTx.txid, vout: 0 }, indexer, onchain),
+            ).rejects.toThrow("INVALID_ARK_SCRIPT");
+        });
+
+        it("Finding D: should validate script-path signature length and sighash type", () => {
+            const leafHash = new Uint8Array(32).fill(0x01);
+            const pubKey = schnorr.getPublicKey(TEST_PRIVKEYS[0]);
+
+            // 1. Unmatched leafHash should throw INVALID_SIGNATURE
+            const unmatchedNode: any = {
+                tx: {
+                    getInput: () => ({
+                        tapKeySig: undefined,
+                        tapScriptSig: [[{ pubKey, leafHash }, new Uint8Array(64).fill(0xaa)]],
+                        tapLeafScript: [
+                            [
+                                new Uint8Array(33).fill(0xc0),
+                                new Uint8Array([...Script.encode([pubKey, "CHECKSIG"]), 0xc0]),
+                            ],
+                        ],
+                    }),
+                    preimageWitnessV1: () => new Uint8Array(32),
+                },
+                txid: fakeCommitmentTxid(17),
+                ancestor: null,
+                prevOutContext: { script: makeP2TRScript(0), amount: 100000n },
+                children: new Map(),
+            };
+
+            expect(() => verifyNodeSignature(unmatchedNode)).toThrow("INVALID_SIGNATURE");
+
+            // 2. Invalid signature length (e.g. 32 bytes) should throw INVALID_SIGNATURE_LENGTH
+            const script = Script.encode([pubKey, "CHECKSIG"]);
+            const matchedLeafHash = tapLeafHash(script, 0xc0);
+            const invalidLenNode: any = {
+                tx: {
+                    getInput: () => ({
+                        tapKeySig: undefined,
+                        tapScriptSig: [
+                            [
+                                { pubKey, leafHash: matchedLeafHash },
+                                new Uint8Array(32).fill(0xaa), // Invalid 32-byte signature
+                            ],
+                        ],
+                        tapLeafScript: [
+                            [new Uint8Array(33).fill(0xc0), new Uint8Array([...script, 0xc0])],
+                        ],
+                    }),
+                    preimageWitnessV1: () => new Uint8Array(32),
+                },
+                txid: fakeCommitmentTxid(17),
+                ancestor: null,
+                prevOutContext: { script: makeP2TRScript(0), amount: 100000n },
+                children: new Map(),
+            };
+
+            expect(() => verifyNodeSignature(invalidLenNode)).toThrow("INVALID_SIGNATURE_LENGTH");
+        });
+
+        it("Finding B: should enforce minConfirmations in fallback path when prevOutContext is missing", async () => {
+            const commitmentRaw = createVirtualTx(fakeCommitmentTxid(18), 0, [
+                { amount: 100000n, script: makeP2TRScript(0) },
+            ]);
+            const commitmentTxid = commitmentRaw.txid;
+            onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
+            onchain.confirmedTxids.add(commitmentTxid);
+
+            const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
+                parentScript: makeP2TRScript(0),
+                tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[0]),
+            });
+            signVirtualTx(vtxoTx.tx, 0, TEST_PRIVKEYS[0], [
+                { script: makeP2TRScript(0), amount: 100000n },
+            ]);
+
+            indexer.chain = [
+                {
+                    txid: vtxoTx.txid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.ARK,
+                    spends: [commitmentTxid],
+                },
+                {
+                    txid: commitmentTxid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.COMMITMENT,
+                    spends: [],
+                },
+            ];
+            indexer.virtualTxs.set(vtxoTx.txid, base64.encode(vtxoTx.tx.toPSBT()));
+
+            // Provider reporting confirmed: true, confirmations: 1
+            const fallbackOnchain: OnchainProvider = {
+                async getRawTransaction(txid: string) {
+                    return hex.encode(commitmentRaw.tx.toBytes());
+                },
+                async getTxStatus(txid: string) {
+                    return { confirmed: true, confirmations: 1 };
+                },
+                async broadcastTransaction(txHex: string) {
+                    return "txid";
+                },
+            };
+
+            // minConfirmations = 1 should pass
+            const pass = await verifyVtxoComplete(
+                { txid: vtxoTx.txid, vout: 0 },
+                indexer,
+                fallbackOnchain,
+                1,
+            );
+            expect(pass.valid).toBe(true);
+
+            // minConfirmations = 2 should fail
+            await expect(
+                verifyVtxoComplete({ txid: vtxoTx.txid, vout: 0 }, indexer, fallbackOnchain, 2),
             ).rejects.toThrow("COMMITMENT_NOT_CONFIRMED");
         });
     });

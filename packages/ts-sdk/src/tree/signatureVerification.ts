@@ -210,6 +210,20 @@ function verifyNodeScriptPathSignature(node: DAGNode): void {
         if (sig.length === 65) {
             signature = sig.slice(0, 64);
             sighashType = sig[64];
+
+            if (sighashType !== 0x01) {
+                throw new VtxoVerificationError(
+                    `Transaction ${txid} script-path signature uses an unsupported sighash flag: 0x${sighashType.toString(16)}`,
+                    "UNSUPPORTED_SIGHASH",
+                    { txid, sighashType },
+                );
+            }
+        } else if (sig.length !== 64) {
+            throw new VtxoVerificationError(
+                `Transaction ${txid} script-path signature has an invalid length (${sig.length})`,
+                "INVALID_SIGNATURE_LENGTH",
+                { txid, length: sig.length },
+            );
         }
 
         const sighash = tx.preimageWitnessV1(

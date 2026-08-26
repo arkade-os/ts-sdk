@@ -223,6 +223,13 @@ export async function executeSovereignExit(
                 const code = err?.code;
                 // If the transaction is already accepted in mempool or confirmed in chain,
                 // consider it successfully broadcasted and proceed to descendants.
+                //
+                // Protocol Security Invariant (Finding A):
+                // Errors such as 'bad-txns-inputs-spent' (or code -25 without 'already in mempool')
+                // MUST NOT be treated as success. An input-spent error indicates that an ancestor/input
+                // was spent by a conflicting transaction (e.g. ASP forfeit sweep or alternative exit path).
+                // Counting it as success would silently report a successful exit while user funds are gone.
+                // Such errors fall through to the else branch and abort the unilateral exit immediately.
                 if (
                     msg.includes("txn-already-in-mempool") ||
                     msg.includes("txn-already-known") ||
