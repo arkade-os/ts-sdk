@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { asset, Extension, Transaction, UnknownPacket } from "@arkade-os/sdk";
-import { encodeOffer, offerVtxoScript, Offer, OFFER_PACKET_TYPE } from "../src/offer";
+import { encodeOffer, offerContract, Offer, OFFER_PACKET_TYPE } from "../src/offer";
 import {
     classifyDepositSpend,
     classifySpend,
@@ -35,7 +35,7 @@ const makeOffer = (side: "want-asset" | "want-btc", wantAmount: bigint): Offer =
         makerPublicKey: MAKER_KEY,
         emulatorPubkey: EMULATOR_KEY,
     };
-    return { ...binding, swapPkScript: offerVtxoScript(binding, SERVER_KEY).pkScript };
+    return { ...binding, swapPkScript: offerContract(binding, SERVER_KEY).pkScript };
 };
 
 const scriptOf = (offer: Offer) => hex.encode(offer.swapPkScript);
@@ -61,7 +61,7 @@ const spendPsbt = (
 ): { psbt: string; txid: string } => {
     const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
     for (const { offer, deposit, via } of spends) {
-        const leaf = offerVtxoScript(offer, SERVER_KEY).functionByName(via)!.tapLeafScript;
+        const leaf = offerContract(offer, SERVER_KEY).functionByName(via)!.tapLeafScript;
         tx.addInput({
             txid: hex.decode(deposit.txid),
             index: deposit.vout,

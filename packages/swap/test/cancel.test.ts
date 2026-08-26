@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { ArkAddress, asset, type IWallet } from "@arkade-os/sdk";
-import { cancelOffer, encodeOffer, offerVtxoScript, type Offer } from "../src/offer";
+import { cancelOffer, encodeOffer, offerContract, type Offer } from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
 
@@ -65,7 +65,7 @@ const binding: Omit<Offer, "swapPkScript"> = {
     makerPublicKey: hex.decode("3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1"),
     emulatorPubkey: hex.decode("466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"),
 };
-const script = offerVtxoScript(binding, fundedServerKey);
+const script = offerContract(binding, fundedServerKey);
 const offerHex = hex.encode(encodeOffer({ ...binding, swapPkScript: script.pkScript }));
 const fundedAddress = new ArkAddress(fundedServerKey, script.tweakedPublicKey, "tark").encode();
 

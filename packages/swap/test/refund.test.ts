@@ -12,7 +12,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { CSVMultisigTapscript, SingleKey, Transaction } from "@arkade-os/sdk";
 
-import { lightningSendVtxoScript, type RfqStatus, type RfqTransport } from "../src/rfq";
+import { lightningSendContract, type RfqStatus, type RfqTransport } from "../src/rfq";
 import {
     LockupNeedsRecoveryError,
     RFQ_RESOLVED_STATES,
@@ -41,7 +41,7 @@ const REFUND_PK_SCRIPT = p2tr(key(5));
 
 /** The same golden participant set rfq.test.ts pins the script bytes against. */
 const swapScript = () =>
-    lightningSendVtxoScript({
+    lightningSendContract({
         solverPubkey: key(1),
         operatorPubkey: key(3),
         paymentHash: hex.encode(sha256(new Uint8Array(32).fill(7))),

@@ -19,7 +19,7 @@ import {
     ONCHAIN_SEND_PAIR,
     assertFundable,
     deriveOnchainSend,
-    lightningSendVtxoScript,
+    lightningSendContract,
     onchainReceiveRequest,
     onchainSendRequest,
     type RfqQuote,
@@ -40,7 +40,7 @@ const NOW = 1_800_000_000;
 const REFUND_LOCKTIME = NOW + 200 * 3600;
 const HTLC_LOCKTIME = NOW + 24 * 3600;
 
-// The onchain leg's Arkade lockup shares `lightningSendVtxoScript` with the
+// The onchain leg's Arkade lockup shares `lightningSendContract` with the
 // Lightning leg directly (see `deriveOnchainSend` below) — one function, one
 // golden test (`rfq.test.ts`). There is no separate onchain program object
 // left to compare it against, so there is nothing to pin here any more.
@@ -181,7 +181,7 @@ describe("deriveOnchainSend", () => {
     const SERVER = key(3);
     const SENDER_PUBKEY = key(13);
     const RECEIVER_PK_SCRIPT = p2tr(key(1));
-    const REFUND_ADDRESS = lightningSendVtxoScript({
+    const REFUND_ADDRESS = lightningSendContract({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
         operatorPubkey: SERVER,
@@ -210,7 +210,7 @@ describe("deriveOnchainSend", () => {
     /** A quote whose compare-only fields MATCH the maker's own derivations. */
     const consistentQuote = (): RfqQuote => {
         const input = derivation();
-        const lockup = lightningSendVtxoScript({
+        const lockup = lightningSendContract({
             solverPubkey: key(1),
             refundLocktime: REFUND_LOCKTIME,
             operatorPubkey: SERVER,

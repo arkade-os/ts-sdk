@@ -12,7 +12,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { CSVMultisigTapscript, SingleKey, Transaction, type IWallet } from "@arkade-os/sdk";
 
-import { lightningSendVtxoScript } from "../src/rfq";
+import { lightningSendContract } from "../src/rfq";
 import { arkadeRefunder } from "../src/arkadeRefunder";
 import { RefundNotLocallyPossibleError } from "../src/refundBlocked";
 import { LockupNeedsRecoveryError, type RefundOperatorProvider } from "../src/refund";
@@ -29,7 +29,7 @@ const REFUND_LOCKTIME = 1_800_000_000;
 const SENDER = SingleKey.fromPrivateKey(priv(13));
 const PAYMENT_HASH = hex.encode(sha256(new Uint8Array(32).fill(7)));
 
-const LOCKUP = lightningSendVtxoScript({
+const LOCKUP = lightningSendContract({
     solverPubkey: key(1),
     operatorPubkey: key(3),
     paymentHash: PAYMENT_HASH,

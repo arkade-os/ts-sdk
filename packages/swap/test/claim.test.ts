@@ -20,7 +20,7 @@ import {
     getArkPsbtFields,
 } from "@arkade-os/sdk";
 
-import { receiveVtxoScript } from "../src/rfq";
+import { lightningReceiveContract } from "../src/rfq";
 import {
     LockupAmountMismatchError,
     awaitLockupFunding,
@@ -44,7 +44,7 @@ const DESTINATION_PK_SCRIPT = p2tr(key(21));
  * reference solver: solver = key(1) (VHTLC sender), trader = key(13)
  * (receiver), server = key(3), emulator = key(9). */
 const swapScript = () =>
-    receiveVtxoScript({
+    lightningReceiveContract({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
         operatorPubkey: key(3),
@@ -102,7 +102,7 @@ const fakeArk = (
         submitTx: async (tx: string, checkpoints: string[]) => {
             submitted.push({ tx, checkpoints });
             const answered = over.checkpointsFor ? over.checkpointsFor(checkpoints) : checkpoints;
-            const finalArkTx = cosign ? await operatorCosign(tx) : arkTx;
+            const finalTx = cosign ? await operatorCosign(tx) : tx;
             return {
                 arkTxid: Transaction.fromPSBT(base64.decode(tx)).id,
                 finalArkTx: over.finalTx ? over.finalTx(finalTx) : finalTx,
@@ -351,7 +351,7 @@ describe("pushClaim", () => {
     });
 
     it("fails closed when the server returns no final ark tx to check", async () => {
-        const ark = fakeArk({ finalArkTx: () => undefined });
+        const ark = fakeArk({ finalTx: () => undefined });
         await expect(
             pushClaim(ark, {
                 script: swapScript(),

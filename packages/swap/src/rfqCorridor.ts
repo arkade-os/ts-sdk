@@ -7,7 +7,7 @@
  * onchain leg's L1 contract — lives in its own handler.
  *
  * This mirrors the contract layer's `contractHandlers` registry, deliberately:
- * that solved the same problem for VTXO scripts, and adding a contract type
+ * that solved the same problem for contracts, and adding a contract type
  * there is a new file plus one `register()` call rather than an edit to a
  * shared type. Adding a corridor here should cost the same. Nothing in
  * `rfqRecord.ts`, `repository.ts` or `indexedDbRepository.ts` names a corridor,

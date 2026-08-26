@@ -18,7 +18,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hex } from "@scure/base";
 import { ArkAddress, asset } from "@arkade-os/sdk";
-import { encodeOffer, decodeOffer, offerVtxoScript } from "@arkade-os/swap";
+import { encodeOffer, decodeOffer, offerContract } from "@arkade-os/swap";
 import { SQLiteAssetSwapRepository } from "@arkade-os/swap/repositories/sqlite";
 import {
     AssetSwapRealmSchemas,
@@ -86,7 +86,7 @@ const offer = {
     emulatorPubkey: hex.decode("466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"),
 };
 
-const script = offerVtxoScript(offer, server);
+const script = offerContract(offer, server);
 offer.swapPkScript = script.pkScript;
 const address = new ArkAddress(server, script.tweakedPublicKey, "tark").encode();
 

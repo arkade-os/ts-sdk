@@ -24,7 +24,7 @@ import {
     type CreateContractParams,
 } from "@arkade-os/sdk";
 
-import { lightningSendVtxoScript, receiveVtxoScript } from "../src/rfq";
+import { lightningSendContract, lightningReceiveContract } from "../src/rfq";
 import {
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     ONCHAIN_ORDER_MARGIN_SECONDS,
@@ -95,7 +95,7 @@ const htlcOf = () =>
 
 /** The Arkade lockup, derived exactly the way both legs derive it — ONE `P`
  * unlocks the covenant's claim leaf and (for an onchain send) the L1 leaf. */
-const LOCKUP = lightningSendVtxoScript({
+const LOCKUP = lightningSendContract({
     solverPubkey: key(1),
     operatorPubkey: key(3),
     paymentHash: PAYMENT_HASH,
@@ -115,7 +115,7 @@ const LOCKUP = lightningSendVtxoScript({
  * particular `refundWithoutReceiver` on THIS script is the solver's leaf, which
  * is what makes a spend through it a loss rather than a return.
  */
-const RECEIVE_LOCKUP = receiveVtxoScript({
+const RECEIVE_LOCKUP = lightningReceiveContract({
     solverPubkey: key(1),
     refundLocktime: REFUND_LOCKTIME,
     operatorPubkey: key(3),

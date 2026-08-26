@@ -66,7 +66,7 @@ import {
     AddressMismatch,
     LIGHTNING_SEND_PAIR,
     ONCHAIN_SEND_PAIR,
-    lightningSendVtxoScript,
+    lightningSendContract,
     requestLightningSend,
     requestOnchainSend,
     type RfqQuote,
@@ -125,7 +125,7 @@ const lightningTransport = (forEmulatorPubkey: Uint8Array): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
         const senderPubkey = hex.decode(profile.client_refund_pubkey as string);
-        const script = lightningSendVtxoScript({
+        const script = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
             operatorPubkey: SERVER,
@@ -203,7 +203,7 @@ describe("requestOnchainSend never touches the emulator", () => {
         async requestQuote(payload) {
             const profile = (payload as { profile: Record<string, unknown> }).profile;
             const senderPubkey = hex.decode(profile.client_refund_pubkey as string);
-            const lockupScript = lightningSendVtxoScript({
+            const lockupScript = lightningSendContract({
                 solverPubkey: SOLVER,
                 refundLocktime: REFUND_LOCKTIME,
                 operatorPubkey: SERVER,

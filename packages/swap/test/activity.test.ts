@@ -8,7 +8,7 @@ import {
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import type { LockupSpendIndexer } from "../src/refund";
 import type { RfqSwapRecord } from "../src/rfqRecord";
-import { lightningSendVtxoScript } from "../src/rfq";
+import { lightningSendContract } from "../src/rfq";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
@@ -149,7 +149,7 @@ describe("rfqSwapActivityInputs", () => {
     const p2tr = (program: Uint8Array) => Uint8Array.from([0x51, 0x20, ...program]);
     /** A real lockup address: the helper decodes it to ask the indexer, so a
      * made-up one would exercise the wrong branch. */
-    const LOCKUP_ADDRESS = lightningSendVtxoScript({
+    const LOCKUP_ADDRESS = lightningSendContract({
         solverPubkey: key(1),
         operatorPubkey: key(3),
         paymentHash: hex.encode(sha256(new Uint8Array(32).fill(7))),

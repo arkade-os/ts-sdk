@@ -123,7 +123,7 @@ const assertFiniteAmount = (value: number, reason: string, label: string): void 
 export async function pushClaim(
     operator: ClaimOperatorProvider,
     input: {
-        /** The receive-direction covenant (see `receiveVtxoScript`). */
+        /** The receive-direction covenant (see `lightningReceiveContract`). */
         script: InstanceType<typeof VHTLC.ScriptV2>;
         /** The trader's `receiver` signer. Build it from the swap's `secrets`
          * with `contractSigner` — on an HD wallet that resolves

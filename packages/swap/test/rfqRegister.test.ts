@@ -47,7 +47,7 @@ import {
     type OnchainProvider,
 } from "@arkade-os/sdk";
 import {
-    lightningSendVtxoScript,
+    lightningSendContract,
     requestLightningSend,
     requestOnchainSend,
     type RfqQuote,
@@ -97,7 +97,7 @@ const INVOICE = {
 const lightningTransport = (): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
-        const script = lightningSendVtxoScript({
+        const script = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
             operatorPubkey: SERVER,
@@ -134,7 +134,7 @@ const onchainTransport = (): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
         const paymentHash = profile.payment_hash as string;
-        const lockup = lightningSendVtxoScript({
+        const lockup = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
             operatorPubkey: SERVER,
@@ -402,15 +402,15 @@ describe("a registered lockup, against a real contract manager", () => {
             {
                 kind: "lightning_send",
                 lockupAddress: swap.address,
-                profile: rfqSecretsProfile(swap.secrets, swap.treeParams.paymentHash),
+                profile: rfqSecretsProfile(swap.secrets, swap.contractParams.paymentHash),
             },
             {
                 kind: "lightning_send",
                 rfqId: swap.rfqId,
                 state: "pending",
                 lockupPkScript: swap.swapPkScript,
-                paymentHash: swap.treeParams.paymentHash,
-                refundLocktime: swap.treeParams.refundLocktime,
+                paymentHash: swap.contractParams.paymentHash,
+                refundLocktime: swap.contractParams.refundLocktime,
                 createdAt: 1,
                 updatedAt: 1,
             },
@@ -418,7 +418,7 @@ describe("a registered lockup, against a real contract manager", () => {
 
         const rebuilt = rebuildRfqSwap(record, params);
         expect(hex.encode(rebuilt.lockupPkScript)).toBe(hex.encode(swap.swapPkScript));
-        expect(rebuilt.refundLocktime).toBe(swap.treeParams.refundLocktime);
+        expect(rebuilt.refundLocktime).toBe(swap.contractParams.refundLocktime);
     });
 
     it("names a lockup with no row instead of rebuilding from nothing", async () => {

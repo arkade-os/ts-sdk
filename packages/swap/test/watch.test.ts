@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { asset, ArkAddress, Transaction } from "@arkade-os/sdk";
-import { encodeOffer, offerVtxoScript, OFFER_CONTRACT_KIND, type Offer } from "../src/offer";
+import { encodeOffer, offerContract, OFFER_CONTRACT_KIND, type Offer } from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
 import { retireSettledOfferContracts } from "../src/coverage";
@@ -27,7 +27,7 @@ const makeOffer = (side: "want-asset" | "want-btc" = "want-asset"): Offer => {
         makerPublicKey: MAKER_KEY,
         emulatorPubkey: EMULATOR_KEY,
     };
-    return { ...binding, swapPkScript: offerVtxoScript(binding, SERVER_KEY).pkScript };
+    return { ...binding, swapPkScript: offerContract(binding, SERVER_KEY).pkScript };
 };
 
 const swapFor = (offer: Offer, overrides: Partial<AssetSwap> = {}): AssetSwap => ({
@@ -46,7 +46,7 @@ const swapFor = (offer: Offer, overrides: Partial<AssetSwap> = {}): AssetSwap =>
 });
 
 const spendPsbt = (offer: Offer, via: "cancel" | "fulfill", vout = 0) => {
-    const leaf = offerVtxoScript(offer, SERVER_KEY).functionByName(via)!.tapLeafScript;
+    const leaf = offerContract(offer, SERVER_KEY).functionByName(via)!.tapLeafScript;
     const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
     tx.addInput({ txid: hex.decode(FUNDING_TXID), index: vout, tapLeafScript: [leaf] });
     tx.addOutput({ script: MAKER_PK_SCRIPT, amount: BigInt(9_000) });

@@ -25,7 +25,7 @@ import {
     expectQuote,
     httpTransport,
     lightningSendRequest,
-    lightningSendVtxoScript,
+    lightningSendContract,
     newRfqId,
     offerTermsFromQuote,
     relayTransport,
@@ -63,7 +63,7 @@ const quoteFixture = (over: Partial<RfqQuote> = {}): RfqQuote => ({
     ...over,
 });
 
-describe("lightningSendVtxoScript", () => {
+describe("lightningSendContract", () => {
     // Any change to these pinned bytes changes every lockup address and needs
     // coordinated trader/solver deployment — see "Breaking changes" in the
     // README. A version mismatch refuses quotes (verifyLockupAddress), it does
@@ -101,7 +101,7 @@ describe("lightningSendVtxoScript", () => {
     const SENDER_PUBKEY = key(13);
 
     const script = () =>
-        lightningSendVtxoScript({
+        lightningSendContract({
             solverPubkey: key(1),
             operatorPubkey: key(3),
             paymentHash: PAYMENT_HASH,
@@ -193,7 +193,7 @@ describe("lightningSendVtxoScript", () => {
 
     it("derives the HASH160 commitment from the payment hash — the trader never sees P", () => {
         // Same script from the payment hash alone; a different hash, different tree.
-        const other = lightningSendVtxoScript({
+        const other = lightningSendContract({
             solverPubkey: key(1),
             operatorPubkey: key(3),
             paymentHash: hex.encode(sha256(new Uint8Array(32).fill(8))),
@@ -208,7 +208,7 @@ describe("lightningSendVtxoScript", () => {
     });
 
     it("produces a different address when the sender key changes", () => {
-        const other = lightningSendVtxoScript({
+        const other = lightningSendContract({
             solverPubkey: key(1),
             operatorPubkey: key(3),
             paymentHash: PAYMENT_HASH,
@@ -223,7 +223,7 @@ describe("lightningSendVtxoScript", () => {
     });
 
     it("produces a different address when the receiver payout script changes", () => {
-        const other = lightningSendVtxoScript({
+        const other = lightningSendContract({
             solverPubkey: key(1),
             operatorPubkey: key(3),
             paymentHash: PAYMENT_HASH,
@@ -261,7 +261,7 @@ describe("unilateralClaimDelay", () => {
         // leaf's sequence encoded — this threw from inside the tapscript
         // encoder before the cap accounted for the stacked tiers
         expect(() =>
-            lightningSendVtxoScript({
+            lightningSendContract({
                 solverPubkey: key(1),
                 operatorPubkey: key(3),
                 paymentHash: "da".repeat(32),

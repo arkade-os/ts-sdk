@@ -3,7 +3,7 @@
  * fund — and check the wallet then treats the lockup as owned-but-escrowed.
  *
  * This is `swap.test.ts`'s escrow test for the other corridor, and the reason
- * it needs its own stack: `lightningSendVtxoScript` emits SECONDS-typed
+ * it needs its own stack: `lightningSendContract` emits SECONDS-typed
  * timelocks on all three unilateral tiers, and `unilateralClaimDelay` refuses a
  * server exit delay below 512s — so on the offer suite's block-typed arkd
  * (`ARKD_UNILATERAL_EXIT_DELAY=20`) `requestLightningSend` throws before it
@@ -36,7 +36,7 @@ import {
     SWAP_LOCKUP_CONTRACT_KIND,
     SWAP_LOCKUP_CONTRACT_LABEL,
     SWAP_LOCKUP_CONTRACT_TYPE,
-    lightningSendVtxoScript,
+    lightningSendContract,
     registerLockupContract,
     requestLightningSend,
     unilateralClaimDelay,
@@ -106,7 +106,7 @@ const stubTransport = (): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
         const refundLocktime = NOW() + 24 * 3600;
-        const script = lightningSendVtxoScript({
+        const script = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime,
             operatorPubkey: serverPubkey,

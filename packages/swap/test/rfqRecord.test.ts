@@ -23,7 +23,7 @@ import {
     type RfqSwapOrigin,
     type RfqSwapRecord,
 } from "../src/rfqRecord";
-import { lightningSendVtxoScript, receiveVtxoScript } from "../src/rfq";
+import { lightningSendContract, lightningReceiveContract } from "../src/rfq";
 import { onchainHtlcScript } from "../src/onchainHtlc";
 import type { LightningReceiveSwap, LightningSendSwap, RfqSwapState } from "../src/swapManager";
 
@@ -41,7 +41,7 @@ const SERVER = key(3);
 /** The two halves a consumer holds: the row's params, and the address that was
  * funded. Built the way the entry points build them, so the fixture exercises
  * the real `serializeParams` round trip rather than a hand-written record. */
-const lockupOf = (script: ReturnType<typeof receiveVtxoScript>) => ({
+const lockupOf = (script: ReturnType<typeof lightningReceiveContract>) => ({
     params: VHTLCV2ContractHandler.serializeParams(script.options),
     address: script.address("tark", SERVER).encode(),
     // The live swap watches this, and the record stores only the address it
@@ -51,7 +51,7 @@ const lockupOf = (script: ReturnType<typeof receiveVtxoScript>) => ({
 });
 
 const SEND_LOCKUP = lockupOf(
-    lightningSendVtxoScript({
+    lightningSendContract({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
         operatorPubkey: SERVER,
@@ -65,7 +65,7 @@ const SEND_LOCKUP = lockupOf(
 );
 
 const RECEIVE_LOCKUP = lockupOf(
-    receiveVtxoScript({
+    lightningReceiveContract({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
         operatorPubkey: SERVER,
