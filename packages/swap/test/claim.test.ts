@@ -77,10 +77,10 @@ type FakeOperator = ArkProvider & {
 };
 
 /** The Ark server's own key — key(3) in the covenant above. */
-const SERVER_SIGNER = SingleKey.fromPrivateKey(priv(3));
+const OPERATOR_SIGNER = SingleKey.fromPrivateKey(priv(3));
 
 const operatorCosign = async (psbt: string): Promise<string> =>
-    base64.encode((await SERVER_SIGNER.sign(Transaction.fromPSBT(base64.decode(psbt)))).toPSBT());
+    base64.encode((await OPERATOR_SIGNER.sign(Transaction.fromPSBT(base64.decode(psbt)))).toPSBT());
 
 /** A scripted arkd that countersigns like the real one — `pushClaim` verifies
  * those signatures before finalizing, so a mute fake would prove nothing. */

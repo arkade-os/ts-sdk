@@ -661,28 +661,28 @@ export const SOLO_REFUND_HEADROOM_SECONDS = 8 * SEQUENCE_GRANULARITY_SECONDS;
  * exit delay exactly as the reference solver derives it — both sides read the
  * SAME server, so the derivation (not a quote field) is what keeps the two
  * scripts identical. */
-export const unilateralClaimDelay = (serverExitDelaySeconds: number): number => {
+export const unilateralClaimDelay = (operatorExitDelaySeconds: number): number => {
     if (
-        !Number.isFinite(serverExitDelaySeconds) ||
-        serverExitDelaySeconds < SEQUENCE_GRANULARITY_SECONDS
+        !Number.isFinite(operatorExitDelaySeconds) ||
+        operatorExitDelaySeconds < SEQUENCE_GRANULARITY_SECONDS
     ) {
         throw new Error(
-            `server exit delay must be at least ${SEQUENCE_GRANULARITY_SECONDS}s of seconds, got ${serverExitDelaySeconds}`,
+            `operator exit delay must be at least ${SEQUENCE_GRANULARITY_SECONDS}s of seconds, got ${operatorExitDelaySeconds}`,
         );
     }
     // the headroom below BIP68's ceiling, not at it: the solo refund stacks
     // SOLO_REFUND_HEADROOM_SECONDS on top of this value, and it must encode too
     if (
-        serverExitDelaySeconds >
+        operatorExitDelaySeconds >
         0xffff * SEQUENCE_GRANULARITY_SECONDS - SOLO_REFUND_HEADROOM_SECONDS
     ) {
         throw new Error(
-            `server exit delay ${serverExitDelaySeconds}s exceeds what BIP68 can encode ` +
+            `operator exit delay ${operatorExitDelaySeconds}s exceeds what BIP68 can encode ` +
                 `once the solo refund's headroom is stacked above it`,
         );
     }
     return (
-        Math.ceil(serverExitDelaySeconds / SEQUENCE_GRANULARITY_SECONDS) *
+        Math.ceil(operatorExitDelaySeconds / SEQUENCE_GRANULARITY_SECONDS) *
         SEQUENCE_GRANULARITY_SECONDS
     );
 };

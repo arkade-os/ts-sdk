@@ -76,7 +76,7 @@ funds an offer should keep cancelling within reach.
 
 1. **`offer`** — the swap covenant itself. Two program JSONs (want-BTC / want-asset), the
    `Offer` type, the TLV wire codec (`encodeOffer`/`decodeOffer`, `OFFER_PACKET_TYPE`), address
-   derivation (`offerVtxoScript`), and the user-side operations `createOffer`/`cancelOffer`. Identical
+   derivation (`offerContract`), and the user-side operations `createOffer`/`cancelOffer`. Identical
    offers always derive identical swap addresses — the program JSONs are hashed into the address,
    so their bytes are frozen (guarded by a golden test).
 2. **`markets`** — solver discovery and pricing guardrails: `discoverMarkets` (1-hour cached
@@ -238,7 +238,7 @@ offer bytes themselves are recoverable from the funding tx if the record is lost
 ## Live status
 
 ```ts
-const watcher = await watchOfferSwaps({ wallet, arkServerUrl: ARK, repository, onUpdate: render });
+const watcher = await watchOfferSwaps({ wallet, operatorUrl: ARK, repository, onUpdate: render });
 // later
 watcher.stop();
 ```
@@ -322,7 +322,7 @@ message anywhere: **acceptance is funding**.
 import { httpTransport, requestLightningSend } from "@arkade-os/swap";
 
 // invoice facts from YOUR OWN decoder — the module takes facts, not a decoder
-const swap = await requestLightningSend(wallet, arkServerUrl, httpTransport(solverUrl), {
+const swap = await requestLightningSend(wallet, operatorUrl, httpTransport(solverUrl), {
     invoice: { raw: bolt11, paymentHash, amountSats, expiresAt },
 });
 // quote verified against the LOCAL derivation and gated; now fund and go offline:
@@ -395,7 +395,7 @@ import {
     swapSecretsToRecord,
 } from "@arkade-os/swap";
 
-const swap = await requestOnchainSend(wallet, arkServerUrl, httpTransport(solverUrl), {
+const swap = await requestOnchainSend(wallet, operatorUrl, httpTransport(solverUrl), {
     amount: 100_000,
     amountSide: "to",
     payoutPubkey,
@@ -997,7 +997,7 @@ scanned? })` — the server key is required because a spend is classified by reb
   when `persisted` is true — the callback is documented as following a persisted change, and a
   consumer caching from it must not run ahead of the store.
 - **`lightningSendProgram` and `htlcSendProgram` are gone** along with the program-artifact layer
-  they compiled. Derive scripts through `lightningSendVtxoScript` / `onchainHtlcScript`.
+  they compiled. Derive scripts through `lightningSendContract` / `onchainHtlcScript`.
 - **The receive corridors are wired, and the wire shape settled.** `lightningReceiveRequest` is
   new; `onchainReceiveRequest`'s profile now matches the shipped solver schema (`payment_hash`,
   `claim_packet`, `refund_pubkey`, `payout_address`, `payout_pubkey` — the earlier
@@ -1008,7 +1008,7 @@ scanned? })` — the server key is required because a spend is classified by reb
   corridor's fee — and refuses quotes whose `to_amount` reprices the invoice; solvers charge
   per-corridor fees on all four pairs, and funding the bare invoice amount underfunds by exactly
   the fee.
-- **`lightningSendVtxoScript` takes two new required fields**: `senderPubkey` (the trader's VHTLC
+- **`lightningSendContract` takes two new required fields**: `senderPubkey` (the trader's VHTLC
   sender key — generate, persist, see `requestLightningSend`) and `receiverPkScript` (the solver's
   claim destination, from `profile.receiver_pk_script`). Callers that built the lockup directly
   must supply both; callers going through `requestLightningSend` are unaffected.

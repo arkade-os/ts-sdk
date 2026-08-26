@@ -239,7 +239,7 @@ describe("lightningSendContract", () => {
 });
 
 describe("unilateralClaimDelay", () => {
-    it("rounds the server's exit delay UP to BIP68 granularity, as the solver does", () => {
+    it("rounds the operator's exit delay UP to BIP68 granularity, as the solver does", () => {
         expect(unilateralClaimDelay(4096)).toBe(4096);
         expect(unilateralClaimDelay(4000)).toBe(4096);
         expect(unilateralClaimDelay(604672)).toBe(604672);
@@ -249,7 +249,7 @@ describe("unilateralClaimDelay", () => {
         expect(() => unilateralClaimDelay(144)).toThrow(/512/);
     });
 
-    it("keeps all three tiers BIP68-encodable at the maximum server delay", () => {
+    it("keeps all three tiers BIP68-encodable at the maximum operator delay", () => {
         // the cap sits SOLO_REFUND_HEADROOM_SECONDS below BIP68's 0xffff * 512
         // ceiling so the solo refund stacked above claimDelay still encodes
         const max = 0xffff * 512 - SOLO_REFUND_HEADROOM_SECONDS;
@@ -275,7 +275,7 @@ describe("unilateralClaimDelay", () => {
         ).not.toThrow();
     });
 
-    it("rejects a server delay whose solo refund would overflow BIP68", () => {
+    it("rejects an operator delay whose solo refund would overflow BIP68", () => {
         expect(() => unilateralClaimDelay(0xffff * 512 - SOLO_REFUND_HEADROOM_SECONDS + 1)).toThrow(
             /BIP68/,
         );

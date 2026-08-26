@@ -11,7 +11,7 @@ import { spendUpdate, watchOfferSwaps } from "../src/watch";
 const ASSET_ID = "f1".repeat(34);
 
 const key = (seed: string) => schnorr.getPublicKey(hex.decode(seed.repeat(32)));
-const SERVER_KEY = key("11");
+const OPERATOR_KEY = key("11");
 const MAKER_KEY = key("22");
 const EMULATOR_KEY = key("33");
 const MAKER_PK_SCRIPT = new Uint8Array([0x51, 0x20, ...key("55")]);
@@ -27,7 +27,7 @@ const makeOffer = (side: "want-asset" | "want-btc" = "want-asset"): Offer => {
         makerPublicKey: MAKER_KEY,
         emulatorPubkey: EMULATOR_KEY,
     };
-    return { ...binding, swapPkScript: offerContract(binding, SERVER_KEY).pkScript };
+    return { ...binding, swapPkScript: offerContract(binding, OPERATOR_KEY).pkScript };
 };
 
 const swapFor = (offer: Offer, overrides: Partial<AssetSwap> = {}): AssetSwap => ({
@@ -46,7 +46,7 @@ const swapFor = (offer: Offer, overrides: Partial<AssetSwap> = {}): AssetSwap =>
 });
 
 const spendPsbt = (offer: Offer, via: "cancel" | "fulfill", vout = 0) => {
-    const leaf = offerContract(offer, SERVER_KEY).functionByName(via)!.tapLeafScript;
+    const leaf = offerContract(offer, OPERATOR_KEY).functionByName(via)!.tapLeafScript;
     const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
     tx.addInput({ txid: hex.decode(FUNDING_TXID), index: vout, tapLeafScript: [leaf] });
     tx.addOutput({ script: MAKER_PK_SCRIPT, amount: BigInt(9_000) });
@@ -60,8 +60,8 @@ const spendPsbt = (offer: Offer, via: "cancel" | "fulfill", vout = 0) => {
  */
 const makeWallet = (getVirtualTxs: (txids: string[]) => Promise<{ txs: string[] }>) => {
     const callbacks = new Set<(event: any) => void>();
-    // a real ark address, so ArkAddress.decode recovers SERVER_KEY from it
-    const address = new ArkAddress(SERVER_KEY, key("66"), "tark").encode();
+    // a real ark address, so ArkAddress.decode recovers OPERATOR_KEY from it
+    const address = new ArkAddress(OPERATOR_KEY, key("66"), "tark").encode();
     const setContractWatchState = vi.fn(async (_script: string, _watch: string) => {});
     const wallet = {
         getAddress: async () => address,
