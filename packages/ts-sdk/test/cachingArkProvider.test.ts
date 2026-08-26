@@ -108,6 +108,68 @@ describe("CachingArkProvider", () => {
         expect(getInfo).toHaveBeenCalledTimes(1);
     });
 
+    it("keeps an event-cached rotation over an older in-flight fetch result", async () => {
+        let resolveInner!: (info: ArkInfo) => void;
+        const getInfo = vi.fn().mockReturnValue(
+            new Promise<ArkInfo>((resolve) => {
+                resolveInner = resolve;
+            }),
+        );
+        const inner = fakeInner(getInfo);
+        const provider = new CachingArkProvider(inner as unknown as ArkProvider, 60_000);
+
+        const pending = provider.getInfo();
+        inner.emit(fakeInfo("d2"));
+        resolveInner(fakeInfo("d1"));
+
+        expect((await pending).digest).toBe("d2");
+        expect((await provider.getInfo()).digest).toBe("d2");
+        expect(getInfo).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not extend the TTL of an event-cached rotation with the older fetch's clock", async () => {
+        vi.useFakeTimers();
+        let resolveInner!: (info: ArkInfo) => void;
+        const getInfo = vi.fn().mockReturnValueOnce(
+            new Promise<ArkInfo>((resolve) => {
+                resolveInner = resolve;
+            }),
+        );
+        const inner = fakeInner(getInfo);
+        const provider = new CachingArkProvider(inner as unknown as ArkProvider, 60_000);
+
+        const pending = provider.getInfo();
+        inner.emit(fakeInfo("d2"));
+        vi.advanceTimersByTime(30_000);
+        resolveInner(fakeInfo("d1"));
+        await pending;
+
+        getInfo.mockResolvedValue(fakeInfo("d3"));
+        vi.advanceTimersByTime(30_001);
+
+        expect((await provider.getInfo()).digest).toBe("d3");
+    });
+
+    it("stops caching rotation events once disposed", async () => {
+        const getInfo = vi.fn().mockResolvedValue(fakeInfo("d1"));
+        const inner = fakeInner(getInfo);
+        const provider = new CachingArkProvider(inner as unknown as ArkProvider, 60_000);
+
+        await provider.getInfo();
+        provider.dispose();
+        inner.emit(fakeInfo("d2"));
+
+        expect((await provider.getInfo()).digest).toBe("d1");
+    });
+
+    it("disposes cleanly when the inner provider emits no server-info events", () => {
+        const provider = new CachingArkProvider({
+            getInfo: async () => fakeInfo("d1"),
+        } as unknown as ArkProvider);
+
+        expect(() => provider.dispose()).not.toThrow();
+    });
+
     it("surfaces a rotation first observed by a TTL-expiry refetch", async () => {
         vi.useFakeTimers();
         let digest = "d1";

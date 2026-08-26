@@ -235,7 +235,8 @@ Only `getInfo()` is cached; all other Ark provider methods pass through. The cac
 after the TTL and updates when the inner provider reports server-info changes, including
 signer rotation. Wrapping `RestArkProvider` preserves its `serverUrl`, so `Wallet.create`
 can still derive the default indexer URL. Expired refresh failures propagate;
-wallet boot fallback lives in the persisted ArkInfo snapshot.
+wallet boot fallback lives in the persisted ArkInfo snapshot. Call `dispose()` if the
+inner provider outlives the wrapper, to drop its server-info subscription.
 
 ### Onchain Providers
 

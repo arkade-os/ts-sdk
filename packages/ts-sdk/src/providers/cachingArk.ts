@@ -25,15 +25,25 @@ export class CachingArkProvider implements ArkProvider {
     private cached?: ArkInfo;
     private expiresAt = 0;
     private inflight?: Promise<ArkInfo>;
+    /** Bumped on every event-driven cache write; see {@link getInfo}. */
+    private generation = 0;
+    private readonly unsubscribe: () => void;
 
     constructor(
         private readonly inner: ArkProvider,
         private readonly ttlMs: number = DEFAULT_TTL_MS,
     ) {
-        (inner as ServerInfoEventSource).onServerInfoChanged?.((info) => {
-            this.cached = info;
-            this.expiresAt = Date.now() + this.ttlMs;
-        });
+        this.unsubscribe =
+            (inner as ServerInfoEventSource).onServerInfoChanged?.((info) => {
+                this.cached = info;
+                this.expiresAt = Date.now() + this.ttlMs;
+                this.generation++;
+            }) ?? (() => {});
+    }
+
+    /** Releases the inner provider's server-info subscription. */
+    dispose(): void {
+        this.unsubscribe();
     }
 
     get serverUrl(): string | undefined {
@@ -44,9 +54,15 @@ export class CachingArkProvider implements ArkProvider {
     async getInfo(): Promise<ArkInfo> {
         if (this.cached && Date.now() < this.expiresAt) return this.cached;
         if (!this.inflight) {
+            // A rotation event can land while this request is in flight, making
+            // its result the older of the two. Writing it back would serve the
+            // superseded signer for a full TTL, so a bumped generation discards
+            // the response in favour of what the event already cached.
+            const generation = this.generation;
             this.inflight = this.inner
                 .getInfo()
                 .then((info) => {
+                    if (this.generation !== generation) return this.cached ?? info;
                     this.cached = info;
                     this.expiresAt = Date.now() + this.ttlMs;
                     return info;
