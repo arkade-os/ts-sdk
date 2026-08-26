@@ -139,17 +139,33 @@ export class BitcoinRpcProvider implements VerificationOnchainProvider {
      */
     async isTxIndexEnabled(): Promise<boolean> {
         if (this.txIndexChecked !== null) return this.txIndexChecked;
-        const indexInfo = await this.call<Record<string, { synced: boolean }>>("getindexinfo");
-        if (
-            typeof indexInfo === "object" &&
-            indexInfo !== null &&
-            indexInfo.txindex &&
-            indexInfo.txindex.synced === true
-        ) {
-            this.txIndexChecked = true;
-            return true;
+        try {
+            const indexInfo = await this.call<Record<string, { synced: boolean }>>("getindexinfo");
+            if (
+                typeof indexInfo === "object" &&
+                indexInfo !== null &&
+                indexInfo.txindex &&
+                indexInfo.txindex.synced === true
+            ) {
+                this.txIndexChecked = true;
+                return true;
+            }
+            this.txIndexChecked = false;
+            return false;
+        } catch (e) {
+            // Finding E: Distinguish unsupported RPC method (-32601 / method not found)
+            // from transient network/auth failures.
+            // If getindexinfo is unsupported (-32601 or "Method not found"), treat as unverified/false.
+            // Transient network/auth failures are rethrown so they are not cached or mistaken for index state.
+            if (
+                e instanceof BitcoinRpcError &&
+                (e.code === -32601 || e.message.toLowerCase().includes("method not found"))
+            ) {
+                this.txIndexChecked = false;
+                return false;
+            }
+            throw e;
         }
-        return false;
     }
 
     /**

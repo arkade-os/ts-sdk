@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { hex, base64 } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {

@@ -98,8 +98,10 @@ export function verifyNodeSignature(node: DAGNode): void {
         signature = tapKeySig.slice(0, 64);
         sighashType = tapKeySig[64];
 
-        // Strict Compliance: Reject any sighash that is not SIGHASH_ALL (0x01)
-        // if a byte is explicitly provided.
+        // Strict BIP 341 & Ark Compliance:
+        // - BIP 341 mandates that if the signature is 64 bytes, sighash is implicitly SIGHASH_DEFAULT (0x00).
+        // - If 65 bytes are provided, the 65th byte MUST NOT be 0x00 (BIP 341 non-standard/invalid).
+        // - For explicit 65-byte signatures in Ark VTXO verification, only standard SIGHASH_ALL (0x01) is supported.
         if (sighashType !== 0x01) {
             throw new VtxoVerificationError(
                 `Transaction ${txid} uses an unsupported sighash flag: 0x${sighashType.toString(16)}`,
@@ -211,6 +213,10 @@ function verifyNodeScriptPathSignature(node: DAGNode): void {
             signature = sig.slice(0, 64);
             sighashType = sig[64];
 
+            // Strict BIP 341 & Ark Compliance:
+            // - BIP 341 mandates that 64-byte signatures use implicit SIGHASH_DEFAULT (0x00).
+            // - 65-byte signatures with trailing 0x00 are invalid under BIP 341 rules.
+            // - For explicit 65-byte script-path signatures, only SIGHASH_ALL (0x01) is supported.
             if (sighashType !== 0x01) {
                 throw new VtxoVerificationError(
                     `Transaction ${txid} script-path signature uses an unsupported sighash flag: 0x${sighashType.toString(16)}`,

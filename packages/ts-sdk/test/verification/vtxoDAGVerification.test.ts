@@ -43,6 +43,7 @@ import {
     verifyNodeHashPreimages,
 } from "../../src/tree/hashPreimageVerification.js";
 import { verifyNodeSignature } from "../../src/tree/signatureVerification.js";
+import { BitcoinRpcProvider, BitcoinRpcError } from "../../src/providers/bitcoinRpc.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import { hex as _hex } from "@scure/base";
@@ -1429,6 +1430,186 @@ describe("VTXO DAG Verification", () => {
             await expect(
                 verifyVtxoComplete({ txid: vtxoTx.txid, vout: 0 }, indexer, fallbackOnchain, 2),
             ).rejects.toThrow("COMMITMENT_NOT_CONFIRMED");
+        });
+        it("Finding C (Residual Gap): should reject 2-key script with vacuous first CHECKSIG (<pk1> CHECKSIG DROP <pk2> CHECKSIG)", async () => {
+            const pk1 = schnorr.getPublicKey(TEST_PRIVKEYS[0]);
+            const pk2 = schnorr.getPublicKey(TEST_PRIVKEYS[1]);
+            // Residual gap vector: <pk1> CHECKSIG DROP <pk2> CHECKSIG
+            // 2 keys and 2 CHECKSIGs, but pk1 is discarded via DROP and only pk2 gates spend
+            const bypassScript = Script.encode([pk1, "CHECKSIG", "DROP", pk2, "CHECKSIG"]);
+            const tr = p2tr(
+                schnorr.getPublicKey(TEST_PRIVKEYS[2]),
+                [{ script: bypassScript, leafVersion: 0xc0 }],
+                undefined,
+                true,
+            );
+
+            const commitmentRaw = createVirtualTx(fakeCommitmentTxid(135), 0, [
+                { amount: 100000n, script: tr.script },
+            ]);
+            const commitmentTxid = commitmentRaw.txid;
+            onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
+            onchain.confirmedTxids.add(commitmentTxid);
+
+            const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
+                parentScript: tr.script,
+                tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[2]),
+                tapLeafScript: tr.tapLeafScript,
+                tapMerkleRoot: tr.tapMerkleRoot,
+            });
+
+            indexer.chain = [
+                {
+                    txid: vtxoTx.txid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.ARK,
+                    spends: [commitmentTxid],
+                },
+                {
+                    txid: commitmentTxid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.COMMITMENT,
+                    spends: [],
+                },
+            ];
+            indexer.virtualTxs.set(vtxoTx.txid, base64.encode(vtxoTx.tx.toPSBT()));
+
+            await expect(
+                reconstructAndValidateVtxoDAG({ txid: vtxoTx.txid, vout: 0 }, indexer, onchain),
+            ).rejects.toThrow("INVALID_ARK_SCRIPT");
+        });
+
+        it("Finding C (Allowlisted Templates): should accept valid BIP 342 collaborative multisig templates", async () => {
+            const pk1 = schnorr.getPublicKey(TEST_PRIVKEYS[0]);
+            const pk2 = schnorr.getPublicKey(TEST_PRIVKEYS[1]);
+
+            // 1. BIP 342 CHECKSIGVERIFY template: <pk1> CHECKSIGVERIFY <pk2> CHECKSIG
+            const verifyTemplate = Script.encode([pk1, "CHECKSIGVERIFY", pk2, "CHECKSIG"]);
+            const tr1 = p2tr(
+                schnorr.getPublicKey(TEST_PRIVKEYS[2]),
+                [{ script: verifyTemplate, leafVersion: 0xc0 }],
+                undefined,
+                true,
+            );
+
+            const commitmentRaw1 = createVirtualTx(fakeCommitmentTxid(136), 0, [
+                { amount: 100000n, script: tr1.script },
+            ]);
+            const commitmentTxid1 = commitmentRaw1.txid;
+            onchain.txs.set(commitmentTxid1, hex.encode(commitmentRaw1.tx.toBytes()));
+            onchain.confirmedTxids.add(commitmentTxid1);
+
+            const vtxoTx1 = createVirtualTx(commitmentTxid1, 0, [{ amount: 100000n }], {
+                parentScript: tr1.script,
+                tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[2]),
+                tapLeafScript: tr1.tapLeafScript,
+                tapMerkleRoot: tr1.tapMerkleRoot,
+            });
+            signVirtualTx(vtxoTx1.tx, 0, TEST_PRIVKEYS[2], [
+                { script: tr1.script, amount: 100000n },
+            ]);
+
+            indexer.chain = [
+                {
+                    txid: vtxoTx1.txid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.ARK,
+                    spends: [commitmentTxid1],
+                },
+                {
+                    txid: commitmentTxid1,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.COMMITMENT,
+                    spends: [],
+                },
+            ];
+            indexer.virtualTxs.set(vtxoTx1.txid, base64.encode(vtxoTx1.tx.toPSBT()));
+
+            const res1 = await reconstructAndValidateVtxoDAG(
+                { txid: vtxoTx1.txid, vout: 0 },
+                indexer,
+                onchain,
+            );
+            expect(res1.valid).toBe(true);
+
+            // 2. BIP 342 CHECKSIGADD template: <pk1> CHECKSIG <pk2> CHECKSIGADD 2 EQUAL
+            const addTemplate = Script.encode([pk1, "CHECKSIG", pk2, "CHECKSIGADD", 2, "EQUAL"]);
+            const tr2 = p2tr(
+                schnorr.getPublicKey(TEST_PRIVKEYS[2]),
+                [{ script: addTemplate, leafVersion: 0xc0 }],
+                undefined,
+                true,
+            );
+
+            const commitmentRaw2 = createVirtualTx(fakeCommitmentTxid(137), 0, [
+                { amount: 100000n, script: tr2.script },
+            ]);
+            const commitmentTxid2 = commitmentRaw2.txid;
+            onchain.txs.set(commitmentTxid2, hex.encode(commitmentRaw2.tx.toBytes()));
+            onchain.confirmedTxids.add(commitmentTxid2);
+
+            const vtxoTx2 = createVirtualTx(commitmentTxid2, 0, [{ amount: 100000n }], {
+                parentScript: tr2.script,
+                tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[2]),
+                tapLeafScript: tr2.tapLeafScript,
+                tapMerkleRoot: tr2.tapMerkleRoot,
+            });
+            signVirtualTx(vtxoTx2.tx, 0, TEST_PRIVKEYS[2], [
+                { script: tr2.script, amount: 100000n },
+            ]);
+
+            indexer.chain = [
+                {
+                    txid: vtxoTx2.txid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.ARK,
+                    spends: [commitmentTxid2],
+                },
+                {
+                    txid: commitmentTxid2,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.COMMITMENT,
+                    spends: [],
+                },
+            ];
+            indexer.virtualTxs.set(vtxoTx2.txid, base64.encode(vtxoTx2.tx.toPSBT()));
+
+            const res2 = await reconstructAndValidateVtxoDAG(
+                { txid: vtxoTx2.txid, vout: 0 },
+                indexer,
+                onchain,
+            );
+            expect(res2.valid).toBe(true);
+        });
+
+        it("Finding E: isTxIndexEnabled handles unsupported RPC method without caching errors on network failure", async () => {
+            const provider = new BitcoinRpcProvider("http://localhost:18443", "user", "pass");
+
+            // Case 1: RPC returns method not found (-32601) -> should return false and cache false
+            const callMock = vi.spyOn(provider as any, "call");
+            callMock.mockRejectedValueOnce(new BitcoinRpcError("Method not found", -32601));
+
+            const res1 = await provider.isTxIndexEnabled();
+            expect(res1).toBe(false);
+
+            // Calling again should return cached false without calling RPC again
+            const res2 = await provider.isTxIndexEnabled();
+            expect(res2).toBe(false);
+            expect(callMock).toHaveBeenCalledTimes(1);
+
+            // Case 2: New provider instance encounters transient network error -> should rethrow and NOT cache
+            const freshProvider = new BitcoinRpcProvider("http://localhost:18443", "user", "pass");
+            const freshCallMock = vi.spyOn(freshProvider as any, "call");
+            freshCallMock.mockRejectedValueOnce(
+                new BitcoinRpcError("HTTP Error: 500 Internal Server Error", 500),
+            );
+
+            await expect(freshProvider.isTxIndexEnabled()).rejects.toThrow("HTTP Error: 500");
+
+            // Next successful call can still evaluate correctly
+            freshCallMock.mockResolvedValueOnce({ txindex: { synced: true } });
+            const res3 = await freshProvider.isTxIndexEnabled();
+            expect(res3).toBe(true);
         });
     });
 });

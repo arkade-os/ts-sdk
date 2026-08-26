@@ -158,6 +158,115 @@ function verifyMerkleProof(
     }
 }
 
+/**
+ * Helper to validate BIP 342 Tapscript 2-of-2 (or N-of-N) CHECKSIGVERIFY template:
+ *   <pk1> CHECKSIGVERIFY <pk2> CHECKSIGVERIFY ... <pkn> CHECKSIG
+ * Requires:
+ *   - Alternating 32/33-byte public keys and CHECKSIGVERIFY, ending with CHECKSIG.
+ *   - At least 2 distinct public keys.
+ */
+function isCheckSigVerifyMultisigTemplate(
+    decoded: (string | number | bigint | Uint8Array)[],
+): boolean {
+    if (decoded.length < 4 || decoded.length % 2 !== 0) return false;
+    const numKeys = decoded.length / 2;
+    const keys = new Set<string>();
+
+    for (let i = 0; i < numKeys; i++) {
+        const keyItem = decoded[2 * i];
+        const opItem = decoded[2 * i + 1];
+
+        if (!(keyItem instanceof Uint8Array) || (keyItem.length !== 32 && keyItem.length !== 33)) {
+            return false;
+        }
+        keys.add(hex.encode(keyItem));
+
+        if (i < numKeys - 1) {
+            if (opItem !== "CHECKSIGVERIFY") return false;
+        } else {
+            if (opItem !== "CHECKSIG") return false;
+        }
+    }
+
+    return keys.size >= 2;
+}
+
+/**
+ * Helper to validate BIP 342 Tapscript 2-of-2 (or N-of-N) CHECKSIGADD template:
+ *   <pk1> CHECKSIG <pk2> CHECKSIGADD ... <pkn> CHECKSIGADD <N> [NUM]EQUAL
+ *   or <pk1> CHECKSIGADD <pk2> CHECKSIGADD ... <pkn> CHECKSIGADD <N> [NUM]EQUAL
+ * Requires:
+ *   - Key pushes followed by CHECKSIG/CHECKSIGADD.
+ *   - Ending with threshold <N> and EQUAL / NUMEQUAL where N === number of keys.
+ *   - At least 2 distinct public keys.
+ */
+function isCheckSigAddMultisigTemplate(
+    decoded: (string | number | bigint | Uint8Array)[],
+): boolean {
+    if (decoded.length < 6) return false;
+    const lastOp = decoded[decoded.length - 1];
+    if (lastOp !== "NUMEQUAL" && lastOp !== "EQUAL") return false;
+
+    const thresholdRaw = decoded[decoded.length - 2];
+    const threshold =
+        typeof thresholdRaw === "bigint"
+            ? Number(thresholdRaw)
+            : typeof thresholdRaw === "number"
+              ? thresholdRaw
+              : null;
+
+    const sigOps = decoded.slice(0, decoded.length - 2);
+    if (sigOps.length < 4 || sigOps.length % 2 !== 0) return false;
+    const numKeys = sigOps.length / 2;
+
+    if (threshold === null || threshold !== numKeys) return false;
+
+    const keys = new Set<string>();
+    for (let i = 0; i < numKeys; i++) {
+        const keyItem = sigOps[2 * i];
+        const opItem = sigOps[2 * i + 1];
+
+        if (!(keyItem instanceof Uint8Array) || (keyItem.length !== 32 && keyItem.length !== 33)) {
+            return false;
+        }
+        keys.add(hex.encode(keyItem));
+
+        if (i === 0) {
+            if (opItem !== "CHECKSIG" && opItem !== "CHECKSIGADD") return false;
+        } else {
+            if (opItem !== "CHECKSIGADD") return false;
+        }
+    }
+
+    return keys.size >= 2;
+}
+
+/**
+ * Validates whether a script matches an allowlisted collaborative / forfeit multisig template.
+ * Supported templates:
+ * 1. BIP 342 CHECKSIGVERIFY chain (<pk1> CHECKSIGVERIFY <pk2> CHECKSIG) with >= 2 distinct keys.
+ * 2. BIP 342 CHECKSIGADD chain (<pk1> CHECKSIG <pk2> CHECKSIGADD 2 EQUAL/NUMEQUAL) with >= 2 distinct keys.
+ * 3. Conditional Multisig (<condition> VERIFY <multisig_template>) with >= 2 distinct keys.
+ */
+function isCollaborativeMultisigTemplate(
+    decoded: (string | number | bigint | Uint8Array)[],
+): boolean {
+    if (isCheckSigVerifyMultisigTemplate(decoded) || isCheckSigAddMultisigTemplate(decoded)) {
+        return true;
+    }
+
+    // Check for conditional multisig: <condition...> VERIFY <multisig>
+    const verifyIdx = decoded.lastIndexOf("VERIFY");
+    if (verifyIdx !== -1 && verifyIdx < decoded.length - 1) {
+        const suffix = decoded.slice(verifyIdx + 1);
+        if (isCheckSigVerifyMultisigTemplate(suffix) || isCheckSigAddMultisigTemplate(suffix)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
     if (!script || script.length === 0) {
         throw new VtxoVerificationError(`Empty tapleaf script in ${txid}`, "SECURITY_VIOLATION");
@@ -196,10 +305,7 @@ function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
     );
     const hasKey = keys.length > 0;
 
-    // ── Key Deduplication & Distinct Pubkey Analysis ──
-    const distinctKeys = new Set(keys.map((k) => hex.encode(k)));
-
-    // ── Standard Ark Exit Policy & Collaborative Leaves ──
+    // ── Standard Ark Exit Policy & Submarine Swap HTLC Policies ──
     const hasCSV = decoded.some((op) => op === "CHECKSEQUENCEVERIFY");
     const hasCLTV = decoded.some((op) => op === "CHECKLOCKTIMEVERIFY");
     const checkSigOps = decoded.filter(
@@ -213,23 +319,25 @@ function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
     const isArkStandard = hasCSV && hasCheckSig && hasKey;
     const isSwapClaim = hasHash && hasCheckSig && hasKey;
     const isSwapRefund = (hasCLTV || hasCSV) && hasCheckSig && hasKey;
-    // Collaborative / forfeit multisig MUST require at least 2 distinct pubkeys AND at least 2 signature checks (e.g. Alice + Server).
+
+    // Collaborative / forfeit multisig:
     // Note (Protocol Invariant): Forfeit scripts and collaborative leaves intentionally carry no CSV timelock.
     // In the Ark protocol, collaborative spends and forfeit clauses require 2-of-2 co-signing by both the
     // user and the ASP (mutual consent), enabling instant off-chain transitions and immediate forfeit sweeps
     // upon settlement without requiring an on-chain delay.
     //
-    // A single 1-of-1 pubkey, duplicate keys (e.g. <aspKey> CHECKSIG <aspKey> CHECKSIGADD), or decorative
-    // second keys without actual signature verification (e.g. <pk1> DROP <pk2> CHECKSIG) lacking a CSV
-    // timelock is NOT a valid Ark exit or forfeit policy.
-    //
-    // WARNING: Structural opcode topology check enforces that both distinct keys and multiple signature-checking
-    // operations are present to prevent 1-of-1 CSV bypass.
-    const isCollaborativeMultisig = distinctKeys.size >= 2 && checkSigOps.length >= 2;
+    // Security Invariant (Finding C / Finding 11 - Template Matching):
+    // Rather than loose opcode counting (which could be bypassed by decorative keys or vacuous CHECKSIG+DROP sequences),
+    // collaborative leaves must strictly match explicit allowlisted BIP 342 multisig templates:
+    //   - <pk1> CHECKSIGVERIFY <pk2> CHECKSIG (BIP 342 2-of-2 CHECKSIGVERIFY chain)
+    //   - <pk1> CHECKSIG <pk2> CHECKSIGADD 2 NUMEQUAL/EQUAL (BIP 342 2-of-2 CHECKSIGADD)
+    //   - Conditional multisig: <condition> VERIFY <multisig_template>
+    // In all cases, at least 2 distinct public keys must participate in active signature enforcement.
+    const isCollaborativeMultisig = isCollaborativeMultisigTemplate(decoded);
 
     if (!isArkStandard && !isSwapClaim && !isSwapRefund && !isCollaborativeMultisig) {
         throw new VtxoVerificationError(
-            `Tapleaf script in ${txid} does not follow Ark exit policy (CSV+CHECKSIG), Swap policy (HTLC), or Collaborative Multisig (>=2 distinct keys and >=2 signature checks)`,
+            `Tapleaf script in ${txid} does not follow Ark exit policy (CSV+CHECKSIG), Swap policy (HTLC), or Collaborative Multisig template (>=2 distinct keys in standard 2-of-2 format)`,
             "INVALID_ARK_SCRIPT",
         );
     }

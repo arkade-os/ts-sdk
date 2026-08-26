@@ -70,10 +70,22 @@ describe("BitcoinRpcProvider", () => {
             expect(result).toBe(false);
         });
 
-        it("propagates error when getindexinfo fails and does not cache true", async () => {
+        it("returns false when getindexinfo is an unsupported RPC method (-32601)", async () => {
             mockRpc((method) => {
                 if (method === "getindexinfo") {
                     return { error: { code: -32601, message: "Method not found" } };
+                }
+                throw new Error("unexpected method");
+            });
+
+            const result = await provider.isTxIndexEnabled();
+            expect(result).toBe(false);
+        });
+
+        it("propagates error when getindexinfo encounters transient network/auth failure and does not cache", async () => {
+            mockRpc((method) => {
+                if (method === "getindexinfo") {
+                    return { error: { code: -32603, message: "Internal server error" } };
                 }
                 throw new Error("unexpected method");
             });
