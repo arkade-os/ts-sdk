@@ -204,7 +204,7 @@ export async function pushClaim(
         // One aggregate output: unlike the covenant refund, this leaf inspects
         // nothing about the output set.
         outputs: [{ script: input.destinationPkScript, amount: BigInt(locked) }],
-        operatorUnrollScript,
+        serverUnrollScript: operatorUnrollScript,
         verifyServerSignatures: { serverPubkey: input.script.options.server },
     });
     return { txid, amount: locked };

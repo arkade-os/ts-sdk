@@ -238,7 +238,7 @@ offer bytes themselves are recoverable from the funding tx if the record is lost
 ## Live status
 
 ```ts
-const watcher = await watchOfferSwaps({ wallet, arkServerUrl: ARK, repository, onUpdate: render });
+const watcher = await watchOfferSwaps({ wallet, operatorUrl: ARK, repository, onUpdate: render });
 // later
 watcher.stop();
 ```
@@ -927,7 +927,7 @@ scanned? })` — the server key is required because a spend is classified by reb
             kind: "lightning_receive",
             lockupAddress: result.address,
             profile: {
-                ...rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                ...rfqSecretsProfile(result.secrets, result.contractParams.paymentHash),
                 expectedAmount: result.expectedAmount,
                 payoutAddress: result.payoutAddress,
             },
@@ -997,7 +997,7 @@ scanned? })` — the server key is required because a spend is classified by reb
   when `persisted` is true — the callback is documented as following a persisted change, and a
   consumer caching from it must not run ahead of the store.
 - **`lightningSendProgram` and `htlcSendProgram` are gone** along with the program-artifact layer
-  they compiled. Derive scripts through `lightningSendVtxoScript` / `onchainHtlcScript`.
+  they compiled. Derive scripts through `lightningSendContract` / `onchainHtlcScript`.
 - **The receive corridors are wired, and the wire shape settled.** `lightningReceiveRequest` is
   new; `onchainReceiveRequest`'s profile now matches the shipped solver schema (`payment_hash`,
   `claim_packet`, `refund_pubkey`, `payout_address`, `payout_pubkey` — the earlier
@@ -1008,7 +1008,7 @@ scanned? })` — the server key is required because a spend is classified by reb
   corridor's fee — and refuses quotes whose `to_amount` reprices the invoice; solvers charge
   per-corridor fees on all four pairs, and funding the bare invoice amount underfunds by exactly
   the fee.
-- **`lightningSendVtxoScript` takes two new required fields**: `senderPubkey` (the trader's VHTLC
+- **`lightningSendContract` takes two new required fields**: `senderPubkey` (the trader's VHTLC
   sender key — generate, persist, see `requestLightningSend`) and `receiverPkScript` (the solver's
   claim destination, from `profile.receiver_pk_script`). Callers that built the lockup directly
   must supply both; callers going through `requestLightningSend` are unaffected.

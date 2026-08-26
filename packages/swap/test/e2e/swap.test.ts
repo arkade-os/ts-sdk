@@ -77,7 +77,7 @@ let operatorPubkey: Uint8Array;
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        operatorUrl: ARK_URL,
+        arkServerUrl: ARK_URL,
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -138,7 +138,7 @@ describe("maker-side swap loop (regtest)", () => {
         // Pending deposits have no spend to classify; operatorPubkey is required
         // by the restore API but does not affect this assertion.
         const { restored, scannedTxids } = await restoreAssetSwaps(indexer, history, new Set(), {
-            operatorPubkey: operatorPubkey,
+            operatorPubkey,
         });
 
         expect(scannedTxids).toEqual([fundingTxid]);
@@ -242,7 +242,9 @@ describe("maker-side swap loop (regtest)", () => {
             redeemTxid: cancelTxid,
             createdAt: Math.floor(Date.now() / 1000),
         });
-        const { restored } = await restoreAssetSwaps(indexer, history, new Set(), { operatorPubkey: operatorPubkey });
+        const { restored } = await restoreAssetSwaps(indexer, history, new Set(), {
+            operatorPubkey,
+        });
         expect(restored).toHaveLength(1);
         expect(restored[0]).toMatchObject({
             status: "cancelled",

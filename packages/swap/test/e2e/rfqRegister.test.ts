@@ -109,7 +109,7 @@ const stubTransport = (): RfqTransport => ({
         const script = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime,
-            operatorPubkey: operatorPubkey,
+            operatorPubkey,
             paymentHash: PAYMENT_HASH,
             claimDelay,
             emulatorPubkey,
@@ -142,7 +142,7 @@ const stubTransport = (): RfqTransport => ({
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        operatorUrl: ARK_URL,
+        arkServerUrl: ARK_URL,
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,

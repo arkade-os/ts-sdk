@@ -111,7 +111,7 @@ The record's corridor half is one opaque `Record<string, unknown>` that nothing 
 repository or the store interprets — so the wallet is the only thing that can get it right, and
 nothing will tell it when it does not.
 
-- **All three corridors, first:** `...rfqSecretsProfile(result.secrets, result.treeParams.paymentHash)`.
+- **All three corridors, first:** `...rfqSecretsProfile(result.secrets, result.contractParams.paymentHash)`.
   One call per leg, writing two keys and only what that leg's provisioning actually produced:
   `signer.signingDescriptor` always, `hashlock.paymentHash` whenever a payment hash is passed, and —
   on a **claim** leg only — at most one of `preimageHex` (P itself, when the wallet cannot re-derive
