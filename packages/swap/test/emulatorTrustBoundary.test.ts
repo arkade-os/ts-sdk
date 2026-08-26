@@ -20,7 +20,7 @@ import { ArkAddress, SingleKey, asset, type IWallet } from "@arkade-os/sdk";
 // network seam these functions must never touch (RestEmulatorProvider) plus
 // the one they legitimately still call (RestArkProvider), stubbed.
 const state = vi.hoisted(() => ({
-    arkInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
+    operatorInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
 }));
 
 vi.mock("@arkade-os/sdk", async (importOriginal) => {
@@ -35,11 +35,11 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
                 // manager, and `Arkade.connect` decodes this — derived from
                 // whatever signer key the test set, so the two cannot drift.
                 return {
-                    ...state.arkInfo,
+                    ...state.operatorInfo,
                     checkpointTapscript: hexCodec.encode(
                         mod.CSVMultisigTapscript.encode({
                             timelock: { type: "blocks", value: 10n },
-                            pubkeys: [hexCodec.decode(state.arkInfo.signerPubkey)],
+                            pubkeys: [hexCodec.decode(state.operatorInfo.signerPubkey)],
                         }).script,
                     ),
                 };
@@ -87,7 +87,7 @@ const PREIMAGE = new Uint8Array(32).fill(7);
 const PAYMENT_HASH = paymentHashOf(PREIMAGE);
 const REFUND_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
 
-state.arkInfo.signerPubkey = hex.encode(SERVER);
+state.operatorInfo.signerPubkey = hex.encode(SERVER);
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
@@ -128,7 +128,7 @@ const lightningTransport = (forEmulatorPubkey: Uint8Array): RfqTransport => ({
         const script = lightningSendVtxoScript({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: SERVER,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
             emulatorPubkey: forEmulatorPubkey,
@@ -206,7 +206,7 @@ describe("requestOnchainSend never touches the emulator", () => {
             const lockupScript = lightningSendVtxoScript({
                 solverPubkey: SOLVER,
                 refundLocktime: REFUND_LOCKTIME,
-                serverPubkey: SERVER,
+                operatorPubkey: SERVER,
                 paymentHash: PAYMENT_HASH,
                 claimDelay: 4096,
                 emulatorPubkey: forEmulatorPubkey,

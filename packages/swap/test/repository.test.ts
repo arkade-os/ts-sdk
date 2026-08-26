@@ -319,7 +319,7 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
 
     it("carries the caller's funding txid through the round trip", async () => {
         await using repository = create();
-        const record = { ...rfqRecord("r1"), fundingArkTxid: "f0".repeat(32) };
+        const record = { ...rfqRecord("r1"), fundingTxid: "f0".repeat(32) };
         await repository.saveRfqSwap(record);
         expect(await repository.getRfqSwap("r1")).toEqual(record);
     });

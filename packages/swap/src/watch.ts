@@ -90,7 +90,7 @@ export interface WatchOfferSwapsParams {
     wallet: IWallet;
     /** Same URL `createOffer`/`cancelOffer` take; used to read a spending tx
      * when the exact classifier cannot answer. */
-    arkServerUrl: string;
+    operatorUrl: string;
     repository: AssetSwapRepository;
     /** Called after a change is persisted. A notification, not a store. */
     onUpdate?: (swap: AssetSwap) => void;
@@ -109,7 +109,7 @@ export interface WatchOfferSwapsParams {
  */
 export async function watchOfferSwaps({
     wallet,
-    arkServerUrl,
+    operatorUrl,
     repository,
     onUpdate,
 }: WatchOfferSwapsParams): Promise<OfferSwapWatcher> {
@@ -117,8 +117,8 @@ export async function watchOfferSwaps({
     // Current server key at watcher start. TODO: persist the funding-time key
     // with swap records; a signer rotation during a long session makes leaf
     // classification return indeterminate rather than guessing.
-    const serverPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;
-    const indexer: RestoreIndexer = new RestIndexerProvider(arkServerUrl);
+    const operatorPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;
+    const indexer: RestoreIndexer = new RestIndexerProvider(operatorUrl);
 
     // events arrive independently but the update is read-modify-write over
     // the whole list, so two concurrent handlers would lose one of the writes
@@ -142,7 +142,7 @@ export async function watchOfferSwaps({
             const { txs } = await indexer.getVirtualTxs(candidates);
             return classifyDepositSpend(
                 decodeOffer(hex.decode(swap.offerHex)),
-                serverPubkey,
+                operatorPubkey,
                 txs.map((psbt) => Transaction.fromPSBT(base64.decode(psbt))),
                 { txid: vtxo.txid, vout: vtxo.vout },
             );

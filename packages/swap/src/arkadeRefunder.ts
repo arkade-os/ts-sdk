@@ -19,7 +19,7 @@ import type { IWallet } from "@arkade-os/sdk";
 import {
     findLockupVtxos,
     pushRefundWithoutReceiver,
-    type RefundArkProvider,
+    type RefundOperatorProvider,
     type RefundIndexer,
 } from "./refund";
 import { RefundNotLocallyPossibleError, senderIdentityForSwapRecord } from "./refundBlocked";
@@ -28,7 +28,7 @@ import type { AssetSwapRepository } from "./repository";
 import type { ArkadeRefundResult, RfqSwap } from "./swapManager";
 
 export interface ArkadeRefunderDeps {
-    ark: RefundArkProvider;
+    operator: RefundOperatorProvider;
     indexer: RefundIndexer;
     /** Asked for the descriptor's signer; never asked to mint a key. */
     wallet: IWallet;
@@ -45,7 +45,7 @@ export interface ArkadeRefunderDeps {
  *
  * @example
  * manager.setCallbacks({
- *     refundArkade: arkadeRefunder({ ark, indexer, wallet, repository }),
+ *     refundArkade: arkadeRefunder({ operator, indexer, wallet, repository }),
  *     saveSwap,
  * });
  */
@@ -92,6 +92,6 @@ export function arkadeRefunder(
         // deciding what "this wallet cannot sign this swap" means stays
         // `senderIdentityForSwapRecord`.
         const sender = await senderIdentityForSwapRecord(deps.wallet, rfqSignerOf(record) ?? {});
-        return pushRefundWithoutReceiver(deps.ark, { script, sender, vtxos });
+        return pushRefundWithoutReceiver(deps.operator, { script, sender, vtxos });
     };
 }

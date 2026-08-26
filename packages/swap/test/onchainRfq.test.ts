@@ -184,7 +184,7 @@ describe("deriveOnchainSend", () => {
     const REFUND_ADDRESS = lightningSendVtxoScript({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
-        serverPubkey: SERVER,
+        operatorPubkey: SERVER,
         paymentHash: PAYMENT_HASH,
         claimDelay: 4096,
         emulatorPubkey: key(9),
@@ -198,7 +198,7 @@ describe("deriveOnchainSend", () => {
     const derivation = () => ({
         paymentHash: PAYMENT_HASH,
         payoutPubkey: key(5),
-        serverPubkey: SERVER,
+        operatorPubkey: SERVER,
         emulatorPubkey: key(9),
         claimDelay: 4096,
         hrp: "ark",
@@ -213,7 +213,7 @@ describe("deriveOnchainSend", () => {
         const lockup = lightningSendVtxoScript({
             solverPubkey: key(1),
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: SERVER,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
             emulatorPubkey: key(9),

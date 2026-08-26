@@ -96,7 +96,7 @@ type SwapProgramBinding = {
  * Deliberately absent from the package index -- not public API. */
 export function swapProgramBinding(
     offer: Omit<Offer, "swapPkScript">,
-    serverPubkey: Uint8Array,
+    operatorPubkey: Uint8Array,
 ): SwapProgramBinding {
     // a wrong-width script would bind a truncated makerWP into the covenant and
     // only surface as an unspendable address once the user funds it
@@ -108,7 +108,7 @@ export function swapProgramBinding(
         args: {
             makerWP: offer.makerPkScript.subarray(2),
             wantAmount: offer.wantAmount,
-            server: serverPubkey,
+            server: operatorPubkey,
             user: offer.makerPublicKey,
             // internal byte order
             ...(offer.wantAsset && {
@@ -117,7 +117,7 @@ export function swapProgramBinding(
             }),
         },
         keys: {
-            serverKey: serverPubkey,
+            serverKey: operatorPubkey,
             userKey: offer.makerPublicKey,
             emulatorKey: offer.emulatorPubkey,
         },
@@ -125,11 +125,11 @@ export function swapProgramBinding(
 }
 
 /** Compile the offer's contract: program + args -> taproot tree. */
-export function offerVtxoScript(
+export function offerContract(
     offer: Omit<Offer, "swapPkScript">,
-    serverPubkey: Uint8Array,
+    operatorPubkey: Uint8Array,
 ): InstanceType<typeof arkade.ArkadeProgramScript> {
-    const { program, args, keys } = swapProgramBinding(offer, serverPubkey);
+    const { program, args, keys } = swapProgramBinding(offer, operatorPubkey);
     return new arkade.ArkadeProgramScript(program, args, keys);
 }
 
@@ -300,17 +300,17 @@ export const OFFER_CONTRACT_KIND = "asset-swap-offer";
  */
 async function registerOfferContract(
     wallet: IWallet,
-    arkServerUrl: string,
+    operatorUrl: string,
     network: NetworkName,
     binding: Omit<Offer, "swapPkScript">,
-    serverPubkey: Uint8Array,
+    operatorPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
 ): Promise<void> {
-    const { program, args, keys } = swapProgramBinding(binding, serverPubkey);
+    const { program, args, keys } = swapProgramBinding(binding, operatorPubkey);
     const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
-        arkade: new RestArkProvider(arkServerUrl),
-        indexer: new RestIndexerProvider(arkServerUrl),
+        arkade: new RestArkProvider(operatorUrl),
+        indexer: new RestIndexerProvider(operatorUrl),
         identity: wallet.identity,
         // without this the row's `address` would be derived against the SDK's
         // default network while its script is right — a row that disagrees with
@@ -358,7 +358,7 @@ async function registerOfferContract(
  */
 export async function createOffer(
     wallet: IWallet,
-    arkServerUrl: string,
+    operatorUrl: string,
     params: {
         wantAmount: bigint;
         wantAsset?: asset.AssetId;
@@ -387,11 +387,11 @@ export async function createOffer(
         throw new Error("set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC)");
     }
     const [info, makerAddress, makerPublicKey] = await Promise.all([
-        new RestArkProvider(arkServerUrl).getInfo(),
+        new RestArkProvider(operatorUrl).getInfo(),
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    const serverPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
+    const operatorPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
     const network = getNetwork(info.network as NetworkName);
     const emuKey = hex.decode(
         toXOnlySignerHex(resolveEmulatorPubkey(network, params.emulatorPubkey)),
@@ -408,15 +408,15 @@ export async function createOffer(
         makerPublicKey,
         emulatorPubkey: emuKey,
     };
-    const script = offerVtxoScript(binding, serverPubKey);
+    const script = offerContract(binding, operatorPubKey);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
 
     await registerOfferContract(
         wallet,
-        arkServerUrl,
+        operatorUrl,
         info.network as NetworkName,
         binding,
-        serverPubKey,
+        operatorPubKey,
         script.pkScript,
     );
 
@@ -424,9 +424,9 @@ export async function createOffer(
     return {
         offerHex: hex.encode(payload),
         extension: { type: OFFER_PACKET_TYPE, payload },
-        // VtxoScript.address owns address construction; assembling an ArkAddress
+        // the contract's .address() builds the address; assembling an ArkAddress
         // from tweakedPublicKey here would silently miss any future step it gains
-        address: script.address(network.hrp, serverPubKey).encode(),
+        address: script.address(network.hrp, operatorPubKey).encode(),
         swapPkScript: script.pkScript,
     };
 }
@@ -487,7 +487,7 @@ export async function createOffer(
  */
 export async function cancelOffer(
     wallet: IWallet,
-    arkServerUrl: string,
+    operatorUrl: string,
     offerHex: string,
     opts: {
         repository: AssetSwapRepository;
@@ -500,8 +500,8 @@ export async function cancelOffer(
 
     const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
-        arkade: new RestArkProvider(arkServerUrl),
-        indexer: new RestIndexerProvider(arkServerUrl),
+        arkade: new RestArkProvider(operatorUrl),
+        indexer: new RestIndexerProvider(operatorUrl),
         identity: wallet.identity,
         // registered offers resolve their VTXOs from the contract repository
         // instead of a direct indexer query; the indexer above stays as the

@@ -24,7 +24,7 @@ import {
     refundIfUnresolved,
     type LockupSpendIndexer,
     type LockupVtxo,
-    type RefundArkProvider,
+    type RefundOperatorProvider,
     type RefundIndexer,
 } from "../src/refund";
 
@@ -43,7 +43,7 @@ const REFUND_PK_SCRIPT = p2tr(key(5));
 const swapScript = () =>
     lightningSendVtxoScript({
         solverPubkey: key(1),
-        serverPubkey: key(3),
+        operatorPubkey: key(3),
         paymentHash: hex.encode(sha256(new Uint8Array(32).fill(7))),
         refundLocktime: REFUND_LOCKTIME,
         claimDelay: 4096,
@@ -67,11 +67,11 @@ const VTXOS: LockupVtxo[] = [
 
 /** A scripted arkd: echoes back the checkpoints it was handed (as a real one
  * does, plus its own signature) and reports the ark txid it was submitted.
- * Typed against the production contract so a change to RefundArkProvider
+ * Typed against the production contract so a change to RefundOperatorProvider
  * breaks the fake at compile time. */
-type FakeArk = RefundArkProvider & {
-    submitted: { arkTx: string; checkpoints: string[] }[];
-    finalized: { arkTxid: string; checkpoints: string[] }[];
+type FakeArk = RefundOperatorProvider & {
+    submitted: { tx: string; checkpoints: string[] }[];
+    finalized: { txid: string; checkpoints: string[] }[];
 };
 
 const fakeArk = (
@@ -81,28 +81,28 @@ const fakeArk = (
         failSubmit?: () => Error | undefined;
     } = {},
 ): FakeArk => {
-    const submitted: { arkTx: string; checkpoints: string[] }[] = [];
-    const finalized: { arkTxid: string; checkpoints: string[] }[] = [];
+    const submitted: { tx: string; checkpoints: string[] }[] = [];
+    const finalized: { txid: string; checkpoints: string[] }[] = [];
     return {
         submitted,
         finalized,
         getInfo: async () => ({
             checkpointTapscript: over.checkpointTapscript ?? CHECKPOINT_TAPSCRIPT,
         }),
-        submitTx: async (arkTx: string, checkpoints: string[]) => {
+        submitTx: async (tx: string, checkpoints: string[]) => {
             const failure = over.failSubmit?.();
             if (failure) throw failure;
-            submitted.push({ arkTx, checkpoints });
+            submitted.push({ tx, checkpoints });
             return {
-                arkTxid: Transaction.fromPSBT(base64.decode(arkTx)).id,
-                finalArkTx: arkTx,
+                arkTxid: Transaction.fromPSBT(base64.decode(tx)).id,
+                finalArkTx: tx,
                 signedCheckpointTxs: over.checkpointsFor
                     ? over.checkpointsFor(checkpoints)
                     : checkpoints,
             };
         },
-        finalizeTx: async (arkTxid: string, checkpoints: string[]) => {
-            finalized.push({ arkTxid, checkpoints });
+        finalizeTx: async (txid: string, checkpoints: string[]) => {
+            finalized.push({ txid, checkpoints });
         },
     } as unknown as FakeArk;
 };
@@ -164,11 +164,11 @@ describe("pushRefundWithoutReceiver", () => {
         expect(ark.submitted).toHaveLength(1);
         // Not `refund` (needs the solver) and not a unilateral leaf (needs an
         // exit): the CLTV leaf is the only one a stranded trader can drive.
-        expect(spentLeafOf(ark.submitted[0].arkTx)).toBe(script.refundWithoutReceiverScript);
+        expect(spentLeafOf(ark.submitted[0].tx)).toBe(script.refundWithoutReceiverScript);
 
         // SingleKey.sign() swallows "No inputs signed", so an unsigned tx would
         // otherwise sail through to submitTx and be rejected only server-side.
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].tx));
         for (let i = 0; i < tx.inputsLength; i++) {
             expect(tx.getInput(i).tapScriptSig?.length).toBeGreaterThan(0);
         }
@@ -185,7 +185,7 @@ describe("pushRefundWithoutReceiver", () => {
         // Without both of these the spend is simply not consensus-valid — and
         // nothing in this package restates the locktime, so this is the check
         // that the CLTV leaf (not a timelock-free one) was handed to the builder.
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].tx));
         expect(tx.lockTime).toBe(REFUND_LOCKTIME);
         expect(tx.getInput(0).sequence).toBeLessThan(0xffffffff);
     });
@@ -201,12 +201,12 @@ describe("pushRefundWithoutReceiver", () => {
         // Both deposits, aggregated: refunding vtxos[0] alone would strand the
         // rest at a script whose other refund paths are all longer.
         expect(result.amount).toBe(100_000);
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].tx));
         expect(tx.inputsLength).toBe(2);
         expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(REFUND_PK_SCRIPT));
         expect(tx.getOutput(0).amount).toBe(BigInt(100_000));
         expect(ark.finalized).toHaveLength(1);
-        expect(ark.finalized[0].arkTxid).toBe(result.arkTxid);
+        expect(ark.finalized[0].txid).toBe(result.txid);
     });
 
     it("honours an explicit destination override", async () => {
@@ -218,7 +218,7 @@ describe("pushRefundWithoutReceiver", () => {
             vtxos: VTXOS,
             refundPkScript: elsewhere,
         });
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].tx));
         expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(elsewhere));
     });
 
@@ -601,14 +601,14 @@ describe("readLockupFate", () => {
         expect(fate).toEqual({
             fate: "returned",
             spends: [
-                { checkpointTxid: first.txid, arkTxid: "c1".repeat(32) },
-                { checkpointTxid: second.txid, arkTxid: "c2".repeat(32) },
+                { checkpointTxid: first.txid, txid: "c1".repeat(32) },
+                { checkpointTxid: second.txid, txid: "c2".repeat(32) },
             ],
         });
     });
 
     it("keeps each output's own ark tx when only one of them has it", async () => {
-        // The shape a single hoisted `arkTxid` would get wrong: two outputs,
+        // The shape a single hoisted `txid` would get wrong: two outputs,
         // one named, one not.
         const first = spendOf(OUT_A);
         const second = spendOf(OUT_B);
@@ -624,8 +624,8 @@ describe("readLockupFate", () => {
         expect(fate).toEqual({
             fate: "returned",
             spends: [
-                { checkpointTxid: first.txid, arkTxid: undefined },
-                { checkpointTxid: second.txid, arkTxid: "c4".repeat(32) },
+                { checkpointTxid: first.txid, txid: undefined },
+                { checkpointTxid: second.txid, txid: "c4".repeat(32) },
             ],
         });
     });
@@ -635,7 +635,7 @@ describe("readLockupFate", () => {
         const fate = await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }], [spend]));
         expect(fate).toEqual({
             fate: "returned",
-            spends: [{ checkpointTxid: spend.txid, arkTxid: undefined }],
+            spends: [{ checkpointTxid: spend.txid, txid: undefined }],
         });
     });
 
@@ -647,7 +647,7 @@ describe("readLockupFate", () => {
         expect(fate).toEqual({
             fate: "claimed",
             preimage: PREIMAGE,
-            spends: [{ checkpointTxid: spend.txid, arkTxid: "c3".repeat(32) }],
+            spends: [{ checkpointTxid: spend.txid, txid: "c3".repeat(32) }],
         });
     });
 

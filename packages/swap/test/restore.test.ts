@@ -116,7 +116,7 @@ const scan = (
     txs: Tx[],
     existingIds = new Set<string>(),
     scanned?: Set<string>,
-) => restoreAssetSwaps(indexer, txs, existingIds, { serverPubkey: SERVER_KEY, scanned });
+) => restoreAssetSwaps(indexer, txs, existingIds, { operatorPubkey: SERVER_KEY, scanned });
 
 describe("classifySpend", () => {
     it("reads the leaf, not what the transaction moved", async () => {

@@ -26,7 +26,7 @@ import {
     awaitLockupFunding,
     claimReceiveLockup,
     pushClaim,
-    type ClaimArkProvider,
+    type ClaimOperatorProvider,
 } from "../src/claim";
 import { LockupNeedsRecoveryError, type LockupVtxo, type RefundIndexer } from "../src/refund";
 
@@ -47,7 +47,7 @@ const swapScript = () =>
     receiveVtxoScript({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
-        serverPubkey: key(3),
+        operatorPubkey: key(3),
         paymentHash: hex.encode(sha256(PREIMAGE)),
         claimDelay: 4096,
         emulatorPubkey: key(9),
@@ -71,15 +71,15 @@ const VTXOS: LockupVtxo[] = [
 const EXPECTED_AMOUNT = 100_000;
 
 /** A scripted arkd, same contract as refund.test.ts's. */
-type FakeArk = ClaimArkProvider & {
-    submitted: { arkTx: string; checkpoints: string[] }[];
-    finalized: { arkTxid: string; checkpoints: string[] }[];
+type FakeArk = ClaimOperatorProvider & {
+    submitted: { tx: string; checkpoints: string[] }[];
+    finalized: { txid: string; checkpoints: string[] }[];
 };
 
 /** The Ark server's own key — key(3) in the covenant above. */
 const SERVER_SIGNER = SingleKey.fromPrivateKey(priv(3));
 
-const serverCosign = async (psbt: string): Promise<string> =>
+const operatorCosign = async (psbt: string): Promise<string> =>
     base64.encode((await SERVER_SIGNER.sign(Transaction.fromPSBT(base64.decode(psbt)))).toPSBT());
 
 /** A scripted arkd that countersigns like the real one — `pushClaim` verifies
@@ -89,30 +89,30 @@ const fakeArk = (
         checkpointsFor?: (submitted: string[]) => string[];
         /** Answer without countersigning, as a server that never signed. */
         cosign?: boolean;
-        finalArkTx?: (signed: string) => string | undefined;
+        finalTx?: (signed: string) => string | undefined;
     } = {},
 ): FakeArk => {
-    const submitted: { arkTx: string; checkpoints: string[] }[] = [];
-    const finalized: { arkTxid: string; checkpoints: string[] }[] = [];
+    const submitted: { tx: string; checkpoints: string[] }[] = [];
+    const finalized: { txid: string; checkpoints: string[] }[] = [];
     const cosign = over.cosign ?? true;
     return {
         submitted,
         finalized,
         getInfo: async () => ({ checkpointTapscript: CHECKPOINT_TAPSCRIPT }),
-        submitTx: async (arkTx: string, checkpoints: string[]) => {
-            submitted.push({ arkTx, checkpoints });
+        submitTx: async (tx: string, checkpoints: string[]) => {
+            submitted.push({ tx, checkpoints });
             const answered = over.checkpointsFor ? over.checkpointsFor(checkpoints) : checkpoints;
-            const finalArkTx = cosign ? await serverCosign(arkTx) : arkTx;
+            const finalArkTx = cosign ? await operatorCosign(tx) : arkTx;
             return {
-                arkTxid: Transaction.fromPSBT(base64.decode(arkTx)).id,
-                finalArkTx: over.finalArkTx ? over.finalArkTx(finalArkTx) : finalArkTx,
+                arkTxid: Transaction.fromPSBT(base64.decode(tx)).id,
+                finalArkTx: over.finalTx ? over.finalTx(finalTx) : finalTx,
                 signedCheckpointTxs: cosign
-                    ? await Promise.all(answered.map(serverCosign))
+                    ? await Promise.all(answered.map(operatorCosign))
                     : answered,
             };
         },
-        finalizeTx: async (arkTxid: string, checkpoints: string[]) => {
-            finalized.push({ arkTxid, checkpoints });
+        finalizeTx: async (txid: string, checkpoints: string[]) => {
+            finalized.push({ txid, checkpoints });
         },
     } as unknown as FakeArk;
 };
@@ -140,9 +140,9 @@ describe("pushClaim", () => {
         expect(ark.submitted).toHaveLength(1);
         // The exact leaf bytes, control block stripped — the claim leaf and no
         // other.
-        expect(spentLeafOf(ark.submitted[0]!.arkTx)).toBe(script.claimScript);
+        expect(spentLeafOf(ark.submitted[0]!.tx)).toBe(script.claimScript);
         // One aggregate output to the trader's destination, for the full amount.
-        const arkTx = Transaction.fromPSBT(base64.decode(ark.submitted[0]!.arkTx));
+        const arkTx = Transaction.fromPSBT(base64.decode(ark.submitted[0]!.tx));
         expect(arkTx.outputsLength).toBeGreaterThan(0);
         expect(hex.encode(arkTx.getOutput(0)!.script!)).toBe(hex.encode(DESTINATION_PK_SCRIPT));
         expect(arkTx.getOutput(0)!.amount).toBe(BigInt(100_000));
@@ -154,7 +154,7 @@ describe("pushClaim", () => {
         expect(hex.encode(conditionFields[0]![0]!)).toBe(hex.encode(PREIMAGE));
         // …and finalize got the checkpoints back signed.
         expect(ark.finalized).toHaveLength(1);
-        expect(ark.finalized[0]!.arkTxid).toBe(result.arkTxid);
+        expect(ark.finalized[0]!.txid).toBe(result.txid);
     });
 
     it("attaches the preimage only after signing — the server's INVALID_SIGNATURE ordering", async () => {

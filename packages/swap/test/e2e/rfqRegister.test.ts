@@ -109,7 +109,7 @@ const stubTransport = (): RfqTransport => ({
         const script = lightningSendVtxoScript({
             solverPubkey: SOLVER,
             refundLocktime,
-            serverPubkey,
+            operatorPubkey: serverPubkey,
             paymentHash: PAYMENT_HASH,
             claimDelay,
             emulatorPubkey,

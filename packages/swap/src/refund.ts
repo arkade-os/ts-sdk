@@ -123,7 +123,7 @@ export async function awaitRfqResolution(
 
 /** The Ark surface the refund push needs — narrower than a full provider, and
  * satisfied by {@link RestArkProvider}. Same seam style as `RestoreIndexer`. */
-export type RefundArkProvider = Pick<RestArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+export type RefundOperatorProvider = Pick<RestArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
 
 /** The indexer surface the lockup lookup needs. */
 export type RefundIndexer = Pick<RestIndexerProvider, "getVtxos">;
@@ -314,7 +314,7 @@ export interface LockupSpend {
     checkpointTxid: string;
     /** The ark transaction that spent the above checkpoint output. What
      * history correlation matches on; absent when the indexer omitted it. */
-    arkTxid?: string;
+    txid?: string;
 }
 
 export type LockupFate =
@@ -420,7 +420,7 @@ export async function readLockupFate(
         if (vtxo.spentBy)
             spentBy.set(vtxo.spentBy, {
                 checkpointTxid: vtxo.spentBy,
-                arkTxid: vtxo.arkTxId,
+                txid: vtxo.arkTxId,
             });
         // Spent, but by nothing this can go and read. No witness to verify, so
         // this output can never contribute proof either way.
@@ -503,7 +503,7 @@ export async function readLockupFate(
  * would be worse still: it would report success over money that never moved.
  */
 export async function pushRefundWithoutReceiver(
-    ark: RefundArkProvider,
+    operator: RefundOperatorProvider,
     input: {
         script: InstanceType<typeof VHTLC.ScriptV2>;
         /** The `sender` signer. Build it from the swap record with
@@ -517,7 +517,7 @@ export async function pushRefundWithoutReceiver(
         /** Defaults to the contract's own committed refund destination. */
         refundPkScript?: Uint8Array;
     },
-): Promise<{ arkTxid: string; amount: number }> {
+): Promise<{ txid: string; amount: number }> {
     if (input.vtxos.length === 0) throw new Error("nothing to refund: no funded outputs");
 
     const swept = input.vtxos.filter((vtxo) => vtxo.recoverable);
@@ -536,10 +536,10 @@ export async function pushRefundWithoutReceiver(
         );
     }
 
-    const info = await ark.getInfo();
-    let serverUnrollScript: CSVMultisigTapscript.Type;
+    const info = await operator.getInfo();
+    let operatorUnrollScript: CSVMultisigTapscript.Type;
     try {
-        serverUnrollScript = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
+        operatorUnrollScript = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
     } catch {
         throw new Error("invalid checkpointTapscript from the Arkade server");
     }
@@ -551,7 +551,7 @@ export async function pushRefundWithoutReceiver(
     // buildOffchainTx reads the CLTV out of this leaf and sets the ark tx's
     // nLockTime and input sequence itself, on the checkpoints too — nothing
     // here has to restate `refundLocktime`.
-    const { arkTx, checkpoints } = buildOffchainTx(
+    const { arkTx: tx, checkpoints } = buildOffchainTx(
         input.vtxos.map((vtxo) => ({
             txid: vtxo.txid,
             vout: vtxo.vout,
@@ -560,16 +560,16 @@ export async function pushRefundWithoutReceiver(
             tapTree,
         })),
         [{ script: refundPkScript, amount: BigInt(amount) }],
-        serverUnrollScript,
+        operatorUnrollScript,
     );
 
     // No index list: every input spends the same leaf, so all are signed.
-    const signedArkTx = await input.sender.sign(arkTx);
-    const submitted = await ark.submitTx(
-        base64.encode(signedArkTx.toPSBT()),
+    const signedTx = await input.sender.sign(tx);
+    const submitted = await operator.submitTx(
+        base64.encode(signedTx.toPSBT()),
         checkpoints.map((c) => base64.encode(c.toPSBT())),
     );
-    assertSubmittedArkTxid(submitted, signedArkTx, "refundWithoutReceiver");
+    assertSubmittedArkTxid(submitted, signedTx, "refundWithoutReceiver");
 
     // Only checkpoints we built ourselves get signed: the server's response is
     // matched against the local set first, so a substituted checkpoint is
@@ -585,8 +585,8 @@ export async function pushRefundWithoutReceiver(
         ),
     );
 
-    await ark.finalizeTx(submitted.arkTxid, finalCheckpoints);
-    return { arkTxid: submitted.arkTxid, amount };
+    await operator.finalizeTx(submitted.arkTxid, finalCheckpoints);
+    return { txid: submitted.arkTxid, amount };
 }
 
 // ── Ask first, then fall back ────────────────────────────────────────────────
@@ -606,7 +606,7 @@ export type RefundOutcome =
     /** The solver resolved it — claimed (`settled`) or returned it (`refunded`). */
     | { outcome: "resolved"; status: RfqStatus }
     /** The trader took it back via `refundWithoutReceiver`. */
-    | { outcome: "refunded"; arkTxid: string; amount: number; status: RfqStatus | null }
+    | { outcome: "refunded"; txid: string; amount: number; status: RfqStatus | null }
     /** The refund window opened but the lockup holds nothing to return. */
     | { outcome: "nothing_to_refund"; status: RfqStatus | null }
     /**
@@ -657,7 +657,7 @@ export type RefundOutcome =
  */
 export async function refundIfUnresolved(
     transport: RfqTransport,
-    ark: RefundArkProvider,
+    operator: RefundOperatorProvider,
     indexer: RefundIndexer,
     input: {
         rfqId: string;
@@ -688,7 +688,7 @@ export async function refundIfUnresolved(
             const vtxos = await findLockupVtxos(indexer, input.script.pkScript);
             if (vtxos.length === 0) return { outcome: "nothing_to_refund", status };
             try {
-                const pushed = await pushRefundWithoutReceiver(ark, {
+                const pushed = await pushRefundWithoutReceiver(operator, {
                     script: input.script,
                     sender: input.sender,
                     vtxos,

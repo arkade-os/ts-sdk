@@ -16,7 +16,7 @@ import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
 const state = vi.hoisted(() => ({
-    arkInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
+    operatorInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
 }));
 
 vi.mock("@arkade-os/sdk", async (importOriginal) => {
@@ -25,7 +25,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
         ...mod,
         RestArkProvider: class {
             async getInfo() {
-                return state.arkInfo;
+                return state.operatorInfo;
             }
         },
     };
@@ -78,7 +78,7 @@ const PAYOUT_PUBKEY = key(15);
 const HTLC_PUBKEY = key(11);
 const REFUND_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
 
-state.arkInfo.signerPubkey = hex.encode(SERVER);
+state.operatorInfo.signerPubkey = hex.encode(SERVER);
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
@@ -100,7 +100,7 @@ const lightningTransport = (): RfqTransport => ({
         const script = lightningSendVtxoScript({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: SERVER,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
             emulatorPubkey: EMULATOR_PUBKEY,
@@ -137,7 +137,7 @@ const onchainTransport = (): RfqTransport => ({
         const lockup = lightningSendVtxoScript({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: SERVER,
             paymentHash,
             claimDelay: 4096,
             emulatorPubkey: EMULATOR_PUBKEY,
@@ -291,7 +291,7 @@ describe.each([
 
 // ── What the registration buys, against a real contract manager ──────────────
 
-const arkInfo = () => ({
+const operatorInfo = () => ({
     boardingExitDelay: 144n,
     checkpointTapscript:
         "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
@@ -345,8 +345,8 @@ const realWallet = async () => {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
     const wallet = await ReadonlyWallet.create({
-        arkServerUrl: "http://localhost:7070",
-        arkProvider: { getInfo: async () => arkInfo() } as Partial<ArkProvider> as ArkProvider,
+        operatorUrl: "http://localhost:7070",
+        arkProvider: { getInfo: async () => operatorInfo() } as Partial<ArkProvider> as ArkProvider,
         indexerProvider: offlineIndexer(),
         onchainProvider: {
             getCoins: async () => [],

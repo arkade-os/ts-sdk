@@ -135,10 +135,10 @@ describe("maker-side swap loop (regtest)", () => {
             redeemTxid: fundingTxid,
             createdAt: Math.floor(Date.now() / 1000),
         });
-        // Pending deposits have no spend to classify; serverPubkey is required
+        // Pending deposits have no spend to classify; operatorPubkey is required
         // by the restore API but does not affect this assertion.
         const { restored, scannedTxids } = await restoreAssetSwaps(indexer, history, new Set(), {
-            serverPubkey,
+            operatorPubkey: serverPubkey,
         });
 
         expect(scannedTxids).toEqual([fundingTxid]);
@@ -242,7 +242,7 @@ describe("maker-side swap loop (regtest)", () => {
             redeemTxid: cancelTxid,
             createdAt: Math.floor(Date.now() / 1000),
         });
-        const { restored } = await restoreAssetSwaps(indexer, history, new Set(), { serverPubkey });
+        const { restored } = await restoreAssetSwaps(indexer, history, new Set(), { operatorPubkey: serverPubkey });
         expect(restored).toHaveLength(1);
         expect(restored[0]).toMatchObject({
             status: "cancelled",
@@ -273,7 +273,7 @@ describe("maker-side swap loop (regtest)", () => {
         const updates: AssetSwap[] = [];
         const watcher = await watchOfferSwaps({
             wallet,
-            arkServerUrl: ARK_URL,
+            operatorUrl: ARK_URL,
             repository: swapRepository,
             onUpdate: (swap) => updates.push(swap),
         });

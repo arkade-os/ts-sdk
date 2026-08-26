@@ -54,7 +54,7 @@ const SEND_LOCKUP = lockupOf(
     lightningSendVtxoScript({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
-        serverPubkey: SERVER,
+        operatorPubkey: SERVER,
         paymentHash: PAYMENT_HASH,
         claimDelay: CLAIM_DELAY,
         emulatorPubkey: key(9),
@@ -68,7 +68,7 @@ const RECEIVE_LOCKUP = lockupOf(
     receiveVtxoScript({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
-        serverPubkey: SERVER,
+        operatorPubkey: SERVER,
         paymentHash: PAYMENT_HASH,
         claimDelay: CLAIM_DELAY,
         emulatorPubkey: key(9),
@@ -205,13 +205,13 @@ describe("rebuildRfqSwap", () => {
             createRfqSwapRecord(receiveOrigin, swapOf(receiveOrigin)),
             {
                 ...swapOf(receiveOrigin, "claimed"),
-                claimArkTxid: "ab".repeat(32),
+                claimTxid: "ab".repeat(32),
             } as LightningReceiveSwap,
         );
-        expect(record.profile.claimArkTxid).toBe("ab".repeat(32));
+        expect(record.profile.claimTxid).toBe("ab".repeat(32));
 
         const rebuilt = rebuildRfqSwap(record, RECEIVE_LOCKUP.params) as LightningReceiveSwap;
-        expect(rebuilt.claimArkTxid).toBe("ab".repeat(32));
+        expect(rebuilt.claimTxid).toBe("ab".repeat(32));
     });
 });
 
@@ -410,11 +410,11 @@ describe("updateRfqSwapRecord", () => {
         const moved = updateRfqSwapRecord(record, {
             ...swapOf(sendOrigin, "refunded"),
             updatedAt: 2_000,
-            refundArkTxid: "ff".repeat(32),
+            refundTxid: "ff".repeat(32),
         } as LightningSendSwap);
 
         expect(moved.state).toBe("refunded");
-        expect(moved.refundArkTxid).toBe("ff".repeat(32));
+        expect(moved.refundTxid).toBe("ff".repeat(32));
         expect(moved.updatedAt).toBe(2_000);
         // the immutable half is untouched, corridor keys included
         expect(hashlockOf(moved).paymentHash).toBe(hashlockOf(sendOrigin).paymentHash);
@@ -439,10 +439,10 @@ describe("updateRfqSwapRecord", () => {
     });
 
     it("carries the caller's funding txid, which no corridor projects", () => {
-        const origin = { ...sendOrigin, fundingArkTxid: "f0".repeat(32) };
+        const origin = { ...sendOrigin, fundingTxid: "f0".repeat(32) };
         const record = createRfqSwapRecord(origin, swapOf(origin));
-        expect(record.fundingArkTxid).toBe("f0".repeat(32));
-        expect(updateRfqSwapRecord(record, swapOf(origin, "settled")).fundingArkTxid).toBe(
+        expect(record.fundingTxid).toBe("f0".repeat(32));
+        expect(updateRfqSwapRecord(record, swapOf(origin, "settled")).fundingTxid).toBe(
             "f0".repeat(32),
         );
     });
@@ -495,7 +495,7 @@ describe("shouldRetainRfqSwap", () => {
  *
  * A record IS an origin plus manager state, so passing one where an origin is
  * wanted type-checks — and quietly carries the old state's `failure`,
- * `blockedReason` and `refundArkTxid` into the next `createRfqSwapRecord`,
+ * `blockedReason` and `refundTxid` into the next `createRfqSwapRecord`,
  * where `managerState` cannot clear them because it omits what the live swap
  * no longer has. That is the same trap `updateRfqSwapRecord` strips those
  * fields to avoid, and this is the other half of it.
@@ -506,8 +506,8 @@ describe("rfqSwapOriginOf", () => {
         state: "failed",
         failure: "the push was refused",
         blockedReason: "no signer for this descriptor",
-        refundArkTxid: "ff".repeat(32),
-        lockupSpendArkTxids: ["ab".repeat(32)],
+        refundTxid: "ff".repeat(32),
+        lockupSpendTxids: ["ab".repeat(32)],
     };
 
     it("keeps every request-time fact", () => {
@@ -523,8 +523,8 @@ describe("rfqSwapOriginOf", () => {
         expect(rebuilt.state).toBe("pending");
         expect(rebuilt.failure).toBeUndefined();
         expect(rebuilt.blockedReason).toBeUndefined();
-        expect(rebuilt.refundArkTxid).toBeUndefined();
-        expect(rebuilt.lockupSpendArkTxids).toBeUndefined();
+        expect(rebuilt.refundTxid).toBeUndefined();
+        expect(rebuilt.lockupSpendTxids).toBeUndefined();
     });
 
     it("gives the profile its own top-level object, so a new key does not reach the record", () => {
@@ -542,10 +542,10 @@ describe("rfqSwapOriginOf", () => {
 describe("the spend that ended the swap", () => {
     it("round-trips through the record and back onto the live swap", () => {
         const spends = ["ab".repeat(32), "cd".repeat(32)];
-        const swap = { ...swapOf(sendOrigin, "settled"), lockupSpendArkTxids: spends };
+        const swap = { ...swapOf(sendOrigin, "settled"), lockupSpendTxids: spends };
         const record = createRfqSwapRecord(sendOrigin, swap);
-        expect(record.lockupSpendArkTxids).toEqual(spends);
-        expect(rebuildRfqSwap(record, paramsOf(sendOrigin)).lockupSpendArkTxids).toEqual(spends);
+        expect(record.lockupSpendTxids).toEqual(spends);
+        expect(rebuildRfqSwap(record, paramsOf(sendOrigin)).lockupSpendTxids).toEqual(spends);
     });
 
     it("is cleared by an update whose swap no longer carries it", () => {
@@ -553,8 +553,8 @@ describe("the spend that ended the swap", () => {
         // REPLACED, so a field the live swap dropped leaves the record.
         const record = createRfqSwapRecord(sendOrigin, {
             ...swapOf(sendOrigin, "settled"),
-            lockupSpendArkTxids: ["ab".repeat(32)],
+            lockupSpendTxids: ["ab".repeat(32)],
         });
-        expect(updateRfqSwapRecord(record, swapOf(sendOrigin)).lockupSpendArkTxids).toBeUndefined();
+        expect(updateRfqSwapRecord(record, swapOf(sendOrigin)).lockupSpendTxids).toBeUndefined();
     });
 });

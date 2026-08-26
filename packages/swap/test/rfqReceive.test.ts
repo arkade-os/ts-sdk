@@ -17,7 +17,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 
 const state = vi.hoisted(() => ({
-    arkInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
+    operatorInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
 }));
 
 vi.mock("@arkade-os/sdk", async (importOriginal) => {
@@ -26,7 +26,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
         ...mod,
         RestArkProvider: class {
             async getInfo() {
-                return state.arkInfo;
+                return state.operatorInfo;
             }
         },
     };
@@ -84,7 +84,7 @@ const HTLC_CLAIM_PUBKEY = key(11);
 const COVCLAIMD_PK = secp256k1.getPublicKey(new Uint8Array(32).fill(0x22), true);
 const PAYOUT_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
 
-state.arkInfo.signerPubkey = hex.encode(SERVER);
+state.operatorInfo.signerPubkey = hex.encode(SERVER);
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
@@ -109,7 +109,7 @@ describe("receiveVtxoScript", () => {
         receiveVtxoScript({
             solverPubkey: SOLVER,
             refundLocktime: 1_800_000_000,
-            serverPubkey: SERVER,
+            operatorPubkey: SERVER,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
             emulatorPubkey: EMULATOR_PUBKEY,
@@ -225,7 +225,7 @@ const receiveQuote = (
     const script = receiveVtxoScript({
         solverPubkey: SOLVER,
         refundLocktime: REFUND_LOCKTIME,
-        serverPubkey: SERVER,
+        operatorPubkey: SERVER,
         paymentHash: profile.payment_hash as string,
         claimDelay: 4096,
         emulatorPubkey: EMULATOR_PUBKEY,
@@ -272,7 +272,7 @@ describe("deriveLightningReceive", () => {
             paymentHash: PAYMENT_HASH,
             payoutPubkey: TRADER_PAYOUT_PUBKEY,
             payoutAddress: PAYOUT_ADDRESS,
-            serverPubkey: SERVER,
+            operatorPubkey: SERVER,
             emulatorPubkey: EMULATOR_PUBKEY,
             claimDelay: 4096,
             hrp: "tark",
@@ -290,7 +290,7 @@ describe("deriveLightningReceive", () => {
                 paymentHash: PAYMENT_HASH,
                 payoutPubkey: TRADER_PAYOUT_PUBKEY,
                 payoutAddress: PAYOUT_ADDRESS,
-                serverPubkey: SERVER,
+                operatorPubkey: SERVER,
                 emulatorPubkey: EMULATOR_PUBKEY,
                 claimDelay: 4096,
                 hrp: "tark",
@@ -306,7 +306,7 @@ describe("deriveLightningReceive", () => {
                 paymentHash: PAYMENT_HASH,
                 payoutPubkey: TRADER_PAYOUT_PUBKEY,
                 payoutAddress: PAYOUT_ADDRESS,
-                serverPubkey: SERVER,
+                operatorPubkey: SERVER,
                 emulatorPubkey: EMULATOR_PUBKEY,
                 claimDelay: 4096,
                 hrp: "tark",
@@ -361,7 +361,7 @@ describe("deriveOnchainReceive", () => {
             payoutPubkey: TRADER_PAYOUT_PUBKEY,
             payoutAddress: PAYOUT_ADDRESS,
             refundPubkey: L1_REFUND_PUBKEY,
-            serverPubkey: SERVER,
+            operatorPubkey: SERVER,
             emulatorPubkey: EMULATOR_PUBKEY,
             claimDelay: 4096,
             hrp: "tark",
@@ -967,7 +967,7 @@ describe("requestOnchainReceive on an HD wallet", () => {
                 const script = receiveVtxoScript({
                     solverPubkey: SOLVER,
                     refundLocktime: REFUND_LOCKTIME,
-                    serverPubkey: SERVER,
+                    operatorPubkey: SERVER,
                     paymentHash: seen.paymentHash!,
                     claimDelay: 4096,
                     emulatorPubkey: EMULATOR_PUBKEY,

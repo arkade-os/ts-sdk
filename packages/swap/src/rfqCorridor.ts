@@ -81,9 +81,9 @@ export interface RfqCorridorHandler<P extends Record<string, unknown> = Record<s
 
     /**
      * The corridor's own transaction ids off its profile — the ones that are
-     * this leg's alone, like the receive leg's `claimArkTxid` or the onchain
+     * this leg's alone, like the receive leg's `claimTxid` or the onchain
      * leg's L1 `claimTxid`. Whatever the record's common half already carries
-     * (`fundingArkTxid`, `refundArkTxid`) is read there, not here.
+     * (`fundingTxid`, `refundTxid`) is read there, not here.
      *
      * Answered by the handler rather than by a kind switch in `activity.ts`,
      * so a corridor added later contributes its txids without any edit

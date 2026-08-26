@@ -125,7 +125,7 @@ export interface RfqSwapActivityDeps {
     repository: Pick<AssetSwapRepository, "getAllRfqSwaps">;
     /**
      * Consulted only for what a record cannot answer: a record written before
-     * `fundingArkTxid` existed, and the counterparty's spend on a swap that
+     * `fundingTxid` existed, and the counterparty's spend on a swap that
      * ended without a refund of ours.
      *
      * Optional because the stored fields are the primary source — cheaper, and
@@ -140,7 +140,7 @@ export interface RfqSwapActivityDeps {
  * groups on.
  *
  * The txids come from four places, in order of preference: the record's own
- * `fundingArkTxid` and `refundArkTxid`, the corridor's `activityTxids` (the
+ * `fundingTxid` and `refundTxid`, the corridor's `activityTxids` (the
  * receive leg's Arkade claim, the onchain leg's L1 one), and — only when the
  * first two cannot answer — one read of the lockup's VTXOs.
  *
@@ -160,8 +160,8 @@ async function activityInputOf(
     indexer?: LockupSpendIndexer,
 ): Promise<SwapActivityInput> {
     const txids = new Set<string>();
-    if (record.fundingArkTxid) txids.add(record.fundingArkTxid);
-    if (record.refundArkTxid) txids.add(record.refundArkTxid);
+    if (record.fundingTxid) txids.add(record.fundingTxid);
+    if (record.refundTxid) txids.add(record.refundTxid);
     const handler = rfqCorridorHandlers.getOrThrow(record.kind);
     for (const txid of handler.activityTxids?.(record.profile) ?? []) txids.add(txid);
     // The manager stamps these from the chain read that ended the swap, which
@@ -169,7 +169,7 @@ async function activityInputOf(
     // costs a lockup read per terminal swap, on the path least able to afford
     // one. Drained before the fallback below, so a record that already knows
     // never reaches the network.
-    for (const txid of record.lockupSpendArkTxids ?? []) txids.add(txid);
+    for (const txid of record.lockupSpendTxids ?? []) txids.add(txid);
 
     // The counterparty's spend is what ended a swap the trader did not refund
     // itself — a solver claim on a send leg, a solver reclaim on a receive one.
@@ -177,10 +177,10 @@ async function activityInputOf(
     // names it.
     const spendUnknown =
         isRfqSwapTerminal(record.state) &&
-        !record.refundArkTxid &&
-        !record.lockupSpendArkTxids?.length;
-    if (indexer && (!record.fundingArkTxid || spendUnknown)) {
-        for (const txid of await lockupTxids(indexer, record, !record.fundingArkTxid)) {
+        !record.refundTxid &&
+        !record.lockupSpendTxids?.length;
+    if (indexer && (!record.fundingTxid || spendUnknown)) {
+        for (const txid of await lockupTxids(indexer, record, !record.fundingTxid)) {
             txids.add(txid);
         }
     }

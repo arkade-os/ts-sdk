@@ -11,7 +11,7 @@ import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
 const state = vi.hoisted(() => ({
-    arkInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
+    operatorInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
 }));
 
 vi.mock("@arkade-os/sdk", async (importOriginal) => {
@@ -20,7 +20,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
         ...mod,
         RestArkProvider: class {
             async getInfo() {
-                return state.arkInfo;
+                return state.operatorInfo;
             }
         },
     };
@@ -67,7 +67,7 @@ const PAYOUT_PUBKEY = key(15);
 const HTLC_PUBKEY = key(11);
 const REFUND_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
 
-state.arkInfo.signerPubkey = hex.encode(SERVER);
+state.operatorInfo.signerPubkey = hex.encode(SERVER);
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
@@ -118,7 +118,7 @@ const lightningTransport = (): RfqTransport => ({
         const script = lightningSendVtxoScript({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: SERVER,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
             emulatorPubkey: EMULATOR_PUBKEY,
@@ -165,7 +165,7 @@ const onchainTransport = (seen: { paymentHash?: string; senderPubkey?: string })
         const lockup = lightningSendVtxoScript({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: SERVER,
             paymentHash: seen.paymentHash,
             claimDelay: 4096,
             emulatorPubkey: EMULATOR_PUBKEY,
@@ -216,7 +216,7 @@ describe("requestLightningSend and the corridor spread", () => {
             const script = lightningSendVtxoScript({
                 solverPubkey: SOLVER,
                 refundLocktime: REFUND_LOCKTIME,
-                serverPubkey: SERVER,
+                operatorPubkey: SERVER,
                 paymentHash: PAYMENT_HASH,
                 claimDelay: 4096,
                 emulatorPubkey: EMULATOR_PUBKEY,
@@ -348,10 +348,10 @@ describe("treeParams round-trips to the funded script", () => {
             lightningTransport(),
             { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
         );
-        // serverPubkey and claimDelay come from this wallet's own getInfo(),
+        // operatorPubkey and claimDelay come from this wallet's own getInfo(),
         // emulatorPubkey from a per-network pin, refundPkScript from decoding an
         // address. None of them is on the quote.
-        expect(result.treeParams.serverPubkey).toHaveLength(32);
+        expect(result.treeParams.operatorPubkey).toHaveLength(32);
         expect(result.treeParams.emulatorPubkey).toHaveLength(32);
         expect(result.treeParams.claimDelay % 512).toBe(0);
         expect(result.treeParams.refundPkScript.length).toBeGreaterThan(0);

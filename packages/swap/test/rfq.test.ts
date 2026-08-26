@@ -103,7 +103,7 @@ describe("lightningSendVtxoScript", () => {
     const script = () =>
         lightningSendVtxoScript({
             solverPubkey: key(1),
-            serverPubkey: key(3),
+            operatorPubkey: key(3),
             paymentHash: PAYMENT_HASH,
             refundLocktime: 1_800_000_000,
             claimDelay: 4096,
@@ -195,7 +195,7 @@ describe("lightningSendVtxoScript", () => {
         // Same script from the payment hash alone; a different hash, different tree.
         const other = lightningSendVtxoScript({
             solverPubkey: key(1),
-            serverPubkey: key(3),
+            operatorPubkey: key(3),
             paymentHash: hex.encode(sha256(new Uint8Array(32).fill(8))),
             refundLocktime: 1_800_000_000,
             claimDelay: 4096,
@@ -210,7 +210,7 @@ describe("lightningSendVtxoScript", () => {
     it("produces a different address when the sender key changes", () => {
         const other = lightningSendVtxoScript({
             solverPubkey: key(1),
-            serverPubkey: key(3),
+            operatorPubkey: key(3),
             paymentHash: PAYMENT_HASH,
             refundLocktime: 1_800_000_000,
             claimDelay: 4096,
@@ -225,7 +225,7 @@ describe("lightningSendVtxoScript", () => {
     it("produces a different address when the receiver payout script changes", () => {
         const other = lightningSendVtxoScript({
             solverPubkey: key(1),
-            serverPubkey: key(3),
+            operatorPubkey: key(3),
             paymentHash: PAYMENT_HASH,
             refundLocktime: 1_800_000_000,
             claimDelay: 4096,
@@ -263,7 +263,7 @@ describe("unilateralClaimDelay", () => {
         expect(() =>
             lightningSendVtxoScript({
                 solverPubkey: key(1),
-                serverPubkey: key(3),
+                operatorPubkey: key(3),
                 paymentHash: "da".repeat(32),
                 refundLocktime: 1_800_000_000,
                 claimDelay: claim,

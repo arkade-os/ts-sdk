@@ -134,7 +134,7 @@ export interface RfqSwapOrigin {
      * learns it. So it is written once at record creation, like {@link amount},
      * and no corridor `project` emits it.
      */
-    fundingArkTxid?: string;
+    fundingTxid?: string;
 }
 
 /** The stored record: the origin plus the manager's mutable state. */
@@ -143,11 +143,11 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
     state: RfqSwapState;
     createdAt: number;
     updatedAt: number;
-    refundArkTxid?: string;
+    refundTxid?: string;
     /** The ark transactions that spent the lockup, stamped by the manager from
      * the chain read that ended the swap. See
-     * `RfqSwapCommon.lockupSpendArkTxids`. */
-    lockupSpendArkTxids?: string[];
+     * `RfqSwapCommon.lockupSpendTxids`. */
+    lockupSpendTxids?: string[];
     failure?: string;
     blockedReason?: string;
 }
@@ -157,7 +157,7 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
  *
  * Corridor-agnostic by construction: every field here is one `RfqSwapCommon`
  * declares, so each is on all three legs, and anything a single corridor tracks
- * goes through its handler's `project` instead — `claimArkTxid` included, which
+ * goes through its handler's `project` instead — `claimTxid` included, which
  * only the receive leg has. A per-kind field lifted to here would be written by
  * this function and restored by nobody, since `rebuildRfqSwap` builds the
  * common half from `RfqSwapCommon` alone.
@@ -167,9 +167,9 @@ const managerState = (swap: PersistableRfqSwap) => ({
     state: swap.state,
     createdAt: swap.createdAt,
     updatedAt: swap.updatedAt,
-    ...(swap.refundArkTxid ? { refundArkTxid: swap.refundArkTxid } : {}),
-    ...(swap.lockupSpendArkTxids?.length
-        ? { lockupSpendArkTxids: [...swap.lockupSpendArkTxids] }
+    ...(swap.refundTxid ? { refundTxid: swap.refundTxid } : {}),
+    ...(swap.lockupSpendTxids?.length
+        ? { lockupSpendTxids: [...swap.lockupSpendTxids] }
         : {}),
     ...(swap.failure ? { failure: swap.failure } : {}),
     ...(swap.blockedReason ? { blockedReason: swap.blockedReason } : {}),
@@ -246,8 +246,8 @@ export function updateRfqSwapRecord(
     // acquires another swap's state.
     assertSameSwap(record, swap);
     const {
-        refundArkTxid: _refundArkTxid,
-        lockupSpendArkTxids: _lockupSpendArkTxids,
+        refundTxid: _refundTxid,
+        lockupSpendTxids: _lockupSpendTxids,
         failure: _failure,
         blockedReason: _blockedReason,
         ...origin
@@ -269,7 +269,7 @@ export function updateRfqSwapRecord(
  * A record IS an origin plus manager state, so `record` where an
  * {@link RfqSwapOrigin} is wanted type-checks — and is a bug. Spread into
  * {@link createRfqSwapRecord} it carries the OLD state's `failure`,
- * `blockedReason` and `refundArkTxid` past `managerState`, which omits a field
+ * `blockedReason` and `refundTxid` past `managerState`, which omits a field
  * the live swap no longer has and therefore cannot clear one. That is the same
  * trap {@link updateRfqSwapRecord} strips those three fields to avoid; this is
  * how a caller holding only a record gets an origin that is safe to keep.
@@ -283,7 +283,7 @@ export function rfqSwapOriginOf(record: RfqSwapRecord): RfqSwapOrigin {
         lockupAddress: record.lockupAddress,
         profile: { ...record.profile },
         ...(record.amount !== undefined ? { amount: record.amount } : {}),
-        ...(record.fundingArkTxid ? { fundingArkTxid: record.fundingArkTxid } : {}),
+        ...(record.fundingTxid ? { fundingTxid: record.fundingTxid } : {}),
     };
 }
 
@@ -335,9 +335,9 @@ export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): Per
         refundLocktime: Number(script.options.refundLocktime),
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
-        ...(record.refundArkTxid ? { refundArkTxid: record.refundArkTxid } : {}),
-        ...(record.lockupSpendArkTxids?.length
-            ? { lockupSpendArkTxids: [...record.lockupSpendArkTxids] }
+        ...(record.refundTxid ? { refundTxid: record.refundTxid } : {}),
+        ...(record.lockupSpendTxids?.length
+            ? { lockupSpendTxids: [...record.lockupSpendTxids] }
             : {}),
         ...(record.failure ? { failure: record.failure } : {}),
         ...(record.blockedReason ? { blockedReason: record.blockedReason } : {}),

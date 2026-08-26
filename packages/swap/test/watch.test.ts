@@ -91,7 +91,7 @@ const spentEvent = (offer: Offer, spentTxid: string, overrides: Record<string, u
     ...overrides,
 });
 
-// the watcher builds its own RestIndexerProvider from arkServerUrl; intercept
+// the watcher builds its own RestIndexerProvider from operatorUrl; intercept
 // the one call it makes rather than reaching through the constructor
 const withIndexer = async (
     fetcher: (txids: string[]) => Promise<{ txs: string[] }>,
@@ -154,7 +154,7 @@ describe("watchOfferSwaps", () => {
                 const updates: AssetSwap[] = [];
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                     onUpdate: (swap) => updates.push(swap),
                 });
@@ -184,7 +184,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, cancel.txid));
@@ -209,7 +209,7 @@ describe("watchOfferSwaps", () => {
         await withIndexer(fetcher, async ({ wallet, emit }) => {
             const watcher = await watchOfferSwaps({
                 wallet,
-                arkServerUrl: "http://ark",
+                operatorUrl: "http://ark",
                 repository,
             });
             emit(spentEvent(offer, cancelTxid));
@@ -234,7 +234,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, "dd".repeat(32)));
@@ -257,7 +257,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, fill.txid, { contract: { metadata: { kind: "other" } } }));
@@ -287,7 +287,7 @@ describe("watchOfferSwaps", () => {
                 const updates: AssetSwap[] = [];
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                     onUpdate: (swap) => updates.push(swap),
                 });
@@ -314,7 +314,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit, setContractWatchState }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, fill.txid));
@@ -346,7 +346,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit, setContractWatchState }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, fill.txid));
@@ -379,7 +379,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit, setContractWatchState }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, fill.txid));
@@ -406,7 +406,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit, setContractWatchState }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, fill.txid));
@@ -433,7 +433,7 @@ describe("watchOfferSwaps", () => {
                 setContractWatchState.mockRejectedValue(new Error("repository unavailable"));
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, fill.txid));
@@ -458,7 +458,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit, listeners }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 watcher.stop();
