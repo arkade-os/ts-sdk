@@ -83,13 +83,17 @@ export type IndexerProvider = VerificationIndexerProvider;
  * Interface for an on-chain explorer/node in verification context.
  */
 export interface VerificationOnchainProvider {
-    /** Get a raw transaction by txid (hex-encoded). */
-    getRawTransaction(txid: string): Promise<string>;
+    /** Get a raw transaction by txid (hex-encoded), optionally specifying blockhash if txindex is disabled. */
+    getRawTransaction(txid: string, blockhash?: string): Promise<string>;
     /** Check if a transaction is confirmed and at what depth. */
-    getTxStatus(txid: string): Promise<{
+    getTxStatus(
+        txid: string,
+        blockhash?: string,
+    ): Promise<{
         confirmed: boolean;
         blockHeight?: number;
         blockTime?: number;
+        blockHash?: string;
     }>;
     /** Get current blockchain tip info (optional — needed for timelock validation). */
     getBlockchainInfo?(): Promise<{ height: number; medianTime: number }>;
@@ -155,6 +159,9 @@ export interface DAGValidationResult {
 
     /** The commitment tx that anchors the DAG on-chain. */
     commitmentTxid: string;
+
+    /** Optional block hash where commitment transaction was confirmed. */
+    commitmentBlockHash?: string;
 
     /** The batch output index on the commitment tx. */
     batchOutputIndex: number;
@@ -310,15 +317,10 @@ export async function reconstructAndValidateVtxoDAG(
 
     if (indexer.getVtxoChain) {
         // Direct mode: fetch the specific VTXO chain (supporting Outpoint object and (txid, vout) signatures)
-        let vtxoChain: VtxoChain;
-        try {
-            vtxoChain = await (indexer.getVtxoChain as any)(
-                vtxoRootOutpoint.txid,
-                vtxoRootOutpoint.vout,
-            );
-        } catch {
-            vtxoChain = await (indexer.getVtxoChain as any)(vtxoRootOutpoint);
-        }
+        const vtxoChain: VtxoChain =
+            indexer.getVtxoChain.length === 1
+                ? await (indexer.getVtxoChain as any)(vtxoRootOutpoint)
+                : await indexer.getVtxoChain(vtxoRootOutpoint.txid, vtxoRootOutpoint.vout);
         if (!vtxoChain || !vtxoChain.chain || vtxoChain.chain.length === 0) {
             throw Errors.EMPTY_CHAIN(vtxoRootOutpoint);
         }
@@ -487,10 +489,24 @@ export async function reconstructAndValidateVtxoDAG(
     }
 
     diagnostics.push(`[5/9] Fetching on-chain anchoring status`);
-    const commitmentRaw = await onchain.getRawTransaction(actualCommitmentTxid);
-    const commitmentTx = Transaction.fromRaw(hex.decode(commitmentRaw), {
-        allowUnknownOutputs: true,
-    });
+    const onchainStatus = await onchain.getTxStatus(actualCommitmentTxid);
+    const commitmentBlockHash = onchainStatus.blockHash;
+    const commitmentRaw = await onchain.getRawTransaction(
+        actualCommitmentTxid,
+        commitmentBlockHash,
+    );
+    let commitmentTx: Transaction;
+    try {
+        commitmentTx = Transaction.fromRaw(hex.decode(commitmentRaw), {
+            allowUnknownOutputs: true,
+        });
+    } catch (e: any) {
+        throw new VtxoVerificationError(
+            `Failed to decode on-chain commitment transaction ${actualCommitmentTxid}: ${e.message}`,
+            "INVALID_ONCHAIN_TX",
+            { commitmentTxid: actualCommitmentTxid, originalError: e.message },
+        );
+    }
     const computedCommitmentTxid = computeTxid(commitmentTx);
     if (computedCommitmentTxid !== actualCommitmentTxid) {
         throw Errors.TXID_MISMATCH(actualCommitmentTxid, computedCommitmentTxid);
@@ -517,7 +533,6 @@ export async function reconstructAndValidateVtxoDAG(
         amount: batchOutput.amount,
     };
 
-    const onchainStatus = await onchain.getTxStatus(actualCommitmentTxid);
     const blockchainInfo = onchain.getBlockchainInfo ? await onchain.getBlockchainInfo() : null;
 
     // ── Steps 6-9: Validations ───────────────────────────────────────────────
@@ -548,6 +563,7 @@ export async function reconstructAndValidateVtxoDAG(
         vtxoRoot: vtxoRoot,
         anchoringLeaf: anchoringLeaf,
         commitmentTxid: actualCommitmentTxid,
+        commitmentBlockHash,
         batchOutputIndex: anchoringLeaf.ancestorOutputIndex ?? BATCH_OUTPUT_VTXO_INDEX,
         checkpointValidations,
         diagnostics,
@@ -908,9 +924,10 @@ async function verifyOnchainAnchoring(
     expectedScript: Uint8Array,
     onchain: VerificationOnchainProvider,
     minConfirmations: number = 1,
-): Promise<{ confirmed: boolean; blockHeight?: number; blockTime?: number }> {
+    commitmentBlockHash?: string,
+): Promise<{ confirmed: boolean; blockHeight?: number; blockTime?: number; blockHash?: string }> {
     // 1. Check confirmation status
-    const status = await onchain.getTxStatus(commitmentTxid);
+    const status = await onchain.getTxStatus(commitmentTxid, commitmentBlockHash);
 
     if (!status.confirmed) {
         throw new VtxoVerificationError(
@@ -920,8 +937,23 @@ async function verifyOnchainAnchoring(
         );
     }
 
+    if (minConfirmations > 1 && status.blockHeight !== undefined && onchain.getBlockchainInfo) {
+        const chainInfo = await onchain.getBlockchainInfo();
+        const depth = chainInfo.height - status.blockHeight + 1;
+        if (depth < minConfirmations) {
+            throw new VtxoVerificationError(
+                `Commitment transaction ${commitmentTxid} is confirmed at depth ${depth}, which is less than requested minConfirmations ${minConfirmations}`,
+                "COMMITMENT_NOT_CONFIRMED",
+                { commitmentTxid, minConfirmations, depth },
+            );
+        }
+    }
+
     // 2. Fetch raw transaction to verify output script and amount
-    const rawTxHex = await onchain.getRawTransaction(commitmentTxid);
+    const rawTxHex = await onchain.getRawTransaction(
+        commitmentTxid,
+        commitmentBlockHash ?? status.blockHash,
+    );
     let onchainTx: Transaction;
     try {
         onchainTx = Transaction.fromRaw(hex.decode(rawTxHex), { allowUnknownOutputs: true });
@@ -1010,14 +1042,16 @@ export async function verifyVtxoComplete(
         if (!anchor || anchor.amount === undefined || anchor.script === undefined) {
             // Fallback to simple confirmation check if structural data is missing
             // (Should not happen in a valid Phase 1 result)
-            return onchain.getTxStatus(dagResult.commitmentTxid).then((status) => {
-                if (!status.confirmed)
-                    throw new VtxoVerificationError(
-                        "Commitment not confirmed",
-                        "COMMITMENT_NOT_CONFIRMED",
-                    );
-                return status;
-            });
+            return onchain
+                .getTxStatus(dagResult.commitmentTxid, dagResult.commitmentBlockHash)
+                .then((status) => {
+                    if (!status.confirmed)
+                        throw new VtxoVerificationError(
+                            "Commitment not confirmed",
+                            "COMMITMENT_NOT_CONFIRMED",
+                        );
+                    return status;
+                });
         }
 
         return verifyOnchainAnchoring(
@@ -1027,12 +1061,13 @@ export async function verifyVtxoComplete(
             anchor.script,
             onchain,
             minConfirmations,
+            dagResult.commitmentBlockHash,
         );
     });
 
-    dagResult.diagnostics.push(
-        `✓ Commitment tx ${dagResult.commitmentTxid} confirmed at block ${onchainStatus.blockHeight}`,
-    );
+    const blockMsg =
+        onchainStatus.blockHeight !== undefined ? ` at block ${onchainStatus.blockHeight}` : "";
+    dagResult.diagnostics.push(`✓ Commitment tx ${dagResult.commitmentTxid} confirmed${blockMsg}`);
 
     return {
         ...dagResult,

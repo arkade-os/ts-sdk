@@ -170,11 +170,17 @@ function extractTimelockOpcodes(
  * Handles OP_0..OP_16 (decoded as numbers/bigints by btc-signer), and byte pushes
  * (decoded as Uint8Array, interpreted as little-endian ScriptNum).
  */
-function resolveScriptNumber(element: string | number | bigint | Uint8Array): number | null {
+export function resolveScriptNumber(element: string | number | bigint | Uint8Array): number | null {
     if (typeof element === "number") {
-        return element;
+        return Number.isSafeInteger(element) ? element : null;
     }
     if (typeof element === "bigint") {
+        if (
+            element < BigInt(Number.MIN_SAFE_INTEGER) ||
+            element > BigInt(Number.MAX_SAFE_INTEGER)
+        ) {
+            return null;
+        }
         return Number(element);
     }
     if (element instanceof Uint8Array) {

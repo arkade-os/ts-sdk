@@ -23,6 +23,9 @@ export class StorageCrypto {
         if (!subtle) {
             throw new Error("WebCrypto (crypto.subtle) is required for StorageCrypto");
         }
+        if (!key || key.length !== 32) {
+            throw new Error("Invalid key length: AES-256 requires a 32-byte key");
+        }
         const iv = globalThis.crypto.getRandomValues(new Uint8Array(this.IV_LENGTH));
         const cryptoKey = await subtle.importKey(
             "raw",
@@ -55,6 +58,9 @@ export class StorageCrypto {
         const subtle = globalThis.crypto?.subtle;
         if (!subtle) {
             throw new Error("WebCrypto (crypto.subtle) is required for StorageCrypto");
+        }
+        if (!key || key.length !== 32) {
+            throw new Error("Invalid key length: AES-256 requires a 32-byte key");
         }
         if (combined.length < this.IV_LENGTH + this.AUTH_TAG_LENGTH) {
             throw new Error("Invalid encrypted payload length");

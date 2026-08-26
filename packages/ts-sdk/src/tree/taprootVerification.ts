@@ -9,7 +9,12 @@
  */
 
 import { hex } from "@scure/base";
-import { taprootTweakPubkey, tagSchnorr, compareBytes } from "@scure/btc-signer/utils.js";
+import {
+    taprootTweakPubkey,
+    tagSchnorr,
+    compareBytes,
+    equalBytes,
+} from "@scure/btc-signer/utils.js";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { Script } from "@scure/btc-signer/script.js";
 import { VtxoVerificationError, type DAGNode } from "./vtxoDAGVerification.js";
@@ -23,13 +28,6 @@ function tapBranchHash(a: Uint8Array, b: Uint8Array): Uint8Array {
     let [left, right] = [a, b];
     if (compareBytes(b, a) === -1) [left, right] = [b, a];
     return tagSchnorr("TapBranch", left, right);
-}
-
-/** Byte equality helper */
-function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-    return true;
 }
 
 /**
@@ -112,7 +110,14 @@ function verifyMerkleProof(
         }
         return;
     } else if (typeof cb === "string") {
-        controlBlock = hex.decode(cb);
+        try {
+            controlBlock = hex.decode(cb);
+        } catch {
+            throw new VtxoVerificationError(
+                `Invalid control block format in ${txid}`,
+                "INVALID_MERKLE_PROOF",
+            );
+        }
     } else {
         throw new VtxoVerificationError(
             `Invalid control block format in ${txid}`,
@@ -189,24 +194,14 @@ function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
         (item) => item instanceof Uint8Array && (item.length === 32 || item.length === 33),
     );
 
-    // ── Standard Ark Exit Policy & Collaborative Leaves ──
-    const hasCSV = decoded.some((op) => op === "CHECKSEQUENCEVERIFY");
+    // ── Structural Signature & Key Policy ──
+    // Enforce that the script contains a public key and a signature check (CHECKSIG / CHECKSIGVERIFY).
+    // Timelock (CSV/CLTV) and preimage satisfiability are validated separately by their respective modules.
     const hasCheckSig = decoded.some((op) => op === "CHECKSIG" || op === "CHECKSIGVERIFY");
 
-    // ── Submarine Swap HTLC Policies ──
-    const hasHash = decoded.some(
-        (op) => op === "HASH160" || op === "SHA256" || op === "HASH256" || op === "RIPEMD160",
-    );
-    const hasCLTV = decoded.some((op) => op === "CHECKLOCKTIMEVERIFY");
-
-    const isArkStandard = hasCSV && hasCheckSig && hasKey;
-    const isSwapClaim = hasHash && hasCheckSig && hasKey;
-    const isSwapRefund = hasCLTV && hasCheckSig && hasKey;
-    const isCollaborativeMultisig = hasCheckSig && hasKey;
-
-    if (!isArkStandard && !isSwapClaim && !isSwapRefund && !isCollaborativeMultisig) {
+    if (!hasCheckSig || !hasKey) {
         throw new VtxoVerificationError(
-            `Tapleaf script in ${txid} does not follow Ark or HTLC exit policies`,
+            `Tapleaf script in ${txid} violates structural key/signature policy: must contain a valid pubkey and CHECKSIG/CHECKSIGVERIFY`,
             "INVALID_ARK_SCRIPT",
         );
     }

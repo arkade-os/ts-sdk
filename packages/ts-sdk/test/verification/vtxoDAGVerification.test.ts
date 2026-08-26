@@ -23,6 +23,7 @@ import { p2tr } from "@scure/btc-signer/payment.js";
 import { Script, OP } from "@scure/btc-signer/script.js";
 import {
     reconstructAndValidateVtxoDAG,
+    verifyVtxoComplete,
     ChainTxType,
     type Outpoint,
     type ChainTx,
@@ -33,6 +34,7 @@ import {
     extractTimelockConstraints,
     validateTimelockConsistency,
     validateTimelockSatisfiability,
+    resolveScriptNumber,
     type ChainState,
 } from "../../src/tree/timelockVerification.js";
 import {
@@ -176,6 +178,7 @@ export class MockIndexerProvider implements IndexerProvider {
 export class MockOnchainProvider implements OnchainProvider {
     public confirmedTxids = new Set<string>();
     public txs = new Map<string, string>();
+    public txHeights = new Map<string, number>();
     public chainHeight = 100;
     public chainMedianTime = 1700000000;
 
@@ -187,7 +190,7 @@ export class MockOnchainProvider implements OnchainProvider {
         if (this.confirmedTxids.has(txid)) {
             return {
                 confirmed: true,
-                blockHeight: this.chainHeight,
+                blockHeight: this.txHeights.get(txid) ?? this.chainHeight,
                 blockTime: this.chainMedianTime,
             };
         }
@@ -796,6 +799,181 @@ describe("VTXO DAG Verification", () => {
             expect(() => {
                 verifyNodeHashPreimages(result.anchoringLeaf, badPreimages);
             }).toThrow("INVALID_HASH_PREIMAGE");
+        });
+    });
+
+    describe("Tier 1 & Tier 2 Enhancements and Edge Cases", () => {
+        it("should enforce minConfirmations against blockchain depth in verifyVtxoComplete", async () => {
+            const commitmentRaw = createVirtualTx(fakeCommitmentTxid(10), 0, [
+                { amount: 100000n, script: makeP2TRScript(0) },
+            ]);
+            const commitmentTxid = commitmentRaw.txid;
+            onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
+            onchain.confirmedTxids.add(commitmentTxid);
+            onchain.txHeights.set(commitmentTxid, 100);
+            onchain.chainHeight = 105; // commitment blockHeight = 100 -> depth = 6
+
+            const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
+                parentScript: makeP2TRScript(0),
+                tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[0]),
+            });
+            signVirtualTx(vtxoTx.tx, 0, TEST_PRIVKEYS[0], [
+                { script: makeP2TRScript(0), amount: 100000n },
+            ]);
+
+            indexer.chain = [
+                {
+                    txid: vtxoTx.txid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.ARK,
+                    spends: [commitmentTxid],
+                },
+                {
+                    txid: commitmentTxid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.COMMITMENT,
+                    spends: [],
+                },
+            ];
+            indexer.virtualTxs.set(vtxoTx.txid, base64.encode(vtxoTx.tx.toPSBT()));
+
+            // Depth is 6; minConfirmations = 6 should pass
+            const passResult = await verifyVtxoComplete(
+                { txid: vtxoTx.txid, vout: 0 },
+                indexer,
+                onchain,
+                6,
+            );
+            expect(passResult.valid).toBe(true);
+
+            // minConfirmations = 7 should fail
+            await expect(
+                verifyVtxoComplete({ txid: vtxoTx.txid, vout: 0 }, indexer, onchain, 7),
+            ).rejects.toThrow("COMMITMENT_NOT_CONFIRMED");
+        });
+
+        it("should format diagnostics cleanly when blockHeight is undefined without printing 'block undefined'", async () => {
+            const commitmentRaw = createVirtualTx(fakeCommitmentTxid(11), 0, [
+                { amount: 100000n, script: makeP2TRScript(0) },
+            ]);
+            const commitmentTxid = commitmentRaw.txid;
+            onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
+            onchain.confirmedTxids.add(commitmentTxid);
+
+            const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
+                parentScript: makeP2TRScript(0),
+                tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[0]),
+            });
+            signVirtualTx(vtxoTx.tx, 0, TEST_PRIVKEYS[0], [
+                { script: makeP2TRScript(0), amount: 100000n },
+            ]);
+
+            indexer.chain = [
+                {
+                    txid: vtxoTx.txid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.ARK,
+                    spends: [commitmentTxid],
+                },
+                {
+                    txid: commitmentTxid,
+                    expiresAt: "2000000000",
+                    type: ChainTxType.COMMITMENT,
+                    spends: [],
+                },
+            ];
+            indexer.virtualTxs.set(vtxoTx.txid, base64.encode(vtxoTx.tx.toPSBT()));
+
+            // Mock getTxStatus returning confirmed without blockHeight
+            const customOnchain: OnchainProvider = {
+                async getRawTransaction(txid: string) {
+                    return onchain.getRawTransaction(txid);
+                },
+                async getTxStatus(txid: string) {
+                    return { confirmed: true, blockHeight: undefined };
+                },
+                async broadcastTransaction(txHex: string) {
+                    return onchain.broadcastTransaction(txHex);
+                },
+            };
+
+            const result = await verifyVtxoComplete(
+                { txid: vtxoTx.txid, vout: 0 },
+                indexer,
+                customOnchain,
+                1,
+            );
+            expect(result.valid).toBe(true);
+            const confirmedDiag = result.diagnostics.find((d) => d.includes("confirmed"));
+            expect(confirmedDiag).toBeDefined();
+            expect(confirmedDiag).not.toContain("block undefined");
+            expect(confirmedDiag).toBe(`✓ Commitment tx ${commitmentTxid} confirmed`);
+        });
+
+        it("should support 1-argument getVtxoChain based on function arity", async () => {
+            const commitmentRaw = createVirtualTx(fakeCommitmentTxid(12), 0, [
+                { amount: 100000n, script: makeP2TRScript(0) },
+            ]);
+            const commitmentTxid = commitmentRaw.txid;
+            onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
+            onchain.confirmedTxids.add(commitmentTxid);
+
+            const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
+                parentScript: makeP2TRScript(0),
+                tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[0]),
+            });
+            signVirtualTx(vtxoTx.tx, 0, TEST_PRIVKEYS[0], [
+                { script: makeP2TRScript(0), amount: 100000n },
+            ]);
+
+            const singleArgIndexer = {
+                // 1 parameter arity (outpoint)
+                async getVtxoChain(outpoint: Outpoint) {
+                    return {
+                        chain: [
+                            {
+                                txid: vtxoTx.txid,
+                                expiresAt: "2000000000",
+                                type: ChainTxType.ARK,
+                                spends: [commitmentTxid],
+                            },
+                            {
+                                txid: commitmentTxid,
+                                expiresAt: "2000000000",
+                                type: ChainTxType.COMMITMENT,
+                                spends: [],
+                            },
+                        ],
+                    };
+                },
+                async getBatchVtxos(_txid: string) {
+                    return [];
+                },
+                async getVirtualTxs(_txids: string[]) {
+                    return { txs: [base64.encode(vtxoTx.tx.toPSBT())] };
+                },
+            };
+
+            const result = await reconstructAndValidateVtxoDAG(
+                { txid: vtxoTx.txid, vout: 0 },
+                singleArgIndexer,
+                onchain,
+            );
+            expect(result.valid).toBe(true);
+        });
+
+        it("should handle safe bigints and reject unsafe bigints in resolveScriptNumber", () => {
+            expect(resolveScriptNumber(500n)).toBe(500);
+            expect(resolveScriptNumber(0n)).toBe(0);
+            expect(resolveScriptNumber(BigInt(Number.MAX_SAFE_INTEGER))).toBe(
+                Number.MAX_SAFE_INTEGER,
+            );
+            expect(resolveScriptNumber(BigInt(Number.MIN_SAFE_INTEGER))).toBe(
+                Number.MIN_SAFE_INTEGER,
+            );
+            expect(resolveScriptNumber(BigInt(Number.MAX_SAFE_INTEGER) + 1n)).toBeNull();
+            expect(resolveScriptNumber(BigInt(Number.MIN_SAFE_INTEGER) - 1n)).toBeNull();
+            expect(resolveScriptNumber(10n ** 30n)).toBeNull();
         });
     });
 });

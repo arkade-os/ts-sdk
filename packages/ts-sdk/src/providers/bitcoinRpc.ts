@@ -139,15 +139,17 @@ export class BitcoinRpcProvider implements VerificationOnchainProvider {
      */
     async isTxIndexEnabled(): Promise<boolean> {
         if (this.txIndexChecked !== null) return this.txIndexChecked;
-        try {
-            const indexInfo = await this.call<Record<string, { synced: boolean }>>("getindexinfo");
-            this.txIndexChecked = Boolean(indexInfo?.txindex?.synced);
-            return this.txIndexChecked;
-        } catch {
-            // If getindexinfo is unsupported, fall back to true (assume regtest/configured node)
+        const indexInfo = await this.call<Record<string, { synced: boolean }>>("getindexinfo");
+        if (
+            typeof indexInfo === "object" &&
+            indexInfo !== null &&
+            indexInfo.txindex &&
+            indexInfo.txindex.synced === true
+        ) {
             this.txIndexChecked = true;
             return true;
         }
+        return false;
     }
 
     /**
@@ -173,6 +175,7 @@ export class BitcoinRpcProvider implements VerificationOnchainProvider {
         confirmed: boolean;
         blockHeight?: number;
         blockTime?: number;
+        blockHash?: string;
     }> {
         try {
             // getrawtransaction txid [verbose=true] [blockhash]
@@ -183,9 +186,25 @@ export class BitcoinRpcProvider implements VerificationOnchainProvider {
             const confirmations = tx.confirmations ?? 0;
             const confirmed = confirmations > 0;
 
+            let blockHeight: number | undefined;
+            if (confirmed && tx.blockhash) {
+                try {
+                    const header = await this.call<{ height: number }>("getblockheader", [
+                        tx.blockhash,
+                    ]);
+                    if (typeof header?.height === "number") {
+                        blockHeight = header.height;
+                    }
+                } catch {
+                    // if getblockheader is unavailable, leave blockHeight undefined
+                }
+            }
+
             return {
                 confirmed,
+                blockHeight,
                 blockTime: tx.blocktime,
+                blockHash: tx.blockhash,
             };
         } catch (e) {
             if (e instanceof BitcoinRpcError && e.code === -5) {

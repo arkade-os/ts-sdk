@@ -21,17 +21,11 @@
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
 import { type DAGNode, VtxoVerificationError } from "./vtxoDAGVerification.js";
-import { taprootTweakPubkey } from "@scure/btc-signer/utils.js";
+import { taprootTweakPubkey, equalBytes } from "@scure/btc-signer/utils.js";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 
 // SIGHASH_DEFAULT (0x00) is the standard for Taproot key-path spends in Ark
 const SIGHASH_DEFAULT = 0x00;
-
-function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-    return true;
-}
 
 /**
  * Recursively verifies signatures for the entire DAG.
@@ -203,7 +197,11 @@ function verifyNodeScriptPathSignature(node: DAGNode): void {
         }
 
         if (!matchingScript) {
-            continue;
+            throw new VtxoVerificationError(
+                `No matching tapLeafScript found for script-path signature in transaction ${txid}`,
+                "INVALID_SIGNATURE",
+                { txid, leafHash: hex.encode(leafHash) },
+            );
         }
 
         let signature = sig;

@@ -226,7 +226,6 @@ export async function executeSovereignExit(
                 if (
                     msg.includes("txn-already-in-mempool") ||
                     msg.includes("txn-already-known") ||
-                    msg.includes("bad-txns-inputs-spent") ||
                     msg.includes("RPC_TRANSACTION_ALREADY_IN_CHAIN") ||
                     msg.includes("Transaction already in block chain") ||
                     code === -27 ||

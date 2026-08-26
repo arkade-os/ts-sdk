@@ -19,6 +19,7 @@ import {
     executeSovereignExit,
 } from "../../src/storage/sovereignStorage.js";
 import { MockWalletAuthenticator } from "../../src/utils/authenticator.js";
+import { StorageCrypto } from "../../src/utils/cryptoUtils.js";
 
 class MockStorageProvider implements VerificationStorageProvider {
     private store: Map<string, string> = new Map();
@@ -241,5 +242,71 @@ describe("Tier 3: Sovereign Unilateral Exit Storage", () => {
         // The data must NOT be readable JSON, it must be a Base64-encoded binary (encrypted)
         expect(rawSaved).not.toBeNull();
         expect(() => JSON.parse(rawSaved!)).toThrow(); // Should fail parsing because it's encrypted
+    });
+
+    it("should reject invalid key lengths in StorageCrypto encrypt and decrypt", async () => {
+        const shortKey = new Uint8Array(16);
+        const longKey = new Uint8Array(64);
+        const validKey = new Uint8Array(32);
+
+        await expect(StorageCrypto.encrypt("test", shortKey)).rejects.toThrow(
+            "Invalid key length: AES-256 requires a 32-byte key",
+        );
+        await expect(StorageCrypto.encrypt("test", longKey)).rejects.toThrow(
+            "Invalid key length: AES-256 requires a 32-byte key",
+        );
+
+        const ciphertext = await StorageCrypto.encrypt("test", validKey);
+        await expect(StorageCrypto.decrypt(ciphertext, shortKey)).rejects.toThrow(
+            "Invalid key length: AES-256 requires a 32-byte key",
+        );
+        await expect(StorageCrypto.decrypt(ciphertext, longKey)).rejects.toThrow(
+            "Invalid key length: AES-256 requires a 32-byte key",
+        );
+    });
+
+    it("should fail executeSovereignExit when broadcast fails with bad-txns-inputs-spent", async () => {
+        const commitmentRaw = createVirtualTx(fakeCommitmentTxid(4), 0, [
+            { amount: 100000n, script: makeP2TRScript(1) },
+        ]);
+        const commitmentTxid = commitmentRaw.txid;
+        onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
+        onchain.confirmedTxids.add(commitmentTxid);
+
+        const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
+            parentScript: makeP2TRScript(1),
+            tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[1]),
+        });
+        signVirtualTx(vtxoTx.tx, 0, TEST_PRIVKEYS[1], [
+            { script: makeP2TRScript(1), amount: 100000n },
+        ]);
+
+        indexer.chain = [
+            {
+                txid: vtxoTx.txid,
+                expiresAt: "2000000000",
+                type: ChainTxType.ARK,
+                spends: [commitmentTxid],
+            },
+            {
+                txid: commitmentTxid,
+                expiresAt: "2000000000",
+                type: ChainTxType.COMMITMENT,
+                spends: [],
+            },
+        ];
+        indexer.virtualTxs.set(vtxoTx.txid, base64.encode(vtxoTx.tx.toPSBT()));
+
+        await onReceiveVtxo({ txid: vtxoTx.txid, vout: 0 }, indexer, onchain, storage, masterKey);
+
+        // Mock onchain broadcast to throw bad-txns-inputs-spent (e.g. input already spent)
+        onchain.broadcastTransaction = vi
+            .fn()
+            .mockRejectedValue(new Error("bad-txns-inputs-spent"));
+
+        const result = await executeSovereignExit(vtxoTx.txid, storage, onchain, masterKey);
+        expect(result.success).toBe(false);
+        expect(result.error).toContain("bad-txns-inputs-spent");
+        expect(result.broadcastedTxids).toHaveLength(0);
     });
 });
