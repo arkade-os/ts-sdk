@@ -1596,7 +1596,14 @@ export function deriveLightningReceive(input: {
     const script = lightningReceiveContract(contractParams);
     const address = script.address(input.hrp, input.operatorPubkey).encode();
     verifyLockupAddress(quote, address);
-    return { address, swapPkScript: script.pkScript, script, invoice, refundLocktime, contractParams };
+    return {
+        address,
+        swapPkScript: script.pkScript,
+        script,
+        invoice,
+        refundLocktime,
+        contractParams,
+    };
 }
 
 /**

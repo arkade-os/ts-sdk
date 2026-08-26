@@ -176,9 +176,7 @@ async function activityInputOf(
     // Unknown only when neither the trader's own refund nor the manager's stamp
     // names it.
     const spendUnknown =
-        isRfqSwapTerminal(record.state) &&
-        !record.refundTxid &&
-        !record.lockupSpendTxids?.length;
+        isRfqSwapTerminal(record.state) && !record.refundTxid && !record.lockupSpendTxids?.length;
     if (indexer && (!record.fundingTxid || spendUnknown)) {
         for (const txid of await lockupTxids(indexer, record, !record.fundingTxid)) {
             txids.add(txid);

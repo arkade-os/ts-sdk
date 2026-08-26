@@ -71,7 +71,7 @@ const VTXOS: LockupVtxo[] = [
 const EXPECTED_AMOUNT = 100_000;
 
 /** A scripted arkd, same contract as refund.test.ts's. */
-type FakeArk = ArkProvider & {
+type FakeOperator = ArkProvider & {
     submitted: { tx: string; checkpoints: string[] }[];
     finalized: { txid: string; checkpoints: string[] }[];
 };
@@ -91,7 +91,7 @@ const fakeOperator = (
         cosign?: boolean;
         finalTx?: (signed: string) => string | undefined;
     } = {},
-): FakeArk => {
+): FakeOperator => {
     const submitted: { tx: string; checkpoints: string[] }[] = [];
     const finalized: { txid: string; checkpoints: string[] }[] = [];
     const cosign = over.cosign ?? true;
@@ -114,7 +114,7 @@ const fakeOperator = (
         finalizeTx: async (txid: string, checkpoints: string[]) => {
             finalized.push({ txid, checkpoints });
         },
-    } as unknown as FakeArk;
+    } as unknown as FakeOperator;
 };
 
 /** The leaf script the ark tx's single input actually spends. */

@@ -242,7 +242,9 @@ describe("maker-side swap loop (regtest)", () => {
             redeemTxid: cancelTxid,
             createdAt: Math.floor(Date.now() / 1000),
         });
-        const { restored } = await restoreAssetSwaps(indexer, history, new Set(), { operatorPubkey });
+        const { restored } = await restoreAssetSwaps(indexer, history, new Set(), {
+            operatorPubkey,
+        });
         expect(restored).toHaveLength(1);
         expect(restored[0]).toMatchObject({
             status: "cancelled",

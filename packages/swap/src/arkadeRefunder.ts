@@ -16,11 +16,7 @@
  * the trader must act on into a retry that grinds the window away.
  */
 import type { ArkProvider, IWallet } from "@arkade-os/sdk";
-import {
-    findLockupVtxos,
-    pushRefundWithoutReceiver,
-    type RefundIndexer,
-} from "./refund";
+import { findLockupVtxos, pushRefundWithoutReceiver, type RefundIndexer } from "./refund";
 import { RefundNotLocallyPossibleError, senderIdentityForSwapRecord } from "./refundBlocked";
 import { rfqSignerOf } from "./rfqProfileParts";
 import type { AssetSwapRepository } from "./repository";

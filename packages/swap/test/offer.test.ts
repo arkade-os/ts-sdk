@@ -6,7 +6,9 @@ import { decodeOffer, encodeOffer, offerContract, swapProgramBinding, Offer } fr
 // deterministic keys -> the derived swap addresses must never drift (any
 // change to the program JSONs or the arg binding changes them); goldens from
 // the swap covenant's reference selfCheck
-const operatorPubkey = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
+const operatorPubkey = hex.decode(
+    "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+);
 const keys = {
     makerPkScript: hex.decode(
         "51203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
@@ -54,7 +56,11 @@ describe("swap offer", () => {
     it("derives the golden swap addresses for both directions", () => {
         for (const [offer, golden] of goldens) {
             const contract = offerContract(offer, operatorPubkey);
-            const address = new ArkAddress(operatorPubkey, contract.tweakedPublicKey, "tark").encode();
+            const address = new ArkAddress(
+                operatorPubkey,
+                contract.tweakedPublicKey,
+                "tark",
+            ).encode();
             expect(address).toBe(golden);
         }
     });

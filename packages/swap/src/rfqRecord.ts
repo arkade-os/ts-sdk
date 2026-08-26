@@ -168,9 +168,7 @@ const managerState = (swap: PersistableRfqSwap) => ({
     createdAt: swap.createdAt,
     updatedAt: swap.updatedAt,
     ...(swap.refundTxid ? { refundTxid: swap.refundTxid } : {}),
-    ...(swap.lockupSpendTxids?.length
-        ? { lockupSpendTxids: [...swap.lockupSpendTxids] }
-        : {}),
+    ...(swap.lockupSpendTxids?.length ? { lockupSpendTxids: [...swap.lockupSpendTxids] } : {}),
     ...(swap.failure ? { failure: swap.failure } : {}),
     ...(swap.blockedReason ? { blockedReason: swap.blockedReason } : {}),
 });

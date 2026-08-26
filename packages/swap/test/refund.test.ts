@@ -68,18 +68,18 @@ const VTXOS: LockupVtxo[] = [
  * does, plus its own signature) and reports the ark txid it was submitted.
  * Typed against the production contract so a change to ArkProvider
  * breaks the fake at compile time. */
-type FakeArk = ArkProvider & {
+type FakeOperator = ArkProvider & {
     submitted: { tx: string; checkpoints: string[] }[];
     finalized: { txid: string; checkpoints: string[] }[];
 };
 
-const fakeArk = (
+const fakeOperator = (
     over: {
         checkpointTapscript?: string;
         checkpointsFor?: (submitted: string[]) => string[];
         failSubmit?: () => Error | undefined;
     } = {},
-): FakeArk => {
+): FakeOperator => {
     const submitted: { tx: string; checkpoints: string[] }[] = [];
     const finalized: { txid: string; checkpoints: string[] }[] = [];
     return {
@@ -103,7 +103,7 @@ const fakeArk = (
         finalizeTx: async (txid: string, checkpoints: string[]) => {
             finalized.push({ txid, checkpoints });
         },
-    } as unknown as FakeArk;
+    } as unknown as FakeOperator;
 };
 
 const fakeIndexer = (vtxos: LockupVtxo[]): RefundIndexer & { scripts: string[][] } => {
@@ -153,29 +153,29 @@ const spentLeafOf = (psbt: string): string => {
 describe("pushRefundWithoutReceiver", () => {
     it("spends the refundWithoutReceiver leaf, signed by the trader's own sender key", async () => {
         const contract = swapScript();
-        const ark = fakeArk();
-        await pushRefundWithoutReceiver(ark, {
+        const operator = fakeOperator();
+        await pushRefundWithoutReceiver(operator, {
             contract: contract,
             sender: SENDER,
             vtxos: VTXOS,
         });
 
-        expect(ark.submitted).toHaveLength(1);
+        expect(operator.submitted).toHaveLength(1);
         // Not `refund` (needs the solver) and not a unilateral leaf (needs an
         // exit): the CLTV leaf is the only one a stranded trader can drive.
-        expect(spentLeafOf(ark.submitted[0].tx)).toBe(contract.refundWithoutReceiverScript);
+        expect(spentLeafOf(operator.submitted[0].tx)).toBe(contract.refundWithoutReceiverScript);
 
         // SingleKey.sign() swallows "No inputs signed", so an unsigned tx would
         // otherwise sail through to submitTx and be rejected only server-side.
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].tx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
         for (let i = 0; i < tx.inputsLength; i++) {
             expect(tx.getInput(i).tapScriptSig?.length).toBeGreaterThan(0);
         }
     });
 
     it("carries the CLTV locktime and an nLockTime-enabling sequence", async () => {
-        const ark = fakeArk();
-        await pushRefundWithoutReceiver(ark, {
+        const operator = fakeOperator();
+        await pushRefundWithoutReceiver(operator, {
             contract: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
@@ -184,14 +184,14 @@ describe("pushRefundWithoutReceiver", () => {
         // Without both of these the spend is simply not consensus-valid — and
         // nothing in this package restates the locktime, so this is the check
         // that the CLTV leaf (not a timelock-free one) was handed to the builder.
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].tx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
         expect(tx.lockTime).toBe(REFUND_LOCKTIME);
         expect(tx.getInput(0).sequence).toBeLessThan(0xffffffff);
     });
 
     it("returns every funded output to the contract's own committed destination", async () => {
-        const ark = fakeArk();
-        const result = await pushRefundWithoutReceiver(ark, {
+        const operator = fakeOperator();
+        const result = await pushRefundWithoutReceiver(operator, {
             contract: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
@@ -200,30 +200,30 @@ describe("pushRefundWithoutReceiver", () => {
         // Both deposits, aggregated: refunding vtxos[0] alone would strand the
         // rest at a script whose other refund paths are all longer.
         expect(result.amount).toBe(100_000);
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].tx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
         expect(tx.inputsLength).toBe(2);
         expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(REFUND_PK_SCRIPT));
         expect(tx.getOutput(0).amount).toBe(BigInt(100_000));
-        expect(ark.finalized).toHaveLength(1);
-        expect(ark.finalized[0].txid).toBe(result.txid);
+        expect(operator.finalized).toHaveLength(1);
+        expect(operator.finalized[0].txid).toBe(result.txid);
     });
 
     it("honours an explicit destination override", async () => {
-        const ark = fakeArk();
+        const operator = fakeOperator();
         const elsewhere = p2tr(key(21));
-        await pushRefundWithoutReceiver(ark, {
+        await pushRefundWithoutReceiver(operator, {
             contract: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
             refundPkScript: elsewhere,
         });
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].tx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
         expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(elsewhere));
     });
 
     it("refuses an empty lockup instead of pushing an inputless transaction", async () => {
         await expect(
-            pushRefundWithoutReceiver(fakeArk(), {
+            pushRefundWithoutReceiver(fakeOperator(), {
                 contract: swapScript(),
                 sender: SENDER,
                 vtxos: [],
@@ -241,26 +241,26 @@ describe("pushRefundWithoutReceiver", () => {
          * this case through `joinBatch` instead of an offchain tx.
          */
         it("refuses rather than submitting a spend the server must reject", async () => {
-            const ark = fakeArk();
+            const operator = fakeOperator();
             const swept: LockupVtxo[] = [
                 { txid: "33".repeat(32), vout: 0, value: 5_000, recoverable: true },
             ];
             await expect(
-                pushRefundWithoutReceiver(ark, {
+                pushRefundWithoutReceiver(operator, {
                     contract: swapScript(),
                     sender: SENDER,
                     vtxos: swept,
                 }),
             ).rejects.toThrow(LockupNeedsRecoveryError);
             // Nothing was sent: the point is to refuse before the round trip.
-            expect(ark.submitted).toEqual([]);
+            expect(operator.submitted).toEqual([]);
         });
 
         it("names the outpoints that need recovering", async () => {
             const swept: LockupVtxo[] = [
                 { txid: "33".repeat(32), vout: 2, value: 5_000, recoverable: true },
             ];
-            const error: unknown = await pushRefundWithoutReceiver(fakeArk(), {
+            const error: unknown = await pushRefundWithoutReceiver(fakeOperator(), {
                 contract: swapScript(),
                 sender: SENDER,
                 vtxos: swept,
@@ -284,30 +284,30 @@ describe("pushRefundWithoutReceiver", () => {
             // would take the live ones down with it. Refusing names the fix;
             // silently dropping it would report success over money that never
             // moved.
-            const ark = fakeArk();
+            const operator = fakeOperator();
             const mixed: LockupVtxo[] = [
                 { ...VTXOS[0], recoverable: false },
                 { txid: "44".repeat(32), vout: 1, value: 9_000, recoverable: true },
             ];
             await expect(
-                pushRefundWithoutReceiver(ark, {
+                pushRefundWithoutReceiver(operator, {
                     contract: swapScript(),
                     sender: SENDER,
                     vtxos: mixed,
                 }),
             ).rejects.toThrow(LockupNeedsRecoveryError);
-            expect(ark.submitted).toEqual([]);
+            expect(operator.submitted).toEqual([]);
         });
 
         it("still pushes when every output is live", async () => {
-            const ark = fakeArk();
+            const operator = fakeOperator();
             const live: LockupVtxo[] = VTXOS.map((v) => ({ ...v, recoverable: false }));
-            await pushRefundWithoutReceiver(ark, {
+            await pushRefundWithoutReceiver(operator, {
                 contract: swapScript(),
                 sender: SENDER,
                 vtxos: live,
             });
-            expect(ark.submitted).toHaveLength(1);
+            expect(operator.submitted).toHaveLength(1);
         });
     });
 
@@ -316,7 +316,7 @@ describe("pushRefundWithoutReceiver", () => {
         // same script — so the sender key can sign it perfectly well, and only
         // matching it against the locally built set catches the swap. (A
         // malformed stand-in would prove nothing: signing would fail anyway.)
-        const capture = fakeArk();
+        const capture = fakeOperator();
         await pushRefundWithoutReceiver(capture, {
             contract: swapScript(),
             sender: SENDER,
@@ -324,20 +324,20 @@ describe("pushRefundWithoutReceiver", () => {
         });
         const foreignCheckpoint = capture.submitted[0].checkpoints[0];
 
-        const ark = fakeArk({ checkpointsFor: () => [foreignCheckpoint] });
+        const operator = fakeOperator({ checkpointsFor: () => [foreignCheckpoint] });
         await expect(
-            pushRefundWithoutReceiver(ark, {
+            pushRefundWithoutReceiver(operator, {
                 contract: swapScript(),
                 sender: SENDER,
                 vtxos: [VTXOS[0]],
             }),
         ).rejects.toThrow(/does not match any submitted checkpoint/);
-        expect(ark.finalized).toHaveLength(0);
+        expect(operator.finalized).toHaveLength(0);
     });
 
     it("reports a malformed checkpointTapscript rather than failing deep in the builder", async () => {
         await expect(
-            pushRefundWithoutReceiver(fakeArk({ checkpointTapscript: "00" }), {
+            pushRefundWithoutReceiver(fakeOperator({ checkpointTapscript: "00" }), {
                 contract: swapScript(),
                 sender: SENDER,
                 vtxos: VTXOS,
@@ -433,16 +433,16 @@ describe("refundIfUnresolved", () => {
 
     it("stops without refunding when the solver resolved it", async () => {
         for (const state of RFQ_RESOLVED_STATES) {
-            const ark = fakeArk();
+            const operator = fakeOperator();
             const result = await refundIfUnresolved(
                 fakeTransport([state]),
-                ark,
+                operator,
                 fakeIndexer(VTXOS),
                 { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
             );
             expect(result.outcome).toBe("resolved");
             // even though the deadline had passed and the lockup looked funded
-            expect(ark.submitted).toHaveLength(0);
+            expect(operator.submitted).toHaveLength(0);
         }
     });
 
@@ -451,15 +451,15 @@ describe("refundIfUnresolved", () => {
         // lockup in every one of them; treating "terminal" as "done" would
         // walk away from the money.
         for (const state of ["refused", "expired", "stuck"]) {
-            const ark = fakeArk();
+            const operator = fakeOperator();
             const result = await refundIfUnresolved(
                 fakeTransport([state]),
-                ark,
+                operator,
                 fakeIndexer(VTXOS),
                 { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
             );
             expect(result.outcome).toBe("refunded");
-            expect(ark.submitted).toHaveLength(1);
+            expect(operator.submitted).toHaveLength(1);
         }
     });
 
@@ -469,7 +469,7 @@ describe("refundIfUnresolved", () => {
         // way". Burning the whole `attemptDeadline` window on it and then
         // rethrowing would waste the time the caller needed to RECOVER the
         // outputs and finish the refund properly.
-        const ark = fakeArk();
+        const operator = fakeOperator();
         const swept = { txid: "55".repeat(32), vout: 3, value: 8_000 };
         const indexer = {
             getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
@@ -477,7 +477,7 @@ describe("refundIfUnresolved", () => {
             }),
         } as unknown as RefundIndexer;
 
-        const result = await refundIfUnresolved(fakeTransport(["quoted"]), ark, indexer, {
+        const result = await refundIfUnresolved(fakeTransport(["quoted"]), operator, indexer, {
             ...baseInput(),
             now: () => REFUND_LOCKTIME + 1,
         });
@@ -487,31 +487,31 @@ describe("refundIfUnresolved", () => {
             expect(result.outpoints).toEqual([`${"55".repeat(32)}:3`]);
             expect(result.vtxos).toEqual([{ ...swept, recoverable: true }]);
         }
-        expect(ark.submitted).toEqual([]);
+        expect(operator.submitted).toEqual([]);
     });
 
     it("waits while the refund window is shut, then pushes once it opens", async () => {
-        const ark = fakeArk();
+        const operator = fakeOperator();
         let clock = REFUND_LOCKTIME - 3;
         const result = await refundIfUnresolved(
             fakeTransport(["quoted"]),
-            ark,
+            operator,
             fakeIndexer(VTXOS),
             { ...baseInput(), now: () => clock++ },
         );
         expect(result.outcome).toBe("refunded");
         if (result.outcome === "refunded") expect(result.amount).toBe(100_000);
-        expect(ark.submitted).toHaveLength(1);
+        expect(operator.submitted).toHaveLength(1);
     });
 
     it("retries a push refused while median-time-past lags, then succeeds", async () => {
         let attempts = 0;
-        const ark = fakeArk({
+        const operator = fakeOperator({
             failSubmit: () => (++attempts <= 2 ? new Error("FORFEIT_CLOSURE_LOCKED") : undefined),
         });
         const result = await refundIfUnresolved(
             fakeTransport(["quoted"]),
-            ark,
+            operator,
             fakeIndexer(VTXOS),
             { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
         );
@@ -520,9 +520,9 @@ describe("refundIfUnresolved", () => {
     });
 
     it("rethrows the server's refusal once the attempt window closes", async () => {
-        const ark = fakeArk({ failSubmit: () => new Error("FORFEIT_CLOSURE_LOCKED") });
+        const operator = fakeOperator({ failSubmit: () => new Error("FORFEIT_CLOSURE_LOCKED") });
         await expect(
-            refundIfUnresolved(fakeTransport(["quoted"]), ark, fakeIndexer(VTXOS), {
+            refundIfUnresolved(fakeTransport(["quoted"]), operator, fakeIndexer(VTXOS), {
                 ...baseInput(),
                 now: () => REFUND_LOCKTIME + 1,
                 attemptDeadline: REFUND_LOCKTIME,
@@ -531,13 +531,18 @@ describe("refundIfUnresolved", () => {
     });
 
     it("reports an empty lockup instead of failing", async () => {
-        const ark = fakeArk();
-        const result = await refundIfUnresolved(fakeTransport(["stuck"]), ark, fakeIndexer([]), {
-            ...baseInput(),
-            now: () => REFUND_LOCKTIME + 1,
-        });
+        const operator = fakeOperator();
+        const result = await refundIfUnresolved(
+            fakeTransport(["stuck"]),
+            operator,
+            fakeIndexer([]),
+            {
+                ...baseInput(),
+                now: () => REFUND_LOCKTIME + 1,
+            },
+        );
         expect(result.outcome).toBe("nothing_to_refund");
-        expect(ark.submitted).toHaveLength(0);
+        expect(operator.submitted).toHaveLength(0);
     });
 });
 
