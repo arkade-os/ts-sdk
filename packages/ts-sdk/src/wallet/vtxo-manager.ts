@@ -3046,20 +3046,24 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             throw e instanceof Error ? e : new Error(String(e));
         }
 
+        const configuredMaxBoardingInputs = this.settlementConfig.maxBoardingInputsPerSettle;
         const maxBoardingInputs =
-            this.settlementConfig.maxBoardingInputsPerSettle ??
-            DEFAULT_SETTLEMENT_CONFIG.maxBoardingInputsPerSettle;
+            configuredMaxBoardingInputs ?? DEFAULT_SETTLEMENT_CONFIG.maxBoardingInputsPerSettle;
         if (!Number.isSafeInteger(maxBoardingInputs) || maxBoardingInputs < 1) {
             throw new Error("maxBoardingInputsPerSettle must be a positive safe integer");
         }
-        const unsettledBoarding = boardingUtxos
-            .filter(
-                (u) =>
-                    u.status.confirmed &&
-                    !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`) &&
-                    !expiredSet.has(`${u.txid}:${u.vout}`),
-            )
-            .sort((a, b) => a.txid.localeCompare(b.txid) || a.vout - b.vout);
+        const unsettledBoarding = boardingUtxos.filter(
+            (u) =>
+                u.status.confirmed &&
+                !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`) &&
+                !expiredSet.has(`${u.txid}:${u.vout}`),
+        );
+        const cappedBoarding =
+            configuredMaxBoardingInputs !== undefined &&
+            configuredMaxBoardingInputs < Number.MAX_SAFE_INTEGER;
+        if (cappedBoarding) {
+            unsettledBoarding.sort((a, b) => a.txid.localeCompare(b.txid) || a.vout - b.vout);
+        }
 
         // Collect near-expiry VTXOs unless the event-driven path is mid-renewal.
         // Skipping when renewalInProgress avoids double-submitting the same VTXOs.
@@ -3114,7 +3118,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const filteredBoarding: ExtendedCoin[] = [];
         for (const u of unsettledBoarding) {
-            if (filteredBoarding.length >= maxBoardingInputs) break;
+            if (cappedBoarding && filteredBoarding.length >= maxBoardingInputs) break;
             const inputFee = estimator.evalOnchainInput({
                 amount: BigInt(u.value),
             });

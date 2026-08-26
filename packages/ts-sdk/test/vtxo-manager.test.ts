@@ -2859,6 +2859,35 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         expect(call.inputs).toEqual([normal]);
     });
 
+    it("preserves provider boarding order when no finite cap is configured", async () => {
+        const second = { ...makeUnexpiredUtxo(10_000), txid: "ff".repeat(32) };
+        const first = { ...makeUnexpiredUtxo(20_000, 1), txid: "00".repeat(32) };
+        const wallet = buildWallet([second, first], []);
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([second, first]);
+
+        expect((wallet.settle as any).mock.calls[0][0].inputs).toEqual([second, first]);
+    });
+
+    it("sorts deterministically only when a finite boarding cap is configured", async () => {
+        const second = { ...makeUnexpiredUtxo(10_000), txid: "ff".repeat(32) };
+        const first = { ...makeUnexpiredUtxo(20_000, 1), txid: "00".repeat(32) };
+        const wallet = buildWallet([second, first], []);
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            maxBoardingInputsPerSettle: 1,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([second, first]);
+
+        expect((wallet.settle as any).mock.calls[0][0].inputs).toEqual([first]);
+    });
+
     it("uses the pinned destination only for a cycle containing boarding inputs", async () => {
         const pinned =
             "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
