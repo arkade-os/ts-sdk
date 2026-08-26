@@ -21,7 +21,7 @@ const boardingDelay = { type: "seconds", value: 604672n } as const;
 
 function program(overrides: Partial<BoardingProgram> = {}): BoardingProgram {
     return {
-        name: "vault-board-v2",
+        name: "example-board-v1",
         boardingPubKey: boardingKey,
         cosignerPubKey: cosignerKey,
         recoveryPubKey: recoveryKey,
@@ -30,14 +30,21 @@ function program(overrides: Partial<BoardingProgram> = {}): BoardingProgram {
 }
 
 describe("named boarding programs", () => {
-    it("rejects every program name except the release-pinned vault program", () => {
+    it("accepts caller-owned program identities and rejects malformed names", () => {
         expect(() =>
             createBoardingProgramScript(
-                { ...program(), name: "another-program" } as BoardingProgram,
+                { ...program(), name: "another-program" },
                 operatorKey,
                 boardingDelay,
             ),
-        ).toThrow("unsupported boarding program");
+        ).not.toThrow();
+        expect(() =>
+            createBoardingProgramScript(
+                { ...program(), name: "invalid program" },
+                operatorKey,
+                boardingDelay,
+            ),
+        ).toThrow("boarding program name is invalid");
     });
 
     it("canonically constructs the exact cooperative and recovery leaves", () => {

@@ -2,11 +2,9 @@ import { hex } from "@scure/base";
 import { VtxoScript, type TapLeafScript } from "./base";
 import { CSVMultisigTapscript, MultisigTapscript, type RelativeTimelock } from "./tapscript";
 
-export const VAULT_BOARDING_PROGRAM = "vault-board-v2";
-
 /** Serializable description of the supported named boarding contract. */
 export interface BoardingProgram {
-    name: typeof VAULT_BOARDING_PROGRAM;
+    name: string;
     boardingPubKey: Uint8Array;
     cosignerPubKey: Uint8Array;
     recoveryPubKey: Uint8Array;
@@ -51,8 +49,8 @@ export function createBoardingProgramScript(
     serverPubKey: Uint8Array,
     csvTimelock: RelativeTimelock,
 ): BoardingProgramScript {
-    if (program.name !== VAULT_BOARDING_PROGRAM) {
-        throw new Error(`unsupported boarding program '${program.name}'`);
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(program.name)) {
+        throw new Error("boarding program name is invalid");
     }
     for (const [label, key] of [
         ["boarding", program.boardingPubKey],

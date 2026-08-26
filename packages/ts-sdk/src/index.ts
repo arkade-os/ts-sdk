@@ -436,11 +436,7 @@ export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
 export * from "./extension/emulator";
-export {
-    BoardingProgramScript,
-    createBoardingProgramScript,
-    VAULT_BOARDING_PROGRAM,
-} from "./script/boarding";
+export { BoardingProgramScript, createBoardingProgramScript } from "./script/boarding";
 export type { BoardingProgram } from "./script/boarding";
 export type {
     BoardingSigningAdapter,

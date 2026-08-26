@@ -41,11 +41,7 @@ export type {
     ValidatedBoardingBatch,
 } from "./boarding";
 export type { BoardingProgram } from "../script/boarding";
-export {
-    BoardingProgramScript,
-    createBoardingProgramScript,
-    VAULT_BOARDING_PROGRAM,
-} from "../script/boarding";
+export { BoardingProgramScript, createBoardingProgramScript } from "../script/boarding";
 export { recoverBoardingProgram } from "./boardingRecovery";
 export type { RecoverBoardingProgramParams } from "./boardingRecovery";
 
