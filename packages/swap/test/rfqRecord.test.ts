@@ -36,14 +36,14 @@ const REFUND_LOCKTIME = 1_900_000_000;
 // 512 — the same 4096 the rest of the suite uses.
 const CLAIM_DELAY = 4096;
 const PAYMENT_HASH = "d4".repeat(32);
-const SERVER = key(3);
+const OPERATOR_PUBKEY = key(3);
 
 /** The two halves a consumer holds: the row's params, and the address that was
  * funded. Built the way the entry points build them, so the fixture exercises
  * the real `serializeParams` round trip rather than a hand-written record. */
 const lockupOf = (contract: ReturnType<typeof lightningReceiveContract>) => ({
     params: VHTLCV2ContractHandler.serializeParams(contract.options),
-    address: contract.address("tark", SERVER).encode(),
+    address: contract.address("tark", OPERATOR_PUBKEY).encode(),
     // The live swap watches this, and the record stores only the address it
     // decodes from — so a fixture that let the two disagree would be a swap no
     // consumer could build.
@@ -54,7 +54,7 @@ const SEND_LOCKUP = lockupOf(
     lightningSendContract({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
-        operatorPubkey: SERVER,
+        operatorPubkey: OPERATOR_PUBKEY,
         paymentHash: PAYMENT_HASH,
         claimDelay: CLAIM_DELAY,
         emulatorPubkey: key(9),
@@ -68,7 +68,7 @@ const RECEIVE_LOCKUP = lockupOf(
     lightningReceiveContract({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
-        operatorPubkey: SERVER,
+        operatorPubkey: OPERATOR_PUBKEY,
         paymentHash: PAYMENT_HASH,
         claimDelay: CLAIM_DELAY,
         emulatorPubkey: key(9),

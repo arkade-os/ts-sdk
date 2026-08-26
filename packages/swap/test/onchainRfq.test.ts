@@ -178,13 +178,13 @@ describe("deriveOnchainSend", () => {
     // The maker's own view of its stack: server key(3), emulator key(9),
     // claim delay 4096, sender key(13) — and a real, decodable arkade refund
     // address.
-    const SERVER = key(3);
+    const OPERATOR_PUBKEY = key(3);
     const SENDER_PUBKEY = key(13);
     const RECEIVER_PK_SCRIPT = p2tr(key(1));
     const REFUND_ADDRESS = lightningSendContract({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
-        operatorPubkey: SERVER,
+        operatorPubkey: OPERATOR_PUBKEY,
         paymentHash: PAYMENT_HASH,
         claimDelay: 4096,
         emulatorPubkey: key(9),
@@ -192,13 +192,13 @@ describe("deriveOnchainSend", () => {
         senderPubkey: SENDER_PUBKEY,
         receiverPkScript: RECEIVER_PK_SCRIPT,
     })
-        .address("ark", SERVER)
+        .address("ark", OPERATOR_PUBKEY)
         .encode();
 
     const derivation = () => ({
         paymentHash: PAYMENT_HASH,
         payoutPubkey: key(5),
-        operatorPubkey: SERVER,
+        operatorPubkey: OPERATOR_PUBKEY,
         emulatorPubkey: key(9),
         claimDelay: 4096,
         hrp: "ark",
@@ -213,7 +213,7 @@ describe("deriveOnchainSend", () => {
         const lockup = lightningSendContract({
             solverPubkey: key(1),
             refundLocktime: REFUND_LOCKTIME,
-            operatorPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
             emulatorPubkey: key(9),
@@ -241,7 +241,7 @@ describe("deriveOnchainSend", () => {
             valid_until: NOW + 900,
             refund_locktime: REFUND_LOCKTIME,
             profile: {
-                lockup_address: lockup.address("ark", SERVER).encode(),
+                lockup_address: lockup.address("ark", OPERATOR_PUBKEY).encode(),
                 htlc_pubkey: hex.encode(key(11)),
                 htlc_locktime: HTLC_LOCKTIME,
                 htlc_address: htlc.address,

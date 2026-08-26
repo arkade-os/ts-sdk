@@ -78,16 +78,16 @@ import { createOffer, decodeOffer } from "../src/offer";
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
 
-const SERVER = key(3);
+const OPERATOR_PUBKEY = key(3);
 const SOLVER = key(1);
 const RECEIVER_PK_SCRIPT = p2tr(key(1));
 const EMULATOR_PUBKEY = key(9);
 const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
 const PREIMAGE = new Uint8Array(32).fill(7);
 const PAYMENT_HASH = paymentHashOf(PREIMAGE);
-const REFUND_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
+const REFUND_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
 
-state.operatorInfo.signerPubkey = hex.encode(SERVER);
+state.operatorInfo.signerPubkey = hex.encode(OPERATOR_PUBKEY);
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
@@ -125,10 +125,10 @@ const lightningTransport = (forEmulatorPubkey: Uint8Array): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
         const senderPubkey = hex.decode(profile.client_refund_pubkey as string);
-        const script = lightningSendContract({
+        const contract = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            operatorPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
             emulatorPubkey: forEmulatorPubkey,
@@ -148,7 +148,7 @@ const lightningTransport = (forEmulatorPubkey: Uint8Array): RfqTransport => ({
             refund_locktime: REFUND_LOCKTIME,
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
-                lockup_address: script.address("tark", SERVER).encode(),
+                lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
             },
         } satisfies RfqQuote;
     },
@@ -206,7 +206,7 @@ describe("requestOnchainSend never touches the emulator", () => {
             const lockupScript = lightningSendContract({
                 solverPubkey: SOLVER,
                 refundLocktime: REFUND_LOCKTIME,
-                operatorPubkey: SERVER,
+                operatorPubkey: OPERATOR_PUBKEY,
                 paymentHash: PAYMENT_HASH,
                 claimDelay: 4096,
                 emulatorPubkey: forEmulatorPubkey,
@@ -234,7 +234,7 @@ describe("requestOnchainSend never touches the emulator", () => {
                 valid_until: VALID_UNTIL,
                 refund_locktime: REFUND_LOCKTIME,
                 profile: {
-                    lockup_address: lockupScript.address("tark", SERVER).encode(),
+                    lockup_address: lockupScript.address("tark", OPERATOR_PUBKEY).encode(),
                     htlc_pubkey: hex.encode(HTLC_PUBKEY),
                     htlc_locktime: HTLC_LOCKTIME,
                     htlc_address: htlc.address,

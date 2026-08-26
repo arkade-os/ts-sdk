@@ -73,7 +73,7 @@ const RFQ_ID = "a1".repeat(32);
 const PREIMAGE = new Uint8Array(32).fill(7);
 const PAYMENT_HASH = hex.encode(sha256(PREIMAGE));
 
-const SERVER = key(3);
+const OPERATOR_PUBKEY = key(3);
 const SOLVER = key(1);
 const EMULATOR_PUBKEY = key(9);
 const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
@@ -82,9 +82,9 @@ const SOLVER_REFUND_PK_SCRIPT = p2tr(key(8));
 const L1_REFUND_PUBKEY = key(7);
 const HTLC_CLAIM_PUBKEY = key(11);
 const COVCLAIMD_PK = secp256k1.getPublicKey(new Uint8Array(32).fill(0x22), true);
-const PAYOUT_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
+const PAYOUT_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
 
-state.operatorInfo.signerPubkey = hex.encode(SERVER);
+state.operatorInfo.signerPubkey = hex.encode(OPERATOR_PUBKEY);
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
@@ -109,7 +109,7 @@ describe("lightningReceiveContract", () => {
         lightningReceiveContract({
             solverPubkey: SOLVER,
             refundLocktime: 1_800_000_000,
-            operatorPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
             emulatorPubkey: EMULATOR_PUBKEY,
@@ -130,18 +130,18 @@ describe("lightningReceiveContract", () => {
 
         // claim: preimage (length-checked) + the TRADER (receiver) + server
         expect(compiled.claimScript).toBe(
-            `82012088a914${hash160}876920${hex.encode(TRADER_PAYOUT_PUBKEY)}ad20${hex.encode(SERVER)}ac`,
+            `82012088a914${hash160}876920${hex.encode(TRADER_PAYOUT_PUBKEY)}ad20${hex.encode(OPERATOR_PUBKEY)}ac`,
         );
         // collaborative refund: solver(sender) + trader + server
         expect(compiled.refundScript).toBe(
-            `20${hex.encode(SOLVER)}ad20${hex.encode(TRADER_PAYOUT_PUBKEY)}ad20${hex.encode(SERVER)}ac`,
+            `20${hex.encode(SOLVER)}ad20${hex.encode(TRADER_PAYOUT_PUBKEY)}ad20${hex.encode(OPERATOR_PUBKEY)}ac`,
         );
         // refundWithoutReceiver: solver + server, CLTV(refundLocktime) — the
         // solver's own recourse on these legs
         expect(compiled.refundWithoutReceiverScript.includes("b175")).toBe(true);
         expect(
             compiled.refundWithoutReceiverScript.endsWith(
-                `20${hex.encode(SOLVER)}ad20${hex.encode(SERVER)}ac`,
+                `20${hex.encode(SOLVER)}ad20${hex.encode(OPERATOR_PUBKEY)}ac`,
             ),
         ).toBe(true);
         // unilateralClaim: preimage + the trader alone, CSV(4096s)
@@ -152,8 +152,8 @@ describe("lightningReceiveContract", () => {
         // nonInteractiveRefund = server + trader(receiver) + emulator-tweaked
         // key, pinned to the solver's refund destination; nonInteractiveClaim
         // carries the server + the trader's payout pin.
-        expect(compiled.nonInteractiveClaimScript).toContain(hex.encode(SERVER));
-        expect(compiled.nonInteractiveRefundScript).toContain(hex.encode(SERVER));
+        expect(compiled.nonInteractiveClaimScript).toContain(hex.encode(OPERATOR_PUBKEY));
+        expect(compiled.nonInteractiveRefundScript).toContain(hex.encode(OPERATOR_PUBKEY));
         expect(compiled.nonInteractiveRefundScript).toContain(hex.encode(TRADER_PAYOUT_PUBKEY));
     });
 });
@@ -222,10 +222,10 @@ const receiveQuote = (
     over: { from?: number; to?: number; profile?: Record<string, unknown> } = {},
 ): RfqQuote => {
     const profile = (payload as { profile: Record<string, unknown> }).profile;
-    const script = lightningReceiveContract({
+    const contract = lightningReceiveContract({
         solverPubkey: SOLVER,
         refundLocktime: REFUND_LOCKTIME,
-        operatorPubkey: SERVER,
+        operatorPubkey: OPERATOR_PUBKEY,
         paymentHash: profile.payment_hash as string,
         claimDelay: 4096,
         emulatorPubkey: EMULATOR_PUBKEY,
@@ -246,7 +246,7 @@ const receiveQuote = (
         profile: {
             payment_hash: profile.payment_hash,
             invoice: "lnbcrt49u1p...",
-            lockup_address: script.address("tark", SERVER).encode(),
+            lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
             solver_refund_pk_script: hex.encode(SOLVER_REFUND_PK_SCRIPT),
             ...over.profile,
         },
@@ -272,7 +272,7 @@ describe("deriveLightningReceive", () => {
             paymentHash: PAYMENT_HASH,
             payoutPubkey: TRADER_PAYOUT_PUBKEY,
             payoutAddress: PAYOUT_ADDRESS,
-            operatorPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             emulatorPubkey: EMULATOR_PUBKEY,
             claimDelay: 4096,
             hrp: "tark",
@@ -290,7 +290,7 @@ describe("deriveLightningReceive", () => {
                 paymentHash: PAYMENT_HASH,
                 payoutPubkey: TRADER_PAYOUT_PUBKEY,
                 payoutAddress: PAYOUT_ADDRESS,
-                operatorPubkey: SERVER,
+                operatorPubkey: OPERATOR_PUBKEY,
                 emulatorPubkey: EMULATOR_PUBKEY,
                 claimDelay: 4096,
                 hrp: "tark",
@@ -306,7 +306,7 @@ describe("deriveLightningReceive", () => {
                 paymentHash: PAYMENT_HASH,
                 payoutPubkey: TRADER_PAYOUT_PUBKEY,
                 payoutAddress: PAYOUT_ADDRESS,
-                operatorPubkey: SERVER,
+                operatorPubkey: OPERATOR_PUBKEY,
                 emulatorPubkey: EMULATOR_PUBKEY,
                 claimDelay: 4096,
                 hrp: "tark",
@@ -361,7 +361,7 @@ describe("deriveOnchainReceive", () => {
             payoutPubkey: TRADER_PAYOUT_PUBKEY,
             payoutAddress: PAYOUT_ADDRESS,
             refundPubkey: L1_REFUND_PUBKEY,
-            operatorPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             emulatorPubkey: EMULATOR_PUBKEY,
             claimDelay: 4096,
             hrp: "tark",
@@ -828,7 +828,7 @@ describe("requestLightningReceive on an HD wallet", () => {
         expect(error.cause).toMatchObject({ message: "repository unavailable" });
         // Both halves of `registerLockupContract`'s call travel together, so a
         // holder of the record can retry the write without a quote.
-        expect(error.script.address("tark", SERVER).encode()).toBe(error.address);
+        expect(error.script.address("tark", OPERATOR_PUBKEY).encode()).toBe(error.address);
         // The invoice must be unreachable, not merely discouraged: a payer who
         // pays into an unwatched lockup loses the payment.
         expect(error).not.toHaveProperty("invoice");
@@ -964,10 +964,10 @@ describe("requestOnchainReceive on an HD wallet", () => {
             async requestQuote(payload) {
                 const profile = (payload as { profile: Record<string, unknown> }).profile;
                 seen.paymentHash = profile.payment_hash as string;
-                const script = lightningReceiveContract({
+                const contract = lightningReceiveContract({
                     solverPubkey: SOLVER,
                     refundLocktime: REFUND_LOCKTIME,
-                    operatorPubkey: SERVER,
+                    operatorPubkey: OPERATOR_PUBKEY,
                     paymentHash: seen.paymentHash!,
                     claimDelay: 4096,
                     emulatorPubkey: EMULATOR_PUBKEY,
@@ -1000,7 +1000,7 @@ describe("requestOnchainReceive on an HD wallet", () => {
                         htlc_locktime: HTLC_LOCKTIME,
                         htlc_address: htlc.address,
                         min_confirmations: 2,
-                        lockup_address: script.address("tark", SERVER).encode(),
+                        lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
                         solver_refund_pk_script: hex.encode(SOLVER_REFUND_PK_SCRIPT),
                     },
                 } satisfies RfqQuote;

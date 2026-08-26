@@ -69,16 +69,16 @@ import { rfqSecretsProfile } from "../src/rfqProfileParts";
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
 
-const SERVER = key(3);
+const OPERATOR_PUBKEY = key(3);
 const SOLVER = key(1);
 const RECEIVER_PK_SCRIPT = p2tr(key(1));
 const EMULATOR_PUBKEY = key(9);
 const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
 const PAYOUT_PUBKEY = key(15);
 const HTLC_PUBKEY = key(11);
-const REFUND_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
+const REFUND_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
 
-state.operatorInfo.signerPubkey = hex.encode(SERVER);
+state.operatorInfo.signerPubkey = hex.encode(OPERATOR_PUBKEY);
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
@@ -100,7 +100,7 @@ const lightningTransport = (): RfqTransport => ({
         const contract = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            operatorPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
             emulatorPubkey: EMULATOR_PUBKEY,
@@ -120,7 +120,7 @@ const lightningTransport = (): RfqTransport => ({
             refund_locktime: REFUND_LOCKTIME,
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
-                lockup_address: contract.address("tark", SERVER).encode(),
+                lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
             },
         } satisfies RfqQuote;
     },
@@ -137,7 +137,7 @@ const onchainTransport = (): RfqTransport => ({
         const lockup = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            operatorPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash,
             claimDelay: 4096,
             emulatorPubkey: EMULATOR_PUBKEY,
@@ -165,7 +165,7 @@ const onchainTransport = (): RfqTransport => ({
             valid_until: VALID_UNTIL,
             refund_locktime: REFUND_LOCKTIME,
             profile: {
-                lockup_address: lockup.address("tark", SERVER).encode(),
+                lockup_address: lockup.address("tark", OPERATOR_PUBKEY).encode(),
                 htlc_pubkey: hex.encode(HTLC_PUBKEY),
                 htlc_locktime: HTLC_LOCKTIME,
                 htlc_address: htlc.address,
@@ -300,11 +300,11 @@ const operatorInfo = () => ({
     dust: 1000n,
     fees: { intentFee: {}, txFeeRate: "0" },
     forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
-    forfeitPubkey: "02" + hex.encode(SERVER),
+    forfeitPubkey: "02" + hex.encode(OPERATOR_PUBKEY),
     network: "regtest",
     serviceStatus: {},
     sessionDuration: 3600n,
-    signerPubkey: "02" + hex.encode(SERVER),
+    signerPubkey: "02" + hex.encode(OPERATOR_PUBKEY),
     unilateralExitDelay: 4096n,
     utxoMaxAmount: -1n,
     utxoMinAmount: 0n,

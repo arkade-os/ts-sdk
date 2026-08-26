@@ -74,7 +74,7 @@ if (AssetSwapRealmSchemas.length !== 4) {
     throw new Error(`expected 4 Realm schemas, got ${AssetSwapRealmSchemas.length}`);
 }
 
-const server = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
+const operatorPubkey = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
 const offer = {
     swapPkScript: new Uint8Array(0),
     wantAmount: 50_000n,
@@ -86,9 +86,9 @@ const offer = {
     emulatorPubkey: hex.decode("466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"),
 };
 
-const script = offerContract(offer, server);
-offer.swapPkScript = script.pkScript;
-const address = new ArkAddress(server, script.tweakedPublicKey, "tark").encode();
+const contract = offerContract(offer, operatorPubkey);
+offer.swapPkScript = contract.pkScript;
+const address = new ArkAddress(operatorPubkey, contract.tweakedPublicKey, "tark").encode();
 
 const payload = encodeOffer(offer);
 const roundtripped = encodeOffer(decodeOffer(payload));
