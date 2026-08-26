@@ -850,6 +850,55 @@ describe("sendMessage reinitialize on SW restart", () => {
         );
     });
 
+    it("re-initializes a live wallet after another page stops the shared worker", async () => {
+        let swInitialized = true;
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.tag === "STOP_MESSAGE_BUS") {
+                swInitialized = false;
+                return { id: message.id, tag: "STOP_MESSAGE_BUS" };
+            }
+            if (message.tag === "INITIALIZE_MESSAGE_BUS") {
+                swInitialized = true;
+                return { id: message.id, tag: "INITIALIZE_MESSAGE_BUS" };
+            }
+            if (!swInitialized) {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
+                };
+            }
+            if (message.type === "INIT_WALLET") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "WALLET_INITIALIZED",
+                };
+            }
+            if (message.type === "GET_ADDRESS") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "ADDRESS",
+                    payload: { address: "bc1-after-stop" },
+                };
+            }
+            return null;
+        });
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createWalletWithConfig(serviceWorker as any);
+
+        await ServiceWorkerReadonlyWallet.stop(serviceWorker as any);
+        await expect(wallet.getAddress()).resolves.toBe("bc1-after-stop");
+
+        const calls = serviceWorker.postMessage.mock.calls.map(([message]: any) => message);
+        expect(
+            calls.filter((message: any) => message.tag === "INITIALIZE_MESSAGE_BUS"),
+        ).toHaveLength(1);
+        expect(calls.some((message: any) => message.type === "GET_STATUS")).toBe(true);
+    });
+
     it("throws after exhausting retries", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
             if (message.tag === "INITIALIZE_MESSAGE_BUS") {
