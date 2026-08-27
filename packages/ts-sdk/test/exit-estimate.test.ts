@@ -12,7 +12,7 @@ import { P2A } from "../src/utils/anchor";
 import { Transaction } from "../src/utils/transaction";
 import { buildExitDag } from "../src/wallet/exit/chain";
 import { IndexerExitDataSource } from "../src/wallet/exit/indexerSource";
-import { CHILD_OUTPUT_DUST, estimate } from "../src/wallet/exit/estimate";
+import { CHILD_OUTPUT_DUST, computeExitLayout, estimate } from "../src/wallet/exit/estimate";
 import type { ExitOptions } from "../src/wallet/exit/estimate";
 
 const COMMIT = "c0".repeat(32);
@@ -333,19 +333,24 @@ describe("graph-mode funding quote", () => {
      */
     it("quotes an amount that survives every bump", async () => {
         const { exitOpts } = await estimateFixture();
-        const quote = await estimate({ ...exitOpts, mode: "graph" });
+        const opts = { ...exitOpts, mode: "graph" as const };
+        const quote = await estimate(opts);
+        // Each step's own fee, not an average of them: `perBump = total / count`
+        // is a float, so the final balance lands on the floor plus or minus an
+        // epsilon and a fixture with indivisible fees would fail spuriously.
+        // The property holds for any distribution — uniformity is incidental.
+        const { steps } = await computeExitLayout(opts, quote.feeRate);
 
-        const sweepFees = quote.vtxos.reduce((s, v) => s + (v.sweepFee ?? 0), 0);
-        const stepFees = quote.totals.totalFeeSats - sweepFees;
-        // Two package steps in this fixture; the split is even here.
-        const bumps = (quote.totals.txCount - quote.vtxos.length) / 2;
-        const perBump = stepFees / bumps;
+        expect(steps.length).toBeGreaterThan(1);
 
         let balance = quote.totals.fundingRequiredSats;
-        for (let i = 0; i < bumps; i++) {
-            balance -= perBump;
+        for (const step of steps) {
+            balance -= step.stepFee;
             expect(balance).toBeGreaterThanOrEqual(CHILD_OUTPUT_DUST);
         }
+        // Exactly one floor is reserved, and it is all that is left: quoting
+        // more would over-charge, quoting less would strand the last bump.
+        expect(balance).toBe(CHILD_OUTPUT_DUST);
     });
 
     it("leaves the funded-mode quote alone", async () => {

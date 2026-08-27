@@ -11,13 +11,22 @@ import type { Wallet } from "../wallet";
 import { getNormalizedVtxos } from "../vtxo";
 import { buildExitDag, DagNode, topoSortByDeps } from "./chain";
 import { createExitChainResolver } from "./resolver";
+import { CHILD_DUST_AMOUNT } from "../../utils/anchor";
 import { finalizeVirtualTx } from "./finalizeVirtualTx";
 import { ExitPathError, ResolvedExitPath, resolveUnilateralPath } from "./path";
 import { sweepFeeFor } from "./sweep";
 import { ExitDelay, ExitMode, ExitQuote, ExitTotals, ExitVtxoInfo } from "./types";
 
-/** Dust floor granted to every fee child's change output. */
-export const CHILD_OUTPUT_DUST = 546;
+/**
+ * Dust floor granted to every fee child's change output.
+ *
+ * An alias, not a second constant: `buildAnchorChild` throws when change falls
+ * below {@link CHILD_DUST_AMOUNT}, so that is the floor the quote has to
+ * reserve. Declaring 546 independently here meant the two could drift — and a
+ * quote that under-reserves by even one sat strands the final bump, which is
+ * the failure this whole path exists to avoid.
+ */
+export const CHILD_OUTPUT_DUST = CHILD_DUST_AMOUNT;
 
 export type ExitOptions = {
     /** Wallet owning the VTXOs: identity (signing) + indexer + onchain provider. */
