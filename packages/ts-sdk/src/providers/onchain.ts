@@ -1,5 +1,6 @@
 import { DEFAULT_NETWORK_NAME, type NetworkName } from "../networks";
 import { Coin } from "../wallet";
+import { hex } from "@scure/base";
 import { baseFetch } from "../utils/fetch";
 
 /**
@@ -90,6 +91,18 @@ export interface OnchainProvider {
      * @see ExplorerTransaction
      */
     getTransactions(address: string): Promise<ExplorerTransaction[]>;
+
+    /**
+     * Fetch the raw wire-format bytes of a transaction.
+     *
+     * @param txid - Transaction id to fetch
+     * @returns Serialized transaction bytes
+     * @throws Error if the transaction is unknown to the backend
+     * @remarks
+     * Needed to carry a boarding or commitment tx as a PSBT prevout field —
+     * those have no off-chain source, so the indexer cannot serve them.
+     */
+    getRawTransaction(txid: string): Promise<Uint8Array>;
 
     /**
      * Fetch confirmation status for a transaction.
@@ -210,6 +223,15 @@ export class EsploraProvider implements OnchainProvider {
         }
 
         return response.json();
+    }
+
+    async getRawTransaction(txid: string): Promise<Uint8Array> {
+        const response = await baseFetch(`${this.baseUrl}/tx/${txid}/hex`);
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(`Failed to get raw transaction ${txid}: ${error}`);
+        }
+        return hex.decode((await response.text()).trim());
     }
 
     async getTxStatus(txid: string): Promise<

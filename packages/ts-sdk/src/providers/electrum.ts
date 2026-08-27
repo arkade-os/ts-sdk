@@ -620,6 +620,11 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         throw new Error("Only 1 or 1P1C package can be broadcast");
     }
 
+    async getRawTransaction(txid: string): Promise<Uint8Array> {
+        const [tx] = await this.chain.fetchTransactions([txid]);
+        return hex.decode(tx.hex);
+    }
+
     async getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]> {
         // Step 1: fetch the creating tx to get its output scripts (1 round trip)
         const [txResult] = await this.chain.fetchTransactions([txid]);
