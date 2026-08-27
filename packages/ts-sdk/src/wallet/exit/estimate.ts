@@ -278,10 +278,22 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
         // splitter. funded: + 1 splitter tx and pre-signed children.
         txCount: (graph ? 0 : steps.length > 0 ? 1 : 0) + steps.length * 2 + sweeps.length,
         totalFeeSats: splitterFee + stepFees + sweepFees,
-        // graph funding is what the executor sends to its own fee address:
-        // just the CPFP fees (change recycles); funded also locks the
-        // per-child dust into the splitter.
-        fundingRequiredSats: graph ? stepFees : splitterFee + fundingTotal,
+        // graph funding is what the executor sends to its own fee address: the
+        // CPFP fees, plus one dust floor. Change recycles through that single
+        // address, so each bump hands its remainder to the next and only the
+        // *final* change has to clear `CHILD_DUST_AMOUNT` — but it does have to,
+        // and `buildAnchorChild` throws rather than absorbing a short remainder
+        // into the fee. Quoting bare fees quotes an amount that strands the last
+        // bump and every sweep behind it.
+        //
+        // funded reserves the same floor per step instead of once overall (see
+        // `stepFundingAmount`), because it pre-funds each child separately
+        // through the splitter rather than recycling one output.
+        fundingRequiredSats: graph
+            ? steps.length > 0
+                ? stepFees + CHILD_OUTPUT_DUST
+                : 0
+            : splitterFee + fundingTotal,
         recoveredSats: sweeps.reduce((s, x) => s + (x.vtxo.value - x.sweepFee), 0),
     };
 
