@@ -16,6 +16,8 @@ and value-moving by M4.
 
 ## M0 — Direction lock & groundwork
 
+> Refined: [`v2-m0-groundwork.md`](./v2-m0-groundwork.md).
+
 Close the decisions that gate implementation, before writing v2 code.
 
 - Sign-off on P1–P10 (RFC-lite) as the fixed public direction.
