@@ -182,6 +182,21 @@ import { normalizeVtxo, type NormalizedExtendedVirtualCoin } from "../vtxo";
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Undo the structured-clone algorithm's Error-name normalization: a custom
+ * `name` (ProviderUnavailableError, ReadonlyWalletError, …) reaches the page
+ * as `"Error"`, so the worker sends the original beside it as a plain string
+ * (`ResponseEnvelope.errorName`) and it is restored here before the reject.
+ * `instanceof` can never survive the boundary; `name` now genuinely does.
+ */
+const restoreErrorName = (response: { error?: Error; errorName?: string }): Error => {
+    const error = response.error as Error;
+    if (response.errorName && error instanceof Error && error.name !== response.errorName) {
+        error.name = response.errorName;
+    }
+    return error;
+};
+
 // Bounded backoff for waiting out an in-flight init: ~100ms, 200ms, … capped at
 // 2s, so a stuck init still surfaces an error instead of hanging the caller.
 const INIT_WAIT_BACKOFF_CAP_MS = 2_000;
@@ -532,7 +547,7 @@ const initializeMessageBus = (
             if (response?.id !== initCmd.id) return;
             cleanup();
             if (response.error) {
-                reject(response.error);
+                reject(restoreErrorName(response));
             } else {
                 resolve();
             }
@@ -759,7 +774,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
                 cleanup();
                 if (response.error) {
-                    reject(response.error);
+                    reject(restoreErrorName(response));
                 } else {
                     resolve(response);
                 }
@@ -793,7 +808,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
                 if (response.error) {
                     cleanup();
-                    reject(response.error);
+                    reject(restoreErrorName(response));
                     return;
                 }
 
@@ -1063,11 +1078,14 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      * Delegated to the worker, which holds the wallet that owns the connection.
      * The payload crosses raw — see {@link ResponseGetArkadeInfo} for why.
      */
-    async getArkadeInfo(): Promise<ArkadeInfo> {
+    async getArkadeInfo(opts?: { requireLive?: boolean }): Promise<ArkadeInfo> {
         const message: RequestGetArkadeInfo = {
             id: getRandomId(),
             tag: this.messageTag,
             type: "GET_ARKADE_INFO",
+            // omitted entirely for the default read, so the wire shape (and
+            // the dedup key) of existing callers does not change
+            ...(opts?.requireLive ? { payload: { requireLive: true } } : {}),
         };
 
         try {
@@ -1078,9 +1096,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             // call reaches `resolveArkInfo` in the worker, which distinguishes
             // `ProviderUnavailableError` (offline — retry) from
             // `MalformedArkInfoSnapshotError` (corrupt cache — re-onboard).
-            // structuredClone drops the prototype, so `instanceof` cannot
-            // survive the boundary either way, but `cause.name` does — and
-            // stringifying into the message would lose even that.
+            // structuredClone drops the prototype AND normalizes a custom
+            // `name` to "Error", so neither survives the boundary on its own;
+            // the worker sends the name beside the error as plain data and
+            // `restoreErrorName` puts it back — which is what makes
+            // `cause.name` the one thing a page can branch on.
             throw new Error(`Failed to get arkade info: ${error}`, { cause: error });
         }
     }
@@ -1106,8 +1126,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     // Re-normalize rather than trust the envelope, as every
                     // other VTXO-returning method here does: the worker
                     // normalizes, but a page can run against an older installed
-                    // one. `normalizeVtxo` is idempotent, so this costs a map.
-                    return { vtxos: vtxos.map(normalizeVtxo), page };
+                    // one. `normalizeVtxo` is idempotent, so this costs a map —
+                    // which also gives each deduped concurrent caller its own
+                    // array. `page` is copied for the same reason: dedup
+                    // settles every caller with ONE shared response.
+                    return { vtxos: vtxos.map(normalizeVtxo), page: page && { ...page } };
                 } catch (error) {
                     throw new Error(`Failed to get vtxos: ${error}`, { cause: error });
                 }
@@ -1121,7 +1144,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 try {
                     const response = await this.sendMessage(message);
-                    return (response as ResponseIndexerGetVirtualTxs).payload;
+                    const { txs, page } = (response as ResponseIndexerGetVirtualTxs).payload;
+                    // Own copies per caller: this request dedupes, so two
+                    // concurrent identical reads settle with ONE response —
+                    // returned by reference, a `txs.sort()` in one caller
+                    // would silently reorder the other's result.
+                    return { txs: [...txs], page: page && { ...page } };
                 } catch (error) {
                     throw new Error(`Failed to get virtual txs: ${error}`, { cause: error });
                 }

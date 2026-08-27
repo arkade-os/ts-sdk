@@ -448,6 +448,33 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         expect(wallet.dustAmount).toBe(makeArkInfo().dust);
     });
 
+    it("getArkadeInfo({ requireLive: true }) fails closed instead of serving the cache", async () => {
+        // The covenant-derivation contract (PR #803 review): a caller about to
+        // bind signerPubkey into a script must never get a snapshot answer.
+        const repos = {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        };
+        const info = makeArkInfo();
+        let reachable = true;
+        const wallet = await createWallet(async () => {
+            if (!reachable) throw new ProviderUnavailableError("operator down");
+            return info;
+        }, repos);
+
+        reachable = false;
+        // the ordinary read still answers from the boot snapshot…
+        expect((await wallet.getArkadeInfo()).digest).toBe(info.digest);
+        // …the live-only read refuses to
+        await expect(wallet.getArkadeInfo({ requireLive: true })).rejects.toThrow(/operator down/);
+        // and the connection state reflects the failed-over ordinary read, not boot
+        expect(wallet.getProviderConnectionState().mode).toBe("degraded");
+
+        reachable = true;
+        await wallet.getArkadeInfo({ requireLive: true });
+        expect(wallet.getProviderConnectionState().mode).not.toBe("degraded");
+    });
+
     it("getArkadeInfo falls back to the cached snapshot when the operator goes away", async () => {
         const repos = {
             walletRepository: new InMemoryWalletRepository(),

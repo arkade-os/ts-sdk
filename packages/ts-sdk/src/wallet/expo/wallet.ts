@@ -304,8 +304,8 @@ export class ExpoWallet implements IWallet, HDWalletCapable, HDAllocationCapable
         return this.wallet.getBoardingAddress();
     }
 
-    getArkadeInfo(): Promise<ArkadeInfo> {
-        return this.wallet.getArkadeInfo();
+    getArkadeInfo(opts?: { requireLive?: boolean }): Promise<ArkadeInfo> {
+        return this.wallet.getArkadeInfo(opts);
     }
 
     getArkadeReader(): Promise<ArkadeReader> {

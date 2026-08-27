@@ -168,6 +168,19 @@ export interface DeprecatedSigner {
 
 export type ServiceStatus = Record<string, string>;
 
+/**
+ * The Arkade server's advertised configuration — the `/v1/info` response.
+ *
+ * Naming/placement vs the NArk reference (AGENTS.md asks divergences to be
+ * noted): NArk calls this `ArkServerInfo`, reads it via
+ * `GetServerInfoAsync` on the *transport*, and caches it in a dedicated
+ * `CachingClientTransport`. This SDK names it for the product (`ArkadeInfo`,
+ * per #734) and hangs the read off the wallet (`getArkadeInfo()`), because
+ * here the wallet is the one object every consumer already holds and — in the
+ * service-worker model — the only side that has a transport at all; the page
+ * has no provider to hang it on. A `CachingClientTransport`-style memo is the
+ * natural follow-up and belongs at this layer when it comes.
+ */
 export interface ArkadeInfo {
     boardingExitDelay: bigint;
     checkpointTapscript: string;
@@ -479,8 +492,16 @@ export class RestArkProvider implements ArkProvider {
     async getInfo(): Promise<ArkadeInfo> {
         const url = `${this.serverUrl}/v1/info`;
         // Wait + report (see rateGate): shares an origin, and a limiter, with
-        // the indexer.
-        const response = await rateGate.runHttp(url, () => fetch(url));
+        // the indexer. The fetch carries its own budget where the runtime
+        // supports one: on a black-holed connection (captive portal, dropped
+        // Wi-Fi with no RST) an unbounded fetch hangs to the OS connect
+        // timeout (30-75s), which outlives the service-worker page deadline
+        // (20s) — the page would time out while the worker was still seconds
+        // from serving the cached snapshot. The abort rejects as a retryable
+        // timeout, so the snapshot fallback stays reachable.
+        const response = await rateGate.runHttp(url, () =>
+            fetch(url, { signal: infoFetchSignal() }),
+        );
         if (!response.ok) {
             const errorText = await response.text();
             // A 429 or 5xx means the operator is up but temporarily unable to
@@ -542,7 +563,20 @@ export class RestArkProvider implements ArkProvider {
             vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
         };
+        // A read is also a rotation signal. Caching the digest here is what
+        // arms the X-Digest negotiation — but it also means a read after the
+        // operator rotated would silently advance past the epoch the wallet is
+        // still spending on, and arkd would never answer DIGEST_MISMATCH (the
+        // one event-driven rotation trigger). So a *moved* digest emits the
+        // same `onServerInfoChanged` the mismatch path does. Guarded on the
+        // previous digest being non-empty: the boot read and the mismatch
+        // path's own refresh (which clears the digest first, then emits
+        // explicitly) stay silent here.
+        const previousDigest = this._digest;
         this._digest = info.digest;
+        if (previousDigest !== "" && previousDigest !== info.digest) {
+            this.emitServerInfoChanged(info);
+        }
         return info;
     }
 
@@ -1237,6 +1271,20 @@ namespace ProtoTypes {
     }
 }
 
+/**
+ * Budget for a single live `/v1/info` fetch. Below the service-worker page
+ * deadline for GET_ARKADE_INFO (20s) with room for the rate-gate queue, so the
+ * worker's snapshot fallback is reachable before the page gives up.
+ */
+const INFO_FETCH_TIMEOUT_MS = 12_000;
+
+/** `AbortSignal.timeout` where the runtime has it; older runtimes go unbudgeted. */
+function infoFetchSignal(): AbortSignal | undefined {
+    return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+        ? AbortSignal.timeout(INFO_FETCH_TIMEOUT_MS)
+        : undefined;
+}
+
 export function isFetchTimeoutError(err: any): boolean {
     const checkError = (error: any) => {
         if (!(error instanceof Error)) return false;
@@ -1246,6 +1294,8 @@ export function isFetchTimeoutError(err: any): boolean {
 
         return (
             isCloudflare524 ||
+            // AbortSignal.timeout rejects with a DOMException named this
+            error.name === "TimeoutError" ||
             error.name === "HeadersTimeoutError" ||
             error.name === "BodyTimeoutError" ||
             (error as any).code === "UND_ERR_HEADERS_TIMEOUT" ||

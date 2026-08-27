@@ -199,7 +199,14 @@ export type ResponseGetBoardingAddress = ResponseEnvelope & {
     payload: { address: string };
 };
 
-export type RequestGetArkadeInfo = RequestEnvelope & { type: "GET_ARKADE_INFO" };
+// `payload` is optional and unknown to workers built before it existed — such
+// a worker serves the ordinary snapshot-fallback read. That skew lasts only a
+// rolling-upgrade window; a page needing a hard guarantee gets it once the
+// worker updates.
+export type RequestGetArkadeInfo = RequestEnvelope & {
+    type: "GET_ARKADE_INFO";
+    payload?: { requireLive?: boolean };
+};
 // `ArkadeInfo` is bigint-heavy and crosses the boundary raw: the channel is
 // `postMessage`/structuredClone, which is bigint-safe, and `GET_BALANCE` below
 // already relies on that for `Asset.amount`. Do NOT route it through the
@@ -1016,6 +1023,9 @@ export class WalletMessageHandler
     private tagged(res: Partial<WalletUpdaterResponse>): WalletUpdaterResponse {
         return {
             ...res,
+            // postMessage's clone normalizes a custom Error name to "Error";
+            // the plain-string copy survives, and the page restores it.
+            ...(res.error instanceof Error ? { errorName: res.error.name } : {}),
             tag: this.messageTag,
         } as WalletUpdaterResponse;
     }
@@ -1089,7 +1099,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_ARKADE_INFO": {
-                    const info = await this.readonlyWallet.getArkadeInfo();
+                    const { payload } = message as RequestGetArkadeInfo;
+                    const info = await this.readonlyWallet.getArkadeInfo(payload);
                     return this.tagged({
                         id,
                         type: "ARKADE_INFO",

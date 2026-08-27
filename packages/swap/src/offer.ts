@@ -387,7 +387,11 @@ export async function createOffer(
         throw new Error("set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC)");
     }
     const [info, makerAddress, makerPublicKey] = await Promise.all([
-        wallet.getArkadeInfo(),
+        // requireLive: this info binds signerPubkey into the covenant — a
+        // snapshot could derive an address the operator no longer co-signs
+        // for, so an unreachable operator fails the call instead (fail closed,
+        // the same behaviour the pre-#734 caller-held provider had)
+        wallet.getArkadeInfo({ requireLive: true }),
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
@@ -497,7 +501,7 @@ export async function cancelOffer(
 
     const [contractManager, info, reader, broadcaster] = await Promise.all([
         wallet.getContractManager(),
-        wallet.getArkadeInfo(),
+        wallet.getArkadeInfo({ requireLive: true }),
         wallet.getArkadeReader(),
         wallet.getArkadeBroadcaster(),
     ]);

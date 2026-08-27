@@ -1004,8 +1004,10 @@ export interface IAssetManager extends IReadonlyAssetManager {
 export type ArkadeReader = Pick<IndexerProvider, "getVirtualTxs"> & {
     /**
      * Required `opts`, unlike the `IndexerProvider` method it mirrors: this
-     * seam reads for *named* foreign scripts (or outpoints), and a bare
-     * `getVtxos()` would be an unscoped server-wide query.
+     * seam reads for *named* foreign scripts (or outpoints). The type stops a
+     * bare `getVtxos()` at compile time; the runtime defence is the provider's
+     * own "Either scripts or outpoints must be provided" throw — the message
+     * boundary adds no validation of its own.
      *
      * One logical query — the reader chunks nothing. `scripts` travel in the
      * query string, so a wide list can `414`; {@link getAllNormalizedVtxos}
@@ -1146,7 +1148,14 @@ export interface IReadonlyWallet {
      * @returns The Arkade server's info
      * @see ArkadeInfo
      */
-    getArkadeInfo(): Promise<ArkadeInfo>;
+    /**
+     * With `requireLive`, the snapshot fallback is off: the read throws when
+     * the operator is unreachable instead of answering from cache. For callers
+     * about to bind `signerPubkey` or a delay into a covenant — a stale
+     * snapshot there derives an address the operator may no longer co-sign
+     * for, so failing closed is the correct shape.
+     */
+    getArkadeInfo(opts?: { requireLive?: boolean }): Promise<ArkadeInfo>;
 
     /**
      * Chain reads against this wallet's Arkade server, for scripts the wallet

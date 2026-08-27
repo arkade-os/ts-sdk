@@ -63,9 +63,11 @@ style and have not been backfilled.
   is `getVtxos` + `getVirtualTxs`; `ArkadeBroadcaster` is
   `submitTx` + `finalizeTx`.
   The split is the readonly/full line: reading is a readonly capability,
-  broadcasting is not, so a readonly wallet — and every `toReadonly()`
-  view — cannot submit, and a readonly service-worker refuses
-  `SUBMIT_TX`/`FINALIZE_TX` outright.
+  broadcasting is not. On the typed surface a readonly wallet — and
+  every `toReadonly()` view — exposes no way to submit (`protected` is
+  erased at runtime, so this is a compile-time boundary, not a
+  sandbox); the readonly service-worker enforces it at runtime too,
+  refusing `SUBMIT_TX`/`FINALIZE_TX` outright.
   `ArkadeReader.getVtxos()` queries the server for arbitrary scripts and
   is distinct from `IReadonlyWallet.getVtxos()`, which answers the
   wallet's own outputs from repositories. It is shaped as
@@ -82,6 +84,36 @@ style and have not been backfilled.
   `IWallet` / `IReadonlyWallet` implementations must add both methods**
   — a compile-time break for external implementers only, with no runtime
   or on-disk effect. (#734)
+- **`getArkadeInfo({ requireLive: true })`, and honest freshness.** The
+  snapshot fallback is now opt-out for callers that must not derive from
+  a cache: with `requireLive` the read throws when the operator is
+  unreachable. The five covenant-deriving swap entrypoints and
+  `cancelOffer` use it, restoring their pre-#734 fail-closed behaviour —
+  a stale snapshot there binds a covenant to a key the operator may no
+  longer co-sign for. Every read now also updates
+  `getProviderConnectionState()`, so a wallet that booted offline and
+  recovered stops reporting `degraded` (and the inverse stops claiming
+  `online`). (#803 review)
+- **An info read is now a rotation signal, not its suppressor.**
+  `RestArkProvider.getInfo()` caches the digest that rides `X-Digest`;
+  previously a read after the operator rotated advanced it silently, so
+  arkd stopped answering `DIGEST_MISMATCH` and `onServerInfoChanged`
+  never fired. `getInfo()` now emits `onServerInfoChanged` when the
+  digest *moved* (boot read and the mismatch path's own refresh stay
+  silent), so the wallet re-derives instead of spending on a stale
+  epoch. The live `/v1/info` fetch also carries a 12s budget where the
+  runtime has `AbortSignal.timeout`, keeping the service-worker snapshot
+  fallback reachable on a black-holed connection. (#803 review)
+- **Typed error names survive the service-worker boundary for real.**
+  The structured-clone algorithm normalizes a custom `Error.name`
+  (`ProviderUnavailableError`, `ReadonlyWalletError`, …) to `"Error"` —
+  the earlier claim that `cause.name` survived was certified by a test
+  stub that copied `name` verbatim. The worker now sends the name beside
+  the error as plain data (`ResponseEnvelope.errorName`) and the page
+  restores it before rejecting, so `cause.name` genuinely is the thing
+  a page can branch on. Wire-compatible in both directions; against an
+  older worker the page sees the clone-normalized name, as it always
+  did. (#803 review)
 - **`ArkInfo` renamed to `ArkadeInfo`.** The type name now matches the
   product and the accessor that returns it. `ArkInfo` is kept as a
   deprecated alias (`export type ArkInfo = ArkadeInfo`), both are

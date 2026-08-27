@@ -34,6 +34,16 @@ export type ResponseEnvelope = {
     tag: string;
     id?: string;
     error?: Error;
+    /**
+     * `error.name`, carried beside the error as an ordinary string. The
+     * structured-clone algorithm serializes an Error's `name` only from the
+     * built-in whitelist (Error, TypeError, RangeError, …) — a custom name
+     * like `ProviderUnavailableError` reaches the page as `"Error"`. A plain
+     * property survives verbatim, so the page restores it before rejecting.
+     * Absent from workers built before it existed; the page then sees the
+     * clone-normalized name, exactly as it always did.
+     */
+    errorName?: string;
     broadcast?: boolean;
 };
 export interface MessageHandler<

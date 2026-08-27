@@ -866,7 +866,10 @@ export async function requestLightningSend(
     // No preimage: a lightning send's P belongs to the payee.
     const secrets = await provisionRefundKey(wallet);
     const senderPubkey = secrets.pubkey;
-    const [info, refundAddress] = await Promise.all([wallet.getArkadeInfo(), wallet.getAddress()]);
+    const [info, refundAddress] = await Promise.all([
+        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getAddress(),
+    ]);
 
     const quote = await transport.requestQuote(
         lightningSendRequest({ rfqId, invoice: params.invoice.raw, refundAddress, senderPubkey }),
@@ -1259,7 +1262,10 @@ export async function requestOnchainSend(
     }
     const paymentHash = hex.encode(secrets.paymentHash);
     const senderPubkey = secrets.pubkey;
-    const [info, refundAddress] = await Promise.all([wallet.getArkadeInfo(), wallet.getAddress()]);
+    const [info, refundAddress] = await Promise.all([
+        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getAddress(),
+    ]);
 
     const quote = await transport.requestQuote(
         onchainSendRequest({
@@ -1689,7 +1695,10 @@ export async function requestLightningReceive(
     const preimage = secrets.preimage;
     const paymentHash = hex.encode(secrets.paymentHash);
     const payoutPubkey = secrets.pubkey;
-    const [info, payoutAddress] = await Promise.all([wallet.getArkadeInfo(), wallet.getAddress()]);
+    const [info, payoutAddress] = await Promise.all([
+        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getAddress(),
+    ]);
     const claimPacket = await sealClaimPacket({
         preimage,
         covclaimdPubkey: params.covclaimdPubkey,
@@ -1898,7 +1907,10 @@ export async function requestOnchainReceive(
     const preimage = secrets.preimage;
     const paymentHash = hex.encode(secrets.paymentHash);
     const payoutPubkey = secrets.pubkey;
-    const [info, payoutAddress] = await Promise.all([wallet.getArkadeInfo(), wallet.getAddress()]);
+    const [info, payoutAddress] = await Promise.all([
+        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getAddress(),
+    ]);
     const claimPacket = await sealClaimPacket({
         preimage,
         covclaimdPubkey: params.covclaimdPubkey,

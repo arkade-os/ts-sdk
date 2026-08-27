@@ -17,7 +17,10 @@ by the watch and relay transports, both of which take an injected implementation
 `requestOnchainReceive` take their server facts from `wallet.getArkadeInfo()`: the network and
 signer key, plus the unilateral-exit delay for the four `request*` calls. The wallet is the single
 place that knows which server it speaks to, so there is no URL to thread through and no second
-`/v1/info` round-trip.
+`/v1/info` round-trip *per call*. Each entrypoint still performs its own live read (deliberately —
+covenant derivation requires live info and fails closed offline); a session creating many offers
+pays one read per offer until the SDK grows a `CachingClientTransport`-style memo (the NArk
+reference's answer), noted as follow-up on `ArkadeInfo`.
 
 No offer entrypoint here takes a server URL. `cancelOffer` and `watchOfferSwaps` need more than
 server info — cancel broadcasts the refund and falls back to the indexer for a deposit made

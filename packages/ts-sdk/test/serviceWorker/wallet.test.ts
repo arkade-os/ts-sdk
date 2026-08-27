@@ -25,11 +25,24 @@ type MessageHandler = (event: { data: any }) => void;
 
 const STUB_XONLY_PUBLIC_KEY = new Uint8Array(32).fill(0xab);
 
-// Simulate the structured clone algorithm that postMessage uses
+// Simulate the structured clone algorithm that postMessage uses. Faithful on
+// the point that burned this PR once: the real algorithm serializes an Error's
+// `name` only from the built-in whitelist — a custom name reaches the page as
+// "Error". A stub that copied `name` verbatim certified a fix the browser
+// would have rejected (PR #803 review).
+const CLONEABLE_ERROR_NAMES = new Set([
+    "Error",
+    "EvalError",
+    "RangeError",
+    "ReferenceError",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+]);
 function structuredCloneError(error: any): any {
     if (error instanceof Error) {
         const cloned = new Error(error.message);
-        cloned.name = error.name;
+        cloned.name = CLONEABLE_ERROR_NAMES.has(error.name) ? error.name : "Error";
         return cloned;
     }
     if (error && typeof error === "object") {
@@ -339,13 +352,22 @@ describe("ServiceWorkerReadonlyWallet", () => {
 
     it("keeps a worker-side typed error reachable as `cause`", async () => {
         // The worker's resolveArkInfo distinguishes offline (retry) from a
-        // corrupt cache (re-onboard); structuredClone drops the prototype, so
-        // `name` on the cause is the only thing a caller can branch on.
+        // corrupt cache (re-onboard). The REAL clone algorithm normalizes a
+        // custom Error name to "Error" — this test certified the opposite
+        // until review caught the harness copying `name` verbatim — so the
+        // worker sends `errorName` as plain data (stamped by `tagged()`) and
+        // the page restores it. Cloned with the real `structuredClone` here,
+        // so the whitelist behaviour is the one under test.
         const worker = new Error("no cached snapshot");
         worker.name = "ProviderUnavailableError";
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
             message.type === "GET_ARKADE_INFO"
-                ? { id: message.id, tag: messageTag, error: worker }
+                ? structuredClone({
+                      id: message.id,
+                      tag: messageTag,
+                      error: worker,
+                      errorName: worker.name,
+                  })
                 : null,
         );
 
@@ -354,6 +376,27 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const wallet = createWallet(serviceWorker as any, messageTag);
         const err = await wallet.getArkadeInfo().catch((e: unknown) => e as Error);
         expect((err.cause as Error).name).toBe("ProviderUnavailableError");
+    });
+
+    it("degrades to the clone-normalized name against a worker without errorName", async () => {
+        // Rolling-upgrade window: a worker built before `errorName` sends only
+        // the Error, whose custom name the clone normalizes away. The page
+        // must not crash — the caller just cannot branch until the worker
+        // updates.
+        const worker = new Error("no cached snapshot");
+        worker.name = "ProviderUnavailableError";
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.type === "GET_ARKADE_INFO"
+                ? structuredClone({ id: message.id, tag: messageTag, error: worker })
+                : null,
+        );
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const err = await wallet.getArkadeInfo().catch((e: unknown) => e as Error);
+        expect((err.cause as Error).name).toBe("Error");
+        expect((err.cause as Error).message).toBe("no cached snapshot");
     });
 
     it("rejects when the response contains an error", async () => {

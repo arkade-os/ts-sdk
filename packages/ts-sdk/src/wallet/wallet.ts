@@ -900,8 +900,32 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * @returns The Arkade server's info
      * @see ArkadeInfo
      */
-    async getArkadeInfo(): Promise<ArkadeInfo> {
-        const { info } = await resolveArkInfo(this.arkProvider, this.walletRepository);
+    async getArkadeInfo(opts?: { requireLive?: boolean }): Promise<ArkadeInfo> {
+        if (opts?.requireLive) {
+            // Fail closed: no snapshot fallback for a caller that is about to
+            // bind this answer into a covenant. Throws whatever the provider
+            // throws when the operator is unreachable — the pre-#734 shape.
+            const info = await this.arkProvider.getInfo();
+            this._serverInfoSource = "live";
+            this._serverInfoLastOnlineAt = Date.now();
+            return info;
+        }
+        const { info, source, lastOnlineAt } = await resolveArkInfo(
+            this.arkProvider,
+            this.walletRepository,
+        );
+        // The resolution just learned whether the operator is reachable, so
+        // {@link getProviderConnectionState} tracks the LATEST resolution
+        // rather than staying pinned to the boot-time verdict — a wallet that
+        // booted offline and recovered stops reporting "degraded", and one
+        // that just fell back to the snapshot stops claiming "online". This is
+        // also what makes fail-closed expressible: read, then check the state.
+        this._serverInfoSource = source;
+        if (source === "live") {
+            this._serverInfoLastOnlineAt = Date.now();
+        } else if (lastOnlineAt !== undefined) {
+            this._serverInfoLastOnlineAt = lastOnlineAt;
+        }
         return info;
     }
 
