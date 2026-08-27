@@ -36,6 +36,13 @@ const arkUrl = "http://localhost:7070";
  * classifies `DUE_NOW`; a future cutoff classifies `MIGRATABLE`; a past cutoff
  * classifies `EXPIRED` (cooperative migration closed).
  *
+ * What these tests do NOT pin is which call performs the re-derive onto the
+ * active signer. A rotation is observable from any `getInfo`, and the wallet
+ * applies it off that emit — so a status poll can rotate the wallet before
+ * `migrateDeprecatedSignerVtxos` runs, leaving `report.rotated` false and the
+ * active-signer contract rows already present. Assertions are therefore scoped
+ * to the deprecated signer's rows and to the durable post-conditions.
+ *
  * Boarding migration is also real on the pinned images: a pre-rotation boarding
  * UTXO under a deprecated signer is discovered, settled cooperatively, and
  * reported in the migration result. (VTXO migration co-signs the forfeit with the
@@ -183,13 +190,14 @@ describe("deprecated-signer migration (real rotation)", () => {
             const { wallet, vtxoManager, contractManager, amount, stale, fromX, toX } =
                 await fundVtxoUnderAThenRotate(A_SEC, useMnemonic);
             try {
-                // Check contracts before migration
+                // Before migration, scoped to the deprecated signer's rows —
+                // the active-signer ones may already be present (see header).
                 const before = await contractManager.getContracts();
-                expect(before.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
-                expect(before.filter((c) => c.type === "boarding")).toHaveLength(1);
-                expect(before.filter((c) => c.type === "default")).toHaveLength(1);
-                expect(before.filter((c) => c.state === "active")).toHaveLength(2);
-                expect(before).toHaveLength(2);
+                const staleRows = before.filter((c) => c.params.serverPubKey === A_PUB);
+                expect(staleRows).toHaveLength(2);
+                expect(staleRows.filter((c) => c.type === "boarding")).toHaveLength(1);
+                expect(staleRows.filter((c) => c.type === "default")).toHaveLength(1);
+                expect(staleRows.every((c) => c.state === "active")).toBe(true);
 
                 const status = await vtxoManager.getDeprecatedSignerStatus();
                 expect(status).toHaveLength(1);
@@ -203,7 +211,6 @@ describe("deprecated-signer migration (real rotation)", () => {
 
                 const balanceBefore = await wallet.getBalance();
                 const report = await vtxoManager.migrateDeprecatedSignerVtxos();
-                expect(report.rotated).toBe(true);
                 // VTXO leg ran through the send path; `txid` is the Ark
                 // transaction id from send, NOT a settle commitment txid.
                 expect(report.vtxos?.txid).toBeDefined();
@@ -262,13 +269,14 @@ describe("deprecated-signer migration (real rotation)", () => {
                     useMnemonic,
                 );
             try {
-                // Check contracts before migration
+                // Before migration, scoped to the deprecated signer's rows —
+                // the active-signer ones may already be present (see header).
                 const before = await contractManager.getContracts();
-                expect(before.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
-                expect(before.filter((c) => c.type === "boarding")).toHaveLength(1);
-                expect(before.filter((c) => c.type === "default")).toHaveLength(1);
-                expect(before.filter((c) => c.state === "active")).toHaveLength(2);
-                expect(before).toHaveLength(2);
+                const staleRows = before.filter((c) => c.params.serverPubKey === A_PUB);
+                expect(staleRows).toHaveLength(2);
+                expect(staleRows.filter((c) => c.type === "boarding")).toHaveLength(1);
+                expect(staleRows.filter((c) => c.type === "default")).toHaveLength(1);
+                expect(staleRows.every((c) => c.state === "active")).toBe(true);
 
                 const status = await vtxoManager.getDeprecatedSignerStatus();
                 expect(status).toHaveLength(1);
@@ -283,7 +291,6 @@ describe("deprecated-signer migration (real rotation)", () => {
 
                 const balanceBefore = await wallet.getBalance();
                 const report = await vtxoManager.migrateDeprecatedSignerVtxos();
-                expect(report.rotated).toBe(true);
                 // VTXO leg send id (not a settle commitment txid).
                 expect(report.vtxos?.txid).toBeDefined();
                 expect(report.vtxos?.error).toBeUndefined();
@@ -341,13 +348,14 @@ describe("deprecated-signer migration (real rotation)", () => {
                     useMnemonic,
                 );
             try {
-                // Check contracts before migration
+                // Before migration, scoped to the deprecated signer's rows —
+                // the active-signer ones may already be present (see header).
                 const before = await contractManager.getContracts();
-                expect(before.filter((c) => c.params.serverPubKey === A_PUB)).toHaveLength(2);
-                expect(before.filter((c) => c.type === "boarding")).toHaveLength(1);
-                expect(before.filter((c) => c.type === "default")).toHaveLength(1);
-                expect(before.filter((c) => c.state === "active")).toHaveLength(2);
-                expect(before).toHaveLength(2);
+                const staleRows = before.filter((c) => c.params.serverPubKey === A_PUB);
+                expect(staleRows).toHaveLength(2);
+                expect(staleRows.filter((c) => c.type === "boarding")).toHaveLength(1);
+                expect(staleRows.filter((c) => c.type === "default")).toHaveLength(1);
+                expect(staleRows.every((c) => c.state === "active")).toBe(true);
 
                 const status = await vtxoManager.getDeprecatedSignerStatus();
                 expect(status).toHaveLength(1);
@@ -365,7 +373,6 @@ describe("deprecated-signer migration (real rotation)", () => {
                 // submitted — the stale VTXO is reported as expired (it recovers via
                 // the server batch sweep, not a cooperative settle).
                 const report = await vtxoManager.migrateDeprecatedSignerVtxos();
-                expect(report.rotated).toBe(true);
                 expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
                 // Past cutoff: no migratable inputs → neither leg, global skip.
                 expect(report.vtxos).toBeUndefined();
@@ -463,7 +470,6 @@ describe("deprecated-signer migration (real rotation)", () => {
                 // migrates the boarding input into a fresh VTXO under B.
                 const stale = `${boarding[0].txid}:${boarding[0].vout}`;
                 const report = await vtxoManager.migrateDeprecatedSignerVtxos();
-                expect(report.rotated).toBe(true);
                 expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
                 // Boarding migrates through its OWN settle leg (separate from
                 // the send-based VTXO leg); its txid is a settle commitment.
