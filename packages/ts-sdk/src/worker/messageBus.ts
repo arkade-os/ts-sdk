@@ -719,6 +719,15 @@ export class MessageBus {
                 });
             return;
         }
+        // postMessage's structured clone normalizes a custom Error name to
+        // "Error"; a plain-string copy survives, and the page restores it.
+        // Stamped HERE — the single egress — so the bus's own typed errors
+        // (MessageBusInitializingError, ServiceWorkerTimeoutError, …) and
+        // every handler's, present or future, all carry their names without
+        // each site remembering to.
+        if (response.error instanceof Error && !response.errorName) {
+            response.errorName = response.error.name;
+        }
         source.postMessage(response);
     }
 

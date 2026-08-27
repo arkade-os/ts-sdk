@@ -1611,7 +1611,7 @@ describe("ReadonlyWallet", () => {
         // timeout budget (an AbortSignal where the runtime has one)
         expect(mockFetch).toHaveBeenCalledWith(
             `${DEFAULT_ARKADE_SERVER_URL}/v1/info`,
-            expect.objectContaining({}),
+            expect.objectContaining({ signal: expect.any(AbortSignal) }),
         );
     });
 

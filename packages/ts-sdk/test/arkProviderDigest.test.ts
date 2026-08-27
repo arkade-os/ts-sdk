@@ -101,10 +101,8 @@ describe("RestArkProvider server-info digest negotiation", () => {
         await provider.getInfo();
         expect(fetchSpy).toHaveBeenCalled();
 
-        // the rejection shape AbortSignal.timeout produces
-        const timeoutErr = new DOMException("The operation timed out.", "TimeoutError");
-        const { isRetryableProviderError } = await import("../src/providers/availability");
-        expect(isRetryableProviderError(timeoutErr)).toBe(true);
+        // The TimeoutError this signal rejects with classifies retryable —
+        // pinned with the rest of the classifier in ark-info-snapshot.test.ts.
     });
 
     it("getInfo emits onServerInfoChanged when the digest moved — and only then", async () => {

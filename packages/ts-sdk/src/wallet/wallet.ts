@@ -55,6 +55,7 @@ import {
     ArkTransaction,
     ArkadeBroadcaster,
     ArkadeReader,
+    GetArkadeInfoOptions,
     Asset,
     Coin,
     ExtendedCoin,
@@ -657,15 +658,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
     protected _arkServerPublicKey: Bytes;
 
     /**
-     * Whether this wallet was constructed from live operator server-info
-     * (`"live"`) or from a cached snapshot because the operator was unreachable
-     * (`"cache"`). Freshness signal for {@link getProviderConnectionState}.
+     * Whether the LATEST server-info resolution answered live (`"live"`) or
+     * from the cached snapshot because the operator was unreachable
+     * (`"cache"`). Seeded at construction and updated by every
+     * {@link getArkadeInfo} read, so a wallet that booted offline and
+     * recovered stops reporting degraded — and one that just fell back stops
+     * claiming online. Freshness signal for
+     * {@link getProviderConnectionState}.
      */
     protected _serverInfoSource: ServerInfoSource = "live";
 
     /**
-     * Epoch-ms of the last known live operator contact: construction time on the
-     * `live` boot path, the cached snapshot's `savedAt` on the `cache` path.
+     * Epoch-ms of the last known live operator contact: the most recent live
+     * resolution (construction or a later {@link getArkadeInfo}), or the
+     * cached snapshot's `savedAt` when the latest resolution fell back.
      */
     protected _serverInfoLastOnlineAt?: number;
 
@@ -675,13 +681,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Composed provider-connection freshness: the boot server-info source
-     * (Arkade) combined with the contract-manager's indexer-sync health, if the
-     * manager has been initialized. Reads no live provider state — it never
-     * forces a `ContractManager` to construct — so it is safe for readonly
-     * callers that only use address/balance APIs.
+     * Composed provider-connection freshness: the LATEST server-info
+     * resolution (boot, or any later {@link getArkadeInfo} read) combined with
+     * the contract-manager's indexer-sync health, if the manager has been
+     * initialized. Reads no live provider state — it never forces a
+     * `ContractManager` to construct — so it is safe for readonly callers
+     * that only use address/balance APIs.
      *
-     *  - Boot fell back to a cached snapshot → degraded on `arkade` (`cache`).
+     *  - Latest resolution fell back to the cached snapshot → degraded on
+     *    `arkade` (`cache`).
      *  - Otherwise, if the contract manager has degraded to repository data →
      *    degraded on `indexer` (`repository`).
      *  - Otherwise online.
@@ -877,42 +885,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * ones a mid-session rotation moves, and a covenant built against a
      * superseded signer is unspendable.
      *
-     * Two rotation caveats, both known gaps (#734) rather than guarantees:
-     *
-     * Reading does NOT re-pin the wallet — {@link arkServerPublicKey},
-     * {@link dustAmount} and the tapscripts move only through
-     * `handleServerInfoChanged`/`rotateServerSigner` — so inside a rotation
-     * window this can report epoch N+1 while the wallet still spends on N.
-     *
-     * Worse, reading *suppresses* the trigger that would close that window.
-     * `RestArkProvider.getInfo()` caches the digest it just read, and the
-     * cached digest is what rides `X-Digest` on every other request. Once it
-     * has advanced, arkd stops answering `DIGEST_MISMATCH`, so the provider
-     * never fires `onServerInfoChanged` and the wallet never learns to
-     * re-derive. Do not call this on a hot path expecting rotation to still
-     * work behind it.
-     *
-     * And the answer may be the boot snapshot rather than live: on a retryable
-     * failure this falls back to the cache, so a caller deriving a covenant
-     * from `signerPubkey` can bind one to a key the operator has since
-     * rotated away from, instead of failing closed.
+     * One rotation caveat: reading does NOT re-pin the wallet —
+     * {@link arkServerPublicKey}, {@link dustAmount} and the tapscripts move
+     * only through `handleServerInfoChanged`/`rotateServerSigner` — so inside
+     * a rotation window this can report epoch N+1 while the wallet still
+     * spends on N. The window closes on its own: a read that observes a moved
+     * digest makes the provider emit `onServerInfoChanged`, which is what
+     * drives that rotation. A caller about to bind the answer into a covenant
+     * passes `{ requireLive: true }` and fails closed instead of receiving
+     * the boot snapshot.
      *
      * @returns The Arkade server's info
      * @see ArkadeInfo
      */
-    async getArkadeInfo(opts?: { requireLive?: boolean }): Promise<ArkadeInfo> {
-        if (opts?.requireLive) {
-            // Fail closed: no snapshot fallback for a caller that is about to
-            // bind this answer into a covenant. Throws whatever the provider
-            // throws when the operator is unreachable — the pre-#734 shape.
-            const info = await this.arkProvider.getInfo();
-            this._serverInfoSource = "live";
-            this._serverInfoLastOnlineAt = Date.now();
-            return info;
-        }
+    async getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
         const { info, source, lastOnlineAt } = await resolveArkInfo(
             this.arkProvider,
             this.walletRepository,
+            opts,
         );
         // The resolution just learned whether the operator is reachable, so
         // {@link getProviderConnectionState} tracks the LATEST resolution

@@ -20,7 +20,8 @@ style and have not been backfilled.
   unilateral-exit delay — from `wallet.getArkadeInfo()`
   instead of building a `RestArkProvider` from a URL, so a caller
   holding a wallet holds everything these need and pays no second
-  `/v1/info` round-trip. Drop the argument at every call site; nothing
+  `/v1/info` round-trip per call (each entrypoint still performs its own
+  live read — deliberately, see the `requireLive` entry below). Drop the argument at every call site; nothing
   else about these calls changed. (#734)
 - **`@arkade-os/swap`: `cancelOffer` and `watchOfferSwaps` lose their
   server URL too.** `cancelOffer(wallet, offerHex, opts)` and

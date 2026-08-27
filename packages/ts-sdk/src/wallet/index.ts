@@ -978,6 +978,13 @@ export interface IAssetManager extends IReadonlyAssetManager {
     burn(params: BurnParams): Promise<string>;
 }
 
+/** Options for {@link IReadonlyWallet.getArkadeInfo}. */
+export type GetArkadeInfoOptions = {
+    /** Throw when the operator is unreachable instead of answering from the
+     * persisted snapshot — for callers binding the answer into a covenant. */
+    requireLive?: boolean;
+};
+
 /**
  * Chain reads a caller needs beyond its own wallet's VTXOs: an arbitrary
  * script's virtual outputs, and the transactions that spent them.
@@ -1145,17 +1152,16 @@ export interface IReadonlyWallet {
      * wins; when the server is unreachable this falls back to the snapshot
      * persisted at construction, so an offline wallet still answers.
      *
-     * @returns The Arkade server's info
-     * @see ArkadeInfo
-     */
-    /**
-     * With `requireLive`, the snapshot fallback is off: the read throws when
-     * the operator is unreachable instead of answering from cache. For callers
+     * With `requireLive`, that fallback is off: the read throws when the
+     * operator is unreachable instead of answering from cache. For callers
      * about to bind `signerPubkey` or a delay into a covenant — a stale
      * snapshot there derives an address the operator may no longer co-sign
      * for, so failing closed is the correct shape.
+     *
+     * @returns The Arkade server's info
+     * @see ArkadeInfo
      */
-    getArkadeInfo(opts?: { requireLive?: boolean }): Promise<ArkadeInfo>;
+    getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo>;
 
     /**
      * Chain reads against this wallet's Arkade server, for scripts the wallet

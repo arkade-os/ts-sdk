@@ -297,6 +297,10 @@ describe("isRetryableProviderError", () => {
     it("classifies unavailable + transport errors as retryable, others terminal", () => {
         expect(isRetryableProviderError(new ProviderUnavailableError("x"))).toBe(true);
         expect(isRetryableProviderError(new FetchError("x", { url: "y" }))).toBe(true);
+        // the rejection shape AbortSignal.timeout produces (the /v1/info budget)
+        expect(
+            isRetryableProviderError(new DOMException("The operation timed out.", "TimeoutError")),
+        ).toBe(true);
         expect(isRetryableProviderError(new Error("400"))).toBe(false);
         expect(isRetryableProviderError(new MalformedArkInfoSnapshotError("x"))).toBe(false);
     });

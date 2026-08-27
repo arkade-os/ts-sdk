@@ -18,7 +18,7 @@ import {
     Recipient,
     SendParams,
 } from "..";
-import { ArkadeInfo, SettlementEvent } from "../../providers/ark";
+import { ArkadeInfo, INFO_FETCH_TIMEOUT_MS, SettlementEvent } from "../../providers/ark";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
 import { hex } from "@scure/base";
 import {
@@ -171,7 +171,7 @@ import type {
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
 import { getRandomId } from "../utils";
-import type { ArkadeBroadcaster, ArkadeReader, VirtualCoin } from "..";
+import type { ArkadeBroadcaster, ArkadeReader, GetArkadeInfoOptions, VirtualCoin } from "..";
 import {
     isMessageBusInitializingError,
     isMessageBusNotInitializedError,
@@ -227,9 +227,12 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     ADVANCE_SIGNING_DESCRIPTOR_WATERMARK: 10_000,
 
     // Medium reads — may involve indexer queries
-    // GET_ARKADE_INFO is a live `/v1/info` fetch queued behind the same
-    // per-origin rate gate as the indexer, not a repository read.
-    GET_ARKADE_INFO: 20_000,
+    // A live `/v1/info` fetch queued behind the same per-origin rate gate as
+    // the indexer, not a repository read. Derived from the fetch's own abort
+    // budget so the worker's snapshot fallback stays reachable before this
+    // page deadline fires — lowering it below the budget would time the page
+    // out while the worker is still seconds from answering from cache.
+    GET_ARKADE_INFO: INFO_FETCH_TIMEOUT_MS + 8_000,
     INDEXER_GET_VTXOS: 20_000,
     INDEXER_GET_VIRTUAL_TXS: 20_000,
     GET_VTXOS: 20_000,
@@ -1078,13 +1081,15 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      * Delegated to the worker, which holds the wallet that owns the connection.
      * The payload crosses raw — see {@link ResponseGetArkadeInfo} for why.
      */
-    async getArkadeInfo(opts?: { requireLive?: boolean }): Promise<ArkadeInfo> {
+    async getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
         const message: RequestGetArkadeInfo = {
             id: getRandomId(),
             tag: this.messageTag,
             type: "GET_ARKADE_INFO",
-            // omitted entirely for the default read, so the wire shape (and
-            // the dedup key) of existing callers does not change
+            // omitted entirely for the default read: wire-shape hygiene
+            // toward workers built before the option existed. (Dedup is
+            // unaffected either way — the key is JSON.stringify, which drops
+            // undefined-valued properties.)
             ...(opts?.requireLive ? { payload: { requireLive: true } } : {}),
         };
 

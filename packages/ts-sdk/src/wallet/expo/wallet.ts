@@ -5,6 +5,7 @@ import { RestArkProvider } from "../../providers/ark";
 import type {
     ArkadeBroadcaster,
     ArkadeReader,
+    GetArkadeInfoOptions,
     IWallet,
     IAssetManager,
     WalletBalance,
@@ -304,7 +305,7 @@ export class ExpoWallet implements IWallet, HDWalletCapable, HDAllocationCapable
         return this.wallet.getBoardingAddress();
     }
 
-    getArkadeInfo(opts?: { requireLive?: boolean }): Promise<ArkadeInfo> {
+    getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
         return this.wallet.getArkadeInfo(opts);
     }
 

@@ -22,6 +22,7 @@ import type {
 import {
     ArkadeBroadcaster,
     ArkadeReader,
+    GetArkadeInfoOptions,
     ArkTransaction,
     AssetDetails,
     BurnParams,
@@ -205,7 +206,7 @@ export type ResponseGetBoardingAddress = ResponseEnvelope & {
 // worker updates.
 export type RequestGetArkadeInfo = RequestEnvelope & {
     type: "GET_ARKADE_INFO";
-    payload?: { requireLive?: boolean };
+    payload?: GetArkadeInfoOptions;
 };
 // `ArkadeInfo` is bigint-heavy and crosses the boundary raw: the channel is
 // `postMessage`/structuredClone, which is bigint-safe, and `GET_BALANCE` below
@@ -1021,11 +1022,11 @@ export class WalletMessageHandler
     }
 
     private tagged(res: Partial<WalletUpdaterResponse>): WalletUpdaterResponse {
+        // `errorName` is stamped by the bus at its postMessage egress
+        // (`MessageBus.deliverResponse`), not here — one choke point for
+        // every handler and for the bus's own typed errors.
         return {
             ...res,
-            // postMessage's clone normalizes a custom Error name to "Error";
-            // the plain-string copy survives, and the page restores it.
-            ...(res.error instanceof Error ? { errorName: res.error.name } : {}),
             tag: this.messageTag,
         } as WalletUpdaterResponse;
     }

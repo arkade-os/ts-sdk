@@ -349,12 +349,16 @@ export interface ResolvedArkInfo {
 export async function resolveArkInfo(
     arkProvider: Pick<ArkProvider, "getInfo">,
     walletRepository: WalletRepository,
+    opts?: { requireLive?: boolean },
 ): Promise<ResolvedArkInfo> {
     let info: ArkadeInfo;
     try {
         info = await arkProvider.getInfo();
     } catch (err) {
-        if (!isRetryableProviderError(err)) throw err;
+        // requireLive: fail closed — no snapshot for a caller about to bind
+        // the answer into a covenant. The policy lives HERE, not in a caller's
+        // second resolution path, so every wallet resolves identically.
+        if (opts?.requireLive || !isRetryableProviderError(err)) throw err;
         // Retryable: fall back to cache. A malformed stored snapshot throws
         // (terminal) out of loadArkInfoSnapshot rather than being swallowed.
         const snapshot = await loadArkInfoSnapshot(walletRepository);

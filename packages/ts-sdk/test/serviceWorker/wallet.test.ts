@@ -25,35 +25,17 @@ type MessageHandler = (event: { data: any }) => void;
 
 const STUB_XONLY_PUBLIC_KEY = new Uint8Array(32).fill(0xab);
 
-// Simulate the structured clone algorithm that postMessage uses. Faithful on
-// the point that burned this PR once: the real algorithm serializes an Error's
-// `name` only from the built-in whitelist — a custom name reaches the page as
-// "Error". A stub that copied `name` verbatim certified a fix the browser
-// would have rejected (PR #803 review).
-const CLONEABLE_ERROR_NAMES = new Set([
-    "Error",
-    "EvalError",
-    "RangeError",
-    "ReferenceError",
-    "SyntaxError",
-    "TypeError",
-    "URIError",
-]);
-function structuredCloneError(error: any): any {
-    if (error instanceof Error) {
-        const cloned = new Error(error.message);
-        cloned.name = CLONEABLE_ERROR_NAMES.has(error.name) ? error.name : "Error";
-        return cloned;
-    }
-    if (error && typeof error === "object") {
-        return JSON.parse(JSON.stringify(error));
-    }
-    return error;
-}
-
+// Errors cross the harness through the REAL structured-clone algorithm, so
+// its fidelity is the platform's problem, not a hand-maintained simulation's.
+// A stub that copied `name` verbatim once certified a fix the browser would
+// have rejected (PR #803 review) — the real algorithm normalizes a custom
+// Error name to "Error", which is exactly what these tests must see.
+// Success payloads still pass by REFERENCE on purpose: responses carry spies,
+// which do not clone. A test asserting that a success payload survives a real
+// clone boundary (the bigint test) wraps its own envelope.
 function structuredCloneResponse(response: any): any {
     if (!response || !response.error) return response;
-    return { ...response, error: structuredCloneError(response.error) };
+    return { ...response, error: structuredClone(response.error) };
 }
 
 const createServiceWorkerHarness = (
@@ -294,17 +276,13 @@ describe("ServiceWorkerReadonlyWallet", () => {
     it("sends requireLive on the wire, and omits payload for the default read", async () => {
         // The other half of the fail-closed path: the page proxy must put the
         // option INTO the message, and must not grow a payload key on the
-        // default read — the wire shape doubles as the dedup key, so a stray
-        // `payload: undefined` would split existing callers' dedup.
+        // default read — wire-shape hygiene toward workers built before the
+        // option existed. (Dedup is unaffected either way: the key is
+        // JSON.stringify, which drops undefined-valued properties.)
         const info = { network: "regtest" };
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
             message.type === "GET_ARKADE_INFO"
-                ? structuredClone({
-                      id: message.id,
-                      tag: messageTag,
-                      type: "ARKADE_INFO",
-                      payload: { info },
-                  })
+                ? { id: message.id, tag: messageTag, type: "ARKADE_INFO", payload: { info } }
                 : null,
         );
 
@@ -334,20 +312,20 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const vtxos = [{ txid: "ab".repeat(32), vout: 0, value: 1000 }];
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
             if (message.type === "INDEXER_GET_VTXOS") {
-                return structuredClone({
+                return {
                     id: message.id,
                     tag: messageTag,
                     type: "INDEXER_VTXOS",
                     payload: { vtxos },
-                });
+                };
             }
             if (message.type === "INDEXER_GET_VIRTUAL_TXS") {
-                return structuredClone({
+                return {
                     id: message.id,
                     tag: messageTag,
                     type: "INDEXER_VIRTUAL_TXS",
                     payload: { txs: ["deadbeef"] },
-                });
+                };
             }
             return null;
         });
@@ -390,19 +368,20 @@ describe("ServiceWorkerReadonlyWallet", () => {
         // corrupt cache (re-onboard). The REAL clone algorithm normalizes a
         // custom Error name to "Error" — this test certified the opposite
         // until review caught the harness copying `name` verbatim — so the
-        // worker sends `errorName` as plain data (stamped by `tagged()`) and
-        // the page restores it. Cloned with the real `structuredClone` here,
-        // so the whitelist behaviour is the one under test.
+        // worker sends `errorName` as plain data (stamped at the bus egress,
+        // `MessageBus.deliverResponse`) and the page restores it. The harness
+        // passes the error through the REAL structured clone, so the
+        // normalization under test is the platform's, not a simulation's.
         const worker = new Error("no cached snapshot");
         worker.name = "ProviderUnavailableError";
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
             message.type === "GET_ARKADE_INFO"
-                ? structuredClone({
+                ? {
                       id: message.id,
                       tag: messageTag,
                       error: worker,
                       errorName: worker.name,
-                  })
+                  }
                 : null,
         );
 
@@ -422,7 +401,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         worker.name = "ProviderUnavailableError";
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
             message.type === "GET_ARKADE_INFO"
-                ? structuredClone({ id: message.id, tag: messageTag, error: worker })
+                ? { id: message.id, tag: messageTag, error: worker }
                 : null,
         );
 
@@ -758,20 +737,16 @@ describe("ServiceWorkerWallet", () => {
         };
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
             if (message.type === "SUBMIT_TX") {
-                return structuredClone({
+                return {
                     id: message.id,
                     tag: messageTag,
                     type: "SUBMIT_TX_SUCCESS",
                     payload: submitted,
-                });
+                };
             }
             if (message.type === "FINALIZE_TX") {
                 // no payload — finalize answers with the bare success envelope
-                return structuredClone({
-                    id: message.id,
-                    tag: messageTag,
-                    type: "FINALIZE_TX_SUCCESS",
-                });
+                return { id: message.id, tag: messageTag, type: "FINALIZE_TX_SUCCESS" };
             }
             return null;
         });

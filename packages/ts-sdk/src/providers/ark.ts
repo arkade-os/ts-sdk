@@ -1272,11 +1272,13 @@ namespace ProtoTypes {
 }
 
 /**
- * Budget for a single live `/v1/info` fetch. Below the service-worker page
- * deadline for GET_ARKADE_INFO (20s) with room for the rate-gate queue, so the
- * worker's snapshot fallback is reachable before the page gives up.
+ * Budget for a single live `/v1/info` fetch. Exported so the service-worker
+ * page deadline for GET_ARKADE_INFO is DERIVED from it (budget + queue
+ * headroom): the invariant that the worker's snapshot fallback stays
+ * reachable before the page gives up must hold by construction, not by two
+ * unrelated numbers happening to agree.
  */
-const INFO_FETCH_TIMEOUT_MS = 12_000;
+export const INFO_FETCH_TIMEOUT_MS = 12_000;
 
 /** `AbortSignal.timeout` where the runtime has it; older runtimes go unbudgeted. */
 function infoFetchSignal(): AbortSignal | undefined {
