@@ -5,14 +5,14 @@ import { p2tr, SigHash } from "@scure/btc-signer";
 import {
     arkade,
     asset,
+    attachPrevArkTxs,
+    attachPrevoutTxs,
     buildOffchainTx,
     ArkAddress,
     EsploraProvider,
     networks,
-    PrevoutTxField,
     RestArkProvider,
     RestIndexerProvider,
-    setArkPsbtField,
     SingleKey,
     Transaction,
     Intent,
@@ -20,6 +20,7 @@ import {
     RestEmulatorProvider,
     Extension,
     EmulatorPacket,
+    withPrevTxs,
 } from "../../src";
 import type { Identity } from "../../src/identity";
 import {
@@ -339,20 +340,27 @@ describe("arkade", () => {
 
         // Create the intent proof. `script` is what marks this as a virtual output rather than a
         // boarding input, so the batch handler builds a forfeit for it.
-        const coin = {
-            txid: vtxo.txid,
-            vout: vtxo.vout,
-            value: vtxo.value,
-            tapTree,
-            forfeitTapLeafScript: arkadeLeaf,
-            intentTapLeafScript: arkadeLeaf,
-            status: vtxo.status,
-            script: vtxo.script,
-            createdAt: vtxo.createdAt,
-            isUnrolled: vtxo.isUnrolled,
-            isSpent: vtxo.isSpent,
-            virtualStatus: vtxo.virtualStatus,
-        };
+        // `prevTx` carries the raw creating tx of each real proof input — the
+        // emulator resolves the prevout pkScript from it.
+        const [coin] = await withPrevTxs(
+            [
+                {
+                    txid: vtxo.txid,
+                    vout: vtxo.vout,
+                    value: vtxo.value,
+                    tapTree,
+                    forfeitTapLeafScript: arkadeLeaf,
+                    intentTapLeafScript: arkadeLeaf,
+                    status: vtxo.status,
+                    script: vtxo.script,
+                    createdAt: vtxo.createdAt,
+                    isUnrolled: vtxo.isUnrolled,
+                    isSpent: vtxo.isSpent,
+                    virtualStatus: vtxo.virtualStatus,
+                },
+            ],
+            indexerProvider,
+        );
 
         const intentProof = Intent.create(
             message,
@@ -502,18 +510,26 @@ describe("arkade", () => {
             cosigners_public_keys: [sessionPubKey],
         };
 
-        const coin = {
-            txid: utxo.txid,
-            vout: utxo.vout,
-            value: utxo.value,
-            tapTree,
-            forfeitTapLeafScript: arkadeLeaf,
-            intentTapLeafScript: arkadeLeaf,
-            status: {
-                confirmed: utxo.status?.confirmed ?? false,
-                block_time: 0,
-            },
-        };
+        // A boarding input's prevout is an onchain funding tx — `getVirtualTxs`
+        // serves ark/tree/checkpoint txs only, so the explorer is the source.
+        const [coin] = await withPrevTxs(
+            [
+                {
+                    txid: utxo.txid,
+                    vout: utxo.vout,
+                    value: utxo.value,
+                    tapTree,
+                    forfeitTapLeafScript: arkadeLeaf,
+                    intentTapLeafScript: arkadeLeaf,
+                    status: {
+                        confirmed: utxo.status?.confirmed ?? false,
+                        block_time: 0,
+                    },
+                },
+            ],
+            indexerProvider,
+            explorer,
+        );
 
         const intentProof = Intent.create(
             message,
@@ -623,6 +639,8 @@ describe("arkade", () => {
             ark.checkpoint,
         );
 
+        await attachPrevArkTxs(arkTx, [vtxo.txid], indexerProvider);
+
         // Bob signs the arkTx and checkpoints; emulator auto-finalizes via
         // arkd because it's the last non-arkd signer.
         const bobSignedArkTx = await bob.sign(arkTx);
@@ -712,6 +730,8 @@ describe("arkade", () => {
             ark.checkpoint,
         );
 
+        await attachPrevArkTxs(mintTx, [mintVtxo.txid], indexerProvider);
+
         // Bob signs the mint tx and checkpoints; emulator auto-finalizes via
         // arkd because it's the last non-arkd signer.
         const bobSignedMintTx = await bob.sign(mintTx);
@@ -768,20 +788,25 @@ describe("arkade", () => {
         };
 
         // `script` marks this as a virtual output — see the note on `coin` in TestSettlement.
-        const settleCoin = {
-            txid: settleVtxo.txid,
-            vout: settleVtxo.vout,
-            value: settleVtxo.value,
-            tapTree: settleTapTree,
-            forfeitTapLeafScript: settleArkadeLeaf,
-            intentTapLeafScript: settleArkadeLeaf,
-            status: settleVtxo.status,
-            script: settleVtxo.script,
-            createdAt: settleVtxo.createdAt,
-            isUnrolled: settleVtxo.isUnrolled,
-            isSpent: settleVtxo.isSpent,
-            virtualStatus: settleVtxo.virtualStatus,
-        };
+        const [settleCoin] = await withPrevTxs(
+            [
+                {
+                    txid: settleVtxo.txid,
+                    vout: settleVtxo.vout,
+                    value: settleVtxo.value,
+                    tapTree: settleTapTree,
+                    forfeitTapLeafScript: settleArkadeLeaf,
+                    intentTapLeafScript: settleArkadeLeaf,
+                    status: settleVtxo.status,
+                    script: settleVtxo.script,
+                    createdAt: settleVtxo.createdAt,
+                    isUnrolled: settleVtxo.isUnrolled,
+                    isSpent: settleVtxo.isSpent,
+                    virtualStatus: settleVtxo.virtualStatus,
+                },
+            ],
+            indexerProvider,
+        );
 
         const settleIntentProof = Intent.create(
             settleMessage,
@@ -863,7 +888,6 @@ describe("arkade", () => {
         // fund the contract address on-chain
         faucetOnchain(vtxoScript.onchainAddress(networks.regtest), FUNDING_SATS);
         const utxo = await waitForUtxo(vtxoScript.onchainAddress(networks.regtest));
-        const rawFundingTx = hex.decode(await fetchTxHex(utxo.txid));
 
         // build the unsigned 1-in/1-out spend PSBT with all required arkade fields
         const tx = new Transaction({ version: 2 });
@@ -876,7 +900,7 @@ describe("arkade", () => {
             sighashType: SigHash.DEFAULT,
         });
         tx.addOutput({ script: bobP2TR, amount: SPEND_AMOUNT });
-        setArkPsbtField(tx, 0, PrevoutTxField, rawFundingTx);
+        await attachPrevoutTxs(tx, explorer);
         addEmulatorPacket(tx, [
             {
                 vin: 0,
@@ -903,12 +927,3 @@ describe("arkade", () => {
         expect(broadcastTxid).toBeTruthy();
     });
 });
-
-/** Fetch the raw hex of a transaction from the Esplora REST API */
-async function fetchTxHex(txid: string): Promise<string> {
-    const resp = await fetch(`${ESPLORA_URL}/tx/${txid}/hex`);
-    if (!resp.ok) {
-        throw new Error(`fetchTxHex failed: ${resp.statusText}`);
-    }
-    return resp.text();
-}

@@ -226,6 +226,8 @@ Wallets read onchain state (UTXOs, transactions, fee rates, chain tip) through a
 
 If you don't pass a provider explicitly, `OnchainWallet` and `Wallet.create({ ... })` both default to `EsploraProvider` pointing at the URL in `ESPLORA_URL[networkName]`.
 
+> **New:** the interface also requires `getRawTransaction(txid): Promise<Uint8Array>`, the raw wire bytes of a transaction. Emulator v0.0.7+ demands the previous transaction of every input a covenant spend or intent proof carries, and a boarding or commitment parent has no off-chain source. Both shipped providers implement it; a custom `OnchainProvider` has to add it.
+
 #### Default URLs
 
 The SDK ships with reachable defaults for each network — bitcoin, signet, and mutinynet point at Ark Labs–operated deployments; testnet falls back to mempool.space; regtest assumes a local [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) stack (esplora API on `http://localhost:3000/api`).

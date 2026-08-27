@@ -273,7 +273,17 @@ import {
     CosignerPublicKey,
     VtxoTreeExpiry,
 } from "./utils/unknownFields";
-import { Intent } from "./intent";
+import {
+    resolvePrevTxs,
+    attachPrevArkTxs,
+    attachPrevoutTxs,
+    withPrevTxs,
+    PrevTxUnavailableError,
+    type PrevTxSource,
+    type RawTxSource,
+    type WithPrevTx,
+} from "./utils/prevoutTx";
+import { Intent, type IntentCoin } from "./intent";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
@@ -659,6 +669,12 @@ export {
     ConditionWitness,
     PrevArkTxField,
     PrevoutTxField,
+    // Prevout tx resolution (emulator v0.0.7+)
+    resolvePrevTxs,
+    attachPrevArkTxs,
+    attachPrevoutTxs,
+    withPrevTxs,
+    PrevTxUnavailableError,
     // Utils
     buildOffchainTx,
     assertSubmittedArkTxid,
@@ -842,6 +858,10 @@ export type {
     TapscriptType,
     ArkTxInput,
     OffchainTx,
+    PrevTxSource,
+    RawTxSource,
+    WithPrevTx,
+    IntentCoin,
     VerifyServerSignatures,
     TapLeaves,
     IncomingFunds,

@@ -13,12 +13,13 @@ import {
     type EmulatorInfo,
     type EmulatorProvider,
 } from "../src";
+import { getVirtualTxs, mintCoin } from "./helpers/prevArkTx";
 
 function xOnly(): Uint8Array {
     return schnorr.getPublicKey(schnorr.utils.randomSecretKey());
 }
 
-const COIN = { txid: hex.encode(new Uint8Array(32).fill(1)), vout: 0, value: 10_000 };
+const COIN = mintCoin(10_000);
 const HASH = new Uint8Array(20).fill(7);
 const AMOUNT = 10_000n;
 
@@ -90,6 +91,7 @@ function stubProviders(server: Uint8Array, emulatorKey: Uint8Array) {
         async getVtxos() {
             return { vtxos: [{ ...COIN } as any] };
         },
+        getVirtualTxs,
     };
     const captured: { arkTx?: string } = {};
     const emulator: EmulatorProvider = {
