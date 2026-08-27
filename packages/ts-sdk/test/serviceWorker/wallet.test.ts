@@ -291,6 +291,41 @@ describe("ServiceWorkerReadonlyWallet", () => {
         );
     });
 
+    it("sends requireLive on the wire, and omits payload for the default read", async () => {
+        // The other half of the fail-closed path: the page proxy must put the
+        // option INTO the message, and must not grow a payload key on the
+        // default read — the wire shape doubles as the dedup key, so a stray
+        // `payload: undefined` would split existing callers' dedup.
+        const info = { network: "regtest" };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.type === "GET_ARKADE_INFO"
+                ? structuredClone({
+                      id: message.id,
+                      tag: messageTag,
+                      type: "ARKADE_INFO",
+                      payload: { info },
+                  })
+                : null,
+        );
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+
+        await expect(wallet.getArkadeInfo({ requireLive: true })).resolves.toEqual(info);
+        expect(serviceWorker.postMessage).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                type: "GET_ARKADE_INFO",
+                payload: { requireLive: true },
+            }),
+        );
+
+        await expect(wallet.getArkadeInfo()).resolves.toEqual(info);
+        const last = (serviceWorker.postMessage as any).mock.calls.at(-1)[0];
+        expect(last.type).toBe("GET_ARKADE_INFO");
+        expect("payload" in last).toBe(false);
+    });
+
     it("proxies getArkadeReader over its own INDEXER_* messages", async () => {
         // The page holds no provider, so the reader has to be an RPC proxy.
         // `INDEXER_GET_VTXOS`, not `GET_VTXOS`: the latter answers the wallet's

@@ -349,6 +349,30 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
+    it("passes requireLive through GET_ARKADE_INFO to the wallet", async () => {
+        // The fail-closed covenant path in a service-worker deployment is
+        // page → message → this handler → wallet.getArkadeInfo(payload). A
+        // handler that dropped the payload (a destructuring slip) would pass
+        // every response-shape test while silently downgrading every
+        // covenant derivation to the snapshot-fallback read.
+        const getArkadeInfo = vi.fn().mockResolvedValue({ network: "regtest" });
+        (updater as any).readonlyWallet = { getArkadeInfo };
+
+        await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_ARKADE_INFO",
+            payload: { requireLive: true },
+        } as any);
+        expect(getArkadeInfo).toHaveBeenLastCalledWith({ requireLive: true });
+
+        // and the default read stays a default read
+        await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_ARKADE_INFO",
+        } as any);
+        expect(getArkadeInfo).toHaveBeenLastCalledWith(undefined);
+    });
+
     it("handles GET_BALANCE messages", async () => {
         (updater as any).readonlyWallet = {};
         const balance = {
