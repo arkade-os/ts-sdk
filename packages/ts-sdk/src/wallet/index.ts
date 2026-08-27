@@ -5,7 +5,7 @@ import { DescriptorProvider } from "../identity/descriptorProvider";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { RenewalConfig, SettlementConfig } from "./vtxo-manager";
-import { GetVtxosOptions, IndexerProvider, PageResponse } from "../providers/indexer";
+import { GetVtxosOptions, IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import {
@@ -877,7 +877,7 @@ export type ExtendedVirtualCoin = TapLeaves &
     EncodedVtxoScript &
     VirtualCoin & { extraWitness?: Bytes[] };
 
-import type { NormalizedExtendedVirtualCoin, NormalizedVirtualCoin } from "./vtxo";
+import type { NormalizedExtendedVirtualCoin, NormalizedVtxoPage } from "./vtxo";
 
 export {
     canRecoverOnchain,
@@ -895,6 +895,7 @@ export {
     toVirtualStatus,
     type NormalizedExtendedVirtualCoin,
     type NormalizedVirtualCoin,
+    type NormalizedVtxoPage,
     type TimeHeight,
     type VtxoScriptQuery,
 } from "./vtxo";
@@ -978,15 +979,6 @@ export interface IAssetManager extends IReadonlyAssetManager {
 }
 
 /**
- * Core wallet interface for Bitcoin transactions with Arkade protocol support.
- *
- * This interface defines the contract that all wallet implementations must follow.
- * It provides methods for address management, balance checking, virtual output
- * operations, and transaction management including sending, settling, and unrolling.
- *
- * @see IReadonlyWallet
- */
-/**
  * Chain reads a caller needs beyond its own wallet's VTXOs: an arbitrary
  * script's virtual outputs, and the transactions that spent them.
  *
@@ -996,7 +988,10 @@ export interface IAssetManager extends IReadonlyAssetManager {
  * and that a plugin holding a raw provider could otherwise skip. And because
  * `NormalizedVirtualCoin` is assignable to `VirtualCoin`, an `ArkadeReader`
  * satisfies `Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">` structurally,
- * so existing narrow seams accept one unchanged.
+ * so existing narrow seams accept one unchanged. Passing a reader to something
+ * that normalizes again — `getNormalizedVtxos`, `Arkade.connect`'s `indexer` —
+ * is harmless: `normalizeVtxo` is idempotent. Do not "fix" that by stripping
+ * the normalization here; it is the whole point of the seam.
  *
  * Deliberately not the whole provider: a caller that could reach `getTxHistory`
  * or `subscribeForScripts` through the wallet would be talking to the server
@@ -1004,10 +999,18 @@ export interface IAssetManager extends IReadonlyAssetManager {
  * express.
  */
 export type ArkadeReader = Pick<IndexerProvider, "getVirtualTxs"> & {
-    /** @see getNormalizedVtxos */
-    getVtxos(
-        opts?: GetVtxosOptions,
-    ): Promise<{ vtxos: NormalizedVirtualCoin[]; page?: PageResponse }>;
+    /**
+     * Required `opts`, unlike the `IndexerProvider` method it mirrors: this
+     * seam reads for *named* foreign scripts (or outpoints), and a bare
+     * `getVtxos()` would be an unscoped server-wide query.
+     *
+     * A single request, so a wide `scripts` list can exceed the query-string
+     * limit and only page one comes back — reach for {@link getAllNormalizedVtxos},
+     * which accepts a reader and chunks and pages to exhaustion.
+     *
+     * @see getNormalizedVtxos
+     */
+    getVtxos(opts: GetVtxosOptions): Promise<NormalizedVtxoPage>;
 };
 
 /**
@@ -1020,6 +1023,15 @@ export type ArkadeReader = Pick<IndexerProvider, "getVirtualTxs"> & {
  */
 export type ArkadeBroadcaster = Pick<ArkProvider, "submitTx" | "finalizeTx">;
 
+/**
+ * Core wallet interface for Bitcoin transactions with Arkade protocol support.
+ *
+ * This interface defines the contract that all wallet implementations must follow.
+ * It provides methods for address management, balance checking, virtual output
+ * operations, and transaction management including sending, settling, and unrolling.
+ *
+ * @see IReadonlyWallet
+ */
 export interface IWallet extends IReadonlyWallet {
     /**
      * Broadcast access to this wallet's Arkade server, so a plugin needs only

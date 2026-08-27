@@ -74,7 +74,7 @@ import type { ArkProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
 import type { Identity } from "../identity";
-import type { VirtualCoin } from "../wallet";
+import type { ArkadeBroadcaster, VirtualCoin } from "../wallet";
 import { getNormalizedVtxos, hasTerminalSpend } from "../wallet";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
@@ -228,8 +228,7 @@ export type CallableFunctions = Record<
  * Named so a caller building a derivation-only client has a type to import
  * rather than reaching into the options bag.
  */
-export type ArkadeServerProvider = Pick<ArkProvider, "getInfo"> &
-    Partial<Pick<ArkProvider, "submitTx" | "finalizeTx">>;
+export type ArkadeServerProvider = Pick<ArkProvider, "getInfo"> & Partial<ArkadeBroadcaster>;
 
 /** Options for {@link Arkade.connect}. */
 export interface ArkadeConnectOptions {

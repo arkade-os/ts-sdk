@@ -42,7 +42,7 @@ import {
 import { RETIRABLE, retireOfferContract } from "./coverage";
 import { decodeOffer, OFFER_CONTRACT_KIND } from "./offer";
 import type { AssetSwapRepository } from "./repository";
-import { classifyDepositSpend, spendTxidsOf, type RestoreIndexer, type SpendKind } from "./restore";
+import { classifyDepositSpend, spendTxidsOf, type SpendKind } from "./restore";
 import {
     getAssetSwaps,
     updateAssetSwapBestEffort,
@@ -108,14 +108,19 @@ export async function watchOfferSwaps({
     repository,
     onUpdate,
 }: WatchOfferSwapsParams): Promise<OfferSwapWatcher> {
-    const manager = await wallet.getContractManager();
+    // Independent, and on a service-worker wallet the first two are each a
+    // round trip to the worker — serialized they cost twice the startup.
+    // The reader is the wallet's own, so that read stays inside the worker
+    // rather than opening a second connection page-side.
+    const [manager, address, indexer] = await Promise.all([
+        wallet.getContractManager(),
+        wallet.getAddress(),
+        wallet.getArkadeReader(),
+    ]);
     // Current server key at watcher start. TODO: persist the funding-time key
     // with swap records; a signer rotation during a long session makes leaf
     // classification return indeterminate rather than guessing.
-    const serverPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;
-    // the wallet's own reader, so a service-worker wallet keeps this read
-    // inside the worker instead of opening a second connection page-side
-    const indexer: RestoreIndexer = await wallet.getArkadeReader();
+    const serverPubkey = ArkAddress.decode(address).serverPubKey;
 
     // events arrive independently but the update is read-modify-write over
     // the whole list, so two concurrent handlers would lose one of the writes

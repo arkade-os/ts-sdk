@@ -19,12 +19,15 @@ signer key, plus the unilateral-exit delay for the four `request*` calls. The wa
 place that knows which server it speaks to, so there is no URL to thread through and no second
 `/v1/info` round-trip.
 
-No entrypoint here takes a server URL. `cancelOffer` and `watchOfferSwaps` need more than
+No offer entrypoint here takes a server URL. `cancelOffer` and `watchOfferSwaps` need more than
 server info — cancel broadcasts the refund and falls back to the indexer for a deposit made
 before contract registration existed, and the watcher reads spending transactions — so they
 ask the wallet for those too: `wallet.getArkadeReader()` for chain reads and
 `wallet.getArkadeBroadcaster()` for `submitTx`/`finalizeTx`. On a service-worker wallet both
 are proxied to the worker, so these reads stay on the wallet's own connection.
+The RFQ/refund/restore helpers (`restoreAssetSwaps`, `arkadeRefunder`, `claim`/`refund`)
+still take provider instances; an `ArkadeReader` satisfies those shapes structurally, so
+they can be fed `await wallet.getArkadeReader()` today.
 
 ## Roles
 

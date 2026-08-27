@@ -72,6 +72,9 @@ const makeWallet = (getVirtualTxs: (txids: string[]) => Promise<{ txs: string[] 
             },
             setContractWatchState,
         }),
+        // the watcher reads spending txs through this seam, so the fetcher
+        // rides the stub wallet — no prototype spy on `RestIndexerProvider`,
+        // which is exactly the indirection the seam removes
         getArkadeReader: async () => ({ getVirtualTxs }),
     } as any;
     return {
@@ -91,14 +94,6 @@ const spentEvent = (offer: Offer, spentTxid: string, overrides: Record<string, u
     timestamp: 1_700_000_100_000,
     ...overrides,
 });
-
-// The watcher reads spending txs through `wallet.getArkadeReader()`, so the
-// stub wallet carries the fetcher directly — no prototype spy on
-// `RestIndexerProvider`, which is exactly the indirection the seam removes.
-const withIndexer = async (
-    fetcher: (txids: string[]) => Promise<{ txs: string[] }>,
-    run: (harness: ReturnType<typeof makeWallet>) => Promise<void>,
-) => run(makeWallet(fetcher));
 
 describe("spendUpdate", () => {
     const offer = makeOffer();
@@ -140,26 +135,22 @@ describe("watchOfferSwaps", () => {
         const repository = new InMemoryAssetSwapRepository();
         await addAssetSwap(repository, swapFor(offer));
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit }) => {
-                const updates: AssetSwap[] = [];
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    repository,
-                    onUpdate: (swap) => updates.push(swap),
-                });
+        const { wallet, emit } = makeWallet(async () => ({ txs: [fill.psbt] }));
+        const updates: AssetSwap[] = [];
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+            onUpdate: (swap) => updates.push(swap),
+        });
 
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                watcher.stop();
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(await getAssetSwaps(repository)).toMatchObject([
-                    { status: "fulfilled", spentTxid: fill.txid, completedAt: 1_700_000_100_000 },
-                ]);
-                expect(updates).toMatchObject([{ status: "fulfilled" }]);
-            },
-        );
+        expect(await getAssetSwaps(repository)).toMatchObject([
+            { status: "fulfilled", spentTxid: fill.txid, completedAt: 1_700_000_100_000 },
+        ]);
+        expect(updates).toMatchObject([{ status: "fulfilled" }]);
     });
 
     it("marks a cancel made elsewhere as cancelled, by its leaf", async () => {
@@ -170,20 +161,16 @@ describe("watchOfferSwaps", () => {
         const repository = new InMemoryAssetSwapRepository();
         await addAssetSwap(repository, swapFor(offer, { fromAsset: ASSET_ID, toAsset: "btc" }));
 
-        await withIndexer(
-            async () => ({ txs: [cancel.psbt] }),
-            async ({ wallet, emit }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    repository,
-                });
-                emit(spentEvent(offer, cancel.txid));
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit } = makeWallet(async () => ({ txs: [cancel.psbt] }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, cancel.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(await getAssetSwaps(repository)).toMatchObject([{ status: "cancelled" }]);
-            },
-        );
+        expect(await getAssetSwaps(repository)).toMatchObject([{ status: "cancelled" }]);
     });
 
     it("takes our own recorded cancel without reading the spending tx", async () => {
@@ -196,19 +183,15 @@ describe("watchOfferSwaps", () => {
         );
 
         const fetcher = vi.fn(async () => ({ txs: [] as string[] }));
-        await withIndexer(fetcher, async ({ wallet, emit }) => {
-            const watcher = await watchOfferSwaps({
-                wallet,
-                repository,
-            });
-            emit(spentEvent(offer, cancelTxid));
-            await watcher.idle();
-            watcher.stop();
+        const { wallet, emit } = makeWallet(fetcher);
+        const watcher = await watchOfferSwaps({ wallet, repository });
+        emit(spentEvent(offer, cancelTxid));
+        await watcher.idle();
+        watcher.stop();
 
-            expect(await getAssetSwaps(repository)).toMatchObject([{ status: "cancelled" }]);
-            // the whole point of the record: no indexer round trip
-            expect(fetcher).not.toHaveBeenCalled();
-        });
+        expect(await getAssetSwaps(repository)).toMatchObject([{ status: "cancelled" }]);
+        // the whole point of the record: no indexer round trip
+        expect(fetcher).not.toHaveBeenCalled();
     });
 
     it("writes nothing when the spending tx cannot be read", async () => {
@@ -218,20 +201,16 @@ describe("watchOfferSwaps", () => {
         const repository = new InMemoryAssetSwapRepository();
         await addAssetSwap(repository, swapFor(offer));
 
-        await withIndexer(
-            async () => ({ txs: [] }),
-            async ({ wallet, emit }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    repository,
-                });
-                emit(spentEvent(offer, "dd".repeat(32)));
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit } = makeWallet(async () => ({ txs: [] }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, "dd".repeat(32)));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
-            },
-        );
+        expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
     });
 
     it("ignores events for contracts that are not offer covenants", async () => {
@@ -240,21 +219,17 @@ describe("watchOfferSwaps", () => {
         const repository = new InMemoryAssetSwapRepository();
         await addAssetSwap(repository, swapFor(offer));
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    repository,
-                });
-                emit(spentEvent(offer, fill.txid, { contract: { metadata: { kind: "other" } } }));
-                emit({ type: "vtxo_received", contractScript: "", vtxos: [], contract: {} });
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit } = makeWallet(async () => ({ txs: [fill.psbt] }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, fill.txid, { contract: { metadata: { kind: "other" } } }));
+        emit({ type: "vtxo_received", contractScript: "", vtxos: [], contract: {} });
+        await watcher.idle();
+        watcher.stop();
 
-                expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
-            },
-        );
+        expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
     });
 
     it("does not notify a change the store refused", async () => {
@@ -268,24 +243,20 @@ describe("watchOfferSwaps", () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         vi.spyOn(repository, "saveSwap").mockRejectedValue(new Error("quota exceeded"));
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit }) => {
-                const updates: AssetSwap[] = [];
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    repository,
-                    onUpdate: (swap) => updates.push(swap),
-                });
+        const { wallet, emit } = makeWallet(async () => ({ txs: [fill.psbt] }));
+        const updates: AssetSwap[] = [];
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+            onUpdate: (swap) => updates.push(swap),
+        });
 
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                watcher.stop();
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(updates).toEqual([]);
-                expect(warn).toHaveBeenCalled();
-            },
-        );
+        expect(updates).toEqual([]);
+        expect(warn).toHaveBeenCalled();
         vi.restoreAllMocks();
     });
 
@@ -295,22 +266,20 @@ describe("watchOfferSwaps", () => {
         const repository = new InMemoryAssetSwapRepository();
         await addAssetSwap(repository, swapFor(offer));
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit, setContractWatchState }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    repository,
-                });
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit, setContractWatchState } = makeWallet(async () => ({
+            txs: [fill.psbt],
+        }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(setContractWatchState).toHaveBeenCalledWith(
-                    hex.encode(offer.swapPkScript),
-                    "retained",
-                );
-            },
+        expect(setContractWatchState).toHaveBeenCalledWith(
+            hex.encode(offer.swapPkScript),
+            "retained",
         );
     });
 
@@ -326,20 +295,18 @@ describe("watchOfferSwaps", () => {
             swapFor(offer, { id: "ee".repeat(32), fundingTxid: "ee".repeat(32) }),
         );
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit, setContractWatchState }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    repository,
-                });
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit, setContractWatchState } = makeWallet(async () => ({
+            txs: [fill.psbt],
+        }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(setContractWatchState).not.toHaveBeenCalled();
-            },
-        );
+        expect(setContractWatchState).not.toHaveBeenCalled();
     });
 
     it("keeps watching when the sibling deposit was swept", async () => {
@@ -358,20 +325,18 @@ describe("watchOfferSwaps", () => {
             }),
         );
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit, setContractWatchState }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    repository,
-                });
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit, setContractWatchState } = makeWallet(async () => ({
+            txs: [fill.psbt],
+        }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(setContractWatchState).not.toHaveBeenCalled();
-            },
-        );
+        expect(setContractWatchState).not.toHaveBeenCalled();
     });
 
     it("does not retire a change the store refused", async () => {
@@ -384,20 +349,18 @@ describe("watchOfferSwaps", () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
         vi.spyOn(repository, "saveSwap").mockRejectedValue(new Error("quota exceeded"));
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit, setContractWatchState }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    repository,
-                });
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit, setContractWatchState } = makeWallet(async () => ({
+            txs: [fill.psbt],
+        }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(setContractWatchState).not.toHaveBeenCalled();
-            },
-        );
+        expect(setContractWatchState).not.toHaveBeenCalled();
         vi.restoreAllMocks();
     });
 
@@ -409,22 +372,20 @@ describe("watchOfferSwaps", () => {
         await addAssetSwap(repository, swapFor(offer));
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit, setContractWatchState }) => {
-                setContractWatchState.mockRejectedValue(new Error("repository unavailable"));
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    repository,
-                });
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit, setContractWatchState } = makeWallet(async () => ({
+            txs: [fill.psbt],
+        }));
+        setContractWatchState.mockRejectedValue(new Error("repository unavailable"));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(await getAssetSwaps(repository)).toMatchObject([{ status: "fulfilled" }]);
-                expect(warn).toHaveBeenCalled();
-            },
-        );
+        expect(await getAssetSwaps(repository)).toMatchObject([{ status: "fulfilled" }]);
+        expect(warn).toHaveBeenCalled();
         vi.restoreAllMocks();
     });
 
@@ -434,21 +395,17 @@ describe("watchOfferSwaps", () => {
         const repository = new InMemoryAssetSwapRepository();
         await addAssetSwap(repository, swapFor(offer));
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit, listeners }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    repository,
-                });
-                watcher.stop();
-                expect(listeners()).toBe(0);
+        const { wallet, emit, listeners } = makeWallet(async () => ({ txs: [fill.psbt] }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        watcher.stop();
+        expect(listeners()).toBe(0);
 
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
-            },
-        );
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
     });
 });
 

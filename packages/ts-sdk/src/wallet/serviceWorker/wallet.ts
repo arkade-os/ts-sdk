@@ -1092,31 +1092,35 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      * caches — this proxy is what keeps chain reads in one place.
      */
     async getArkadeReader(): Promise<ArkadeReader> {
-        const wallet = this;
         return {
-            async getVtxos(opts) {
+            getVtxos: async (opts) => {
                 const message: RequestIndexerGetVtxos = {
                     id: getRandomId(),
-                    tag: wallet.messageTag,
+                    tag: this.messageTag,
                     type: "INDEXER_GET_VTXOS",
                     payload: { opts },
                 };
                 try {
-                    const response = await wallet.sendMessage(message);
-                    return (response as ResponseIndexerGetVtxos).payload;
+                    const response = await this.sendMessage(message);
+                    const { vtxos, page } = (response as ResponseIndexerGetVtxos).payload;
+                    // Re-normalize rather than trust the envelope, as every
+                    // other VTXO-returning method here does: the worker
+                    // normalizes, but a page can run against an older installed
+                    // one. `normalizeVtxo` is idempotent, so this costs a map.
+                    return { vtxos: vtxos.map(normalizeVtxo), page };
                 } catch (error) {
                     throw new Error(`Failed to get vtxos: ${error}`, { cause: error });
                 }
             },
-            async getVirtualTxs(txids, opts) {
+            getVirtualTxs: async (txids, opts) => {
                 const message: RequestIndexerGetVirtualTxs = {
                     id: getRandomId(),
-                    tag: wallet.messageTag,
+                    tag: this.messageTag,
                     type: "INDEXER_GET_VIRTUAL_TXS",
                     payload: { txids, opts },
                 };
                 try {
-                    const response = await wallet.sendMessage(message);
+                    const response = await this.sendMessage(message);
                     return (response as ResponseIndexerGetVirtualTxs).payload;
                 } catch (error) {
                     throw new Error(`Failed to get virtual txs: ${error}`, { cause: error });
@@ -1917,31 +1921,30 @@ export class ServiceWorkerWallet
      * readonly class would promise something the boundary rejects.
      */
     async getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
-        const wallet = this;
         return {
-            async submitTx(signedArkTx, checkpointTxs) {
+            submitTx: async (signedArkTx, checkpointTxs) => {
                 const message: RequestSubmitTx = {
                     id: getRandomId(),
-                    tag: wallet.messageTag,
+                    tag: this.messageTag,
                     type: "SUBMIT_TX",
                     payload: { signedArkTx, checkpointTxs },
                 };
                 try {
-                    const response = await wallet.sendMessage(message);
+                    const response = await this.sendMessage(message);
                     return (response as ResponseSubmitTx).payload;
                 } catch (error) {
                     throw new Error(`Failed to submit tx: ${error}`, { cause: error });
                 }
             },
-            async finalizeTx(arkTxid, finalCheckpointTxs) {
+            finalizeTx: async (arkTxid, finalCheckpointTxs) => {
                 const message: RequestFinalizeTx = {
                     id: getRandomId(),
-                    tag: wallet.messageTag,
+                    tag: this.messageTag,
                     type: "FINALIZE_TX",
                     payload: { arkTxid, finalCheckpointTxs },
                 };
                 try {
-                    await wallet.sendMessage(message);
+                    await this.sendMessage(message);
                 } catch (error) {
                     throw new Error(`Failed to finalize tx: ${error}`, { cause: error });
                 }

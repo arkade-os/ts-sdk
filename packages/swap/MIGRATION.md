@@ -96,8 +96,10 @@ localStorage adapter to write:
   broadcasts and falls back to the indexer for a deposit made before contract registration
   existed, and the watcher reads spending transactions — so they take it from two new seams on
   the wallet: `getArkadeReader()` on `IReadonlyWallet` for chain reads, and
-  `getArkadeBroadcaster()` on `IWallet` for `submitTx`/`finalizeTx`. No entrypoint in this
-  package takes a server URL any more.
+  `getArkadeBroadcaster()` on `IWallet` for `submitTx`/`finalizeTx`. No *offer* entrypoint
+  takes a server URL now; `restoreAssetSwaps`, `arkadeRefunder`, `claim`/`refund` and the
+  activity resolver still take provider instances (an `ArkadeReader` satisfies those
+  structurally, so converting their callers is follow-up work).
 - `createOffer` no longer returns `payload`; it returns the send-ready `extension` instead. In
   `providers/assetSwaps.tsx`: `extensions: [{ type: OFFER_PACKET_TYPE, payload: offer.payload }]`
   → `extensions: [offer.extension]` (the `OFFER_PACKET_TYPE` import can go).

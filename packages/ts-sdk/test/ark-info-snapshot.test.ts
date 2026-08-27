@@ -306,12 +306,11 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
     const readonlyIdentity = async () =>
         ReadonlySingleKey.fromPublicKey(await SingleKey.fromHex(privKeyHex).compressedPublicKey());
 
-    const indexerStub = (extra: Partial<IndexerProvider> = {}) =>
+    const indexerStub = () =>
         ({
             subscribeForScripts: async () => "sub-1",
             unsubscribeForScripts: async () => undefined,
             getSubscription: async function* () {},
-            ...extra,
         }) as Partial<IndexerProvider> as IndexerProvider;
 
     async function createWallet(
@@ -326,7 +325,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             identity: await readonlyIdentity(),
             arkServerUrl: "http://localhost:7070",
             arkProvider: { getInfo } as Partial<ArkProvider> as ArkProvider,
-            indexerProvider: indexerStub(indexer),
+            indexerProvider: { ...indexerStub(), ...indexer } as IndexerProvider,
             onchainProvider: {} as OnchainProvider,
             storage: repos,
         });

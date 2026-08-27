@@ -478,11 +478,6 @@ export async function createOffer(
  * record and classifies the spend by its covenant leaf instead — the same
  * answer, one indexer read more.
  *
- * Keeps an `arkServerUrl`, unlike {@link createOffer}: this call broadcasts.
- * `submitTx`/`finalizeTx` and the unregistered-offer VTXO read are provider
- * calls, and `wallet.getArkadeInfo()` retires the URL only where server *info*
- * was all it ever bought.
- *
  * Takes no server URL, like every other entrypoint here: broadcast comes from
  * `wallet.getArkadeBroadcaster()` and the indexer fallback from
  * `wallet.getArkadeReader()`, so the wallet's own connection is the only one

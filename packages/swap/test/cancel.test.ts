@@ -13,7 +13,9 @@ const state = vi.hoisted(() => ({
     // returns the ArrayBufferLike flavor and must be assignable here
     serverKey: new Uint8Array(0) as Uint8Array,
     utxos: [] as { txid: string; vout: number; value: number }[],
-    connectOptions: undefined as { contractManager?: unknown } | undefined,
+    connectOptions: undefined as
+        | { contractManager?: unknown; indexer?: unknown; arkade?: unknown }
+        | undefined,
     sends: 0,
 }));
 
@@ -163,7 +165,7 @@ describe("cancelOffer guards", () => {
 
     // without this the contract takes the direct-indexer fallback and a
     // registered offer's repository-backed VTXOs are never consulted
-    it("hands the wallet's contract manager to the arkade client", async () => {
+    it("hands the wallet's own manager, reader and broadcaster to the arkade client", async () => {
         state.serverKey = fundedServerKey;
         state.utxos = [];
         state.connectOptions = undefined;
@@ -173,6 +175,13 @@ describe("cancelOffer guards", () => {
             }),
         ).rejects.toThrow("no spendable VTXO");
         expect(state.connectOptions?.contractManager).toBe(contractManager);
+        // the point of dropping arkServerUrl: the client reads and broadcasts
+        // over THIS wallet's connection, not one built from a URL beside it
+        expect(state.connectOptions?.indexer).toBe(arkadeReader);
+        expect(state.connectOptions?.arkade).toMatchObject({
+            submitTx: arkadeBroadcaster.submitTx,
+            finalizeTx: arkadeBroadcaster.finalizeTx,
+        });
     });
 });
 

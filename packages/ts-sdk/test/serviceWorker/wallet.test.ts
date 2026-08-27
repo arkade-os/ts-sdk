@@ -309,7 +309,18 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const wallet = createWallet(serviceWorker as any, messageTag);
         const reader = await wallet.getArkadeReader();
 
-        await expect(reader.getVtxos({ scripts: ["5120aa"] })).resolves.toEqual({ vtxos });
+        // Normalized page-side, not passed through: the worker normalizes too,
+        // but a page can run against an older installed worker, so the seam's
+        // guarantee has to be structural rather than trusted.
+        const read = await reader.getVtxos({ scripts: ["5120aa"] });
+        expect(read.vtxos[0]).toMatchObject({
+            txid: vtxos[0].txid,
+            isSpent: false,
+            isSwept: false,
+            isPreconfirmed: false,
+            spentBy: "",
+            commitmentTxIds: [],
+        });
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: "INDEXER_GET_VTXOS",

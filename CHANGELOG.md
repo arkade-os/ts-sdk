@@ -28,8 +28,11 @@ style and have not been backfilled.
   server info — cancel broadcasts and falls back to the indexer for a
   deposit made before contract registration existed, and the watcher
   reads spending transactions — so they now take those from the wallet
-  as well, through the two seams below. No entrypoint in the package
-  takes a server URL any more. (#734)
+  as well, through the two seams below. No *offer* entrypoint takes a
+  server URL now; the RFQ/refund/restore helpers (`restoreAssetSwaps`,
+  `arkadeRefunder`, `claim`/`refund`, the activity resolver) still take
+  provider instances, which an `ArkadeReader` satisfies structurally —
+  converting their callers is follow-up work. (#734)
 - **`Arkade.arkProvider` narrowed to `ArkadeServerProvider`.** The
   provider a connected client exposes now types `submitTx`/`finalizeTx`
   as optional, mirroring what `Arkade.connect` accepts. Reaching

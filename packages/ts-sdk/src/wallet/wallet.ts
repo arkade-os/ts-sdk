@@ -899,9 +899,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * {@link getNormalizedVtxos}, which is what makes every VTXO leaving the
      * seam carry its canonical facts.
      *
-     * A bound object rather than the provider itself: the narrowing is the
-     * point, and returning `this.indexerProvider` would hand out the rest of
-     * `IndexerProvider` at runtime whatever the declared type says.
+     * A bound object rather than the provider itself, so an `IReadonlyWallet`
+     * holder gets `getVtxos`/`getVirtualTxs` and nothing else at runtime.
+     * (`indexerProvider` is still public on the concrete classes, unlike
+     * `arkProvider`, so this narrows the interface rather than the field.)
      */
     async getArkadeReader(): Promise<ArkadeReader> {
         const indexer = this.indexerProvider;

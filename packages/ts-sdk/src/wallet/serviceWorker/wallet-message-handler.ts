@@ -45,7 +45,7 @@ import {
     fetchVtxoCreatedAtByTxid,
     hasTerminalSpend,
     type NormalizedExtendedVirtualCoin,
-    type NormalizedVirtualCoin,
+    type NormalizedVtxoPage,
 } from "../vtxo";
 import {
     ReadonlyWallet,
@@ -216,13 +216,13 @@ export type ResponseGetArkadeInfo = ResponseEnvelope & {
 // question — collapsing them would silently change which one a caller gets.
 export type RequestIndexerGetVtxos = RequestEnvelope & {
     type: "INDEXER_GET_VTXOS";
-    payload: { opts?: GetVtxosOptions };
+    payload: { opts: GetVtxosOptions };
 };
 // Normalized VTXOs carry bigint-free fields, but `page` and the filters ride
 // the same structuredClone channel `ARKADE_INFO` documents above.
 export type ResponseIndexerGetVtxos = ResponseEnvelope & {
     type: "INDEXER_VTXOS";
-    payload: { vtxos: NormalizedVirtualCoin[]; page?: PageResponse };
+    payload: NormalizedVtxoPage;
 };
 
 export type RequestIndexerGetVirtualTxs = RequestEnvelope & {
@@ -1098,21 +1098,19 @@ export class WalletMessageHandler
                 case "INDEXER_GET_VTXOS": {
                     const { opts } = (message as RequestIndexerGetVtxos).payload;
                     const reader = await this.readonlyWallet.getArkadeReader();
-                    const { vtxos, page } = await reader.getVtxos(opts);
                     return this.tagged({
                         id,
                         type: "INDEXER_VTXOS",
-                        payload: { vtxos, page },
+                        payload: await reader.getVtxos(opts),
                     });
                 }
                 case "INDEXER_GET_VIRTUAL_TXS": {
                     const { txids, opts } = (message as RequestIndexerGetVirtualTxs).payload;
                     const reader = await this.readonlyWallet.getArkadeReader();
-                    const { txs, page } = await reader.getVirtualTxs(txids, opts);
                     return this.tagged({
                         id,
                         type: "INDEXER_VIRTUAL_TXS",
-                        payload: { txs, page },
+                        payload: await reader.getVirtualTxs(txids, opts),
                     });
                 }
                 case "SUBMIT_TX": {
