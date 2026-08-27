@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { ArkAddress, asset, type IWallet } from "@arkade-os/sdk";
-import { cancelOffer, encodeOffer, offerVtxoScript, type Offer } from "../src/offer";
+import { cancelOffer, encodeOffer, offerContract, type Offer } from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
 
@@ -52,10 +52,10 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
     };
 });
 
-const fundedServerKey = hex.decode(
+const fundedOperatorKey = hex.decode(
     "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
 );
-const rotatedServerKey = hex.decode(
+const rotatedOperatorKey = hex.decode(
     "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
 );
 const binding: Omit<Offer, "swapPkScript"> = {
@@ -67,9 +67,9 @@ const binding: Omit<Offer, "swapPkScript"> = {
     makerPublicKey: hex.decode("3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1"),
     emulatorPubkey: hex.decode("466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"),
 };
-const script = offerVtxoScript(binding, fundedServerKey);
-const offerHex = hex.encode(encodeOffer({ ...binding, swapPkScript: script.pkScript }));
-const fundedAddress = new ArkAddress(fundedServerKey, script.tweakedPublicKey, "tark").encode();
+const contract = offerContract(binding, fundedOperatorKey);
+const offerHex = hex.encode(encodeOffer({ ...binding, swapPkScript: contract.pkScript }));
+const fundedAddress = new ArkAddress(fundedOperatorKey, contract.tweakedPublicKey, "tark").encode();
 
 const setContractWatchState = vi.fn(async (_script: string, _watch: string) => {});
 const contractManager = { marker: "the wallet's manager", setContractWatchState };
@@ -95,7 +95,7 @@ const pendingSwap = (over: Partial<AssetSwap> = {}): AssetSwap => ({
     fromAmount: "10000",
     toAmount: "50000",
     swapAddress: fundedAddress,
-    swapPkScript: hex.encode(script.pkScript),
+    swapPkScript: hex.encode(contract.pkScript),
     offerHex,
     fundingTxid: "a".repeat(64),
     status: "pending",
@@ -105,7 +105,7 @@ const pendingSwap = (over: Partial<AssetSwap> = {}): AssetSwap => ({
 
 describe("cancelOffer guards", () => {
     it("diagnoses a rotated server key instead of reporting a missing VTXO", async () => {
-        state.serverKey = rotatedServerKey;
+        state.serverKey = rotatedOperatorKey;
         await expect(
             cancelOffer(wallet, offerHex, {
                 repository: new InMemoryAssetSwapRepository(),
@@ -116,7 +116,7 @@ describe("cancelOffer guards", () => {
     it("proceeds past a rotation when swapAddress pins the funded server key", async () => {
         // the current (rotated) key is never consulted; reaching the vtxo
         // lookup — and its ordinary empty-address error — proves the pin held
-        state.serverKey = rotatedServerKey;
+        state.serverKey = rotatedOperatorKey;
         state.utxos = [];
         await expect(
             cancelOffer(wallet, offerHex, {
@@ -127,7 +127,7 @@ describe("cancelOffer guards", () => {
     });
 
     it("refuses to guess between multiple deposits when fundingTxid is absent", async () => {
-        state.serverKey = fundedServerKey;
+        state.serverKey = fundedOperatorKey;
         state.utxos = [
             { txid: "a".repeat(64), vout: 0, value: 10_000 },
             { txid: "b".repeat(64), vout: 0, value: 10_000 },
@@ -144,7 +144,7 @@ describe("cancelOffer guards", () => {
         // record from leaving a swap that still looks pending. It is written
         // before `send()`, so a lost write must stop the broadcast, not warn
         // past it.
-        state.serverKey = fundedServerKey;
+        state.serverKey = fundedOperatorKey;
         state.utxos = [{ txid: "a".repeat(64), vout: 0, value: 10_000 }];
         state.sends = 0;
 
@@ -168,7 +168,7 @@ describe("cancelOffer guards", () => {
     // without this the contract takes the direct-indexer fallback and a
     // registered offer's repository-backed VTXOs are never consulted
     it("hands the wallet's own manager, reader and broadcaster to the arkade client", async () => {
-        state.serverKey = fundedServerKey;
+        state.serverKey = fundedOperatorKey;
         state.utxos = [];
         state.connectOptions = undefined;
         await expect(
@@ -194,7 +194,7 @@ describe("cancelOffer guards", () => {
 describe("cancelOffer coverage", () => {
     const funded = { ...wallet, getAddress: async () => fundedAddress } as unknown as IWallet;
     const cancellable = () => {
-        state.serverKey = fundedServerKey;
+        state.serverKey = fundedOperatorKey;
         state.utxos = [{ txid: "a".repeat(64), vout: 0, value: 10_000 }];
         setContractWatchState.mockClear();
     };
@@ -211,7 +211,7 @@ describe("cancelOffer coverage", () => {
         const [cancelled] = await getAssetSwaps(repository);
         expect(cancelled.status).toBe("cancelled");
         expect(setContractWatchState.mock.calls).toEqual([
-            [hex.encode(script.pkScript), "retained"],
+            [hex.encode(contract.pkScript), "retained"],
         ]);
     });
 

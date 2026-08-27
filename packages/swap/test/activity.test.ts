@@ -8,14 +8,14 @@ import {
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import type { LockupSpendIndexer } from "../src/refund";
 import type { RfqSwapRecord } from "../src/rfqRecord";
-import { lightningSendVtxoScript } from "../src/rfq";
+import { lightningSendContract } from "../src/rfq";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
 
-const tx = (arkTxid: string): ArkTransaction =>
+const tx = (txid: string): ArkTransaction =>
     ({
-        key: { arkTxid, boardingTxid: "", commitmentTxid: "" },
+        key: { arkTxid: txid, boardingTxid: "", commitmentTxid: "" },
         type: "SENT",
         amount: 1000,
         settled: true,
@@ -149,9 +149,9 @@ describe("rfqSwapActivityInputs", () => {
     const p2tr = (program: Uint8Array) => Uint8Array.from([0x51, 0x20, ...program]);
     /** A real lockup address: the helper decodes it to ask the indexer, so a
      * made-up one would exercise the wrong branch. */
-    const LOCKUP_ADDRESS = lightningSendVtxoScript({
+    const LOCKUP_ADDRESS = lightningSendContract({
         solverPubkey: key(1),
-        serverPubkey: key(3),
+        operatorPubkey: key(3),
         paymentHash: hex.encode(sha256(new Uint8Array(32).fill(7))),
         refundLocktime: 1_800_000_000,
         claimDelay: 4096,
@@ -197,8 +197,24 @@ describe("rfqSwapActivityInputs", () => {
 
     it("flattens a send record's own txids without asking anyone", async () => {
         const repository = await storeOf(
-            record({ state: "refunded", fundingArkTxid: "fund", refundArkTxid: "refund" }),
+            record({ state: "refunded", fundingTxid: "fund", refundTxid: "refund" }),
         );
+        expect(await rfqSwapActivityInputs({ repository })).toEqual([
+            { rfqId: "r1", kind: "lightning_send", state: "refunded", txids: ["fund", "refund"] },
+        ]);
+    });
+
+    it("answers from a record written under the old txid names, without the indexer", async () => {
+        // The record fields shipped in `0.0.8` and a consumer's store still
+        // holds them; read under the current names they are `undefined`, and
+        // every activity query falls back to a lockup read it does not need.
+        const { fundingTxid: _f, refundTxid: _r, ...base } = record({ state: "refunded" });
+        const repository = await storeOf({
+            ...base,
+            fundingArkTxid: "fund",
+            refundArkTxid: "refund",
+        } as unknown as RfqSwapRecord);
+
         expect(await rfqSwapActivityInputs({ repository })).toEqual([
             { rfqId: "r1", kind: "lightning_send", state: "refunded", txids: ["fund", "refund"] },
         ]);
@@ -209,13 +225,13 @@ describe("rfqSwapActivityInputs", () => {
             record({
                 rfqId: "receive",
                 kind: "lightning_receive",
-                fundingArkTxid: "fund",
+                fundingTxid: "fund",
                 profile: {
                     signer: { signingDescriptor: `tr(${"a7".repeat(32)})` },
                     hashlock: { paymentHash: "d4".repeat(32) },
                     expectedAmount: 1000,
                     payoutAddress: "tark1qpayout",
-                    claimArkTxid: "claim",
+                    claimTxid: "claim",
                 },
             }),
         );
@@ -226,7 +242,7 @@ describe("rfqSwapActivityInputs", () => {
     it("reads the counterparty's spend off the lockup when no refund of ours ended it", async () => {
         // `settled` means the SOLVER claimed: the transaction that closed the
         // swap is one no record of ours carries.
-        const repository = await storeOf(record({ fundingArkTxid: "fund" }));
+        const repository = await storeOf(record({ fundingTxid: "fund" }));
         const [input] = await rfqSwapActivityInputs({
             repository,
             indexer: fakeIndexer([{ txid: "fund", arkTxId: "solver-claim" }]),
@@ -252,18 +268,18 @@ describe("rfqSwapActivityInputs", () => {
             },
         } as unknown as LockupSpendIndexer;
         const repository = await storeOf(
-            record({ state: "refunded", fundingArkTxid: "fund", refundArkTxid: "refund" }),
+            record({ state: "refunded", fundingTxid: "fund", refundTxid: "refund" }),
         );
         await rfqSwapActivityInputs({ repository, indexer: counting });
         expect(calls).toBe(0);
     });
 
     it("takes the counterparty's spend off the record with no indexer wired at all", async () => {
-        // The offline-first case `lockupSpendArkTxids` exists for: the manager
+        // The offline-first case `lockupSpendTxids` exists for: the manager
         // stamped the solver's claim when it ended the swap, so the txid that
         // closed it is already stored and nothing has to go to the network.
         const repository = await storeOf(
-            record({ fundingArkTxid: "fund", lockupSpendArkTxids: ["solver-claim"] }),
+            record({ fundingTxid: "fund", lockupSpendTxids: ["solver-claim"] }),
         );
         const [input] = await rfqSwapActivityInputs({ repository });
         expect(input.txids).toEqual(["fund", "solver-claim"]);
@@ -278,7 +294,7 @@ describe("rfqSwapActivityInputs", () => {
             },
         } as unknown as LockupSpendIndexer;
         const repository = await storeOf(
-            record({ fundingArkTxid: "fund", lockupSpendArkTxids: ["solver-claim"] }),
+            record({ fundingTxid: "fund", lockupSpendTxids: ["solver-claim"] }),
         );
         await rfqSwapActivityInputs({ repository, indexer: counting });
         expect(calls).toBe(0);
@@ -287,7 +303,7 @@ describe("rfqSwapActivityInputs", () => {
     it("still reads the lockup when the stamp is absent, which is what makes it a fallback", async () => {
         // A record written before the manager owned persistence carries no
         // stamp, so the indexer is still the only source for its spend.
-        const repository = await storeOf(record({ fundingArkTxid: "fund" }));
+        const repository = await storeOf(record({ fundingTxid: "fund" }));
         const [input] = await rfqSwapActivityInputs({
             repository,
             indexer: fakeIndexer([{ txid: "fund", arkTxId: "solver-claim" }]),
@@ -296,7 +312,7 @@ describe("rfqSwapActivityInputs", () => {
     });
 
     it("degrades to fewer txids when the indexer is unreachable, never to a throw", async () => {
-        const repository = await storeOf(record({ fundingArkTxid: "fund" }));
+        const repository = await storeOf(record({ fundingTxid: "fund" }));
         const [input] = await rfqSwapActivityInputs({
             repository,
             indexer: fakeIndexer([], { fail: true }),
@@ -306,7 +322,7 @@ describe("rfqSwapActivityInputs", () => {
 
     it("groups what it produced, which is the whole point", async () => {
         const repository = await storeOf(
-            record({ state: "refunded", fundingArkTxid: "fund", refundArkTxid: "refund" }),
+            record({ state: "refunded", fundingTxid: "fund", refundTxid: "refund" }),
         );
         const resolver = await preparedResolver(await rfqSwapActivityInputs({ repository }));
         expect(resolver.resolve(tx("fund"))?.[0].groupId).toBe("swap:r1");

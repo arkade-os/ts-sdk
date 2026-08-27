@@ -95,7 +95,7 @@ funds an offer should keep cancelling within reach.
 
 1. **`offer`** — the swap covenant itself. Two program JSONs (want-BTC / want-asset), the
    `Offer` type, the TLV wire codec (`encodeOffer`/`decodeOffer`, `OFFER_PACKET_TYPE`), address
-   derivation (`offerVtxoScript`), and the user-side operations `createOffer`/`cancelOffer`. Identical
+   derivation (`offerContract`), and the user-side operations `createOffer`/`cancelOffer`. Identical
    offers always derive identical swap addresses — the program JSONs are hashed into the address,
    so their bytes are frozen (guarded by a golden test).
 2. **`markets`** — solver discovery and pricing guardrails: `discoverMarkets` (1-hour cached
@@ -831,7 +831,7 @@ Notes from before 0.0.1, kept for consumers who tracked the branch.
   silently overwritten.
 - **`readLockupFate` names the spends it observed.** `claimed` and `returned` now carry
   `spends: readonly LockupSpend[]`, one per spent lockup output, with the `checkpointTxid` that
-  `spentBy` names and the `arkTxid` that rode it. History correlation wants `arkTxid`; the
+  `spentBy` names and the `txid` that rode it. History correlation wants `txid`; the
   checkpoint txid is the wrong value to correlate on alone. `unknown` and `open` claim no spend.
 
 - **Every derived address changed again, in both corridors — the unilateral ladder was re-spaced.**
@@ -903,8 +903,8 @@ stored?)`. The returned `ProvisionedKey` / `ProvisionedClaimSecret` replace `Swa
   quote at `verifyLockupAddress`. Upgrade both sides before expecting fills.
 - **`cancelOffer` and `restoreAssetSwaps` take an options object.** `cancelOffer(wallet, url,
 offerHex, { repository, fundingTxid?, swapAddress? })` — the repository is required because the
-  call now records its own outcome. `restoreAssetSwaps(indexer, txs, existingIds, { serverPubkey,
-scanned? })` — the server key is required because a spend is classified by rebuilding the
+  call now records its own outcome. `restoreAssetSwaps(indexer, txs, existingIds, { operatorPubkey,
+scanned? })` — the operator key is required because a spend is classified by rebuilding the
   covenant and matching the leaf it took.
 - **`isCancelSpend` is gone**, replaced by `classifySpend`, and `Tx.assets` with it. The old test
   read what a transaction moved, which a wallet reports as a _net_ delta: once the deposit is a
@@ -946,7 +946,7 @@ scanned? })` — the server key is required because a spend is classified by reb
             kind: "lightning_receive",
             lockupAddress: result.address,
             profile: {
-                ...rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                ...rfqSecretsProfile(result.secrets, result.contractParams.paymentHash),
                 expectedAmount: result.expectedAmount,
                 payoutAddress: result.payoutAddress,
             },
@@ -1016,7 +1016,7 @@ scanned? })` — the server key is required because a spend is classified by reb
   when `persisted` is true — the callback is documented as following a persisted change, and a
   consumer caching from it must not run ahead of the store.
 - **`lightningSendProgram` and `htlcSendProgram` are gone** along with the program-artifact layer
-  they compiled. Derive scripts through `lightningSendVtxoScript` / `onchainHtlcScript`.
+  they compiled. Derive scripts through `lightningSendContract` / `onchainHtlcScript`.
 - **The receive corridors are wired, and the wire shape settled.** `lightningReceiveRequest` is
   new; `onchainReceiveRequest`'s profile now matches the shipped solver schema (`payment_hash`,
   `claim_packet`, `refund_pubkey`, `payout_address`, `payout_pubkey` — the earlier
@@ -1027,7 +1027,7 @@ scanned? })` — the server key is required because a spend is classified by reb
   corridor's fee — and refuses quotes whose `to_amount` reprices the invoice; solvers charge
   per-corridor fees on all four pairs, and funding the bare invoice amount underfunds by exactly
   the fee.
-- **`lightningSendVtxoScript` takes two new required fields**: `senderPubkey` (the trader's VHTLC
+- **`lightningSendContract` takes two new required fields**: `senderPubkey` (the trader's VHTLC
   sender key — generate, persist, see `requestLightningSend`) and `receiverPkScript` (the solver's
   claim destination, from `profile.receiver_pk_script`). Callers that built the lockup directly
   must supply both; callers going through `requestLightningSend` are unaffected.

@@ -5,6 +5,7 @@ import { numberToBytesBE } from "@noble/curves/utils.js";
 import {
     arkade,
     asset,
+    attachPrevArkTxs,
     buildOffchainTx,
     EmulatorPacket,
     Extension,
@@ -120,6 +121,10 @@ describe("liquidation (oracle-signed asset burn)", () => {
             ],
             ark.checkpoint,
         );
+
+        // Emulator v0.0.7+ needs the previous ark tx of every input; the builder
+        // does this itself, a hand-rolled buildOffchainTx has to ask for it.
+        await attachPrevArkTxs(mintTx, [mintCoin.txid], indexerProvider);
 
         const mintResult = await emulator.submitTx(
             base64.encode(mintTx.toPSBT()),

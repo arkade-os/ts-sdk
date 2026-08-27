@@ -6,6 +6,7 @@ import { getNetwork } from "../src/networks";
 import { ChainTxType } from "../src/providers/indexer";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
 import { VtxoScript } from "../src/script/base";
+import { CHILD_OUTPUT_DUST } from "../src/wallet/exit/estimate";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { timelockToSequence } from "../src/utils/timelock";
 import { P2A } from "../src/utils/anchor";
@@ -199,10 +200,14 @@ describe("prepare", () => {
         // sweep still pre-signed by the wallet key
         expect(pkg.steps.some((s) => s.kind === "sweep")).toBe(true);
 
-        // funding guidance = CPFP fees only (no splitter, no per-child dust)
-        const stepFeeSum = pkg.totals.totalFeeSats; // no splitter fee in graph mode besides sweeps
-        expect(pkg.totals.fundingRequiredSats).toBeGreaterThan(0);
-        expect(pkg.totals.fundingRequiredSats).toBeLessThan(stepFeeSum + 1); // <= totalFee
+        // Funding guidance = CPFP fees + one dust floor. No splitter and no
+        // per-child dust (that is funded mode, which pre-funds each child), but
+        // the recycling change output still has to stay above
+        // `CHILD_DUST_AMOUNT` or the final bump cannot be built at all.
+        const sweepFeeSum = pkg.vtxos.reduce((s, v) => s + (v.sweepFee ?? 0), 0);
+        const stepFeeSum = pkg.totals.totalFeeSats - sweepFeeSum;
+        expect(stepFeeSum).toBeGreaterThan(0);
+        expect(pkg.totals.fundingRequiredSats).toBe(stepFeeSum + CHILD_OUTPUT_DUST);
     });
 
     it("quotes enough for the deposit UTXO when the wallet holds pre-existing dust", async () => {

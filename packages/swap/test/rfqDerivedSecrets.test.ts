@@ -23,7 +23,7 @@ import {
 import {
     LIGHTNING_SEND_PAIR,
     ONCHAIN_SEND_PAIR,
-    lightningSendVtxoScript,
+    lightningSendContract,
     requestLightningSend,
     requestOnchainSend,
     type RfqQuote,
@@ -42,20 +42,20 @@ const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, .
 
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-const SERVER = key(3);
+const OPERATOR_PUBKEY = key(3);
 const SOLVER = key(1);
 const RECEIVER_PK_SCRIPT = p2tr(key(1));
 const EMULATOR_PUBKEY = key(9);
 const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
 const PAYOUT_PUBKEY = key(15);
 const HTLC_PUBKEY = key(11);
-const REFUND_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
+const REFUND_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
 
 /** What both wallets below answer for the server they are connected to —
  * one object, so the covenant derived in-flow and the one the transport stubs
- * build from SERVER cannot drift. */
+ * build from OPERATOR_PUBKEY cannot drift. */
 const ARK_INFO = {
-    signerPubkey: hex.encode(SERVER),
+    signerPubkey: hex.encode(OPERATOR_PUBKEY),
     unilateralExitDelay: 4096,
     network: "regtest",
 };
@@ -108,10 +108,10 @@ const staticWallet = (rows: { params: Record<string, string> }[] = []): IWallet 
 const lightningTransport = (): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
-        const script = lightningSendVtxoScript({
+        const contract = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
             emulatorPubkey: EMULATOR_PUBKEY,
@@ -131,7 +131,7 @@ const lightningTransport = (): RfqTransport => ({
             refund_locktime: REFUND_LOCKTIME,
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
-                lockup_address: script.address("tark", SERVER).encode(),
+                lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
             },
         } satisfies RfqQuote;
     },
@@ -155,10 +155,10 @@ const onchainTransport = (seen: { paymentHash?: string; senderPubkey?: string })
         const profile = (payload as { profile: Record<string, unknown> }).profile;
         seen.paymentHash = profile.payment_hash as string;
         seen.senderPubkey = profile.client_refund_pubkey as string;
-        const lockup = lightningSendVtxoScript({
+        const lockup = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: seen.paymentHash,
             claimDelay: 4096,
             emulatorPubkey: EMULATOR_PUBKEY,
@@ -186,7 +186,7 @@ const onchainTransport = (seen: { paymentHash?: string; senderPubkey?: string })
             valid_until: VALID_UNTIL,
             refund_locktime: REFUND_LOCKTIME,
             profile: {
-                lockup_address: lockup.address("tark", SERVER).encode(),
+                lockup_address: lockup.address("tark", OPERATOR_PUBKEY).encode(),
                 htlc_pubkey: hex.encode(HTLC_PUBKEY),
                 htlc_locktime: HTLC_LOCKTIME,
                 htlc_address: htlc.address,
@@ -206,10 +206,10 @@ describe("requestLightningSend and the corridor spread", () => {
     const spreadTransport = (fromAmount: number, toAmount: number): RfqTransport => ({
         async requestQuote(payload) {
             const profile = (payload as { profile: Record<string, unknown> }).profile;
-            const script = lightningSendVtxoScript({
+            const contract = lightningSendContract({
                 solverPubkey: SOLVER,
                 refundLocktime: REFUND_LOCKTIME,
-                serverPubkey: SERVER,
+                operatorPubkey: OPERATOR_PUBKEY,
                 paymentHash: PAYMENT_HASH,
                 claimDelay: 4096,
                 emulatorPubkey: EMULATOR_PUBKEY,
@@ -229,7 +229,7 @@ describe("requestLightningSend and the corridor spread", () => {
                 refund_locktime: REFUND_LOCKTIME,
                 profile: {
                     receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
-                    lockup_address: script.address("tark", SERVER).encode(),
+                    lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
                 },
             } satisfies RfqQuote;
         },
@@ -274,7 +274,7 @@ describe("requestLightningSend and the corridor spread", () => {
  * re-fetch `getArkadeInfo()` and re-derive the tree itself, and any drift
  * between the two derivations is a lockup nobody can spend.
  */
-describe("treeParams round-trips to the funded script", () => {
+describe("contractParams round-trips to the funded script", () => {
     it.each([
         ["hd", async () => await hdWallet()],
         ["static", async () => staticWallet()],
@@ -284,7 +284,7 @@ describe("treeParams round-trips to the funded script", () => {
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
         });
 
-        const rebuilt = lightningSendVtxoScript(result.treeParams);
+        const rebuilt = lightningSendContract(result.contractParams);
         expect(hex.encode(rebuilt.pkScript)).toBe(hex.encode(result.swapPkScript));
         expect(hex.encode(rebuilt.pkScript)).toBe(hex.encode(result.script.pkScript));
     });
@@ -308,7 +308,7 @@ describe("treeParams round-trips to the funded script", () => {
                 lockupAddress: result.address,
                 // One call, both corridor keys. Hand-mapping is what drops the
                 // salt on a static wallet — see the claim-secret tests below.
-                profile: rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                profile: rfqSecretsProfile(result.secrets, result.contractParams.paymentHash),
                 amount: result.fundAmount,
             },
             {
@@ -316,8 +316,8 @@ describe("treeParams round-trips to the funded script", () => {
                 rfqId: result.rfqId,
                 state: "pending",
                 lockupPkScript: result.swapPkScript,
-                paymentHash: result.treeParams.paymentHash,
-                refundLocktime: result.treeParams.refundLocktime,
+                paymentHash: result.contractParams.paymentHash,
+                refundLocktime: result.contractParams.refundLocktime,
                 createdAt: 1,
                 updatedAt: 1,
             },
@@ -325,7 +325,7 @@ describe("treeParams round-trips to the funded script", () => {
 
         const rebuilt = rebuildRfqSwap(record, rows[0].params);
         expect(hex.encode(rebuilt.lockupPkScript)).toBe(hex.encode(result.swapPkScript));
-        expect(rebuilt.refundLocktime).toBe(result.treeParams.refundLocktime);
+        expect(rebuilt.refundLocktime).toBe(result.contractParams.refundLocktime);
     });
 
     it("carries the inputs no quote and no second round trip could supply", async () => {
@@ -336,11 +336,11 @@ describe("treeParams round-trips to the funded script", () => {
         // serverPubkey and claimDelay come from this wallet's own getArkadeInfo(),
         // emulatorPubkey from a per-network pin, refundPkScript from decoding an
         // address. None of them is on the quote.
-        expect(result.treeParams.serverPubkey).toHaveLength(32);
-        expect(result.treeParams.emulatorPubkey).toHaveLength(32);
-        expect(result.treeParams.claimDelay % 512).toBe(0);
-        expect(result.treeParams.refundPkScript.length).toBeGreaterThan(0);
-        expect(result.treeParams.paymentHash).toBe(INVOICE.paymentHash);
+        expect(result.contractParams.operatorPubkey).toHaveLength(32);
+        expect(result.contractParams.emulatorPubkey).toHaveLength(32);
+        expect(result.contractParams.claimDelay % 512).toBe(0);
+        expect(result.contractParams.refundPkScript.length).toBeGreaterThan(0);
+        expect(result.contractParams.paymentHash).toBe(INVOICE.paymentHash);
     });
 });
 
@@ -634,15 +634,15 @@ describe("what an RFQ record stores about its corridor's keys", () => {
                 {
                     kind: "lightning_send",
                     lockupAddress: result.address,
-                    profile: rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                    profile: rfqSecretsProfile(result.secrets, result.contractParams.paymentHash),
                 },
                 {
                     kind: "lightning_send",
                     rfqId: result.rfqId,
                     state: "pending",
                     lockupPkScript: result.swapPkScript,
-                    paymentHash: result.treeParams.paymentHash,
-                    refundLocktime: result.treeParams.refundLocktime,
+                    paymentHash: result.contractParams.paymentHash,
+                    refundLocktime: result.contractParams.refundLocktime,
                     createdAt: 1,
                     updatedAt: 1,
                 },
@@ -652,7 +652,7 @@ describe("what an RFQ record stores about its corridor's keys", () => {
                 signingDescriptor: result.secrets.descriptor,
             });
             expect(record.profile.hashlock).toEqual({
-                paymentHash: result.treeParams.paymentHash,
+                paymentHash: result.contractParams.paymentHash,
             });
             expect(JSON.stringify(record)).not.toContain("preimage");
             // the reader answers "this leg has none", not a projection that
@@ -702,8 +702,8 @@ describe("a corridor with no hashlock at all", () => {
                     lockupPkScript: result.swapPkScript,
                     // the live type still requires it; the RECORD does not, which
                     // is the follow-up this cast marks
-                    paymentHash: result.treeParams.paymentHash,
-                    refundLocktime: result.treeParams.refundLocktime,
+                    paymentHash: result.contractParams.paymentHash,
+                    refundLocktime: result.contractParams.refundLocktime,
                     createdAt: 1,
                     updatedAt: 1,
                 },

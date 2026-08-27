@@ -7,7 +7,7 @@
  * onchain leg's L1 contract — lives in its own handler.
  *
  * This mirrors the contract layer's `contractHandlers` registry, deliberately:
- * that solved the same problem for VTXO scripts, and adding a contract type
+ * that solved the same problem for contracts, and adding a contract type
  * there is a new file plus one `register()` call rather than an edit to a
  * shared type. Adding a corridor here should cost the same. Nothing in
  * `rfqRecord.ts`, `repository.ts` or `indexedDbRepository.ts` names a corridor,
@@ -81,9 +81,9 @@ export interface RfqCorridorHandler<P extends Record<string, unknown> = Record<s
 
     /**
      * The corridor's own transaction ids off its profile — the ones that are
-     * this leg's alone, like the receive leg's `claimArkTxid` or the onchain
+     * this leg's alone, like the receive leg's `claimTxid` or the onchain
      * leg's L1 `claimTxid`. Whatever the record's common half already carries
-     * (`fundingArkTxid`, `refundArkTxid`) is read there, not here.
+     * (`fundingTxid`, `refundTxid`) is read there, not here.
      *
      * Answered by the handler rather than by a kind switch in `activity.ts`,
      * so a corridor added later contributes its txids without any edit

@@ -94,7 +94,7 @@ type SwapProgramBinding = {
  * Deliberately absent from the package index -- not public API. */
 export function swapProgramBinding(
     offer: Omit<Offer, "swapPkScript">,
-    serverPubkey: Uint8Array,
+    operatorPubkey: Uint8Array,
 ): SwapProgramBinding {
     // a wrong-width script would bind a truncated makerWP into the covenant and
     // only surface as an unspendable address once the user funds it
@@ -106,7 +106,7 @@ export function swapProgramBinding(
         args: {
             makerWP: offer.makerPkScript.subarray(2),
             wantAmount: offer.wantAmount,
-            server: serverPubkey,
+            server: operatorPubkey,
             user: offer.makerPublicKey,
             // internal byte order
             ...(offer.wantAsset && {
@@ -115,7 +115,7 @@ export function swapProgramBinding(
             }),
         },
         keys: {
-            serverKey: serverPubkey,
+            serverKey: operatorPubkey,
             userKey: offer.makerPublicKey,
             emulatorKey: offer.emulatorPubkey,
         },
@@ -123,11 +123,11 @@ export function swapProgramBinding(
 }
 
 /** Compile the offer's contract: program + args -> taproot tree. */
-export function offerVtxoScript(
+export function offerContract(
     offer: Omit<Offer, "swapPkScript">,
-    serverPubkey: Uint8Array,
+    operatorPubkey: Uint8Array,
 ): InstanceType<typeof arkade.ArkadeProgramScript> {
-    const { program, args, keys } = swapProgramBinding(offer, serverPubkey);
+    const { program, args, keys } = swapProgramBinding(offer, operatorPubkey);
     return new arkade.ArkadeProgramScript(program, args, keys);
 }
 
@@ -300,10 +300,10 @@ async function registerOfferContract(
     wallet: IWallet,
     info: ArkadeInfo,
     binding: Omit<Offer, "swapPkScript">,
-    serverPubkey: Uint8Array,
+    operatorPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
 ): Promise<void> {
-    const { program, args, keys } = swapProgramBinding(binding, serverPubkey);
+    const { program, args, keys } = swapProgramBinding(binding, operatorPubkey);
     const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
         // Registration derives and persists; it never broadcasts and never
@@ -391,7 +391,7 @@ export async function createOffer(
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    const serverPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
+    const operatorPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
     const network = networkFromArkadeInfo(info);
     const emuKey = hex.decode(
         toXOnlySignerHex(resolveEmulatorPubkey(network, params.emulatorPubkey)),
@@ -408,18 +408,18 @@ export async function createOffer(
         makerPublicKey,
         emulatorPubkey: emuKey,
     };
-    const script = offerVtxoScript(binding, serverPubKey);
+    const script = offerContract(binding, operatorPubKey);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
 
-    await registerOfferContract(wallet, info, binding, serverPubKey, script.pkScript);
+    await registerOfferContract(wallet, info, binding, operatorPubKey, script.pkScript);
 
     const payload = encodeOffer(offer);
     return {
         offerHex: hex.encode(payload),
         extension: { type: OFFER_PACKET_TYPE, payload },
-        // VtxoScript.address owns address construction; assembling an ArkAddress
+        // the contract's .address() builds the address; assembling an ArkAddress
         // from tweakedPublicKey here would silently miss any future step it gains
-        address: script.address(network.hrp, serverPubKey).encode(),
+        address: script.address(network.hrp, operatorPubKey).encode(),
         swapPkScript: script.pkScript,
     };
 }
@@ -455,8 +455,8 @@ export async function createOffer(
  * Identical offers derive the same address, so `fundingTxid` selects the exact
  * deposit; without it the address must hold exactly one spendable VTXO — with
  * several, cancel refuses to guess and throws.
- * `swapAddress` (the funded address) pins the server key the covenant was
- * built with, so cancel keeps working across a server signer rotation; without
+ * `swapAddress` (the funded address) pins the operator key the covenant was
+ * built with, so cancel keeps working across an operator signer rotation; without
  * it a rotated key is detected and reported rather than reading as a missing
  * VTXO.
  *
@@ -523,13 +523,13 @@ export async function cancelOffer(
         : client.serverKey;
     const { program, args, keys } = swapProgramBinding(offer, operatorPubkey);
     // the offer's TLV pins the script the deposit was funded to; if the rebuild
-    // disagrees, this server key is not the one the covenant was built with
+    // disagrees, this operator key is not the one the covenant was built with
     // (rotated since funding, or a wrong swapAddress) — getUtxos would just
     // return nothing, so fail with the diagnosis instead
     const rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
     if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {
         throw new Error(
-            "rebuilt covenant does not match the offer's swapPkScript — the server " +
+            "rebuilt covenant does not match the offer's swapPkScript — the operator " +
                 "signing key has likely rotated since funding; pass swapAddress (the " +
                 "funded address) to pin the original key",
         );

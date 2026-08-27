@@ -120,7 +120,7 @@ export async function watchOfferSwaps({
     // Current server key at watcher start. TODO: persist the funding-time key
     // with swap records; a signer rotation during a long session makes leaf
     // classification return indeterminate rather than guessing.
-    const serverPubkey = ArkAddress.decode(address).serverPubKey;
+    const operatorPubkey = ArkAddress.decode(address).serverPubKey;
 
     // events arrive independently but the update is read-modify-write over
     // the whole list, so two concurrent handlers would lose one of the writes
@@ -144,7 +144,7 @@ export async function watchOfferSwaps({
             const { txs } = await indexer.getVirtualTxs(candidates);
             return classifyDepositSpend(
                 decodeOffer(hex.decode(swap.offerHex)),
-                serverPubkey,
+                operatorPubkey,
                 txs.map((psbt) => Transaction.fromPSBT(base64.decode(psbt))),
                 { txid: vtxo.txid, vout: vtxo.vout },
             );

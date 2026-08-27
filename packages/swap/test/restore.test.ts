@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { asset, Extension, Transaction, UnknownPacket } from "@arkade-os/sdk";
-import { encodeOffer, offerVtxoScript, Offer, OFFER_PACKET_TYPE } from "../src/offer";
+import { encodeOffer, offerContract, Offer, OFFER_PACKET_TYPE } from "../src/offer";
 import {
     classifyDepositSpend,
     classifySpend,
@@ -18,7 +18,7 @@ const OTHER_ASSET_ID = "a2".repeat(34);
 // real points: the covenant is compiled for every fixture, so the offer's
 // swapPkScript is the script the spends below are classified against
 const key = (seed: string) => schnorr.getPublicKey(hex.decode(seed.repeat(32)));
-const SERVER_KEY = key("11");
+const OPERATOR_KEY = key("11");
 const MAKER_KEY = key("22");
 const EMULATOR_KEY = key("33");
 // a real taproot output key: the spend psbts below pay it, and @scure rejects
@@ -35,7 +35,7 @@ const makeOffer = (side: "want-asset" | "want-btc", wantAmount: bigint): Offer =
         makerPublicKey: MAKER_KEY,
         emulatorPubkey: EMULATOR_KEY,
     };
-    return { ...binding, swapPkScript: offerVtxoScript(binding, SERVER_KEY).pkScript };
+    return { ...binding, swapPkScript: offerContract(binding, OPERATOR_KEY).pkScript };
 };
 
 const scriptOf = (offer: Offer) => hex.encode(offer.swapPkScript);
@@ -61,7 +61,7 @@ const spendPsbt = (
 ): { psbt: string; txid: string } => {
     const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
     for (const { offer, deposit, via } of spends) {
-        const leaf = offerVtxoScript(offer, SERVER_KEY).functionByName(via)!.tapLeafScript;
+        const leaf = offerContract(offer, OPERATOR_KEY).functionByName(via)!.tapLeafScript;
         tx.addInput({
             txid: hex.decode(deposit.txid),
             index: deposit.vout,
@@ -116,7 +116,7 @@ const scan = (
     txs: Tx[],
     existingIds = new Set<string>(),
     scanned?: Set<string>,
-) => restoreAssetSwaps(indexer, txs, existingIds, { serverPubkey: SERVER_KEY, scanned });
+) => restoreAssetSwaps(indexer, txs, existingIds, { operatorPubkey: OPERATOR_KEY, scanned });
 
 describe("classifySpend", () => {
     it("reads the leaf, not what the transaction moved", async () => {
@@ -129,8 +129,8 @@ describe("classifySpend", () => {
         const fill = spendPsbt([{ offer, deposit, via: "fulfill" }]);
 
         const parse = (psbt: string) => Transaction.fromPSBT(base64.decode(psbt));
-        expect(classifySpend(offer, SERVER_KEY, parse(cancel.psbt), deposit)).toBe("cancelled");
-        expect(classifySpend(offer, SERVER_KEY, parse(fill.psbt), deposit)).toBe("fulfilled");
+        expect(classifySpend(offer, OPERATOR_KEY, parse(cancel.psbt), deposit)).toBe("cancelled");
+        expect(classifySpend(offer, OPERATOR_KEY, parse(fill.psbt), deposit)).toBe("fulfilled");
     });
 
     it("classifies each deposit by its own input when one tx spends several", async () => {
@@ -147,8 +147,8 @@ describe("classifySpend", () => {
         ]);
         const parsed = Transaction.fromPSBT(base64.decode(psbt));
 
-        expect(classifySpend(cancelled, SERVER_KEY, parsed, a)).toBe("cancelled");
-        expect(classifySpend(filled, SERVER_KEY, parsed, b)).toBe("fulfilled");
+        expect(classifySpend(cancelled, OPERATOR_KEY, parsed, a)).toBe("cancelled");
+        expect(classifySpend(filled, OPERATOR_KEY, parsed, b)).toBe("fulfilled");
     });
 
     it("classifies across both halves of a real spend, where only the checkpoint holds the outpoint", async () => {
@@ -166,15 +166,17 @@ describe("classifySpend", () => {
         ]);
         const parse = (psbt: string) => Transaction.fromPSBT(base64.decode(psbt));
 
-        expect(classifySpend(offer, SERVER_KEY, parse(arkTx.psbt), deposit)).toBe("indeterminate");
-        expect(classifyDepositSpend(offer, SERVER_KEY, [parse(arkTx.psbt)], deposit)).toBe(
+        expect(classifySpend(offer, OPERATOR_KEY, parse(arkTx.psbt), deposit)).toBe(
+            "indeterminate",
+        );
+        expect(classifyDepositSpend(offer, OPERATOR_KEY, [parse(arkTx.psbt)], deposit)).toBe(
             "indeterminate",
         );
         // given both, the checkpoint answers
         expect(
             classifyDepositSpend(
                 offer,
-                SERVER_KEY,
+                OPERATOR_KEY,
                 [parse(checkpoint.psbt), parse(arkTx.psbt)],
                 deposit,
             ),
@@ -197,7 +199,7 @@ describe("classifySpend", () => {
         // classify against a script the deposit was never funded to
         expect(classifySpend(offer, key("44"), parsed, deposit)).toBe("indeterminate");
         // right tx, wrong outpoint — the deposit is not among its inputs
-        expect(classifySpend(offer, SERVER_KEY, parsed, { txid: "ef".repeat(32), vout: 0 })).toBe(
+        expect(classifySpend(offer, OPERATOR_KEY, parsed, { txid: "ef".repeat(32), vout: 0 })).toBe(
             "indeterminate",
         );
     });

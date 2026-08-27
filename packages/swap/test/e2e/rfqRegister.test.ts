@@ -3,7 +3,7 @@
  * fund — and check the wallet then treats the lockup as owned-but-escrowed.
  *
  * This is `swap.test.ts`'s escrow test for the other corridor, and the reason
- * it needs its own stack: `lightningSendVtxoScript` emits SECONDS-typed
+ * it needs its own stack: `lightningSendContract` emits SECONDS-typed
  * timelocks on all three unilateral tiers, and `unilateralClaimDelay` refuses a
  * server exit delay below 512s — so on the offer suite's block-typed arkd
  * (`ARKD_UNILATERAL_EXIT_DELAY=20`) `requestLightningSend` throws before it
@@ -35,7 +35,7 @@ import {
     SWAP_LOCKUP_CONTRACT_KIND,
     SWAP_LOCKUP_CONTRACT_LABEL,
     SWAP_LOCKUP_CONTRACT_TYPE,
-    lightningSendVtxoScript,
+    lightningSendContract,
     registerLockupContract,
     requestLightningSend,
     unilateralClaimDelay,
@@ -43,7 +43,7 @@ import {
     type RfqTransport,
 } from "../../src";
 
-const ARK_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";
 const arkdExec = "docker exec -t arkd";
 
@@ -82,7 +82,7 @@ const waitFor = async (
     throw new Error("timeout in waitFor");
 };
 
-const indexer = new RestIndexerProvider(ARK_URL);
+const indexer = new RestIndexerProvider(OPERATOR_URL);
 let wallet: Wallet;
 let emulatorPubkey: Uint8Array;
 let operatorPubkey: Uint8Array;
@@ -105,10 +105,10 @@ const stubTransport = (): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
         const refundLocktime = NOW() + 24 * 3600;
-        const script = lightningSendVtxoScript({
+        const contract = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime,
-            serverPubkey: operatorPubkey,
+            operatorPubkey,
             paymentHash: PAYMENT_HASH,
             claimDelay,
             emulatorPubkey,
@@ -128,7 +128,7 @@ const stubTransport = (): RfqTransport => ({
             refund_locktime: refundLocktime,
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
-                lockup_address: script.address(hrp, operatorPubkey).encode(),
+                lockup_address: contract.address(hrp, operatorPubkey).encode(),
             },
         } satisfies RfqQuote;
     },
@@ -141,7 +141,7 @@ const stubTransport = (): RfqTransport => ({
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: ARK_URL,
+        arkServerUrl: OPERATOR_URL,
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,

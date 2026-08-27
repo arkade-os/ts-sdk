@@ -9,7 +9,7 @@
  *
  * - `arkade:BTC -> lightning:BTC` / `arkade:BTC -> onchain:BTC` (send) — the
  *   user funds its own locally derived VHTLC contract ({@link
- *   lightningSendVtxoScript}) and the onchain leg claims its L1 HTLC with `P`;
+ *   lightningSendContract}) and the onchain leg claims its L1 HTLC with `P`;
  *   the solver fills by observing the funding on-chain. A failed swap refunds
  *   to the user's address — by the user's own `sender` key on every
  *   interactive path, or, if the user's own key is ever lost, by the server
@@ -19,7 +19,7 @@
  * - `lightning:BTC -> arkade:BTC` / `onchain:BTC -> arkade:BTC` (receive) —
  *   the user generates `P`, pays the solver's hold invoice or funds the L1
  *   HTLC, and may go offline; the solver funds the Arkade lockup pinned to
- *   the user's payout ({@link receiveVtxoScript}, roles inverted), and the
+ *   the user's payout ({@link lightningReceiveContract}, roles inverted), and the
  *   claim — the user's own collaborative spend, or covclaimd's — reveals
  *   `P` publicly, which is what settles the user's side.
  * - `arkade:BTC|asset -> arkade:BTC|asset` — the user accepts the quote by
@@ -204,7 +204,7 @@ export interface RfqStatus {
 /** The rfq_request for the lightning send profile. A BOLT11 profile is always
  * exact-out: the invoice fixes the amount, so none is restated here.
  * `senderPubkey` is the trader's own key for the VHTLC's sender-side leaves
- * (see {@link lightningSendVtxoScript}) — required, never sent anywhere else,
+ * (see {@link lightningSendContract}) — required, never sent anywhere else,
  * never trusted by the solver as anything but a pubkey to bind into the
  * script. On the wire it's `client_refund_pubkey` (the payload schemas are
  * public at https://docs.arkadeos.com/intents/reference/rfq — the solver's schema
@@ -659,28 +659,28 @@ export const SOLO_REFUND_HEADROOM_SECONDS = 8 * SEQUENCE_GRANULARITY_SECONDS;
  * exit delay exactly as the reference solver derives it — both sides read the
  * SAME server, so the derivation (not a quote field) is what keeps the two
  * scripts identical. */
-export const unilateralClaimDelay = (serverExitDelaySeconds: number): number => {
+export const unilateralClaimDelay = (operatorExitDelaySeconds: number): number => {
     if (
-        !Number.isFinite(serverExitDelaySeconds) ||
-        serverExitDelaySeconds < SEQUENCE_GRANULARITY_SECONDS
+        !Number.isFinite(operatorExitDelaySeconds) ||
+        operatorExitDelaySeconds < SEQUENCE_GRANULARITY_SECONDS
     ) {
         throw new Error(
-            `server exit delay must be at least ${SEQUENCE_GRANULARITY_SECONDS}s of seconds, got ${serverExitDelaySeconds}`,
+            `operator exit delay must be at least ${SEQUENCE_GRANULARITY_SECONDS}s of seconds, got ${operatorExitDelaySeconds}`,
         );
     }
     // the headroom below BIP68's ceiling, not at it: the solo refund stacks
     // SOLO_REFUND_HEADROOM_SECONDS on top of this value, and it must encode too
     if (
-        serverExitDelaySeconds >
+        operatorExitDelaySeconds >
         0xffff * SEQUENCE_GRANULARITY_SECONDS - SOLO_REFUND_HEADROOM_SECONDS
     ) {
         throw new Error(
-            `server exit delay ${serverExitDelaySeconds}s exceeds what BIP68 can encode ` +
+            `operator exit delay ${operatorExitDelaySeconds}s exceeds what BIP68 can encode ` +
                 `once the solo refund's headroom is stacked above it`,
         );
     }
     return (
-        Math.ceil(serverExitDelaySeconds / SEQUENCE_GRANULARITY_SECONDS) *
+        Math.ceil(operatorExitDelaySeconds / SEQUENCE_GRANULARITY_SECONDS) *
         SEQUENCE_GRANULARITY_SECONDS
     );
 };
@@ -713,13 +713,13 @@ export const unilateralRefundWithoutReceiverDelay = (claimDelay: number): number
  * `refundPkScript`, no timelock and no trader signature needed — see {@link
  * VHTLC.Options.nonInteractiveRefund}'s doc comment for why that matters).
  */
-export function lightningSendVtxoScript(params: {
+export function lightningSendContract(params: {
     /** Binding field #1: the solver's x-only key, from the quote. */
     solverPubkey: Uint8Array;
     /** Binding field #2: when the trader's refund path opens, from the quote. */
     refundLocktime: number;
     /** The Ark server's x-only key — the trader's OWN connection. */
-    serverPubkey: Uint8Array;
+    operatorPubkey: Uint8Array;
     /** BOLT11 payment hash, hex — from the trader's OWN invoice decode. */
     paymentHash: string;
     /** From {@link unilateralClaimDelay} over the trader's OWN server info.
@@ -748,7 +748,7 @@ export function lightningSendVtxoScript(params: {
     return new VHTLC.ScriptV2({
         sender: params.senderPubkey,
         receiver: params.solverPubkey,
-        server: params.serverPubkey,
+        server: params.operatorPubkey,
         preimageHash: ripemd160(hex.decode(params.paymentHash)),
         refundLocktime: BigInt(params.refundLocktime),
         unilateralClaimDelay: seconds(params.claimDelay),
@@ -767,9 +767,9 @@ export function lightningSendVtxoScript(params: {
     });
 }
 
-/** Every input {@link lightningSendVtxoScript} builds from. Derived from the
+/** Every input {@link lightningSendContract} builds from. Derived from the
  * builder rather than restated, so the two cannot drift. */
-export type LightningSendTreeParams = Parameters<typeof lightningSendVtxoScript>[0];
+export type LightningSendContractParams = Parameters<typeof lightningSendContract>[0];
 
 /** The BOLT11 facts the trader read from its OWN decode — this module takes
  * the facts, not the decoder, so any wallet's existing decoder serves. */
@@ -859,7 +859,7 @@ export async function requestLightningSend(
      * `VHTLCV2ContractHandler.serializeParams(script.options)`, the shape the
      * rebuild accepts.
      */
-    treeParams: LightningSendTreeParams;
+    contractParams: LightningSendContractParams;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
     // This leg is one we fund, so all it needs is the key that refunds it.
@@ -893,14 +893,14 @@ export async function requestLightningSend(
         );
     }
 
-    const serverPubkey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
+    const operatorPubkey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
     const network = networkFromArkadeInfo(info);
     // Named rather than inlined so the exact inputs the covenant was built from
-    // can be returned to the caller — see `treeParams` on the return type.
-    const treeParams = {
+    // can be returned to the caller — see `contractParams` on the return type.
+    const contractParams = {
         solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime: quote.refund_locktime,
-        serverPubkey,
+        operatorPubkey,
         paymentHash: params.invoice.paymentHash,
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
         emulatorPubkey: toXOnly(
@@ -911,8 +911,8 @@ export async function requestLightningSend(
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
         refundPkScript: ArkAddress.decode(refundAddress).pkScript,
     };
-    const script = lightningSendVtxoScript(treeParams);
-    const address = script.address(network.hrp, serverPubkey).encode();
+    const script = lightningSendContract(contractParams);
+    const address = script.address(network.hrp, operatorPubkey).encode();
     verifyLockupAddress(quote, address);
     assertFundable({
         quote,
@@ -937,7 +937,7 @@ export async function requestLightningSend(
         refundAddress,
         senderPubkey,
         secrets,
-        treeParams,
+        contractParams,
     };
 }
 
@@ -964,7 +964,7 @@ export const offerTermsFromQuote = (
 // ── Onchain corridor: off-board (arkade->onchain) and on-board wire ─────────
 
 /** The Arkade lockup for an onchain send uses the SAME {@link
- * lightningSendVtxoScript} the Lightning leg does — only the SOURCE of the
+ * lightningSendContract} the Lightning leg does — only the SOURCE of the
  * payment hash differs (user-generated P instead of a BOLT11). One function,
  * one golden test. */
 
@@ -1079,7 +1079,7 @@ export function deriveOnchainSend(input: {
     quote: RfqQuote;
     paymentHash: string;
     payoutPubkey: Uint8Array;
-    serverPubkey: Uint8Array;
+    operatorPubkey: Uint8Array;
     emulatorPubkey: Uint8Array;
     claimDelay: number;
     hrp: string;
@@ -1126,10 +1126,10 @@ export function deriveOnchainSend(input: {
         throw new Error("onchain-send quote is missing a binding field");
     }
 
-    const script = lightningSendVtxoScript({
+    const script = lightningSendContract({
         solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime,
-        serverPubkey: input.serverPubkey,
+        operatorPubkey: input.operatorPubkey,
         paymentHash: input.paymentHash,
         claimDelay: input.claimDelay,
         emulatorPubkey: input.emulatorPubkey,
@@ -1137,7 +1137,7 @@ export function deriveOnchainSend(input: {
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
         refundPkScript: ArkAddress.decode(input.refundAddress).pkScript,
     });
-    const address = script.address(input.hrp, input.serverPubkey).encode();
+    const address = script.address(input.hrp, input.operatorPubkey).encode();
     verifyLockupAddress(quote, address);
 
     // Named so the inputs can be handed back: `OnchainHtlc` carries only
@@ -1278,7 +1278,7 @@ export async function requestOnchainSend(
         quote,
         paymentHash,
         payoutPubkey: params.payoutPubkey,
-        serverPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+        operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
         emulatorPubkey: toXOnly(
             hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
             "emulator signer key",
@@ -1468,12 +1468,12 @@ export const assertReceivable = (input: {
 };
 
 /** Compile the RECEIVE-direction VHTLC: the same eight-leaf tree as {@link
- * lightningSendVtxoScript} with the roles inverted — the trader is the
+ * lightningSendContract} with the roles inverted — the trader is the
  * `receiver` (it generated `P` and claims the lockup with it), the solver is
  * the `sender` (it funds the lockup and holds the refund recourse). One
  * function shared by both receive corridors, mirroring the send legs' sharing
- * of `lightningSendVtxoScript`. */
-export function receiveVtxoScript(params: {
+ * of `lightningSendContract`. */
+export function lightningReceiveContract(params: {
     /** Binding field #1: the solver's x-only key, from the quote — VHTLC's
      * `sender` role on the receive corridors. */
     solverPubkey: Uint8Array;
@@ -1481,7 +1481,7 @@ export function receiveVtxoScript(params: {
      * the quote — after it the solver may reclaim an unclaimed lockup. */
     refundLocktime: number;
     /** The Ark server's x-only key — the trader's OWN connection. */
-    serverPubkey: Uint8Array;
+    operatorPubkey: Uint8Array;
     /** `sha256(P)`, hex — the trader's OWN preimage hash. */
     paymentHash: string;
     /** From {@link unilateralClaimDelay} over the trader's OWN server info. */
@@ -1506,7 +1506,7 @@ export function receiveVtxoScript(params: {
     return new VHTLC.ScriptV2({
         sender: params.solverPubkey,
         receiver: params.payoutPubkey,
-        server: params.serverPubkey,
+        server: params.operatorPubkey,
         preimageHash: ripemd160(hex.decode(params.paymentHash)),
         refundLocktime: BigInt(params.refundLocktime),
         unilateralClaimDelay: seconds(params.claimDelay),
@@ -1525,9 +1525,9 @@ export function receiveVtxoScript(params: {
     });
 }
 
-/** Every input {@link receiveVtxoScript} builds from; see
- * {@link LightningSendTreeParams}. */
-export type LightningReceiveTreeParams = Parameters<typeof receiveVtxoScript>[0];
+/** Every input {@link lightningReceiveContract} builds from; see
+ * {@link LightningSendContractParams}. */
+export type LightningReceiveContractParams = Parameters<typeof lightningReceiveContract>[0];
 
 /**
  * The pure core of {@link requestLightningReceive}: derive the solver-funded
@@ -1542,7 +1542,7 @@ export function deriveLightningReceive(input: {
     paymentHash: string;
     payoutPubkey: Uint8Array;
     payoutAddress: string;
-    serverPubkey: Uint8Array;
+    operatorPubkey: Uint8Array;
     emulatorPubkey: Uint8Array;
     claimDelay: number;
     hrp: string;
@@ -1555,7 +1555,7 @@ export function deriveLightningReceive(input: {
     refundLocktime: number;
     /** Every input the covenant was built from — see the same field on
      * `requestLightningSend`'s result for why a consumer needs them. */
-    treeParams: LightningReceiveTreeParams;
+    contractParams: LightningReceiveContractParams;
 } {
     const { quote } = input;
     const profile = quote.profile ?? {};
@@ -1571,11 +1571,11 @@ export function deriveLightningReceive(input: {
     }
 
     // Named rather than inlined so the exact inputs can be handed back — see
-    // `treeParams` on the return type.
-    const treeParams = {
+    // `contractParams` on the return type.
+    const contractParams = {
         solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime,
-        serverPubkey: input.serverPubkey,
+        operatorPubkey: input.operatorPubkey,
         paymentHash: input.paymentHash,
         claimDelay: input.claimDelay,
         emulatorPubkey: input.emulatorPubkey,
@@ -1583,10 +1583,17 @@ export function deriveLightningReceive(input: {
         payoutPubkey: input.payoutPubkey,
         payoutPkScript: ArkAddress.decode(input.payoutAddress).pkScript,
     };
-    const script = receiveVtxoScript(treeParams);
-    const address = script.address(input.hrp, input.serverPubkey).encode();
+    const script = lightningReceiveContract(contractParams);
+    const address = script.address(input.hrp, input.operatorPubkey).encode();
     verifyLockupAddress(quote, address);
-    return { address, swapPkScript: script.pkScript, script, invoice, refundLocktime, treeParams };
+    return {
+        address,
+        swapPkScript: script.pkScript,
+        script,
+        invoice,
+        refundLocktime,
+        contractParams,
+    };
 }
 
 /**
@@ -1669,7 +1676,7 @@ export async function requestLightningReceive(
     secrets: ProvisionedClaimSecret;
     /** Every input the covenant was built from; see the same field on
      * `requestLightningSend`'s result. */
-    treeParams: LightningReceiveTreeParams;
+    contractParams: LightningReceiveContractParams;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
     // A leg we claim: the key that receives it, and the P that unlocks it.
@@ -1707,7 +1714,7 @@ export async function requestLightningReceive(
         paymentHash,
         payoutPubkey,
         payoutAddress,
-        serverPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+        operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
         emulatorPubkey: toXOnly(
             hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
             "emulator signer key",
@@ -1744,7 +1751,7 @@ export async function requestLightningReceive(
         payoutAddress,
         payoutPubkey,
         secrets,
-        treeParams: derived.treeParams,
+        contractParams: derived.contractParams,
     };
 }
 
@@ -1762,7 +1769,7 @@ export function deriveOnchainReceive(input: {
     payoutAddress: string;
     /** The trader's own x-only L1 key — the HTLC's refund role. */
     refundPubkey: Uint8Array;
-    serverPubkey: Uint8Array;
+    operatorPubkey: Uint8Array;
     emulatorPubkey: Uint8Array;
     claimDelay: number;
     hrp: string;
@@ -1795,10 +1802,10 @@ export function deriveOnchainReceive(input: {
         throw new Error("onchain-receive quote is missing a binding field");
     }
 
-    const script = receiveVtxoScript({
+    const script = lightningReceiveContract({
         solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime,
-        serverPubkey: input.serverPubkey,
+        operatorPubkey: input.operatorPubkey,
         paymentHash: input.paymentHash,
         claimDelay: input.claimDelay,
         emulatorPubkey: input.emulatorPubkey,
@@ -1806,7 +1813,7 @@ export function deriveOnchainReceive(input: {
         payoutPubkey: input.payoutPubkey,
         payoutPkScript: ArkAddress.decode(input.payoutAddress).pkScript,
     });
-    const address = script.address(input.hrp, input.serverPubkey).encode();
+    const address = script.address(input.hrp, input.operatorPubkey).encode();
     verifyLockupAddress(quote, address);
 
     const htlc = onchainHtlcScript(
@@ -1918,7 +1925,7 @@ export async function requestOnchainReceive(
         payoutPubkey,
         payoutAddress,
         refundPubkey: params.refundPubkey,
-        serverPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+        operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
         emulatorPubkey: toXOnly(
             hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
             "emulator signer key",

@@ -2404,6 +2404,29 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             console.warn("server-signer rotation on info change failed", e);
         }
     }
+
+    /**
+     * Await an `onServerInfoChanged` handler still applying a rotation.
+     *
+     * The provider emits synchronously but {@link handleServerInfoChanged} runs
+     * off the emit, so between the two a caller can observe a half-applied
+     * rotation: {@link rotateServerSigner} persists the active signer's contract
+     * rows *before* committing the tapscripts, so `arkServerPublicKey` still
+     * reads the old key while the new key's rows are already in the repository.
+     * A path that refreshes server info and then reads signer-derived state must
+     * drain the chain first, or it both reads that torn state and races the
+     * handler for the rotation itself.
+     *
+     * Resolves once the chain is idle; a handler that threw already logged, and
+     * its rejection is swallowed here.
+     *
+     * @internal Invoked by {@link dispose} and the {@link VtxoManager} migration
+     * pass; not part of the stable public API.
+     */
+    async settleServerInfoChanges(): Promise<void> {
+        await this._serverInfoInFlight?.catch(() => undefined);
+    }
+
     private _receiveRotatorInstalled = false;
 
     /**
@@ -3262,7 +3285,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // dispose the contract manager underneath it.
         this._serverInfoUnsub?.();
         this._serverInfoUnsub = undefined;
-        await this._serverInfoInFlight?.catch(() => undefined);
+        await this.settleServerInfoChanges();
 
         // Tear down the rotation subscription + drain in-flight rotations
         // first so no late `vtxo_received` event can queue work on a

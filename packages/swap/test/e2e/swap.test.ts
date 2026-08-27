@@ -35,7 +35,7 @@ import {
     type Tx,
 } from "../../src";
 
-const ARK_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 // mempool serves the Esplora REST API under `/api`; the root path is the HTML UI
 const ESPLORA_API_URL = "http://localhost:3000/api";
 const arkdExec = "docker exec -t arkd";
@@ -67,7 +67,7 @@ const waitFor = async (
     throw new Error("timeout in waitFor");
 };
 
-const indexer = new RestIndexerProvider(ARK_URL);
+const indexer = new RestIndexerProvider(OPERATOR_URL);
 const repository = new InMemoryAssetSwapRepository();
 let wallet: Wallet;
 // the key the covenants are funded against — restore classifies each spend by
@@ -77,7 +77,7 @@ let operatorPubkey: Uint8Array;
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: ARK_URL,
+        arkServerUrl: OPERATOR_URL,
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -135,10 +135,10 @@ describe("maker-side swap loop (regtest)", () => {
             redeemTxid: fundingTxid,
             createdAt: Math.floor(Date.now() / 1000),
         });
-        // Pending deposits have no spend to classify; serverPubkey is required
+        // Pending deposits have no spend to classify; operatorPubkey is required
         // by the restore API but does not affect this assertion.
         const { restored, scannedTxids } = await restoreAssetSwaps(indexer, history, new Set(), {
-            serverPubkey: operatorPubkey,
+            operatorPubkey,
         });
 
         expect(scannedTxids).toEqual([fundingTxid]);
@@ -243,7 +243,7 @@ describe("maker-side swap loop (regtest)", () => {
             createdAt: Math.floor(Date.now() / 1000),
         });
         const { restored } = await restoreAssetSwaps(indexer, history, new Set(), {
-            serverPubkey: operatorPubkey,
+            operatorPubkey,
         });
         expect(restored).toHaveLength(1);
         expect(restored[0]).toMatchObject({
