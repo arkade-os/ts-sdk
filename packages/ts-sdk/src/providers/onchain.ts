@@ -396,7 +396,21 @@ export class EsploraProvider implements OnchainProvider {
             throw new Error(`Failed to broadcast package: ${error}`);
         }
 
-        return response.json();
+        // `/txs/package` proxies Bitcoin Core's `submitpackage`, which reports
+        // per-transaction results in the body. A package whose transactions
+        // were all rejected still answers 200, so the HTTP status alone cannot
+        // tell acceptance from refusal:
+        //
+        //   200 {"package_msg":"transaction failed",
+        //        "tx-results":{"<wtxid>":{"txid":"...",
+        //                                 "error":"bad-txns-inputs-missingorspent"}}}
+        //
+        // Returning that as success is worse than failing: the caller believes
+        // the transaction is in flight and waits for a confirmation that cannot
+        // come, while the node already said exactly why it will not.
+        const result = await response.json();
+        assertPackageAccepted(result);
+        return result;
     }
 
     private async broadcastTx(tx: string): Promise<string> {
@@ -415,6 +429,40 @@ export class EsploraProvider implements OnchainProvider {
 
         return response.text();
     }
+}
+
+/**
+ * Throw when a 200 response describes a rejected package.
+ *
+ * Deliberately permissive: only a body that carries Core's own verdict is
+ * judged. Not every Esplora deployment proxies that shape, and treating an
+ * unrecognised body as failure would break broadcasting against the ones that
+ * do not.
+ */
+function assertPackageAccepted(result: unknown): void {
+    if (!result || typeof result !== "object") return;
+    const r = result as {
+        package_msg?: unknown;
+        "tx-results"?: Record<string, { txid?: unknown; error?: unknown }>;
+    };
+    const msg = typeof r.package_msg === "string" ? r.package_msg : undefined;
+    if (msg === undefined || msg === "success") return;
+
+    const reasons: string[] = [];
+    const results = r["tx-results"];
+    if (results && typeof results === "object") {
+        for (const entry of Object.values(results)) {
+            if (!entry || typeof entry !== "object" || entry.error === undefined) continue;
+            const txid = typeof entry.txid === "string" ? entry.txid : "unknown tx";
+            reasons.push(`${txid}: ${String(entry.error)}`);
+        }
+    }
+
+    throw new Error(
+        reasons.length > 0
+            ? `Package rejected (${msg}) — ${reasons.join("; ")}`
+            : `Package rejected (${msg})`,
+    );
 }
 
 function isValidBlocksTip(tip: any): tip is { id: string; height: number; mediantime: number }[] {
