@@ -178,7 +178,7 @@ export async function pushClaim(
     try {
         operatorUnrollScript = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
     } catch {
-        throw new Error("invalid checkpointTapscript from the Arkade server");
+        throw new Error("invalid checkpointTapscript from the operator");
     }
 
     const leaf = input.contract.claim();
@@ -186,7 +186,7 @@ export async function pushClaim(
 
     // The core primitive owns build → sign → submit → match → finalize; this
     // module supplies only what is swap-specific: the claim leaf, the preimage
-    // signer, and the server key to check the response against — the covenant
+    // signer, and the operator key to check the response against — the covenant
     // already carries it, so it is not a caller obligation.
     const txid = await signAndSubmitOffchainTx({
         identity: claimWithPreimageIdentity(input.receiver, input.preimage),

@@ -60,6 +60,7 @@ export {
 export {
     RFQ_SWAP_RETENTION_SECONDS,
     createRfqSwapRecord,
+    normalizeRfqSwapRecord,
     rebuildRfqSwap,
     rfqSwapOriginOf,
     shouldRetainRfqSwap,

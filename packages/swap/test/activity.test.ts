@@ -204,6 +204,22 @@ describe("rfqSwapActivityInputs", () => {
         ]);
     });
 
+    it("answers from a record written under the old txid names, without the indexer", async () => {
+        // The record fields shipped in `0.0.8` and a consumer's store still
+        // holds them; read under the current names they are `undefined`, and
+        // every activity query falls back to a lockup read it does not need.
+        const { fundingTxid: _f, refundTxid: _r, ...base } = record({ state: "refunded" });
+        const repository = await storeOf({
+            ...base,
+            fundingArkTxid: "fund",
+            refundArkTxid: "refund",
+        } as unknown as RfqSwapRecord);
+
+        expect(await rfqSwapActivityInputs({ repository })).toEqual([
+            { rfqId: "r1", kind: "lightning_send", state: "refunded", txids: ["fund", "refund"] },
+        ]);
+    });
+
     it("takes each corridor's own claim txid from its handler", async () => {
         const repository = await storeOf(
             record({

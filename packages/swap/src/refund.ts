@@ -537,7 +537,7 @@ export async function pushRefundWithoutReceiver(
     try {
         operatorUnrollScript = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
     } catch {
-        throw new Error("invalid checkpointTapscript from the Arkade server");
+        throw new Error("invalid checkpointTapscript from the operator");
     }
 
     const leaf = input.contract.refundWithoutReceiver();

@@ -1,15 +1,94 @@
-# Migrating `arkade-os/wallet` to `@arkade-os/swap`
+# Migration notes for `@arkade-os/swap`
+
+Two migrations live here. **Upgrading past `0.0.9`** is what every consumer of the package needs;
+the **wallet extraction** below it is history for anyone but `arkade-os/wallet`.
+
+## Upgrading past `0.0.9` — the operator and contract rename
+
+`ark`/`server` as names for the operator-run server became `operator`; `vtxoScript`/`treeParams`
+as names for a covenant became `contract`/`contractParams`; and `arkTxid` became `txid` on every
+field this package owns. **Identifiers only.** No covenant construction, signing path, refund
+locktime or forfeit logic changed, and every address a previous version derived is byte-identical
+under the new names — the golden `ArkAddress` test pins that.
+
+### Renamed exports
+
+| `0.0.9`                     | now                              |
+| --------------------------- | -------------------------------- |
+| `offerVtxoScript`           | `offerContract`                  |
+| `lightningSendVtxoScript`   | `lightningSendContract`          |
+| `receiveVtxoScript`         | `lightningReceiveContract`       |
+| `LightningSendTreeParams`   | `LightningSendContractParams`    |
+| `LightningReceiveTreeParams`| `LightningReceiveContractParams` |
+
+### Removed exports — `ClaimArkProvider`, `RefundArkProvider`
+
+Gone rather than renamed, and no alias replaces them. Both were
+`Pick<RestArkProvider, "getInfo" | "submitTx" | "finalizeTx">`; `pushClaim`, `claimReceiveLockup`,
+`pushRefundWithoutReceiver` and `ArkadeRefunderDeps.operator` now take the SDK's full
+`ArkProvider`. A `RestArkProvider` satisfies that unchanged — only a hand-built three-method fake
+has to grow, and widening the parameter is the point of the change.
+
+### Renamed properties
+
+| where                                                                | `0.0.9`                      | now                            |
+| -------------------------------------------------------------------- | ---------------------------- | ------------------------------ |
+| `pushClaim` / `claimReceiveLockup` / `pushRefundWithoutReceiver` input | `script`                     | `contract`                     |
+| …and their results                                                    | `{ arkTxid }`                | `{ txid }`                     |
+| `ArkadeRefundResult`                                                  | `arkTxid`                    | `txid`                         |
+| `RfqSwapManagerCallbacks.claimLockup` result                          | `arkTxid`                    | `txid`                         |
+| `RefundOutcome` (`refunded` variant)                                  | `arkTxid`                    | `txid`                         |
+| `LockupSpend`                                                         | `arkTxid`                    | `txid`                         |
+| `requestLightningSend` / `requestLightningReceive` / `deriveLightningReceive` results | `treeParams` | `contractParams`               |
+| `WatchOfferSwapsParams`                                              | `arkServerUrl`               | `operatorUrl`                  |
+| `restoreAssetSwaps` options                                          | `serverPubkey`               | `operatorPubkey`               |
+| `offerContract` / `cancelOffer`                                      | `serverPubkey`               | `operatorPubkey`               |
+
+Deliberately **unchanged**, because the SDK owns them and this package only passes them through:
+`ArkAddress.serverPubKey`, `client.serverKey`, `verifyServerSignatures.serverPubkey`,
+`ReadonlyWallet.create({ arkServerUrl })`, `vtxo.arkTxId` / `tx.key.arkTxid`, and the `server`
+slot in the swap program JSON — that one sits inside the hashed program bytes and renaming it
+would change every derived address.
+
+### Stored records migrate themselves
+
+`RfqSwapRecord.fundingArkTxid` / `refundArkTxid` / `lockupSpendArkTxids`, and the receive
+corridor's `profile.claimArkTxid`, were renamed with the rest. Backends store the record whole,
+so a store written by `0.0.9` or earlier still holds the old names on disk.
+
+**No consumer action is required.** `rebuildRfqSwap`, `rfqSwapOriginOf`, `updateRfqSwapRecord` and
+`rfqSwapActivityInputs` all read through `normalizeRfqSwapRecord`, which is exported for a
+consumer that reads records by hand. The first write after the upgrade persists the new names and
+drops the old ones, so the compatibility read costs one pass and nothing after it.
+
+### `arkade-os/wallet` call sites
+
+The wallet pins `0.0.7`, so nothing breaks until it upgrades. Five edits when it does:
+
+- `src/lib/lnReceive.ts` — `claimLnReceive`'s `args.ark` widens from
+  `Pick<RestArkProvider, 'getInfo' | 'submitTx' | 'finalizeTx'>` to `ArkProvider`.
+- `src/lib/lnReceive.ts` — its declared return becomes `Promise<{ txid: string; amount: number }>`.
+- `src/lib/lnReceive.ts` — `pushClaim(args.ark, { script: request.script, … })` becomes
+  `{ contract: request.script, … }`.
+- `src/providers/assetSwaps.tsx` — `restoreAssetSwaps(…, { serverPubkey })` becomes
+  `{ operatorPubkey }`.
+- `src/providers/assetSwaps.tsx` — `watchOfferSwaps({ arkServerUrl })` becomes `{ operatorUrl }`.
+
+`requestLightningReceive` takes its URL positionally, so `lnReceive.ts`'s own `arkServerUrl`
+argument name is a wallet-local choice and needs no change.
+
+## Migrating `arkade-os/wallet` to `@arkade-os/swap`
 
 Wallet-side changes to consume this package (extracted from wallet commit `60b0834`,
 `src/lib/swap/`). Everything below is mechanical unless marked.
 
-## 1. Dependency and imports
+### 1. Dependency and imports
 
 Add `"@arkade-os/swap"` to the wallet's dependencies and delete `src/lib/swap/` plus the two
 `banco-*.program.json` files. Swap every `from '../lib/swap/…'` import for
 `from '@arkade-os/swap'`.
 
-## 2. Symbol renames
+### 2. Symbol renames
 
 | wallet                           | package                           |
 | -------------------------------- | --------------------------------- |
@@ -22,7 +101,7 @@ The program JSON **contents** are byte-identical (verified by sha256 and the add
 test), so all previously derived swap addresses remain valid. Note their internal `"name"`
 fields still read `banco-*` — they are inside the hashed program bytes and cannot be renamed.
 
-## 3. Swap records: `IndexedDbAssetSwapRepository`
+### 3. Swap records: `IndexedDbAssetSwapRepository`
 
 Swap records and the restore-scan cursor now live in an `AssetSwapRepository` — the same
 repository system the wallet already uses for Boltz swaps (`IndexedDbSwapRepository`), built on
@@ -56,7 +135,7 @@ The store/scan calls become async and take the repository:
 - Ordering note: newest-first is by `createdAt` alone; equal-timestamp insertion order is no
   longer guaranteed (records stamp `Date.now()` ms, so this never bites in practice).
 
-## 3b. Markets discovery
+### 3b. Markets discovery
 
 `discoverMarkets` takes that same repository — there is no second storage seam, so no
 localStorage adapter to write:
@@ -88,7 +167,7 @@ localStorage adapter to write:
 - The `Network` type on these call sites is now `@arkade-os/solver-discovery`'s `Network`, not
   `@arkade-os/boltz-swap`'s — for the wallet's current networks they are the same strings.
 
-## 3c. RFQ swaps: persist what the manager is driving
+### 3c. RFQ swaps: persist what the manager is driving
 
 New, and not a move: RFQ swaps started by the released wallet were **never persisted anywhere**, so
 a restart lost them. `AssetSwapRepository` gains three methods for them (`version` is `3`;
@@ -105,7 +184,7 @@ three existing stores are untouched), and the wallet writes the records.
   **seconds** (`Math.floor(Date.now() / 1000)`); milliseconds against a seconds window retires every
   terminal record after ~43 minutes.
 
-### How to fill `profile`, per corridor
+#### How to fill `profile`, per corridor
 
 The record's corridor half is one opaque `Record<string, unknown>` that nothing in the package, the
 repository or the store interprets — so the wallet is the only thing that can get it right, and
@@ -143,7 +222,7 @@ nothing will tell it when it does not.
   inputs against, so it is the easiest to skip and impossible to reconstruct later. Without this
   profile a restored swap watches nothing and its L1 refund window passes unwatched.
 
-### Not every corridor has a hashlock
+#### Not every corridor has a hashlock
 
 The three corridors shipping today all lock to a preimage, so all three carry `profile.hashlock` —
 but that is a fact about them, not about RFQ. A corridor that settles without a hashlock
@@ -153,7 +232,7 @@ check. It still writes `profile.signer` — signing a leg is not a hashlock ques
 why `rfqSecretsProfile` takes the payment hash as an *optional* second argument. Worth knowing now,
 so the wallet does not grow a "every swap has a paymentHash" assumption of its own.
 
-### A partial profile throws — at boot AND at read
+#### A partial profile throws — at boot AND at read
 
 Deliberate, and it decides how the wallet handles both a failed restore and a failed claim-secret
 read. `rebuildRfqSwap` refuses a hashlock profile with no usable `paymentHash`, a missing
@@ -163,7 +242,7 @@ half-armed, since every one of them is a gate whose absence reads as "passed" ra
 The readers behave the same way: `undefined` means "this corridor has none", a throw means "the half
 is there and unusable".
 
-### No backfill exists
+#### No backfill exists
 
 RFQ swaps started by the released wallet were never persisted, so the upgrade recovers none of them;
 records begin at swaps started after it. Refunds for in-flight pre-upgrade swaps stay manual. Worth
@@ -174,7 +253,7 @@ rather than implementing `AssetSwapRepository`. One thing is **not** reversible:
 database is at `DB_VERSION` 2, rolling the app back to `@arkade-os/swap@0.0.5` opens it at version 1
 and fails `VersionError` across the whole swap store, not just the RFQ half.
 
-## 4. Not mechanical — cut with ponytail markers
+### 4. Not mechanical — cut with ponytail markers
 
 - **`preFeeDisplayRate`** was not ported (display-only). Keep it in the wallet (e.g. move to
   `src/lib/swapDisplay.ts`) together with its two tests from `markets.test.ts`.
@@ -188,7 +267,7 @@ and fails `VersionError` across the whole swap store, not just the RFQ half.
 - `restore.ts` no longer documents the wallet's feeBps/fiat backfill behavior; that logic already
   lives in the wallet caller and is unaffected.
 
-## 5. Tests
+### 5. Tests
 
 Delete `src/test/lib/swap/` except the pieces that test wallet display code
 (`swapPriceRateLabel` / `mergeAssetSwapActivity` cases in `restore.test.ts` / `store.test.ts`)
@@ -196,7 +275,7 @@ Delete `src/test/lib/swap/` except the pieces that test wallet display code
 
 ---
 
-## TODO — ready-to-paste prompt for the next PR
+### TODO — ready-to-paste prompt for the next PR
 
 > In `arkade-os/wallet`, migrate the app to `@arkade-os/swap` (see
 > `packages/swap/MIGRATION.md` in arkade-os/ts-sdk, added by

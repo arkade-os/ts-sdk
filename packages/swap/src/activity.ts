@@ -8,11 +8,12 @@ import { hex } from "@scure/base";
 import { isRfqSwapTerminal, type RfqSwapState } from "./swapManager";
 import type { LockupSpendIndexer } from "./refund";
 import { rfqCorridorHandlers } from "./rfqCorridor";
-// Side-effecting, as in `rfqRecord.ts`: the type-only import below erases, so
-// nothing else here would register the handlers this reads.
+// Side-effecting, as in `rfqRecord.ts`: the handlers this reads register
+// themselves on import, and nothing here should rely on another module having
+// pulled them in first.
 import "./rfqCorridors";
 import type { AssetSwapRepository } from "./repository";
-import type { RfqSwapRecord } from "./rfqRecord";
+import { normalizeRfqSwapRecord, type RfqSwapRecord } from "./rfqRecord";
 
 /**
  * One swap, flattened to what grouping needs: an identity, a corridor, an
@@ -156,9 +157,12 @@ export async function rfqSwapActivityInputs(
 }
 
 async function activityInputOf(
-    record: RfqSwapRecord,
+    stored: RfqSwapRecord,
     indexer?: LockupSpendIndexer,
 ): Promise<SwapActivityInput> {
+    // Reads straight off the repository, so a record written before the txid
+    // fields were renamed reaches this untouched by the manager.
+    const record = normalizeRfqSwapRecord(stored);
     const txids = new Set<string>();
     if (record.fundingTxid) txids.add(record.fundingTxid);
     if (record.refundTxid) txids.add(record.refundTxid);

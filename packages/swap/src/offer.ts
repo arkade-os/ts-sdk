@@ -462,8 +462,8 @@ export async function createOffer(
  * Identical offers derive the same address, so `fundingTxid` selects the exact
  * deposit; without it the address must hold exactly one spendable VTXO — with
  * several, cancel refuses to guess and throws.
- * `swapAddress` (the funded address) pins the server key the covenant was
- * built with, so cancel keeps working across a server signer rotation; without
+ * `swapAddress` (the funded address) pins the operator key the covenant was
+ * built with, so cancel keeps working across an operator signer rotation; without
  * it a rotated key is detected and reported rather than reading as a missing
  * VTXO.
  *
@@ -519,13 +519,13 @@ export async function cancelOffer(
         : client.serverKey;
     const { program, args, keys } = swapProgramBinding(offer, operatorPubkey);
     // the offer's TLV pins the script the deposit was funded to; if the rebuild
-    // disagrees, this server key is not the one the covenant was built with
+    // disagrees, this operator key is not the one the covenant was built with
     // (rotated since funding, or a wrong swapAddress) — getUtxos would just
     // return nothing, so fail with the diagnosis instead
     const rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
     if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {
         throw new Error(
-            "rebuilt covenant does not match the offer's swapPkScript — the server " +
+            "rebuilt covenant does not match the offer's swapPkScript — the operator " +
                 "signing key has likely rotated since funding; pass swapAddress (the " +
                 "funded address) to pin the original key",
         );

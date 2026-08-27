@@ -114,7 +114,7 @@ export async function watchOfferSwaps({
     onUpdate,
 }: WatchOfferSwapsParams): Promise<OfferSwapWatcher> {
     const manager = await wallet.getContractManager();
-    // Current server key at watcher start. TODO: persist the funding-time key
+    // Current operator key at watcher start. TODO: persist the funding-time key
     // with swap records; a signer rotation during a long session makes leaf
     // classification return indeterminate rather than guessing.
     const operatorPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;

@@ -15,6 +15,7 @@ import { VHTLCV2ContractHandler } from "@arkade-os/sdk";
 import {
     RFQ_SWAP_RETENTION_SECONDS,
     createRfqSwapRecord,
+    normalizeRfqSwapRecord,
     rebuildRfqSwap,
     rfqSwapOriginOf,
     shouldRetainRfqSwap,
@@ -556,5 +557,69 @@ describe("the spend that ended the swap", () => {
             lockupSpendTxids: ["ab".repeat(32)],
         });
         expect(updateRfqSwapRecord(record, swapOf(sendOrigin)).lockupSpendTxids).toBeUndefined();
+    });
+});
+
+/**
+ * Records written before the txid rename are on disk at consumers: the record
+ * fields shipped in `0.0.8`, and the receive corridor's `profile.claimArkTxid`
+ * as far back as `0.0.6`. Backends store the record whole, so nothing renames
+ * them at the storage layer — every read through this module has to.
+ */
+describe("a record written under the old txid names", () => {
+    /** The shape `0.0.9` and earlier wrote. Cast because the current type no
+     * longer declares these — which is the whole point. */
+    const legacy = (record: RfqSwapRecord, over: Record<string, unknown>): RfqSwapRecord => {
+        const { fundingTxid, refundTxid, lockupSpendTxids, ...rest } = record;
+        return { ...rest, ...over } as RfqSwapRecord;
+    };
+
+    it("rebuilds with the txids the old names carried", () => {
+        const stored = legacy(createRfqSwapRecord(sendOrigin, swapOf(sendOrigin, "refunded")), {
+            fundingArkTxid: "ab".repeat(32),
+            refundArkTxid: "cd".repeat(32),
+            lockupSpendArkTxids: ["ef".repeat(32)],
+        });
+        const rebuilt = rebuildRfqSwap(stored, paramsOf(sendOrigin));
+
+        expect(rebuilt.refundTxid).toBe("cd".repeat(32));
+        expect(rebuilt.lockupSpendTxids).toEqual(["ef".repeat(32)]);
+        expect(rfqSwapOriginOf(stored).fundingTxid).toBe("ab".repeat(32));
+    });
+
+    it("keeps a receive leg's claim, so the value gate stays disarmed", () => {
+        // The sharpest one: with `claimTxid` lost, `partiallyClaimed` reads
+        // false and an underfunded lockup whose preimage is already public
+        // gets blocked instead of drained.
+        const record = createRfqSwapRecord(receiveOrigin, swapOf(receiveOrigin, "claimed"));
+        const { claimTxid: _current, ...profile } = record.profile;
+        const stored = { ...record, profile: { ...profile, claimArkTxid: "ab".repeat(32) } };
+
+        const rebuilt = rebuildRfqSwap(stored, paramsOf(receiveOrigin)) as LightningReceiveSwap;
+        expect(rebuilt.claimTxid).toBe("ab".repeat(32));
+    });
+
+    it("is written back without them, so the rename costs one pass", () => {
+        const stored = legacy(createRfqSwapRecord(sendOrigin, swapOf(sendOrigin, "refunded")), {
+            fundingArkTxid: "ab".repeat(32),
+            refundArkTxid: "cd".repeat(32),
+        });
+        const written = updateRfqSwapRecord(stored, {
+            ...swapOf(sendOrigin, "refunded"),
+            refundTxid: "cd".repeat(32),
+        });
+
+        expect(written.fundingTxid).toBe("ab".repeat(32));
+        expect(written.refundTxid).toBe("cd".repeat(32));
+        expect(written).not.toHaveProperty("fundingArkTxid");
+        expect(written).not.toHaveProperty("refundArkTxid");
+    });
+
+    it("leaves a current record alone", () => {
+        const record = createRfqSwapRecord(sendOrigin, {
+            ...swapOf(sendOrigin, "refunded"),
+            refundTxid: "cd".repeat(32),
+        });
+        expect(normalizeRfqSwapRecord(record)).toBe(record);
     });
 });

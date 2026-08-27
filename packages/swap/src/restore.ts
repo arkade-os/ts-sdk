@@ -224,7 +224,7 @@ export function classifyDepositSpend(
  * does, so the `existingIds` escape hatch is no longer a correction mechanism
  * for a wrong label — it is only a skip list.
  *
- * `operatorPubkey` must be the server key the covenants were funded against; a
+ * `operatorPubkey` must be the operator key the covenants were funded against; a
  * key that has rotated since makes every affected swap unclassifiable rather
  * than misclassified.
  */
@@ -365,7 +365,7 @@ export async function restoreAssetSwaps(
             fromAmount,
             toAmount: offer.wantAmount.toString(),
             // ponytail(arkade-os/ts-sdk#680): empty address makes cancel fall back
-            // to the current server key; store the funded address if server-key
+            // to the current operator key; store the funded address if operator-key
             // rotations become real (cancelOffer now at least diagnoses the
             // mismatch instead of reporting a missing VTXO)
             swapAddress: "",
