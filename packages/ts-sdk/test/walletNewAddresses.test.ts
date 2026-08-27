@@ -3,11 +3,13 @@ import {
     Wallet,
     MnemonicIdentity,
     SingleKey,
+    HDDescriptorProvider,
     InMemoryWalletRepository,
     InMemoryContractRepository,
     WalletCannotAllocateAddressError,
     signingDescriptorIndex,
 } from "../src";
+import type { DescriptorProvider } from "../src/identity/descriptorProvider";
 
 /**
  * The explicit multi-type address allocator (`getNewAddresses`).
@@ -102,6 +104,35 @@ async function watermark(repo: InMemoryWalletRepository): Promise<number | undef
     return (await repo.getWalletState())?.settings?.hd?.lastIndexUsed;
 }
 
+/**
+ * A wallet driven by a `DescriptorProvider` that is NOT an
+ * `HDDescriptorProvider` — the `walletMode: <provider>` shape. It delegates to
+ * a real HD provider so the descriptors it hands out are genuinely rangeable,
+ * but the wallet cannot recognise it by type. Only the provider itself can
+ * allocate for such a wallet: `lookAheadConfig()` refuses to wire the band for
+ * anything that is not an `HDDescriptorProvider`, so the contract manager has
+ * no `allocate` hook to call.
+ */
+async function makeCustomProviderWallet(walletRepo: InMemoryWalletRepository) {
+    const identity = MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false });
+    const inner = await HDDescriptorProvider.create(identity, walletRepo);
+    const custom: DescriptorProvider = {
+        getNextSigningDescriptor: () => inner.getNextSigningDescriptor(),
+        isOurs: (d) => inner.isOurs(d),
+        signWithDescriptor: (r) => inner.signWithDescriptor(r),
+        signMessageWithDescriptor: (d, m, t) => inner.signMessageWithDescriptor(d, m, t),
+    };
+    return Wallet.create({
+        identity,
+        walletMode: custom,
+        arkServerUrl: "http://localhost:7070",
+        storage: {
+            walletRepository: walletRepo,
+            contractRepository: new InMemoryContractRepository(),
+        },
+    });
+}
+
 describe("Wallet.getNewAddresses", () => {
     describe("HD allocation", () => {
         it("mints every requested type at ONE shared HD index", async () => {
@@ -186,6 +217,36 @@ describe("Wallet.getNewAddresses", () => {
             // Offchain has no such split.
             expect(offchain.address).toBe(offchain.contract.address);
             expect(offchain.address.startsWith("tark1")).toBe(true);
+
+            await wallet.dispose();
+        });
+
+        it("rejects an empty types list instead of burning an index for nothing", async () => {
+            const walletRepo = new InMemoryWalletRepository();
+            const wallet = await makeHdWallet(walletRepo);
+
+            const before = await watermark(walletRepo);
+            // Reporting success while allocating nothing would leave an
+            // unexplained gap in the index stream.
+            await expect(wallet.getNewAddresses({ types: [] })).rejects.toThrow(
+                /at least one address type/,
+            );
+            expect(await watermark(walletRepo)).toBe(before);
+
+            await wallet.dispose();
+        });
+
+        it("allocates through a custom DescriptorProvider, not just the built-in HD one", async () => {
+            const walletRepo = new InMemoryWalletRepository();
+            const wallet = await makeCustomProviderWallet(walletRepo);
+
+            // The provider can allocate, so `forceNew` must be honoured rather
+            // than mistaken for a wallet with no HD stream.
+            const first = await wallet.getNewAddresses({ forceNew: true });
+            const second = await wallet.getNewAddresses({ forceNew: true });
+
+            expect(second[0].address).not.toBe(first[0].address);
+            expect(second[0].address).not.toBe(await wallet.getAddress());
 
             await wallet.dispose();
         });

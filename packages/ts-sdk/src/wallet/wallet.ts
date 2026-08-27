@@ -2619,19 +2619,35 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         forceNew: boolean,
         tagSource: boolean,
     ): Promise<AllocatedAddress[]> {
+        // Before anything is allocated: an empty request that burned an index
+        // would report success while handing back nothing, leaving a gap in the
+        // stream that no contract row explains.
+        if (types.length === 0) {
+            throw new Error("getNewAddresses: `types` must name at least one address type");
+        }
+
         const manager = await this.getContractManager();
+        const provider = this._descriptorProvider;
         // One allocation for the whole call — every requested type derives from
-        // the same index. Skipped entirely without a provider: there is no
-        // stream to advance, and `getNextSigningDescriptor` would answer with
-        // the identity's pathless descriptor rather than a fresh index.
-        const descriptor = this._descriptorProvider
-            ? await manager.getNextSigningDescriptor()
-            : undefined;
+        // the same index.
+        //
+        // The built-in HD provider is allocated through the contract manager,
+        // which owns cross-context serialization and slides the look-ahead band
+        // with the watermark. A custom provider has neither: `lookAheadConfig()`
+        // only wires the band for an `HDDescriptorProvider`, so the manager has
+        // no `allocate` hook and would answer `undefined` — reading as "declined
+        // to allocate" for a provider that allocates perfectly well. Ask it
+        // directly. Without any provider there is no stream to advance at all.
+        const descriptor = !provider
+            ? undefined
+            : provider instanceof HDDescriptorProvider
+              ? await manager.getNextSigningDescriptor()
+              : await provider.getNextSigningDescriptor();
 
         if (!descriptor) {
             if (forceNew) {
                 throw new WalletCannotAllocateAddressError(
-                    this._descriptorProvider
+                    provider
                         ? "the descriptor provider declined to allocate an index"
                         : "this wallet has no HD stream (walletMode 'static' / 'auto')",
                 );
