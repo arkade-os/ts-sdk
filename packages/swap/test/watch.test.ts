@@ -55,8 +55,8 @@ const spendPsbt = (offer: Offer, via: "cancel" | "fulfill", vout = 0) => {
 
 /**
  * A wallet stub exposing only what the watcher reads: the contract manager's
- * event seam, and an address to recover the server key from. `emit` plays the
- * manager's part.
+ * event seam, an address to recover the server key from, and the arkade
+ * reader that serves spending-tx lookups. `emit` plays the manager's part.
  */
 const makeWallet = (getVirtualTxs: (txids: string[]) => Promise<{ txs: string[] }>) => {
     const callbacks = new Set<(event: any) => void>();
@@ -79,7 +79,6 @@ const makeWallet = (getVirtualTxs: (txids: string[]) => Promise<{ txs: string[] 
     } as any;
     return {
         wallet,
-        getVirtualTxs,
         setContractWatchState,
         emit: (event: any) => callbacks.forEach((cb) => cb(event)),
         listeners: () => callbacks.size,

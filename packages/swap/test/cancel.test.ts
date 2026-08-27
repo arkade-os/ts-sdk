@@ -73,7 +73,9 @@ const fundedAddress = new ArkAddress(fundedServerKey, script.tweakedPublicKey, "
 
 const setContractWatchState = vi.fn(async (_script: string, _watch: string) => {});
 const contractManager = { marker: "the wallet's manager", setContractWatchState };
-const arkadeInfo = { network: "regtest", signerPubkey: hex.encode(fundedServerKey) };
+// contents never read: the mocked `Arkade.connect` answers the server key
+// from `state.serverKey`, which stays the single key knob in these tests
+const arkadeInfo = {};
 const arkadeReader = { marker: "the wallet's reader" };
 const arkadeBroadcaster = { submitTx: async () => ({}), finalizeTx: async () => {} };
 const wallet = {

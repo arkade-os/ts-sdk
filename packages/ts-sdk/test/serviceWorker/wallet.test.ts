@@ -668,6 +668,58 @@ describe("ServiceWorkerWallet", () => {
         vi.unstubAllGlobals();
     });
 
+    it("proxies getArkadeBroadcaster over SUBMIT_TX and FINALIZE_TX", async () => {
+        // The broadcast leg of the seam, end to end from the page. Worth its own
+        // round-trip test rather than leaning on the worker-side handler cases:
+        // this is the only money-moving path the page can reach, and the client
+        // proxy is what turns a `submitTx(...)` call into the wire message.
+        const submitted = {
+            arkTxid: "cd".repeat(32),
+            finalArkTx: "70736274ff",
+            signedCheckpointTxs: ["aa"],
+        };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "SUBMIT_TX") {
+                return structuredClone({
+                    id: message.id,
+                    tag: messageTag,
+                    type: "SUBMIT_TX_SUCCESS",
+                    payload: submitted,
+                });
+            }
+            if (message.type === "FINALIZE_TX") {
+                // no payload — finalize answers with the bare success envelope
+                return structuredClone({
+                    id: message.id,
+                    tag: messageTag,
+                    type: "FINALIZE_TX_SUCCESS",
+                });
+            }
+            return null;
+        });
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag, false);
+        const broadcaster = await wallet.getArkadeBroadcaster();
+
+        await expect(broadcaster.submitTx("70736274ff", ["aa"])).resolves.toEqual(submitted);
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "SUBMIT_TX",
+                payload: { signedArkTx: "70736274ff", checkpointTxs: ["aa"] },
+            }),
+        );
+
+        await expect(broadcaster.finalizeTx("cd".repeat(32), ["bb"])).resolves.toBeUndefined();
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "FINALIZE_TX",
+                payload: { arkTxid: "cd".repeat(32), finalCheckpointTxs: ["bb"] },
+            }),
+        );
+    });
+
     it("getDelegateManager returns undefined when no delegate configured", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness();
 

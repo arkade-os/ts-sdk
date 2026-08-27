@@ -112,6 +112,25 @@ describe("WalletMessageHandler handleMessage", () => {
             expect(response.error?.name).toBe("ReadonlyWalletError");
         });
 
+        it("finalizes through the full wallet's broadcaster", async () => {
+            // The completion leg of every broadcast. It answers with a bare
+            // success envelope rather than a payload, which is exactly why it
+            // is worth pinning: a handler that forgot to await would still
+            // return the right shape.
+            const finalizeTx = vi.fn(async () => {});
+            (updater as any).readonlyWallet = {};
+            (updater as any).wallet = { getArkadeBroadcaster: async () => ({ finalizeTx }) };
+
+            await expect(
+                updater.handleMessage({
+                    ...baseMessage(),
+                    type: "FINALIZE_TX",
+                    payload: { arkTxid: "cd".repeat(32), finalCheckpointTxs: ["bb"] },
+                } as any),
+            ).resolves.toMatchObject({ type: "FINALIZE_TX_SUCCESS" });
+            expect(finalizeTx).toHaveBeenCalledWith("cd".repeat(32), ["bb"]);
+        });
+
         it("submits through the full wallet's broadcaster", async () => {
             const submitTx = vi.fn(async () => ({
                 arkTxid: "cd".repeat(32),

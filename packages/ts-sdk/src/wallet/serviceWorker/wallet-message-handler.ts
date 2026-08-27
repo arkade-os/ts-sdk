@@ -2,7 +2,6 @@ import { ArkadeInfo, ArkProvider, SettlementEvent } from "../../providers/ark";
 import {
     GetVtxosOptions,
     IndexerProvider,
-    PageResponse,
     PaginationOptions,
     RestIndexerProvider,
 } from "../../providers/indexer";
@@ -21,6 +20,8 @@ import type {
     GetSpendablePathsOptions,
 } from "../../contracts/contractManager";
 import {
+    ArkadeBroadcaster,
+    ArkadeReader,
     ArkTransaction,
     AssetDetails,
     BurnParams,
@@ -218,8 +219,8 @@ export type RequestIndexerGetVtxos = RequestEnvelope & {
     type: "INDEXER_GET_VTXOS";
     payload: { opts: GetVtxosOptions };
 };
-// Normalized VTXOs carry bigint-free fields, but `page` and the filters ride
-// the same structuredClone channel `ARKADE_INFO` documents above.
+// VTXOs cross the boundary raw — `assets[].amount` is bigint — relying on the
+// same bigint-safe structuredClone channel `ARKADE_INFO` documents above.
 export type ResponseIndexerGetVtxos = ResponseEnvelope & {
     type: "INDEXER_VTXOS";
     payload: NormalizedVtxoPage;
@@ -231,7 +232,7 @@ export type RequestIndexerGetVirtualTxs = RequestEnvelope & {
 };
 export type ResponseIndexerGetVirtualTxs = ResponseEnvelope & {
     type: "INDEXER_VIRTUAL_TXS";
-    payload: { txs: string[]; page?: PageResponse };
+    payload: Awaited<ReturnType<ArkadeReader["getVirtualTxs"]>>;
 };
 
 export type RequestSubmitTx = RequestEnvelope & {
@@ -240,7 +241,7 @@ export type RequestSubmitTx = RequestEnvelope & {
 };
 export type ResponseSubmitTx = ResponseEnvelope & {
     type: "SUBMIT_TX_SUCCESS";
-    payload: { arkTxid: string; finalArkTx: string; signedCheckpointTxs: string[] };
+    payload: Awaited<ReturnType<ArkadeBroadcaster["submitTx"]>>;
 };
 
 export type RequestFinalizeTx = RequestEnvelope & {

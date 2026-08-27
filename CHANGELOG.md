@@ -29,10 +29,12 @@ style and have not been backfilled.
   deposit made before contract registration existed, and the watcher
   reads spending transactions — so they now take those from the wallet
   as well, through the two seams below. No *offer* entrypoint takes a
-  server URL now; the RFQ/refund/restore helpers (`restoreAssetSwaps`,
-  `arkadeRefunder`, `claim`/`refund`, the activity resolver) still take
-  provider instances, which an `ArkadeReader` satisfies structurally —
-  converting their callers is follow-up work. (#734)
+  server URL now. The RFQ restore/refund/claim helpers still take
+  provider instances: an `ArkadeReader` satisfies their *indexer*
+  parameter structurally, while their ark-provider parameter wants
+  `getInfo` plus the broadcast pair — buildable from
+  `wallet.getArkadeInfo()` and `wallet.getArkadeBroadcaster()`.
+  Converting their callers is follow-up work. (#734)
 - **`Arkade.arkProvider` narrowed to `ArkadeServerProvider`.** The
   provider a connected client exposes now types `submitTx`/`finalizeTx`
   as optional, mirroring what `Arkade.connect` accepts. Reaching

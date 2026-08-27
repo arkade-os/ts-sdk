@@ -993,20 +993,25 @@ export interface IAssetManager extends IReadonlyAssetManager {
  * is harmless: `normalizeVtxo` is idempotent. Do not "fix" that by stripping
  * the normalization here; it is the whole point of the seam.
  *
- * Deliberately not the whole provider: a caller that could reach `getTxHistory`
- * or `subscribeForScripts` through the wallet would be talking to the server
- * behind the wallet's back, which the service-worker wallet cannot even
- * express.
+ * Deliberately not the whole provider: a caller that could reach
+ * `getVtxoChain` or `getSubscription` through the wallet would be talking to
+ * the server behind the wallet's back, which the service-worker wallet cannot
+ * even express.
  */
+// `getVirtualTxs` note: txids ride the URL *path*, one request per call — the
+// reader chunks nothing, and a `page` in the answer is the caller's to follow.
+// `swap`'s restore scan chunks at 50 txids for exactly this reason.
 export type ArkadeReader = Pick<IndexerProvider, "getVirtualTxs"> & {
     /**
      * Required `opts`, unlike the `IndexerProvider` method it mirrors: this
      * seam reads for *named* foreign scripts (or outpoints), and a bare
      * `getVtxos()` would be an unscoped server-wide query.
      *
-     * A single request, so a wide `scripts` list can exceed the query-string
-     * limit and only page one comes back — reach for {@link getAllNormalizedVtxos},
-     * which accepts a reader and chunks and pages to exhaustion.
+     * One logical query — the reader chunks nothing. `scripts` travel in the
+     * query string, so a wide list can `414`; {@link getAllNormalizedVtxos}
+     * accepts a reader and chunks and pages to exhaustion. Whether a single
+     * call pages internally is the provider's business: when a `page` comes
+     * back, following it is yours.
      *
      * @see getNormalizedVtxos
      */

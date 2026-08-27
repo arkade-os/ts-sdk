@@ -126,6 +126,11 @@ import {
 export {
     ActivityRegistry,
     boardingResolver,
+    // The reader-compatible bulk read `ArkadeReader`'s doc points at, and the
+    // single-shot normalizer it wraps. Exported so a plugin holding only a
+    // wallet can follow the doc without re-implementing the chunk/page loop.
+    getAllNormalizedVtxos,
+    getNormalizedVtxos,
     collabExitResolver,
     assetMintResolver,
     createDefaultActivityRegistry,
@@ -298,6 +303,7 @@ import {
     IndexerProvider,
     IndexerTxType,
     ChainTxType,
+    GetVtxosOptions,
     PageResponse,
     BatchInfo,
     ChainTx,
@@ -869,6 +875,7 @@ export type {
     ProvisionedKey,
     // Indexer types
     IndexerProvider,
+    GetVtxosOptions,
     PageResponse,
     BatchInfo,
     ChainTx,

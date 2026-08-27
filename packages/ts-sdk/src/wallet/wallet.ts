@@ -908,8 +908,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
     /**
      * Chain reads against this wallet's server for scripts it does not own.
      *
-     * Binds the wallet's own `indexerProvider`, so a caller shares the wallet's
-     * connection rather than opening a second one. `getVtxos` goes through
+     * Binds the wallet's own `indexerProvider` — which may be an Expo or
+     * injected one that a caller's hand-built `RestIndexerProvider` would
+     * silently bypass. `getVtxos` goes through
      * {@link getNormalizedVtxos}, which is what makes every VTXO leaving the
      * seam carry its canonical facts.
      *

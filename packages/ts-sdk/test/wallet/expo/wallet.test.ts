@@ -37,6 +37,8 @@ const createWalletStub = () => ({
     getAddress: vi.fn().mockResolvedValue("arkade1-address"),
     getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
     getArkadeInfo: vi.fn().mockResolvedValue({ network: "regtest", dust: 1n }),
+    getArkadeReader: vi.fn().mockResolvedValue({ id: "reader" }),
+    getArkadeBroadcaster: vi.fn().mockResolvedValue({ id: "broadcaster" }),
     getBalance: vi.fn().mockResolvedValue({ offchain: 1, onchain: 2 }),
     getVtxos: vi.fn().mockResolvedValue([{ txid: "v1" }]),
     getBoardingUtxos: vi.fn().mockResolvedValue([{ txid: "u1" }]),
@@ -169,6 +171,10 @@ describe("ExpoWallet", () => {
             network: "regtest",
             dust: 1n,
         });
+        // distinct sentinels, so a reader wired to the broadcaster (or vice
+        // versa) fails here rather than in a consumer
+        await expect(wallet.getArkadeReader()).resolves.toEqual({ id: "reader" });
+        await expect(wallet.getArkadeBroadcaster()).resolves.toEqual({ id: "broadcaster" });
         await expect(wallet.getBalance()).resolves.toEqual({
             offchain: 1,
             onchain: 2,

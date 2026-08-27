@@ -25,9 +25,11 @@ before contract registration existed, and the watcher reads spending transaction
 ask the wallet for those too: `wallet.getArkadeReader()` for chain reads and
 `wallet.getArkadeBroadcaster()` for `submitTx`/`finalizeTx`. On a service-worker wallet both
 are proxied to the worker, so these reads stay on the wallet's own connection.
-The RFQ/refund/restore helpers (`restoreAssetSwaps`, `arkadeRefunder`, `claim`/`refund`)
-still take provider instances; an `ArkadeReader` satisfies those shapes structurally, so
-they can be fed `await wallet.getArkadeReader()` today.
+The RFQ restore/refund/claim helpers still take provider instances. An `ArkadeReader`
+satisfies their *indexer* parameter structurally — `restoreAssetSwaps` can be fed
+`await wallet.getArkadeReader()` today — while `arkadeRefunder` and `claim`/`refund` also
+want an ark provider (`getInfo` plus the broadcast pair), buildable from
+`wallet.getArkadeInfo()` and `wallet.getArkadeBroadcaster()`.
 
 ## Roles
 
