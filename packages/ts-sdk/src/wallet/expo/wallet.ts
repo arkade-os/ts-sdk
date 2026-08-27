@@ -9,6 +9,8 @@ import type {
     SendBitcoinParams,
     SettleParams,
     GetVtxosFilter,
+    GetNewAddressesOptions,
+    NewAddress,
     ArkTransaction,
     ExtendedCoin,
     Recipient,
@@ -341,6 +343,11 @@ export class ExpoWallet implements IWallet, HDWalletCapable, HDAllocationCapable
 
     getNextSigningDescriptor(): Promise<string | undefined> {
         return this.wallet.getNextSigningDescriptor();
+    }
+
+    /** @see Wallet.getNewAddresses */
+    getNewAddresses(opts?: GetNewAddressesOptions): Promise<NewAddress[]> {
+        return this.wallet.getNewAddresses(opts);
     }
 
     getUsedSigningDescriptors(opts?: { lookAhead?: number }): Promise<string[]> {

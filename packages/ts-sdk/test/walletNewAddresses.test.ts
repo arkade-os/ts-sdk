@@ -10,6 +10,11 @@ import {
     signingDescriptorIndex,
 } from "../src";
 import type { DescriptorProvider } from "../src/identity/descriptorProvider";
+import {
+    DEFAULT_MESSAGE_TAG,
+    WalletMessageHandler,
+} from "../src/wallet/serviceWorker/wallet-message-handler";
+import { ExpoWallet } from "../src/wallet/expo/wallet";
 
 /**
  * The explicit multi-type address allocator (`getNewAddresses`).
@@ -308,6 +313,66 @@ describe("Wallet.getNewAddresses", () => {
             expect(await second.getAddress()).toBe(receiveBefore);
             expect(await second.getBoardingAddress()).toBe(boardingBefore);
             await second.dispose();
+        });
+    });
+
+    describe("public wallet wrappers", () => {
+        // One minted entry, shaped like the real thing. Everything here is
+        // plain data on purpose: it has to survive structured clone on the way
+        // back from the worker.
+        const minted = [
+            {
+                address: "tark1qminted",
+                signingDescriptor: "tr([73c5da0a/86'/1'/0']tpubD6/0/7)",
+                contract: {
+                    type: "default",
+                    params: { pubKey: "aa" },
+                    script: "5120aa",
+                    address: "tark1qminted",
+                    state: "active",
+                    createdAt: 1,
+                },
+            },
+        ];
+
+        it("the worker handler mints through the wallet it owns", async () => {
+            const handler = new WalletMessageHandler();
+            const getNewAddresses = vi.fn().mockResolvedValue(minted);
+            // `handleMessage` gates every non-INIT message on `readonlyWallet`,
+            // so both handles have to be present for the switch to be reached.
+            (handler as any).wallet = { getNewAddresses };
+            (handler as any).readonlyWallet = { getNewAddresses };
+
+            const response: any = await handler.handleMessage({
+                id: "1",
+                tag: DEFAULT_MESSAGE_TAG,
+                type: "GET_NEW_ADDRESSES",
+                payload: { types: ["default", "boarding"], forceNew: true },
+            } as any);
+
+            // The worker is the single writer of the HD watermark, so the page
+            // must be able to reach the whole operation, not just the index.
+            expect(getNewAddresses).toHaveBeenCalledWith({
+                types: ["default", "boarding"],
+                forceNew: true,
+            });
+            expect(response.type).toBe("NEW_ADDRESSES");
+            expect(response.payload.addresses).toEqual(minted);
+        });
+
+        // Deliberately no "refuses before init" test: `handleMessage` gates on
+        // `readonlyWallet` before the switch, so such a test passes with the
+        // `GET_NEW_ADDRESSES` case deleted entirely — it covers the pre-existing
+        // guard, not this message.
+
+        it("ExpoWallet forwards to the wallet it wraps", async () => {
+            const getNewAddresses = vi.fn().mockResolvedValue(minted);
+            const expo = Object.create(ExpoWallet.prototype) as ExpoWallet;
+            (expo as any).wallet = { getNewAddresses };
+
+            const opts = { types: ["boarding"] as const, forceNew: true };
+            await expect(expo.getNewAddresses(opts)).resolves.toEqual(minted);
+            expect(getNewAddresses).toHaveBeenCalledWith(opts);
         });
     });
 
