@@ -844,7 +844,12 @@ export interface MigrationLegReport {
  * separate settle-backed migration. They are never combined into one intent.
  */
 export interface DeprecatedSignerMigrationReport {
-    /** Whether a mid-session server-signer rotation was applied first. */
+    /**
+     * Whether this pass moved the wallet's receive state onto the active
+     * signer — directly, or through the server-info refresh it opens with.
+     * `false` when the wallet was already there, which includes a rotation an
+     * earlier refresh elsewhere in the session already applied.
+     */
     rotated: boolean;
     /** Global skip; when set, neither leg is present. */
     skipped?: MigrationGlobalSkipReason;
@@ -881,6 +886,13 @@ interface MigrationCapableWallet {
     rotateServerSigner(newServerPubKey: Uint8Array, checkpointTapscript: string): Promise<void>;
     /** Refresh the wallet's cached deprecated-signer set from a fresh {@link ArkInfo} snapshot. */
     refreshDeprecatedSigners(info: ArkInfo): void;
+    /**
+     * Drain a rotation the wallet is applying off an `onServerInfoChanged`
+     * emit, so this pass classifies against a settled signer snapshot instead
+     * of a half-rotated one. Optional: only the concrete `Wallet` subscribes to
+     * server-info events, so proxy / mock implementations omit it.
+     */
+    settleServerInfoChanges?(): Promise<void>;
     /**
      * Spend an explicit set of the wallet's own deprecated-signer VTXOs into a
      * single full-value active-signer output through the Ark send path (not
@@ -1993,6 +2005,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     async getDeprecatedSignerStatus(): Promise<DeprecatedSignerReport[]> {
         const wallet = this.requireMigrationCapableWallet();
         const info = await wallet.arkProvider.getInfo();
+        // This refresh can itself surface a rotated operator config, which the
+        // wallet applies off the emit. Let it settle so the counts below are
+        // read from one signer epoch rather than a half-rotated wallet.
+        await wallet.settleServerInfoChanges?.();
         const { reports: vtxoReports } = await this.classifyDeprecatedSignerContracts(info);
         const { reports: boardingReports } = await this.classifyDeprecatedSignerBoarding(info);
         return mergeSignerReports(vtxoReports, boardingReports);
@@ -2009,7 +2025,18 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         options?: MigrateDeprecatedSignerOptions,
     ): Promise<DeprecatedSignerMigrationReport> {
         const wallet = this.requireMigrationCapableWallet();
+        // Read BEFORE the refresh: the refresh itself can surface a rotated
+        // operator config, which the wallet applies off the emit — so the
+        // rotation this pass reports may be the one that handler performed
+        // rather than the one `ensureReceiveOnActiveSigner` performs below.
+        const signerBeforeRefresh = hex.encode(wallet.arkServerPublicKey);
         const info = await wallet.arkProvider.getInfo();
+        // Drain that handler before reading anything signer-derived: mid-rotation
+        // the active signer's contract rows are already persisted while
+        // `arkServerPublicKey` still holds the deprecated one, and both chains
+        // would otherwise race to rotate.
+        await wallet.settleServerInfoChanges?.();
+        const rotatedOnRefresh = signerBeforeRefresh !== hex.encode(wallet.arkServerPublicKey);
         // Refresh the wallet's cached deprecated-signer set from this fresh
         // snapshot before any classification or early-exit, so the spendability
         // filter that excludes EXPIRED deprecated-signer inputs from settle() is
@@ -2026,7 +2053,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // Common cheap exit: nothing deprecated advertised and our own snapshot
         // is current → no contract sweep, no indexer round-trip.
         if (signerSet.deprecated.size === 0 && walletClass.status === "CURRENT") {
-            return { rotated: false, expired: [], signers: [] };
+            return { rotated: rotatedOnRefresh, expired: [], signers: [] };
         }
 
         // The wallet's own signer is neither active nor advertised deprecated:
@@ -2036,7 +2063,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             const { reports: vtxoReports } = await this.classifyDeprecatedSignerContracts(info);
             const { reports: boardingReports } = await this.classifyDeprecatedSignerBoarding(info);
             return {
-                rotated: false,
+                // Normally false here — a drained rotation targets the active
+                // signer, which classifies CURRENT, not UNKNOWN. It is true only
+                // when a second rotation landed inside the drain, leaving us on a
+                // signer newer than `info`: still a rotation this pass applied.
+                rotated: rotatedOnRefresh,
                 expired: [],
                 signers: mergeSignerReports(vtxoReports, boardingReports),
                 skipped: "unknown-wallet-signer",
@@ -2049,7 +2080,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // (UNKNOWN_SIGNER already returned above, so the guard rotates here iff
         // the snapshot is MIGRATABLE/DUE_NOW/EXPIRED — identical to the prior
         // `!== CURRENT` test.)
-        const rotated = await this.ensureReceiveOnActiveSigner(info);
+        const rotated = (await this.ensureReceiveOnActiveSigner(info)) || rotatedOnRefresh;
 
         // Collect stale VTXOs AND boarding UTXOs AFTER any rotation, so the
         // just-deprecated former receive/boarding contracts are included in the

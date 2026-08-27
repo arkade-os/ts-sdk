@@ -33,6 +33,11 @@
  * param must be bound, every `$name` reference must be declared, and bound
  * values are validated against their type at compilation.
  *
+ * A covenant spend needs an `indexer`, not just an `emulator`: the co-signing
+ * service resolves each input's prevout pkScript from the previous ark tx the
+ * PSBT carries, and only the indexer can supply those bytes. Pure tapscript
+ * spends go straight to arkd and need neither.
+ *
  * @example
  * ```typescript
  * const htlcProgram = {
@@ -86,6 +91,7 @@ import {
     type ArkTxInput,
 } from "../utils/arkTransaction";
 import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
+import { attachPrevArkTxs, PrevTxUnavailableError } from "../utils/prevoutTx";
 import { Transaction } from "../utils/transaction";
 import { ANCHOR_PKSCRIPT } from "../utils/anchor";
 import { Extension } from "../extension";
@@ -182,10 +188,13 @@ export interface Utxo {
     vout: number;
     value: number;
     /**
-     * The ark transaction that created this VTXO. Required only by continuation
-     * /recursive covenants that inspect the input's provenance; when set, the SDK
-     * attaches it as the PrevArkTx field.
+     * Raw wire bytes of the ark transaction that created this VTXO, attached as
+     * the PrevArkTx field on input 0.
      *
+     * An override, not the only channel: covenant spends resolve the previous
+     * tx of every input through the client's indexer. Supply it when the tx is
+     * not yet indexable — a recursive covenant spending the output of an ark tx
+     * the caller just built — and the resolved value is suppressed for input 0.
      */
     sourceTx?: Uint8Array;
 }
@@ -231,8 +240,12 @@ export interface ArkadeConnectOptions {
      * tapscript contracts (multisig/timelock/hashlock) don't need it.
      */
     emulator?: EmulatorProvider;
-    /** Indexer — enables `getUtxos`/`getBalance` and coin auto-selection. */
-    indexer?: Pick<IndexerProvider, "getVtxos">;
+    /**
+     * Indexer — enables `getUtxos`/`getBalance` and coin auto-selection, and
+     * resolves the previous ark txs a covenant spend must carry (see
+     * {@link attachPrevArkTxs}). Required for covenant spends.
+     */
+    indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
     /** Signer for paths that require a user signature; optional for watch-only. */
     identity?: Identity;
     /** Network for address derivation; defaults to the SDK default. */
@@ -283,7 +296,7 @@ export class Arkade {
      */
     readonly emulatorKey: Uint8Array | undefined;
     readonly checkpoint: CSVMultisigTapscript.Type;
-    readonly indexer?: Pick<IndexerProvider, "getVtxos">;
+    readonly indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
     readonly identity?: Identity;
     /** The signing identity's x-only public key, resolved at connect — identifies which inputs the wallet signs. */
     readonly userKey?: Uint8Array;
@@ -297,7 +310,7 @@ export class Arkade {
         serverKey: Uint8Array;
         emulatorKey: Uint8Array | undefined;
         checkpoint: CSVMultisigTapscript.Type;
-        indexer?: Pick<IndexerProvider, "getVtxos">;
+        indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
         identity?: Identity;
         userKey?: Uint8Array;
         contractManager?: IContractManager;
@@ -658,9 +671,30 @@ export class ArkadeTransactionBuilder {
         );
 
         // Continuation context for recursive covenants — the parent ark tx that
-        // created the spent coin.
+        // created the spent coin. An explicit `sourceTx` overrides the resolved
+        // value below, which skips inputs that already carry the field (the
+        // emulator refuses an input bearing two).
         if (coin.sourceTx) {
             setArkPsbtField(arkTx, 0, PrevArkTxField, coin.sourceTx);
+        }
+
+        // Emulator v0.0.7+ requires PrevArkTx on every input of a submitted ark
+        // tx. Ark tx input i spends checkpoint i, which spends inputs[i] — so
+        // the tx to carry is the coin's own creating tx, not the checkpoint.
+        // Only the covenant path goes through the emulator; arkd-direct spends
+        // stay byte-identical.
+        if (this.fn.arkadeScript) {
+            const indexer = this.contract.client.indexer;
+            if (!indexer) {
+                throw new PrevTxUnavailableError(
+                    "covenant spends require an `indexer` on the Arkade client to resolve the previous ark tx of each input",
+                );
+            }
+            await attachPrevArkTxs(
+                arkTx,
+                [coin.txid, ...this.fundingCoins.map((c) => c.txid)],
+                indexer,
+            );
         }
 
         const condition = (def.tapscript.witness ?? []).map((w) => this.witnessBytes(w));
