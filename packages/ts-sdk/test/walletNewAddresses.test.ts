@@ -146,11 +146,15 @@ describe("Wallet.getNewAddresses", () => {
             expect(minted.map((m) => m.contract.type)).toEqual(["default", "boarding"]);
 
             // The whole point: two addresses, ONE index burned.
-            const descriptors = new Set(
-                minted.map((m) => m.contract.metadata?.signingDescriptor as string),
-            );
+            const descriptors = new Set(minted.map((m) => m.signingDescriptor));
             expect(descriptors.size).toBe(1);
             expect(await watermark(walletRepo)).toBe((before ?? -1) + 1);
+
+            // Surfaced directly so callers keeping it beside an invoice do not
+            // have to reach through untyped contract metadata and cast.
+            for (const m of minted) {
+                expect(m.signingDescriptor).toBe(m.contract.metadata?.signingDescriptor);
+            }
 
             await wallet.dispose();
         });
@@ -175,12 +179,32 @@ describe("Wallet.getNewAddresses", () => {
             // The reported bug: rotation used to require a `vtxo_received`, so
             // two receive addresses could not be outstanding at once.
             expect(second[0].address).not.toBe(first[0].address);
-            expect(
-                signingDescriptorIndex(second[0].contract.metadata?.signingDescriptor),
-            ).toBeGreaterThan(
-                signingDescriptorIndex(first[0].contract.metadata?.signingDescriptor),
+            expect(signingDescriptorIndex(second[0].signingDescriptor)).toBeGreaterThan(
+                signingDescriptorIndex(first[0].signingDescriptor),
             );
 
+            await wallet.dispose();
+        });
+
+        it("still slides the look-ahead band when one type fails midway", async () => {
+            const wallet = await makeHdWallet();
+            const manager = await wallet.getContractManager();
+
+            // The watermark moves before any contract is written, so a failure
+            // partway through still leaves the band trailing the stream.
+            const refill = vi.spyOn(manager, "refillLookAhead");
+            let calls = 0;
+            vi.spyOn(manager, "createContract").mockImplementation(async () => {
+                if (++calls === 2) throw new Error("registration failed");
+                return { type: "default", params: {}, script: "", address: "" } as never;
+            });
+
+            await expect(
+                wallet.getNewAddresses({ types: ["default", "boarding"] }),
+            ).rejects.toThrow("registration failed");
+            expect(refill).toHaveBeenCalled();
+
+            vi.restoreAllMocks();
             await wallet.dispose();
         });
 

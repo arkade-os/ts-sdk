@@ -98,9 +98,18 @@ export interface NewAddress {
      */
     address: string;
     /**
-     * The persisted, watched contract row. `metadata.signingDescriptor` is
-     * what `signerForDescriptor` needs to recover the key later; every entry
-     * from a single call carries the same one.
+     * The descriptor this address was derived from — hand it to
+     * `signerForDescriptor` to recover the key later. Every entry from a
+     * single call carries the same one, because they share an index.
+     *
+     * Also present on `contract.metadata.signingDescriptor`, but surfaced here
+     * typed: `Contract.metadata` is `Record<string, unknown>`, so reading it
+     * there costs the caller an `as string` on the one field they are most
+     * likely to persist beside an invoice.
+     */
+    signingDescriptor: string;
+    /**
+     * The persisted, watched contract row — script, type, state and metadata.
      */
     contract: Contract;
 }

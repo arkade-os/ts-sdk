@@ -234,15 +234,20 @@ export const DEFAULT_LOOK_AHEAD_WINDOW = 20;
  * A {@link NewAddress} plus the two fields only the wallet needs: the built
  * tapscript (so the deprecated boarding allocator can swap its display
  * script) and whether an index was actually burned (so it does not announce a
- * rotation that did not happen on a static wallet).
+ * rotation that did not happen on a wallet with no stream).
+ *
+ * Discriminated on `type` rather than carrying a widened tapscript, so the
+ * boarding branch narrows to {@link DefaultVtxo.Script} on its own. The
+ * alternative — a cast at the point of use — would be unchecked precisely
+ * where the wallet's displayed boarding script gets written.
  *
  * @internal Never crosses the public API — {@link Wallet.getNewAddresses}
  * projects it down to {@link NewAddress}.
  */
-interface AllocatedAddress extends NewAddress {
-    tapscript: DefaultVtxo.Script | DelegateVtxo.Script;
-    allocated: boolean;
-}
+type AllocatedAddress = NewAddress & { allocated: boolean } & (
+        | { type: "boarding"; tapscript: DefaultVtxo.Script }
+        | { type: "default"; tapscript: DefaultVtxo.Script | DelegateVtxo.Script }
+    );
 
 /**
  * Maximum caller-requested HD descriptors materialized past the watermark by
@@ -2544,7 +2549,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // allocate — leaves the display address untouched, exactly as the
         // pre-`getNewAddresses` implementation did.
         if (!minted?.allocated) return this.getBoardingAddress();
-        this.setBoardingTapscriptForRotation(minted.tapscript as DefaultVtxo.Script);
+        // `type` narrows the tapscript to `DefaultVtxo.Script`, so this write
+        // path takes no unchecked cast.
+        if (minted.type === "boarding") this.setBoardingTapscriptForRotation(minted.tapscript);
         return minted.address;
     }
 
@@ -2589,8 +2596,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * ```typescript
      * const [invoice] = await wallet.getNewAddresses({ forceNew: true });
      * // hand `invoice.address` to Alice, keep the descriptor with the invoice
-     * const descriptor = invoice.contract.metadata?.signingDescriptor as string;
-     * const signer = await wallet.signerForDescriptor(descriptor);
+     * const signer = await wallet.signerForDescriptor(invoice.signingDescriptor);
      * ```
      */
     async getNewAddresses(opts?: GetNewAddressesOptions): Promise<NewAddress[]> {
@@ -2599,9 +2605,13 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             opts?.forceNew ?? false,
             false,
         );
-        // Drop the internal tapscript/allocated fields: the display swap is the
-        // caller's business only inside this class.
-        return minted.map(({ address, contract }) => ({ address, contract }));
+        // Drop the internal tapscript/type/allocated fields: the display swap is
+        // the caller's business only inside this class.
+        return minted.map(({ address, signingDescriptor, contract }) => ({
+            address,
+            signingDescriptor,
+            contract,
+        }));
     }
 
     /**
@@ -2660,35 +2670,46 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
         const pubKey = deriveDescriptorLeafPubKey(descriptor);
         const allocated: AllocatedAddress[] = [];
-        for (const type of types) {
-            const built =
-                type === "boarding"
-                    ? this.buildBoardingContract(pubKey, descriptor, tagSource)
-                    : buildReceiveContract(
-                          this.offchainTapscript,
-                          descriptor,
-                          this.network.hrp,
-                          tagSource,
-                      );
-            // Persist before returning: an address the caller hands out but the
-            // watcher never saw is one whose payment silently never lands.
-            const contract = await manager.createContract(built.params);
-            allocated.push({
-                address: this.usableAddress(type, built.tapscript, contract),
-                contract,
-                tapscript: built.tapscript,
-                allocated: true,
-            });
-        }
-
-        // The watermark moved past offchain indices an external issuer may
-        // still be handing out, so the band has to slide (and keep covering the
-        // low side). Best-effort: the addresses are already allocated and
-        // committed, so a failed slide must not fail the call.
         try {
-            await manager.refillLookAhead();
-        } catch (e) {
-            console.warn("look-ahead refill after address allocation failed", e);
+            for (const type of types) {
+                const built =
+                    type === "boarding"
+                        ? this.buildBoardingContract(pubKey, descriptor, tagSource)
+                        : buildReceiveContract(
+                              this.offchainTapscript,
+                              descriptor,
+                              this.network.hrp,
+                              tagSource,
+                          );
+                // Persist before returning: an address the caller hands out but
+                // the watcher never saw is one whose payment silently never
+                // lands.
+                const contract = await manager.createContract(built.params);
+                allocated.push({
+                    ...(type === "boarding"
+                        ? { type, tapscript: built.tapscript as DefaultVtxo.Script }
+                        : { type, tapscript: built.tapscript }),
+                    address: this.usableAddress(type, built.tapscript, contract),
+                    signingDescriptor: descriptor,
+                    contract,
+                    allocated: true,
+                });
+            }
+        } finally {
+            // The watermark moved past offchain indices an external issuer may
+            // still be handing out, so the band has to slide (and keep covering
+            // the low side). In `finally` because the watermark moves before the
+            // first contract is written: a type that fails partway through still
+            // leaves the band trailing the stream, and skipping the slide would
+            // strand it there until the next successful allocation.
+            //
+            // Best-effort: the allocation is already committed, so a failed
+            // slide must not replace the caller's error — or fail the call.
+            try {
+                await manager.refillLookAhead();
+            } catch (e) {
+                console.warn("look-ahead refill after address allocation failed", e);
+            }
         }
         return allocated;
     }
@@ -2720,9 +2741,12 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                       );
             const contract = await manager.createContract(built.params);
             out.push({
+                ...(type === "boarding"
+                    ? { type, tapscript: tapscript as DefaultVtxo.Script }
+                    : { type, tapscript }),
                 address: this.usableAddress(type, tapscript, contract),
+                signingDescriptor: descriptor,
                 contract,
-                tapscript,
                 allocated: false,
             });
         }
