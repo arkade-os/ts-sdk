@@ -195,6 +195,51 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
         await bus.stop();
     });
 
+    it("stamps errorName at the egress for every error envelope", async () => {
+        // The one place error-name survival is enforced. structuredClone
+        // normalizes a custom Error name to "Error" on the wire, so
+        // `deliverResponse` carries it beside the error as a plain string —
+        // for handler errors AND the bus's own typed errors alike. The
+        // page-side restore is pinned elsewhere; without this test, deleting
+        // the stamp would fail nothing.
+        const failure = new Error("operator down");
+        failure.name = "ProviderUnavailableError";
+        handler.handleMessage.mockResolvedValueOnce({
+            id: "m-err",
+            tag: handler.messageTag,
+            error: failure,
+        } as ResponseEnvelope);
+        const bus = await createAndInitBus({ handlers: [handler] });
+        const postMessage = vi.fn();
+
+        await messageHandler({
+            data: { id: "m-err", tag: handler.messageTag },
+            source: { postMessage },
+            waitUntil: (p) => p,
+        });
+
+        expect(postMessage).toHaveBeenCalledTimes(1);
+        const sent = postMessage.mock.calls[0][0] as ResponseEnvelope;
+        expect(sent.errorName).toBe("ProviderUnavailableError");
+
+        // and a handler that already stamped one is not overwritten
+        handler.handleMessage.mockResolvedValueOnce({
+            id: "m-err2",
+            tag: handler.messageTag,
+            error: new Error("x"),
+            errorName: "AlreadyStamped",
+        } as ResponseEnvelope);
+        await messageHandler({
+            data: { id: "m-err2", tag: handler.messageTag },
+            source: { postMessage },
+            waitUntil: (p) => p,
+        });
+        const sent2 = postMessage.mock.calls[1][0] as ResponseEnvelope;
+        expect(sent2.errorName).toBe("AlreadyStamped");
+
+        await bus.stop();
+    });
+
     it("delivers an ack envelope when a handler returns null", async () => {
         handler.handleMessage.mockResolvedValueOnce(null);
         const bus = await createAndInitBus({ handlers: [handler] });
