@@ -3,6 +3,8 @@ import { Wallet, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
 import { RestArkProvider } from "../../providers/ark";
 import type {
+    ArkadeBroadcaster,
+    ArkadeReader,
     IWallet,
     IAssetManager,
     WalletBalance,
@@ -304,6 +306,14 @@ export class ExpoWallet implements IWallet, HDWalletCapable, HDAllocationCapable
 
     getArkadeInfo(): Promise<ArkadeInfo> {
         return this.wallet.getArkadeInfo();
+    }
+
+    getArkadeReader(): Promise<ArkadeReader> {
+        return this.wallet.getArkadeReader();
+    }
+
+    getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
+        return this.wallet.getArkadeBroadcaster();
     }
 
     getBalance(): Promise<WalletBalance> {

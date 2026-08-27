@@ -65,6 +65,8 @@ function createBackgroundWalletShim(args: {
         getAddress: args.getAddress,
         getBoardingAddress: async () => notImplemented("getBoardingAddress"),
         getArkadeInfo: async () => notImplemented("getArkadeInfo"),
+        getArkadeReader: async () => notImplemented("getArkadeReader"),
+        getArkadeBroadcaster: async () => notImplemented("getArkadeBroadcaster"),
         getBalance: async () => notImplemented("getBalance"),
         getVtxos: async () => notImplemented("getVtxos"),
         getSpendableVtxos: async () => notImplemented("getSpendableVtxos"),

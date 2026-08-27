@@ -21,12 +21,15 @@ style and have not been backfilled.
   instead of building a `RestArkProvider` from a URL, so a caller
   holding a wallet holds everything these need and pays no second
   `/v1/info` round-trip. Drop the argument at every call site; nothing
-  else about these calls changed. `cancelOffer` and `watchOfferSwaps`
-  keep theirs — cancel broadcasts (`submitTx`/`finalizeTx`) and falls
-  back to the indexer for a deposit made before contract registration
-  existed, and the watcher reads spending transactions from the indexer
-  (`getVirtualTxs`); neither is answerable from the server info alone.
-  (#734)
+  else about these calls changed. (#734)
+- **`@arkade-os/swap`: `cancelOffer` and `watchOfferSwaps` lose their
+  server URL too.** `cancelOffer(wallet, offerHex, opts)` and
+  `watchOfferSwaps({ wallet, repository })`. These two need more than
+  server info — cancel broadcasts and falls back to the indexer for a
+  deposit made before contract registration existed, and the watcher
+  reads spending transactions — so they now take those from the wallet
+  as well, through the two seams below. No entrypoint in the package
+  takes a server URL any more. (#734)
 - **`Arkade.arkProvider` narrowed to `ArkadeServerProvider`.** The
   provider a connected client exposes now types `submitTx`/`finalizeTx`
   as optional, mirroring what `Arkade.connect` accepts. Reaching
@@ -48,6 +51,31 @@ style and have not been backfilled.
   Expo wallets. Additive for consumers, but **third-party `IWallet` /
   `IReadonlyWallet` implementations must add the method** — a
   compile-time break for external implementers only, with no runtime
+  or on-disk effect. (#734)
+- **`IReadonlyWallet.getArkadeReader()` and
+  `IWallet.getArkadeBroadcaster()`.** Chain reads and broadcast, taken
+  from the wallet rather than from a URL a caller carries. `ArkadeReader`
+  is `getVtxos` + `getVirtualTxs`; `ArkadeBroadcaster` is
+  `submitTx` + `finalizeTx`.
+  The split is the readonly/full line: reading is a readonly capability,
+  broadcasting is not, so a readonly wallet — and every `toReadonly()`
+  view — cannot submit, and a readonly service-worker refuses
+  `SUBMIT_TX`/`FINALIZE_TX` outright.
+  `ArkadeReader.getVtxos()` queries the server for arbitrary scripts and
+  is distinct from `IReadonlyWallet.getVtxos()`, which answers the
+  wallet's own outputs from repositories. It is shaped as
+  `getNormalizedVtxos`, so everything leaving the seam carries its
+  canonical facts — the guarantee `check-provider-boundary.mjs` enforces
+  inside the SDK, now extended to consumers. Deliberately not the whole
+  `IndexerProvider`/`ArkProvider`: a caller reaching further would be
+  talking to the server behind the wallet's back, which a service-worker
+  wallet cannot even express.
+  Implemented across the standard, service-worker and Expo wallets; on a
+  service-worker wallet both are proxied to the worker, so a plugin
+  shares the wallet's connection instead of opening a second one outside
+  its rate gate and caches. Additive for consumers, but **third-party
+  `IWallet` / `IReadonlyWallet` implementations must add both methods**
+  — a compile-time break for external implementers only, with no runtime
   or on-disk effect. (#734)
 - **`ArkInfo` renamed to `ArkadeInfo`.** The type name now matches the
   product and the accessor that returns it. `ArkInfo` is kept as a

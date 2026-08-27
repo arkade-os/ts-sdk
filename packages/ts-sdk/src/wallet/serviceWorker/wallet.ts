@@ -42,6 +42,10 @@ import {
     RequestDeleteContract,
     RequestGetAddress,
     RequestGetArkadeInfo,
+    RequestIndexerGetVtxos,
+    RequestIndexerGetVirtualTxs,
+    RequestSubmitTx,
+    RequestFinalizeTx,
     RequestGetBalance,
     RequestGetBoardingAddress,
     RequestGetBoardingUtxos,
@@ -67,6 +71,9 @@ import {
     ResponseAnnotateVtxos,
     ResponseGetAddress,
     ResponseGetArkadeInfo,
+    ResponseIndexerGetVtxos,
+    ResponseIndexerGetVirtualTxs,
+    ResponseSubmitTx,
     ResponseGetBalance,
     ResponseGetBoardingAddress,
     ResponseGetBoardingUtxos,
@@ -164,7 +171,7 @@ import type {
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
 import { getRandomId } from "../utils";
-import type { VirtualCoin } from "..";
+import type { ArkadeBroadcaster, ArkadeReader, VirtualCoin } from "..";
 import {
     isMessageBusInitializingError,
     isMessageBusNotInitializedError,
@@ -208,6 +215,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // GET_ARKADE_INFO is a live `/v1/info` fetch queued behind the same
     // per-origin rate gate as the indexer, not a repository read.
     GET_ARKADE_INFO: 20_000,
+    INDEXER_GET_VTXOS: 20_000,
+    INDEXER_GET_VIRTUAL_TXS: 20_000,
     GET_VTXOS: 20_000,
     GET_SPENDABLE_VTXOS: 20_000,
     GET_BOARDING_UTXOS: 20_000,
@@ -231,6 +240,10 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     SEND_BITCOIN: 50_000,
     SEND: 50_000,
     SETTLE: 50_000,
+    // Broadcast: the server round-trip a spend ends in, so it belongs
+    // with the writes rather than the reads above.
+    SUBMIT_TX: 50_000,
+    FINALIZE_TX: 50_000,
     ISSUE: 50_000,
     REISSUE: 50_000,
     BURN: 50_000,
@@ -260,6 +273,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
 const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_ADDRESS",
     "GET_ARKADE_INFO",
+    "INDEXER_GET_VTXOS",
+    "INDEXER_GET_VIRTUAL_TXS",
     "GET_BALANCE",
     "GET_BOARDING_ADDRESS",
     "GET_BOARDING_UTXOS",
@@ -1070,6 +1085,46 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
+    /**
+     * An {@link ArkadeReader} that speaks to the worker rather than to the
+     * server. The page holds no provider, so a caller that built its own from a
+     * URL would open a second connection outside the worker's rate gate and
+     * caches — this proxy is what keeps chain reads in one place.
+     */
+    async getArkadeReader(): Promise<ArkadeReader> {
+        const wallet = this;
+        return {
+            async getVtxos(opts) {
+                const message: RequestIndexerGetVtxos = {
+                    id: getRandomId(),
+                    tag: wallet.messageTag,
+                    type: "INDEXER_GET_VTXOS",
+                    payload: { opts },
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseIndexerGetVtxos).payload;
+                } catch (error) {
+                    throw new Error(`Failed to get vtxos: ${error}`, { cause: error });
+                }
+            },
+            async getVirtualTxs(txids, opts) {
+                const message: RequestIndexerGetVirtualTxs = {
+                    id: getRandomId(),
+                    tag: wallet.messageTag,
+                    type: "INDEXER_GET_VIRTUAL_TXS",
+                    payload: { txids, opts },
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseIndexerGetVirtualTxs).payload;
+                } catch (error) {
+                    throw new Error(`Failed to get virtual txs: ${error}`, { cause: error });
+                }
+            },
+        };
+    }
+
     async getBalance(): Promise<WalletBalance> {
         const message: RequestGetBalance = {
             id: getRandomId(),
@@ -1853,6 +1908,45 @@ export class ServiceWorkerWallet
      */
     async signerForDescriptor(descriptor: string): Promise<Identity> {
         return resolveDescriptorSigner(descriptor, this.identity);
+    }
+
+    /**
+     * An {@link ArkadeBroadcaster} proxied to the worker, which holds the
+     * provider. Only `ServiceWorkerWallet` offers one: a readonly worker
+     * refuses `SUBMIT_TX`/`FINALIZE_TX` outright, so exposing it on the
+     * readonly class would promise something the boundary rejects.
+     */
+    async getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
+        const wallet = this;
+        return {
+            async submitTx(signedArkTx, checkpointTxs) {
+                const message: RequestSubmitTx = {
+                    id: getRandomId(),
+                    tag: wallet.messageTag,
+                    type: "SUBMIT_TX",
+                    payload: { signedArkTx, checkpointTxs },
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseSubmitTx).payload;
+                } catch (error) {
+                    throw new Error(`Failed to submit tx: ${error}`, { cause: error });
+                }
+            },
+            async finalizeTx(arkTxid, finalCheckpointTxs) {
+                const message: RequestFinalizeTx = {
+                    id: getRandomId(),
+                    tag: wallet.messageTag,
+                    type: "FINALIZE_TX",
+                    payload: { arkTxid, finalCheckpointTxs },
+                };
+                try {
+                    await wallet.sendMessage(message);
+                } catch (error) {
+                    throw new Error(`Failed to finalize tx: ${error}`, { cause: error });
+                }
+            },
+        };
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {

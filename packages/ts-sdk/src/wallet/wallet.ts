@@ -53,6 +53,8 @@ import {
 } from "./vtxo";
 import {
     ArkTransaction,
+    ArkadeBroadcaster,
+    ArkadeReader,
     Asset,
     Coin,
     ExtendedCoin,
@@ -887,6 +889,26 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async getArkadeInfo(): Promise<ArkadeInfo> {
         const { info } = await resolveArkInfo(this.arkProvider, this.walletRepository);
         return info;
+    }
+
+    /**
+     * Chain reads against this wallet's server for scripts it does not own.
+     *
+     * Binds the wallet's own `indexerProvider`, so a caller shares the wallet's
+     * connection rather than opening a second one. `getVtxos` goes through
+     * {@link getNormalizedVtxos}, which is what makes every VTXO leaving the
+     * seam carry its canonical facts.
+     *
+     * A bound object rather than the provider itself: the narrowing is the
+     * point, and returning `this.indexerProvider` would hand out the rest of
+     * `IndexerProvider` at runtime whatever the declared type says.
+     */
+    async getArkadeReader(): Promise<ArkadeReader> {
+        const indexer = this.indexerProvider;
+        return {
+            getVtxos: (opts) => getNormalizedVtxos(indexer, opts),
+            getVirtualTxs: (txids, opts) => indexer.getVirtualTxs(txids, opts),
+        };
     }
 
     /**
@@ -3062,6 +3084,23 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * keeps it protected so a readonly view cannot hand out `submitTx`.
      */
     declare readonly arkProvider: ArkProvider;
+
+    /**
+     * Broadcast access bound to this wallet's server, so a plugin needs only
+     * the wallet.
+     *
+     * Defined here and not on {@link ReadonlyWallet} for the same reason
+     * `arkProvider` is protected there: a readonly wallet, and every
+     * `toReadonly()` view, must not be able to submit.
+     */
+    async getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
+        const ark = this.arkProvider;
+        return {
+            submitTx: (signedArkTx, checkpointTxs) => ark.submitTx(signedArkTx, checkpointTxs),
+            finalizeTx: (arkTxid, finalCheckpointTxs) =>
+                ark.finalizeTx(arkTxid, finalCheckpointTxs),
+        };
+    }
 
     protected constructor(
         identity: Identity,

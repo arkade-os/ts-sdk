@@ -89,11 +89,15 @@ localStorage adapter to write:
   `requestOnchainReceive`. Each reads the server's info from the wallet itself — the new
   `wallet.getArkadeInfo()` on `IReadonlyWallet` — instead of building a `RestArkProvider` from a
   URL, so a caller holding a wallet holds everything these need and pays no second `/v1/info`
-  round-trip. `cancelOffer(wallet, arkUrl, offerHex, opts)` and
-  `watchOfferSwaps({ wallet, arkServerUrl, repository })` keep theirs: cancel broadcasts
-  (`submitTx`/`finalizeTx`) and falls back to the indexer for a deposit made before contract
-  registration existed, and the watcher reads spending transactions from the indexer
-  (`getVirtualTxs`) — neither is answerable from the server info alone.
+  round-trip.
+- The URL is gone from the last two as well: `cancelOffer(wallet, arkUrl, offerHex, opts)` →
+  `cancelOffer(wallet, offerHex, opts)`, and `watchOfferSwaps({ wallet, arkServerUrl, repository })`
+  → `watchOfferSwaps({ wallet, repository })`. These two need more than server info — cancel
+  broadcasts and falls back to the indexer for a deposit made before contract registration
+  existed, and the watcher reads spending transactions — so they take it from two new seams on
+  the wallet: `getArkadeReader()` on `IReadonlyWallet` for chain reads, and
+  `getArkadeBroadcaster()` on `IWallet` for `submitTx`/`finalizeTx`. No entrypoint in this
+  package takes a server URL any more.
 - `createOffer` no longer returns `payload`; it returns the send-ready `extension` instead. In
   `providers/assetSwaps.tsx`: `extensions: [{ type: OFFER_PACKET_TYPE, payload: offer.payload }]`
   → `extensions: [offer.extension]` (the `OFFER_PACKET_TYPE` import can go).

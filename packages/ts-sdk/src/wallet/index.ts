@@ -5,7 +5,7 @@ import { DescriptorProvider } from "../identity/descriptorProvider";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { RenewalConfig, SettlementConfig } from "./vtxo-manager";
-import { IndexerProvider } from "../providers/indexer";
+import { GetVtxosOptions, IndexerProvider, PageResponse } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import {
@@ -877,7 +877,7 @@ export type ExtendedVirtualCoin = TapLeaves &
     EncodedVtxoScript &
     VirtualCoin & { extraWitness?: Bytes[] };
 
-import type { NormalizedExtendedVirtualCoin } from "./vtxo";
+import type { NormalizedExtendedVirtualCoin, NormalizedVirtualCoin } from "./vtxo";
 
 export {
     canRecoverOnchain,
@@ -986,7 +986,50 @@ export interface IAssetManager extends IReadonlyAssetManager {
  *
  * @see IReadonlyWallet
  */
+/**
+ * Chain reads a caller needs beyond its own wallet's VTXOs: an arbitrary
+ * script's virtual outputs, and the transactions that spent them.
+ *
+ * Shaped as {@link getNormalizedVtxos} rather than as `IndexerProvider`, for
+ * two reasons. Every VTXO leaving this seam carries its canonical facts —
+ * the guarantee `scripts/check-provider-boundary.mjs` enforces inside the SDK
+ * and that a plugin holding a raw provider could otherwise skip. And because
+ * `NormalizedVirtualCoin` is assignable to `VirtualCoin`, an `ArkadeReader`
+ * satisfies `Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">` structurally,
+ * so existing narrow seams accept one unchanged.
+ *
+ * Deliberately not the whole provider: a caller that could reach `getTxHistory`
+ * or `subscribeForScripts` through the wallet would be talking to the server
+ * behind the wallet's back, which the service-worker wallet cannot even
+ * express.
+ */
+export type ArkadeReader = Pick<IndexerProvider, "getVirtualTxs"> & {
+    /** @see getNormalizedVtxos */
+    getVtxos(
+        opts?: GetVtxosOptions,
+    ): Promise<{ vtxos: NormalizedVirtualCoin[]; page?: PageResponse }>;
+};
+
+/**
+ * Submitting a signed Arkade transaction, and finalizing it.
+ *
+ * On {@link IWallet} rather than {@link IReadonlyWallet}: broadcasting is the
+ * one thing a readonly wallet must not do. That is the same line
+ * `IReadonlyAssetManager` draws, and the invariant behind
+ * `ReadonlyWallet.arkProvider` being protected.
+ */
+export type ArkadeBroadcaster = Pick<ArkProvider, "submitTx" | "finalizeTx">;
+
 export interface IWallet extends IReadonlyWallet {
+    /**
+     * Broadcast access to this wallet's Arkade server, so a plugin needs only
+     * the wallet — never a server URL of its own.
+     *
+     * @returns A submit/finalize pair bound to this wallet's server
+     * @see ArkadeBroadcaster
+     */
+    getArkadeBroadcaster(): Promise<ArkadeBroadcaster>;
+
     /**
      * Signing identity associated with the wallet.
      *
@@ -1087,6 +1130,17 @@ export interface IReadonlyWallet {
      * @see ArkadeInfo
      */
     getArkadeInfo(): Promise<ArkadeInfo>;
+
+    /**
+     * Chain reads against this wallet's Arkade server, for scripts the wallet
+     * does not own — a plugin's covenant, say. {@link getVtxos} answers for the
+     * wallet's own outputs and reads from repositories; this one goes to the
+     * server.
+     *
+     * @returns A normalized reader bound to this wallet's server
+     * @see ArkadeReader
+     */
+    getArkadeReader(): Promise<ArkadeReader>;
 
     /** @returns The wallet's combined onchain and offchain balance. */
     getBalance(): Promise<WalletBalance>;

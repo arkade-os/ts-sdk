@@ -306,11 +306,12 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
     const readonlyIdentity = async () =>
         ReadonlySingleKey.fromPublicKey(await SingleKey.fromHex(privKeyHex).compressedPublicKey());
 
-    const indexerStub = () =>
+    const indexerStub = (extra: Partial<IndexerProvider> = {}) =>
         ({
             subscribeForScripts: async () => "sub-1",
             unsubscribeForScripts: async () => undefined,
             getSubscription: async function* () {},
+            ...extra,
         }) as Partial<IndexerProvider> as IndexerProvider;
 
     async function createWallet(
@@ -319,12 +320,13 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             walletRepository: InMemoryWalletRepository;
             contractRepository: InMemoryContractRepository;
         },
+        indexer: Partial<IndexerProvider> = {},
     ) {
         return ReadonlyWallet.create({
             identity: await readonlyIdentity(),
             arkServerUrl: "http://localhost:7070",
             arkProvider: { getInfo } as Partial<ArkProvider> as ArkProvider,
-            indexerProvider: indexerStub(),
+            indexerProvider: indexerStub(indexer),
             onchainProvider: {} as OnchainProvider,
             storage: repos,
         });
@@ -389,6 +391,44 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             createWallet(async () => makeArkInfo({ network: "bogusnet" }), repos),
         ).rejects.toThrow(/Unsupported network/);
         expect(await loadArkInfoSnapshot(repos.walletRepository)).toBeNull();
+    });
+
+    it("getArkadeReader normalizes, and binds the wallet's own indexer", async () => {
+        // The seam exists so a plugin never builds a second provider. Two
+        // claims: the call lands on THIS wallet's indexer, and what comes back
+        // has been through `getNormalizedVtxos` — the guarantee
+        // `check-provider-boundary.mjs` enforces for SDK logic and that a raw
+        // provider would let a plugin skip.
+        const getVtxos = vi.fn(async () => ({
+            // a server row with the optional facts absent
+            vtxos: [{ txid: "ab".repeat(32), vout: 0, value: 1000 }],
+        }));
+        const getVirtualTxs = vi.fn(async () => ({ txs: ["deadbeef"] }));
+        const repos = {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        };
+        const wallet = await createWallet(async () => makeArkInfo(), repos, {
+            getVtxos,
+            getVirtualTxs,
+        } as Partial<IndexerProvider>);
+
+        const reader = await wallet.getArkadeReader();
+        const { vtxos } = await reader.getVtxos({ scripts: ["5120aa"], spendableOnly: true });
+
+        expect(getVtxos).toHaveBeenCalledWith({ scripts: ["5120aa"], spendableOnly: true });
+        expect(vtxos[0]).toMatchObject({
+            isSpent: false,
+            isSwept: false,
+            isPreconfirmed: false,
+            spentBy: "",
+            commitmentTxIds: [],
+        });
+
+        await expect(reader.getVirtualTxs(["cd".repeat(32)])).resolves.toEqual({
+            txs: ["deadbeef"],
+        });
+        expect(getVirtualTxs).toHaveBeenCalledWith(["cd".repeat(32)], undefined);
     });
 
     it("getArkadeInfo reports the server's CURRENT info, not the boot snapshot", async () => {

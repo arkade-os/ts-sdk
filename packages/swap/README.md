@@ -19,11 +19,12 @@ signer key, plus the unilateral-exit delay for the four `request*` calls. The wa
 place that knows which server it speaks to, so there is no URL to thread through and no second
 `/v1/info` round-trip.
 
-The two calls that still take a URL do more than derive.
-`cancelOffer(wallet, arkServerUrl, …)` broadcasts the refund (`submitTx`/`finalizeTx`) and falls
-back to the indexer for a deposit made before contract registration existed;
-`watchOfferSwaps({ wallet, arkServerUrl, … })` reads spending transactions from the indexer
-(`getVirtualTxs`). Neither is answerable from the server info alone.
+No entrypoint here takes a server URL. `cancelOffer` and `watchOfferSwaps` need more than
+server info — cancel broadcasts the refund and falls back to the indexer for a deposit made
+before contract registration existed, and the watcher reads spending transactions — so they
+ask the wallet for those too: `wallet.getArkadeReader()` for chain reads and
+`wallet.getArkadeBroadcaster()` for `submitTx`/`finalizeTx`. On a service-worker wallet both
+are proxied to the worker, so these reads stay on the wallet's own connection.
 
 ## Roles
 
@@ -251,7 +252,7 @@ offer bytes themselves are recoverable from the funding tx if the record is lost
 ## Live status
 
 ```ts
-const watcher = await watchOfferSwaps({ wallet, arkServerUrl: ARK, repository, onUpdate: render });
+const watcher = await watchOfferSwaps({ wallet, repository, onUpdate: render });
 // later
 watcher.stop();
 ```
@@ -273,7 +274,7 @@ repository.
 ## Cancelling: the refund path
 
 ```ts
-const txid = await cancelOffer(wallet, ARK, swap.offerHex, {
+const txid = await cancelOffer(wallet, swap.offerHex, {
     repository,
     fundingTxid: swap.fundingTxid,
     swapAddress: swap.swapAddress,

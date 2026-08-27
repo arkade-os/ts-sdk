@@ -220,7 +220,7 @@ describe("maker-side swap loop (regtest)", () => {
         // outpoint, so the escrow marker must not close the one spend route the
         // maker actually owns. A future tightening that gates explicit inputs
         // would strand every offer deposit, and would fail here.
-        const cancelTxid = await cancelOffer(wallet, ARK_URL, restoredOfferHex, {
+        const cancelTxid = await cancelOffer(wallet, restoredOfferHex, {
             repository,
             fundingTxid,
             swapAddress: offer.address,
@@ -275,7 +275,6 @@ describe("maker-side swap loop (regtest)", () => {
         const updates: AssetSwap[] = [];
         const watcher = await watchOfferSwaps({
             wallet,
-            arkServerUrl: ARK_URL,
             repository: swapRepository,
             onUpdate: (swap) => updates.push(swap),
         });
@@ -312,7 +311,7 @@ describe("maker-side swap loop (regtest)", () => {
                 createdAt: Date.now(),
             });
 
-            await cancelOffer(wallet, ARK_URL, second.offerHex, {
+            await cancelOffer(wallet, second.offerHex, {
                 repository: elsewhere,
                 fundingTxid: secondFundingTxid,
                 swapAddress: second.address,

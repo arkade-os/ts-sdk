@@ -26,8 +26,6 @@ import { hex } from "@scure/base";
 import { concatBytes } from "@scure/btc-signer/utils.js";
 import {
     ArkAddress,
-    RestArkProvider,
-    RestIndexerProvider,
     arkade,
     asset,
     networkFromArkadeInfo,
@@ -485,13 +483,13 @@ export async function createOffer(
  * calls, and `wallet.getArkadeInfo()` retires the URL only where server *info*
  * was all it ever bought.
  *
- * A missing seam, not a rule: `IReadonlyWallet` already proxies one
- * provider-backed collaborator (`getContractManager()`), so the same shape
- * could serve broadcast and indexer — it just does not exist yet (#734).
+ * Takes no server URL, like every other entrypoint here: broadcast comes from
+ * `wallet.getArkadeBroadcaster()` and the indexer fallback from
+ * `wallet.getArkadeReader()`, so the wallet's own connection is the only one
+ * used (#734).
  */
 export async function cancelOffer(
     wallet: IWallet,
-    arkServerUrl: string,
     offerHex: string,
     opts: {
         repository: AssetSwapRepository;
@@ -502,10 +500,17 @@ export async function cancelOffer(
     const { repository, fundingTxid, swapAddress } = opts;
     const offer = decodeOffer(hex.decode(offerHex));
 
-    const contractManager = await wallet.getContractManager();
+    const [contractManager, info, reader, broadcaster] = await Promise.all([
+        wallet.getContractManager(),
+        wallet.getArkadeInfo(),
+        wallet.getArkadeReader(),
+        wallet.getArkadeBroadcaster(),
+    ]);
     const client = await arkade.Arkade.connect({
-        arkade: new RestArkProvider(arkServerUrl),
-        indexer: new RestIndexerProvider(arkServerUrl),
+        // info the wallet already holds, plus its broadcast pair — the shape
+        // `ArkadeServerProvider` describes, without a second `/v1/info`
+        arkade: { getInfo: async () => info, ...broadcaster },
+        indexer: reader,
         identity: wallet.identity,
         // registered offers resolve their VTXOs from the contract repository
         // instead of a direct indexer query; the indexer above stays as the

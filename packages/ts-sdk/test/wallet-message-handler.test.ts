@@ -70,6 +70,71 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(response.error?.message).toBe("Wallet handler not initialized");
     });
 
+    describe("chain-read and broadcast seams", () => {
+        // The reader is a readonly capability: it answers off `readonlyWallet`,
+        // so a readonly-initialized worker serves it like any other read.
+        it.each([
+            ["INDEXER_GET_VTXOS", { opts: { scripts: ["5120aa"] } }, "INDEXER_VTXOS"],
+            ["INDEXER_GET_VIRTUAL_TXS", { txids: ["ab".repeat(32)] }, "INDEXER_VIRTUAL_TXS"],
+        ])("answers %s from the readonly wallet", async (type, payload, expected) => {
+            (updater as any).readonlyWallet = {
+                getArkadeReader: async () => ({
+                    getVtxos: async () => ({ vtxos: [] }),
+                    getVirtualTxs: async () => ({ txs: [] }),
+                }),
+            };
+            (updater as any).wallet = undefined;
+
+            await expect(
+                updater.handleMessage({ ...baseMessage(), type, payload } as any),
+            ).resolves.toMatchObject({ type: expected });
+        });
+
+        // Broadcast is not. `getArkadeBroadcaster` lives on IWallet precisely so
+        // a readonly view cannot submit, and the worker has to enforce the same
+        // line the types draw page-side — the bus does not carry the type.
+        it.each([
+            ["SUBMIT_TX", { signedArkTx: "70736274ff", checkpointTxs: [] }],
+            ["FINALIZE_TX", { arkTxid: "ab".repeat(32), finalCheckpointTxs: [] }],
+        ])("refuses %s on a readonly worker", async (type, payload) => {
+            (updater as any).readonlyWallet = {};
+            (updater as any).wallet = undefined;
+
+            const response = await updater.handleMessage({
+                ...baseMessage(),
+                type,
+                payload,
+            } as any);
+
+            expect(response.error).toBeInstanceOf(Error);
+            // `ReadonlyWalletError`, not `WalletNotInitializedError`: the worker
+            // is initialized, it just holds a wallet that must not broadcast.
+            expect(response.error?.name).toBe("ReadonlyWalletError");
+        });
+
+        it("submits through the full wallet's broadcaster", async () => {
+            const submitTx = vi.fn(async () => ({
+                arkTxid: "cd".repeat(32),
+                finalArkTx: "70736274ff",
+                signedCheckpointTxs: [],
+            }));
+            (updater as any).readonlyWallet = {};
+            (updater as any).wallet = { getArkadeBroadcaster: async () => ({ submitTx }) };
+
+            await expect(
+                updater.handleMessage({
+                    ...baseMessage(),
+                    type: "SUBMIT_TX",
+                    payload: { signedArkTx: "70736274ff", checkpointTxs: ["aa"] },
+                } as any),
+            ).resolves.toMatchObject({
+                type: "SUBMIT_TX_SUCCESS",
+                payload: { arkTxid: "cd".repeat(32) },
+            });
+            expect(submitTx).toHaveBeenCalledWith("70736274ff", ["aa"]);
+        });
+    });
+
     describe("HD signing-descriptor allocation", () => {
         const descriptor = "tr(deadbeef/86'/1'/0'/0/7)";
 

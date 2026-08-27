@@ -1,5 +1,11 @@
 import { ArkadeInfo, ArkProvider, SettlementEvent } from "../../providers/ark";
-import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
+import {
+    GetVtxosOptions,
+    IndexerProvider,
+    PageResponse,
+    PaginationOptions,
+    RestIndexerProvider,
+} from "../../providers/indexer";
 import { WalletRepository } from "../../repositories";
 import type {
     Contract,
@@ -39,6 +45,7 @@ import {
     fetchVtxoCreatedAtByTxid,
     hasTerminalSpend,
     type NormalizedExtendedVirtualCoin,
+    type NormalizedVirtualCoin,
 } from "../vtxo";
 import {
     ReadonlyWallet,
@@ -201,6 +208,46 @@ export type ResponseGetArkadeInfo = ResponseEnvelope & {
     type: "ARKADE_INFO";
     payload: { info: ArkadeInfo };
 };
+
+// `getArkadeReader()`/`getArkadeBroadcaster()` proxied to the worker, which
+// owns the providers. Named `INDEXER_*` rather than reusing `GET_VTXOS`: that
+// one answers the *wallet's own* outputs from repositories, while this is an
+// arbitrary-script query that reaches the server. Same verb, different
+// question — collapsing them would silently change which one a caller gets.
+export type RequestIndexerGetVtxos = RequestEnvelope & {
+    type: "INDEXER_GET_VTXOS";
+    payload: { opts?: GetVtxosOptions };
+};
+// Normalized VTXOs carry bigint-free fields, but `page` and the filters ride
+// the same structuredClone channel `ARKADE_INFO` documents above.
+export type ResponseIndexerGetVtxos = ResponseEnvelope & {
+    type: "INDEXER_VTXOS";
+    payload: { vtxos: NormalizedVirtualCoin[]; page?: PageResponse };
+};
+
+export type RequestIndexerGetVirtualTxs = RequestEnvelope & {
+    type: "INDEXER_GET_VIRTUAL_TXS";
+    payload: { txids: string[]; opts?: PaginationOptions };
+};
+export type ResponseIndexerGetVirtualTxs = ResponseEnvelope & {
+    type: "INDEXER_VIRTUAL_TXS";
+    payload: { txs: string[]; page?: PageResponse };
+};
+
+export type RequestSubmitTx = RequestEnvelope & {
+    type: "SUBMIT_TX";
+    payload: { signedArkTx: string; checkpointTxs: string[] };
+};
+export type ResponseSubmitTx = ResponseEnvelope & {
+    type: "SUBMIT_TX_SUCCESS";
+    payload: { arkTxid: string; finalArkTx: string; signedCheckpointTxs: string[] };
+};
+
+export type RequestFinalizeTx = RequestEnvelope & {
+    type: "FINALIZE_TX";
+    payload: { arkTxid: string; finalCheckpointTxs: string[] };
+};
+export type ResponseFinalizeTx = ResponseEnvelope & { type: "FINALIZE_TX_SUCCESS" };
 
 export type RequestGetBalance = RequestEnvelope & { type: "GET_BALANCE" };
 export type ResponseGetBalance = ResponseEnvelope & {
@@ -768,6 +815,10 @@ export type WalletUpdaterRequest =
     | RequestGetAddress
     | RequestGetBoardingAddress
     | RequestGetArkadeInfo
+    | RequestIndexerGetVtxos
+    | RequestIndexerGetVirtualTxs
+    | RequestSubmitTx
+    | RequestFinalizeTx
     | RequestGetBalance
     | RequestGetVtxos
     | RequestGetSpendableVtxos
@@ -819,6 +870,10 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetAddress
         | ResponseGetBoardingAddress
         | ResponseGetArkadeInfo
+        | ResponseIndexerGetVtxos
+        | ResponseIndexerGetVirtualTxs
+        | ResponseSubmitTx
+        | ResponseFinalizeTx
         | ResponseGetBalance
         | ResponseGetVtxos
         | ResponseGetSpendableVtxos
@@ -1039,6 +1094,45 @@ export class WalletMessageHandler
                         type: "ARKADE_INFO",
                         payload: { info },
                     });
+                }
+                case "INDEXER_GET_VTXOS": {
+                    const { opts } = (message as RequestIndexerGetVtxos).payload;
+                    const reader = await this.readonlyWallet.getArkadeReader();
+                    const { vtxos, page } = await reader.getVtxos(opts);
+                    return this.tagged({
+                        id,
+                        type: "INDEXER_VTXOS",
+                        payload: { vtxos, page },
+                    });
+                }
+                case "INDEXER_GET_VIRTUAL_TXS": {
+                    const { txids, opts } = (message as RequestIndexerGetVirtualTxs).payload;
+                    const reader = await this.readonlyWallet.getArkadeReader();
+                    const { txs, page } = await reader.getVirtualTxs(txids, opts);
+                    return this.tagged({
+                        id,
+                        type: "INDEXER_VIRTUAL_TXS",
+                        payload: { txs, page },
+                    });
+                }
+                case "SUBMIT_TX": {
+                    const { signedArkTx, checkpointTxs } = (message as RequestSubmitTx).payload;
+                    // requireWallet, not readonlyWallet: a readonly worker must
+                    // refuse to broadcast rather than answer with someone
+                    // else's provider.
+                    const broadcaster = await this.requireWallet().getArkadeBroadcaster();
+                    const result = await broadcaster.submitTx(signedArkTx, checkpointTxs);
+                    return this.tagged({
+                        id,
+                        type: "SUBMIT_TX_SUCCESS",
+                        payload: result,
+                    });
+                }
+                case "FINALIZE_TX": {
+                    const { arkTxid, finalCheckpointTxs } = (message as RequestFinalizeTx).payload;
+                    const broadcaster = await this.requireWallet().getArkadeBroadcaster();
+                    await broadcaster.finalizeTx(arkTxid, finalCheckpointTxs);
+                    return this.tagged({ id, type: "FINALIZE_TX_SUCCESS" });
                 }
                 case "GET_BALANCE": {
                     const balance = await this.handleGetBalance();

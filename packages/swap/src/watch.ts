@@ -34,7 +34,6 @@
 import { base64, hex } from "@scure/base";
 import {
     ArkAddress,
-    RestIndexerProvider,
     Transaction,
     type ContractEvent,
     type ContractVtxo,
@@ -88,9 +87,6 @@ export interface OfferSwapWatcher {
 
 export interface WatchOfferSwapsParams {
     wallet: IWallet;
-    /** Same URL `cancelOffer` takes, and for the same reason — see its doc.
-     * Used to read a spending tx when the exact classifier cannot answer. */
-    arkServerUrl: string;
     repository: AssetSwapRepository;
     /** Called after a change is persisted. A notification, not a store. */
     onUpdate?: (swap: AssetSwap) => void;
@@ -109,7 +105,6 @@ export interface WatchOfferSwapsParams {
  */
 export async function watchOfferSwaps({
     wallet,
-    arkServerUrl,
     repository,
     onUpdate,
 }: WatchOfferSwapsParams): Promise<OfferSwapWatcher> {
@@ -118,7 +113,9 @@ export async function watchOfferSwaps({
     // with swap records; a signer rotation during a long session makes leaf
     // classification return indeterminate rather than guessing.
     const serverPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;
-    const indexer: RestoreIndexer = new RestIndexerProvider(arkServerUrl);
+    // the wallet's own reader, so a service-worker wallet keeps this read
+    // inside the worker instead of opening a second connection page-side
+    const indexer: RestoreIndexer = await wallet.getArkadeReader();
 
     // events arrive independently but the update is read-modify-write over
     // the whole list, so two concurrent handlers would lose one of the writes

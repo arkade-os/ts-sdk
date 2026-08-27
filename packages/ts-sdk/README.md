@@ -730,6 +730,33 @@ const exitTxid = await new Ramps(wallet).offboard(
 service-worker and Expo wallets too. It answers with the server's live `ArkadeInfo`, falling back
 to the snapshot persisted at wallet construction when the server is unreachable.
 
+### Talking to the server through the wallet
+
+`getArkadeInfo()` is one of three seams that let a plugin work from a wallet alone, never a
+server URL of its own:
+
+| Seam | Interface | For |
+| --- | --- | --- |
+| `getArkadeInfo()` | `IReadonlyWallet` | Network, signer key, delays, dust, fees, limits |
+| `getArkadeReader()` | `IReadonlyWallet` | Chain reads for scripts the wallet does not own |
+| `getArkadeBroadcaster()` | `IWallet` | `submitTx` / `finalizeTx` |
+
+```typescript
+const reader = await wallet.getArkadeReader();
+const { vtxos } = await reader.getVtxos({ scripts: [covenantScriptHex], spendableOnly: true });
+const { txs } = await reader.getVirtualTxs([spendTxid]);
+```
+
+`getVtxos()` here queries the server for an arbitrary script — distinct from
+`wallet.getVtxos()`, which answers the wallet's own outputs from local repositories. Everything
+it returns is normalized, so each VTXO carries its canonical facts.
+
+Broadcasting sits on `IWallet` rather than `IReadonlyWallet` on purpose: a readonly wallet must
+not submit, and a service-worker wallet in readonly mode refuses the message outright.
+
+All three are proxied to the worker on a service-worker wallet, so a plugin shares the wallet's
+connection instead of opening a second one outside its rate gate and caches.
+
 ### Unilateral Exit
 
 Unilateral exit allows you to withdraw your funds from the Arkade protocol back to the Bitcoin blockchain without requiring cooperation from the Arkade server. This process involves two main steps:

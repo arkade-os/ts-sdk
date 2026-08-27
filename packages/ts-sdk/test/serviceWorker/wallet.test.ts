@@ -278,6 +278,54 @@ describe("ServiceWorkerReadonlyWallet", () => {
         );
     });
 
+    it("proxies getArkadeReader over its own INDEXER_* messages", async () => {
+        // The page holds no provider, so the reader has to be an RPC proxy.
+        // `INDEXER_GET_VTXOS`, not `GET_VTXOS`: the latter answers the wallet's
+        // own outputs from repositories, and answering an arbitrary-script
+        // query with it would quietly return the wrong set.
+        const vtxos = [{ txid: "ab".repeat(32), vout: 0, value: 1000 }];
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "INDEXER_GET_VTXOS") {
+                return structuredClone({
+                    id: message.id,
+                    tag: messageTag,
+                    type: "INDEXER_VTXOS",
+                    payload: { vtxos },
+                });
+            }
+            if (message.type === "INDEXER_GET_VIRTUAL_TXS") {
+                return structuredClone({
+                    id: message.id,
+                    tag: messageTag,
+                    type: "INDEXER_VIRTUAL_TXS",
+                    payload: { txs: ["deadbeef"] },
+                });
+            }
+            return null;
+        });
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const reader = await wallet.getArkadeReader();
+
+        await expect(reader.getVtxos({ scripts: ["5120aa"] })).resolves.toEqual({ vtxos });
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "INDEXER_GET_VTXOS",
+                payload: { opts: { scripts: ["5120aa"] } },
+            }),
+        );
+        // never the wallet-scoped read
+        expect(serviceWorker.postMessage).not.toHaveBeenCalledWith(
+            expect.objectContaining({ type: "GET_VTXOS" }),
+        );
+
+        await expect(reader.getVirtualTxs(["cd".repeat(32)])).resolves.toEqual({
+            txs: ["deadbeef"],
+        });
+    });
+
     it("keeps a worker-side typed error reachable as `cause`", async () => {
         // The worker's resolveArkInfo distinguishes offline (retry) from a
         // corrupt cache (re-onboard); structuredClone drops the prototype, so
