@@ -51,6 +51,17 @@ await client.accept(await client.quote({ give: BTC, to: "bc1p...", amount: 100_0
 | Q8 | Built-in BOLT11 decoding becomes an SDK guarantee. Which decoder and validation rules own amountless invoices, expiry, payment hash, and network checks? |
 | Q9 | Which reserved published-RFQ API names survive: `policy.rfq`, `policy.selectBid`, `Quote.auction`, and bid timing/provenance fields? |
 
+## Decisions (M0)
+
+Recorded when the corresponding spec text landed; rationale in `v2-m0-groundwork.md`.
+
+- **Q1: ratified.** `give`/`take`, `lapsed` — no rename.
+- **Q2: throw.** `resolve()` without a discovery snapshot throws `DiscoverySnapshotUnavailable`; no partial route shape (§3.1).
+- **Q3: as drawn.** Always-present idempotent `start()`/`stop()`; `client.ready` rejects only on an unreadable repository — per-record and per-swap problems surface as outcomes, never construction failures (§3).
+- **Q5: swap-package alias layer.** Tickers case-insensitive, network-scoped, collisions rejected; arkade asset identity form round-trips byte-for-byte; NArk divergence documented in §2/FAQ.
+- **Q8: `light-bolt11-decoder`.** Swap-package dependency behind the lightning corridor's overridable `decode`; validation rules in §6.
+- **Q4, Q6, Q7, Q9: open/deferred** per `v2-m0-groundwork.md` (Q6 tracks PR #803).
+
 ## Decision Boundaries / TODOs
 
 - Supported routes, lifecycle/disposal, Node SQLite durability, and accept idempotency are specified in `v2-api-spec.md`; this RFC only records the decision.

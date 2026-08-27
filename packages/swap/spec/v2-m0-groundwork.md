@@ -30,40 +30,28 @@ code ships in M0 except G2 if chosen.
 
 Each: write the decision into the spec where its TODO sits today.
 
-- [ ] **B1 — Naming (Q1).** Ratify `give`/`take` and `lapsed` (spec already
-  uses them everywhere — changing either is a spec-wide rename) or pick
-  alternatives now, before M1 types crystallize. Recommendation: ratify as-is.
-- [ ] **B2 — `resolve()` without discovery (Q2).** The spec TODO offers two
-  shapes; pick one:
-  - *Throw* `DiscoverySnapshotUnavailable` — one result shape, no half-resolved
-    route to misuse. Offline apps inject or warm discovery explicitly.
-  - *Partial route shape* — corridor-parsed route with market unresolved;
-    friendlier to pre-veto UX but adds a third route state to the type system.
-  Recommendation: throw. Deliverable: §3.1 TODO replaced by the chosen rule.
-- [ ] **B3 — Lifecycle shape + `client.ready` failure semantics (Q3).**
-  Two sub-decisions:
-  - start/stop exposure: always-present idempotent methods (spec §3 as drawn)
-    vs manual-mode-only. Recommendation: always-present.
-  - `ready` failure: enumerate the cases — corrupt records, missing corridor
-    deps, a first restore pass producing `needs_recovery` — and pick reject vs
-    resolve-with-report per case. Recommendation: `ready` never rejects on
-    per-swap problems (they surface via `swaps()`/`onUpdate` as
-    `needs_recovery`); it rejects only on repository-unreadable and
-    construction-level dependency failures.
-  Deliverable: §3 TODO replaced by the semantics table.
-- [ ] **B4 — CAIP-19 alias registry (Q5).** The concrete mapping rules between
-  public ids and today's discovery/RFQ pair strings:
-  - The canonical table: one CAIP-19 BTC id ↔ `btc` on each corridor leg;
-    `arkade:<genesis>.<idx>` ↔ asset id forms used by `rfqPair`/offer TLV
-    (the endianness/identity forms pinned by `test/rfq.test.ts` and
-    `test/offer.test.ts` shared vectors must round-trip through it).
-  - Where the registry lives: swap package module vs solver-discovery.
-    Recommendation: swap package, injected registry data, defaults from
-    discovery.
-  - Ticker alias rules ("BTC", "USDT"): case, collisions, network scoping.
-  - Write the deliberate divergence from NArk's corridor-specific BTC asset
-    model into the FAQ TODO (§"What about assets on other networks?").
-  Deliverable: mapping spec appendix + §2 Decision/TODO resolved.
+- [x] **B1 — Naming (Q1).** RESOLVED: ratified `give`/`take` and `lapsed`
+  as-is; recorded in RFC-lite Decisions. (Was: ratify or rename now, before
+  M1 types crystallize — the spec already uses both everywhere, so a rename
+  would have been spec-wide.)
+- [x] **B2 — `resolve()` without discovery (Q2).** RESOLVED: throw
+  `DiscoverySnapshotUnavailable`; §3.1 amended. A partial route shape would
+  have been a third route state the type system deliberately excludes; offline
+  callers inject or warm a snapshot.
+- [x] **B3 — Lifecycle shape + `client.ready` failure semantics (Q3).**
+  RESOLVED: always-present idempotent `start()`/`stop()` as drawn in §3;
+  `ready` failure semantics written into §3 — rejects only on an unreadable
+  repository, per-record/per-swap problems surface as outcomes (corrupt
+  records filtered per the v1 store's rule; `needs_recovery` via
+  `swaps()`/`onUpdate`; missing corridor deps stay quote-time
+  `MissingCorridorDep`).
+- [x] **B4 — CAIP-19 alias registry (Q5).** RESOLVED: swap-package module,
+  discovery-fed with injected overrides; tickers case-insensitive,
+  network-scoped, collisions rejected; arkade identity form (the
+  endianness-pinned covenant/TLV form from the `test/offer.test.ts` /
+  `test/rfq.test.ts` shared vectors) round-trips byte-for-byte; the NArk
+  divergence is documented. Rules written into §2 and the FAQ; RFC-lite
+  Decisions record it.
 - [ ] **B5 — Arkade Service URL source (Q6).** Ground truth has moved: open
   **PR #803** is the "neutral core API" the spec has been waiting for. It adds
   `IReadonlyWallet.getArkadeInfo()` (live info with cached-snapshot fallback)
@@ -86,45 +74,29 @@ Each: write the decision into the spec where its TODO sits today.
   broadcast/indexer seam still needs it (likely for watcher/refund paths, in
   which case it stays as a corridor dep, not client config).
   Deliverable: §3 config TODO resolved against #803's actual merged shape.
-- [ ] **B6 — BOLT11 decoder (Q8).** Ground truth: core deliberately carries no
-  bolt11 dependency (`ts-sdk/src/payment/predicates.ts`); `boltz-swap` uses
-  `light-bolt11-decoder`; swap today requires caller-injected `InvoiceFacts`.
-  - Decoder: adopt `light-bolt11-decoder` as a swap-package dependency
-    (matches boltz-swap, keeps core clean), wrapped behind the corridor's
-    overridable `decode` dep from §6.
-  - Validation rules to pin: amountless invoices (reject on send routes —
-    the invoice is the amount pin), expiry (reject expired; enforce a
-    minimum validity headroom consistent with `assertFundable`'s invoice
-    gates), payment-hash extraction, network check (hrp prefix vs wallet
-    network; regtest/signet handling).
-  Deliverable: decoder + validation rules written into §6's TODO.
+- [x] **B6 — BOLT11 decoder (Q8).** RESOLVED: `light-bolt11-decoder` as a
+  swap-package dependency behind the lightning corridor's overridable `decode`
+  (core stays bolt11-free; matches `@arkade-os/boltz-swap`); validation rules
+  written into §6 — hrp prefix vs wallet network, payment-hash extraction,
+  expired/insufficient-headroom rejected, amountless rejected on send routes.
 
 ## C. Accept idempotency rule (spec §3.2)
 
-- [ ] **C1 — Pick the idempotency key.** The spec says "by quote id *or* a
-  deterministic accept id"; choose:
-  - *Quote id*: simplest; but feed-priced offer quotes have no solver-minted
-    id, so the client mints one at quote time — quote id becomes
-    client-minted everywhere, carried on `Quote.id`.
-  - *Deterministic accept id*: hash of the canonicalized quote content;
-    identical terms dedupe across re-quotes, but two legitimately separate
-    accepts of identical terms collapse into one record.
-  Recommendation: client-minted quote id as the sole key; deterministic
-  content-hash dedupe is a policy concern, not identity. Also define
-  `AcceptConflict` field-by-field: which persisted fields, differing from the
-  incoming quote, constitute "incompatible" vs benign.
-  Deliverable: §3.2 amended to one rule + the conflict field list.
+- [x] **C1 — Idempotency key.** RESOLVED: client-minted `Quote.id` is the sole
+  key (minted at quote time, which also covers feed-priced offers that have no
+  solver-minted id); content-hash dedupe stays a policy concern, not identity.
+  `AcceptConflict` compares pair, assets, amounts, instrument, lock hash,
+  `refundLocktime`, and solver/registry; a previously-missing funding txid is
+  a benign resume, never a conflict. §3.2 amended; old text reviewed first.
 
 ## D. Node SQLite defaults (spec §3, Storage)
 
-- [ ] **D1 — Default database path.** Options: platform config dir
-  (XDG / `~/Library/Application Support` / `%APPDATA%`), `~/.arkade/`, or
-  cwd-relative. Per-network filename, per-registry namespacing already exists
-  via the repository prefix. Recommendation: platform config dir under
-  `arkade/swaps/`, `swaps-<network>.sqlite`.
-- [ ] **D2 — Connection ownership.** Rule: the client closes connections it
-  created on `stop()`/dispose; injected repositories are never closed by the
-  client. Deliverable: both written into §3, resolving its TODO.
+- [x] **D1 — Default database path.** RESOLVED: platform config dir (XDG /
+  `~/Library/Application Support` / `%APPDATA%`) under `arkade/swaps/`,
+  `swaps-<network>.sqlite`. §3 amended; TODO resolved.
+- [x] **D2 — Connection ownership.** RESOLVED: the client closes connections
+  it created on `stop()`/dispose; injected repositories are caller-owned and
+  never closed by the client. §3 amended with D1.
 
 ## E. PR alignment
 
