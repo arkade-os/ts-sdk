@@ -877,11 +877,25 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * ones a mid-session rotation moves, and a covenant built against a
      * superseded signer is unspendable.
      *
-     * Reading does NOT re-pin the wallet: {@link arkServerPublicKey},
+     * Two rotation caveats, both known gaps (#734) rather than guarantees:
+     *
+     * Reading does NOT re-pin the wallet — {@link arkServerPublicKey},
      * {@link dustAmount} and the tapscripts move only through
-     * `handleServerInfoChanged`/`rotateServerSigner`. So inside a rotation
-     * window this can report epoch N+1 while the wallet still spends on epoch
-     * N — a known gap (#734), not a guarantee to rely on.
+     * `handleServerInfoChanged`/`rotateServerSigner` — so inside a rotation
+     * window this can report epoch N+1 while the wallet still spends on N.
+     *
+     * Worse, reading *suppresses* the trigger that would close that window.
+     * `RestArkProvider.getInfo()` caches the digest it just read, and the
+     * cached digest is what rides `X-Digest` on every other request. Once it
+     * has advanced, arkd stops answering `DIGEST_MISMATCH`, so the provider
+     * never fires `onServerInfoChanged` and the wallet never learns to
+     * re-derive. Do not call this on a hot path expecting rotation to still
+     * work behind it.
+     *
+     * And the answer may be the boot snapshot rather than live: on a retryable
+     * failure this falls back to the cache, so a caller deriving a covenant
+     * from `signerPubkey` can bind one to a key the operator has since
+     * rotated away from, instead of failing closed.
      *
      * @returns The Arkade server's info
      * @see ArkadeInfo
