@@ -75,7 +75,7 @@ describe("named boarding programs", () => {
         expect(afterRestart.onchainAddress()).toBe(beforeRestart.onchainAddress());
     });
 
-    it("discovers the configured script after restart without a boarding contract row", async () => {
+    it("discovers the configured script after restart and drops an outspent coin", async () => {
         const script = createBoardingProgramScript(program(), operatorKey, boardingDelay);
         const coin = {
             txid: "11".repeat(32),
@@ -84,6 +84,7 @@ describe("named boarding programs", () => {
             status: { confirmed: true, block_height: 1, block_time: 1 },
         };
         const saveUtxos = async () => undefined;
+        let unspent = true;
         let queriedContracts = false;
         const wallet = Object.create(ReadonlyWallet.prototype) as ReadonlyWallet &
             Record<string, unknown>;
@@ -97,7 +98,7 @@ describe("named boarding programs", () => {
                     return [];
                 },
             },
-            onchainProvider: { getCoins: async () => [coin] },
+            onchainProvider: { getCoins: async () => (unspent ? [coin] : []) },
             walletRepository: { saveUtxos },
         });
 
@@ -107,6 +108,9 @@ describe("named boarding programs", () => {
         expect(found[0]).toMatchObject({ txid: coin.txid, vout: coin.vout, value: coin.value });
         expect(hex.encode(found[0].tapTree)).toBe(hex.encode(script.encode()));
         expect(queriedContracts).toBe(false);
+
+        unspent = false;
+        await expect(wallet.getBoardingUtxos()).resolves.toEqual([]);
     });
 
     it("routes named register, delete, and final board inputs to the worker identity", async () => {
