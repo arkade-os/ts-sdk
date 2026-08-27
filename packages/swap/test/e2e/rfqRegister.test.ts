@@ -142,7 +142,7 @@ const stubTransport = (): RfqTransport => ({
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        operatorUrl: OPERATOR_URL,
+        arkServerUrl: OPERATOR_URL,
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,

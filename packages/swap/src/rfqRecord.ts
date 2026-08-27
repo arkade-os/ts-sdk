@@ -175,10 +175,11 @@ function renameLegacyClaimTxid(profile: Record<string, unknown>): Record<string,
  * A stored record read under the current field names.
  *
  * Four fields were renamed after `0.0.9`: `fundingArkTxid`, `refundArkTxid`,
- * `lockupSpendArkTxids`, and the receive corridor's `profile.claimArkTxid`,
- * which shipped as far back as `0.0.6`. Backends store the record WHOLE, so a
- * store written by any of those versions still holds the old names on disk and
- * the current code reads every one of them as `undefined`.
+ * `lockupSpendArkTxids`, and the receive corridor's `profile.claimArkTxid`. All
+ * four arrived together with record persistence itself in `0.0.8`, so `0.0.8`
+ * and `0.0.9` are the only versions that ever wrote them. Backends store the
+ * record WHOLE, so such a store still holds the old names on disk and the
+ * current code reads every one of them as `undefined`.
  *
  * Called by every function here that takes a record, so a consumer needs no
  * boot-time migration of its own; and because the old keys never reach the

@@ -54,7 +54,9 @@ would change every derived address.
 
 `RfqSwapRecord.fundingArkTxid` / `refundArkTxid` / `lockupSpendArkTxids`, and the receive
 corridor's `profile.claimArkTxid`, were renamed with the rest. Backends store the record whole,
-so a store written by `0.0.9` or earlier still holds the old names on disk.
+so a store written under the old names still holds them on disk. That is `0.0.8` and `0.0.9`
+only — RFQ record persistence landed in `0.0.8` (`rfqRecord.ts` and the repository's
+`saveRfqSwap`), and all four names arrived with it, so nothing earlier wrote a record at all.
 
 **No consumer action is required.** `rebuildRfqSwap`, `rfqSwapOriginOf`, `updateRfqSwapRecord` and
 `rfqSwapActivityInputs` all read through `normalizeRfqSwapRecord`, which is exported for a
@@ -63,13 +65,17 @@ drops the old ones, so the compatibility read costs one pass and nothing after i
 
 ### `arkade-os/wallet` call sites
 
-The wallet pins `0.0.7`, so nothing breaks until it upgrades. Five edits when it does:
+The wallet pins `0.0.7`, so nothing breaks until it upgrades. Six edits when it does:
 
 - `src/lib/lnReceive.ts` — `claimLnReceive`'s `args.ark` widens from
   `Pick<RestArkProvider, 'getInfo' | 'submitTx' | 'finalizeTx'>` to `ArkProvider`.
 - `src/lib/lnReceive.ts` — its declared return becomes `Promise<{ txid: string; amount: number }>`.
 - `src/lib/lnReceive.ts` — `pushClaim(args.ark, { script: request.script, … })` becomes
   `{ contract: request.script, … }`.
+- `src/lib/lnReceive.ts` — `LnReceiveRequest.script` is typed
+  `Parameters<typeof pushClaim>[1]['script']`, which stops resolving once that key is
+  `contract`; the indexed access becomes `[1]['contract']`. The wallet's own field name can
+  stay `script` — only the lookup follows the rename.
 - `src/providers/assetSwaps.tsx` — `restoreAssetSwaps(…, { serverPubkey })` becomes
   `{ operatorPubkey }`.
 - `src/providers/assetSwaps.tsx` — `watchOfferSwaps({ arkServerUrl })` becomes `{ operatorUrl }`.
@@ -190,7 +196,7 @@ The record's corridor half is one opaque `Record<string, unknown>` that nothing 
 repository or the store interprets — so the wallet is the only thing that can get it right, and
 nothing will tell it when it does not.
 
-- **All three corridors, first:** `...rfqSecretsProfile(result.secrets, result.treeParams.paymentHash)`.
+- **All three corridors, first:** `...rfqSecretsProfile(result.secrets, result.contractParams.paymentHash)`.
   One call per leg, writing two keys and only what that leg's provisioning actually produced:
   `signer.signingDescriptor` always, `hashlock.paymentHash` whenever a payment hash is passed, and —
   on a **claim** leg only — at most one of `preimageHex` (P itself, when the wallet cannot re-derive

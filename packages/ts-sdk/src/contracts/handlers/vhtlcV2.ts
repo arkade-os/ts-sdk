@@ -113,7 +113,7 @@ function decodeCovenantLeaf<K extends string>(
 /**
  * Handler for {@link VHTLC.ScriptV2} — the VHTLC whose preimage leaves carry an
  * explicit `OP_SIZE 32 OP_EQUALVERIFY` before the hash check, and which the RFQ
- * swap corridor builds (`@arkade-os/swap`'s `lightningSendVtxoScript`).
+ * swap corridor builds (`@arkade-os/swap`'s `lightningSendContract`).
  *
  * **Why a separate type string rather than a flag on `vhtlc`.** A handler's
  * `type` names the script class it derives, the way every other registered type
