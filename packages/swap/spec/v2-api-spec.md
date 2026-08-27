@@ -1,8 +1,8 @@
 # Arkade Swap SDK v2: High-Level API Spec
 
 Status: proposal. Breaks the documented v1 surface deliberately.
-Scope: `@arkade-os/swap` public API and the optional wallet-style verbs exported by the swap package.
-Out of scope: contract scripts, solver behavior, and the RFQ protocol itself. Adapter compatibility during the RFQ amount migration is called out where it affects the SDK boundary.
+Scope: `@arkade-os/swap` public API and the product-facing verbs exported by the swap package.
+Out of scope: contract scripts, solver behavior, and RFQ protocol design. Published RFQ is specified by `rfq-protocol.md` section 4.6; this spec ships addressed RFQ first and reserves the client policy/provenance space for published mode. Adapter compatibility during the RFQ amount migration is called out where it affects the SDK boundary.
 
 ---
 
@@ -18,11 +18,11 @@ The v2 swap client takes a route and returns an outcome. A route is two endpoint
 |---|---|---|---|
 | Intents protocol | wire + contracts | route, endpoint, corridor, RFQ, offer | solvers, auditors |
 | Swap client (this spec) | `@arkade-os/swap` | route, quote, accept, outcome | app developers |
-| Swap verbs | `@arkade-os/swap` extension over `IWallet` | pay, receive, withdraw, exchange | product developers |
+| Swap verbs | `@arkade-os/swap` client facade | pay, receive, withdraw, exchange | product developers |
 
 The protocol layer is authoritative and unchanged. The v1 building blocks (`requestLightningSend`, `createOffer`, `pushClaim`, `refundIfUnresolved`, `watchOfferSwaps`, ...) are demoted to `@arkade-os/swap/protocol`: still exported, no longer documented as the integration path. The client is built on them; solvers and advanced integrators keep them.
 
-The core `@arkade-os/sdk` package stays usable without `@arkade-os/swap`. Wallet-style verbs are a convenience surface composed by the swap package, not required methods on core `IWallet`.
+The core `@arkade-os/sdk` package stays usable without `@arkade-os/swap`. PR #793 answers the ownership shape: product-facing swap UX extends `createSwapClient` in the swap package, not core `IWallet`.
 
 ---
 
@@ -36,11 +36,11 @@ type AssetId = string;
 // Tickers ("BTC", "USDT") are accepted as aliases and canonicalized via the registry.
 
 type Corridor = "arkade" | "lightning" | "onchain";
-type CorridorId = Corridor | `eip155:${number}`;   // §9 drafts the eip155 extension
+type CorridorId = Corridor | `eip155:${number}`;   // known corridor ids; §9 is draft-only
 
 /** An endpoint is an asset on a corridor, plus the instrument that settles it. */
 interface Endpoint {
-  corridor: Corridor;
+  corridor: CorridorId;
   asset: AssetId;
   instrument: Instrument;          // resolved by the client, never constructed by callers
 }
@@ -53,7 +53,7 @@ type Instrument =
       amount?: bigint; expiresAt: number };
 ```
 
-WARNING/TODO: the CAIP-19 shape is an intentional API simplification, not direct NArk compatibility by type shape. Current discovery uses names such as `btc`, and NArk models Ark, Lightning, and onchain BTC as distinct corridor assets. V2 needs a registry-backed alias/canonicalization layer that maps the public CAIP-19 endpoint ids back to today's market pair strings, for example `arkade:BTC->lightning:BTC`.
+Decision/TODO: the public API uses one CAIP-19 BTC id across corridors. That is an intentional API simplification, not direct NArk compatibility by type shape. Current discovery uses names such as `btc`, and NArk models Ark, Lightning, and onchain BTC as distinct corridor assets. V2 needs a registry-backed alias/canonicalization layer that maps the public CAIP-19 endpoint ids back to today's market pair strings, for example `arkade:BTC->lightning:BTC`.
 
 An instrument is the leg's concrete settlement locus on its corridor; direction comes from give versus take, not from the instrument. `{ kind: "wallet" }` is the only instrument the SDK holds signing authority over, which is why it is the only one nobody passes: `accept()` acts on wallet legs (spend the balance, land the claim) and merely watches the others. The supply law: the caller provides non-wallet take instruments, which is what `to` is; the quote provides non-wallet give instruments, which is exactly what the artifact is; every remaining slot resolves to `wallet`. The variant is explicit rather than an absent field because absence would mean two unrelated things, wallet-by-default versus not-yet-resolved, and receive legs live in the second state until the quote returns.
 
@@ -89,7 +89,8 @@ const client = createSwapClient({
   discovery?,                      // default: network + registry inferred from wallet's network
   corridors?,                      // overrides only; see §6
   policy?,                         // maxFee ceilings, allowed registries, quote TTL floor,
-                                   // selectMarket veto, drive: "auto" | "manual" | "readonly"
+                                   // selectMarket veto, drive: "auto" | "manual" | "readonly";
+                                   // published-RFQ names reserved/deferred: rfq, selectBid
 });
 
 // No required start(). In drive:"auto", construction runs one restore-read and
@@ -106,6 +107,11 @@ client.cancel(swapId: AssetSwapId): Promise<{ outcome: "cancelled" | "filled" }>
 client.swaps(filter?): Promise<Swap[]>          // full history, both contract kinds
 client.onUpdate(fn: (u: SwapUpdate) => void): Unsubscribe
 client.markets(): Promise<Market[]>             // escape hatch; never required
+
+// Product-facing verbs on the same swap facade; §5 expands these.
+client.pay(destination: string, opts: PayOptions): Promise<Swap>
+client.receive(opts: ReceiveOptions): Promise<ReceiveRequest>
+client.exchange(opts: ExchangeOptions): Promise<Swap>
 ```
 
 Lifecycle. Work arms the drive by default, never the caller's memory. Construction performs one background restore-read of the repository. In `drive: "auto"`, live swaps found by that read start the manager, run one immediate pass because a resumed swap may already be past a deadline, then hold the poll loop; if no live swaps exist, nothing runs until `accept()` supplies new work. In `drive: "manual"`, construction restores state but does not open timers or streams until `start()` is called. In `drive: "readonly"`, the client restores and reports but never actuates, honoring the read-without-driving consumer the manager's own restore/start split was designed for. The poll loop is the correctness mechanism, deadline-gated claims and refunds ride on it; the contract-event subscription is a latency optimization that only makes a pass run early, so dropping it is always safe.
@@ -123,7 +129,7 @@ interface QuoteInput {
   give?: AssetId;                  // omitted when `to` fully determines it
   take?: AssetId;
   to?: string;                     // self-describing instrument: bolt11 | Arkade addr | bc1...
-  via?: Corridor;                  // receive flows only: names the corridor when no
+  via?: CorridorId;                // receive flows only: names the corridor when no
                                    // instrument can exist yet
   amount?: bigint;
   amountOn?: "give" | "take";
@@ -133,6 +139,8 @@ interface QuoteInput {
 Resolution, in order. `to` is parsed once, at this boundary: a bolt11 yields the lightning corridor and an invoice instrument; an Arkade address yields arkade; a bitcoin L1 address yields onchain; anything ambiguous throws `AmbiguousDestination` here and nowhere else. `via` covers the receive case where the instrument does not exist yet. The corridor pair selects the `Route` variant; the pair `(give.asset, take.asset, corridors)` selects the market from the discovery index; the market card selects the backend, feed-priced or RFQ, per the protocol rule that the market picks the backend. Exactly one amount is pinned: by the caller via `amount` + `amountOn`, or by the invoice when one is present. Pinning a second one is `AmountMismatch`, thrown before any network round trip.
 
 Resolution is also available without new disclosure: `client.resolve(input)` performs the same parsing and returns the resolved route when possible, so application policy can veto before an RFQ round trip discloses an invoice or an amount. Market and solver selection are network-free only against injected or cached discovery data. If no discovery snapshot is available, the client must either return an unresolved route shape or throw `DiscoverySnapshotUnavailable`; TODO: choose one result shape before implementation. `quote()` runs the same veto internally through `policy.selectMarket`, may fetch discovery as part of the quote path, and every `Quote` carries its market provenance for audit.
+
+RFQ mode. Base v2 uses addressed RFQ: the client selects one market card/solver, sends one directed request, and returns one binding `Quote`. `rfq-protocol.md` section 4.6 specifies published RFQ as open request -> sealed bids -> addressed close with a fresh `rfq_id`; that can live inside `quote()` later without turning the return value into a quote array. The public surface should reserve, but not yet require, names for `policy.rfq`, `policy.selectBid`, bid timing, and `Quote.auction` provenance.
 
 The returned `Quote` is the order, fully resolved:
 
@@ -145,6 +153,7 @@ interface Quote {
   lock?: { hash: Hex };            // corridor routes: the HTLC hash
   market: MarketRef;               // provenance: which card priced this, from which registry
   solver?: Pubkey;                 // RFQ routes: the committed counterparty
+  auction?: AuctionProvenance;      // published RFQ only; TODO exact shape
   expiresAt: number;               // quote TTL; corridor routes also carry
   refundLocktime?: number;         //   the non-optional-in-type refund bound
   artifact?: Artifact;             // §3.4: the one thing a counterparty must see
@@ -238,7 +247,7 @@ The caller supplies, at most: two asset ids or one destination string, one amoun
 
 ## 5. Swap verbs
 
-The product-facing layer can still be wallet-shaped, but it is exported by `@arkade-os/swap` and composes over an `IWallet`. It must not become required surface on core `IWallet`; `@arkade-os/sdk` stays useful without the swap package installed.
+PR #793 settles the ownership shape: the product-facing layer is the `createSwapClient` facade exported by `@arkade-os/swap`. These verbs extend that facade; they are not required methods on core `IWallet`, and `@arkade-os/sdk` stays useful without the swap package installed.
 
 ```ts
 const swaps = createSwapClient({ wallet });
@@ -256,14 +265,7 @@ await swaps.exchange({ give: "BTC", take: "USDT", amount, amountOn: "give", maxF
 // arkade <-> arkade asset swap
 ```
 
-A wallet-shaped wrapper is also viable if product code wants the verbs colocated with the wallet object:
-
-```ts
-const walletWithSwaps = withSwapVerbs(wallet, { client: swaps });
-await walletWithSwaps.pay(destination, { amount, maxFee });
-```
-
-TODO: choose the final export shape, direct client verbs or wrapper, before declaring the public API. In either shape, each verb compiles to a `QuoteInput`, calls `quote`, checks `quote.fee` against `maxFee`, and calls `accept`. `maxFee` exceeded rejects before funding with the quote attached, so the app can re-present. The verbs add no capability; they subtract vocabulary. A product integrating payments never sees the words route, corridor, market, or quote, and Lightning is what it has always been to a wallet user: BTC, paid or received.
+Each verb compiles to a `QuoteInput`, calls `quote`, checks `quote.fee` against `maxFee`, and calls `accept`. `maxFee` exceeded rejects before funding with the quote attached, so the app can re-present. The verbs add no capability; they subtract vocabulary. A product integrating payments never sees the words route, corridor, market, or quote, and Lightning is what it has always been to a wallet user: BTC, paid or received.
 
 ---
 
@@ -283,15 +285,14 @@ interface CorridorOverrides {
   lightning?: { decode?: (bolt11: string) => InvoiceFacts;
                 covclaimd?: { pubkey: CompressedHex } };  // default: ephemeral self-claim seal
   onchain?:   { chain?: { esploraUrl: string } };
-  evm?:       { chains: Record<number, { rpc: string; confirmations?: number }> };  // §9
 }
 ```
 
-Override semantics. An override replaces a dependency inside a corridor module; it never enables a route (the closed `Route` union and discovered markets own that), never selects a solver or transport (the market card owns that), and never alters settlement behavior. Every override is a named trust anchor: the chain source is whose L1 view reconcile-from-evidence runs against, the decoder is who validates an invoice before display, the covclaimd key is who may open the sealed claim packet, the repository is where persist-first lands. Each defaults to the wallet, the operator, or a built-in, so the config key can be absent entirely; explicitly overriding a dep to nothing surfaces as `MissingCorridorDep` at quote time, before funding. The one exception is deliberate: `evm.chains` is constitutive rather than an override, because no default RPC can be responsibly shipped, and naming a chain with its endpoint is what admits that chain's routes into this client.
+Override semantics. An override replaces a dependency inside an implemented corridor module; it never enables a route (the closed `Route` union and discovered markets own that), never selects a solver or transport (the market card owns that), and never alters settlement behavior. Every override is a named trust anchor: the chain source is whose L1 view reconcile-from-evidence runs against, the decoder is who validates an invoice before display, the covclaimd key is who may open the sealed claim packet, the repository is where persist-first lands. Each defaults to the wallet, the operator, or a built-in, so the config key can be absent entirely; explicitly overriding a dep to nothing surfaces as `MissingCorridorDep` at quote time, before funding.
 
 WARNING/TODO: dependency overrides are not yet a safe public third-party corridor plugin API. A corridor cannot be registered externally unless parsing, quoting/RFQ adaptation, persistence, restoration, observation, actions, deadline semantics, and outcome translation are registered together. Until that manager contract exists, §6 should be read as internal modularity plus dependency overrides.
 
-Future corridors such as BOLT12 offers as reusable lightning instruments or an EVM corridor with `eip155` asset ids appear as new `Route` variants in a minor version only after that full contract exists. §9 drafts the EVM corridor end to end; the CAIP layout already reserves the namespace.
+Future corridors such as BOLT12 offers as reusable lightning instruments or an EVM corridor with `eip155` asset ids appear as new `Route` variants in a minor version only after that full contract exists. EVM configuration is therefore draft-only in §9, not part of `CorridorOverrides`.
 
 TODO: built-in BOLT11 decoding is now an SDK guarantee. The lightning corridor must define decoder choice and validation rules for amountless invoices, expiry, payment hash extraction, and network checks.
 
@@ -372,9 +373,10 @@ Three rules govern everything below. For an `eip155` asset the corridor is impli
 ### 9.2 Configuration
 
 ```ts
+// Draft-only extension config. Final public corridor plugin shape is still open.
 const client = createSwapClient({
   wallet,
-  corridors: {
+  corridorExtensions: {
     evm: {
       chains: { 8453: { rpc: "https://mainnet.base.org", confirmations: 1 } },
     },
@@ -438,7 +440,7 @@ const d = await swaps.receive({ via: "eip155:8453", asset: USDC_BASE, amount: 10
 showDeposit(d.artifact);
 ```
 
-`pay` grows exactly one field, and only on EVM destinations; the compile error when `take` is missing is the API teaching the asymmetry. Everything else, `maxFee` ceiling, quote and accept collapsed inside, rejection-with-quote on an exceeded ceiling, is identical to §5. The verbs still come from the swap package, whether exposed directly on the client or through `withSwapVerbs`.
+`pay` grows exactly one field, and only on EVM destinations; the compile error when `take` is missing is the API teaching the asymmetry. Everything else, `maxFee` ceiling, quote and accept collapsed inside, rejection-with-quote on an exceeded ceiling, is identical to §5. The verbs still come from the swap package client facade, not core `IWallet`.
 
 ### 9.6 Inference additions
 
@@ -461,6 +463,9 @@ Because the documentation is currently a list of ways to lose money: fund withou
 **Why keep two-step quote/accept at the client layer when Spark hides it?**
 Because the layers serve different people. An exchange UI must show terms before commitment; a checkout flow must not. The client keeps the honest two-step; the verbs collapse it behind `maxFee`. Deleting the two-step from the client would force every terms-showing app back down to `/protocol`.
 
+**Does v2 require published RFQ?**
+No. Base v2 uses addressed RFQ because that is the shipped client behavior. `rfq-protocol.md` section 4.6 specifies published RFQ, but the client publisher and API policy names are deferred/reserved: `policy.rfq`, `policy.selectBid`, bid timing, and `Quote.auction` provenance.
+
 **Why is the invoice still visible at all?**
 It is the one irreducible artifact: the payer needs it, and no abstraction changes that. v2's move is to make it the only visible piece of lightning receive, with the sealing key, preimage, and claim removed from the surface around it.
 
@@ -474,7 +479,7 @@ The current docs dedicate a bold paragraph to the display-versus-atomic trap. A 
 No. Derive locally, persist first, reconcile from evidence remain exactly the protocol's rules; v2 relocates their enforcement from documentation into the client. Registries and cards remain advisory, quotes remain solver-signed and short-lived, and a quote that disagrees with local derivation still dies before funding.
 
 **Why are swap verbs not required methods on `IWallet`?**
-Because package direction matters. Core wallet primitives belong in `@arkade-os/sdk`, but swap orchestration, solver discovery, artifacts, route UX, and outcome translation belong in `@arkade-os/swap`. Product code can still get wallet-shaped verbs from the swap package without making every wallet consumer depend on swaps.
+Because package direction matters. Core wallet primitives belong in `@arkade-os/sdk`, but swap orchestration, solver discovery, artifacts, route UX, and outcome translation belong in `@arkade-os/swap`. PR #793 sets the direction: product code uses the swap package's client facade, and core wallet consumers do not inherit a swap dependency.
 
 **What about assets on other networks?**
 The asset id layout is already CAIP-19 with room reserved: `eip155` assets imply their own corridor, arkade assets live under bitcoin's `bip122` chain id, and BTC is a single id on every corridor. New networks are new corridor modules and new `Route` variants, not new client shapes; §9 is the worked instance. TODO: define the canonical alias map from CAIP-19 ids to current discovery and RFQ pair strings, and document the deliberate divergence from NArk's corridor-specific BTC asset model.

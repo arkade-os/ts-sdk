@@ -106,151 +106,79 @@ from one fixed solver key.
    inherits this problem *by construction*: with N unknown responders, attribution
    must come from each bid's own signature, not from transport addressing.
 
-## 5. Even the future is broadcast-then-direct — and deliberately bounded
+## 5. Published RFQ Is Specified, But Still Broadcast-Then-Direct
 
-The docs do not aspire to an unbounded quote auction. `rfq_open`/`rfq_bid` payloads
-are **deliberately unspecified** ("Pinning field names before an implementation
-exists would publish a schema that the first working publisher then contradicts");
-the client publisher is tracked as
-[arkade-os/ts-sdk#725](https://github.com/arkade-os/ts-sdk/issues/725); the reference
-deployment bids only on Lightning sends, flat-fee bids skipped. And
-`intents/reference/future-work.mdx` argues open broadcast *degrades* quote quality
-(winner's curse, information leakage) and points instead at **bounded
-client-selected panels of a few solvers, deadline-based selection, and
-post-selection exclusivity**. The relay explicitly "does not select a solver,
-aggregate quotes, or touch funds."
+`rfq-protocol.md` section 4.6 is the normative source for published RFQ. It
+specifies the open request, sealed bid, and directed close shapes. The important
+model does not change: published mode is **open -> sealed bids -> addressed close**,
+not "collect N binding quotes and take the best". There is still exactly one
+binding quote per negotiation, from the solver selected after the bid phase.
 
-## 6. Missing pieces for the published mode
+This matters for the v2 API spec: published RFQ can live inside `quote()` later
+without changing `quote()` into a quote-array API. The main quote return shape can
+stay singular; only policy, timing, and provenance need reserved space.
 
-> **Correction (post-research):**
-> [ts-sdk#725](https://github.com/arkade-os/ts-sdk/issues/725) reveals that a
-> *normative* spec for the published mode exists — `rfq-protocol.md` §4.6 — even
-> though the public docs deliberately leave the payloads unspecified. §4.6 pins:
-> the `rfq_open` payload (kind 24860, plaintext, `open_id`, `pair`, `amount_side`,
-> `amount` or a coarse `size_bucket`, optional `bids_until`, `t` tag = the canonical
-> corridor-qualified market key shared with the registry's discovery spec — which
-> already documents kind 24860 and the shared derivation); the privacy rule (never
-> an invoice, address, or profile field in an open — resolving item 2 below by
-> design); the `rfq_bid` payload (sealed to the open's author, `fee_bps` + required
-> `min`/`max` + `valid_until`, one bid per solver, revisions bind only downward);
-> anti-spam inversion (opens are never refused — malformed/unserved opens are
-> ignored, so an empty window is a timeout, not a `SwapRefusal`); and the close as
-> the unchanged directed flow with a **fresh `rfq_id`**, with a quote-no-worse-than-bid
-> conformance formula and next-bid fallback on renege. The reference service already
-> implements the server half. Items 1, 2, and 6 below are therefore **specified,
-> not missing** — the gap is that the public docs lag §4.6 and no client implements
-> it. Items that remain genuinely open even under §4.6: flat-fee corridors cannot
-> bid (`fee_bps`-only bid schema — flagged in #725 itself), no loser notification,
-> no bonding (renege is reputational, mitigated by holding both signed artifacts),
-> and the rendezvous relay-set question (item 5; in practice the union of
-> card-listed relays for the pair). §4.6 also settles item 9's interface question
-> the other way: the published dance lives *inside* `requestQuote` with
-> `solverPubkey` becoming optional, and its `selectBid` callback is exactly the
-> policy hook §7.2 asks the v2 spec to reserve.
+## 6. Resolved By `rfq-protocol.md` Section 4.6
 
-### Wire / protocol
+Section 4.6 resolves the items that earlier drafts treated as missing:
 
-1. **Payload schemas** — `rfq_open` and `rfq_bid` have no specified fields: no bid
-   contents, no expiry/sealing semantics, no reply-window ("bid-by") field; the
-   interplay between a bid's validity and the closing quote's `valid_until` is
-   undefined.
-2. **Privacy of the broadcast payload** — kind 24860 is plaintext, but the current
-   corridor request profiles carry the full BOLT11, `payment_hash`, refund/payout
-   addresses and client pubkeys. Reusing those shapes in an `rfq_open` would expose
-   amount, destination, and linkable keys to every relay observer. A redacted or
-   two-phase payload (amount-only open request; full instrument only in the
-   addressed close) is needed and unspecified.
-3. **Bid fade / renege** — nothing ties the closing quote to the winning bid's terms;
-   bids are unbonded; negotiation kinds are ephemeral with no relay retention, so
-   there is no record from which to build accountability or fill-history reputation.
-   Bonds/staking are separately listed as future work.
-4. **Spam/DoS** — every plaintext `rfq_open` forces quote computation on all watching
-   solvers; no proof-of-work, rate limit, or admission control is specified.
-5. **Rendezvous** — directed mode takes its relays from the chosen solver's card; open
-   mode has no canonical per-market relay set, and with ephemeral kinds and no
-   store-and-forward, "every solver watching the pair" is only "every solver on the
-   same relays at that instant". The canonical market key tag is referenced but its
-   derivation is not documented.
-6. **Bid revision/dedup** — no semantics for a solver revising or retracting a bid,
-   and no dedup-by-author rule; a first-event-wins waiter would take whichever copy
-   arrives first.
-7. **`quote_conflict`** is listed in the refusal set with no defined multi-quote
-   semantics; concurrent parallel *addressed* negotiations (one client, N solvers, N
-   `rfq_id`s) are neither forbidden nor described anywhere.
-8. **Provisional wire** — kinds 24859/24860/38859 are unregistered; the design reuses
-   one solver key for transport and settlement identity (transport-key delegation is
-   future work).
+1. **Payload schema** — `rfq_open` is kind 24860 plaintext and carries `open_id`,
+   `pair`, `amount_side`, `amount` or `size_bucket`, optional `bids_until`, and the
+   canonical market-key `t` tag shared with discovery.
+2. **Privacy boundary** — an open request must not include invoice, address, or
+   profile fields; the full instrument appears only in the addressed close.
+3. **Bid schema** — `rfq_bid` is sealed to the opener and carries `fee_bps`,
+   required `min` / `max`, `valid_until`, and one-bid-per-solver revision rules.
+4. **Malformed/unserved opens** — opens are ignored rather than refused; an empty
+   window is a timeout, not `SwapRefusal`.
+5. **Close semantics** — the winner is closed with the existing directed RFQ flow
+   using a fresh `rfq_id`, and the final quote must be no worse than the bid.
+6. **Client interface direction** — published mode lives inside `requestQuote`; the
+   fixed `solverPubkey` becomes optional and `selectBid` is the policy hook.
 
-### Client / SDK
+## 7. Still Open For Client/API Work
 
-9. **The "one-line client change" is understated.** `rfq.mdx` claims "dropping the
-   transport's `solverPubkey` is the entire client change", but the shipped transport
-   derives a *single* conversation key at construction, hard-filters
-   `authors: [solverPubkey]`, and delivers through a single-resolver
-   `Promise<RfqQuote>`. Hearing N bidders needs per-event conversation-key derivation
-   from each bid's author, an author-admission policy replacing the fixed filter, and
-   a multi-value delivery contract (callback or async iterator) — an interface
-   change, not a dropped parameter.
-10. **Bid collection and selection surface** — no collection window, ranking policy,
-    tie-breaking, or deadline semantics exist anywhere; selection is "application
-    policy" with no reference implementation.
-11. **Persistence** — `RfqSwapRecord` has no shape for candidate bids or for auditing
-    which solver was chosen among several.
-12. **Discovery surface** — nothing returns *all* cards for a pair; `bestMarket`'s
-    ranking rule lives in the external `@arkade-os/solver-discovery` package (not
-    vendored here, unverifiable from this repo); cards carry no reputation or
-    fill-history data a client could rank on.
-13. **Ecosystem reality** — one closed-source, pinned corridor solver (onboarding by
-    email); zero solvers serve Lightning receive; open-source `solverd` fills asset
-    swaps but does no RFQ. A second competing corridor solver does not exist yet.
+These remain real work even with section 4.6 as the protocol source:
 
-### Observed drift (worth fixing independently)
+1. **Client publisher** — the SDK has no published-RFQ publisher/subscriber path;
+   shipped transports are still single-solver/direct.
+2. **Policy surface** — the v2 API should reserve or name `policy.rfq`,
+   `policy.selectBid`, collection deadline, and tie-breaking semantics. Addressed
+   RFQ should remain the default.
+3. **Provenance and persistence** — a published quote needs audit data for bids seen,
+   the selected solver, and why it won; the selected-bid record should be persisted
+   before any irreversible action.
+4. **Timing invariants** — collection deadlines must sit inside bid validity, and the
+   addressed close must still respect the winning bid's `valid_until` and the final
+   quote `expiresAt`.
+5. **Flat-fee corridors** — the §4.6 bid schema is `fee_bps` based, so flat-fee
+   corridors still need a bidding representation.
+6. **Loser notification and bonding** — losing bidders are not notified, bids are not
+   bonded, and renege accountability remains reputational.
+7. **Rendezvous relay set** — in practice this is likely the union of card-listed
+   relays for the pair, but the SDK still needs deterministic client behavior.
+8. **Responder authentication in dev transports** — production Nostr authenticates by
+   author filter and conversation key; dev relay/http paths still need explicit
+   attribution rules if reused for open mode.
+9. **Ecosystem reality** — published mode has server-side pieces, but a second
+   competing corridor solver and a general client publisher are not in regular use.
+
+### Observed Drift Worth Fixing Independently
 
 - The code's closed refusal set includes `rate_limited` (`rfq.ts:139-147`); the docs'
-  closed set (`intents/reference/rfq.mdx` §Refusal) lists seven reasons without it.
-  Harmless today (both sides say to treat unknown reasons as a generic decline), but
-  the doc's "closed set" is stale against the shipped type.
+  closed set (`intents/reference/rfq.mdx` section "Refusal") lists seven reasons
+  without it. Harmless today because both sides say to treat unknown reasons as a
+  generic decline, but the docs' "closed set" is stale against the shipped type.
 
-## 7. Implications for the v2 spec
+## 8. Implications For The V2 Spec
 
-The v2 surface as drafted is single-solver-shaped: `Quote.solver?: Pubkey` is "the
-committed counterparty" (singular), `resolve()` returns one `{ route, market,
-solver? }`, `quote()` returns one `Quote`, and `policy.selectMarket` is a *veto*.
-That is **correct for the shipped protocol** and — because even published mode ends
-in one addressed close and one binding quote — it remains the right *return* shape
-after the open mode ships. The published mode slots **inside** `quote()`:
-publish → collect sealed bids → select → addressed close → return the one verified
-`Quote`. No caller-visible type changes.
+The v2 surface remains correctly singular: `Quote.solver?: Pubkey` is the committed
+counterparty, `resolve()` selects one market when discovery is available, and
+`quote()` returns one verified `Quote`. Published mode can slot inside `quote()` as
+open -> collect sealed bids -> select -> addressed close -> return that one quote.
+The accurate statement is therefore **no main `quote()` return-shape change is
+required**, not that published RFQ has no caller-visible API at all.
 
-What the spec does *not* yet say, and should decide:
-
-1. **Mode selection is policy.** Whether a given `quote()` runs addressed (to the
-   resolved card's solver) or published (to the pair's watchers) is a disclosure
-   decision: published mode shows the request to the world, which cuts directly
-   against the spec's own `resolve()`-without-disclosure design goal. This wants a
-   policy knob (e.g. `policy.rfq: "addressed" | "published" | "panel"`), defaulting
-   to addressed, and per §5 above the docs' own direction is *panel* (bounded N),
-   not unbounded broadcast.
-2. **Bid selection is the missing policy hook.** `selectMarket` vetoes a market;
-   nothing in the spec ranks *bids*. A `policy.selectBid` (or a default: best
-   take-amount after fees, earliest tie-break) plus a collection deadline belongs in
-   `policy` next to the quote-TTL floor.
-3. **Provenance widens.** `Quote.market: MarketRef` documents which card priced the
-   quote. Under published mode the honest provenance is "which bids were seen,
-   which won, why" — an audit artifact the spec's provenance stance implies but its
-   types don't carry (e.g. `Quote.auction?: { bids: BidRef[]; selected: Pubkey }`).
-4. **Persist-first extends to the auction.** The spec's persist-before-irreversible
-   invariant should cover the selected-bid record, both for support ("why this
-   solver") and for any future reputation layer, since the wire itself retains
-   nothing.
-5. **Timing invariants.** The spec asserts refund-window sanity per quote; a panel
-   adds cross-quote clocks: the collection deadline must sit safely inside every
-   collected bid's validity, and the close must still respect the winner's
-   `valid_until`. "Calling accept after `expiresAt` is `QuoteExpired`" already
-   covers the tail; the head (bid deadline semantics) is unspecified protocol (§6.1).
-
-None of this blocks v2 as drafted: the spec can ship addressed-only against the
-current protocol, provided it reserves the policy surface (`rfq` mode knob,
-`selectBid`, auction provenance) so that published mode lands as a policy + internal
-change — which is exactly the layering the protocol docs promise, minus their
-optimistic "one line".
+The API spec should reserve/defer the caller-visible additions needed for published
+mode: RFQ mode policy, bid selection policy, bid timing, and auction provenance. It
+can still ship addressed-only first against the current client implementation.
