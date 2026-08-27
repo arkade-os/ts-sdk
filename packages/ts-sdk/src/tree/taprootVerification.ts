@@ -199,6 +199,12 @@ function isCheckSigVerifyMultisigTemplate(
  *   - Key pushes followed by CHECKSIG/CHECKSIGADD.
  *   - Ending with threshold <N> and EQUAL / NUMEQUAL where N === number of keys.
  *   - At least 2 distinct public keys.
+ *
+ * Note on N-of-N constraint (Finding N1):
+ *   This template matcher intentionally enforces strict N-of-N (threshold === numKeys)
+ *   matching current Ark collaborative leaves (e.g. 2-of-2 ASP + user). M-of-N thresholds
+ *   where threshold < numKeys are not currently used in Ark collaborative paths and are
+ *   conservatively rejected.
  */
 function isCheckSigAddMultisigTemplate(
     decoded: (string | number | bigint | Uint8Array)[],
@@ -247,6 +253,12 @@ function isCheckSigAddMultisigTemplate(
  * 1. BIP 342 CHECKSIGVERIFY chain (<pk1> CHECKSIGVERIFY <pk2> CHECKSIG) with >= 2 distinct keys.
  * 2. BIP 342 CHECKSIGADD chain (<pk1> CHECKSIG <pk2> CHECKSIGADD 2 EQUAL/NUMEQUAL) with >= 2 distinct keys.
  * 3. Conditional Multisig (<condition> VERIFY <multisig_template>) with >= 2 distinct keys.
+ *
+ * Note on Conditional Multisig (Finding N2):
+ *   Uses lastIndexOf("VERIFY") to locate the terminal multisig template. Because compound opcodes
+ *   (e.g., EQUALVERIFY, CHECKSEQUENCEVERIFY) decode as distinct tokens from standalone VERIFY,
+ *   this reliably isolates preceding validation conditions (such as hashlocks or CLTV) without
+ *   ambiguity for standard Ark and forfeit script formats.
  */
 function isCollaborativeMultisigTemplate(
     decoded: (string | number | bigint | Uint8Array)[],

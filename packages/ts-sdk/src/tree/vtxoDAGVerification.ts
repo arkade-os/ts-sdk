@@ -766,6 +766,10 @@ function validateDAGChaining(
                 }
             }
 
+            // Protocol invariant (Finding 12): virtual tree transactions carry zero miner fees
+            // at internal hops (miner fees are paid exclusively at the on-chain batch root commitment).
+            // Therefore, strict amount conservation (sum of child outputs === ancestor output amount)
+            // is required and intentional.
             if (childOutputsSum !== ancestorOutput.amount) {
                 throw Errors.AMOUNT_MISMATCH(
                     node.txid,
