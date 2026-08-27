@@ -1,7 +1,6 @@
 import { hex } from "@scure/base";
-import { Wallet, type ProviderConnectionState } from "../wallet";
+import { Wallet, extractArkProviderUrl, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
-import { RestArkProvider } from "../../providers/ark";
 import type {
     IWallet,
     IAssetManager,
@@ -173,11 +172,7 @@ export class ExpoWallet implements IWallet, HDWalletCapable, HDAllocationCapable
         // Persist wallet params so the background handler can rehydrate
         // without a network call. Only works with AsyncStorageTaskQueue.
         if ("persistConfig" in taskQueue) {
-            const arkServerUrl =
-                config.arkServerUrl ||
-                (wallet.arkProvider instanceof RestArkProvider
-                    ? wallet.arkProvider.serverUrl
-                    : undefined);
+            const arkServerUrl = config.arkServerUrl || extractArkProviderUrl(wallet.arkProvider);
 
             if (arkServerUrl) {
                 const timelock = wallet.offchainTapscript.options.csvTimelock;

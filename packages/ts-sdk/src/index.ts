@@ -226,6 +226,7 @@ import {
     ScheduledSession,
     FeeInfo,
 } from "./providers/ark";
+import { CachingArkProvider } from "./providers/cachingArk";
 import {
     DelegateProvider,
     DelegatorProvider,
@@ -614,6 +615,7 @@ export {
     ElectrumOnchainProvider,
     WsElectrumChainSource,
     RestArkProvider,
+    CachingArkProvider,
     DigestMismatchError,
     FetchError,
     RestIndexerProvider,
