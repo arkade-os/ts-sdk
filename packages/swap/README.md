@@ -812,7 +812,7 @@ Notes from before 0.0.1, kept for consumers who tracked the branch.
   silently overwritten.
 - **`readLockupFate` names the spends it observed.** `claimed` and `returned` now carry
   `spends: readonly LockupSpend[]`, one per spent lockup output, with the `checkpointTxid` that
-  `spentBy` names and the `arkTxid` that rode it. History correlation wants `arkTxid`; the
+  `spentBy` names and the `txid` that rode it. History correlation wants `txid`; the
   checkpoint txid is the wrong value to correlate on alone. `unknown` and `open` claim no spend.
 
 - **Every derived address changed again, in both corridors — the unilateral ladder was re-spaced.**
@@ -884,8 +884,8 @@ stored?)`. The returned `ProvisionedKey` / `ProvisionedClaimSecret` replace `Swa
   quote at `verifyLockupAddress`. Upgrade both sides before expecting fills.
 - **`cancelOffer` and `restoreAssetSwaps` take an options object.** `cancelOffer(wallet, url,
 offerHex, { repository, fundingTxid?, swapAddress? })` — the repository is required because the
-  call now records its own outcome. `restoreAssetSwaps(indexer, txs, existingIds, { serverPubkey,
-scanned? })` — the server key is required because a spend is classified by rebuilding the
+  call now records its own outcome. `restoreAssetSwaps(indexer, txs, existingIds, { operatorPubkey,
+scanned? })` — the operator key is required because a spend is classified by rebuilding the
   covenant and matching the leaf it took.
 - **`isCancelSpend` is gone**, replaced by `classifySpend`, and `Tx.assets` with it. The old test
   read what a transaction moved, which a wallet reports as a _net_ delta: once the deposit is a
@@ -927,7 +927,7 @@ scanned? })` — the server key is required because a spend is classified by reb
             kind: "lightning_receive",
             lockupAddress: result.address,
             profile: {
-                ...rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                ...rfqSecretsProfile(result.secrets, result.contractParams.paymentHash),
                 expectedAmount: result.expectedAmount,
                 payoutAddress: result.payoutAddress,
             },
