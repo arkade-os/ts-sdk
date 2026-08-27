@@ -122,6 +122,32 @@ aggregate quotes, or touch funds."
 
 ## 6. Missing pieces for the published mode
 
+> **Correction (post-research):**
+> [ts-sdk#725](https://github.com/arkade-os/ts-sdk/issues/725) reveals that a
+> *normative* spec for the published mode exists — `rfq-protocol.md` §4.6 — even
+> though the public docs deliberately leave the payloads unspecified. §4.6 pins:
+> the `rfq_open` payload (kind 24860, plaintext, `open_id`, `pair`, `amount_side`,
+> `amount` or a coarse `size_bucket`, optional `bids_until`, `t` tag = the canonical
+> corridor-qualified market key shared with the registry's discovery spec — which
+> already documents kind 24860 and the shared derivation); the privacy rule (never
+> an invoice, address, or profile field in an open — resolving item 2 below by
+> design); the `rfq_bid` payload (sealed to the open's author, `fee_bps` + required
+> `min`/`max` + `valid_until`, one bid per solver, revisions bind only downward);
+> anti-spam inversion (opens are never refused — malformed/unserved opens are
+> ignored, so an empty window is a timeout, not a `SwapRefusal`); and the close as
+> the unchanged directed flow with a **fresh `rfq_id`**, with a quote-no-worse-than-bid
+> conformance formula and next-bid fallback on renege. The reference service already
+> implements the server half. Items 1, 2, and 6 below are therefore **specified,
+> not missing** — the gap is that the public docs lag §4.6 and no client implements
+> it. Items that remain genuinely open even under §4.6: flat-fee corridors cannot
+> bid (`fee_bps`-only bid schema — flagged in #725 itself), no loser notification,
+> no bonding (renege is reputational, mitigated by holding both signed artifacts),
+> and the rendezvous relay-set question (item 5; in practice the union of
+> card-listed relays for the pair). §4.6 also settles item 9's interface question
+> the other way: the published dance lives *inside* `requestQuote` with
+> `solverPubkey` becoming optional, and its `selectBid` callback is exactly the
+> policy hook §7.2 asks the v2 spec to reserve.
+
 ### Wire / protocol
 
 1. **Payload schemas** — `rfq_open` and `rfq_bid` have no specified fields: no bid
