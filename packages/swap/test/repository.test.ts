@@ -104,8 +104,8 @@ describe.each(backends)("AssetSwapRepository (%s)", (_, create) => {
         ).toBeUndefined();
     });
 
-    // MIGRATION.md tells consumers to extend the record by cast, so a backend
-    // that writes only the declared columns must fail here. The fixture is
+    // Consumers extend the record by cast, so a backend that writes only the
+    // declared columns must fail here. The fixture is
     // JSON-safe on purpose: a Date or bigint would NOT round-trip equally
     // across backends, so asserting parity on one would assert something untrue.
     it("round-trips an unknown consumer field", async () => {

@@ -62,11 +62,10 @@ describe("assertValidServerUnrollScript", () => {
         [86_528n, "bitcoin", "accept", "512*169, just over 24h"],
         [604_672n, "bitcoin", "accept", "arkd default, ~7 days"],
         [1n, "regtest", "reject", "1-block sweep on regtest"],
-        // ARKD_CHECKPOINT_EXIT_DELAY defaults used across this repo's regtest
-        // envs: 5 (packages/boltz-swap/.env.regtest) and 20
-        // (packages/ts-sdk/.env.regtest, packages/swap/.env.regtest) — both
-        // must clear the regtest floor.
-        [5n, "regtest", "accept", "boltz-swap regtest env value"],
+        // ARKD_CHECKPOINT_EXIT_DELAY values a regtest deployment may set; both
+        // must clear the regtest floor. This repo's own envs are all 20 now —
+        // 5 is kept as coverage of the lower bound the floor was sized for.
+        [5n, "regtest", "accept", "low block-typed regtest value"],
         [20n, "regtest", "accept", "ts-sdk/swap regtest env value"],
     ];
 

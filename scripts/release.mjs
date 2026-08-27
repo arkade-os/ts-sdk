@@ -24,35 +24,20 @@ const PACKAGES = [
         order: 1,
     },
     {
-        key: "boltz-swap",
-        name: "@arkade-os/boltz-swap",
-        dir: path.join(ROOT_DIR, "packages/boltz-swap"),
-        pkgJson: path.join(ROOT_DIR, "packages/boltz-swap/package.json"),
-        tagPrefix: "@arkade-os/boltz-swap/",
-        order: 2,
-        dependsOnSdk: true,
-        bumpFlag: "--boltz-bump",
-        // Not part of bulk `all` releases for now; still releasable directly
-        // (`release.mjs boltz-swap <bump>`) and still dragged along as a
-        // dependent when `sdk` is released.
-        excludeFromAll: true,
-    },
-    {
         key: "swap",
         name: "@arkade-os/swap",
         dir: path.join(ROOT_DIR, "packages/swap"),
         pkgJson: path.join(ROOT_DIR, "packages/swap/package.json"),
         tagPrefix: "@arkade-os/swap/",
-        order: 3,
+        order: 2,
         dependsOnSdk: true,
         bumpFlag: "--swap-bump",
     },
 ];
 
 const PACKAGE_BY_KEY = Object.fromEntries(PACKAGES.map((p) => [p.key, p]));
-const ACTIVE_PACKAGES = PACKAGES.filter((p) => !p.excludedFromRelease);
-const ALL_KEYS = ACTIVE_PACKAGES.map((p) => p.key);
-const DEPENDENT_PACKAGES = ACTIVE_PACKAGES.filter((p) => p.dependsOnSdk);
+const ALL_KEYS = PACKAGES.map((p) => p.key);
+const DEPENDENT_PACKAGES = PACKAGES.filter((p) => p.dependsOnSdk);
 const PACKAGE_BY_BUMP_FLAG = Object.fromEntries(
     DEPENDENT_PACKAGES.map((p) => [p.bumpFlag, p.key]),
 );
@@ -321,10 +306,6 @@ function parseArgs(argv) {
 
 function validateTarget(target) {
     if (!VALID_TARGETS.has(target)) {
-        const excluded = PACKAGES.find((p) => p.key === target && p.excludedFromRelease);
-        if (excluded) {
-            die(`${excluded.name} is excluded from the release cycle until further notice.`);
-        }
         die(`Invalid target: ${target}. Use ${[...ALL_KEYS, "all"].join(", ")}.`);
     }
 }
@@ -345,9 +326,8 @@ function primarySelection(target) {
     // Releasing the SDK drags every SDK-dependent package along, because each
     // would otherwise stay published against the previous SDK version.
     if (target === "sdk") return ALL_KEYS;
-    // `all` is a bulk convenience, not an implication of the SDK bump; packages
-    // marked `excludeFromAll` opt out of it but remain releasable directly.
-    if (target === "all") return ALL_KEYS.filter((k) => !PACKAGE_BY_KEY[k].excludeFromAll);
+    // `all` is a bulk convenience, not an implication of the SDK bump.
+    if (target === "all") return ALL_KEYS;
     if (PACKAGE_BY_KEY[target]) return [target];
     die(`Invalid target: ${target}`);
 }

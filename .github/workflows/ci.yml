@@ -39,9 +39,6 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      - name: Type-check boltz-swap
-        run: pnpm -C packages/boltz-swap run typecheck
-
       - name: Type-check swap
         run: pnpm -C packages/swap run typecheck
 
@@ -50,12 +47,6 @@ jobs:
 
       - name: Verify ts-sdk publish shape
         run: cd packages/ts-sdk && npm pack --dry-run --ignore-scripts
-
-      - name: Smoke-test boltz-swap dist
-        run: pnpm -C packages/boltz-swap run smoke:dist
-
-      - name: Verify boltz-swap publish shape
-        run: cd packages/boltz-swap && npm pack --dry-run --ignore-scripts
 
       - name: Smoke-test swap dist
         run: pnpm -C packages/swap run smoke:dist
@@ -109,9 +100,6 @@ jobs:
               test/e2e/onchain.test.ts
               test/e2e/deprecatedSignerMigration.test.ts
               test/e2e/digestMismatch.test.ts
-          # boltz-swap is deprecated: no integration stack is spun up for it.
-          # The check job still type-checks, builds and smoke-tests it, since
-          # release.yml can still publish the package.
           - package: swap
             group: all
             test_files: ""
@@ -166,9 +154,6 @@ jobs:
           docker logs arkd 2>&1 || true
           docker logs arkd-wallet 2>&1 || true
           docker logs emulator 2>&1 || true
-          docker logs boltz 2>&1 || true
-          docker logs boltz-lnd 2>&1 || true
-          docker logs boltz-fulmine 2>&1 || true
 
       - name: Cleanup
         if: always()

@@ -11,7 +11,7 @@
 # types — see that file's header. The profiles share ports, so only one stack
 # can be up at a time.
 #
-# Usage: scripts/regtest.sh <ts-sdk|boltz-swap|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]
+# Usage: scripts/regtest.sh <ts-sdk|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]
 #   up     – clean + start with the package's .env.regtest
 #   down   – stop the stack (preserves data)
 #   reset  – clean (remove containers, volumes)
@@ -32,7 +32,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REGTEST_DIR="$ROOT_DIR/regtest"
 
 usage() {
-  echo "Usage: $0 <ts-sdk|boltz-swap|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]" >&2
+  echo "Usage: $0 <ts-sdk|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]" >&2
   exit 1
 }
 
@@ -51,8 +51,8 @@ TEST_FILES=("$@")
 # A profile resolves to a package directory plus an env-file suffix; a plain
 # package name is the profile with no suffix.
 case "$PKG" in
-  ts-sdk|boltz-swap|swap) PKG_DIR="$PKG"; ENV_SUFFIX="" ;;
-  swap-rfq)               PKG_DIR="swap"; ENV_SUFFIX=".rfq" ;;
+  ts-sdk|swap) PKG_DIR="$PKG"; ENV_SUFFIX="" ;;
+  swap-rfq)    PKG_DIR="swap"; ENV_SUFFIX=".rfq" ;;
   *) usage ;;
 esac
 
@@ -86,9 +86,6 @@ cmd_setup() {
     ts-sdk)
       pnpm -C "$ROOT_DIR/packages/ts-sdk" exec node test/setup.mjs
       ;;
-    boltz-swap)
-      pnpm -C "$ROOT_DIR/packages/boltz-swap" exec node test/e2e/setup.mjs
-      ;;
     swap)
       pnpm -C "$ROOT_DIR/packages/swap" exec node test/e2e/setup.mjs
       ;;
@@ -102,13 +99,6 @@ cmd_test() {
         ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" exec vitest run "${TEST_FILES[@]}"
       else
         ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" run test:integration
-      fi
-      ;;
-    boltz-swap)
-      if [ "${#TEST_FILES[@]}" -gt 0 ]; then
-        pnpm -C "$ROOT_DIR/packages/boltz-swap" exec vitest run "${TEST_FILES[@]}"
-      else
-        pnpm -C "$ROOT_DIR/packages/boltz-swap" run test:integration
       fi
       ;;
     swap)
