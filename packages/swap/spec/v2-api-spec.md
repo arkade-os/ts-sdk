@@ -1,8 +1,8 @@
 # Arkade Swap SDK v2: High-Level API Spec
 
 Status: proposal. Breaks the documented v1 surface deliberately.
-Scope: `@arkade-os/swap` public API and the wallet-verb layer above it.
-Out of scope: RFQ wire format, contract scripts, solver behavior. Those are the Intents protocol and do not change.
+Scope: `@arkade-os/swap` public API and the optional wallet-style verbs exported by the swap package.
+Out of scope: contract scripts, solver behavior, and the RFQ protocol itself. Adapter compatibility during the RFQ amount migration is called out where it affects the SDK boundary.
 
 ---
 
@@ -18,9 +18,11 @@ The v2 swap client takes a route and returns an outcome. A route is two endpoint
 |---|---|---|---|
 | Intents protocol | wire + contracts | route, endpoint, corridor, RFQ, offer | solvers, auditors |
 | Swap client (this spec) | `@arkade-os/swap` | route, quote, accept, outcome | app developers |
-| Wallet verbs | wallet SDK | pay, receive, withdraw, exchange | product developers |
+| Swap verbs | `@arkade-os/swap` extension over `IWallet` | pay, receive, withdraw, exchange | product developers |
 
 The protocol layer is authoritative and unchanged. The v1 building blocks (`requestLightningSend`, `createOffer`, `pushClaim`, `refundIfUnresolved`, `watchOfferSwaps`, ...) are demoted to `@arkade-os/swap/protocol`: still exported, no longer documented as the integration path. The client is built on them; solvers and advanced integrators keep them.
+
+The core `@arkade-os/sdk` package stays usable without `@arkade-os/swap`. Wallet-style verbs are a convenience surface composed by the swap package, not required methods on core `IWallet`.
 
 ---
 
@@ -33,7 +35,8 @@ type AssetId = string;
 // "bip122:000000000019d6689c085ae165831e93/arkade:<genesis_txid>.<idx>" Arkade asset
 // Tickers ("BTC", "USDT") are accepted as aliases and canonicalized via the registry.
 
-type Corridor = "arkade" | "lightning" | "onchain";   // §9 drafts the eip155 extension
+type Corridor = "arkade" | "lightning" | "onchain";
+type CorridorId = Corridor | `eip155:${number}`;   // §9 drafts the eip155 extension
 
 /** An endpoint is an asset on a corridor, plus the instrument that settles it. */
 interface Endpoint {
@@ -50,23 +53,29 @@ type Instrument =
       amount?: bigint; expiresAt: number };
 ```
 
+WARNING/TODO: the CAIP-19 shape is an intentional API simplification, not direct NArk compatibility by type shape. Current discovery uses names such as `btc`, and NArk models Ark, Lightning, and onchain BTC as distinct corridor assets. V2 needs a registry-backed alias/canonicalization layer that maps the public CAIP-19 endpoint ids back to today's market pair strings, for example `arkade:BTC->lightning:BTC`.
+
 An instrument is the leg's concrete settlement locus on its corridor; direction comes from give versus take, not from the instrument. `{ kind: "wallet" }` is the only instrument the SDK holds signing authority over, which is why it is the only one nobody passes: `accept()` acts on wallet legs (spend the balance, land the claim) and merely watches the others. The supply law: the caller provides non-wallet take instruments, which is what `to` is; the quote provides non-wallet give instruments, which is exactly what the artifact is; every remaining slot resolves to `wallet`. The variant is explicit rather than an absent field because absence would mean two unrelated things, wallet-by-default versus not-yet-resolved, and receive legs live in the second state until the quote returns.
 
 ```ts
 /**
- * The implemented routes, as a closed union. An unsupported corridor pair is a
- * type error and an `UnsupportedRoute` at runtime, never a misclassification.
+ * The implemented routes, as a closed union. An unsupported corridor pair is an
+ * `UnsupportedRoute` during resolve/quote and a type error once a route has
+ * been resolved into this value.
  * Serialized as the protocol pair string: "arkade:BTC->lightning:BTC".
  */
 type Route =
   | { give: Ep<"arkade">;    take: Ep<"arkade"> }        // asset swap (offer covenant)
   | { give: Ep<"arkade">;    take: Ep<"lightning"> }     // corridor swaps:
   | { give: Ep<"lightning">; take: Ep<"arkade"> }        // paired HTLCs,
-  | { give: Ep<"arkade">;    take: Ep<"onchain"> }       // BTC on both legs
-  | { give: Ep<"onchain">;   take: Ep<"arkade"> };
+  | { give: Ep<"arkade">;    take: Ep<"onchain"> };      // BTC on both legs
 ```
 
-Amounts are `bigint` atomic units everywhere in this API. There is no display-amount code path. `Amount.parse("0.01", asset)` and `Amount.format(n, asset)` exist for UI code and are the only place decimals appear. Records and wire forms serialize amounts as decimal strings, as v1 records already do; `bigint` is the in-memory law, not a storage format. This deletes the documented v1 footgun where `100000` meaning sats quoted 100,000 BTC.
+WARNING/TODO: `onchain:BTC -> arkade:BTC` is deliberately not in the implemented route union yet. It must return `UnsupportedRoute` during `resolve()` / `quote()`, before RFQ disclosure, artifact creation, persistence, or funding, until the manager owns the trader's L1 refund path end to end.
+
+Amounts are `bigint` atomic units everywhere in this API. There is no display-amount code path. `Amount.parse("0.01", asset)` and `Amount.format(n, asset)` exist for UI code and are the only place decimals appear. Records and target wire forms serialize amounts as decimal strings, as v1 records already do; `bigint` is the in-memory law, not a storage format. This deletes the documented v1 footgun where `100000` meaning sats quoted 100,000 BTC.
+
+RFQ compatibility note: the target RFQ contract is decimal strings for request and quote amounts, but current services may still emit safe JSON number quote fields during migration. The v2 adapter should parse canonical decimal strings, accept JSON numbers only when they are non-negative safe integers, emit decimal strings where the RFQ protocol expects them, and refuse unsafe `bigint` narrowing with a typed compatibility error.
 
 ---
 
@@ -74,19 +83,22 @@ Amounts are `bigint` atomic units everywhere in this API. There is no display-am
 
 ```ts
 const client = createSwapClient({
-  wallet,                          // IWallet; also the source of the Arkade Service URL
-  repository?,                     // default: IndexedDB in browser, in-memory in Node
+  wallet,                          // IWallet; endpoint inference needs a neutral core API
+  arkServerUrl?,                   // TODO: explicit fallback until that core API exists
+  repository?,                     // default: IndexedDB in browser, file-backed SQLite in Node
   discovery?,                      // default: network + registry inferred from wallet's network
   corridors?,                      // overrides only; see §6
   policy?,                         // maxFee ceilings, allowed registries, quote TTL floor,
-                                   // selectMarket veto, drive: "auto" | "readonly"
+                                   // selectMarket veto, drive: "auto" | "manual" | "readonly"
 });
 
-// No start(). Construction kicks one background restore-read; the drive loop
-// starts itself iff that read finds live swaps, and otherwise on the first
-// accept(). quote() never reads, never drives, never opens a stream.
+// No required start(). In drive:"auto", construction runs one restore-read and
+// arms live resources only when live swaps exist or on first accept(). quote()
+// never drives swaps or opens watcher streams; it only performs quote/discovery work.
 await client.ready;                // restore-read done; if it armed, the first pass ran
-await using _ = client;            // dispose = pause: timer and streams drop, registrations stay
+client.start(): Promise<void>      // idempotent; required only by drive:"manual"
+client.stop(): Promise<void>       // releases live resources; instance remains reusable
+await using _ = client;            // terminal cleanup; durable records/registrations remain
 
 client.quote(input: QuoteInput): Promise<Quote>
 client.accept(quote: Quote): Promise<Swap>
@@ -96,7 +108,13 @@ client.onUpdate(fn: (u: SwapUpdate) => void): Unsubscribe
 client.markets(): Promise<Market[]>             // escape hatch; never required
 ```
 
-Lifecycle. Work arms the drive, never the caller's memory. Construction performs exactly one side effect, a background restore-read of the repository; when that read finds live swaps the client starts the manager itself, which runs one pass immediately because a resumed swap may already be past a deadline, then holds the poll loop. When it finds none, nothing runs until `accept` supplies new work. The poll loop is the correctness mechanism, deadline-gated claims and refunds ride on it; the contract-event subscription is a latency optimization that only makes a pass run early, so dropping it is always safe. Disposal is a pause, not a cancellation: `await using` clears the timer, drops the subscription, keeps the wallet's contract registrations, and the next construction's restore-read re-arms. Double arming is a no-op, so React double-mounts and concurrent callers are safe, and the dangerous state, live swaps with no pass running, is unreachable except by never constructing the client at all. A client constructed with `policy.drive: "readonly"` restores and reports but never actuates, honoring the read-without-driving consumer the manager's own restore/start split was designed for. Concurrent drivers on one seed are wasteful, not unsafe: every push is evidence-gated, the first refund attempts are expected-refused by design, and a losing race reconciles as an outcome the same way cancel reconciles a fill.
+Lifecycle. Work arms the drive by default, never the caller's memory. Construction performs one background restore-read of the repository. In `drive: "auto"`, live swaps found by that read start the manager, run one immediate pass because a resumed swap may already be past a deadline, then hold the poll loop; if no live swaps exist, nothing runs until `accept()` supplies new work. In `drive: "manual"`, construction restores state but does not open timers or streams until `start()` is called. In `drive: "readonly"`, the client restores and reports but never actuates, honoring the read-without-driving consumer the manager's own restore/start split was designed for. The poll loop is the correctness mechanism, deadline-gated claims and refunds ride on it; the contract-event subscription is a latency optimization that only makes a pass run early, so dropping it is always safe.
+
+`stop()` releases the live resources owned by this instance while leaving the instance reusable. `[Symbol.asyncDispose]` is stronger: it releases timers, streams, subscriptions, listeners, callbacks, and process-local loop state, then makes the client instance terminal. It must not delete durable swap records, wallet contract registrations, or recovery metadata; constructing a new client restores and resumes from that state. Double arming is a no-op, so React double-mounts and concurrent callers are safe. Concurrent drivers on one seed are wasteful, not unsafe: every push is evidence-gated, the first refund attempts are expected-refused by design, and a losing race reconciles as an outcome the same way cancel reconciles a fill.
+
+Storage. Browser defaults to IndexedDB. Node defaults for real swap operation should be file-backed SQLite, reusing `packages/swap/src/repositories/sqlite/repository.ts`; the `node:sqlite` executor can follow `config/test-helpers/nodeSqlExecutor.ts` but use a file path rather than `:memory:`. In-memory storage remains available only through an explicit ephemeral/test mode. TODO: choose the default Node database path and ownership rules for closing a client-created SQLite connection.
+
+TODO: define exact `client.ready` failure semantics, especially for corrupt records, missing corridor dependencies, and a first restore pass that produces `needs_recovery`.
 
 ### 3.1 `quote(input)`
 
@@ -114,7 +132,7 @@ interface QuoteInput {
 
 Resolution, in order. `to` is parsed once, at this boundary: a bolt11 yields the lightning corridor and an invoice instrument; an Arkade address yields arkade; a bitcoin L1 address yields onchain; anything ambiguous throws `AmbiguousDestination` here and nowhere else. `via` covers the receive case where the instrument does not exist yet. The corridor pair selects the `Route` variant; the pair `(give.asset, take.asset, corridors)` selects the market from the discovery index; the market card selects the backend, feed-priced or RFQ, per the protocol rule that the market picks the backend. Exactly one amount is pinned: by the caller via `amount` + `amountOn`, or by the invoice when one is present. Pinning a second one is `AmountMismatch`, thrown before any network round trip.
 
-Resolution is also available without disclosure: `client.resolve(input)` performs the same parsing and market selection and returns `{ route, market, solver? }` while contacting nobody, so application policy can veto a market or registry before an RFQ round trip discloses an invoice or an amount. `quote()` runs the same veto internally through `policy.selectMarket`, and every `Quote` carries its market provenance for audit.
+Resolution is also available without new disclosure: `client.resolve(input)` performs the same parsing and returns the resolved route when possible, so application policy can veto before an RFQ round trip discloses an invoice or an amount. Market and solver selection are network-free only against injected or cached discovery data. If no discovery snapshot is available, the client must either return an unresolved route shape or throw `DiscoverySnapshotUnavailable`; TODO: choose one result shape before implementation. `quote()` runs the same veto internally through `policy.selectMarket`, may fetch discovery as part of the quote path, and every `Quote` carries its market provenance for audit.
 
 The returned `Quote` is the order, fully resolved:
 
@@ -138,7 +156,11 @@ The client verifies every quote against the request before returning it: pair ma
 
 ### 3.2 `accept(quote)`
 
-One call, one contract: persist the full record and secrets first, then fund, then update the record with the funding txid. The offer extension packet is attached by the client on asset-swap routes; the v1 failure mode of funding without the extension is unrepresentable. On `arkade -> lightning` and `arkade -> onchain`, accept funds the lockup and the caller can go offline; recovery is the client's job. On `arkade <-> arkade`, accept creates and funds the offer. On `lightning -> arkade` there is no accept message at the protocol level; `accept(quote)` arms persistence and the claim watcher, and the payer paying `quote.artifact.invoice` is the acceptance. Calling accept after `expiresAt` is `QuoteExpired`; the client never silently re-quotes.
+One call, one contract: persist the full record and secrets first, then fund, then update the record with the funding txid. `accept(quote)` is idempotent by quote id or by a deterministic accept id derived from the quote. Once an accept record exists, later calls with the same quote return or resume that record; they must not create a new swap, a new invoice, or a second funding attempt. If funding may have happened but the txid is missing, recovery reconciles from wallet/indexer/contract evidence before any funding retry.
+
+The crash windows are part of the contract: before persistence, retry is a normal first accept; after persistence but before funding, retry resumes the existing record and can still expire safely; after funding but before txid persistence, retry reconciles from evidence before moving value; after txid persistence, the drive loop resumes from the saved record. Receive routes follow the same rule: on `lightning -> arkade`, `accept(quote)` arms persistence and the claim watcher, and the payer paying `quote.artifact.invoice` is the acceptance. A duplicate accept returns the same valid artifact/invoice rather than minting a second one.
+
+The offer extension packet is attached by the client on asset-swap routes; the v1 failure mode of funding without the extension is unrepresentable. On `arkade -> lightning` and `arkade -> onchain`, accept funds the lockup and the caller can go offline; recovery is the client's job. On `arkade <-> arkade`, accept creates and funds the offer. Calling accept after `expiresAt` is `QuoteExpired`; the client never silently re-quotes.
 
 ### 3.3 `cancel(swapId)`
 
@@ -153,10 +175,12 @@ Some routes have exactly one thing a counterparty must see. It is a first-class 
 ```ts
 type Artifact =
   | { kind: "invoice"; bolt11: string }        // lightning receive: show to the payer
-  | { kind: "deposit"; address: string; amount: bigint };  // future inbound corridors
+  | { kind: "deposit"; corridor: CorridorId; address: string;
+      asset: AssetId; amount: bigint; expiresAt?: number;
+      chain?: string | number };               // future inbound corridors, including §9
 ```
 
-Everything else that v1 exposed around the artifact, sealing keys, preimages, claim scripts, is internal.
+Everything else that v1 exposed around the artifact, sealing keys, preimages, claim scripts, is internal. TODO: finalize the deposit artifact before inbound corridors ship; the shape above is intentionally broad enough to cover the EVM draft without under-specifying expiry, asset, or chain identity.
 
 ### 3.5 Updates and outcomes
 
@@ -201,36 +225,45 @@ This table is the spec's center. "v1" is the currently documented integration su
 | Claim | `awaitLockupFunding` + `contractSigner` + `contractPreimage` + `pushClaim` + `expectedAmount` | automatic on funding; expected amount is the order's take amount; short-funded lockups still refuse to reveal the preimage |
 | Refund | `refundIfUnresolved` with seven hand-fed parameters | automatic after `refundLocktime`; surfaces as `refunded` or `needs_recovery` |
 | Preimage persistence | check `secrets.mustPersistPreimage` | internal |
-| Arkade Service URL | config parameter | the wallet (issue #734) |
+| Arkade Service URL | config parameter | wallet via a neutral core endpoint API; explicit config remains until that exists |
 | Emulator key | optional parameter | resolved from the operator; override retained |
-| Repository | required parameter | defaulted per environment; injectable |
-| Units | display strings with a documented footgun | `bigint` atomic only; `Amount.parse` is the explicit conversion |
+| Repository | required parameter | browser IndexedDB; Node file-backed SQLite; injectable; in-memory only as explicit ephemeral/test mode |
+| Units | display strings with a documented footgun | `bigint` atomic at the API; RFQ adapter serializes decimal strings and accepts safe-number quotes only during migration |
 | Status vocabulary | ternary on `family` | one `Outcome` enum; raw state on `detail` |
-| Watcher lifecycle | `start()` after construction, `stop()` on teardown | drive starts itself when the restore-read finds live swaps, or on first `accept`; disposal via `await using` is a pause, registrations survive |
+| Watcher lifecycle | required `start()` after construction, `stop()` on teardown | `drive:"auto"` starts itself when restore finds live swaps or on first `accept`; optional manual `start()`/`stop()` provide deterministic control; async disposal is terminal cleanup and registrations survive |
 
 The caller supplies, at most: two asset ids or one destination string, one amount, which side it pins, and optionally a corridor for receives. Nothing else.
 
 ---
 
-## 5. Wallet verbs
+## 5. Swap verbs
 
-The layer product code actually calls. Spark-shaped: destination-typed verbs, a fee ceiling as the only visible price surface, quote and accept collapsed inside.
+The product-facing layer can still be wallet-shaped, but it is exported by `@arkade-os/swap` and composes over an `IWallet`. It must not become required surface on core `IWallet`; `@arkade-os/sdk` stays useful without the swap package installed.
 
 ```ts
-await wallet.pay(destination, { amount?, maxFee? });
+const swaps = createSwapClient({ wallet });
+
+await swaps.pay(destination, { amount?, maxFee? });
 // bolt11        -> arkade:BTC -> lightning:BTC   (amount from invoice)
 // bc1...        -> arkade:BTC -> onchain:BTC     (amount required)
 // Arkade addr   -> plain Arkade transaction      (no swap; not this SDK's concern)
 
-const r = await wallet.receive({ amount, via: "lightning" });
+const r = await swaps.receive({ amount, via: "lightning" });
 showToPayer(r.artifact.bolt11);
 // lightning:BTC -> arkade:BTC; claim is automatic while online
 
-await wallet.exchange({ give: "BTC", take: "USDT", amount, amountOn: "give", maxFee? });
+await swaps.exchange({ give: "BTC", take: "USDT", amount, amountOn: "give", maxFee? });
 // arkade <-> arkade asset swap
 ```
 
-Each verb compiles to a `QuoteInput`, calls `quote`, checks `quote.fee` against `maxFee`, and calls `accept`. `maxFee` exceeded rejects before funding with the quote attached, so the app can re-present. The verbs add no capability; they subtract vocabulary. A product integrating payments never sees the words route, corridor, market, or quote, and Lightning is what it has always been to a wallet user: BTC, paid or received.
+A wallet-shaped wrapper is also viable if product code wants the verbs colocated with the wallet object:
+
+```ts
+const walletWithSwaps = withSwapVerbs(wallet, { client: swaps });
+await walletWithSwaps.pay(destination, { amount, maxFee });
+```
+
+TODO: choose the final export shape, direct client verbs or wrapper, before declaring the public API. In either shape, each verb compiles to a `QuoteInput`, calls `quote`, checks `quote.fee` against `maxFee`, and calls `accept`. `maxFee` exceeded rejects before funding with the quote attached, so the app can re-present. The verbs add no capability; they subtract vocabulary. A product integrating payments never sees the words route, corridor, market, or quote, and Lightning is what it has always been to a wallet user: BTC, paid or received.
 
 ---
 
@@ -256,7 +289,11 @@ interface CorridorOverrides {
 
 Override semantics. An override replaces a dependency inside a corridor module; it never enables a route (the closed `Route` union and discovered markets own that), never selects a solver or transport (the market card owns that), and never alters settlement behavior. Every override is a named trust anchor: the chain source is whose L1 view reconcile-from-evidence runs against, the decoder is who validates an invoice before display, the covclaimd key is who may open the sealed claim packet, the repository is where persist-first lands. Each defaults to the wallet, the operator, or a built-in, so the config key can be absent entirely; explicitly overriding a dep to nothing surfaces as `MissingCorridorDep` at quote time, before funding. The one exception is deliberate: `evm.chains` is constitutive rather than an override, because no default RPC can be responsibly shipped, and naming a chain with its endpoint is what admits that chain's routes into this client.
 
-This is the extension seam. A future corridor (BOLT12 offers as reusable lightning instruments; an EVM corridor with `eip155` asset ids, where the chain id in the asset implies the corridor) registers a parser, an instrument, deps, and a watcher, and appears as new `Route` variants in a minor version. §9 drafts the EVM corridor end to end; the CAIP layout already reserves the namespace.
+WARNING/TODO: dependency overrides are not yet a safe public third-party corridor plugin API. A corridor cannot be registered externally unless parsing, quoting/RFQ adaptation, persistence, restoration, observation, actions, deadline semantics, and outcome translation are registered together. Until that manager contract exists, §6 should be read as internal modularity plus dependency overrides.
+
+Future corridors such as BOLT12 offers as reusable lightning instruments or an EVM corridor with `eip155` asset ids appear as new `Route` variants in a minor version only after that full contract exists. §9 drafts the EVM corridor end to end; the CAIP layout already reserves the namespace.
+
+TODO: built-in BOLT11 decoding is now an SDK guarantee. The lightning corridor must define decoder choice and validation rules for amountless invoices, expiry, payment hash extraction, and network checks.
 
 ---
 
@@ -264,20 +301,24 @@ This is the extension seam. A future corridor (BOLT12 offers as reusable lightni
 
 ```ts
 type SwapError =
-  | AmbiguousDestination      // "0x..." or otherwise underdetermined `to`
-  | UnsupportedRoute          // corridor pair outside the closed union
-  | AmountMismatch            // two pinned amounts, or amount vs invoice conflict
-  | QuoteVerificationError    // solver response fails local derivation or pair check
-  | SwapRefusal               // solver declined, with reason (protocol type, retained)
+  | AmbiguousDestination       // "0x..." or otherwise underdetermined `to`
+  | UnsupportedRoute           // corridor pair unsupported, including onchain -> arkade for now
+  | DiscoverySnapshotUnavailable // resolve() needs market data but has no injected/cached snapshot
+  | AmountMismatch             // two pinned amounts, or amount vs invoice conflict
+  | AmountEncodingUnsupported  // RFQ migration would require unsafe bigint narrowing
+  | QuoteVerificationError     // solver response fails local derivation or pair check
+  | SwapRefusal                // solver declined, with reason (protocol type, retained)
   | QuoteExpired
-  | MaxFeeExceeded            // verbs layer; carries the quote
-  | InsufficientFunds         // v1's validatePlan, run internally before accept
-  | NotCancellable           // cancel() on a corridor swap; only asset swaps cancel (§3.3)
-  | InconsistentRoute         // destination disagrees with an asset's chain (§9)
-  | MissingCorridorDep;       // e.g. onchain route with chain source overridden to null
+  | MaxFeeExceeded             // verbs layer; carries the quote
+  | InsufficientFunds          // v1's validatePlan, run internally before accept
+  | AcceptConflict             // quote id maps to an incompatible persisted accept record
+  | ClientDisposed             // method called after async disposal
+  | NotCancellable             // cancel() on a corridor swap; only asset swaps cancel (§3.3)
+  | InconsistentRoute          // destination disagrees with an asset's chain (§9)
+  | MissingCorridorDep;        // e.g. onchain route with chain source overridden to null
 ```
 
-Every error is thrown before value moves or not at all; post-funding problems are outcomes, not exceptions.
+Every error is thrown before value moves or not at all; post-funding problems are outcomes, not exceptions. `AcceptConflict` is only for incompatible durable evidence, not ordinary duplicate `accept(quote)`, which returns or resumes the original swap.
 
 ---
 
@@ -287,7 +328,7 @@ Every error is thrown before value moves or not at all; post-funding problems ar
 |---|---|
 | `requestLightningSend` / `requestLightningReceive` | internal to `quote`/`accept`; exported from `/protocol` |
 | `createOffer` + manual `wallet.send` + `addAssetSwap` | internal to `accept` |
-| `watchOfferSwaps`, RFQ manager wiring | internal; armed by the first `accept`/`onUpdate` |
+| `watchOfferSwaps`, RFQ manager wiring | internal; `drive:"auto"` arms when live work exists, optional manual `start()`/`stop()` remains for explicit control |
 | `awaitLockupFunding`, `pushClaim`, `contractPreimage` plumbing | internal claim path |
 | `refundIfUnresolved` | internal recovery; `client.recover` for `needs_recovery` |
 | `cancelOffer` | `client.cancel`, fill race reconciled |
@@ -297,8 +338,9 @@ Every error is thrown before value moves or not at all; post-funding problems ar
 | `SwapQuoteInput` kinds / flat bag | `QuoteInput` + closed `Route` union |
 | `family` on updates | deleted; `Outcome` + `detail` |
 | `amountSide: "to"` | `amountOn: "take"` |
-| `arkServerUrl` config | from the wallet |
-| display-amount inputs | `bigint` + `Amount.parse` |
+| required lifecycle `start()` / `stop()` choreography | no required start; optional manual control; async disposal is terminal cleanup |
+| `arkServerUrl` config | wallet/provider-derived only after a neutral core API exists; explicit config remains until then |
+| display-amount inputs | `bigint` + `Amount.parse`; RFQ adapter serializes decimal strings |
 
 Deprecated does not mean deleted: one major version of re-exports from `/protocol` with `@deprecated` pointers, then removal from the root export.
 
@@ -312,7 +354,7 @@ Not in the closed union yet. This section is the reference for adding it, and a 
 
 ```ts
 type EvmCorridor = `eip155:${number}`;                 // "eip155:8453" = Base
-type CorridorV2  = Corridor | EvmCorridor;
+type CorridorV2  = CorridorId;
 
 const BTC       = "bip122:000000000019d6689c085ae165831e93/slip44:0";
 const USDT_ARK  = "bip122:000000000019d6689c085ae165831e93/arkade:<genesis_txid>.<idx>";
@@ -374,8 +416,8 @@ const q = await client.quote({
 });
 
 showDeposit(q.artifact);
-// { kind: "deposit", chain: 8453, address: "0x...", token: USDC_BASE,
-//   amount: 100_000_000n, expiresAt }
+// { kind: "deposit", corridor: "eip155:8453", chain: 8453,
+//   address: "0x...", asset: USDC_BASE, amount: 100_000_000n, expiresAt }
 
 const swap = await client.accept(q);   // arms persistence and the watcher
 // The deposit itself is the acceptance: accepted -> open -> funded -> claimed
@@ -383,20 +425,20 @@ const swap = await client.accept(q);   // arms persistence and the watcher
 
 This is the structural mirror of lightning receive. No accept message crosses the wire; the counterparty-visible artifact is a deposit instruction instead of a hold invoice; `accept` arms persistence and watching; and the funding action happens in a wallet this SDK does not control. The `deposit` artifact kind reserved in §3.4 is this route's irreducible piece.
 
-### 9.5 Wallet verbs
+### 9.5 Swap verbs
 
 ```ts
-await wallet.pay("eip155:8453:0xAbC...123", {
+await swaps.pay("eip155:8453:0xAbC...123", {
   take: USDC_BASE,               // required: EVM destinations name no asset
   amount: 250_000_000n,
   maxFee,
 });
 
-const d = await wallet.receive({ via: "eip155:8453", asset: USDC_BASE, amount: 100_000_000n });
+const d = await swaps.receive({ via: "eip155:8453", asset: USDC_BASE, amount: 100_000_000n });
 showDeposit(d.artifact);
 ```
 
-`pay` grows exactly one field, and only on EVM destinations; the compile error when `take` is missing is the API teaching the asymmetry. Everything else, `maxFee` ceiling, quote and accept collapsed inside, rejection-with-quote on an exceeded ceiling, is identical to §5.
+`pay` grows exactly one field, and only on EVM destinations; the compile error when `take` is missing is the API teaching the asymmetry. Everything else, `maxFee` ceiling, quote and accept collapsed inside, rejection-with-quote on an exceeded ceiling, is identical to §5. The verbs still come from the swap package, whether exposed directly on the client or through `withSwapVerbs`.
 
 ### 9.6 Inference additions
 
@@ -423,16 +465,19 @@ Because the layers serve different people. An exchange UI must show terms before
 It is the one irreducible artifact: the payer needs it, and no abstraction changes that. v2's move is to make it the only visible piece of lightning receive, with the sealing key, preimage, and claim removed from the surface around it.
 
 **Why a closed `Route` union instead of `Corridor x Corridor`?**
-The full product contains pairs no contract implements. An open type forces runtime classification, and the v1 classifier already misroutes a mixed onchain-to-lightning market. The closed union makes unimplemented pairs unrepresentable and turns adding a corridor profile into an explicit, reviewable type change.
+The full product contains pairs no contract implements. An open type forces runtime classification, and the v1 classifier already misroutes a mixed onchain-to-lightning market. The closed union makes unimplemented pairs unrepresentable after resolution and turns adding a corridor profile into an explicit, reviewable type change. Runtime `QuoteInput` still validates strings and throws `UnsupportedRoute`; `onchain -> arkade` deliberately stays in that bucket until the L1 refund leg is owned end to end.
 
 **Why `bigint` only?**
-The current docs dedicate a bold paragraph to the display-versus-atomic trap. A high-level API that needs a warning about its number types has the wrong number types. Conversion still exists; it is just spelled `Amount.parse`, where a reviewer can see it.
+The current docs dedicate a bold paragraph to the display-versus-atomic trap. A high-level API that needs a warning about its number types has the wrong number types. Conversion still exists; it is just spelled `Amount.parse`, where a reviewer can see it. The RFQ adapter carries any temporary safe-number compatibility during migration; callers never get a display-number path back.
 
 **Does this change the trust model?**
 No. Derive locally, persist first, reconcile from evidence remain exactly the protocol's rules; v2 relocates their enforcement from documentation into the client. Registries and cards remain advisory, quotes remain solver-signed and short-lived, and a quote that disagrees with local derivation still dies before funding.
 
+**Why are swap verbs not required methods on `IWallet`?**
+Because package direction matters. Core wallet primitives belong in `@arkade-os/sdk`, but swap orchestration, solver discovery, artifacts, route UX, and outcome translation belong in `@arkade-os/swap`. Product code can still get wallet-shaped verbs from the swap package without making every wallet consumer depend on swaps.
+
 **What about assets on other networks?**
-The asset id layout is already CAIP-19 with room reserved: `eip155` assets imply their own corridor, arkade assets live under bitcoin's `bip122` chain id, and BTC is a single id on every corridor. New networks are new corridor modules and new `Route` variants, not new client shapes; §9 is the worked instance.
+The asset id layout is already CAIP-19 with room reserved: `eip155` assets imply their own corridor, arkade assets live under bitcoin's `bip122` chain id, and BTC is a single id on every corridor. New networks are new corridor modules and new `Route` variants, not new client shapes; §9 is the worked instance. TODO: define the canonical alias map from CAIP-19 ids to current discovery and RFQ pair strings, and document the deliberate divergence from NArk's corridor-specific BTC asset model.
 
 **Why does an EVM send require `take` when a bolt11 requires nothing?**
 Instruments differ in how much they self-describe. An invoice pins the asset, the amount, the deadline, and the settlement hash; an EVM account pins only a chain. The API mirrors that gradient instead of papering over it: the invoice-shaped call takes one argument, the account-shaped call takes three, and the extra arguments are exactly the information the instrument failed to carry.
