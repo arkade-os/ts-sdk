@@ -69,6 +69,22 @@ export class ForeignDescriptorError extends Error {
     }
 }
 
+/**
+ * Thrown by `Wallet.getNewAddresses({ forceNew: true })` when the wallet has
+ * no HD stream to advance — `walletMode: 'static'` / `'auto'`, or a
+ * {@link DescriptorProvider} that declined to allocate.
+ *
+ * A typed refusal rather than a silent repeat: a caller that asked for a
+ * *fresh* address is issuing one per counterparty, and quietly returning the
+ * address it already handed out surfaces only as two payers sharing a script.
+ */
+export class WalletCannotAllocateAddressError extends Error {
+    override readonly name = "WalletCannotAllocateAddressError";
+    constructor(reason: string, options?: { cause?: unknown }) {
+        super(`cannot allocate a fresh address: ${reason}`, options);
+    }
+}
+
 /** Anything that can derive and sign for a descriptor it claims. */
 type DescriptorOwner = Pick<
     DescriptorProvider,
