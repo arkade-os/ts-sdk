@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
 import { ArkAddress, arkade, asset } from "@arkade-os/sdk";
-import { decodeOffer, encodeOffer, offerVtxoScript, swapProgramBinding, Offer } from "../src/offer";
+import { decodeOffer, encodeOffer, offerContract, swapProgramBinding, Offer } from "../src/offer";
 
 // deterministic keys -> the derived swap addresses must never drift (any
 // change to the program JSONs or the arg binding changes them); goldens from
 // the swap covenant's reference selfCheck
-const server = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
+const operatorPubkey = hex.decode(
+    "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+);
 const keys = {
     makerPkScript: hex.decode(
         "51203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
@@ -53,16 +55,20 @@ const goldens: [Omit<Offer, "swapPkScript">, string][] = [
 describe("swap offer", () => {
     it("derives the golden swap addresses for both directions", () => {
         for (const [offer, golden] of goldens) {
-            const script = offerVtxoScript(offer, server);
-            const address = new ArkAddress(server, script.tweakedPublicKey, "tark").encode();
+            const contract = offerContract(offer, operatorPubkey);
+            const address = new ArkAddress(
+                operatorPubkey,
+                contract.tweakedPublicKey,
+                "tark",
+            ).encode();
             expect(address).toBe(golden);
         }
     });
 
     it("roundtrips the TLV codec for both directions", () => {
         for (const [offer] of goldens) {
-            const script = offerVtxoScript(offer, server);
-            const full: Offer = { ...offer, swapPkScript: script.pkScript };
+            const contract = offerContract(offer, operatorPubkey);
+            const full: Offer = { ...offer, swapPkScript: contract.pkScript };
             const back = decodeOffer(encodeOffer(full));
             expect(hex.encode(encodeOffer(back))).toBe(hex.encode(encodeOffer(full)));
             expect(back.wantAmount).toBe(BigInt(50_000));
@@ -73,11 +79,11 @@ describe("swap offer", () => {
 
     it("binds the asset group index into the covenant", () => {
         const indexed = asset.AssetId.create("aa".repeat(32), 1);
-        const script = offerVtxoScript(
+        const contract = offerContract(
             { wantAmount: BigInt(50_000), wantAsset: indexed, ...keys },
-            server,
+            operatorPubkey,
         );
-        const address = new ArkAddress(server, script.tweakedPublicKey, "tark").encode();
+        const address = new ArkAddress(operatorPubkey, contract.tweakedPublicKey, "tark").encode();
         expect(address).not.toBe(goldens[0][1]);
     });
 
@@ -112,9 +118,9 @@ describe("swap offer", () => {
                     ["offerAsset", 0x0b],
                 ] as const) {
                     const offer = { wantAmount: BigInt(50_000), [field]: assetId, ...keys };
-                    const script = offerVtxoScript(offer, server);
+                    const contract = offerContract(offer, operatorPubkey);
                     const wire = hex.encode(
-                        encodeOffer({ ...offer, swapPkScript: script.pkScript }),
+                        encodeOffer({ ...offer, swapPkScript: contract.pkScript }),
                     );
                     // `[tag][len BE u16][value]`, value == the identity form
                     const record = hex.encode(Uint8Array.from([tag, 0x00, 0x22])) + v.asset_id_hex;
@@ -125,7 +131,7 @@ describe("swap offer", () => {
             it(`program args carry the reversed txid and the index -- ${v.label}`, () => {
                 const { args } = swapProgramBinding(
                     { wantAmount: BigInt(50_000), wantAsset: assetId, ...keys },
-                    server,
+                    operatorPubkey,
                 );
 
                 // Serialization order in the covenant, display order in the id.
@@ -195,14 +201,14 @@ describe("swap offer", () => {
         // a 33-byte script would silently truncate makerWP to 31 bytes and only
         // surface as an unspendable address once the maker funds it
         expect(() =>
-            offerVtxoScript(
+            offerContract(
                 {
                     wantAmount: BigInt(50_000),
                     wantAsset: testAsset,
                     ...keys,
                     makerPkScript: keys.makerPkScript.slice(0, 33),
                 },
-                server,
+                operatorPubkey,
             ),
         ).toThrow("makerPkScript");
     });

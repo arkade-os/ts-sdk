@@ -19,7 +19,7 @@ import {
     Transaction,
     scriptFromTapLeafScript,
 } from "@arkade-os/sdk";
-import { decodeOffer, Offer, OFFER_PACKET_TYPE, offerVtxoScript } from "./offer";
+import { decodeOffer, Offer, OFFER_PACKET_TYPE, offerContract } from "./offer";
 import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "./store";
 
 // ponytail: fixed request size; tune only if histories outgrow it
@@ -134,20 +134,20 @@ export type SpendKind = "cancelled" | "fulfilled" | "indeterminate";
  * and they also survive batching: a solver filling several offers in one tx
  * gives each input its own leaf.
  *
- * `serverPubkey` must be the key the covenant was *funded* against. If it has
+ * `operatorPubkey` must be the key the covenant was *funded* against. If it has
  * rotated since, the rebuilt script will not match the offer's own
  * `swapPkScript` and this returns `indeterminate` rather than guessing —
  * `cancelOffer` diagnoses the same mismatch the same way.
  */
 export function classifySpend(
     offer: Offer,
-    serverPubkey: Uint8Array,
+    operatorPubkey: Uint8Array,
     spendTx: Transaction,
     deposit: { txid: string; vout: number },
 ): SpendKind {
     let leaves: { cancel?: Uint8Array; fulfill?: Uint8Array };
     try {
-        const script = offerVtxoScript(offer, serverPubkey);
+        const script = offerContract(offer, operatorPubkey);
         if (hex.encode(script.pkScript) !== hex.encode(offer.swapPkScript)) return "indeterminate";
         leaves = {
             cancel: script.functionByName("cancel")?.leafScript,
@@ -192,12 +192,12 @@ export const spendTxidsOf = (vtxo: { spentBy?: string; arkTxId?: string }): stri
  */
 export function classifyDepositSpend(
     offer: Offer,
-    serverPubkey: Uint8Array,
+    operatorPubkey: Uint8Array,
     spendTxs: Iterable<Transaction>,
     deposit: { txid: string; vout: number },
 ): SpendKind {
     for (const tx of spendTxs) {
-        const kind = classifySpend(offer, serverPubkey, tx, deposit);
+        const kind = classifySpend(offer, operatorPubkey, tx, deposit);
         if (kind !== "indeterminate") return kind;
     }
     return "indeterminate";
@@ -224,7 +224,7 @@ export function classifyDepositSpend(
  * does, so the `existingIds` escape hatch is no longer a correction mechanism
  * for a wrong label — it is only a skip list.
  *
- * `serverPubkey` must be the server key the covenants were funded against; a
+ * `operatorPubkey` must be the operator key the covenants were funded against; a
  * key that has rotated since makes every affected swap unclassifiable rather
  * than misclassified.
  */
@@ -232,9 +232,9 @@ export async function restoreAssetSwaps(
     indexer: RestoreIndexer,
     txs: Tx[],
     existingIds: ReadonlySet<string>,
-    opts: { serverPubkey: Uint8Array; scanned?: ReadonlySet<string> },
+    opts: { operatorPubkey: Uint8Array; scanned?: ReadonlySet<string> },
 ): Promise<{ restored: AssetSwap[]; scannedTxids: string[] }> {
-    const { serverPubkey, scanned = new Set<string>() } = opts;
+    const { operatorPubkey, scanned = new Set<string>() } = opts;
     const candidates = unscannedSwapCandidates(txs, existingIds, scanned);
     if (candidates.length === 0) return { restored: [], scannedTxids: [] };
 
@@ -345,7 +345,7 @@ export async function restoreAssetSwaps(
             const spendTxs = spendTxidsOf(vtxo)
                 .map((id) => spendTxByTxid.get(id))
                 .filter((tx): tx is Transaction => tx !== undefined);
-            const kind = classifyDepositSpend(offer, serverPubkey, spendTxs, {
+            const kind = classifyDepositSpend(offer, operatorPubkey, spendTxs, {
                 txid: vtxo.txid,
                 vout: vtxo.vout,
             });
@@ -365,7 +365,7 @@ export async function restoreAssetSwaps(
             fromAmount,
             toAmount: offer.wantAmount.toString(),
             // ponytail(arkade-os/ts-sdk#680): empty address makes cancel fall back
-            // to the current server key; store the funded address if server-key
+            // to the current operator key; store the funded address if operator-key
             // rotations become real (cancelOffer now at least diagnoses the
             // mismatch instead of reporting a missing VTXO)
             swapAddress: "",

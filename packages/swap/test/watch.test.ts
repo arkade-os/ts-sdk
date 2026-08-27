@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { asset, ArkAddress, Transaction } from "@arkade-os/sdk";
-import { encodeOffer, offerVtxoScript, OFFER_CONTRACT_KIND, type Offer } from "../src/offer";
+import { encodeOffer, offerContract, OFFER_CONTRACT_KIND, type Offer } from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
 import { retireSettledOfferContracts } from "../src/coverage";
@@ -11,7 +11,7 @@ import { spendUpdate, watchOfferSwaps } from "../src/watch";
 const ASSET_ID = "f1".repeat(34);
 
 const key = (seed: string) => schnorr.getPublicKey(hex.decode(seed.repeat(32)));
-const SERVER_KEY = key("11");
+const OPERATOR_KEY = key("11");
 const MAKER_KEY = key("22");
 const EMULATOR_KEY = key("33");
 const MAKER_PK_SCRIPT = new Uint8Array([0x51, 0x20, ...key("55")]);
@@ -27,7 +27,7 @@ const makeOffer = (side: "want-asset" | "want-btc" = "want-asset"): Offer => {
         makerPublicKey: MAKER_KEY,
         emulatorPubkey: EMULATOR_KEY,
     };
-    return { ...binding, swapPkScript: offerVtxoScript(binding, SERVER_KEY).pkScript };
+    return { ...binding, swapPkScript: offerContract(binding, OPERATOR_KEY).pkScript };
 };
 
 const swapFor = (offer: Offer, overrides: Partial<AssetSwap> = {}): AssetSwap => ({
@@ -46,7 +46,7 @@ const swapFor = (offer: Offer, overrides: Partial<AssetSwap> = {}): AssetSwap =>
 });
 
 const spendPsbt = (offer: Offer, via: "cancel" | "fulfill", vout = 0) => {
-    const leaf = offerVtxoScript(offer, SERVER_KEY).functionByName(via)!.tapLeafScript;
+    const leaf = offerContract(offer, OPERATOR_KEY).functionByName(via)!.tapLeafScript;
     const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
     tx.addInput({ txid: hex.decode(FUNDING_TXID), index: vout, tapLeafScript: [leaf] });
     tx.addOutput({ script: MAKER_PK_SCRIPT, amount: BigInt(9_000) });
@@ -60,8 +60,8 @@ const spendPsbt = (offer: Offer, via: "cancel" | "fulfill", vout = 0) => {
  */
 const makeWallet = (getVirtualTxs: (txids: string[]) => Promise<{ txs: string[] }>) => {
     const callbacks = new Set<(event: any) => void>();
-    // a real ark address, so ArkAddress.decode recovers SERVER_KEY from it
-    const address = new ArkAddress(SERVER_KEY, key("66"), "tark").encode();
+    // a real ark address, so ArkAddress.decode recovers OPERATOR_KEY from it
+    const address = new ArkAddress(OPERATOR_KEY, key("66"), "tark").encode();
     const setContractWatchState = vi.fn(async (_script: string, _watch: string) => {});
     const wallet = {
         getAddress: async () => address,
@@ -91,7 +91,7 @@ const spentEvent = (offer: Offer, spentTxid: string, overrides: Record<string, u
     ...overrides,
 });
 
-// the watcher builds its own RestIndexerProvider from arkServerUrl; intercept
+// the watcher builds its own RestIndexerProvider from operatorUrl; intercept
 // the one call it makes rather than reaching through the constructor
 const withIndexer = async (
     fetcher: (txids: string[]) => Promise<{ txs: string[] }>,
@@ -154,7 +154,7 @@ describe("watchOfferSwaps", () => {
                 const updates: AssetSwap[] = [];
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                     onUpdate: (swap) => updates.push(swap),
                 });
@@ -184,7 +184,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, cancel.txid));
@@ -209,7 +209,7 @@ describe("watchOfferSwaps", () => {
         await withIndexer(fetcher, async ({ wallet, emit }) => {
             const watcher = await watchOfferSwaps({
                 wallet,
-                arkServerUrl: "http://ark",
+                operatorUrl: "http://ark",
                 repository,
             });
             emit(spentEvent(offer, cancelTxid));
@@ -234,7 +234,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, "dd".repeat(32)));
@@ -257,7 +257,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, fill.txid, { contract: { metadata: { kind: "other" } } }));
@@ -287,7 +287,7 @@ describe("watchOfferSwaps", () => {
                 const updates: AssetSwap[] = [];
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                     onUpdate: (swap) => updates.push(swap),
                 });
@@ -314,7 +314,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit, setContractWatchState }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, fill.txid));
@@ -346,7 +346,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit, setContractWatchState }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, fill.txid));
@@ -379,7 +379,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit, setContractWatchState }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, fill.txid));
@@ -406,7 +406,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit, setContractWatchState }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, fill.txid));
@@ -433,7 +433,7 @@ describe("watchOfferSwaps", () => {
                 setContractWatchState.mockRejectedValue(new Error("repository unavailable"));
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 emit(spentEvent(offer, fill.txid));
@@ -458,7 +458,7 @@ describe("watchOfferSwaps", () => {
             async ({ wallet, emit, listeners }) => {
                 const watcher = await watchOfferSwaps({
                     wallet,
-                    arkServerUrl: "http://ark",
+                    operatorUrl: "http://ark",
                     repository,
                 });
                 watcher.stop();

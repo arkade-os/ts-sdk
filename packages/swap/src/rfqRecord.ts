@@ -134,7 +134,7 @@ export interface RfqSwapOrigin {
      * learns it. So it is written once at record creation, like {@link amount},
      * and no corridor `project` emits it.
      */
-    fundingArkTxid?: string;
+    fundingTxid?: string;
 }
 
 /** The stored record: the origin plus the manager's mutable state. */
@@ -143,13 +143,75 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
     state: RfqSwapState;
     createdAt: number;
     updatedAt: number;
-    refundArkTxid?: string;
+    refundTxid?: string;
     /** The ark transactions that spent the lockup, stamped by the manager from
      * the chain read that ended the swap. See
-     * `RfqSwapCommon.lockupSpendArkTxids`. */
-    lockupSpendArkTxids?: string[];
+     * `RfqSwapCommon.lockupSpendTxids`. */
+    lockupSpendTxids?: string[];
     failure?: string;
     blockedReason?: string;
+}
+
+/**
+ * The txid fields under the names records already on disk carry them by; see
+ * {@link normalizeRfqSwapRecord}.
+ *
+ * Deliberately not part of {@link RfqSwapRecord}: nothing writes them any more,
+ * and declaring them there would read as a shape still in use.
+ */
+interface LegacyRfqSwapTxids {
+    fundingArkTxid?: string;
+    refundArkTxid?: string;
+    lockupSpendArkTxids?: string[];
+}
+
+/** The receive corridor's profile with `claimArkTxid` read as `claimTxid`. */
+function renameLegacyClaimTxid(profile: Record<string, unknown>): Record<string, unknown> {
+    const { claimArkTxid, ...rest } = profile;
+    return { ...rest, claimTxid: rest.claimTxid ?? claimArkTxid };
+}
+
+/**
+ * A stored record read under the current field names.
+ *
+ * Four fields were renamed after `0.0.9`: `fundingArkTxid`, `refundArkTxid`,
+ * `lockupSpendArkTxids`, and the receive corridor's `profile.claimArkTxid`. All
+ * four arrived together with record persistence itself in `0.0.8`, so `0.0.8`
+ * and `0.0.9` are the only versions that ever wrote them. Backends store the
+ * record WHOLE, so such a store still holds the old names on disk and the
+ * current code reads every one of them as `undefined`.
+ *
+ * Called by every function here that takes a record, so a consumer needs no
+ * boot-time migration of its own; and because the old keys never reach the
+ * object handed back, the next write persists the record without them.
+ *
+ * What it buys, in descending order of sharpness: a receive leg with a partial
+ * claim already out keeps its `claimTxid`, so the value gate stays disarmed
+ * rather than re-blocking the rest of a lockup whose preimage is public;
+ * `refunded` swaps report an outcome txid again; and activity answers from the
+ * record instead of falling back to a lockup read per query. It is NOT a
+ * re-refund fix — `refunded` is terminal, and `restoreFromRepository` puts a
+ * terminal record straight into `finished` without ever driving it.
+ */
+export function normalizeRfqSwapRecord(record: RfqSwapRecord): RfqSwapRecord {
+    const { fundingArkTxid, refundArkTxid, lockupSpendArkTxids, ...rest } =
+        record as RfqSwapRecord & LegacyRfqSwapTxids;
+    // Only the receive corridor's profile ever carried the old name; the
+    // onchain leg has written `claimTxid` from the start.
+    const legacyClaim =
+        record.kind === "lightning_receive" && record.profile.claimArkTxid !== undefined;
+    if (!fundingArkTxid && !refundArkTxid && !lockupSpendArkTxids && !legacyClaim) return record;
+
+    const fundingTxid = rest.fundingTxid ?? fundingArkTxid;
+    const refundTxid = rest.refundTxid ?? refundArkTxid;
+    const lockupSpendTxids = rest.lockupSpendTxids ?? lockupSpendArkTxids;
+    return {
+        ...rest,
+        ...(fundingTxid ? { fundingTxid } : {}),
+        ...(refundTxid ? { refundTxid } : {}),
+        ...(lockupSpendTxids?.length ? { lockupSpendTxids } : {}),
+        ...(legacyClaim ? { profile: renameLegacyClaimTxid(record.profile) } : {}),
+    };
 }
 
 /**
@@ -157,7 +219,7 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
  *
  * Corridor-agnostic by construction: every field here is one `RfqSwapCommon`
  * declares, so each is on all three legs, and anything a single corridor tracks
- * goes through its handler's `project` instead — `claimArkTxid` included, which
+ * goes through its handler's `project` instead — `claimTxid` included, which
  * only the receive leg has. A per-kind field lifted to here would be written by
  * this function and restored by nobody, since `rebuildRfqSwap` builds the
  * common half from `RfqSwapCommon` alone.
@@ -167,10 +229,8 @@ const managerState = (swap: PersistableRfqSwap) => ({
     state: swap.state,
     createdAt: swap.createdAt,
     updatedAt: swap.updatedAt,
-    ...(swap.refundArkTxid ? { refundArkTxid: swap.refundArkTxid } : {}),
-    ...(swap.lockupSpendArkTxids?.length
-        ? { lockupSpendArkTxids: [...swap.lockupSpendArkTxids] }
-        : {}),
+    ...(swap.refundTxid ? { refundTxid: swap.refundTxid } : {}),
+    ...(swap.lockupSpendTxids?.length ? { lockupSpendTxids: [...swap.lockupSpendTxids] } : {}),
     ...(swap.failure ? { failure: swap.failure } : {}),
     ...(swap.blockedReason ? { blockedReason: swap.blockedReason } : {}),
 });
@@ -245,21 +305,22 @@ export function updateRfqSwapRecord(
     // updating one swap's record from another's is exactly how a good record
     // acquires another swap's state.
     assertSameSwap(record, swap);
+    const stored = normalizeRfqSwapRecord(record);
     const {
-        refundArkTxid: _refundArkTxid,
-        lockupSpendArkTxids: _lockupSpendArkTxids,
+        refundTxid: _refundTxid,
+        lockupSpendTxids: _lockupSpendTxids,
         failure: _failure,
         blockedReason: _blockedReason,
         ...origin
-    } = record;
-    const handler = rfqCorridorHandlers.getOrThrow(record.kind);
+    } = stored;
+    const handler = rfqCorridorHandlers.getOrThrow(stored.kind);
     // The profile MERGES rather than being replaced: `project` returns only
     // what the manager can change, and the rest came from the request result
     // and has no other source.
     return {
         ...origin,
         ...managerState(swap),
-        profile: { ...record.profile, ...handler.project(swap) },
+        profile: { ...stored.profile, ...handler.project(swap) },
     };
 }
 
@@ -269,7 +330,7 @@ export function updateRfqSwapRecord(
  * A record IS an origin plus manager state, so `record` where an
  * {@link RfqSwapOrigin} is wanted type-checks — and is a bug. Spread into
  * {@link createRfqSwapRecord} it carries the OLD state's `failure`,
- * `blockedReason` and `refundArkTxid` past `managerState`, which omits a field
+ * `blockedReason` and `refundTxid` past `managerState`, which omits a field
  * the live swap no longer has and therefore cannot clear one. That is the same
  * trap {@link updateRfqSwapRecord} strips those three fields to avoid; this is
  * how a caller holding only a record gets an origin that is safe to keep.
@@ -278,12 +339,13 @@ export function updateRfqSwapRecord(
  * rebuilds, so a later write can create the record again if the store lost it.
  */
 export function rfqSwapOriginOf(record: RfqSwapRecord): RfqSwapOrigin {
+    const stored = normalizeRfqSwapRecord(record);
     return {
-        kind: record.kind,
-        lockupAddress: record.lockupAddress,
-        profile: { ...record.profile },
-        ...(record.amount !== undefined ? { amount: record.amount } : {}),
-        ...(record.fundingArkTxid ? { fundingArkTxid: record.fundingArkTxid } : {}),
+        kind: stored.kind,
+        lockupAddress: stored.lockupAddress,
+        profile: { ...stored.profile },
+        ...(stored.amount !== undefined ? { amount: stored.amount } : {}),
+        ...(stored.fundingTxid ? { fundingTxid: stored.fundingTxid } : {}),
     };
 }
 
@@ -323,24 +385,25 @@ function lockupScript(
  * funded lockup is keyed by.
  */
 export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): PersistableRfqSwap {
-    const script = lockupScript(params, record.lockupAddress);
+    const stored = normalizeRfqSwapRecord(record);
+    const script = lockupScript(params, stored.lockupAddress);
 
     const common = {
-        rfqId: record.rfqId,
-        state: record.state,
+        rfqId: stored.rfqId,
+        state: stored.state,
         lockupPkScript: script.pkScript,
-        lockup: { script, address: record.lockupAddress },
+        lockup: { script, address: stored.lockupAddress },
         // From the covenant, which binds it: the record's own copy would be a
         // second source for the deadline the refund is gated on.
         refundLocktime: Number(script.options.refundLocktime),
-        createdAt: record.createdAt,
-        updatedAt: record.updatedAt,
-        ...(record.refundArkTxid ? { refundArkTxid: record.refundArkTxid } : {}),
-        ...(record.lockupSpendArkTxids?.length
-            ? { lockupSpendArkTxids: [...record.lockupSpendArkTxids] }
+        createdAt: stored.createdAt,
+        updatedAt: stored.updatedAt,
+        ...(stored.refundTxid ? { refundTxid: stored.refundTxid } : {}),
+        ...(stored.lockupSpendTxids?.length
+            ? { lockupSpendTxids: [...stored.lockupSpendTxids] }
             : {}),
-        ...(record.failure ? { failure: record.failure } : {}),
-        ...(record.blockedReason ? { blockedReason: record.blockedReason } : {}),
+        ...(stored.failure ? { failure: stored.failure } : {}),
+        ...(stored.blockedReason ? { blockedReason: stored.blockedReason } : {}),
     };
 
     // Corridor-agnostic from here: the handler for this record's kind supplies
@@ -348,11 +411,11 @@ export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): Per
     // fact and not RFQ's — and this file names none of them. A kind with no
     // handler registered throws rather than restoring a swap nothing knows how
     // to drive.
-    const handler = rfqCorridorHandlers.getOrThrow(record.kind);
+    const handler = rfqCorridorHandlers.getOrThrow(stored.kind);
     return {
         ...common,
-        kind: record.kind,
-        ...handler.hydrate(record.profile, { lockup: script }),
+        kind: stored.kind,
+        ...handler.hydrate(stored.profile, { lockup: script }),
     } as PersistableRfqSwap;
 }
 

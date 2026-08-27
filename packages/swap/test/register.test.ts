@@ -155,7 +155,7 @@ describe("offer contract registration", () => {
 
 const SIGNER_PUBKEY = "02" + "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
 
-const arkInfo = () => ({
+const operatorInfo = () => ({
     boardingExitDelay: 144n,
     checkpointTapscript:
         "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
@@ -192,7 +192,7 @@ const realWallet = async () => {
     const contractRepository = new InMemoryContractRepository();
     const wallet = await ReadonlyWallet.create({
         arkServerUrl: "http://localhost:7070",
-        arkProvider: { getInfo: async () => arkInfo() } as Partial<ArkProvider> as ArkProvider,
+        arkProvider: { getInfo: async () => operatorInfo() } as Partial<ArkProvider> as ArkProvider,
         indexerProvider: offlineIndexer(),
         onchainProvider: {
             getCoins: async () => [],
