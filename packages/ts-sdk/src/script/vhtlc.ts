@@ -107,8 +107,12 @@ export namespace VHTLC {
              * funded a lockup and vanished is refundable through this leaf
              * alone, by anyone, to their pre-committed address.
              *
-             * Off by default: it is a ninth leaf, so enabling it changes the
-             * taproot merkle root and therefore the address.
+             * Off by default: it is an additional leaf, appended last, so
+             * enabling it changes the taproot merkle root and therefore the
+             * address. `nonInteractiveClaim` and `nonInteractiveRefund` are
+             * independently optional, so this is the NINTH leaf only in the
+             * full swap-corridor configuration where both are set — on its
+             * own, it is the eighth.
              */
             withoutReceiver?: boolean;
         };
