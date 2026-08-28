@@ -80,8 +80,9 @@ The wallet pins `0.0.7`, so nothing breaks until it upgrades. Six edits when it 
   `{ operatorPubkey }`.
 - `src/providers/assetSwaps.tsx` — `watchOfferSwaps({ arkServerUrl })` becomes `{ operatorUrl }`.
 
-`requestLightningReceive` takes its URL positionally, so `lnReceive.ts`'s own `arkServerUrl`
-argument name is a wallet-local choice and needs no change.
+`requestLightningReceive` no longer takes a URL at all (the positional was removed — see the
+v0.5 entrypoint changes below), so `lnReceive.ts`'s wallet-local `arkServerUrl` argument simply
+disappears with that migration rather than being renamed.
 
 ## Migrating `arkade-os/wallet` to `@arkade-os/swap`
 
