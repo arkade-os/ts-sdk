@@ -13,18 +13,14 @@ code ships in M0 except G2 if chosen.
 
 ## A. Direction sign-off
 
-- [ ] **A1 — Ratify P1–P10.** Sign-off on RFC-lite proposals as the fixed
-  public direction. Deliverable: a "Decisions" section appended to
-  `v2-rfc-lite.md` marking each P accepted / amended / rejected.
-- [ ] **A2 — Record deferrals with reserved names.**
-  - Q4 (migration window): confirm one major version of `/protocol`
-    re-exports, or amend §8.
-  - Q7 (corridor plugins): confirm internal-only for v2; §6 keeps its
-    WARNING/TODO as-is.
-  - Q9 (published-RFQ names): confirm the reserved set — `policy.rfq`,
-    `policy.selectBid`, `Quote.auction`, bid timing/provenance fields —
-    and freeze anything beyond it out of v2 scope.
-  Deliverable: deferral table in the RFC-lite Decisions section.
+- [x] **A1 — Ratify P1–P10.** RESOLVED: all ten accepted unamended as the
+  fixed public direction; recorded first in RFC-lite Decisions.
+- [x] **A2 — Record deferrals with reserved names.** RESOLVED: Q4 = one major
+  version of `/protocol` re-exports then root removal; Q7 = internal-only
+  corridor modules for v2, public plugin API deferred; Q9 = the reserved set
+  `policy.rfq`, `policy.selectBid`, `Quote.auction`, bid timing/provenance is
+  frozen as v2's complete published-RFQ surface. Recorded in RFC-lite
+  Decisions.
 
 ## B. Blocking decisions
 
@@ -116,13 +112,13 @@ Each: write the decision into the spec where its TODO sits today.
 
 ## F. Deprecation map
 
-- [ ] **F1 — Export inventory.** Walk the current root `src/index.ts`
-  (242 lines) and produce the table M8 executes mechanically: every export →
-  v2 disposition (`/protocol` re-export | internalized into the client |
-  deleted) → replacement if any. §8 gives the disposition for the documented
-  surface; this catches everything else (`spendUpdate`, `classifySpend`,
-  profile parts, `arkadeRefunder`, lockup-contract helpers, activity
-  resolvers, ...). Deliverable: appendix table, either here or in §8.
+- [x] **F1 — Export inventory.** RESOLVED: full 121-value + ~90-type export
+  inventory mapped to S/P/I/D dispositions in
+  [`v2-f1-deprecation-map.md`](./v2-f1-deprecation-map.md), with the M8
+  execution checklist (consumer sweep → `/protocol` barrel → subpath export →
+  root slimming → MIGRATION.md → removal pass after Q4's window). One open
+  sub-decision deferred to M8: barrel vs per-area carve-outs for `/protocol`
+  (default: barrel).
 
 ## G. Hygiene fixes (independent of v2; can ship immediately)
 

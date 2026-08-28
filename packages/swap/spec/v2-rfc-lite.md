@@ -55,6 +55,10 @@ await client.accept(await client.quote({ give: BTC, to: "bc1p...", amount: 100_0
 
 Recorded when the corresponding spec text landed; rationale in `v2-m0-groundwork.md`.
 
+- **P1–P10: ratified as a set** as the fixed public direction for v2. No amendments.
+- **Q4: one major version.** `/protocol` re-exports with `@deprecated` pointers live for exactly one major version, then are removed from the root export.
+- **Q7: internal-only for v2.** Corridor modules are internal modularity plus dependency overrides; the public third-party plugin API is a deferred track, re-entered once the full manager registration contract exists.
+- **Q9: freeze the reserved set.** `policy.rfq`, `policy.selectBid`, `Quote.auction`, and bid timing/provenance fields are the complete published-RFQ surface scoped into v2 — typed, inert; nothing beyond them.
 - **Q1: ratified.** `give`/`take`, `lapsed` — no rename.
 - **Q2: throw.** `resolve()` without a discovery snapshot throws `DiscoverySnapshotUnavailable`; no partial route shape (§3.1).
 - **Q3: as drawn.** Always-present idempotent `start()`/`stop()`; `client.ready` rejects only on an unreadable repository — per-record and per-swap problems surface as outcomes, never construction failures (§3).
