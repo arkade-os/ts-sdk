@@ -1310,11 +1310,14 @@ describe("MessageBus broadcast fan-out", () => {
 
         handler.channel!.broadcast(event("first"));
         await Promise.resolve(); // let drain() reach the matchAll await
+        // Two, not one: with a single straggler the expected count matches what
+        // one matchAll per message would also produce, and the test says nothing.
         handler.channel!.broadcast(event("second"));
+        handler.channel!.broadcast(event("third"));
         release!([clientA, clientB]);
         await flushDelivery();
 
-        expect(posted(clientA)).toEqual(["first", "second"]);
+        expect(posted(clientA)).toEqual(["first", "second", "third"]);
         expect(selfMock.clients.matchAll).toHaveBeenCalledTimes(2);
 
         await bus.stop();
