@@ -15,6 +15,7 @@ import {
     VirtualTxRepository,
 } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
+import type { Contract } from "../contracts/types";
 import { IDelegateManager } from "./delegate";
 import type { Activity, ActivityRegistry } from "./activity";
 import type { ExitCaptureMode } from "./exit/capture";
@@ -56,6 +57,62 @@ import { DelegateProvider } from "../providers/delegate";
  *   provider.
  */
 export type WalletMode = "auto" | "static" | "hd" | DescriptorProvider;
+
+/**
+ * Address flavours {@link Wallet.getNewAddresses} can mint. Both derive from
+ * the same HD index within one call — `default` is the offchain Arkade
+ * receive script, `boarding` the onchain deposit script.
+ */
+export type NewAddressType = "default" | "boarding";
+
+/** Options for {@link Wallet.getNewAddresses}. */
+export interface GetNewAddressesOptions {
+    /**
+     * Flavours to mint, in the order they are returned.
+     *
+     * @defaultValue `["default"]`
+     */
+    types?: readonly NewAddressType[];
+    /**
+     * Require a genuinely fresh index. A wallet with no HD stream to advance
+     * (`walletMode: 'static'` / `'auto'`, or a provider that declines to
+     * allocate) throws {@link WalletCannotAllocateAddressError} rather than
+     * silently handing back the address it already gave you — which, for a
+     * caller issuing one address per counterparty, surfaces only as two
+     * people paying the same script.
+     *
+     * @defaultValue `false`
+     */
+    forceNew?: boolean;
+}
+
+/** One minted address and the contract row backing it. */
+export interface NewAddress {
+    /**
+     * The address to hand out: the onchain address for `boarding`, the Arkade
+     * address for `default`.
+     *
+     * Not always `contract.address`. A boarding row persists the *ark*
+     * encoding of its script, so reading `contract.address` on a boarding
+     * entry yields an address no onchain sender can pay.
+     */
+    address: string;
+    /**
+     * The descriptor this address was derived from — hand it to
+     * `signerForDescriptor` to recover the key later. Every entry from a
+     * single call carries the same one, because they share an index.
+     *
+     * Also present on `contract.metadata.signingDescriptor`, but surfaced here
+     * typed: `Contract.metadata` is `Record<string, unknown>`, so reading it
+     * there costs the caller an `as string` on the one field they are most
+     * likely to persist beside an invoice.
+     */
+    signingDescriptor: string;
+    /**
+     * The persisted, watched contract row — script, type, state and metadata.
+     */
+    contract: Contract;
+}
 
 /**
  * Base configuration options shared by all wallet types.

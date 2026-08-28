@@ -9,6 +9,8 @@ import type {
     SendBitcoinParams,
     SettleParams,
     GetVtxosFilter,
+    GetNewAddressesOptions,
+    NewAddress,
     ArkTransaction,
     ExtendedCoin,
     Recipient,
@@ -16,7 +18,11 @@ import type {
 } from "..";
 import type { SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
-import type { HDAllocationCapable, HDWalletCapable } from "../hdWalletCapable";
+import type {
+    AddressAllocationCapable,
+    HDAllocationCapable,
+    HDWalletCapable,
+} from "../hdWalletCapable";
 import type { IContractManager } from "../../contracts/contractManager";
 import type { IDelegateManager } from "../delegate";
 import type { TaskQueue, TaskItem } from "../../worker/expo/taskQueue";
@@ -114,7 +120,9 @@ export function warnOnRemovedBackgroundFields(bg: unknown): void {
  * const balance = await wallet.getBalance();
  * ```
  */
-export class ExpoWallet implements IWallet, HDWalletCapable, HDAllocationCapable {
+export class ExpoWallet
+    implements IWallet, HDWalletCapable, HDAllocationCapable, AddressAllocationCapable
+{
     readonly identity: Identity;
     readonly arkProvider: Wallet["arkProvider"];
     readonly indexerProvider: Wallet["indexerProvider"];
@@ -341,6 +349,11 @@ export class ExpoWallet implements IWallet, HDWalletCapable, HDAllocationCapable
 
     getNextSigningDescriptor(): Promise<string | undefined> {
         return this.wallet.getNextSigningDescriptor();
+    }
+
+    /** @see Wallet.getNewAddresses */
+    getNewAddresses(opts?: GetNewAddressesOptions): Promise<NewAddress[]> {
+        return this.wallet.getNewAddresses(opts);
     }
 
     getUsedSigningDescriptors(opts?: { lookAhead?: number }): Promise<string[]> {

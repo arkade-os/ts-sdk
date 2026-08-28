@@ -20,6 +20,7 @@ import {
     BurnParams,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    GetNewAddressesOptions,
     GetVtxosFilter,
     IssuanceParams,
     IssuanceResult,
@@ -27,6 +28,7 @@ import {
     isRecoverable,
     isSubdust,
     IWallet,
+    NewAddress,
     Recipient,
     ReissuanceParams,
     SendBitcoinParams,
@@ -388,6 +390,21 @@ export type RequestGetNextSigningDescriptor = RequestEnvelope & {
 export type ResponseGetNextSigningDescriptor = ResponseEnvelope & {
     type: "NEXT_SIGNING_DESCRIPTOR";
     payload: { descriptor?: string };
+};
+
+// Minting is one worker round-trip rather than a page-side reassembly out of
+// `getNextSigningDescriptor`: the worker owns both the HD watermark and the
+// contract repository, so a page that allocated an index and then could not
+// register the script would be left holding a burnt index and an address
+// nothing watches. `NewAddress` is plain data — strings plus a `Contract`
+// record — so it crosses the structured-clone boundary as-is.
+export type RequestGetNewAddresses = RequestEnvelope & {
+    type: "GET_NEW_ADDRESSES";
+    payload?: GetNewAddressesOptions;
+};
+export type ResponseGetNewAddresses = ResponseEnvelope & {
+    type: "NEW_ADDRESSES";
+    payload: { addresses: NewAddress[] };
 };
 
 export type RequestGetUsedSigningDescriptors = RequestEnvelope & {
@@ -779,6 +796,7 @@ export type WalletUpdaterRequest =
     | RequestRefreshOutpoints
     | RequestGetCurrentSigningDescriptor
     | RequestGetNextSigningDescriptor
+    | RequestGetNewAddresses
     | RequestGetUsedSigningDescriptors
     | RequestAdvanceSigningDescriptorWatermark
     | RequestSend
@@ -831,6 +849,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseRefreshOutpoints
         | ResponseGetCurrentSigningDescriptor
         | ResponseGetNextSigningDescriptor
+        | ResponseGetNewAddresses
         | ResponseGetUsedSigningDescriptors
         | ResponseAdvanceSigningDescriptorWatermark
         | ResponseContractEvent
@@ -1248,6 +1267,22 @@ export class WalletMessageHandler
                         id,
                         type: "NEXT_SIGNING_DESCRIPTOR",
                         payload: { descriptor },
+                    });
+                }
+                case "GET_NEW_ADDRESSES": {
+                    const wallet = this.wallet;
+                    if (!wallet) throw new WalletNotInitializedError();
+                    // No capability probe: allocation policy is the wallet's,
+                    // and `getNewAddresses` answers for every shape — a wallet
+                    // with no HD stream returns its existing addresses, or
+                    // throws when the caller demanded a fresh one.
+                    const addresses = await wallet.getNewAddresses(
+                        (message as RequestGetNewAddresses).payload,
+                    );
+                    return this.tagged({
+                        id,
+                        type: "NEW_ADDRESSES",
+                        payload: { addresses },
                     });
                 }
                 case "GET_USED_SIGNING_DESCRIPTORS": {

@@ -4,6 +4,7 @@ import { DescriptorIdentity } from "../identity/descriptorIdentity";
 import { deriveDescriptorLeafPubKey, parseHDDescriptor } from "../identity/descriptor";
 import { isHDCapableIdentity } from "../identity/hdCapableIdentity";
 import type { DescriptorProvider } from "../identity/descriptorProvider";
+import type { GetNewAddressesOptions, NewAddress } from "./index";
 
 /**
  * Capability a wallet exposes so descriptor-blind consumers — Boltz swaps and
@@ -66,6 +67,22 @@ export class ForeignDescriptorError extends Error {
         options?: { cause?: unknown },
     ) {
         super(`this wallet holds no key for descriptor: ${descriptor}`, options);
+    }
+}
+
+/**
+ * Thrown by `Wallet.getNewAddresses({ forceNew: true })` when the wallet has
+ * no HD stream to advance — `walletMode: 'static'` / `'auto'`, or a
+ * {@link DescriptorProvider} that declined to allocate.
+ *
+ * A typed refusal rather than a silent repeat: a caller that asked for a
+ * *fresh* address is issuing one per counterparty, and quietly returning the
+ * address it already handed out surfaces only as two payers sharing a script.
+ */
+export class WalletCannotAllocateAddressError extends Error {
+    override readonly name = "WalletCannotAllocateAddressError";
+    constructor(reason: string, options?: { cause?: unknown }) {
+        super(`cannot allocate a fresh address: ${reason}`, options);
     }
 }
 
@@ -184,4 +201,39 @@ export function isHDAllocationCapable(value: unknown): value is HDAllocationCapa
         typeof v.getNextSigningDescriptor === "function" &&
         typeof v.advanceSigningDescriptorWatermark === "function"
     );
+}
+
+/**
+ * Minting addresses to hand out, which is strictly more than
+ * {@link HDAllocationCapable}'s bare index allocation: the wallet also builds
+ * the scripts at that index, persists them as watched contracts, and reports
+ * the rows.
+ *
+ * A third probe rather than another method on `HDAllocationCapable`, for the
+ * same reason that interface exists separately from {@link HDWalletCapable}:
+ * widening an existing guard silently demotes every wallet implementing only
+ * its older surface.
+ */
+export interface AddressAllocationCapable {
+    /**
+     * Fresh addresses of each requested type, all derived from one newly
+     * allocated HD index, persisted and watched. **The wallet decides what
+     * "fresh" means**: an HD wallet burns an index, a wallet with no stream
+     * answers with its existing display addresses — or, under
+     * `forceNew`, refuses with {@link WalletCannotAllocateAddressError}
+     * rather than repeat an address it already handed out.
+     *
+     * Distinct from {@link HDAllocationCapable.getNextSigningDescriptor},
+     * which yields only an index and leaves the caller to build and register
+     * the script — two steps that must not be split across a process
+     * boundary, since a page that allocated an index and then failed to
+     * register the script holds a burnt index and an unwatched address.
+     */
+    getNewAddresses(opts?: GetNewAddressesOptions): Promise<NewAddress[]>;
+}
+
+/** Structural type guard for {@link AddressAllocationCapable}. */
+export function isAddressAllocationCapable(value: unknown): value is AddressAllocationCapable {
+    if (typeof value !== "object" || value === null) return false;
+    return typeof (value as Record<string, unknown>).getNewAddresses === "function";
 }
