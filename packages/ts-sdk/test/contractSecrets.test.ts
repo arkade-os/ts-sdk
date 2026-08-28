@@ -261,7 +261,63 @@ describe("provisionRefundKey", () => {
             const address = await wallet.getAddress();
             const { pkScript } = ArkAddress.decode(address);
             expect(hex.encode(first.pkScript)).toBe(hex.encode(pkScript));
+            // address comes back alongside, decoding to that same script
+            expect(first.address).toBe(address);
+            expect(hex.encode(ArkAddress.decode(first.address).pkScript)).toBe(
+                hex.encode(first.pkScript),
+            );
         }
+    });
+
+    it("pairs address and pkScript from one read, even when getAddress rotates", async () => {
+        // The quote's refund address and the covenant's refundPkScript must
+        // name the same script. A wallet that rotates its receive address
+        // between two reads would pair script A with address B if each field
+        // came from its own getAddress() call — both come from one read, and
+        // this fails if a second read ever feeds either.
+        const { wallet } = await hdWallet();
+        const first = await wallet.getAddress();
+        const rotated = new ArkAddress(
+            DUMMY_SERVER_PUBKEY,
+            new Uint8Array(32).fill(0x07),
+            "tark",
+        ).encode();
+        let addressReads = 0;
+        const rotating = {
+            ...wallet,
+            getAddress: async () => (addressReads++ === 0 ? first : rotated),
+        } as unknown as IWallet;
+
+        const key = await provisionRefundKey(rotating);
+        expect(addressReads).toBe(1);
+        expect(key.address).toBe(first);
+        expect(hex.encode(ArkAddress.decode(key.address).pkScript)).toBe(hex.encode(key.pkScript));
+    });
+
+    it("refuses when the identity key diverges between the descriptor and the guard read", async () => {
+        // Defense in depth for a hand-rolled IWallet whose identity answers
+        // inconsistently: identityDescriptor encodes the first read, and a
+        // second read naming a different key would put the lockup's refund
+        // path and the refund destination on different keys. A correct wallet
+        // can never reach this — contractSigner has already matched the
+        // signer to the descriptor — so the throw must come from this guard.
+        const stable = SingleKey.fromRandomBytes();
+        const other = SingleKey.fromRandomBytes();
+        let identityReads = 0;
+        const wallet = {
+            identity: {
+                xOnlyPublicKey: async () =>
+                    (identityReads++ === 0 ? stable : other).xOnlyPublicKey(),
+            },
+            // HD surface: contractSigner resolves through signerForDescriptor,
+            // which answers with a stable, correct signer — only the
+            // identity's own reads diverge.
+            getCurrentSigningDescriptor: async () => undefined,
+            getUsedSigningDescriptors: async () => [],
+            signerForDescriptor: async () => stable,
+        } as unknown as IWallet;
+
+        await expect(provisionRefundKey(wallet)).rejects.toThrow(/does not match wallet identity/);
     });
 });
 

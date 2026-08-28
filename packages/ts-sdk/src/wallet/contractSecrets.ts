@@ -145,13 +145,23 @@ export interface ProvisionedKey {
      * {@link IWallet.getAddress} round-trip or an `ArkAddress.decode` call.
      */
     pkScript: Uint8Array;
+    /**
+     * The receive address {@link pkScript} was decoded from, captured in the
+     * same single {@link IWallet.getAddress} read. The quote-time refund
+     * address and the covenant's `refundPkScript` must always name the same
+     * script, and two independent reads of a wallet that rotates its receive
+     * address would not guarantee that — reuse this, never a second
+     * `getAddress()` call.
+     */
+    address: string;
 }
 
 /**
- * A claim key together with the preimage it claims with. `pkScript` is
- * excluded: a claim leg funds nothing, so it names no refund destination.
+ * A claim key together with the preimage it claims with. `pkScript` and
+ * `address` are excluded: a claim leg funds nothing, so it names no refund
+ * destination.
  */
-export interface ProvisionedClaimSecret extends Omit<ProvisionedKey, "pkScript"> {
+export interface ProvisionedClaimSecret extends Omit<ProvisionedKey, "pkScript" | "address"> {
     preimage: Uint8Array;
     /** `sha256(preimage)` — what the contract commits to. */
     paymentHash: Uint8Array;
@@ -219,8 +229,12 @@ export async function provisionRefundKey(wallet: IWallet): Promise<ProvisionedKe
                 "the refund key and the refund address would be on different keys",
         );
     }
-    const { pkScript } = ArkAddress.decode(await wallet.getAddress());
-    return { descriptor, pubkey, pkScript };
+    // One read, one pair: the caller sends `address` as the refund destination
+    // and binds `pkScript` into the covenant, so both must come from the same
+    // getAddress() answer.
+    const address = await wallet.getAddress();
+    const { pkScript } = ArkAddress.decode(address);
+    return { descriptor, pubkey, pkScript, address };
 }
 
 /**

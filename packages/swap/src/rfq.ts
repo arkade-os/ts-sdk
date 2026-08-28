@@ -839,7 +839,8 @@ export async function requestLightningSend(
      * `lockup` (with `address`): without it the manager can only poll, and
      * cannot retire the row this call just wrote. */
     script: InstanceType<typeof VHTLC.ScriptV2>;
-    /** Where a failed swap refunds. */
+    /** Where a failed swap refunds — the same address `secrets.pkScript` was
+     * decoded from, so the quote and the covenant always name one script. */
     refundAddress: string;
     /** The VHTLC `sender` x-only key, bound into the covenant. Public. */
     senderPubkey: Uint8Array;
@@ -853,7 +854,8 @@ export async function requestLightningSend(
      * it. Half of these are not on the quote: `serverPubkey` and `claimDelay`
      * come from this wallet's own `getInfo()`, `emulatorPubkey` from a
      * per-network pin, `refundPkScript` from `secrets` — decoded from the
-     * refund address at provisioning time.
+     * refund address at provisioning time, the same address this call returns
+     * as `refundAddress`.
      *
      * All public. Persisting them is optional: this call also registers the
      * lockup as a contract, and that row is where `rebuildRfqSwap` takes its
@@ -869,10 +871,12 @@ export async function requestLightningSend(
     // No preimage: a lightning send's P belongs to the payee.
     const secrets = await provisionRefundKey(wallet);
     const senderPubkey = secrets.pubkey;
-    const [info, refundAddress] = await Promise.all([
-        new RestArkProvider(arkServerUrl).getInfo(),
-        wallet.getAddress(),
-    ]);
+    // One address read, inside provisionRefundKey: the quote's refund address
+    // and the covenant's refundPkScript come from it together, so a wallet
+    // that rotates its receive address between two reads cannot pair the
+    // solver's refund_address with a different script.
+    const refundAddress = secrets.address;
+    const info = await new RestArkProvider(arkServerUrl).getInfo();
 
     const quote = await transport.requestQuote(
         lightningSendRequest({ rfqId, invoice: params.invoice.raw, refundAddress, senderPubkey }),
