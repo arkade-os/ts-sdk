@@ -147,8 +147,11 @@ export interface ProvisionedKey {
     pkScript: Uint8Array;
 }
 
-/** A claim key together with the preimage it claims with. */
-export interface ProvisionedClaimSecret extends ProvisionedKey {
+/**
+ * A claim key together with the preimage it claims with. `pkScript` is
+ * excluded: a claim leg funds nothing, so it names no refund destination.
+ */
+export interface ProvisionedClaimSecret extends Omit<ProvisionedKey, "pkScript"> {
     preimage: Uint8Array;
     /** `sha256(preimage)` — what the contract commits to. */
     paymentHash: Uint8Array;
@@ -197,9 +200,10 @@ async function provisionDescriptor(wallet: IWallet): Promise<string> {
  * the failure would surface at refund time with the money already committed.
  * Throws {@link ForeignDescriptorError} instead, before there is a quote.
  *
- * On an HD wallet this consumes an index even if the artifact is never built,
- * and a swap index never becomes a funded receive contract, so a long run of
- * them widens the gap a seed-only restore scan sees.
+ * The wallet's identity key is reused rather than a fresh HD child, so no
+ * index is consumed when the artifact is never built — and the covenant's
+ * refund path is on the same key as the refund address the caller sends to
+ * at quote time.
  */
 export async function provisionRefundKey(wallet: IWallet): Promise<ProvisionedKey> {
     const descriptor = await identityDescriptor(wallet.identity);

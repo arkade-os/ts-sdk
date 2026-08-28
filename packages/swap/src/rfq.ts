@@ -807,12 +807,11 @@ export interface InvoiceFacts {
  * throws while nothing is funded. `RfqSwapManager` re-registers as a backstop
  * for older records; a repeat write is a no-op.
  *
- * The `sender` key comes from the wallet — a fresh HD descriptor per call, or
- * the wallet's static key — and is returned as `senderPubkey` plus `secrets`.
- * `secrets` holds only a public descriptor; the signer re-derives from the
- * wallet, so nothing secret is at rest. Persist `secrets` with the record
- * anyway: it is how the refund signer is found again. `nonInteractiveRefund`
- * recovers the funds even without it — but it needs the SOLVER's active
+ * The `sender` key is the wallet's identity key, reused by {@link
+ * provisionRefundKey} — returned as `senderPubkey` plus `secrets`. `secrets`
+ * holds only a public descriptor; the signer re-derives from the wallet, so
+ * nothing secret is at rest. Persist `secrets` with the record anyway: it is
+ * how the refund signer is found again. `nonInteractiveRefund` recovers the funds even without it — but it needs the SOLVER's active
  * cooperation, not just infrastructure uptime.
  */
 export async function requestLightningSend(
@@ -853,7 +852,8 @@ export async function requestLightningSend(
      * Returned so a consumer can persist the swap without re-deriving any of
      * it. Half of these are not on the quote: `serverPubkey` and `claimDelay`
      * come from this wallet's own `getInfo()`, `emulatorPubkey` from a
-     * per-network pin, `refundPkScript` from decoding an address.
+     * per-network pin, `refundPkScript` from `secrets` — decoded from the
+     * refund address at provisioning time.
      *
      * All public. Persisting them is optional: this call also registers the
      * lockup as a contract, and that row is where `rebuildRfqSwap` takes its
