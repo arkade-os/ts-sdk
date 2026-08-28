@@ -389,7 +389,57 @@ export namespace VHTLC {
             ];
         }
 
-        /** Return the timelocked non-interactive refund tapleaf and its ArkadeScript. */
+        /**
+         * Return the timelocked non-interactive refund tapleaf and its ArkadeScript.
+         *
+         * SPENDING THIS LEAF, CONCRETELY — confirmed from this SDK's own
+         * emulator client and covenant-spend builder ({@link
+         * EmulatorProvider} in `src/providers/emulator.ts`, and {@link
+         * ArkadeTransactionBuilder} in `src/arkade/contract.ts`), which is
+         * the general machinery every covenant leaf in this file goes
+         * through:
+         *
+         *  1. Build the ark tx spending this leaf (this method's {@link
+         *     TapLeafScript} as `tapLeafScript`, this script's {@link
+         *     VtxoScript.encode} as `tapTree`), plus its checkpoint tx.
+         *  2. Attach the ArkadeScript this method returns to the spent
+         *     input via an `EmulatorPacket` (type 1) — `{ vin, script:
+         *     <this ArkadeScript>, witness: <empty> }`, empty because the
+         *     script pushes its own input/output index with
+         *     `PUSHCURRENTINPUTINDEX` rather than reading one from the
+         *     witness — wrapped in an `Extension` OP_RETURN output on the
+         *     ark tx.
+         *  3. Attach the spent input's OWN creating ark tx as `PrevArkTx` on
+         *     input 0 — required so the emulator can resolve that input's
+         *     prevout pkScript/value; it does not otherwise have them.
+         *  4. POST the (base64-PSBT) ark tx and checkpoint(s) as `{ arkTx,
+         *     checkpointTxs }` to the emulator's `POST /v1/tx`.
+         *
+         * THE COVENANT CHECK the emulator runs against that ArkadeScript —
+         * `enforcePayTo(senderPkScript)`, see that function above — is: the
+         * output at this SAME input's index is a v1 P2TR output paying
+         * `senderPkScript`, with a value at least the input's. Only on that
+         * check passing does the emulator sign for `nirCosigner` (the
+         * `emulatorPubkey` tweaked by this ArkadeScript's hash); the
+         * response carries the fully co-signed `signedArkTx` and
+         * `signedCheckpointTxs` (the emulator's own doc comment: "the
+         * emulator executes the arkade script and finalizes with arkd" — no
+         * separate call to arkd is made by this SDK for a covenant spend).
+         * Neither `server` nor `receiver` play any part in that check: this
+         * leaf's tapscript still requires `server`'s own signature
+         * alongside `nirCosigner`'s (see the class doc above), but that is
+         * consensus-level multisig, not something the covenant enforces.
+         *
+         * NOT SPENDABLE UNTIL `refundLocktime` MATURES — the tapscript's
+         * `OP_CHECKLOCKTIMEVERIFY` is arkd's concern, not the emulator's;
+         * the emulator will happily co-sign an immature spend and arkd will
+         * then refuse it. A block-height-typed `refundLocktime` (below the
+         * standard height/timestamp boundary this SDK names
+         * `CLTV_HEIGHT_THRESHOLD`, 500,000,000, in
+         * `src/contracts/handlers/helpers.ts`) is refused by arkd for a
+         * forfeit-eligible leaf independent of maturity — use a
+         * seconds-typed (absolute Unix timestamp) value.
+         */
         nonInteractiveRefundWithoutReceiver(): [TapLeafScript, Bytes] {
             if (
                 !this.nonInteractiveRefundWithoutReceiverScript ||
@@ -430,6 +480,21 @@ export namespace VHTLC {
      * See {@link ScriptV2} for the current recommended construction — same
      * leaf ladder, same options shape, an added length check on the claim
      * preimage. This class is unchanged and stays available as-is.
+     *
+     * **Pre-existing limitation, widened rather than introduced by
+     * `nonInteractiveRefundWithoutReceiver`.** `nonInteractiveClaim` and
+     * `nonInteractiveRefund` (and now its `withoutReceiver` leaf) build on
+     * this class exactly as they do on {@link ScriptV2} — both extend the
+     * same `BaseScript` where these leaves are constructed. But the `vhtlc`
+     * contract handler (`src/contracts/handlers/vhtlc.ts`) round-trips none
+     * of them: its params type carries no covenant fields, and
+     * `createScript` only ever builds the six signature-only leaves. A V1
+     * script built with either covenant option therefore compiles and can
+     * be funded, but cannot be registered as a `vhtlc` contract — the
+     * handler would derive a different (six-leaf) script for the same
+     * params and `ContractManager` refuses the mismatch. This was already
+     * true before `withoutReceiver` existed; it now applies to one more
+     * option than before, not to a newly-exposed one.
      *
      * @example
      * ```typescript
