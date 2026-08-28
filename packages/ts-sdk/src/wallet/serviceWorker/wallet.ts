@@ -32,7 +32,11 @@ import {
     serializeSigningIdentity,
     isSigningIdentity,
 } from "../../identity";
-import type { HDWalletCapable, HDAllocationCapable } from "../hdWalletCapable";
+import type {
+    HDWalletCapable,
+    HDAllocationCapable,
+    AddressAllocationCapable,
+} from "../hdWalletCapable";
 import { resolveDescriptorSigner } from "../hdWalletCapable";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
@@ -1564,7 +1568,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
 export class ServiceWorkerWallet
     extends ServiceWorkerReadonlyWallet
-    implements IWallet, HDWalletCapable, HDAllocationCapable
+    implements IWallet, HDWalletCapable, HDAllocationCapable, AddressAllocationCapable
 {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
@@ -1790,7 +1794,9 @@ export class ServiceWorkerWallet
      *
      * Note the error shape — `WalletCannotAllocateAddressError` is thrown
      * worker-side and cannot cross the message boundary as a class, so a
-     * `forceNew` refusal surfaces here as a plain `Error` carrying its message.
+     * `forceNew` refusal surfaces here as a plain `Error` carrying its message
+     * (and the worker-side error as `cause`). Callers that must branch on the
+     * refusal match the message rather than `instanceof`.
      */
     async getNewAddresses(opts?: GetNewAddressesOptions): Promise<NewAddress[]> {
         const message: RequestGetNewAddresses = {
@@ -1803,7 +1809,7 @@ export class ServiceWorkerWallet
             const response = await this.sendMessage(message);
             return (response as ResponseGetNewAddresses).payload.addresses;
         } catch (error) {
-            throw new Error(`Failed to allocate new addresses: ${error}`);
+            throw new Error(`Failed to allocate new addresses: ${error}`, { cause: error });
         }
     }
 

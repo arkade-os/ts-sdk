@@ -8,13 +8,17 @@ import {
     InMemoryContractRepository,
     WalletCannotAllocateAddressError,
     signingDescriptorIndex,
+    deriveDescriptorLeafPubKey,
+    isAddressAllocationCapable,
 } from "../src";
+import { buildReceiveContract } from "../src/wallet/walletReceiveRotator";
 import type { DescriptorProvider } from "../src/identity/descriptorProvider";
 import {
     DEFAULT_MESSAGE_TAG,
     WalletMessageHandler,
 } from "../src/wallet/serviceWorker/wallet-message-handler";
 import { ExpoWallet } from "../src/wallet/expo/wallet";
+import { ServiceWorkerWallet } from "../src/wallet/serviceWorker/wallet";
 
 /**
  * The explicit multi-type address allocator (`getNewAddresses`).
@@ -136,6 +140,34 @@ async function makeCustomProviderWallet(walletRepo: InMemoryWalletRepository) {
             contractRepository: new InMemoryContractRepository(),
         },
     });
+}
+
+/**
+ * As {@link makeCustomProviderWallet}, but its allocation can be switched off
+ * mid-test — the "provider declined to allocate" path, which is the only way a
+ * wallet that HAS rotated can end up answering from its display addresses.
+ */
+async function makeDecliningProviderWallet(walletRepo: InMemoryWalletRepository) {
+    const identity = MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false });
+    const inner = await HDDescriptorProvider.create(identity, walletRepo);
+    const state = { declining: false };
+    const custom: DescriptorProvider = {
+        getNextSigningDescriptor: () =>
+            state.declining ? Promise.resolve(undefined) : inner.getNextSigningDescriptor(),
+        isOurs: (d) => inner.isOurs(d),
+        signWithDescriptor: (r) => inner.signWithDescriptor(r),
+        signMessageWithDescriptor: (d, m, t) => inner.signMessageWithDescriptor(d, m, t),
+    };
+    const wallet = await Wallet.create({
+        identity,
+        walletMode: custom,
+        arkServerUrl: "http://localhost:7070",
+        storage: {
+            walletRepository: walletRepo,
+            contractRepository: new InMemoryContractRepository(),
+        },
+    });
+    return { wallet, state, provider: custom };
 }
 
 describe("Wallet.getNewAddresses", () => {
@@ -365,6 +397,25 @@ describe("Wallet.getNewAddresses", () => {
         // `GET_NEW_ADDRESSES` case deleted entirely — it covers the pre-existing
         // guard, not this message.
 
+        it("every wallet shape answers the AddressAllocationCapable probe", async () => {
+            const wallet = await makeHdWallet();
+            const expo = Object.create(ExpoWallet.prototype) as ExpoWallet;
+
+            // Feature detection, not policy: a consumer holding an `IWallet`
+            // has no other way to ask whether minting is reachable, since
+            // `getNewAddresses` is deliberately not on `IWallet` itself.
+            expect(isAddressAllocationCapable(wallet)).toBe(true);
+            expect(isAddressAllocationCapable(expo)).toBe(true);
+            expect(isAddressAllocationCapable(ServiceWorkerWallet.prototype)).toBe(true);
+
+            // A wallet predating the capability must read as "cannot", not
+            // throw at the call site.
+            expect(isAddressAllocationCapable({ getAddress: () => "" })).toBe(false);
+            expect(isAddressAllocationCapable(undefined)).toBe(false);
+
+            await wallet.dispose();
+        });
+
         it("ExpoWallet forwards to the wallet it wraps", async () => {
             const getNewAddresses = vi.fn().mockResolvedValue(minted);
             const expo = Object.create(ExpoWallet.prototype) as ExpoWallet;
@@ -373,6 +424,73 @@ describe("Wallet.getNewAddresses", () => {
             const opts = { types: ["boarding"] as const, forceNew: true };
             await expect(expo.getNewAddresses(opts)).resolves.toEqual(minted);
             expect(getNewAddresses).toHaveBeenCalledWith(opts);
+        });
+    });
+
+    describe("a rotated wallet whose provider declines to allocate", () => {
+        // The wallet still has display addresses, but they belong to HD
+        // children — not to the identity key. Answering with the identity
+        // descriptor pairs a rotated address with a signer that holds the
+        // wrong key, which surfaces only when the spend is attempted.
+        it("reports the descriptor that actually owns the boarding address", async () => {
+            const walletRepo = new InMemoryWalletRepository();
+            const { wallet, state } = await makeDecliningProviderWallet(walletRepo);
+
+            // Rotate the DISPLAY boarding address off index 0.
+            const baseline = await wallet.getBoardingAddress();
+            const rotated = await wallet.getNewBoardingAddress();
+            expect(rotated).not.toBe(baseline);
+
+            state.declining = true;
+            const [boarding] = await wallet.getNewAddresses({ types: ["boarding"] });
+
+            expect(boarding.address).toBe(await wallet.getBoardingAddress());
+            // The reported descriptor must be the row's own, not `tr(identity)`.
+            expect(boarding.signingDescriptor).toBe(boarding.contract.metadata?.signingDescriptor);
+            expect(signingDescriptorIndex(boarding.signingDescriptor)).toBeGreaterThan(0);
+            // And it must actually resolve to a signer for that address.
+            const signer = await wallet.signerForDescriptor(boarding.signingDescriptor);
+            expect(await signer.xOnlyPublicKey()).toEqual(
+                deriveDescriptorLeafPubKey(boarding.signingDescriptor),
+            );
+
+            await wallet.dispose();
+        });
+
+        it("returns the wallet's real display receive address, not the identity one", async () => {
+            const walletRepo = new InMemoryWalletRepository();
+            const { wallet, state, provider } = await makeDecliningProviderWallet(walletRepo);
+
+            // Rotate the DISPLAY receive address the way WalletReceiveRotator
+            // does: persist the contract, then commit the tapscript.
+            //
+            // Allocated straight from the provider, not via
+            // `wallet.getNextSigningDescriptor()` — that answers the identity
+            // descriptor for any non-`HDDescriptorProvider` wallet and never
+            // advances, so the rotation would land back on index 0, whose leaf
+            // key IS the identity key, making the assertion below vacuous.
+            await provider.getNextSigningDescriptor();
+            const descriptor = (await provider.getNextSigningDescriptor())!;
+            expect(signingDescriptorIndex(descriptor)).toBeGreaterThan(0);
+            const built = buildReceiveContract(
+                wallet.offchainTapscript,
+                descriptor,
+                wallet.network.hrp,
+                true,
+            );
+            await (await wallet.getContractManager()).createContract(built.params);
+            wallet.setOffchainTapscriptForRotation(built.tapscript);
+            const displayed = await wallet.getAddress();
+
+            state.declining = true;
+            const [receive] = await wallet.getNewAddresses();
+
+            // Rebuilding the script from the identity key instead of reading
+            // the display row would hand back a DIFFERENT address here.
+            expect(receive.address).toBe(displayed);
+            expect(receive.signingDescriptor).toBe(descriptor);
+
+            await wallet.dispose();
         });
     });
 
@@ -406,14 +524,34 @@ describe("Wallet.getNewAddresses", () => {
         });
 
         it("returns the genuine persisted baseline rows, not synthesized ones", async () => {
-            const wallet = await makeStaticWallet();
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await Wallet.create({
+                identity: SingleKey.fromHex(SINGLEKEY_HEX),
+                walletMode: "static",
+                arkServerUrl: "http://localhost:7070",
+                storage: {
+                    walletRepository: new InMemoryWalletRepository(),
+                    contractRepository: contractRepo,
+                },
+            });
+
+            // The contract manager is built lazily and registers the index-0
+            // baselines as it comes up, so force that first — snapshotting
+            // before it exists would compare against an empty repository and
+            // prove nothing.
+            await wallet.getContractManager();
+            const before = await contractRepo.getContracts({});
+            expect(before.length).toBeGreaterThan(0);
+            const beforeByScript = new Map(before.map((c) => [c.script, c.createdAt]));
 
             const [minted] = await wallet.getNewAddresses();
 
             // `createContract` is first-wins on script, so a static wallet gets
-            // back the row registered at construction — `createdAt` proves it
-            // was not minted by this call.
-            expect(minted.contract.createdAt).toBeGreaterThan(0);
+            // back the very row registered at construction: same script, same
+            // `createdAt`, and no new row written.
+            expect(beforeByScript.has(minted.contract.script)).toBe(true);
+            expect(minted.contract.createdAt).toBe(beforeByScript.get(minted.contract.script));
+            expect(await contractRepo.getContracts({})).toHaveLength(before.length);
             expect(minted.contract.state).toBe("active");
 
             await wallet.dispose();

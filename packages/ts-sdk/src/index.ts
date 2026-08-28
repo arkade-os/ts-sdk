@@ -34,6 +34,7 @@ import type {
 import {
     isHDWalletCapable,
     isHDAllocationCapable,
+    isAddressAllocationCapable,
     ForeignDescriptorError,
     WalletCannotAllocateAddressError,
     resolveDescriptorSigner,
@@ -57,7 +58,11 @@ import type {
     ProvisionedClaimSecret,
     ProvisionedKey,
 } from "./wallet/contractSecrets";
-import type { HDAllocationCapable, HDWalletCapable } from "./wallet/hdWalletCapable";
+import type {
+    AddressAllocationCapable,
+    HDAllocationCapable,
+    HDWalletCapable,
+} from "./wallet/hdWalletCapable";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
@@ -575,6 +580,7 @@ export {
     isHDDeterministicSignCapable,
     isHDWalletCapable,
     isHDAllocationCapable,
+    isAddressAllocationCapable,
     ForeignDescriptorError,
     WalletCannotAllocateAddressError,
     resolveDescriptorSigner,
@@ -885,6 +891,7 @@ export type {
     HDDeterministicSignCapable,
     HDWalletCapable,
     HDAllocationCapable,
+    AddressAllocationCapable,
     DeterministicSigner,
     ProvisionedClaimSecret,
     ProvisionedKey,
