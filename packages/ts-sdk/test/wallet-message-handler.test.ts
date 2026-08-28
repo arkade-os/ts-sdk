@@ -2300,6 +2300,28 @@ describe("WalletMessageHandler event-push generations", () => {
         (updater as any).refreshCachedData = vi.fn().mockResolvedValue(undefined);
     });
 
+    it("does not let tick() wipe what was queued while it drained", async () => {
+        // tick() splices up front precisely so "stop()/clear() clears
+        // onNextTick" means something: assigning [] after the await clobbers
+        // whatever landed in the window instead, and nothing else guards this.
+        const queue = () => (updater as any).onNextTick as (() => any)[];
+        const inFlight = deferred<any>();
+        const drained = { tag: updater.messageTag, type: "DRAINED" };
+        const late = { tag: updater.messageTag, type: "LATE" };
+
+        // No channel attached: this is the tick fallback path.
+        expect((updater as any).channel).toBeUndefined();
+        queue().push(() => inFlight.promise);
+
+        const pending = updater.tick(Date.now());
+        // Lands mid-drain, exactly where a teardown or a live emit would.
+        queue().push(() => late);
+        inFlight.resolve(drained);
+
+        expect(await pending).toEqual([drained]);
+        expect(await updater.tick(Date.now())).toEqual([late]);
+    });
+
     it("drops a suspended incoming-funds callback across stop() + start()", async () => {
         // Without the counter this emit lands on the *new* channel carrying the
         // previous wallet's vtxos, and VTXO_UPDATE carries no id to filter on.
