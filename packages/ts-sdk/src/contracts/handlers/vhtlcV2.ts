@@ -131,21 +131,21 @@ function decodeCovenantLeaf<K extends string>(
  * the same ScriptV2 the two uses would fight over one row.
  *
  * **Which leaves this offers, and why the set is smaller than the ladder.**
- * ScriptV2 has eight leaves; a wallet holding ONE of the two participant keys
+ * ScriptV2 has nine leaves; a wallet holding ONE of the two participant keys
  * can satisfy four of them, and offering a leaf whose signature the caller
  * cannot produce is worse than offering fewer — it turns a refusal into a
  * transaction that gets built and then rejected.
  *
- * | leaf                              | needs                          | offered |
- * |-----------------------------------|--------------------------------|---------|
- * | `claim`                           | receiver + server, preimage    | yes, to the receiver |
- * | `refund`                          | sender + receiver + server     | no — needs the counterparty live |
- * | `refundWithoutReceiver`           | sender + server, CLTV          | yes, to the sender |
- * | `unilateralClaim`                 | receiver, CSV                  | yes, to the receiver |
- * | `unilateralRefund`                | sender + receiver, CSV         | no — needs the counterparty live |
- * | `unilateralRefundWithoutReceiver` | sender, CSV                    | yes, to the sender |
- * | `nonInteractiveClaim`             | server + emulator              | no — the wallet holds neither key |
- * | `nonInteractiveRefund`            | server + receiver + emulator   | no — the wallet holds neither key |
+ * | leaf                                  | needs                          | offered |
+ * |---------------------------------------|--------------------------------|---------|
+ * | `claim`                               | receiver + server, preimage    | yes, to the receiver |
+ * | `refund`                              | sender + receiver + server     | no — needs the counterparty live |
+ * | `refundWithoutReceiver`               | sender + server, CLTV          | yes, to the sender |
+ * | `unilateralClaim`                     | receiver, CSV                  | yes, to the receiver |
+ * | `unilateralRefund`                    | sender + receiver, CSV         | no — needs the counterparty live |
+ * | `unilateralRefundWithoutReceiver`     | sender, CSV                    | yes, to the sender |
+ * | `nonInteractiveClaim`                 | server + emulator              | no — the wallet holds neither key |
+ * | `nonInteractiveRefund`                | server + receiver + emulator   | no — the wallet holds neither key |
  * | `nonInteractiveRefundWithoutReceiver` | server + emulator, CLTV        | no — the wallet holds neither key |
  *
  * The two omitted interactive leaves are the same two the `vhtlc` handler

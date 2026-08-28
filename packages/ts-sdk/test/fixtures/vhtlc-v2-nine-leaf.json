@@ -1,0 +1,48 @@
+{
+    "comment": "Generated from VHTLC.ScriptV2 with fixed, non-random test keys so this file is byte-reproducible. Regenerate by constructing VHTLC.ScriptV2 with: sender = schnorr.getPublicKey(Uint8Array(32).fill(1)), receiver = fill(2), server = fill(3), preimageHash = Uint8Array(20).fill(9), refundLocktime = 1000n, unilateralClaimDelay = {blocks, 100n}, unilateralRefundDelay = {blocks, 102n}, unilateralRefundWithoutReceiverDelay = {blocks, 103n}, nonInteractiveClaim = {receiverPkScript: 0x5120 || fill(4), emulatorPubkey: fill(5)}, nonInteractiveRefund = {senderPkScript: 0x5120 || fill(6), emulatorPubkey: fill(5), withoutReceiver: true} (all fill(n) via schnorr.getPublicKey(Uint8Array(32).fill(n)), @noble/curves/secp256k1.js) — then print pkScript, every script.*Script leaf, script.encode(), and both *ArkadeScript fields as hex. See test/script/vhtlc-vectors.test.ts for the exact reconstruction this pins against.",
+    "options": {
+        "sender": "031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+        "receiver": "024d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766",
+        "server": "02531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+        "preimageHash": "0909090909090909090909090909090909090909",
+        "refundLocktime": "1000",
+        "unilateralClaimDelay": {
+            "type": "blocks",
+            "value": "100"
+        },
+        "unilateralRefundDelay": {
+            "type": "blocks",
+            "value": "102"
+        },
+        "unilateralRefundWithoutReceiverDelay": {
+            "type": "blocks",
+            "value": "103"
+        },
+        "nonInteractiveClaim": {
+            "receiverPkScript": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b",
+            "emulatorPubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7"
+        },
+        "nonInteractiveRefund": {
+            "senderPkScript": "5120f006a18d5653c4edf5391ff23a61f03ff83d237e880ee61187fa9f379a028e0a",
+            "emulatorPubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+            "withoutReceiver": true
+        }
+    },
+    "pkScript": "51208c814f0c398c065d46d975283d24818e97d9c6e917be2d30c347f4fc11c48b5b",
+    "tapTree": "01c06082012088a91409090909090909090909090909090909090909098769204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766ad20531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337ac01c066201b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078fad204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766ad20531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337ac01c04902e803b175201b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078fad20531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337ac01c04282012088a914090909090909090909090909090909090909090987690164b275204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766ac01c0480166b275201b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078fad204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766ac01c0260167b275201b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078fac01c06082012088a9140909090909090909090909090909090909090909876920531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337ad20b39fac289b95579dfbb032f44d076375d3f3820b36021169bf63d8ec40ed99e1ac01c06620531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337ad204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766ad2065ed13213f33571c6666008870605652066d8879f7a972d2e34b6070e63ed9efac01c04902e803b17520531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337ad2065ed13213f33571c6666008870605652066d8879f7a972d2e34b6070e63ed9efac",
+    "leaves": {
+        "claim": "82012088a91409090909090909090909090909090909090909098769204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766ad20531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337ac",
+        "refund": "201b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078fad204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766ad20531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337ac",
+        "refundWithoutReceiver": "02e803b175201b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078fad20531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337ac",
+        "unilateralClaim": "82012088a914090909090909090909090909090909090909090987690164b275204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766ac",
+        "unilateralRefund": "0166b275201b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078fad204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766ac",
+        "unilateralRefundWithoutReceiver": "0167b275201b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078fac",
+        "nonInteractiveClaim": "82012088a9140909090909090909090909090909090909090909876920531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337ad20b39fac289b95579dfbb032f44d076375d3f3820b36021169bf63d8ec40ed99e1ac",
+        "nonInteractiveRefund": "20531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337ad204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766ad2065ed13213f33571c6666008870605652066d8879f7a972d2e34b6070e63ed9efac",
+        "nonInteractiveRefundWithoutReceiver": "02e803b17520531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337ad2065ed13213f33571c6666008870605652066d8879f7a972d2e34b6070e63ed9efac"
+    },
+    "arkadeScripts": {
+        "nonInteractiveClaim": "cd76d1518820462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b88cfcdc9a2",
+        "nonInteractiveRefund": "cd76d1518820f006a18d5653c4edf5391ff23a61f03ff83d237e880ee61187fa9f379a028e0a88cfcdc9a2"
+    }
+}
