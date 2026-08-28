@@ -96,6 +96,21 @@ export namespace VHTLC {
         nonInteractiveRefund?: {
             senderPkScript: Bytes;
             emulatorPubkey: Bytes;
+            /**
+             * Also emit the timelocked twin: `server` plus the SAME
+             * covenant-tweaked co-signer, spendable after `refundLocktime`
+             * with no receiver signature and no sender signature.
+             *
+             * This is the only refund tier that needs nobody: `refund` and
+             * `refundWithoutReceiver` need the sender's key,
+             * `nonInteractiveRefund` needs the receiver's. A sender who
+             * funded a lockup and vanished is refundable through this leaf
+             * alone, by anyone, to their pre-committed address.
+             *
+             * Off by default: it is a ninth leaf, so enabling it changes the
+             * taproot merkle root and therefore the address.
+             */
+            withoutReceiver?: boolean;
         };
         /**
          * Optional: denominate this contract in an Arkade ASSET rather than in
@@ -168,6 +183,8 @@ export namespace VHTLC {
         readonly nonInteractiveClaimArkadeScript?: Bytes;
         readonly nonInteractiveRefundScript?: string;
         readonly nonInteractiveRefundArkadeScript?: Bytes;
+        readonly nonInteractiveRefundWithoutReceiverScript?: string;
+        readonly nonInteractiveRefundWithoutReceiverArkadeScript?: Bytes;
 
         protected constructor(options: Options, preimageCondition: (hash: Bytes) => Bytes) {
             validateOptions(options);
@@ -251,26 +268,42 @@ export namespace VHTLC {
 
             let arkadeScriptNir: Bytes | undefined;
             let nonInteractiveRefundScript: Bytes | undefined;
+            let nonInteractiveRefundWithoutReceiverScript: Bytes | undefined;
             if (options.nonInteractiveRefund) {
                 arkadeScriptNir = enforcePayToMaybeAsset(
                     options.nonInteractiveRefund.senderPkScript,
                     options.asset,
+                );
+                // Derived ONCE and shared by both refund covenant leaves. They
+                // pin the same destination, so they must commit to the same
+                // key; computing it twice would make that a coincidence rather
+                // than a guarantee.
+                const nirCosigner = computeArkadeScriptPublicKey(
+                    options.nonInteractiveRefund.emulatorPubkey,
+                    arkadeScriptNir,
                 );
                 // No timelock: server + receiver together can release this
                 // immediately, same as `refund` above, just without needing
                 // the sender's own signature — the covenant is what still
                 // guarantees the payout can only reach the sender.
                 nonInteractiveRefundScript = MultisigTapscript.encode({
-                    pubkeys: [
-                        server,
-                        receiver,
-                        computeArkadeScriptPublicKey(
-                            options.nonInteractiveRefund.emulatorPubkey,
-                            arkadeScriptNir,
-                        ),
-                    ],
+                    pubkeys: [server, receiver, nirCosigner],
                 }).script;
                 scripts.push(nonInteractiveRefundScript);
+
+                if (options.nonInteractiveRefund.withoutReceiver) {
+                    // The same tier `refundWithoutReceiver` reaches, reached
+                    // without the sender: their signature is replaced by the
+                    // covenant, exactly as `nonInteractiveRefund` replaces it
+                    // in `refund`. Last in `scripts`, because leaf order fixes
+                    // the merkle root and every earlier leaf must keep its
+                    // position.
+                    nonInteractiveRefundWithoutReceiverScript = CLTVMultisigTapscript.encode({
+                        absoluteTimelock: refundLocktime,
+                        pubkeys: [server, nirCosigner],
+                    }).script;
+                    scripts.push(nonInteractiveRefundWithoutReceiverScript);
+                }
             }
 
             super(scripts);
@@ -291,6 +324,12 @@ export namespace VHTLC {
             if (nonInteractiveRefundScript) {
                 this.nonInteractiveRefundScript = hex.encode(nonInteractiveRefundScript);
                 this.nonInteractiveRefundArkadeScript = arkadeScriptNir;
+            }
+            if (nonInteractiveRefundWithoutReceiverScript) {
+                this.nonInteractiveRefundWithoutReceiverScript = hex.encode(
+                    nonInteractiveRefundWithoutReceiverScript,
+                );
+                this.nonInteractiveRefundWithoutReceiverArkadeScript = arkadeScriptNir;
             }
         }
 
@@ -345,6 +384,20 @@ export namespace VHTLC {
                 this.nonInteractiveRefundArkadeScript,
             ];
         }
+
+        /** Return the timelocked non-interactive refund tapleaf and its ArkadeScript. */
+        nonInteractiveRefundWithoutReceiver(): [TapLeafScript, Bytes] {
+            if (
+                !this.nonInteractiveRefundWithoutReceiverScript ||
+                !this.nonInteractiveRefundWithoutReceiverArkadeScript
+            ) {
+                throw new Error("VHTLC has no non-interactive refund-without-receiver leaf");
+            }
+            return [
+                this.findLeaf(this.nonInteractiveRefundWithoutReceiverScript),
+                this.nonInteractiveRefundWithoutReceiverArkadeScript,
+            ];
+        }
     }
 
     /**
@@ -365,6 +418,10 @@ export namespace VHTLC {
      *   can push the sender's refund immediately, no timelock, pinned to a
      *   pre-committed destination — recoverable even if the sender's own key
      *   is lost
+     * - **nonInteractiveRefundWithoutReceiver** (optional): server + emulator
+     *   can push the sender's refund after `refundLocktime`, pinned to a
+     *   pre-committed destination — the only refund tier needing no
+     *   participant signature at all
      *
      * See {@link ScriptV2} for the current recommended construction — same
      * leaf ladder, same options shape, an added length check on the claim
