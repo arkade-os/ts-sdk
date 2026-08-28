@@ -515,6 +515,34 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
+    it("pushes contract events straight to the channel", async () => {
+        const manager = {
+            onContractEvent: vi.fn((cb: any) => {
+                eventCallback = cb;
+                return vi.fn();
+            }),
+        };
+        let eventCallback: ((event: any) => void) | undefined;
+        const broadcast = vi.fn();
+        (updater as any).readonlyWallet = {
+            getContractManager: vi.fn().mockResolvedValue(manager),
+        };
+        (updater as any).channel = { broadcast };
+
+        await (updater as any).ensureContractEventBroadcasting();
+
+        const event = { type: "test", contractId: "c1" };
+        eventCallback?.(event);
+
+        expect(broadcast).toHaveBeenCalledWith({
+            tag: updater.messageTag,
+            type: "CONTRACT_EVENT",
+            broadcast: true,
+            payload: { event },
+        });
+        expect(await updater.tick(Date.now())).toEqual([]);
+    });
+
     it("broadcasts contract events without subscriptions", async () => {
         const unsubscribe = vi.fn();
         let eventCallback: ((event: any) => void) | undefined;
@@ -834,6 +862,37 @@ describe("WalletMessageHandler handleMessage", () => {
             type: "RECOVER_VTXOS_SUCCESS",
             payload: { txid: "recover-txid" },
         });
+    });
+
+    it("RECOVER_VTXOS pushes settlement events straight to the channel", async () => {
+        // The three progress cases share a shape; one channel-wired variant
+        // covers them.
+        const event = { type: "batch_started", id: "b1" };
+        const broadcast = vi.fn();
+        const vtxoManager = {
+            recoverVtxos: vi.fn().mockImplementation(async (cb: any) => {
+                cb(event);
+                return "recover-txid";
+            }),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+        };
+        (updater as any).channel = { broadcast };
+
+        await updater.handleMessage({
+            ...baseMessage("r1"),
+            type: "RECOVER_VTXOS",
+        } as any);
+
+        expect(broadcast).toHaveBeenCalledWith({
+            tag: updater.messageTag,
+            id: "r1",
+            type: "RECOVER_VTXOS_EVENT",
+            payload: event,
+        });
+        expect(await updater.tick(Date.now())).toEqual([]);
     });
 
     it("RECOVER_VTXOS forwards settlement events via tick", async () => {
@@ -2184,5 +2243,352 @@ describe("WalletMessageHandler repo-backed reads", () => {
         await expect((updater as any).getVtxosFromRepo()).rejects.toThrow(
             /failed to derive script from wallet address/,
         );
+    });
+});
+
+describe("WalletMessageHandler event-push generations", () => {
+    const deferred = <T = void>() => {
+        let resolve!: (value: T) => void;
+        const promise = new Promise<T>((r) => {
+            resolve = r;
+        });
+        return { promise, resolve };
+    };
+    const flush = async (turns = 10) => {
+        for (let i = 0; i < turns; i++) await Promise.resolve();
+    };
+
+    const makeWallet = (overrides: Record<string, any> = {}) => ({
+        getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
+        getContractManager: vi.fn().mockResolvedValue({
+            onContractEvent: vi.fn(() => vi.fn()),
+            getContracts: vi.fn().mockResolvedValue([]),
+        }),
+        notifyIncomingFunds: vi.fn().mockResolvedValue(vi.fn()),
+        getBoardingUtxos: vi.fn().mockResolvedValue([]),
+        dispose: vi.fn().mockResolvedValue(undefined),
+        clear: vi.fn().mockResolvedValue(undefined),
+        ...overrides,
+    });
+
+    const vtxoFunds = () => ({
+        type: "vtxo",
+        newVtxos: [createMockExtendedVtxo()],
+        spentVtxos: [],
+    });
+
+    let updater: WalletMessageHandler;
+    let repository: InMemoryWalletRepository;
+    let broadcast: ReturnType<typeof vi.fn>;
+
+    const attach = (wallet: any) => {
+        (updater as any).readonlyWallet = wallet;
+        (updater as any).arkProvider = {};
+        (updater as any).indexerProvider = {};
+        (updater as any).walletRepository = repository;
+        (updater as any).channel = { broadcast };
+    };
+
+    const emitted = (type: string) =>
+        broadcast.mock.calls.some(([response]) => response?.type === type);
+
+    beforeEach(() => {
+        updater = new WalletMessageHandler();
+        repository = new InMemoryWalletRepository();
+        broadcast = vi.fn();
+        // Not under test, and the real one talks to the indexer.
+        (updater as any).refreshCachedData = vi.fn().mockResolvedValue(undefined);
+    });
+
+    it("drops a suspended incoming-funds callback across stop() + start()", async () => {
+        // Without the counter this emit lands on the *new* channel carrying the
+        // previous wallet's vtxos, and VTXO_UPDATE carries no id to filter on.
+        const gate = deferred();
+        let fundsCallback: ((funds: any) => Promise<void>) | undefined;
+        const wallet = makeWallet({
+            getContractManager: vi.fn().mockResolvedValue({
+                onContractEvent: vi.fn(() => vi.fn()),
+                getContracts: vi.fn(async () => {
+                    await gate.promise;
+                    return [];
+                }),
+            }),
+            notifyIncomingFunds: vi.fn(async (cb: any) => {
+                fundsCallback = cb;
+                return vi.fn();
+            }),
+        });
+        attach(wallet);
+        await (updater as any).onWalletInitialized();
+
+        const inFlight = fundsCallback!(vtxoFunds());
+        await flush();
+
+        await updater.stop();
+        const nextBroadcast = vi.fn();
+        await updater.start(
+            { readonlyWallet: makeWallet(), arkProvider: {} } as any,
+            { walletRepository: repository },
+            { broadcast: nextBroadcast },
+        );
+
+        gate.resolve();
+        await inFlight;
+
+        expect(emitted("VTXO_UPDATE")).toBe(false);
+        expect(nextBroadcast).not.toHaveBeenCalled();
+        expect(await repository.getVtxosForScript(TEST_DEFAULT_SCRIPT)).toEqual([]);
+    });
+
+    it("does not re-arm the tick queue with progress events emitted after stop()", async () => {
+        // The fallback branch of the same guard: stop() clears onNextTick, and
+        // an uncancelled handleMessage must not refill it.
+        const started = deferred();
+        const gate = deferred();
+        const vtxoManager = {
+            recoverVtxos: vi.fn(async (cb: any) => {
+                started.resolve();
+                await gate.promise;
+                cb({ type: "batch_started" });
+                return "recover-txid";
+            }),
+        };
+        (updater as any).readonlyWallet = makeWallet();
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+            dispose: vi.fn().mockResolvedValue(undefined),
+        };
+
+        const inFlight = updater.handleMessage({
+            ...baseMessage("r1"),
+            type: "RECOVER_VTXOS",
+        } as any);
+        await started.promise;
+
+        await updater.stop();
+        gate.resolve();
+        await inFlight;
+
+        expect((updater as any).onNextTick).toEqual([]);
+    });
+
+    it("neither emits nor writes from a callback suspended across CLEAR", async () => {
+        // A channel-only assertion passes while saveVtxosForContract resurrects
+        // the rows wallet.clear() just deleted — assert the repository too.
+        const gate = deferred();
+        let fundsCallback: ((funds: any) => Promise<void>) | undefined;
+        const wallet = makeWallet({
+            getContractManager: vi.fn().mockResolvedValue({
+                getContracts: vi.fn(async () => {
+                    await gate.promise;
+                    return [];
+                }),
+            }),
+            notifyIncomingFunds: vi.fn(async (cb: any) => {
+                fundsCallback = cb;
+                return vi.fn();
+            }),
+        });
+        attach(wallet);
+        await (updater as any).onWalletInitialized();
+
+        const inFlight = fundsCallback!(vtxoFunds());
+        await flush();
+
+        await (updater as any).clear();
+        expect(wallet.clear).toHaveBeenCalled();
+        gate.resolve();
+        await inFlight;
+
+        expect(emitted("VTXO_UPDATE")).toBe(false);
+        expect(await repository.getVtxosForScript(TEST_DEFAULT_SCRIPT)).toEqual([]);
+        // clear() does not end the bus generation, so the channel survives it.
+        expect((updater as any).channel).toBeDefined();
+    });
+
+    it("keeps contract-event delivery alive across a second INIT_WALLET", async () => {
+        // Regression test for collapsing the two subscription counters: sharing
+        // a bump with the incoming-funds re-subscribe would make this emitter
+        // permanently stale, and nothing re-registers it.
+        let eventCallback: ((event: any) => void) | undefined;
+        const wallet = makeWallet({
+            getContractManager: vi.fn().mockResolvedValue({
+                onContractEvent: vi.fn((cb: any) => {
+                    eventCallback = cb;
+                    return vi.fn();
+                }),
+                getContracts: vi.fn().mockResolvedValue([]),
+            }),
+        });
+        attach(wallet);
+
+        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized();
+
+        eventCallback?.({ type: "test" });
+        expect(emitted("CONTRACT_EVENT")).toBe(true);
+    });
+
+    it("keeps a settle's progress stream alive across a second INIT_WALLET", async () => {
+        // Folding requests into the incoming-funds counter would truncate this,
+        // leaving the page a SETTLE_SUCCESS with no progress behind it.
+        const gate = deferred();
+        const wallet = makeWallet();
+        const signer = {
+            settle: vi.fn(async (_params: any, cb: any) => {
+                cb({ type: "first" });
+                await gate.promise;
+                cb({ type: "second" });
+                return "settle-txid";
+            }),
+        };
+        attach(wallet);
+        (updater as any).wallet = signer;
+
+        const inFlight = (updater as any).handleSettle({
+            ...baseMessage("s1"),
+            type: "SETTLE",
+            payload: { params: {} },
+        });
+        await flush();
+
+        await (updater as any).onWalletInitialized();
+        gate.resolve();
+        await inFlight;
+
+        const events = broadcast.mock.calls
+            .map(([r]) => r)
+            .filter((r) => r?.type === "SETTLE_EVENT");
+        expect(events.map((r) => r.payload.type)).toEqual(["first", "second"]);
+    });
+
+    it("drops the previous incoming-funds callback across a second INIT_WALLET", async () => {
+        const gate = deferred();
+        const callbacks: ((funds: any) => Promise<void>)[] = [];
+        const wallet = makeWallet({
+            getContractManager: vi.fn().mockResolvedValue({
+                onContractEvent: vi.fn(() => vi.fn()),
+                getContracts: vi.fn(async () => {
+                    await gate.promise;
+                    return [];
+                }),
+            }),
+            notifyIncomingFunds: vi.fn(async (cb: any) => {
+                callbacks.push(cb);
+                return vi.fn();
+            }),
+        });
+        attach(wallet);
+        await (updater as any).onWalletInitialized();
+
+        const inFlight = callbacks[0](vtxoFunds());
+        await flush();
+
+        await (updater as any).onWalletInitialized();
+        gate.resolve();
+        await inFlight;
+
+        expect(callbacks).toHaveLength(2);
+        expect(emitted("VTXO_UPDATE")).toBe(false);
+        expect(await repository.getVtxosForScript(TEST_DEFAULT_SCRIPT)).toEqual([]);
+    });
+
+    it("keeps CONTRACT_EVENT delivery alive when a stale setup lands after stop()", async () => {
+        // The damage is the field assignment, not the emit: a stale run that
+        // assigns contractEventsSubscription makes every later call no-op at the
+        // early return, and delivery dies silently.
+        const gate = deferred();
+        const staleManager = { onContractEvent: vi.fn(() => vi.fn()) };
+        attach(
+            makeWallet({
+                getContractManager: vi.fn(async () => {
+                    await gate.promise;
+                    return staleManager;
+                }),
+            }),
+        );
+
+        const pending = (updater as any).ensureContractEventBroadcasting();
+        await flush();
+        await updater.stop();
+        gate.resolve();
+        await pending;
+
+        expect(staleManager.onContractEvent).not.toHaveBeenCalled();
+        expect((updater as any).contractEventsSubscription).toBeUndefined();
+
+        let eventCallback: ((event: any) => void) | undefined;
+        const fresh = makeWallet({
+            getContractManager: vi.fn().mockResolvedValue({
+                onContractEvent: vi.fn((cb: any) => {
+                    eventCallback = cb;
+                    return vi.fn();
+                }),
+            }),
+        });
+        await updater.start(
+            { readonlyWallet: fresh, arkProvider: {} } as any,
+            { walletRepository: repository },
+            { broadcast },
+        );
+        await (updater as any).ensureContractEventBroadcasting();
+
+        eventCallback?.({ type: "test" });
+        expect(emitted("CONTRACT_EVENT")).toBe(true);
+    });
+
+    it("unsubscribes an incoming-funds registration that lands after stop()", async () => {
+        // The subscription is already live when the check runs, so a bare return
+        // would leave a callback with no handle to cancel it.
+        const gate = deferred();
+        const unsubscribe = vi.fn();
+        attach(
+            makeWallet({
+                notifyIncomingFunds: vi.fn(async () => {
+                    await gate.promise;
+                    return unsubscribe;
+                }),
+            }),
+        );
+
+        const pending = (updater as any).onWalletInitialized();
+        await flush();
+        await updater.stop();
+        gate.resolve();
+        await pending;
+
+        expect(unsubscribe).toHaveBeenCalled();
+        expect((updater as any).incomingFundsSubscription).toBeUndefined();
+    });
+
+    it("lets the later of two overlapping INIT_WALLETs own the subscription", async () => {
+        // incomingFundsEpoch doing double duty as the initializer's mutual
+        // exclusion: the loser cannot unsubscribe the winner.
+        const gate = deferred();
+        const unsubFirst = vi.fn();
+        const unsubSecond = vi.fn();
+        let calls = 0;
+        attach(
+            makeWallet({
+                notifyIncomingFunds: vi.fn(async () => {
+                    if (++calls === 1) {
+                        await gate.promise;
+                        return unsubFirst;
+                    }
+                    return unsubSecond;
+                }),
+            }),
+        );
+
+        const first = (updater as any).onWalletInitialized();
+        await flush();
+        const second = (updater as any).onWalletInitialized();
+        await flush();
+        gate.resolve();
+        await Promise.all([first, second]);
+
+        expect(unsubFirst).toHaveBeenCalled();
+        expect(unsubSecond).not.toHaveBeenCalled();
+        expect((updater as any).incomingFundsSubscription).toBe(unsubSecond);
     });
 });

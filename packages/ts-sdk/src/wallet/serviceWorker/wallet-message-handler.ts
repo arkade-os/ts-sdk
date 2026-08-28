@@ -874,6 +874,18 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseRestoreWallet
     );
 
+/** What a generation counter covers: a subscription field, or the request stream. */
+type Scope = "incomingFunds" | "contractEvents" | "request";
+
+/**
+ * Bound to the generation live when it was created. Re-check `stale` after
+ * every await that precedes a side effect — an emit, a repository write, or a
+ * subscription-field assignment.
+ */
+type Generation = { readonly stale: boolean };
+
+type Emitter = Generation & { emit(response: WalletUpdaterResponse | null): void };
+
 export class WalletMessageHandler
     implements MessageHandler<WalletUpdaterRequest, WalletUpdaterResponse>
 {
@@ -889,6 +901,18 @@ export class WalletMessageHandler
     private incomingFundsSubscription: (() => void) | undefined;
     private contractEventsSubscription: (() => void) | undefined;
     private onNextTick: (() => WalletUpdaterResponse | null)[] = [];
+    private channel: { broadcast(response: WalletUpdaterResponse): void } | undefined;
+
+    // One counter per subscription field, bumped exactly where that field is
+    // dropped — never where a neighbour's is. They cannot be merged:
+    // `onWalletInitialized` re-subscribes incoming funds while
+    // `ensureContractEventBroadcasting` deliberately keeps its subscription, so
+    // a shared bump would leave the live contract-event emitter permanently
+    // stale, and folding requests in would truncate an in-flight settle.
+    private incomingFundsEpoch = 0;
+    private contractEventsEpoch = 0;
+    /** Per-request progress callbacks: ends with the handler, not with a re-init. */
+    private requestEpoch = 0;
 
     /**
      * Instantiate a new WalletUpdater.
@@ -901,14 +925,25 @@ export class WalletMessageHandler
 
     // lifecycle methods
     async start(...params: Parameters<MessageHandler["start"]>): Promise<void> {
-        const [services, repositories] = params;
+        const [services, repositories, channel] = params;
         this.readonlyWallet = services.readonlyWallet;
         this.wallet = services.wallet;
         this.arkProvider = services.arkProvider;
         this.walletRepository = repositories.walletRepository;
+        this.channel = channel;
+        this.onNextTick = [];
     }
 
     async stop() {
+        // Before the async disposal below: an uncancelled handleMessage keeps
+        // invoking its progress callback, and without the bumps it would re-arm
+        // the tick queue that this just emptied.
+        this.requestEpoch++;
+        this.incomingFundsEpoch++;
+        this.contractEventsEpoch++;
+        this.channel = undefined;
+        this.onNextTick = [];
+
         if (this.incomingFundsSubscription) {
             this.incomingFundsSubscription();
             this.incomingFundsSubscription = undefined;
@@ -937,8 +972,10 @@ export class WalletMessageHandler
     }
 
     async tick(_now: number) {
-        const results = await Promise.allSettled(this.onNextTick.map((fn) => fn()));
-        this.onNextTick = [];
+        // Drain atomically: assigning [] after the await would re-clear anything
+        // a concurrent stop()/clear() queued, and resurrect what it dropped.
+        const pending = this.onNextTick.splice(0);
+        const results = await Promise.allSettled(pending.map((fn) => fn()));
         return results
             .map((result) => {
                 if (result.status === "fulfilled") {
@@ -952,8 +989,46 @@ export class WalletMessageHandler
             .filter((response) => response !== null);
     }
 
-    private scheduleForNextTick(callback: () => WalletUpdaterResponse | null) {
-        this.onNextTick.push(callback);
+    private epochOf(scope: Scope): number {
+        switch (scope) {
+            case "incomingFunds":
+                return this.incomingFundsEpoch;
+            case "contractEvents":
+                return this.contractEventsEpoch;
+            case "request":
+                return this.requestEpoch;
+        }
+    }
+
+    private newGeneration(scope: Scope): Generation {
+        const born = this.epochOf(scope);
+        const stale = () => born !== this.epochOf(scope);
+        return {
+            get stale() {
+                return stale();
+            },
+        };
+    }
+
+    /**
+     * A handle rather than a `broadcast(response, epoch)` call, because it can
+     * only be written where the closure it guards is created — an epoch passed
+     * at the call site reads identically whether it guards anything or not.
+     */
+    private newEmitter(scope: Scope): Emitter {
+        const gen = this.newGeneration(scope);
+        return {
+            get stale() {
+                return gen.stale;
+            },
+            emit: (response) => {
+                // Before the channel branch, so a dead generation reaches
+                // neither delivery path.
+                if (!response || gen.stale) return;
+                if (this.channel) return this.channel.broadcast(response);
+                this.onNextTick.push(() => response); // no channel: legacy tick delivery
+            },
+        };
     }
 
     private requireWallet(): Wallet {
@@ -992,6 +1067,9 @@ export class WalletMessageHandler
 
     async handleMessage(message: WalletUpdaterRequest): Promise<WalletUpdaterResponse> {
         const id = message.id;
+        // Shared by the progress callbacks below: they are inline case blocks,
+        // so there is no per-request handler of their own to capture at.
+        const emitter = this.newEmitter("request");
         if (message.type === "INIT_WALLET") {
             await this.handleInitWallet(message);
             return this.tagged({
@@ -1387,7 +1465,7 @@ export class WalletMessageHandler
                     const wallet = this.requireWallet();
                     const vtxoManager = await wallet.getVtxoManager();
                     const txid = await vtxoManager.recoverVtxos((e) => {
-                        this.scheduleForNextTick(() =>
+                        emitter.emit(
                             this.tagged({
                                 id,
                                 type: "RECOVER_VTXOS_EVENT",
@@ -1432,7 +1510,7 @@ export class WalletMessageHandler
                     const wallet = this.requireWallet();
                     const vtxoManager = await wallet.getVtxoManager();
                     const txid = await vtxoManager.renewVtxos((e) => {
-                        this.scheduleForNextTick(() =>
+                        emitter.emit(
                             this.tagged({
                                 id,
                                 type: "RENEW_VTXOS_EVENT",
@@ -1471,7 +1549,7 @@ export class WalletMessageHandler
                     const vtxoManager = await wallet.getVtxoManager();
                     const report = await vtxoManager.migrateDeprecatedSignerVtxos({
                         eventCallback: (e) => {
-                            this.scheduleForNextTick(() =>
+                            emitter.emit(
                                 this.tagged({
                                     id,
                                     type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_EVENT",
@@ -1602,21 +1680,27 @@ export class WalletMessageHandler
         return this.readonlyWallet.getBoardingUtxos();
     }
     private async onWalletInitialized() {
-        if (
-            !this.readonlyWallet ||
-            !this.arkProvider ||
-            !this.indexerProvider ||
-            !this.walletRepository
-        ) {
+        const wallet = this.readonlyWallet;
+        if (!wallet || !this.arkProvider || !this.indexerProvider || !this.walletRepository) {
             return;
         }
+
+        // Bounds each await below to the generation that entered: a stop(),
+        // CLEAR or re-init landing inside one must not let the stale
+        // initializer resume and overwrite the new wallet's subscription.
+        // `incomingFundsEpoch` doubles as mutual exclusion between two
+        // overlapping INIT_WALLETs — whichever reaches the bump first makes the
+        // other return before it can unsubscribe the winner.
+        const init = this.newGeneration("incomingFunds");
 
         // Initialize contract manager FIRST — this populates the repository
         // with full virtual output history for all contracts (one indexer call per contract)
         await this.ensureContractEventBroadcasting();
+        if (init.stale) return;
 
         // Refresh cached data (virtual outputs, boarding inputs, tx history)
         await this.refreshCachedData();
+        if (init.stale) return;
 
         // Recover pending transactions (init-only, not on reload).
         // Pending txs only exist if a send was interrupted mid-finalization.
@@ -1632,104 +1716,120 @@ export class WalletMessageHandler
             } catch (error: unknown) {
                 console.error("Error recovering pending transactions:", error);
             }
+            if (init.stale) return;
         }
 
         // unsubscribe previous subscription if any
         if (this.incomingFundsSubscription) this.incomingFundsSubscription();
+        this.incomingFundsSubscription = undefined;
+        this.incomingFundsEpoch++;
+        // The new generation starts here — `init` is stale from now on.
+        const emitter = this.newEmitter("incomingFunds");
 
-        const address = await this.readonlyWallet.getAddress();
+        const address = await wallet.getAddress();
 
         // subscribe for incoming funds and notify all clients when new funds arrive
-        this.incomingFundsSubscription = await this.readonlyWallet.notifyIncomingFunds(
-            async (funds) => {
-                if (funds.type === "vtxo") {
-                    // `funds.newVtxos` / `funds.spentVtxos` are already
-                    // ExtendedVirtualCoin — annotation happened inside the
-                    // underlying Wallet's subscription handler before this
-                    // callback fired. Re-annotating here would only duplicate
-                    // work and re-expose us to `annotateVtxos` throws.
-                    const { newVtxos, spentVtxos } = funds;
+        const unsubscribe = await wallet.notifyIncomingFunds(async (funds) => {
+            if (emitter.stale) return;
+            if (funds.type === "vtxo") {
+                // `funds.newVtxos` / `funds.spentVtxos` are already
+                // ExtendedVirtualCoin — annotation happened inside the
+                // underlying Wallet's subscription handler before this
+                // callback fired. Re-annotating here would only duplicate
+                // work and re-expose us to `annotateVtxos` throws.
+                const { newVtxos, spentVtxos } = funds;
 
-                    if (newVtxos.length + spentVtxos.length === 0) return;
+                if (newVtxos.length + spentVtxos.length === 0) return;
 
-                    // Save virtual outputs using unified repository. The
-                    // event may carry rows for several scripts (other
-                    // contracts the wallet watches), so split by script and
-                    // save each bucket under its own contract address rather
-                    // than saving a mixed-script array under one address.
-                    const byScript = new Map<string, ExtendedVirtualCoin[]>();
-                    for (const v of [...newVtxos, ...spentVtxos]) {
-                        if (!v.script) {
-                            // Without a script we can't route the row to the
-                            // right contract bucket; surface the drop instead
-                            // of silently losing the VTXO.
-                            console.warn(
-                                `WalletMessageHandler.notifyIncomingFunds: dropping VTXO without script ${v.txid}:${v.vout}`,
-                            );
-                            continue;
-                        }
-                        const arr = byScript.get(v.script) ?? [];
-                        arr.push(v);
-                        byScript.set(v.script, arr);
-                    }
-                    let walletScript: string | undefined;
-                    try {
-                        walletScript = scriptFromArkAddress(address);
-                    } catch {
-                        walletScript = undefined;
-                    }
-                    const cm = await this.readonlyWallet!.getContractManager();
-                    const contracts = await cm.getContracts();
-                    const addrByScript = new Map(contracts.map((c) => [c.script, c.address]));
-                    for (const [script, vtxos] of byScript) {
-                        const filtered = warnAndFilterVtxosForScript(
-                            vtxos,
-                            script,
-                            "WalletMessageHandler.notifyIncomingFunds",
+                // Save virtual outputs using unified repository. The
+                // event may carry rows for several scripts (other
+                // contracts the wallet watches), so split by script and
+                // save each bucket under its own contract address rather
+                // than saving a mixed-script array under one address.
+                const byScript = new Map<string, ExtendedVirtualCoin[]>();
+                for (const v of [...newVtxos, ...spentVtxos]) {
+                    if (!v.script) {
+                        // Without a script we can't route the row to the
+                        // right contract bucket; surface the drop instead
+                        // of silently losing the VTXO.
+                        console.warn(
+                            `WalletMessageHandler.notifyIncomingFunds: dropping VTXO without script ${v.txid}:${v.vout}`,
                         );
-                        if (filtered.length === 0) continue;
-                        const targetAddress =
-                            script === walletScript ? address : addrByScript.get(script);
-                        if (!targetAddress) continue;
-                        if (this.walletRepository) {
-                            await saveVtxosForContract(
-                                this.walletRepository,
-                                { script, address: targetAddress },
-                                filtered,
-                            );
-                        }
+                        continue;
                     }
-
-                    // notify all clients about the virtual output state update
-                    this.scheduleForNextTick(() =>
-                        this.tagged({
-                            type: "VTXO_UPDATE",
-                            broadcast: true,
-                            payload: { newVtxos, spentVtxos },
-                        }),
-                    );
+                    const arr = byScript.get(v.script) ?? [];
+                    arr.push(v);
+                    byScript.set(v.script, arr);
                 }
-                if (funds.type === "utxo") {
-                    // A deposit may land on the current OR a previous boarding
-                    // address (per-derivation rotation, plan §6-IV.2). The
-                    // notified `coins` carry no address, so re-fetch + re-cache
-                    // the full boarding-address set via getBoardingUtxos, which
-                    // buckets each UTXO under the address it sits on with the
-                    // correct per-UTXO tapscript — instead of assuming the
-                    // current boarding address.
-                    const utxos = await this.readonlyWallet!.getBoardingUtxos();
-
-                    // notify all clients about the boarding input state update
-                    this.scheduleForNextTick(() =>
-                        this.tagged({
-                            type: "UTXO_UPDATE",
-                            broadcast: true,
-                            payload: { coins: utxos },
-                        }),
-                    );
+                let walletScript: string | undefined;
+                try {
+                    walletScript = scriptFromArkAddress(address);
+                } catch {
+                    walletScript = undefined;
                 }
-            },
-        );
+                // Re-checked after every await: this callback *writes* before
+                // it emits, and `clear()` leaves `walletRepository` set, so
+                // guarding only the emit would resurrect the rows the wipe
+                // just deleted while telling the page nothing.
+                const cm = await wallet.getContractManager();
+                if (emitter.stale) return;
+                const contracts = await cm.getContracts();
+                if (emitter.stale) return;
+                const addrByScript = new Map(contracts.map((c) => [c.script, c.address]));
+                for (const [script, vtxos] of byScript) {
+                    const filtered = warnAndFilterVtxosForScript(
+                        vtxos,
+                        script,
+                        "WalletMessageHandler.notifyIncomingFunds",
+                    );
+                    if (filtered.length === 0) continue;
+                    const targetAddress =
+                        script === walletScript ? address : addrByScript.get(script);
+                    if (!targetAddress) continue;
+                    if (this.walletRepository) {
+                        if (emitter.stale) return;
+                        await saveVtxosForContract(
+                            this.walletRepository,
+                            { script, address: targetAddress },
+                            filtered,
+                        );
+                    }
+                }
+
+                // notify all clients about the virtual output state update
+                emitter.emit(
+                    this.tagged({
+                        type: "VTXO_UPDATE",
+                        broadcast: true,
+                        payload: { newVtxos, spentVtxos },
+                    }),
+                );
+            }
+            if (funds.type === "utxo") {
+                // A deposit may land on the current OR a previous boarding
+                // address (per-derivation rotation, plan §6-IV.2). The
+                // notified `coins` carry no address, so re-fetch + re-cache
+                // the full boarding-address set via getBoardingUtxos, which
+                // buckets each UTXO under the address it sits on with the
+                // correct per-UTXO tapscript — instead of assuming the
+                // current boarding address.
+                if (emitter.stale) return; // its re-cache is internal: bail before the call
+                const utxos = await wallet.getBoardingUtxos();
+
+                // notify all clients about the boarding input state update
+                emitter.emit(
+                    this.tagged({
+                        type: "UTXO_UPDATE",
+                        broadcast: true,
+                        payload: { coins: utxos },
+                    }),
+                );
+            }
+        });
+        // Teardown landed mid-registration: the subscription is already live, so
+        // a bare return would leave a callback nothing can unsubscribe.
+        if (emitter.stale) return unsubscribe();
+        this.incomingFundsSubscription = unsubscribe;
 
         // Eagerly start the VtxoManager so its background tasks (auto-renewal,
         // boarding input polling/sweep) run inside the service worker without
@@ -1793,9 +1893,10 @@ export class WalletMessageHandler
     }
 
     private async handleSettle(message: RequestSettle) {
+        const emitter = this.newEmitter("request");
         const wallet = this.requireWallet();
         const txid = await wallet.settle(message.payload.params, (e) => {
-            this.scheduleForNextTick(() =>
+            emitter.emit(
                 this.tagged({
                     id: message.id,
                     type: "SETTLE_EVENT",
@@ -1920,6 +2021,15 @@ export class WalletMessageHandler
         const wallet = this.wallet ?? this.readonlyWallet;
         if (!wallet) return;
 
+        // The bus generation is untouched here, so the channel stays: dropping
+        // it would push later emits back onto the tick queue. The counters are
+        // what stop an in-flight callback from emitting — or writing — a
+        // just-wiped wallet's state.
+        this.requestEpoch++;
+        this.incomingFundsEpoch++;
+        this.contractEventsEpoch++;
+        this.onNextTick = [];
+
         if (this.incomingFundsSubscription) {
             this.incomingFundsSubscription();
             this.incomingFundsSubscription = undefined;
@@ -2043,12 +2153,19 @@ export class WalletMessageHandler
     }
 
     private async ensureContractEventBroadcasting() {
-        if (!this.readonlyWallet) return;
+        const wallet = this.readonlyWallet;
+        if (!wallet) return;
         if (this.contractEventsSubscription) return;
+        const gen = this.newGeneration("contractEvents");
         try {
-            const manager = await this.readonlyWallet.getContractManager();
+            const manager = await wallet.getContractManager();
+            // A stale run assigning the field would make the early return above
+            // swallow every later call, killing delivery for good; and a peer
+            // may have subscribed while we awaited.
+            if (gen.stale || this.contractEventsSubscription) return;
+            const emitter = this.newEmitter("contractEvents");
             this.contractEventsSubscription = manager.onContractEvent((event) => {
-                this.scheduleForNextTick(() =>
+                emitter.emit(
                     this.tagged({
                         type: "CONTRACT_EVENT",
                         broadcast: true,

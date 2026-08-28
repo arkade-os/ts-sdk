@@ -43,24 +43,30 @@ scheduler.
    outright and must wire the repository itself.
 4. Subsequent client messages are routed by `tag` (the handler's `messageTag`)
    or broadcast to all handlers.
-5. Handlers can respond immediately (via `handleMessage`) or later (via `tick`).
-   Responses are posted back to clients.
+5. Handlers can respond immediately (via `handleMessage`), push at any time
+   (via `channel.broadcast`), or wait for cadence (via `tick`). Responses are
+   posted back to clients.
 
 ## MessageHandler Interface
 
 Each handler implements the `MessageHandler` interface:
 
 - `messageTag` — unique string used to route messages to this handler.
-- `start(services, repositories)` — called once after initialization with the
-  wallet, Ark provider, and repositories.
+- `start(services, repositories, channel?)` — called once after initialization
+  with the wallet, Ark provider, repositories, and a push channel to the
+  clients. The channel is scoped to the generation it was handed out in and
+  goes inert on its own after a re-init or `stop()`.
 - `stop()` — called on shutdown.
-- `tick(now)` — called periodically; returns responses to broadcast to clients.
+- `tick(now)` — called periodically, for cadence-driven work; returns responses
+  to broadcast to clients.
 - `handleMessage(message)` — handles a routed message and returns a response.
 
 ## Trade-Offs
 
-- **Polling-based updates**: The tick loop uses `setTimeout`. Updates arrive at
-  most every `tickIntervalMs` (default 10s).
+- **Two delivery paths**: events pushed through `channel.broadcast` go out as
+  soon as the fan-out can post them. Only responses a handler holds for its
+  `tick` are bounded by `tickIntervalMs` (default 10s), whose `setTimeout` loop
+  is for periodic work.
 - **No persistence**: Handler state is in-memory. If the browser kills the
   service worker, state is lost unless the handler persists it elsewhere.
 - **Minimal lifecycle hooks**: Only `install` and `activate` are used. There is
