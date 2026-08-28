@@ -378,6 +378,46 @@ describe("requestLightningSend on an HD wallet", () => {
         ).signerForDescriptor(result.secrets.descriptor);
         expect(hex.encode(result.senderPubkey)).toBe(hex.encode(await signer.xOnlyPublicKey()));
     });
+
+    it("pairs the quote's refund address with the covenant's refundPkScript when getAddress rotates", async () => {
+        // Regression: two independent getAddress() reads — one feeding
+        // secrets.pkScript, one feeding the quote's refund_address — pair
+        // script A with address B on a wallet that rotates its receive
+        // address. Both come from the single read inside provisionRefundKey.
+        const wallet = await hdWallet();
+        const rotated = new ArkAddress(SERVER, key(22), "tark").encode();
+        let addressReads = 0;
+        const rotating = {
+            ...wallet,
+            getAddress: async () => (addressReads++ === 0 ? REFUND_ADDRESS : rotated),
+        } as unknown as IWallet;
+        const seen: { refundAddress?: string } = {};
+        const transport: RfqTransport = {
+            requestQuote(payload) {
+                seen.refundAddress = (payload as { profile: Record<string, unknown> }).profile
+                    .refund_address as string;
+                return lightningTransport().requestQuote(payload);
+            },
+            async status() {
+                return null;
+            },
+            async close() {},
+        };
+
+        const result = await requestLightningSend(rotating, "http://ark", transport, {
+            emulatorPubkey: EMULATOR_PUBKEY_HEX,
+            invoice: INVOICE,
+        });
+
+        expect(addressReads).toBe(1);
+        expect(result.refundAddress).toBe(REFUND_ADDRESS);
+        expect(result.refundAddress).toBe(result.secrets.address);
+        expect(seen.refundAddress).toBe(REFUND_ADDRESS);
+        // What the solver was told and what the covenant binds are one script.
+        expect(hex.encode(ArkAddress.decode(result.refundAddress).pkScript)).toBe(
+            hex.encode(result.treeParams.refundPkScript),
+        );
+    });
 });
 
 describe("requestOnchainSend on an HD wallet", () => {
