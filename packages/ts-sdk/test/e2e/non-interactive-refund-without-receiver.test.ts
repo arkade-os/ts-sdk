@@ -21,19 +21,42 @@
  *
  * THE TRAP THIS FILE EXISTS TO NAME: `refundLocktime` cannot be a small
  * block-height literal here, unlike every other VHTLC e2e fixture in this
- * suite (`vhtlc.test.ts` uses `1000` and `coreBlockCount() + 5`). Confirmed
- * against this repo's pinned arkd (v0.9.14): ANY vtxo script carrying a
- * block-typed CLTV leaf (< 500_000_000 — the same `CLTV_HEIGHT_THRESHOLD`
- * `src/contracts/handlers/helpers.ts` names) is refused at `submitTx` —
- * `INVALID_VTXO_SCRIPT (10): invalid forfeit closure, CLTV block type not
- * allowed` — for EVERY leaf in that script, not just the CLTV one.
- * Reproduced independently of this PR: `vhtlc.test.ts`'s
- * `should claim` (spends the unrelated `claim` leaf) and `should refund
- * without receiver on a post-maturity retry` both fail on it against the
- * same live stack, on `main`. So this file's `refundLocktime` is a
- * SECONDS-typed absolute timestamp (current chain median-time-past plus a
- * few seconds), matured by advancing the chain's own median-time-past — see
- * `matureAbsoluteLocktime` below — not by mining a fixed block count.
+ * suite (`vhtlc.test.ts` uses `1000` and `coreBlockCount() + 5`). This is
+ * NOT a blanket arkd rule against block-typed CLTV — it is OPERATOR
+ * CONFIGURATION, and this regtest operator's happens to refuse it. arkd's
+ * own source (a separate repo, cited here for the next reader, not part of
+ * this SDK) gates it on one flag:
+ *
+ *   // pkg/ark-lib/script/vtxo_script.go:107
+ *   if !blockTypeAllowed && !c.Locktime.IsSeconds() {
+ *       return fmt.Errorf("invalid forfeit closure, CLTV block type not allowed")
+ *   }
+ *   // internal/core/domain/settings.go:456
+ *   func (s Settings) AllowCSVBlockType() bool {
+ *       return s.VtxoTreeExpiry.Type == arklib.LocktimeTypeBlock
+ *   }
+ *
+ * `blockTypeAllowed` is true only when the OPERATOR's own `VtxoTreeExpiry`
+ * is itself block-typed — a stack configured that way would accept the same
+ * block-height `refundLocktime` every other fixture here uses. This regtest
+ * operator's is not: live `GET /v1/info` on this stack reports
+ * `unilateralExitDelay: "512"` — at/above the 512 magnitude boundary this
+ * submodule's own README documents for exactly this block-vs-seconds
+ * classification (`regtest/README.md`, "Fast VTXO expiry & sweeps") — so
+ * `AllowCSVBlockType()` is false here and a block-typed CLTV forfeit closure
+ * is refused at `submitTx`: `INVALID_VTXO_SCRIPT (10): invalid forfeit
+ * closure, CLTV block type not allowed`, for EVERY leaf in that script, not
+ * just the CLTV one (the check runs over the whole vtxo script, before
+ * reaching whichever leaf is actually being spent). Reproduced
+ * independently of this PR: `vhtlc.test.ts`'s `should claim` (spends the
+ * unrelated `claim` leaf) and `should refund without receiver on a
+ * post-maturity retry` both fail on it against this same live stack, on
+ * `main` — not because those fixtures are wrong in general, but because
+ * they assume a block-typed operator and this one isn't configured as one.
+ * So this file's `refundLocktime` is a SECONDS-typed absolute timestamp
+ * (current chain median-time-past plus a few seconds), matured by advancing
+ * the chain's own median-time-past — see `matureAbsoluteLocktime` below —
+ * not by mining a fixed block count.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -179,23 +202,52 @@ describe("non-interactive refund without receiver (VHTLC.ScriptV2 covenant leaf)
         // right amount) — the CLTV is the only thing that can refuse this,
         // isolating arkd's own timelock gate on the new leaf from the
         // covenant the emulator evaluates.
+        // WHY THE SAME PATTERN MATCHES ALL THREE OF (2)/(4)/(5) BELOW, ON
+        // PURPOSE. `RestEmulatorProvider.submitTx` (src/providers/emulator.ts:90-93)
+        // throws `Failed to submit tx to emulator: ${errorText}`, where
+        // `errorText` is the emulator's raw HTTP response body. Checked
+        // directly against this live stack (`docker logs emulator`) for each
+        // of the three rejections below, in order: the body is, byte for
+        // byte, `{"code":13, "message":"internal error", "details":[]}` —
+        // IDENTICAL for all three, despite three genuinely different causes
+        // server-side (confirmed only in the emulator's own logs, which a
+        // real caller does not see): `FORFEIT_CLOSURE_LOCKED (11): ... >
+        // ... (blocktime)` for the immature case, `OP_EQUALVERIFY failed
+        // vin=0` for the misdirected one, `false stack entry at end of
+        // script execution vin=0` for the shortchanged one — the last two
+        // matching exactly where `enforcePayTo`'s script would fail: the
+        // destination `EQUALVERIFY` for a wrong pkScript, and the trailing
+        // bare `GREATERTHANOREQUAL` (no `VERIFY`) leaving a false stack top
+        // for a short amount, rather than throwing partway through.
+        // `REGEXP` below is deliberately the SAME for all three: it is the
+        // most specific thing the client can actually observe, and forcing
+        // three different patterns onto one indistinguishable response would
+        // manufacture a distinction the API does not provide. What each
+        // assertion still rules out, over a bare `.rejects.toThrow()`: a
+        // wrong-class failure — a bug in this test, a network-level fetch
+        // failure, a timeout somewhere else in the chain — reaching this
+        // `await` instead of a genuine emulator-side submission rejection.
+        const EMULATOR_REJECTION = /Failed to submit tx to emulator:.*"code":\s*13/;
+
         await expect(
             contract.functions.refund().to(senderPkScript, CONTRACT_AMOUNT).send(),
-        ).rejects.toThrow();
+        ).rejects.toThrow(EMULATOR_REJECTION);
 
         await matureAbsoluteLocktime(refundLocktime);
 
         // (3) MATURE, MISDIRECTED. Right amount, wrong destination — only
         // `INSPECTOUTPUTSCRIPTPUBKEY ... EQUALVERIFY` refuses this, now
-        // that the CLTV can no longer be the reason.
+        // that the CLTV can no longer be the reason (server-side:
+        // `OP_EQUALVERIFY failed vin=0`, see above).
         await expect(
             contract.functions.refund().to(randomP2TR(), CONTRACT_AMOUNT).send(),
-        ).rejects.toThrow();
+        ).rejects.toThrow(EMULATOR_REJECTION);
 
         // (4) MATURE, SHORTCHANGED. Right destination, but one sat short —
         // routed to a second output so the tx still balances — refused only
-        // by `INSPECTOUTPUTVALUE ... GREATERTHANOREQUAL`. Mirrors the
-        // wrong-amount case in `non-interactive-htlc.test.ts`.
+        // by `INSPECTOUTPUTVALUE ... GREATERTHANOREQUAL` (server-side:
+        // `false stack entry at end of script execution vin=0`, see above).
+        // Mirrors the wrong-amount case in `non-interactive-htlc.test.ts`.
         await expect(
             contract.functions
                 .refund()
@@ -204,7 +256,7 @@ describe("non-interactive refund without receiver (VHTLC.ScriptV2 covenant leaf)
                     { script: randomP2TR(), amount: 1n },
                 ])
                 .send(),
-        ).rejects.toThrow();
+        ).rejects.toThrow(EMULATOR_REJECTION);
 
         // (5) MATURE, CORRECT. The emulator signs for `nirCosigner`, arkd
         // accepts the now-matured CLTV tapscript, and the payout lands at
