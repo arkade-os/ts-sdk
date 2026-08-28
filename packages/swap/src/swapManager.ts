@@ -12,6 +12,10 @@
  * swap at a time, remembers where each one got to, and tells the caller when
  * something happened. That is this module.
  *
+ * TODO: `packages/boltz-swap` is gone. This paragraph and the three bullets
+ * under it are framed as a diff against its `SwapManager`, so the rationale
+ * needs restating on its own terms.
+ *
  * The shape is deliberately the one `packages/boltz-swap`'s `SwapManager`
  * arrived at — monitor a set, act automatically through injected callbacks,
  * persist through an injected `saveSwap` or a repository of its own, expose
@@ -58,6 +62,9 @@
  *   poll interval is already that retry cadence and
  *   {@link REFUND_MTP_LAG_SECONDS} is already that deadline. A second backoff
  *   on top would only fight the first.
+ *
+ *   TODO: the `skipped`/`retryAt` contrast above points at the removed
+ *   boltz-swap — restate why the atomicity matters without it.
  *
  * **The manager owns WHEN, the caller owns HOW.** It holds the observation
  * seams (a {@link LockupSpendIndexer} for the Arkade side, and `ChainSource`
@@ -2029,10 +2036,9 @@ export class RfqSwapManager {
     /**
      * Drop a terminal swap from monitoring and report it exactly once.
      *
-     * `onSwapCompleted` and `onSwapFailed` are mutually exclusive here, unlike
-     * Boltz's manager, which fires completion for every swap that leaves
-     * monitoring including the failed ones — a listener named "completed" that
-     * also fires on failure is a trap worth not inheriting.
+     * `onSwapCompleted` and `onSwapFailed` are mutually exclusive here: a
+     * listener named "completed" that also fires on failure is a trap, so a
+     * swap that leaves monitoring reports through exactly one of them.
      */
     private finalize(swap: RfqSwap): void {
         if (!this.monitored.has(swap.rfqId)) return;

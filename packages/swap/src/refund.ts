@@ -143,12 +143,6 @@ export interface LockupVtxo {
      * trader's `sender` key does not change that; a sweep removes the leaf from
      * the live tree, not the signature from the trader.
      *
-     * `packages/boltz-swap` splits on exactly this fact rather than working
-     * around it: `settleRefundWithoutReceiver` sends a live VTXO through an
-     * offchain tx and a recoverable one through `joinBatch` — "a swept
-     * (recoverable) VTXO is no longer a live leaf, so it can only be reclaimed
-     * by re-registering it into a batch".
-     *
      * So the remedy is recovery (renewing the output into a fresh batch),
      * after which the ordinary CLTV refund works again. This package does not
      * build that round — see {@link pushRefundWithoutReceiver}, which refuses
@@ -167,8 +161,7 @@ export interface LockupVtxo {
  *
  * **The remedy already exists; this package does not reimplement it.** The SDK
  * recovers swept outputs by re-registering them into a fresh batch, through
- * `IVtxoManager.recoverVtxos()` — the same batch round `packages/boltz-swap`
- * reaches via its own `joinBatch`. It reads the wallet's registered-contract
+ * `IVtxoManager.recoverVtxos()`. It reads the wallet's registered-contract
  * snapshot (`recoverVtxos` → `wallet.getVtxos({ withRecoverable: true })` →
  * `contractSnapshot()` → `contractManager.getContractsWithVtxos()`), so it
  * covers a swap lockup as soon as that lockup is registered as a contract —
@@ -185,8 +178,7 @@ export interface LockupVtxo {
  *   recovery round including this VTXO earlier is rejected. `recoverVtxos`
  *   sweeps every recoverable output in ONE settlement and has no CLTV
  *   awareness, so recovering early can fail the whole batch rather than just
- *   this output. `packages/boltz-swap` encodes the same rule as "pre-CLTV
- *   recoverable → skipped".
+ *   this output.
  */
 export class LockupNeedsRecoveryError extends Error {
     readonly name = "LockupNeedsRecoveryError";
@@ -199,11 +191,10 @@ export class LockupNeedsRecoveryError extends Error {
      * into one settlement with no CLTV awareness, so an early attempt can fail
      * the whole batch — including unrelated outputs that were otherwise fine.
      *
-     * Exposed as a value, not only inside the message, so a caller can encode
-     * `packages/boltz-swap`'s "pre-CLTV recoverable → skipped" rule without
-     * parsing prose. Seconds-based locktimes mature against the chain tip's
-     * timestamp rather than wall clock, so treat this as a floor to wait past,
-     * not an exact alarm.
+     * Exposed as a value, not only inside the message, so a caller can skip
+     * pre-CLTV recoverable outputs without parsing prose. Seconds-based
+     * locktimes mature against the chain tip's timestamp rather than wall
+     * clock, so treat this as a floor to wait past, not an exact alarm.
      */
     readonly recoverableAfter: bigint;
 
@@ -234,8 +225,7 @@ export class LockupNeedsRecoveryError extends Error {
  * sat unresolved — which are precisely the ones most likely to have got there.
  * Reading only the spendable set would report `nothing_to_refund` over money
  * that is still sitting at the script, which is worse than an error: it looks
- * like a resolved swap. `packages/boltz-swap` merges the same two queries for
- * the same reason (`arkade-swaps.ts`'s `refundableVtxos`).
+ * like a resolved swap.
  *
  * **Visible is not the same as refundable.** A `recoverable` output cannot be
  * spent offchain at all — see {@link LockupVtxo.recoverable} — so this set is

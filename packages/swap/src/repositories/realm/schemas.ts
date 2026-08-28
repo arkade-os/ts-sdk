@@ -2,8 +2,8 @@
  * Realm object schemas for the asset-swap repository.
  *
  * The names land in the **consuming application's** schema namespace, next to
- * its own models and the SDK's `Ark*` / the Boltz plugin's `Boltz*`, so they
- * are prefixed with `ArkadeAssetSwap`. Unlike the SQLite backend there is no
+ * its own models and the SDK's `Ark*`, so they are prefixed with
+ * `ArkadeAssetSwap`. Unlike the SQLite backend there is no
  * prefix option: a Realm schema name is baked into the schema objects the
  * consumer registers and into every `realm.objects(…)` call here.
  *

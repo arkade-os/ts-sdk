@@ -17,9 +17,8 @@ export const marketsCacheKey = (network: string, registry: string) =>
 
 /**
  * Everything the package persists, following the monorepo repository
- * convention (versioned interface, AsyncDisposable, one backend per
- * platform — see the Boltz plugin's SwapRepository). Consumers construct
- * exactly one of these; there is no second storage seam.
+ * convention: versioned interface, AsyncDisposable, one backend per platform.
+ * Consumers construct exactly one of these; there is no second storage seam.
  *
  * Durable records (swaps) and rebuildable state (the restore scan's txid
  * cursor, the markets cache) live side by side because they share a
@@ -27,8 +26,7 @@ export const marketsCacheKey = (network: string, registry: string) =>
  * that wipes one wants all three gone.
  *
  * ponytail: no query filters — every consumer reads all swaps and filters
- * in memory; mirror the Boltz plugin's GetSwapsFilter when a consumer needs
- * subset queries.
+ * in memory; add a filter type when a consumer needs subset queries.
  */
 export interface AssetSwapRepository extends AsyncDisposable {
     /** 4 adds `getRfqSwap`. 3 added the other RFQ methods below; 2 was the
