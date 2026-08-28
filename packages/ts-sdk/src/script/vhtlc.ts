@@ -422,9 +422,10 @@ export namespace VHTLC {
          * check passing does the emulator sign for `nirCosigner` (the
          * `emulatorPubkey` tweaked by this ArkadeScript's hash); the
          * response carries the fully co-signed `signedArkTx` and
-         * `signedCheckpointTxs` (the emulator's own doc comment: "the
-         * emulator executes the arkade script and finalizes with arkd" — no
-         * separate call to arkd is made by this SDK for a covenant spend).
+         * `signedCheckpointTxs` — `ArkadeTransactionBuilder.send()`'s own
+         * comment on this path: "the emulator executes the arkade script
+         * and finalizes with arkd" — no separate call to arkd is made by
+         * this SDK for a covenant spend.
          * Neither `server` nor `receiver` play any part in that check: this
          * leaf's tapscript still requires `server`'s own signature
          * alongside `nirCosigner`'s (see the class doc above), but that is
