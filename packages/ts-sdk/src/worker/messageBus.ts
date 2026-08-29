@@ -310,7 +310,10 @@ export class MessageBus {
             while (this.broadcastQueue.length) {
                 const epoch = this.broadcastEpoch;
                 const batch = this.broadcastQueue.splice(0);
-                if (!this.running) return;
+                if (!this.running) {
+                    this.logDroppedBroadcasts(batch, "bus stopped");
+                    return;
+                }
 
                 let clients: readonly Client[];
                 try {
@@ -318,20 +321,29 @@ export class MessageBus {
                         includeUncontrolled: true,
                         type: "window",
                     });
-                } catch {
+                } catch (err) {
+                    this.logDroppedBroadcasts(batch, "clients.matchAll failed", err);
                     continue; // lose the batch, never the loop
                 }
 
-                if (!this.running) return; // stop() landed during matchAll
-                if (this.broadcastEpoch !== epoch) continue; // re-init landed
+                if (!this.running) {
+                    this.logDroppedBroadcasts(batch, "bus stopped during matchAll");
+                    return;
+                }
+                if (this.broadcastEpoch !== epoch) {
+                    this.logDroppedBroadcasts(batch, "re-init landed during matchAll");
+                    continue;
+                }
 
                 for (const message of batch) {
                     for (const client of clients) {
                         try {
                             client.postMessage(message);
-                        } catch {
+                        } catch (err) {
                             // a non-cloneable payload or a dead client must not
                             // cost the other windows their message
+                            if (this.debug)
+                                console.warn(`[${message.tag}] broadcast to client failed`, err);
                         }
                     }
                 }
@@ -344,6 +356,23 @@ export class MessageBus {
             // an early return must not leave work queued with nobody draining.
             if (this.running && this.broadcastQueue.length) void this.drain();
         }
+    }
+
+    /**
+     * A dropped batch has no periodic recovery to fall back on now that events
+     * no longer ride the tick, so name the loss under {@link Options.debug}.
+     */
+    private logDroppedBroadcasts(
+        batch: ResponseEnvelope[],
+        reason: string,
+        ...error: unknown[]
+    ): void {
+        if (!this.debug) return;
+        console.warn(
+            `dropping ${batch.length} broadcast(s): ${reason}`,
+            batch.map((response) => response.tag),
+            ...error,
+        );
     }
 
     private scheduleNextTick() {

@@ -924,7 +924,9 @@ export class WalletMessageHandler
     }
 
     // lifecycle methods
-    async start(...params: Parameters<MessageHandler["start"]>): Promise<void> {
+    async start(
+        ...params: Parameters<MessageHandler<WalletUpdaterRequest, WalletUpdaterResponse>["start"]>
+    ): Promise<void> {
         const [services, repositories, channel] = params;
         this.readonlyWallet = services.readonlyWallet;
         this.wallet = services.wallet;
