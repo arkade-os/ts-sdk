@@ -64,9 +64,11 @@ Each handler implements the `MessageHandler` interface:
 ## Trade-Offs
 
 - **Two delivery paths**: events pushed through `channel.broadcast` go out as
-  soon as the fan-out can post them. Only responses a handler holds for its
-  `tick` are bounded by `tickIntervalMs` (default 10s), whose `setTimeout` loop
-  is for periodic work.
+  soon as the fan-out can post them. Responses a handler holds for its `tick`
+  wait for the `setTimeout` loop instead, which paces periodic work rather than
+  bounding delivery: `tickIntervalMs` (default 10s) is a floor measured from the
+  previous tick's end, and a slow handler or an in-flight init pushes it out
+  further.
 - **No persistence**: Handler state is in-memory. If the browser kills the
   service worker, state is lost unless the handler persists it elsewhere.
 - **Minimal lifecycle hooks**: Only `install` and `activate` are used. There is
