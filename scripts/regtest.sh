@@ -136,21 +136,34 @@ cmd_groups() {
     echo "groups: only defined for ts-sdk" >&2
     exit 1
   fi
+  # Read the list before looping so a discovery failure is fatal: piped straight
+  # into `while`, a non-zero exit would yield no lines and report a vacuous pass.
+  local groups
+  if ! groups=$(node "$ROOT_DIR/scripts/e2e-groups.mjs"); then
+    echo "groups: could not read the e2e groups from the CI matrix" >&2
+    exit 1
+  fi
   local failed=()
   while IFS=$'\t' read -r name files; do
     [ -n "$name" ] || continue
     echo "=== e2e group: $name ==="
-    cmd_reset
-    cmd_up
-    cmd_setup
-    # shellcheck disable=SC2086 -- $files is a deliberate word-split file list
+    # Testing the stack steps as a condition exempts them from `set -e`, which
+    # would otherwise abort the whole run on one bad bring-up and hide every
+    # later group — the opposite of what this command is for.
+    if ! { cmd_reset && cmd_up && cmd_setup; }; then
+      echo "=== group $name: FAIL (stack setup) ===" >&2
+      failed+=("$name")
+      continue
+    fi
+    # $files is a deliberate word-split file list.
+    # shellcheck disable=SC2086
     if ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" exec vitest run $files; then
       echo "=== group $name: PASS ==="
     else
       echo "=== group $name: FAIL ===" >&2
       failed+=("$name")
     fi
-  done < <(node "$ROOT_DIR/scripts/e2e-groups.mjs")
+  done <<< "$groups"
   if [ "${#failed[@]}" -gt 0 ]; then
     echo "failed groups: ${failed[*]}" >&2
     exit 1

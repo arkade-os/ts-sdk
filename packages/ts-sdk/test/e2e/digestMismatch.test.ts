@@ -15,6 +15,7 @@ import {
     faucetOffchain,
     getServerInfo,
     rotateArkdSigner,
+    ROTATE_SIGNER_HOOK_TIMEOUT_MS,
     waitFor,
 } from "./utils";
 
@@ -116,14 +117,14 @@ describe("server-info digest mismatch across a real signer rotation", () => {
     };
 
     // Order matters: restore baseline signer A BEFORE the faucet redeems notes.
-    beforeEach(resetToBaselineSigner, 120_000);
+    beforeEach(resetToBaselineSigner, ROTATE_SIGNER_HOOK_TIMEOUT_MS);
     beforeEach(beforeEachFaucet, 20_000);
 
     // The signer set lives in arkd's volumes and survives `regtest:start`/`stop`
     // — only `clean` clears it. Leaving the stack rotated breaks the NEXT run
     // before it starts: cached digests mismatch and the emulator still holds the
     // old arkd key. Hand the stack back on the baseline.
-    afterAll(resetToBaselineSigner, 120_000);
+    afterAll(resetToBaselineSigner, ROTATE_SIGNER_HOOK_TIMEOUT_MS);
 
     it("stale X-Digest after rotation → DIGEST_MISMATCH → refresh + wallet re-derives onto the new signer, throws (no silent retry), and a rebuilt request recovers", {
         timeout: 240_000,
