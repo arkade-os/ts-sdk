@@ -11,7 +11,7 @@
         "test": "pnpm run test:unit && pnpm run test:integration",
         "test:unit": "pnpm -r test:unit",
         "test:integration": "pnpm run test:integration:ts-sdk && pnpm run test:integration:boltz-swap && pnpm run test:integration:swap && pnpm run test:integration:swap-rfq",
-        "test:integration:ts-sdk": "bash scripts/regtest.sh ts-sdk cycle",
+        "test:integration:ts-sdk": "bash scripts/regtest.sh ts-sdk groups",
         "test:integration:boltz-swap": "bash scripts/regtest.sh boltz-swap cycle",
         "test:integration:swap": "bash scripts/regtest.sh swap cycle",
         "test:integration:swap-rfq": "bash scripts/regtest.sh swap-rfq cycle",
