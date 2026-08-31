@@ -194,6 +194,14 @@ export namespace Unroll {
 
         /**
          * Get the next step to be executed
+         *
+         * @remarks
+         * `do()` is the step, not a formality: every effect lives there, and at
+         * `StepType.DONE` that includes firing {@link onExitObserved}. A caller
+         * driving `next()` by hand must always await it — the async iterator
+         * below does. Reading `type` and skipping `do()` leaves the exit
+         * unobserved, and on the other step kinds unbroadcast.
+         *
          * @returns The next step to be executed + the function to execute it
          */
         async next(): Promise<Step & { do: () => Promise<void> }> {

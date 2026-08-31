@@ -993,7 +993,15 @@ export type GetVtxosFilter = {
     /** Include swept but still unspent virtual outputs. */
     withRecoverable?: boolean;
 
-    /** Include virtual outputs that have been unrolled onchain. */
+    /**
+     * Include virtual outputs that have been unrolled onchain.
+     *
+     * Authoritative on the *location* axis and only that: an exited output is
+     * returned whatever else is true of it, spent ones included. So unlike
+     * {@link withRecoverable}, this flag does not narrow to a capability —
+     * test {@link canSweepOnchain} before acting on what comes back.
+     * `Unroll.prepareUnrollTransaction`, the flag's main consumer, does.
+     */
     withUnrolled?: boolean;
 };
 

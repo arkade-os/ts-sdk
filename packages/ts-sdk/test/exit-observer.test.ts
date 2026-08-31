@@ -11,6 +11,7 @@ import {
     notifyExitObserved,
     type OnExitObserved,
 } from "../src/wallet/exitObserver";
+import { UnilateralExit } from "../src/wallet/exit";
 import { prepareUnrollTransaction, Unroll } from "../src/wallet/unroll";
 import type { Wallet } from "../src/wallet/wallet";
 
@@ -125,9 +126,14 @@ function walletStub(vtxos: ExtendedVirtualCoin[], refresh?: () => Promise<void>)
     const refreshOutpoints = vi.fn(refresh ?? (async () => {}));
     const broadcastTransaction = vi.fn(async (..._hexes: string[]) => "broadcast-txid");
     const getVtxos = vi.fn(async (_opts?: unknown) => vtxos);
+    const getVtxoChain = vi.fn(async (_o: unknown) => ({ chain: [] }));
+    const indexerProvider = { getVtxoChain };
+    const virtualTxRepository = { marker: "repo" };
     const wallet = {
         network,
         identity,
+        indexerProvider,
+        virtualTxRepository,
         onchainProvider: {
             getChainTip: async () => ({ height: 1_000, time: 2_000_000 }),
             getTxStatus: async () => ({
@@ -146,8 +152,39 @@ function walletStub(vtxos: ExtendedVirtualCoin[], refresh?: () => Promise<void>)
         refreshOutpoints,
         broadcastTransaction,
         getVtxos,
+        indexerProvider,
+        virtualTxRepository,
+        onchainProvider: wallet.onchainProvider,
     };
 }
+
+/** One already-confirmed package step, so the executor completes on the first pass. */
+const onePackageFor = (vtxo: string) =>
+    ({
+        version: 1,
+        network: "regtest",
+        createdAt: 1,
+        feeRate: 2,
+        sweepAddress: "bcrt1unused",
+        totals: { txCount: 0, totalFeeSats: 0, fundingRequiredSats: 0, recoveredSats: 0 },
+        vtxos: [],
+        steps: [
+            {
+                kind: "package",
+                parentTxid: "aa".repeat(32),
+                parentHex: "parent-hex",
+                childTxid: "bb".repeat(32),
+                childHex: "child-hex",
+                forVtxos: [vtxo],
+            },
+        ],
+    }) as never;
+
+const drain = async (iterable: AsyncIterable<unknown>) => {
+    for await (const _ of iterable) {
+        // drive to completion; the events themselves are the executor's own tests
+    }
+};
 
 describe("Unroll.completeUnroll", () => {
     it("refreshes the outpoints the sweep just spent", async () => {
@@ -180,6 +217,68 @@ describe("Unroll.completeUnroll", () => {
         expect(broadcastTransaction).toHaveBeenCalledTimes(1);
         expect(refreshOutpoints).toHaveBeenCalledTimes(1);
         errors.mockRestore();
+    });
+});
+
+describe("Unroll.sessionFor", () => {
+    // Thin by design, but it is the recommended entry point: everything the
+    // wallet already holds, plus the one parameter a caller would forget.
+    it("wires the wallet's providers and its exit observer", async () => {
+        const stub = walletStub([]);
+        const session = await Unroll.sessionFor(
+            stub.wallet,
+            { txid: EXITED, vout: 5 },
+            {} as never,
+        );
+
+        expect(session.explorer).toBe(stub.onchainProvider);
+        expect(session.indexer).toBe(stub.indexerProvider);
+        expect(session.virtualTxRepository).toBe(stub.virtualTxRepository);
+
+        // The assertion that matters: a hook that is present but unwired would
+        // pass every check above and still leave the repository stale.
+        await drain(session);
+        expect(stub.refreshOutpoints).toHaveBeenCalledWith([{ txid: EXITED, vout: 5 }]);
+    });
+});
+
+describe("UnilateralExit.execute", () => {
+    it("wires the wallet's exit observer into the executor", async () => {
+        const stub = walletStub([]);
+        const executor = await UnilateralExit.execute(stub.wallet, onePackageFor(`${EXITED}:7`));
+
+        expect(executor.provider).toBe(stub.onchainProvider);
+        await drain(executor);
+        expect(stub.refreshOutpoints).toHaveBeenCalledWith([{ txid: EXITED, vout: 7 }]);
+    });
+
+    it("lets an explicit observer win over the wallet's", async () => {
+        const stub = walletStub([]);
+        const mine = vi.fn();
+        const executor = await UnilateralExit.execute(stub.wallet, onePackageFor(`${EXITED}:7`), {
+            onExitObserved: mine,
+        });
+
+        await drain(executor);
+        expect(mine).toHaveBeenCalledWith({ txid: EXITED, vout: 7 });
+        expect(stub.refreshOutpoints).not.toHaveBeenCalled();
+    });
+
+    it("forwards the rest of the options, provider override included", async () => {
+        const stub = walletStub([]);
+        const provider = { ...stub.onchainProvider } as never;
+        const signal = new AbortController().signal;
+        const executor = await UnilateralExit.execute(stub.wallet, onePackageFor(`${EXITED}:7`), {
+            provider,
+            signal,
+            pollIntervalMs: 1,
+        });
+
+        expect(executor.provider).toBe(provider);
+        // `signal` reaches the executor: an already-aborted one would throw, so
+        // assert on the live path instead — it drives to completion.
+        await drain(executor);
+        expect(stub.refreshOutpoints).toHaveBeenCalledTimes(1);
     });
 });
 
