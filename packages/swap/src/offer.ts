@@ -26,15 +26,13 @@ import { hex } from "@scure/base";
 import { concatBytes } from "@scure/btc-signer/utils.js";
 import {
     ArkAddress,
-    RestArkProvider,
-    RestIndexerProvider,
     arkade,
     asset,
-    getNetwork,
+    networkFromArkadeInfo,
     resolveEmulatorPubkey,
     toXOnlySignerHex,
+    type ArkadeInfo,
     type IWallet,
-    type NetworkName,
 } from "@arkade-os/sdk";
 
 import wantAssetProgram from "./swap-want-asset.program.json";
@@ -300,8 +298,7 @@ export const OFFER_CONTRACT_KIND = "asset-swap-offer";
  */
 async function registerOfferContract(
     wallet: IWallet,
-    operatorUrl: string,
-    network: NetworkName,
+    info: ArkadeInfo,
     binding: Omit<Offer, "swapPkScript">,
     operatorPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
@@ -309,13 +306,17 @@ async function registerOfferContract(
     const { program, args, keys } = swapProgramBinding(binding, operatorPubkey);
     const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
-        arkade: new RestArkProvider(operatorUrl),
-        indexer: new RestIndexerProvider(operatorUrl),
+        // Registration derives and persists; it never broadcasts and never
+        // reads UTXOs, so the only thing the client needs off the server is the
+        // info the caller already resolved. Handing that back — rather than a
+        // provider built from a URL — is what lets `createOffer` take just a
+        // wallet, and spares a second `/v1/info` round-trip.
+        arkade: { getInfo: async () => info },
         identity: wallet.identity,
         // without this the row's `address` would be derived against the SDK's
         // default network while its script is right — a row that disagrees with
         // the address the user is about to fund
-        network: getNetwork(network),
+        network: networkFromArkadeInfo(info),
         contractManager,
     });
     const contract = new arkade.ArkadeContract(client, program, args, keys);
@@ -339,11 +340,11 @@ async function registerOfferContract(
  * you deposit, embedding the returned extension, and the solver does the rest:
  *
  *   // BTC -> asset
- *   const o = await createOffer(wallet, ARK, { wantAmount: 1000n, wantAsset })
+ *   const o = await createOffer(wallet, { wantAmount: 1000n, wantAsset })
  *   await wallet.send({ address: o.address, amount: 1000, extensions: [o.extension] })
  *
  *   // asset -> BTC (the sats are the VTXO carrier for the asset)
- *   const o = await createOffer(wallet, ARK, { wantAmount: 1000n, offerAsset })
+ *   const o = await createOffer(wallet, { wantAmount: 1000n, offerAsset })
  *   await wallet.send({ address: o.address, amount: 500,
  *                       assets: [{ assetId, amount: 1000n }],
  *                       extensions: [o.extension] })
@@ -358,7 +359,6 @@ async function registerOfferContract(
  */
 export async function createOffer(
     wallet: IWallet,
-    operatorUrl: string,
     params: {
         wantAmount: bigint;
         wantAsset?: asset.AssetId;
@@ -387,12 +387,16 @@ export async function createOffer(
         throw new Error("set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC)");
     }
     const [info, makerAddress, makerPublicKey] = await Promise.all([
-        new RestArkProvider(operatorUrl).getInfo(),
+        // requireLive: this info binds signerPubkey into the covenant — a
+        // snapshot could derive an address the operator no longer co-signs
+        // for, so an unreachable operator fails the call instead (fail closed,
+        // the same behaviour the pre-#734 caller-held provider had)
+        wallet.getArkadeInfo({ requireLive: true }),
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
     const operatorPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
-    const network = getNetwork(info.network as NetworkName);
+    const network = networkFromArkadeInfo(info);
     const emuKey = hex.decode(
         toXOnlySignerHex(resolveEmulatorPubkey(network, params.emulatorPubkey)),
     );
@@ -411,14 +415,7 @@ export async function createOffer(
     const script = offerContract(binding, operatorPubKey);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
 
-    await registerOfferContract(
-        wallet,
-        operatorUrl,
-        info.network as NetworkName,
-        binding,
-        operatorPubKey,
-        script.pkScript,
-    );
+    await registerOfferContract(wallet, info, binding, operatorPubKey, script.pkScript);
 
     const payload = encodeOffer(offer);
     return {
@@ -484,10 +481,14 @@ export async function createOffer(
  * returns, so a spend event that arrives in that window finds a `cancelling`
  * record and classifies the spend by its covenant leaf instead — the same
  * answer, one indexer read more.
+ *
+ * Takes no server URL, like every other entrypoint here: broadcast comes from
+ * `wallet.getArkadeBroadcaster()` and the indexer fallback from
+ * `wallet.getArkadeReader()`, so the wallet's own connection is the only one
+ * used (#734).
  */
 export async function cancelOffer(
     wallet: IWallet,
-    operatorUrl: string,
     offerHex: string,
     opts: {
         repository: AssetSwapRepository;
@@ -498,10 +499,17 @@ export async function cancelOffer(
     const { repository, fundingTxid, swapAddress } = opts;
     const offer = decodeOffer(hex.decode(offerHex));
 
-    const contractManager = await wallet.getContractManager();
+    const [contractManager, info, reader, broadcaster] = await Promise.all([
+        wallet.getContractManager(),
+        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getArkadeReader(),
+        wallet.getArkadeBroadcaster(),
+    ]);
     const client = await arkade.Arkade.connect({
-        arkade: new RestArkProvider(operatorUrl),
-        indexer: new RestIndexerProvider(operatorUrl),
+        // info the wallet already holds, plus its broadcast pair — the shape
+        // `ArkadeServerProvider` describes, without a second `/v1/info`
+        arkade: { getInfo: async () => info, ...broadcaster },
+        indexer: reader,
         identity: wallet.identity,
         // registered offers resolve their VTXOs from the contract repository
         // instead of a direct indexer query; the indexer above stays as the

@@ -1329,7 +1329,10 @@ describe("Wallet.restore", () => {
         } finally {
             await wallet.dispose();
         }
-    });
+        // ~1.7s of real HD gap-scanning in isolation, against vitest's 5s
+        // default — close enough that a loaded worker pool tips it over
+        // intermittently. Explicit budget rather than a moving default.
+    }, 20_000);
 
     it("HD: recovers history older than the delta-sync overlap window", async () => {
         // Regression: the boot-time reconcile advances the global sync

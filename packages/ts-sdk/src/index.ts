@@ -75,6 +75,10 @@ import {
     TxType,
     IWallet,
     IReadonlyWallet,
+    ArkadeReader,
+    ArkadeBroadcaster,
+    GetArkadeInfoOptions,
+    NormalizedVtxoPage,
     BaseWalletConfig,
     WalletConfig,
     WalletMode,
@@ -123,6 +127,11 @@ import {
 export {
     ActivityRegistry,
     boardingResolver,
+    // The reader-compatible bulk read `ArkadeReader`'s doc points at, and the
+    // single-shot normalizer it wraps. Exported so a plugin holding only a
+    // wallet can follow the doc without re-implementing the chunk/page loop.
+    getAllNormalizedVtxos,
+    getNormalizedVtxos,
     collabExitResolver,
     assetMintResolver,
     createDefaultActivityRegistry,
@@ -209,6 +218,7 @@ import {
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
+    ArkadeInfo,
     ArkInfo,
     SignedIntent,
     Output,
@@ -289,6 +299,7 @@ import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
 import {
     getNetwork,
+    networkFromArkadeInfo,
     networks,
     Network,
     NetworkName,
@@ -303,6 +314,7 @@ import {
     IndexerProvider,
     IndexerTxType,
     ChainTxType,
+    GetVtxosOptions,
     PageResponse,
     BatchInfo,
     ChainTx,
@@ -701,6 +713,7 @@ export {
     ArkadeCashCreateError,
     // Network
     getNetwork,
+    networkFromArkadeInfo,
     networks,
     defaultEmulatorPubkey,
     resolveEmulatorPubkey,
@@ -837,6 +850,10 @@ export type {
     SignRequest,
     IWallet,
     IReadonlyWallet,
+    ArkadeReader,
+    ArkadeBroadcaster,
+    GetArkadeInfoOptions,
+    NormalizedVtxoPage,
     BaseWalletConfig,
     WalletConfig,
     WalletMode,
@@ -880,6 +897,7 @@ export type {
     ProvisionedKey,
     // Indexer types
     IndexerProvider,
+    GetVtxosOptions,
     PageResponse,
     BatchInfo,
     ChainTx,
@@ -897,6 +915,7 @@ export type {
     ArkProvider,
     SettlementEvent,
     FeeInfo,
+    ArkadeInfo,
     ArkInfo,
     SignedIntent,
     Output,

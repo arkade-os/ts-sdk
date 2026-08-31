@@ -720,13 +720,44 @@ const wallet = await Wallet.create({
 })
 
 // Get fee information from the server
-const { fees: feeInfo } = await wallet.arkProvider.getInfo();
+const { fees: feeInfo } = await wallet.getArkadeInfo();
 
 const exitTxid = await new Ramps(wallet).offboard(
   'bc1p...',
   feeInfo
 );
 ```
+
+`getArkadeInfo()` is part of the `IReadonlyWallet` interface, so the same call works on the
+service-worker and Expo wallets too. It answers with the server's live `ArkadeInfo`, falling back
+to the snapshot persisted at wallet construction when the server is unreachable.
+
+### Talking to the server through the wallet
+
+`getArkadeInfo()` is one of three seams that let a plugin work from a wallet alone, never a
+server URL of its own:
+
+| Seam | Interface | For |
+| --- | --- | --- |
+| `getArkadeInfo()` | `IReadonlyWallet` | Network, signer key, delays, dust, fees, limits |
+| `getArkadeReader()` | `IReadonlyWallet` | Chain reads for scripts the wallet does not own |
+| `getArkadeBroadcaster()` | `IWallet` | `submitTx` / `finalizeTx` |
+
+```typescript
+const reader = await wallet.getArkadeReader();
+const { vtxos } = await reader.getVtxos({ scripts: [covenantScriptHex], spendableOnly: true });
+const { txs } = await reader.getVirtualTxs([spendTxid]);
+```
+
+`getVtxos()` here queries the server for an arbitrary script — distinct from
+`wallet.getVtxos()`, which answers the wallet's own outputs from local repositories. Everything
+it returns is normalized, so each VTXO carries its canonical facts.
+
+Broadcasting sits on `IWallet` rather than `IReadonlyWallet` on purpose: a readonly wallet must
+not submit, and a service-worker wallet in readonly mode refuses the message outright.
+
+All three are proxied to the worker on a service-worker wallet, so a plugin shares the wallet's
+connection instead of opening a second one outside its rate gate and caches.
 
 ### Unilateral Exit
 

@@ -12,6 +12,28 @@ React Native does not, so install `react-native-get-random-values` (or `expo-cry
 it before this package. `crypto.subtle` is not used. `EventSource` and `WebSocket` are needed only
 by the watch and relay transports, both of which take an injected implementation.
 
+**The covenant-deriving entry points need a wallet and nothing else.** `createOffer`,
+`requestLightningSend`, `requestLightningReceive`, `requestOnchainSend` and
+`requestOnchainReceive` take their server facts from `wallet.getArkadeInfo()`: the network and
+signer key, plus the unilateral-exit delay for the four `request*` calls. The wallet is the single
+place that knows which server it speaks to, so there is no URL to thread through and no second
+`/v1/info` round-trip *per call*. Each entrypoint still performs its own live read (deliberately —
+covenant derivation requires live info and fails closed offline); a session creating many offers
+pays one read per offer until the SDK grows a `CachingClientTransport`-style memo (the NArk
+reference's answer), noted as follow-up on `ArkadeInfo`.
+
+No offer entrypoint here takes a server URL. `cancelOffer` and `watchOfferSwaps` need more than
+server info — cancel broadcasts the refund and falls back to the indexer for a deposit made
+before contract registration existed, and the watcher reads spending transactions — so they
+ask the wallet for those too: `wallet.getArkadeReader()` for chain reads and
+`wallet.getArkadeBroadcaster()` for `submitTx`/`finalizeTx`. On a service-worker wallet both
+are proxied to the worker, so these reads stay on the wallet's own connection.
+The RFQ restore/refund/claim helpers still take provider instances. An `ArkadeReader`
+satisfies their *indexer* parameter structurally — `restoreAssetSwaps` can be fed
+`await wallet.getArkadeReader()` today — while `arkadeRefunder` and `claim`/`refund` also
+want an ark provider (`getInfo` plus the broadcast pair), buildable from
+`wallet.getArkadeInfo()` and `wallet.getArkadeBroadcaster()`.
+
 ## Roles
 
 Arkade Intents names two participants:
@@ -200,11 +222,11 @@ the rest:
 
 ```ts
 // BTC -> asset
-const o = await createOffer(wallet, ARK, { wantAmount: 1000n, wantAsset });
+const o = await createOffer(wallet, { wantAmount: 1000n, wantAsset });
 await wallet.send({ address: o.address, amount: 1000, extensions: [o.extension] });
 
 // asset -> BTC (the sats are the VTXO carrier for the asset)
-const o = await createOffer(wallet, ARK, { wantAmount: 1000n, offerAsset });
+const o = await createOffer(wallet, { wantAmount: 1000n, offerAsset });
 await wallet.send({
     address: o.address,
     amount: 500,
@@ -238,7 +260,7 @@ offer bytes themselves are recoverable from the funding tx if the record is lost
 ## Live status
 
 ```ts
-const watcher = await watchOfferSwaps({ wallet, operatorUrl: ARK, repository, onUpdate: render });
+const watcher = await watchOfferSwaps({ wallet, repository, onUpdate: render });
 // later
 watcher.stop();
 ```
@@ -260,7 +282,7 @@ repository.
 ## Cancelling: the refund path
 
 ```ts
-const txid = await cancelOffer(wallet, ARK, swap.offerHex, {
+const txid = await cancelOffer(wallet, swap.offerHex, {
     repository,
     fundingTxid: swap.fundingTxid,
     swapAddress: swap.swapAddress,
@@ -322,7 +344,7 @@ message anywhere: **acceptance is funding**.
 import { httpTransport, requestLightningSend } from "@arkade-os/swap";
 
 // invoice facts from YOUR OWN decoder — the module takes facts, not a decoder
-const swap = await requestLightningSend(wallet, operatorUrl, httpTransport(solverUrl), {
+const swap = await requestLightningSend(wallet, httpTransport(solverUrl), {
     invoice: { raw: bolt11, paymentHash, amountSats, expiresAt },
 });
 // quote verified against the LOCAL derivation and gated; now fund and go offline:
@@ -395,7 +417,7 @@ import {
     swapSecretsToRecord,
 } from "@arkade-os/swap";
 
-const swap = await requestOnchainSend(wallet, operatorUrl, httpTransport(solverUrl), {
+const swap = await requestOnchainSend(wallet, httpTransport(solverUrl), {
     amount: 100_000,
     amountSide: "to",
     payoutPubkey,

@@ -79,7 +79,7 @@ import type { ArkProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
 import type { Identity } from "../identity";
-import type { VirtualCoin } from "../wallet";
+import type { ArkadeBroadcaster, VirtualCoin } from "../wallet";
 import { getNormalizedVtxos, hasTerminalSpend } from "../wallet";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
@@ -230,10 +230,30 @@ export type CallableFunctions = Record<
 
 // --- Arkade client ---------------------------------------------------------
 
+/**
+ * What {@link Arkade} needs from the Arkade server.
+ *
+ * Only `getInfo` is required — see {@link ArkadeConnectOptions.arkade} for why.
+ * Named so a caller building a derivation-only client has a type to import
+ * rather than reaching into the options bag.
+ */
+export type ArkadeServerProvider = Pick<ArkProvider, "getInfo"> & Partial<ArkadeBroadcaster>;
+
 /** Options for {@link Arkade.connect}. */
 export interface ArkadeConnectOptions {
-    /** The Ark/Arkade server provider. */
-    arkade: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+    /**
+     * The Arkade server provider.
+     *
+     * Only `getInfo` is required: it is what resolves the server key and
+     * checkpoint closure, and it is all a client needs to derive, register and
+     * inspect contracts. `submitTx`/`finalizeTx` are needed solely to
+     * broadcast, so a client built without them throws at `.send()` — the same
+     * deferred, explicit failure an absent `indexer` gives `getUtxos()` and an
+     * absent `emulator` gives a covenant spend. That lets a caller that already
+     * holds the server info (`wallet.getArkadeInfo()`) connect without a
+     * provider of its own, and without a second `/v1/info` round-trip.
+     */
+    arkade: ArkadeServerProvider;
     /**
      * The co-signing (introspector/emulator) service. Optional: only required for
      * contracts whose functions have an `arkadeScript` (covenant paths). Pure
@@ -279,7 +299,7 @@ export interface ArkadeConnectOptions {
  * so spinning up contracts is synchronous.
  */
 export class Arkade {
-    readonly arkProvider: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+    readonly arkProvider: ArkadeServerProvider;
     /** The co-signing service, or undefined for emulator-less (pure tapscript) usage. */
     readonly emulator: EmulatorProvider | undefined;
     readonly network: Network;
@@ -304,7 +324,7 @@ export class Arkade {
     readonly contractManager?: IContractManager;
 
     private constructor(fields: {
-        arkProvider: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+        arkProvider: ArkadeServerProvider;
         emulator: EmulatorProvider | undefined;
         network: Network;
         serverKey: Uint8Array;
@@ -769,8 +789,17 @@ export class ArkadeTransactionBuilder {
         if (!client.identity) {
             throw new Error("a signing identity is required for non-covenant spends");
         }
+        // Checked alongside the identity, before anything is signed: a client
+        // connected for derivation/registration alone has no way to broadcast,
+        // and should say so rather than after collecting signatures.
+        const ark = client.arkProvider;
+        if (!ark.submitTx || !ark.finalizeTx) {
+            throw new Error(
+                "broadcasting requires an `arkade` provider with `submitTx`/`finalizeTx` on the Arkade client",
+            );
+        }
         const signedArk = await this.signArk(arkTx, userInputs);
-        const res = await client.arkProvider.submitTx(
+        const res = await ark.submitTx(
             base64.encode(signedArk.toPSBT()),
             checkpoints.map((c) => base64.encode(c.toPSBT())),
         );
@@ -781,7 +810,7 @@ export class ArkadeTransactionBuilder {
                 base64.encode((await client.identity!.sign(server, [0])).toPSBT()),
             ),
         );
-        await client.arkProvider.finalizeTx(res.arkTxid, finalCps);
+        await ark.finalizeTx(res.arkTxid, finalCps);
         return {
             txid: res.arkTxid,
             signedArkTx: res.finalArkTx,

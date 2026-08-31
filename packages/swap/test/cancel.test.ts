@@ -13,7 +13,9 @@ const state = vi.hoisted(() => ({
     // returns the ArrayBufferLike flavor and must be assignable here
     serverKey: new Uint8Array(0) as Uint8Array,
     utxos: [] as { txid: string; vout: number; value: number }[],
-    connectOptions: undefined as { contractManager?: unknown } | undefined,
+    connectOptions: undefined as
+        | { contractManager?: unknown; indexer?: unknown; arkade?: unknown }
+        | undefined,
     sends: 0,
 }));
 
@@ -71,10 +73,18 @@ const fundedAddress = new ArkAddress(fundedOperatorKey, contract.tweakedPublicKe
 
 const setContractWatchState = vi.fn(async (_script: string, _watch: string) => {});
 const contractManager = { marker: "the wallet's manager", setContractWatchState };
+// contents never read: the mocked `Arkade.connect` answers the server key
+// from `state.serverKey`, which stays the single key knob in these tests
+const arkadeInfo = {};
+const arkadeReader = { marker: "the wallet's reader" };
+const arkadeBroadcaster = { submitTx: async () => ({}), finalizeTx: async () => {} };
 const wallet = {
     identity: {},
     getAddress: async () => "unused-before-a-vtxo-is-selected",
     getContractManager: async () => contractManager,
+    getArkadeInfo: async () => arkadeInfo,
+    getArkadeReader: async () => arkadeReader,
+    getArkadeBroadcaster: async () => arkadeBroadcaster,
 } as unknown as IWallet;
 
 /** The record a funded, cancellable deposit leaves in the caller's store. */
@@ -97,7 +107,7 @@ describe("cancelOffer guards", () => {
     it("diagnoses a rotated server key instead of reporting a missing VTXO", async () => {
         state.serverKey = rotatedOperatorKey;
         await expect(
-            cancelOffer(wallet, "http://ark", offerHex, {
+            cancelOffer(wallet, offerHex, {
                 repository: new InMemoryAssetSwapRepository(),
             }),
         ).rejects.toThrow("signing key has likely rotated");
@@ -109,7 +119,7 @@ describe("cancelOffer guards", () => {
         state.serverKey = rotatedOperatorKey;
         state.utxos = [];
         await expect(
-            cancelOffer(wallet, "http://ark", offerHex, {
+            cancelOffer(wallet, offerHex, {
                 repository: new InMemoryAssetSwapRepository(),
                 swapAddress: fundedAddress,
             }),
@@ -123,7 +133,7 @@ describe("cancelOffer guards", () => {
             { txid: "b".repeat(64), vout: 0, value: 10_000 },
         ];
         await expect(
-            cancelOffer(wallet, "http://ark", offerHex, {
+            cancelOffer(wallet, offerHex, {
                 repository: new InMemoryAssetSwapRepository(),
             }),
         ).rejects.toThrow("pass fundingTxid");
@@ -146,7 +156,7 @@ describe("cancelOffer guards", () => {
         const funded = { ...wallet, getAddress: async () => fundedAddress } as unknown as IWallet;
 
         await expect(
-            cancelOffer(funded, "http://ark", offerHex, {
+            cancelOffer(funded, offerHex, {
                 repository,
                 fundingTxid: "a".repeat(64),
             }),
@@ -157,16 +167,23 @@ describe("cancelOffer guards", () => {
 
     // without this the contract takes the direct-indexer fallback and a
     // registered offer's repository-backed VTXOs are never consulted
-    it("hands the wallet's contract manager to the arkade client", async () => {
+    it("hands the wallet's own manager, reader and broadcaster to the arkade client", async () => {
         state.serverKey = fundedOperatorKey;
         state.utxos = [];
         state.connectOptions = undefined;
         await expect(
-            cancelOffer(wallet, "http://ark", offerHex, {
+            cancelOffer(wallet, offerHex, {
                 repository: new InMemoryAssetSwapRepository(),
             }),
         ).rejects.toThrow("no spendable VTXO");
         expect(state.connectOptions?.contractManager).toBe(contractManager);
+        // the point of dropping arkServerUrl: the client reads and broadcasts
+        // over THIS wallet's connection, not one built from a URL beside it
+        expect(state.connectOptions?.indexer).toBe(arkadeReader);
+        expect(state.connectOptions?.arkade).toMatchObject({
+            submitTx: arkadeBroadcaster.submitTx,
+            finalizeTx: arkadeBroadcaster.finalizeTx,
+        });
     });
 });
 
@@ -182,7 +199,7 @@ describe("cancelOffer coverage", () => {
         setContractWatchState.mockClear();
     };
     const cancel = (repository: InMemoryAssetSwapRepository) =>
-        cancelOffer(funded, "http://ark", offerHex, { repository, fundingTxid: "a".repeat(64) });
+        cancelOffer(funded, offerHex, { repository, fundingTxid: "a".repeat(64) });
 
     it("retires the offer contract once the cancel is recorded", async () => {
         cancellable();

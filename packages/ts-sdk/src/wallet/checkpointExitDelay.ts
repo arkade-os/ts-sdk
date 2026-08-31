@@ -54,7 +54,7 @@ const HOSTED_MIN_CHECKPOINT_EXIT_DELAY_SECONDS: Partial<Record<NetworkName, bigi
     mutinynet: MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
 };
 
-/** Bounds applied to a server-supplied `ArkInfo.checkpointTapscript`. */
+/** Bounds applied to a server-supplied `ArkadeInfo.checkpointTapscript`. */
 export type CheckpointExitDelayPolicy = {
     /** Minimum wall-clock delay in seconds, after normalization. */
     minSeconds: bigint;
@@ -69,7 +69,7 @@ export type CheckpointExitDelayPolicy = {
      * arkd always builds the checkpoint tapscript from its own `forfeitPubkey`
      * (`internal/core/application/service.go`), so this should be the
      * `forfeitPubkey` the caller already trusts — pinned wallet state where one
-     * exists, otherwise the same `ArkInfo` response's own `forfeitPubkey` field
+     * exists, otherwise the same `ArkadeInfo` response's own `forfeitPubkey` field
      * as a self-consistency check.
      */
     advertisedForfeitPubkey?: Bytes;

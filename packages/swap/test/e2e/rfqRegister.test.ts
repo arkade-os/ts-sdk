@@ -26,7 +26,6 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     REGTEST_EMULATOR_PUBKEY,
-    RestArkProvider,
     RestIndexerProvider,
     SingleKey,
     Wallet,
@@ -160,9 +159,10 @@ beforeAll(async () => {
     execCommand(`${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`);
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
 
-    // The stub solver has to derive the same script the maker will, so it needs
-    // the same server-derived inputs `requestLightningSend` reads for itself.
-    const info = await new RestArkProvider(OPERATOR_URL).getInfo();
+    // The stub solver has to derive the same script the maker will, so it reads
+    // the server through the same seam `requestLightningSend` now uses — a
+    // second provider built from a URL would only agree by coincidence.
+    const info = await wallet.getArkadeInfo();
     operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     hrp = ArkAddress.decode(address).hrp;
@@ -177,7 +177,7 @@ describe("RFQ lockup registration (regtest)", () => {
     let lockupScript: string;
 
     it("registers the lockup before the maker can fund it", async () => {
-        swap = await requestLightningSend(wallet, OPERATOR_URL, stubTransport(), {
+        swap = await requestLightningSend(wallet, stubTransport(), {
             invoice: {
                 raw: "lnbcrt10u1p",
                 paymentHash: PAYMENT_HASH,

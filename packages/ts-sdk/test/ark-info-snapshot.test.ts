@@ -297,6 +297,10 @@ describe("isRetryableProviderError", () => {
     it("classifies unavailable + transport errors as retryable, others terminal", () => {
         expect(isRetryableProviderError(new ProviderUnavailableError("x"))).toBe(true);
         expect(isRetryableProviderError(new FetchError("x", { url: "y" }))).toBe(true);
+        // the rejection shape AbortSignal.timeout produces (the /v1/info budget)
+        expect(
+            isRetryableProviderError(new DOMException("The operation timed out.", "TimeoutError")),
+        ).toBe(true);
         expect(isRetryableProviderError(new Error("400"))).toBe(false);
         expect(isRetryableProviderError(new MalformedArkInfoSnapshotError("x"))).toBe(false);
     });
@@ -319,12 +323,13 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             walletRepository: InMemoryWalletRepository;
             contractRepository: InMemoryContractRepository;
         },
+        indexer: Partial<IndexerProvider> = {},
     ) {
         return ReadonlyWallet.create({
             identity: await readonlyIdentity(),
             arkServerUrl: "http://localhost:7070",
             arkProvider: { getInfo } as Partial<ArkProvider> as ArkProvider,
-            indexerProvider: indexerStub(),
+            indexerProvider: { ...indexerStub(), ...indexer } as IndexerProvider,
             onchainProvider: {} as OnchainProvider,
             storage: repos,
         });
@@ -389,6 +394,123 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             createWallet(async () => makeArkInfo({ network: "bogusnet" }), repos),
         ).rejects.toThrow(/Unsupported network/);
         expect(await loadArkInfoSnapshot(repos.walletRepository)).toBeNull();
+    });
+
+    it("getArkadeReader normalizes, and binds the wallet's own indexer", async () => {
+        // The seam exists so a plugin never builds a second provider. Two
+        // claims: the call lands on THIS wallet's indexer, and what comes back
+        // has been through `getNormalizedVtxos` — the guarantee
+        // `check-provider-boundary.mjs` enforces for SDK logic and that a raw
+        // provider would let a plugin skip.
+        const getVtxos = vi.fn(async () => ({
+            // a server row with the optional facts absent
+            vtxos: [{ txid: "ab".repeat(32), vout: 0, value: 1000 }],
+        }));
+        const getVirtualTxs = vi.fn(async () => ({ txs: ["deadbeef"] }));
+        const repos = {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        };
+        const wallet = await createWallet(async () => makeArkInfo(), repos, {
+            getVtxos,
+            getVirtualTxs,
+        } as Partial<IndexerProvider>);
+
+        const reader = await wallet.getArkadeReader();
+        const { vtxos } = await reader.getVtxos({ scripts: ["5120aa"], spendableOnly: true });
+
+        expect(getVtxos).toHaveBeenCalledWith({ scripts: ["5120aa"], spendableOnly: true });
+        expect(vtxos[0]).toMatchObject({
+            isSpent: false,
+            isSwept: false,
+            isPreconfirmed: false,
+            spentBy: "",
+            commitmentTxIds: [],
+        });
+
+        await expect(reader.getVirtualTxs(["cd".repeat(32)])).resolves.toEqual({
+            txs: ["deadbeef"],
+        });
+        expect(getVirtualTxs).toHaveBeenCalledWith(["cd".repeat(32)], undefined);
+    });
+
+    it("getArkadeInfo reports the server's CURRENT info, not the boot snapshot", async () => {
+        // The fields callers come here for — signerPubkey, checkpointTapscript,
+        // fees — are the ones a mid-session rotation moves. Pinning to boot
+        // would hand a plugin a superseded signer to build a covenant against.
+        const repos = {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        };
+        let served = makeArkInfo();
+        const wallet = await createWallet(async () => served, repos);
+        expect((await wallet.getArkadeInfo()).digest).toBe("digest-abc");
+
+        served = makeArkInfo({ digest: "digest-rotated" });
+        expect((await wallet.getArkadeInfo()).digest).toBe("digest-rotated");
+        // The wallet's own pinned epoch is untouched by the read.
+        expect(wallet.dustAmount).toBe(makeArkInfo().dust);
+    });
+
+    it("getArkadeInfo({ requireLive: true }) fails closed instead of serving the cache", async () => {
+        // The covenant-derivation contract (PR #803 review): a caller about to
+        // bind signerPubkey into a script must never get a snapshot answer.
+        const repos = {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        };
+        const info = makeArkInfo();
+        let reachable = true;
+        const wallet = await createWallet(async () => {
+            if (!reachable) throw new ProviderUnavailableError("operator down");
+            return info;
+        }, repos);
+
+        reachable = false;
+        // the ordinary read still answers from the boot snapshot…
+        expect((await wallet.getArkadeInfo()).digest).toBe(info.digest);
+        // …the live-only read refuses to
+        await expect(wallet.getArkadeInfo({ requireLive: true })).rejects.toThrow(/operator down/);
+        // and the connection state reflects the failed-over ordinary read, not boot
+        expect(wallet.getProviderConnectionState().mode).toBe("degraded");
+
+        reachable = true;
+        await wallet.getArkadeInfo({ requireLive: true });
+        expect(wallet.getProviderConnectionState().mode).not.toBe("degraded");
+    });
+
+    it("getArkadeInfo falls back to the cached snapshot when the operator goes away", async () => {
+        const repos = {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        };
+        const info = makeArkInfo();
+        let reachable = true;
+        const wallet = await createWallet(async () => {
+            if (!reachable) throw new ProviderUnavailableError("operator down");
+            return info;
+        }, repos);
+
+        reachable = false;
+        // Boot persisted the snapshot, so an offline read still answers —
+        // minus serviceStatus, which is live health and deliberately uncached.
+        expect(await wallet.getArkadeInfo()).toEqual({ ...info, serviceStatus: {} });
+    });
+
+    it("getArkadeInfo propagates a terminal failure rather than serving the cache", async () => {
+        const repos = {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        };
+        const terminal = new Error("400 bad request");
+        let live = true;
+        const wallet = await createWallet(async () => {
+            if (!live) throw terminal;
+            return makeArkInfo();
+        }, repos);
+
+        live = false;
+        await expect(wallet.getArkadeInfo()).rejects.toBe(terminal);
     });
 
     it("full Wallet.create does not cache a live response with invalid checkpoint metadata", async () => {

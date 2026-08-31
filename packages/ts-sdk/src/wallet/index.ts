@@ -1,11 +1,11 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
-import { ArkProvider, Output, SettlementEvent } from "../providers/ark";
+import { ArkadeInfo, ArkProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity, ReadonlyIdentity } from "../identity";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { RenewalConfig, SettlementConfig } from "./vtxo-manager";
-import { IndexerProvider } from "../providers/indexer";
+import { GetVtxosOptions, IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import {
@@ -114,7 +114,7 @@ export interface BaseWalletConfig {
      */
     minBatchExpirySeconds?: bigint;
     /**
-     * Minimum accepted checkpoint exit delay decoded from `ArkInfo.checkpointTapscript`,
+     * Minimum accepted checkpoint exit delay decoded from `ArkadeInfo.checkpointTapscript`,
      * as wall-clock seconds. Defaults per network — see
      * `defaultCheckpointExitDelayPolicy`, which already carries the value the
      * hosted signet and mutinynet Arkade Services advertise, so neither needs
@@ -877,7 +877,7 @@ export type ExtendedVirtualCoin = TapLeaves &
     EncodedVtxoScript &
     VirtualCoin & { extraWitness?: Bytes[] };
 
-import type { NormalizedExtendedVirtualCoin } from "./vtxo";
+import type { NormalizedExtendedVirtualCoin, NormalizedVtxoPage } from "./vtxo";
 
 export {
     canRecoverOnchain,
@@ -895,6 +895,7 @@ export {
     toVirtualStatus,
     type NormalizedExtendedVirtualCoin,
     type NormalizedVirtualCoin,
+    type NormalizedVtxoPage,
     type TimeHeight,
     type VtxoScriptQuery,
 } from "./vtxo";
@@ -977,6 +978,65 @@ export interface IAssetManager extends IReadonlyAssetManager {
     burn(params: BurnParams): Promise<string>;
 }
 
+/** Options for {@link IReadonlyWallet.getArkadeInfo}. */
+export type GetArkadeInfoOptions = {
+    /** Throw when the operator is unreachable instead of answering from the
+     * persisted snapshot — for callers binding the answer into a covenant. */
+    requireLive?: boolean;
+};
+
+/**
+ * Chain reads a caller needs beyond its own wallet's VTXOs: an arbitrary
+ * script's virtual outputs, and the transactions that spent them.
+ *
+ * Shaped as {@link getNormalizedVtxos} rather than as `IndexerProvider`, for
+ * two reasons. Every VTXO leaving this seam carries its canonical facts —
+ * the guarantee `scripts/check-provider-boundary.mjs` enforces inside the SDK
+ * and that a plugin holding a raw provider could otherwise skip. And because
+ * `NormalizedVirtualCoin` is assignable to `VirtualCoin`, an `ArkadeReader`
+ * satisfies `Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">` structurally,
+ * so existing narrow seams accept one unchanged. Passing a reader to something
+ * that normalizes again — `getNormalizedVtxos`, `Arkade.connect`'s `indexer` —
+ * is harmless: `normalizeVtxo` is idempotent. Do not "fix" that by stripping
+ * the normalization here; it is the whole point of the seam.
+ *
+ * Deliberately not the whole provider: a caller that could reach
+ * `getVtxoChain` or `getSubscription` through the wallet would be talking to
+ * the server behind the wallet's back, which the service-worker wallet cannot
+ * even express.
+ */
+// `getVirtualTxs` note: txids ride the URL *path*, one request per call — the
+// reader chunks nothing, and a `page` in the answer is the caller's to follow.
+// `swap`'s restore scan chunks at 50 txids for exactly this reason.
+export type ArkadeReader = Pick<IndexerProvider, "getVirtualTxs"> & {
+    /**
+     * Required `opts`, unlike the `IndexerProvider` method it mirrors: this
+     * seam reads for *named* foreign scripts (or outpoints). The type stops a
+     * bare `getVtxos()` at compile time; the runtime defence is the provider's
+     * own "Either scripts or outpoints must be provided" throw — the message
+     * boundary adds no validation of its own.
+     *
+     * One logical query — the reader chunks nothing. `scripts` travel in the
+     * query string, so a wide list can `414`; {@link getAllNormalizedVtxos}
+     * accepts a reader and chunks and pages to exhaustion. Whether a single
+     * call pages internally is the provider's business: when a `page` comes
+     * back, following it is yours.
+     *
+     * @see getNormalizedVtxos
+     */
+    getVtxos(opts: GetVtxosOptions): Promise<NormalizedVtxoPage>;
+};
+
+/**
+ * Submitting a signed Arkade transaction, and finalizing it.
+ *
+ * On {@link IWallet} rather than {@link IReadonlyWallet}: broadcasting is the
+ * one thing a readonly wallet must not do. That is the same line
+ * `IReadonlyAssetManager` draws, and the invariant behind
+ * `ReadonlyWallet.arkProvider` being protected.
+ */
+export type ArkadeBroadcaster = Pick<ArkProvider, "submitTx" | "finalizeTx">;
+
 /**
  * Core wallet interface for Bitcoin transactions with Arkade protocol support.
  *
@@ -987,6 +1047,15 @@ export interface IAssetManager extends IReadonlyAssetManager {
  * @see IReadonlyWallet
  */
 export interface IWallet extends IReadonlyWallet {
+    /**
+     * Broadcast access to this wallet's Arkade server, so a plugin needs only
+     * the wallet — never a server URL of its own.
+     *
+     * @returns A submit/finalize pair bound to this wallet's server
+     * @see ArkadeBroadcaster
+     */
+    getArkadeBroadcaster(): Promise<ArkadeBroadcaster>;
+
     /**
      * Signing identity associated with the wallet.
      *
@@ -1073,6 +1142,37 @@ export interface IReadonlyWallet {
 
     /** @returns Onchain boarding address used to move funds into Arkade. */
     getBoardingAddress(): Promise<string>;
+
+    /**
+     * Server info for the Arkade server this wallet is connected to — network,
+     * signer key, delays, dust, fees and limits.
+     *
+     * The wallet is the single place that knows which server it speaks to, so
+     * a plugin needs only the wallet, never a server URL of its own. Live info
+     * wins; when the server is unreachable this falls back to the snapshot
+     * persisted at construction, so an offline wallet still answers.
+     *
+     * With `requireLive`, that fallback is off: the read throws when the
+     * operator is unreachable instead of answering from cache. For callers
+     * about to bind `signerPubkey` or a delay into a covenant — a stale
+     * snapshot there derives an address the operator may no longer co-sign
+     * for, so failing closed is the correct shape.
+     *
+     * @returns The Arkade server's info
+     * @see ArkadeInfo
+     */
+    getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo>;
+
+    /**
+     * Chain reads against this wallet's Arkade server, for scripts the wallet
+     * does not own — a plugin's covenant, say. {@link getVtxos} answers for the
+     * wallet's own outputs and reads from repositories; this one goes to the
+     * server.
+     *
+     * @returns A normalized reader bound to this wallet's server
+     * @see ArkadeReader
+     */
+    getArkadeReader(): Promise<ArkadeReader>;
 
     /** @returns The wallet's combined onchain and offchain balance. */
     getBalance(): Promise<WalletBalance>;

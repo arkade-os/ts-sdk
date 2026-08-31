@@ -49,14 +49,12 @@ import { hex } from "@scure/base";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import {
     ArkAddress,
-    RestArkProvider,
     VHTLC,
     asset,
-    getNetwork,
+    networkFromArkadeInfo,
     resolveEmulatorPubkey,
     toXOnly,
     type IWallet,
-    type NetworkName,
 } from "@arkade-os/sdk";
 
 import {
@@ -817,7 +815,6 @@ export interface InvoiceFacts {
  */
 export async function requestLightningSend(
     wallet: IWallet,
-    operatorUrl: string,
     transport: RfqTransport,
     params: {
         invoice: InvoiceFacts;
@@ -851,8 +848,8 @@ export async function requestLightningSend(
      * Every input the covenant was built from, as it was AT REQUEST TIME.
      *
      * Returned so a consumer can persist the swap without re-deriving any of
-     * it. Half of these are not on the quote: `operatorPubkey` and `claimDelay`
-     * come from this wallet's own `getInfo()`, `emulatorPubkey` from a
+     * it. Half of these are not on the quote: `serverPubkey` and `claimDelay`
+     * come from this wallet's own `getArkadeInfo()`, `emulatorPubkey` from a
      * per-network pin, `refundPkScript` from decoding an address.
      *
      * All public. Persisting them is optional: this call also registers the
@@ -870,7 +867,7 @@ export async function requestLightningSend(
     const secrets = await provisionRefundKey(wallet);
     const senderPubkey = secrets.pubkey;
     const [info, refundAddress] = await Promise.all([
-        new RestArkProvider(operatorUrl).getInfo(),
+        wallet.getArkadeInfo({ requireLive: true }),
         wallet.getAddress(),
     ]);
 
@@ -900,7 +897,7 @@ export async function requestLightningSend(
     }
 
     const operatorPubkey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
-    const network = getNetwork(info.network as NetworkName);
+    const network = networkFromArkadeInfo(info);
     // Named rather than inlined so the exact inputs the covenant was built from
     // can be returned to the caller — see `contractParams` on the return type.
     const contractParams = {
@@ -1195,7 +1192,6 @@ export function deriveOnchainSend(input: {
  */
 export async function requestOnchainSend(
     wallet: IWallet,
-    operatorUrl: string,
     transport: RfqTransport,
     params: {
         amount: number;
@@ -1267,7 +1263,7 @@ export async function requestOnchainSend(
     const paymentHash = hex.encode(secrets.paymentHash);
     const senderPubkey = secrets.pubkey;
     const [info, refundAddress] = await Promise.all([
-        new RestArkProvider(operatorUrl).getInfo(),
+        wallet.getArkadeInfo({ requireLive: true }),
         wallet.getAddress(),
     ]);
 
@@ -1283,7 +1279,7 @@ export async function requestOnchainSend(
         }),
     );
 
-    const network = getNetwork(info.network as NetworkName);
+    const network = networkFromArkadeInfo(info);
     const derived = deriveOnchainSend({
         quote,
         paymentHash,
@@ -1639,7 +1635,6 @@ export function deriveLightningReceive(input: {
  */
 export async function requestLightningReceive(
     wallet: IWallet,
-    operatorUrl: string,
     transport: RfqTransport,
     params: {
         amount: number;
@@ -1701,7 +1696,7 @@ export async function requestLightningReceive(
     const paymentHash = hex.encode(secrets.paymentHash);
     const payoutPubkey = secrets.pubkey;
     const [info, payoutAddress] = await Promise.all([
-        new RestArkProvider(operatorUrl).getInfo(),
+        wallet.getArkadeInfo({ requireLive: true }),
         wallet.getAddress(),
     ]);
     const claimPacket = await sealClaimPacket({
@@ -1722,7 +1717,7 @@ export async function requestLightningReceive(
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
-    const network = getNetwork(info.network as NetworkName);
+    const network = networkFromArkadeInfo(info);
     const derived = deriveLightningReceive({
         quote,
         paymentHash,
@@ -1867,7 +1862,6 @@ export function deriveOnchainReceive(input: {
  */
 export async function requestOnchainReceive(
     wallet: IWallet,
-    operatorUrl: string,
     transport: RfqTransport,
     params: {
         amount: number;
@@ -1914,7 +1908,7 @@ export async function requestOnchainReceive(
     const paymentHash = hex.encode(secrets.paymentHash);
     const payoutPubkey = secrets.pubkey;
     const [info, payoutAddress] = await Promise.all([
-        new RestArkProvider(operatorUrl).getInfo(),
+        wallet.getArkadeInfo({ requireLive: true }),
         wallet.getAddress(),
     ]);
     const claimPacket = await sealClaimPacket({
@@ -1936,7 +1930,7 @@ export async function requestOnchainReceive(
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
-    const network = getNetwork(info.network as NetworkName);
+    const network = networkFromArkadeInfo(info);
     const derived = deriveOnchainReceive({
         quote,
         paymentHash,

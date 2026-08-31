@@ -113,7 +113,7 @@ describe("maker-side swap loop (regtest)", () => {
 
     it("derives, funds, and restores a pending offer from chain data alone", async () => {
         // no override — asserts the default pin matches the regtest stack
-        offer = await createOffer(wallet, OPERATOR_URL, {
+        offer = await createOffer(wallet, {
             wantAmount: WANT_AMOUNT,
             wantAsset,
         });
@@ -220,7 +220,7 @@ describe("maker-side swap loop (regtest)", () => {
         // outpoint, so the escrow marker must not close the one spend route the
         // maker actually owns. A future tightening that gates explicit inputs
         // would strand every offer deposit, and would fail here.
-        const cancelTxid = await cancelOffer(wallet, OPERATOR_URL, restoredOfferHex, {
+        const cancelTxid = await cancelOffer(wallet, restoredOfferHex, {
             repository,
             fundingTxid,
             swapAddress: offer.address,
@@ -275,13 +275,12 @@ describe("maker-side swap loop (regtest)", () => {
         const updates: AssetSwap[] = [];
         const watcher = await watchOfferSwaps({
             wallet,
-            operatorUrl: OPERATOR_URL,
             repository: swapRepository,
             onUpdate: (swap) => updates.push(swap),
         });
 
         try {
-            const second = await createOffer(wallet, OPERATOR_URL, {
+            const second = await createOffer(wallet, {
                 wantAmount: WANT_AMOUNT + BigInt(1),
                 wantAsset,
             });
@@ -312,7 +311,7 @@ describe("maker-side swap loop (regtest)", () => {
                 createdAt: Date.now(),
             });
 
-            await cancelOffer(wallet, OPERATOR_URL, second.offerHex, {
+            await cancelOffer(wallet, second.offerHex, {
                 repository: elsewhere,
                 fundingTxid: secondFundingTxid,
                 swapAddress: second.address,

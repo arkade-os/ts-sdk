@@ -11,32 +11,15 @@
  * because the point of registering is what the wallet then does with the row:
  * the lockup has to be visible as owned and invisible to generic selection.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-
-const state = vi.hoisted(() => ({
-    operatorInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
-}));
-
-vi.mock("@arkade-os/sdk", async (importOriginal) => {
-    const mod = await importOriginal<typeof import("@arkade-os/sdk")>();
-    return {
-        ...mod,
-        RestArkProvider: class {
-            async getInfo() {
-                return state.operatorInfo;
-            }
-        },
-    };
-});
 
 import {
     ArkAddress,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     ProviderUnavailableError,
-    ReadonlySingleKey,
     ReadonlyWallet,
     SingleKey,
     VHTLCV2ContractHandler,
@@ -77,8 +60,6 @@ const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
 const PAYOUT_PUBKEY = key(15);
 const HTLC_PUBKEY = key(11);
 const REFUND_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
-
-state.operatorInfo.signerPubkey = hex.encode(OPERATOR_PUBKEY);
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
@@ -191,6 +172,7 @@ const recordingWallet = (
         // identity is not a wallet these entrypoints can serve.
         identity: SingleKey.fromRandomBytes(),
         getAddress: async () => REFUND_ADDRESS,
+        getArkadeInfo: async () => operatorInfo(),
         getContractManager: async () => ({
             createContract: async (params: Record<string, unknown>) => {
                 if (createContract) return createContract(params);
@@ -203,13 +185,13 @@ const recordingWallet = (
 };
 
 const lightningSend = (wallet: IWallet) =>
-    requestLightningSend(wallet, "http://ark", lightningTransport(), {
+    requestLightningSend(wallet, lightningTransport(), {
         emulatorPubkey: EMULATOR_PUBKEY_HEX,
         invoice: INVOICE,
     });
 
 const onchainSend = (wallet: IWallet) =>
-    requestOnchainSend(wallet, "http://ark", onchainTransport(), {
+    requestOnchainSend(wallet, onchainTransport(), {
         emulatorPubkey: EMULATOR_PUBKEY_HEX,
         amount: 100_000,
         amountSide: "to",

@@ -12,6 +12,7 @@ import {
     VtxoScript,
     type EmulatorInfo,
     type EmulatorProvider,
+    type Identity,
 } from "../src";
 import { getVirtualTxs, mintCoin } from "./helpers/prevArkTx";
 
@@ -71,6 +72,19 @@ function _typecheckStrongInputs(ark: arkade.Arkade) {
     c.functions.nope();
 }
 
+// Pure-tapscript program (no arkadeScript) — the non-covenant branch, which is
+// the only one that reaches `arkProvider.submitTx`/`finalizeTx`.
+function exitProgram() {
+    return {
+        version: 0,
+        params: ["server", "user"],
+        functions: { exit: { tapscript: { signers: ["$server", "$user"] } } },
+    } satisfies arkade.Program;
+}
+
+const stubIdentity = (key: Uint8Array) =>
+    ({ xOnlyPublicKey: async () => key, sign: async (tx: any) => tx }) as any;
+
 function stubProviders(server: Uint8Array, emulatorKey: Uint8Array) {
     const checkpointTapscript = hex.encode(
         CSVMultisigTapscript.encode({
@@ -121,12 +135,13 @@ describe("arkade.Arkade / ArkadeContract", () => {
     const receiver = xOnly(); // 32-byte witness program
     const args = { hash: HASH, receiver, amount: AMOUNT };
 
-    async function connect() {
+    async function connect(identity?: Identity) {
         const { arkProvider, indexer, emulator, captured } = stubProviders(server, emulatorKey);
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
             indexer,
+            identity,
             network: networks.regtest,
             // connect() takes the co-signer key from the network, not from the
             // emulator's own getInfo, so this fixture key has to come in as the
@@ -197,24 +212,73 @@ describe("arkade.Arkade / ArkadeContract", () => {
 
     it("defaults declared 'server'/'user' params to the client keys", async () => {
         const userKey = xOnly();
-        const { arkProvider, indexer, emulator } = stubProviders(server, emulatorKey);
-        const ark = await arkade.Arkade.connect({
-            arkade: arkProvider,
-            emulator,
-            indexer,
-            identity: { xOnlyPublicKey: async () => userKey, sign: async (tx: any) => tx } as any,
-            network: networks.regtest,
-        });
-        const program = {
-            version: 0,
-            params: ["server", "user"],
-            functions: { exit: { tapscript: { signers: ["$server", "$user"] } } },
-        } satisfies arkade.Program;
+        const { ark } = await connect(stubIdentity(userKey));
+        const program = exitProgram();
         const defaulted = ark.contract(program);
         const explicit = ark.contract(program, { server, user: userKey });
         expect(defaulted.address).toBe(explicit.address);
         const overridden = ark.contract(program, { server: xOnly(), user: userKey });
         expect(overridden.address).not.toBe(defaulted.address);
+    });
+
+    // A client connected for derivation/registration alone — `getInfo` and
+    // nothing else. This is the shape `@arkade-os/swap`'s createOffer uses now
+    // that it sources the server info from `wallet.getArkadeInfo()` instead of
+    // building a provider from a URL.
+    describe("a getInfo-only `arkade` provider", () => {
+        const identity = stubIdentity(xOnly());
+        // One provider, built once — only its `getInfo` ever crosses over.
+        const { getInfo } = stubProviders(server, emulatorKey).arkProvider;
+
+        const connectInfoOnly = (contractManager?: unknown) =>
+            arkade.Arkade.connect({
+                arkade: { getInfo },
+                identity,
+                network: networks.regtest,
+                contractManager: contractManager as any,
+            });
+
+        it("derives the same contract as one connected with a full provider", async () => {
+            const { ark: full } = await connect(identity);
+            const lean = await connectInfoOnly();
+
+            expect(lean.contract(exitProgram()).address).toBe(full.contract(exitProgram()).address);
+            expect(hex.encode(lean.serverKey)).toBe(hex.encode(full.serverKey));
+        });
+
+        it("registers through the contract manager without touching the network", async () => {
+            const created: Record<string, unknown>[] = [];
+            const ark = await connectInfoOnly({
+                createContract: async (params: Record<string, unknown>) => {
+                    created.push(params);
+                    return params;
+                },
+            });
+            const contract = ark.contract(exitProgram());
+            await contract.register({ label: "lean" });
+
+            expect(created).toHaveLength(1);
+            expect(created[0]).toMatchObject({
+                type: "arkade",
+                script: hex.encode(contract.pkScript),
+                address: contract.address,
+                label: "lean",
+            });
+        });
+
+        it("refuses to broadcast, before signing anything", async () => {
+            const ark = await connectInfoOnly();
+            const contract = ark.contract(exitProgram());
+            const out = new Uint8Array([0x51, 0x20, ...receiver]);
+
+            await expect(
+                contract.functions
+                    .exit()
+                    .from({ txid: COIN.txid, vout: COIN.vout, value: COIN.value })
+                    .to(out, AMOUNT)
+                    .send(),
+            ).rejects.toThrow(/submitTx.*finalizeTx/);
+        });
     });
 
     it("resolveAsm substitutes $params and passes opcodes through", () => {
