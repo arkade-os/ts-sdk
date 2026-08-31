@@ -1681,6 +1681,7 @@ export class WalletMessageHandler
             intentLocked: offchain.intentLocked,
             recoverable: offchain.recoverable,
             pendingRecovery: offchain.pendingRecovery,
+            unrolled: offchain.unrolled,
             total: totalBoarding + offchain.total,
             assets: offchain.assets,
             availableAssets: offchain.availableAssets,
@@ -2000,31 +2001,35 @@ export class WalletMessageHandler
             throw new WalletNotInitializedError();
         }
         const allVtxos = await this.getVtxosFromRepo();
-        const vtxos = allVtxos.filter((v) => !hasTerminalSpend(v));
         const dustAmount = this.readonlyWallet.dustAmount;
+        const withUnrolled = message.payload.filter?.withUnrolled ?? false;
         const includeRecoverable = message.payload.filter?.withRecoverable ?? false;
-        const filteredVtxos = includeRecoverable
-            ? vtxos
-            : vtxos.filter((v) => {
-                  if (dustAmount != null && isSubdust(v, dustAmount)) {
-                      return false;
-                  }
-                  if (isRecoverable(v)) {
-                      return false;
-                  }
-                  if (isExpired(v)) {
-                      return false;
-                  }
-                  return true;
-              });
 
-        // Unrolling terminally spends the virtual output, so unrolled coins never
-        // survive the unspent read above — append them on request, as `Wallet.getVtxos`
-        // does, otherwise `prepareUnrollTransaction` finds nothing behind the worker.
-        if (!message.payload.filter?.withUnrolled) {
-            return filteredVtxos;
-        }
-        return filteredVtxos.concat(allVtxos.filter((v) => hasTerminalSpend(v) && v.isUnrolled));
+        // Same shape as `filterSnapshotVtxos`: location first, so `withUnrolled`
+        // is authoritative for an exited coin and `prepareUnrollTransaction`
+        // finds it behind the worker. (The `withRecoverable` default differs
+        // from the main thread's — pre-existing, not touched here.)
+        return allVtxos.filter((v) => {
+            if (v.isUnrolled) {
+                return withUnrolled;
+            }
+            if (hasTerminalSpend(v)) {
+                return false;
+            }
+            if (includeRecoverable) {
+                return true;
+            }
+            if (dustAmount != null && isSubdust(v, dustAmount)) {
+                return false;
+            }
+            if (isRecoverable(v)) {
+                return false;
+            }
+            if (isExpired(v)) {
+                return false;
+            }
+            return true;
+        });
     }
 
     /** Tear down handler subscriptions, then delegate the full wipe to the wallet. */

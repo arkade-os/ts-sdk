@@ -192,4 +192,78 @@ describe("reconcileIntents", () => {
         expect(await stateOf(repo, "stale")).toBe("cancelled");
         expect(await stateOf(repo, "live")).toBe("waiting_for_batch");
     });
+
+    it("cancels a submitted, unexpired intent whose input was unilaterally exited", async () => {
+        const repo = await seed(
+            new InMemoryIntentRepository(),
+            intent({ state: "waiting_for_batch" }),
+        );
+        // The wire shape of an exit: onchain now, but never consumed offchain.
+        const indexerProvider = indexerReturning([coin("v", 0, { isUnrolled: true })]);
+
+        await reconcileIntents({ intentRepository: repo, indexerProvider });
+
+        const done = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        expect(done.state).toBe("cancelled");
+        expect(done.cancellationReason).toMatch(/unilaterally exited/i);
+        // The whole point: without the exit branch these stay locked forever.
+        expect(await repo.getLockedVtxoOutpoints()).toEqual([]);
+    });
+
+    it("reports batch_succeeded when an input both settled and unrolled", async () => {
+        const repo = await seed(
+            new InMemoryIntentRepository(),
+            intent({ state: "waiting_for_batch" }),
+        );
+        const indexerProvider = indexerReturning([
+            coin("v", 0, { settledBy: "commitment-tx", isUnrolled: true }),
+        ]);
+
+        await reconcileIntents({ intentRepository: repo, indexerProvider });
+
+        const done = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        expect(done.state).toBe("batch_succeeded");
+        expect(done.commitmentTransactionId).toBe("commitment-tx");
+    });
+
+    it("treats a spentBy-only input as consumed", async () => {
+        const repo = await seed(
+            new InMemoryIntentRepository(),
+            intent({
+                state: "waiting_for_batch",
+                intentVtxos: [
+                    { txid: "v", vout: 0 },
+                    { txid: "v", vout: 1 },
+                ],
+            }),
+        );
+        // No isSpent, no settledBy: the wire writes forfeited inputs this way.
+        const indexerProvider = indexerReturning([
+            coin("v", 0, { spentBy: "ark-tx" }),
+            coin("v", 1, { spentBy: "ark-tx" }),
+        ]);
+
+        await reconcileIntents({ intentRepository: repo, indexerProvider });
+
+        const done = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        expect(done.state).toBe("batch_succeeded");
+        expect(done.commitmentTransactionId).toBeUndefined();
+        expect(await repo.getLockedVtxoOutpoints()).toEqual([]);
+    });
+
+    it("does not treat an empty settledBy as consumed", async () => {
+        const repo = await seed(
+            new InMemoryIntentRepository(),
+            intent({ state: "waiting_for_batch" }),
+        );
+        // "" is the wire convention for "unset", not a commitment txid.
+        const indexerProvider = indexerReturning([coin("v", 0, { settledBy: "" })]);
+
+        await reconcileIntents({ intentRepository: repo, indexerProvider });
+
+        const done = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        expect(done.state).toBe("waiting_for_batch");
+        expect(done.commitmentTransactionId).toBeUndefined();
+        expect(await repo.getLockedVtxoOutpoints()).toEqual([{ txid: "v", vout: 0 }]);
+    });
 });

@@ -599,3 +599,279 @@ describe("Executor cancellation", () => {
         ]);
     });
 });
+
+describe("Executor exit observation", () => {
+    type Observed = { txid: string; vout: number };
+
+    // `seenAt` records `<step>:<status>=<observations so far>`: the hook fires BEFORE the
+    // matching yield, so the count read at an event includes that event's own observation.
+
+    it("observes a vtxo when its branch confirms, and again when its sweep confirms", async () => {
+        const script = scriptedProvider();
+        script.register("parent1-hex", P1);
+        script.register("sweep1-hex", SW1);
+        const observed: Observed[] = [];
+        const seenAt: string[] = [];
+        const pkg = pkgOf([
+            {
+                kind: "package",
+                parentTxid: P1,
+                parentHex: "parent1-hex",
+                childTxid: C1,
+                childHex: "child1-hex",
+                forVtxos: [`${P1}:0`],
+            },
+            {
+                kind: "sweep",
+                vtxo: `${P1}:0`,
+                txid: SW1,
+                hex: "sweep1-hex",
+                dependsOnTxid: P1,
+                delay: { type: "blocks", value: 10 },
+            },
+        ]);
+
+        await run(
+            new Executor(pkg, script.provider, {
+                pollIntervalMs: 1,
+                onExitObserved: (o) => void observed.push({ ...o }),
+            }),
+            (e, s) => {
+                seenAt.push(`${e.kind}:${e.status}=${observed.length}`);
+                if (e.status === "broadcast" && e.txid) s.confirm(e.txid);
+                if (e.status === "waiting_csv") s.tip.height = e.maturesAtHeight!;
+            },
+            script,
+        );
+
+        expect(seenAt).toEqual([
+            "package:broadcast=0",
+            "package:confirmed=1",
+            "sweep:waiting_csv=1",
+            "sweep:broadcast=1",
+            "sweep:confirmed=2",
+        ]);
+        // The outpoint is parsed out of `"txid:vout"`, both halves.
+        expect(observed).toEqual([
+            { txid: P1, vout: 0 },
+            { txid: P1, vout: 0 },
+        ]);
+    });
+
+    it("observes a multi-step branch only once, after its last step confirms", async () => {
+        const script = scriptedProvider();
+        script.register("parent1-hex", P1);
+        script.register("parent2-hex", P2);
+        const observed: Observed[] = [];
+        const seenAt: string[] = [];
+        const pkg = pkgOf([
+            {
+                kind: "package",
+                parentTxid: P1,
+                parentHex: "parent1-hex",
+                childTxid: C1,
+                childHex: "child1-hex",
+                forVtxos: ["vtxoA:0"],
+            },
+            {
+                kind: "package",
+                parentTxid: P2,
+                parentHex: "parent2-hex",
+                childTxid: C2,
+                childHex: "child2-hex",
+                forVtxos: ["vtxoA:0"],
+            },
+        ]);
+
+        await run(
+            new Executor(pkg, script.provider, {
+                pollIntervalMs: 1,
+                onExitObserved: (o) => void observed.push({ ...o }),
+            }),
+            (e, s) => {
+                seenAt.push(`${e.stepIndex}:${e.status}=${observed.length}`);
+                if (e.status === "broadcast" && e.txid) s.confirm(e.txid);
+            },
+            script,
+        );
+
+        expect(seenAt).toEqual([
+            "0:broadcast=0",
+            "0:confirmed=0", // one of two steps onchain: the branch is not exited yet
+            "1:broadcast=0",
+            "1:confirmed=1",
+        ]);
+        expect(observed).toEqual([{ txid: "vtxoA", vout: 0 }]);
+    });
+
+    it("counts a step skipped as already-confirmed toward its branch", async () => {
+        const script = scriptedProvider();
+        script.confirm(P1);
+        script.register("parent2-hex", P2);
+        const observed: Observed[] = [];
+        const seenAt: string[] = [];
+        const pkg = pkgOf([
+            {
+                kind: "package",
+                parentTxid: P1,
+                parentHex: "parent1-hex",
+                childTxid: C1,
+                childHex: "child1-hex",
+                forVtxos: ["vtxoA:0"],
+            },
+            {
+                kind: "package",
+                parentTxid: P2,
+                parentHex: "parent2-hex",
+                childTxid: C2,
+                childHex: "child2-hex",
+                forVtxos: ["vtxoA:0"],
+            },
+        ]);
+
+        await run(
+            new Executor(pkg, script.provider, {
+                pollIntervalMs: 1,
+                onExitObserved: (o) => void observed.push({ ...o }),
+            }),
+            (e, s) => {
+                seenAt.push(`${e.stepIndex}:${e.status}=${observed.length}`);
+                if (e.status === "broadcast" && e.txid) s.confirm(e.txid);
+            },
+            script,
+        );
+
+        // Step 0 never broadcasts, yet the branch still completes on step 1.
+        expect(seenAt).toEqual(["0:skipped=0", "1:broadcast=0", "1:confirmed=1"]);
+        expect(observed).toEqual([{ txid: "vtxoA", vout: 0 }]);
+    });
+
+    it("observes nothing for a vtxo whose branch failed", async () => {
+        const script = scriptedProvider({ rejectTxids: new Set([P1]) });
+        script.register("parent1-hex", P1);
+        script.register("parent2-hex", P2);
+        script.register("sweep2-hex", SW2);
+        const observed: Observed[] = [];
+        const pkg = pkgOf([
+            {
+                kind: "package",
+                parentTxid: P1,
+                parentHex: "parent1-hex",
+                childTxid: C1,
+                childHex: "child1-hex",
+                forVtxos: ["vtxoA:0"],
+            },
+            {
+                kind: "package",
+                parentTxid: P2,
+                parentHex: "parent2-hex",
+                childTxid: C2,
+                childHex: "child2-hex",
+                forVtxos: ["vtxoB:0"],
+            },
+            {
+                kind: "sweep",
+                vtxo: "vtxoA:0",
+                txid: SW1,
+                hex: "sweep1-hex",
+                dependsOnTxid: P1,
+                delay: { type: "blocks", value: 0 },
+            },
+            {
+                kind: "sweep",
+                vtxo: "vtxoB:0",
+                txid: SW2,
+                hex: "sweep2-hex",
+                dependsOnTxid: P2,
+                delay: { type: "blocks", value: 0 },
+            },
+        ]);
+
+        await run(
+            new Executor(pkg, script.provider, {
+                pollIntervalMs: 1,
+                onExitObserved: (o) => void observed.push({ ...o }),
+            }),
+            (e, s) => {
+                if (e.status === "broadcast" && e.txid) s.confirm(e.txid);
+            },
+            script,
+        );
+
+        expect(observed).toEqual([
+            { txid: "vtxoB", vout: 0 },
+            { txid: "vtxoB", vout: 0 },
+        ]);
+    });
+
+    it("skips a malformed forVtxos entry rather than inventing an outpoint for it", async () => {
+        // `Number("")` is 0, so a trailing-colon entry would otherwise be
+        // observed as vout 0 — a real outpoint, and a different one than the
+        // package named. Reporting the wrong outpoint is worse than reporting
+        // none: the repository would refresh a coin nobody exited.
+        const script = scriptedProvider();
+        script.register("parent1-hex", P1);
+        const observed: { txid: string; vout: number }[] = [];
+        const pkg = pkgOf([
+            {
+                kind: "package",
+                parentTxid: P1,
+                parentHex: "parent1-hex",
+                childTxid: C1,
+                childHex: "child1-hex",
+                forVtxos: ["deadbeef:", ":0", "nocolon", "deadbeef:abc", `${P1}:1`],
+            },
+        ]);
+
+        const events = await run(
+            new Executor(pkg, script.provider, {
+                pollIntervalMs: 1,
+                onExitObserved: (o) => void observed.push({ ...o }),
+            }),
+            (e, s) => {
+                if (e.status === "broadcast" && e.txid) s.confirm(e.txid);
+            },
+            script,
+        );
+
+        // Only the well-formed entry is observed; the step itself still runs.
+        expect(observed).toEqual([{ txid: P1, vout: 1 }]);
+        expect(events.map((e) => e.status)).toEqual(["broadcast", "confirmed"]);
+    });
+
+    it("does not let a rejecting hook break the exit", async () => {
+        const errors: unknown[] = [];
+        const realError = console.error;
+        console.error = (...args: unknown[]) => void errors.push(args);
+        const script = scriptedProvider();
+        script.register("parent1-hex", P1);
+        try {
+            const pkg = pkgOf([
+                {
+                    kind: "package",
+                    parentTxid: P1,
+                    parentHex: "parent1-hex",
+                    childTxid: C1,
+                    childHex: "child1-hex",
+                    forVtxos: [`${P1}:0`],
+                },
+            ]);
+            const events = await run(
+                new Executor(pkg, script.provider, {
+                    pollIntervalMs: 1,
+                    onExitObserved: async () => {
+                        throw new Error("repository is gone");
+                    },
+                }),
+                (e, s) => {
+                    if (e.status === "broadcast" && e.txid) s.confirm(e.txid);
+                },
+                script,
+            );
+            expect(events.map((e) => e.status)).toEqual(["broadcast", "confirmed"]);
+        } finally {
+            console.error = realError;
+        }
+        expect(errors).toHaveLength(1);
+    });
+});

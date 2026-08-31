@@ -111,6 +111,7 @@ import {
     // VTXO capability predicates
     canRecoverOnchain,
     canSpendOffchain,
+    canSweepOnchain,
     hasTerminalSpend,
     isPastExpiry,
     isVirtualCoin,
@@ -353,6 +354,8 @@ import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
 import { TxWeightEstimator, type VSize } from "./utils/txSizeEstimator";
 import { Unroll } from "./wallet/unroll";
+import { exitObserverFor, notifyExitObserved } from "./wallet/exitObserver";
+import type { OnExitObserved } from "./wallet/exitObserver";
 import {
     UnilateralExit,
     createExitChainResolver,
@@ -369,6 +372,7 @@ import type {
     ExitVtxoInfo,
     ExitOptions,
     ExecutorEvent,
+    ExecutorOptions,
     ExitFeeWallet,
     ExitCaptureMode,
     ExitChainResolver,
@@ -760,6 +764,10 @@ export {
     P2A,
     Unroll,
     UnilateralExit,
+    // Exit-observed seam
+    exitObserverFor,
+    notifyExitObserved,
+    type OnExitObserved,
     createExitChainResolver,
     serializeExitPackage,
     deserializeExitPackage,
@@ -807,6 +815,7 @@ export {
     // VTXO capability predicates
     canRecoverOnchain,
     canSpendOffchain,
+    canSweepOnchain,
     hasTerminalSpend,
     isPastExpiry,
     isVirtualCoin,
@@ -1009,6 +1018,7 @@ export type {
     ExitVtxoInfo,
     ExitOptions,
     ExecutorEvent,
+    ExecutorOptions,
     ExitFeeWallet,
     // Storage
     StorageConfig,

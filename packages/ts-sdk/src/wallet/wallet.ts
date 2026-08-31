@@ -416,13 +416,19 @@ export function filterSnapshotVtxos(
             if (pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
                 return false;
             }
-            if (!hasTerminalSpend(vtxo)) {
-                if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
-                    return false;
-                }
-                return true;
+            // Location before spend: `withUnrolled` is authoritative for an
+            // exited coin whatever else is true of it, which is also what
+            // preserves today's behaviour for unrolled-and-spent coins.
+            if (vtxo.isUnrolled) {
+                return !!f.withUnrolled;
             }
-            return !!(f.withUnrolled && vtxo.isUnrolled);
+            if (hasTerminalSpend(vtxo)) {
+                return false;
+            }
+            if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
+                return false;
+            }
+            return true;
         });
 }
 
@@ -520,6 +526,8 @@ export interface BoardingUtxoGroup {
  * - `subdust` — below dust, so it sits at an OP_RETURN script with no spendable
  *   leaf. Unspendable as cash; `createCash` prevents minting these.
  * - `already-spent` — someone else claimed it first.
+ * - `exited` — unilaterally exited onchain, so the offchain sweep cannot reach it;
+ *   `Unroll.completeUnroll` is the remedy.
  * - `has-assets` — asset-bearing; the BTC-only sweep would burn the assets.
  * - `sweep-failed` — spendable, but its own sweep was rejected.
  */
@@ -527,6 +535,7 @@ export type ArkadeCashUnclaimedReason =
     | "swept"
     | "subdust"
     | "already-spent"
+    | "exited"
     | "has-assets"
     | "sweep-failed";
 
@@ -1191,7 +1200,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
             this.getBoardingUtxos(),
             this.contractSnapshot(),
         ]);
-        const vtxos = filterSnapshotVtxos(snapshot, undefined, this._pendingSpendOutpoints);
+        // Explicit, not the default filter: the default drops unrolled coins,
+        // and `computeOffchainBalance` cannot report a bucket it never sees.
+        const vtxos = filterSnapshotVtxos(
+            snapshot,
+            { withRecoverable: true, withUnrolled: true },
+            this._pendingSpendOutpoints,
+        );
 
         // boarding
         let confirmed = 0;
@@ -1227,6 +1242,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             intentLocked: offchain.intentLocked,
             recoverable: offchain.recoverable,
             pendingRecovery: offchain.pendingRecovery,
+            unrolled: offchain.unrolled,
             total: totalBoarding + offchain.total,
             assets: offchain.assets,
             availableAssets: offchain.availableAssets,
@@ -5197,6 +5213,12 @@ export class Wallet
         for (const vtxo of vtxos) {
             if (hasTerminalSpend(vtxo)) {
                 unclaimed.push(cashReport(vtxo, "already-spent"));
+            } else if (vtxo.isUnrolled) {
+                // Exited onchain. The thin sweep is an offchain spend, so it
+                // cannot reach the output whatever its dust or sweep state —
+                // hence before both of those checks, and with its own reason:
+                // the remedy is `completeUnroll`, not a settlement.
+                unclaimed.push(cashReport(vtxo, "exited"));
             } else if (isSubdust(vtxo, this.dustAmount)) {
                 // Subdust lives at an OP_RETURN output: no forfeit leaf, nothing
                 // to spend, and no settlement can lift it out on its own. The

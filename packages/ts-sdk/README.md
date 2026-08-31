@@ -370,21 +370,27 @@ console.log('Gated by a contract:', balance.gated) // swap escrow, chiefly
 console.log('Locked by an in-flight intent:', balance.intentLocked)
 console.log('Recoverable:', balance.recoverable)
 console.log('Awaiting recovery:', balance.pendingRecovery)
+console.log('Unilaterally exited:', balance.unrolled)
 ```
 
 `settled` and `preconfirmed` are the owned offchain buckets this relationship is
-about — `recoverable` and `pendingRecovery` are the wallet's funds too, just held
-under a different predicate. `available` is what generic spending will actually
-pick, and the difference between the two is accounted for exactly:
+about — `recoverable`, `pendingRecovery` and `unrolled` are the wallet's funds
+too, just held under a different predicate. `available` is what generic spending
+will actually pick, and the difference between the two is accounted for exactly:
 
 ```text
 settled + preconfirmed === available + gated + intentLocked
 ```
 
+`unrolled` holds virtual outputs whose unilateral exit already happened: they sit
+onchain behind their CSV timelock, so nothing offchain can move them and
+`Unroll.completeUnroll` is the only thing that will. They are never `available` and
+never `recoverable` — but they are still your money, so they still count in `total`.
+
 To show "your money, minus what is tied up", subtract from `settled + preconfirmed`
-— **not from `total`**, which also contains `boarding.total`, `recoverable` and
-`pendingRecovery`. Those are still your funds, so subtracting a bucket from `total`
-silently drops them from the figure.
+— **not from `total`**, which also contains `boarding.total`, `recoverable`,
+`pendingRecovery` and `unrolled`. Those are still your funds, so subtracting a bucket
+from `total` silently drops them from the figure.
 
 ```typescript
 
@@ -772,12 +778,7 @@ const onchainWallet = await OnchainWallet.create(onchainIdentity, 'regtest');
 
 // Unroll a specific virtual output
 const vtxo = { txid: 'your_vtxo_txid', vout: 0 };
-const session = await Unroll.Session.create(
-  vtxo,
-  onchainWallet,
-  onchainWallet.provider,
-  wallet.indexerProvider
-);
+const session = await Unroll.sessionFor(wallet, vtxo, onchainWallet);
 
 // Iterate through the unrolling steps
 for await (const step of session) {
@@ -794,6 +795,24 @@ for await (const step of session) {
   }
 }
 ```
+
+`Unroll.sessionFor` is `Session.create` with the wallet's explorer, indexer and
+virtual-tx cache filled in, plus the exit observer wired: at `StepType.DONE` it re-reads
+the outpoint from the indexer, so the value moves into the `unrolled` balance bucket
+without waiting for a sync that would never bring it. Nothing else would tell the wallet
+— delta sync filters on creation time, so it never sees a status change on an older
+virtual output.
+
+That re-read is a prompt rather than a guarantee: `StepType.DONE` means your Esplora
+endpoint saw the exit confirm, and the Arkade indexer may not have marked the output
+`isUnrolled` yet. The session fires once, so a re-read that lands early simply leaves the
+wallet where it would have been anyway, and the next thing to refresh that outpoint picks
+the exit up. `UnilateralExit` fires twice per virtual output — branch-confirmed and
+sweep-confirmed — and by the sweep the exit has been onchain for at least the CSV delay.
+
+If you hold no `Wallet` — driving an exit from providers alone — build the session with
+the lower-level `Unroll.Session.create(vtxo, bumper, explorer, indexer,
+virtualTxRepository?, onExitObserved?)`, whose last two parameters are optional.
 
 The unrolling process works by:
 
@@ -844,9 +863,10 @@ await Unroll.completeUnroll(
 
 ### Unilateral Exit Packages (pre-signed)
 
-`Unroll.Session` requires the wallet (keys + indexer access) to stay online for the whole
-multi-day exit. `UnilateralExit` removes that requirement: it pre-signs **every** transaction
-needed to unroll a VTXO's offchain transaction chain onchain **and** sweep each matured output
+`Unroll.sessionFor` (and the `Unroll.Session` it builds) requires the wallet — keys plus
+indexer access — to stay online for the whole multi-day exit. `UnilateralExit` removes that
+requirement: it pre-signs **every** transaction needed to unroll a VTXO's offchain
+transaction chain onchain **and** sweep each matured output
 to an address you solely control, then emits a versioned JSON package that anything with an
 Esplora-compatible endpoint can execute — no keys, no Arkade infrastructure.
 
@@ -882,6 +902,12 @@ for await (const event of executor) {
   console.log(event.stepIndex, event.kind, event.status)
 }
 ```
+
+Where the executing machine does hold the `Wallet`, `UnilateralExit.execute(wallet, pkg, opts?)`
+returns the same executor with the exit observer already wired, so the repository re-reads each
+branch as it confirms and again as its sweep does — picking the exit up as it lands, indexer lag
+permitting. The same prompt-not-guarantee caveat as `Unroll.sessionFor` above applies, with the
+sweep-confirm re-read as its own retry.
 
 Every exit terminates in a **sweep**. Unrolling only lands a VTXO back onchain still encumbered
 by its Arkade script; the funds become yours unilaterally only once a sweep spends that output

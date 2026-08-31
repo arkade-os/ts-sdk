@@ -206,11 +206,25 @@ interface FakeVtxo {
     arkTxId?: string;
     isSpent?: boolean;
     settledBy?: string;
+    /** Broadcast onchain by a unilateral exit. A LOCATION, not a spend: the
+     * wire pairs it with `isSpent: false`, so the money is still at the lockup
+     * — it is just money no offchain spend can reach. */
+    isUnrolled?: boolean;
 }
 
 /** An unspent lockup output, exactly as the indexer shapes one. */
 const unspent = (): FakeVtxo[] => [{ ...LOCKUP_OUTPOINT, spentBy: "" }];
 const spentBy = (txid: string): FakeVtxo[] => [{ ...LOCKUP_OUTPOINT, spentBy: txid }];
+/** Unilaterally exited, and still unspent — the shape `readLockupFate` reads
+ * as `exited` ahead of everything else. */
+const exited = (count = 1): FakeVtxo[] =>
+    Array.from({ length: count }, (_, vout) => ({
+        ...LOCKUP_OUTPOINT,
+        vout,
+        spentBy: "",
+        isSpent: false,
+        isUnrolled: true,
+    }));
 /** Spent, but by nothing the indexer names — the shape `hasTerminalSpend`
  * exists to catch. There is no witness to go and verify. */
 const spentUnnamed = (over: Partial<FakeVtxo> = {}): FakeVtxo => ({
@@ -1901,6 +1915,186 @@ describe("RfqSwapManager — a refund this wallet cannot make", () => {
         expect(states).toEqual(["needs_counterparty", "pending", "refunded"]);
         expect(swap.blockedReason).toBeUndefined();
         expect(s.refunds).toEqual([RFQ_ID]);
+    });
+});
+
+describe("RfqSwapManager — a lockup that was unilaterally exited", () => {
+    /** The lockup, exited and still unspent — for however many passes run. */
+    const exitedIndexer = (count = 1) => fakeIndexer({ vtxos: exited(count) });
+
+    it("does not push the refund the exit has put out of reach", async () => {
+        // THE assertion, and it is on the DRIVE rather than the label: a state
+        // check alone passes while the doomed push still goes out. `refundArkade`
+        // builds an offchain spend of a leaf that is no longer in the live tree,
+        // so a pass that reached it would hand the caller a transaction the
+        // server must reject.
+        const s = spies();
+        const swap = lightningSwap();
+        const m = manager({ indexer: exitedIndexer(2), now: REFUND_LOCKTIME + 1, spies: s });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.refunds).toEqual([]);
+        expect(s.actions).toEqual([]);
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/unilaterally exited \(2 output\(s\) onchain\)/);
+    });
+
+    it("is not terminal, and the swap stays monitored past the refund deadline", async () => {
+        // The money is still there and the onchain spend has no window, so this
+        // has no deadline of its own — unlike the push, which ends `failed` once
+        // median-time-past can no longer be the excuse.
+        let now = REFUND_LOCKTIME + 1;
+        const s = spies();
+        const failures: string[] = [];
+        const swap = lightningSwap();
+        const m = manager({ indexer: exitedIndexer(), now: () => now, spies: s });
+        m.onSwapFailed((_swap, error) => failures.push(error.message));
+        await m.addSwap(swap);
+        await m.poll();
+        now = REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS + 1;
+        await m.poll();
+        await m.poll();
+
+        expect(s.refunds).toEqual([]);
+        expect(isRfqSwapTerminal(swap.state)).toBe(false);
+        expect(swap.failure).toBeUndefined();
+        expect(failures).toEqual([]);
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
+    });
+
+    it("still ends `settled` when the counterparty resolves the lockup", async () => {
+        // What the non-terminal state is FOR: the swap is still watched, so the
+        // pass that reads a resolution still ends it — and the refusal's reason
+        // goes with the state, since a settled swap carrying one reads as blocked.
+        const s = spies();
+        const swap = lightningSwap();
+        let claimed = false;
+        const m = manager({
+            indexer: {
+                getVtxos: async () =>
+                    claimed
+                        ? fakeIndexer({ vtxos: spentBy(CLAIM_SPEND.txid) }).getVtxos()
+                        : fakeIndexer({ vtxos: exited() }).getVtxos(),
+                getVirtualTxs: fakeIndexer({ txs: [CLAIM_SPEND] }).getVirtualTxs,
+            } as unknown as LockupSpendIndexer,
+            now: REFUND_LOCKTIME + 1,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(swap.state).toBe("needs_counterparty");
+
+        claimed = true;
+        await m.poll();
+
+        expect(swap.state).toBe("settled");
+        expect(swap.blockedReason).toBeUndefined();
+        expect(await m.hasSwap(RFQ_ID)).toBe(false);
+    });
+
+    it("reads an exit the counterparty has since spent as the spend", async () => {
+        // `isUnrolled` is a LOCATION, not a spend fact, and a terminal spend
+        // outranks it: once the output really is gone the swap ends on that
+        // spend rather than sitting blocked behind a flag describing where the
+        // money used to be.
+        const s = spies();
+        const swap = lightningSwap();
+        const m = manager({
+            indexer: fakeIndexer({
+                vtxos: [{ ...LOCKUP_OUTPOINT, spentBy: CLAIM_SPEND.txid, isUnrolled: true }],
+                txs: [CLAIM_SPEND],
+            }),
+            now: REFUND_LOCKTIME + 1,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("settled");
+        expect(s.refunds).toEqual([]);
+    });
+
+    it("does not publish the preimage into a receive claim that cannot land", async () => {
+        // The receive leg's version of the same hazard, and the worse one:
+        // `claimLockup` spends the claim leaf offchain, so a spend that cannot
+        // land still makes `P` public — and `P` is what lets the solver settle
+        // the payer's held HTLC. The funded read is deliberately left claimable,
+        // because the branch under test is the manager's and not
+        // `findLockupVtxos`' own drop of exited outputs.
+        const s = spies();
+        const swap = receiveSwap();
+        const m = manager({
+            indexer: fakeIndexer({
+                vtxos: exited(),
+                funded: [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }],
+            }),
+            now: REFUND_LOCKTIME - 3600,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.lockupClaims).toEqual([]);
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/unilaterally exited/);
+    });
+
+    it("claims the L1 fill anyway: the exit is one half's fact, not the swap's", async () => {
+        // Why the check sits per-half instead of at step 1. The fill is a
+        // different output, under a different key, on a different chain; a swap
+        // blocked before step 2 would let its claim window pass in silence and
+        // give up money the Arkade exit says nothing about.
+        const s = spies();
+        const swap = onchainSwap();
+        const m = manager({
+            indexer: exitedIndexer(),
+            chain: fakeChain({ utxos: [FILL], mtp: SAFE_NOW }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(s.claims).toHaveLength(1);
+        expect(swap.claimTxid).toBe("dd".repeat(32));
+
+        // The Arkade half is reached on the next pass — step 2 no longer ends
+        // the pass once the claim is made — but before the refund window the
+        // proven claim keeps the label: relabelling it would un-say something
+        // the record can prove, and the exit is the other half's fact.
+        await m.poll();
+
+        expect(s.claims).toHaveLength(1);
+        expect(swap.claimTxid).toBe("dd".repeat(32));
+        expect(swap.state).toBe("claimed");
+        expect(swap.blockedReason).toBeUndefined();
+    });
+
+    it("reports the exit once the refund window opens, without re-claiming", async () => {
+        // The other side of the deferral above: past `refundLocktime` the Arkade
+        // half is the live one, so the refusal wins the label — the same
+        // hand-over `driveArkadeRefund` makes for a probe refusal.
+        let now = SAFE_NOW;
+        const s = spies();
+        const swap = onchainSwap();
+        const m = manager({
+            indexer: exitedIndexer(),
+            chain: fakeChain({ utxos: [FILL], mtp: SAFE_NOW }),
+            now: () => now,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(swap.state).toBe("claimed");
+
+        now = REFUND_LOCKTIME + 1;
+        await m.poll();
+
+        expect(s.claims).toHaveLength(1);
+        expect(s.refunds).toEqual([]);
+        expect(swap.claimTxid).toBe("dd".repeat(32));
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/unilaterally exited/);
     });
 });
 

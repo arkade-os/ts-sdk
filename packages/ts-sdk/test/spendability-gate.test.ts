@@ -22,6 +22,10 @@ import {
 } from "../src";
 import type { ArkInfo } from "../src/providers/ark";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
+import {
+    DEFAULT_MESSAGE_TAG,
+    WalletMessageHandler,
+} from "../src/wallet/serviceWorker/wallet-message-handler";
 import { ReadonlySingleKey, SingleKey } from "../src/identity/singleKey";
 import { Ramps } from "../src/wallet/ramps";
 import { VtxoManager } from "../src/wallet/vtxo-manager";
@@ -240,7 +244,7 @@ describe("getSpendableVtxos", () => {
                 vout: 0,
                 value: 10_000,
                 script: defaultScript,
-                isSpent: true,
+                isSpent: false,
                 isUnrolled: true,
             }),
         ]);
@@ -334,17 +338,35 @@ describe("getSpendableVtxos", () => {
 });
 
 describe("getBalance", () => {
-    /** `settled + preconfirmed === available + gated + intentLocked`. */
+    /**
+     * `settled + preconfirmed === available + gated + intentLocked`, and the
+     * five owned buckets sum to `total` — which is what catches a bucket added
+     * without being counted, or counted twice.
+     */
     const expectSplit = (balance: {
         settled: number;
         preconfirmed: number;
         available: number;
         gated: number;
         intentLocked: number;
-    }) =>
+        recoverable: number;
+        pendingRecovery: number;
+        unrolled: number;
+        total: number;
+        boarding: { total: number };
+    }) => {
         expect(balance.settled + balance.preconfirmed).toBe(
             balance.available + balance.gated + balance.intentLocked,
         );
+        expect(balance.total).toBe(
+            balance.boarding.total +
+                balance.settled +
+                balance.preconfirmed +
+                balance.recoverable +
+                balance.pendingRecovery +
+                balance.unrolled,
+        );
+    };
 
     const lockOutpoint = async (intents: InMemoryIntentRepository, txid: string) =>
         intents.saveIntent({
@@ -372,6 +394,103 @@ describe("getBalance", () => {
         expect(balance.gated).toBe(20_000);
         expect(balance.intentLocked).toBe(0);
         expectSplit(balance);
+    });
+
+    it("buckets an unrolled VTXO as unrolled — visible in total, in no spendable bucket", async () => {
+        const { wallet, walletRepository, defaultScript } = await seededWallet();
+        const unrolledTxid = "f1".repeat(32);
+        await walletRepository.saveVtxos(await wallet.getAddress(), [
+            createMockExtendedVtxo({
+                txid: unrolledTxid,
+                vout: 0,
+                value: 25_000,
+                script: defaultScript,
+                virtualStatus: { state: "settled" },
+                isSpent: false,
+                isUnrolled: true,
+                assets: [{ assetId: ASSET_ID, amount: 3n }],
+            }),
+        ]);
+
+        expect(txidsOf(await wallet.getVtxos())).not.toContain(unrolledTxid);
+        expect(txidsOf(await wallet.getVtxos({ withUnrolled: true }))).toContain(unrolledTxid);
+
+        const balance = await wallet.getBalance();
+        // The 70k baseline is untouched; the exited 25k shows up only under
+        // `unrolled`, and `total` still accounts for every sat.
+        expect(balance.unrolled).toBe(25_000);
+        expect(balance.total).toBe(95_000);
+        expect(balance.settled).toBe(70_000);
+        expect(balance.preconfirmed).toBe(0);
+        expect(balance.available).toBe(50_000);
+        expect(balance.recoverable).toBe(0);
+        expect(balance.pendingRecovery).toBe(0);
+        expectSplit(balance);
+
+        // Assets follow the value: owned, never offered to generic spending.
+        expect(balance.assets).toContainEqual({ assetId: ASSET_ID, amount: 25n });
+        expect(balance.availableAssets).toContainEqual({ assetId: ASSET_ID, amount: 12n });
+    });
+
+    it("keeps an unrolled-AND-swept VTXO out of recoverable", async () => {
+        const { wallet, walletRepository, defaultScript } = await seededWallet();
+        await walletRepository.saveVtxos(await wallet.getAddress(), [
+            createMockExtendedVtxo({
+                txid: "f2".repeat(32),
+                vout: 0,
+                value: 25_000,
+                script: defaultScript,
+                isSwept: true,
+                isUnrolled: true,
+            }),
+        ]);
+
+        const balance = await wallet.getBalance();
+        expect(balance.recoverable).toBe(0);
+        expect(balance.unrolled).toBe(25_000);
+        expectSplit(balance);
+    });
+
+    it("drops an unrolled-AND-spent VTXO from every bucket", async () => {
+        // The `hasTerminalSpend` guard in the bucketer is what does this: the
+        // filter now hands unrolled coins over WITHOUT testing spend first.
+        const { wallet, walletRepository, defaultScript } = await seededWallet();
+        await walletRepository.saveVtxos(await wallet.getAddress(), [
+            createMockExtendedVtxo({
+                txid: "f3".repeat(32),
+                vout: 0,
+                value: 25_000,
+                script: defaultScript,
+                isSpent: true,
+                spentBy: "ab".repeat(32),
+                isUnrolled: true,
+            }),
+        ]);
+
+        const balance = await wallet.getBalance();
+        expect(balance.unrolled).toBe(0);
+        expect(balance.total).toBe(70_000);
+        expectSplit(balance);
+    });
+
+    it("never selects an unrolled VTXO for a send or a settlement", async () => {
+        const { wallet, walletRepository, defaultScript } = await seededWallet();
+        const unrolledTxid = "f4".repeat(32);
+        await walletRepository.saveVtxos(await wallet.getAddress(), [
+            createMockExtendedVtxo({
+                txid: unrolledTxid,
+                vout: 0,
+                value: 500_000,
+                script: defaultScript,
+                isUnrolled: true,
+            }),
+        ]);
+
+        // Big enough to be picked first by any value-ordered selector, so its
+        // absence is the selector refusing it rather than not needing it.
+        for (const filter of [undefined, { withRecoverable: true }, { withRecoverable: false }]) {
+            expect(txidsOf(await wallet.getSpendableVtxos(filter))).not.toContain(unrolledTxid);
+        }
     });
 
     it("counts a gated-and-locked VTXO once, as gated", async () => {
@@ -696,5 +815,68 @@ describe("a contract whose handler rejects its stored params", () => {
                 { txid: "ab".repeat(32), vout: 0, script: "5120" + "cd".repeat(32) },
             ]),
         ).rejects.toThrow(/no contract registered/);
+    });
+});
+
+describe("main-thread / worker balance parity", () => {
+    /**
+     * The worker hands `computeOffchainBalance` an unfiltered repository read,
+     * so its `unrolled` bucket fills itself; the main thread has to ask for
+     * unrolled coins explicitly. Comparing the two is the only assertion that
+     * catches `Wallet.getBalance` going back to the default filter, which
+     * silently drops them and reports `unrolled: 0` forever.
+     */
+    const workerBalance = async (seeded: Awaited<ReturnType<typeof seededWallet>>) => {
+        // Same wallet, same repository as the main-thread read — two stubs
+        // would agree with each other and prove nothing.
+        const handler = new WalletMessageHandler();
+        (handler as any).readonlyWallet = seeded.wallet;
+        (handler as any).walletRepository = seeded.walletRepository;
+        (handler as any).indexerProvider = offlineIndexer();
+        (handler as any).arkProvider = {};
+
+        const response = await handler.handleMessage({
+            id: "1",
+            tag: DEFAULT_MESSAGE_TAG,
+            type: "GET_BALANCE",
+        } as any);
+        expect(response.error).toBeUndefined();
+        return (response as any).payload as Awaited<ReturnType<Wallet["getBalance"]>>;
+    };
+
+    it("reports the same unrolled bucket on both sides of the bus", async () => {
+        const seeded = await seededWallet();
+        await seeded.walletRepository.saveVtxos(await seeded.wallet.getAddress(), [
+            createMockExtendedVtxo({
+                txid: "f5".repeat(32),
+                vout: 0,
+                value: 25_000,
+                script: seeded.defaultScript,
+                virtualStatus: { state: "settled" },
+                isSpent: false,
+                isUnrolled: true,
+            }),
+        ]);
+
+        const main = await seeded.wallet.getBalance();
+        const worker = await workerBalance(seeded);
+
+        // Non-zero first: two paths both reporting 0 must not pass as parity.
+        expect(worker.unrolled).toBe(25_000);
+        expect(main.unrolled).toBe(worker.unrolled);
+        expect(main.total).toBe(worker.total);
+        expect(main.total).toBe(95_000);
+    });
+
+    it("agrees when there is no unrolled coin at all", async () => {
+        const seeded = await seededWallet();
+
+        const main = await seeded.wallet.getBalance();
+        const worker = await workerBalance(seeded);
+
+        expect(worker.unrolled).toBe(0);
+        expect(main.unrolled).toBe(0);
+        expect(main.total).toBe(worker.total);
+        expect(main.total).toBe(70_000);
     });
 });
