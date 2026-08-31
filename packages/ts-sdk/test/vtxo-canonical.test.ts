@@ -217,6 +217,13 @@ describe("truth table", () => {
         expect(canSpendOffchain(v, now)).toBe(false);
         expect(canRecoverOnchain(v, now)).toBe(false);
     });
+
+    it("row 9: unrolled without isSpent → terminal", () => {
+        const v = coin({ isUnrolled: true, isSpent: false, spentBy: "" });
+        expect(hasTerminalSpend(v)).toBe(true);
+        expect(canSpendOffchain(v, now)).toBe(false);
+        expect(canRecoverOnchain(v, now)).toBe(false);
+    });
 });
 
 describe("normalization", () => {
@@ -334,9 +341,10 @@ describe("deprecated compatibility wrappers", () => {
         expect(isExpired(coin({ expiresAt: FUTURE }))).toBe(false);
     });
 
-    it("rows 6 and 8 narrow isSpendable/isRecoverable — only ever toward 'spent'", () => {
+    it("rows 6, 8, and 9 narrow isSpendable/isRecoverable — only ever toward 'spent'", () => {
         expect(isSpendable(coin({ isSpent: true, spentBy: "" }))).toBe(false);
         expect(isSpendable(coin({ isSpent: false, settledBy: "44".repeat(32) }))).toBe(false);
+        expect(isSpendable(coin({ isUnrolled: true, isSpent: false }))).toBe(false);
         expect(isRecoverable(coin({ isSwept: true, settledBy: "44".repeat(32) }))).toBe(false);
     });
 });

@@ -240,7 +240,7 @@ describe("getSpendableVtxos", () => {
                 vout: 0,
                 value: 10_000,
                 script: defaultScript,
-                isSpent: true,
+                isSpent: false,
                 isUnrolled: true,
             }),
         ]);
@@ -371,6 +371,31 @@ describe("getBalance", () => {
         expect(balance.available).toBe(50_000);
         expect(balance.gated).toBe(20_000);
         expect(balance.intentLocked).toBe(0);
+        expectSplit(balance);
+    });
+
+    it("does not count unrolled VTXOs in offchain balance", async () => {
+        const { wallet, walletRepository, defaultScript } = await seededWallet();
+        const unrolledTxid = "f1".repeat(32);
+        await walletRepository.saveVtxos(await wallet.getAddress(), [
+            createMockExtendedVtxo({
+                txid: unrolledTxid,
+                vout: 0,
+                value: 25_000,
+                script: defaultScript,
+                virtualStatus: { state: "settled" },
+                isSpent: false,
+                isUnrolled: true,
+            }),
+        ]);
+
+        expect(txidsOf(await wallet.getVtxos())).not.toContain(unrolledTxid);
+        expect(txidsOf(await wallet.getVtxos({ withUnrolled: true }))).toContain(unrolledTxid);
+
+        const balance = await wallet.getBalance();
+        expect(balance.settled).toBe(70_000);
+        expect(balance.total).toBe(70_000);
+        expect(balance.available).toBe(50_000);
         expectSplit(balance);
     });
 

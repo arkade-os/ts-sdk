@@ -1588,7 +1588,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             txid: "bb".repeat(32),
             value: 50000,
             virtualStatus: { state: "settled" },
-            isSpent: true,
+            isSpent: false,
             isUnrolled: true,
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, unrolled]);
@@ -1635,6 +1635,38 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 settled: 100000,
                 preconfirmed: 50000,
                 available: 150000,
+            },
+        });
+    });
+
+    it("GET_BALANCE excludes unrolled VTXOs that are not marked isSpent", async () => {
+        setupHandler();
+        const settled = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 100000,
+            virtualStatus: { state: "settled" },
+        });
+        const unrolled = createMockExtendedVtxo({
+            txid: "bb".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "settled" },
+            isSpent: false,
+            isUnrolled: true,
+        });
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, unrolled]);
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_BALANCE",
+        } as any);
+
+        expect(response).toMatchObject({
+            type: "BALANCE",
+            payload: {
+                settled: 100000,
+                preconfirmed: 0,
+                available: 100000,
+                total: 100000,
             },
         });
     });

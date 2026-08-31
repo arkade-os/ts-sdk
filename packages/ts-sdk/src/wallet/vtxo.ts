@@ -332,14 +332,15 @@ export async function fetchVtxoCreatedAtByTxid(
  * Whether a virtual output has been consumed and can never be spent again.
  *
  * @remarks
- * Unions all three spend facts rather than trusting any one of them. The wire contract permits
+ * Unions all terminal facts rather than trusting any one of them. The wire contract permits
  * `isSpent: true` with an empty `spentBy` (settlement inputs needing no forfeit are written that
- * way), so a `spentBy || settledBy` definition would classify a spent VTXO as spendable — inflating
- * balance and selecting it for a send that must fail.
+ * way), and unilateral exits set `isUnrolled` without necessarily setting `isSpent`; omitting
+ * either would classify a consumed VTXO as spendable, inflating balance and selecting it for a send
+ * that must fail.
  */
 export function hasTerminalSpend(vtxo: VirtualCoin): boolean {
     const n = normalizeVtxo(vtxo);
-    return !!n.isSpent || !!n.spentBy || !!n.settledBy;
+    return !!n.isUnrolled || !!n.isSpent || !!n.spentBy || !!n.settledBy;
 }
 
 /**
