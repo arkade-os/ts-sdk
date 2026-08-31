@@ -146,6 +146,7 @@
         "smoke:dist": "node scripts/smoke-dist.mjs",
         "typecheck": "tsc --noEmit",
         "check:vtxo": "node scripts/check-virtual-status.mjs && node scripts/check-provider-boundary.mjs",
+        "check:e2e-groups": "node ../../scripts/e2e-groups.mjs --check",
         "docs:build": "pnpm run typecheck && pnpm typedoc",
         "docs:open": "open ../../docs/index.html",
         "test": "vitest run",
@@ -162,7 +163,7 @@
         "test:watch": "vitest",
         "test:coverage": "vitest run --coverage",
         "format": "biome format --write src test examples",
-        "lint": "biome format src test examples && pnpm run check:vtxo",
+        "lint": "biome format src test examples && pnpm run check:vtxo && pnpm run check:e2e-groups",
         "audit": "pnpm audit",
         "prepack": "pnpm run build",
         "prepublishOnly": "pnpm run build"

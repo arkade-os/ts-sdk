@@ -11,13 +11,20 @@
 # types — see that file's header. The profiles share ports, so only one stack
 # can be up at a time.
 #
-# Usage: scripts/regtest.sh <ts-sdk|boltz-swap|swap|swap-rfq> <up|down|reset|setup|test|cycle> [test file...]
+# Usage: scripts/regtest.sh <ts-sdk|boltz-swap|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]
 #   up     – clean + start with the package's .env.regtest
 #   down   – stop the stack (preserves data)
 #   reset  – clean (remove containers, volumes)
 #   setup  – run the package's test/setup waiter
 #   test   – run the package's vitest e2e suite or selected files (assumes stack is up)
 #   cycle  – reset + up + setup + test (full integration run)
+#   groups – ts-sdk only: run each CI group in turn, on a fresh stack per group
+#
+# `cycle` runs every e2e file in ONE vitest process against ONE long-lived stack.
+# CI never does that — it splits the suite into groups, each with its own stack —
+# and the shared arkd is what makes a whole-suite run flaky: server config a test
+# mutates (fees, signer rotation) outlives it and breaks later files. Prefer
+# `groups` for a full local run; keep `cycle` for a quick single-stack pass.
 
 set -euo pipefail
 
@@ -25,7 +32,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REGTEST_DIR="$ROOT_DIR/regtest"
 
 usage() {
-  echo "Usage: $0 <ts-sdk|boltz-swap|swap|swap-rfq> <up|down|reset|setup|test|cycle> [test file...]" >&2
+  echo "Usage: $0 <ts-sdk|boltz-swap|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]" >&2
   exit 1
 }
 
@@ -121,12 +128,42 @@ cmd_test() {
   esac
 }
 
+# Run each CI group on its own fresh stack, mirroring the integration matrix.
+# Keeps going after a failing group so one bad group does not hide the rest;
+# exits non-zero if any failed.
+cmd_groups() {
+  if [ "$PKG" != "ts-sdk" ]; then
+    echo "groups: only defined for ts-sdk" >&2
+    exit 1
+  fi
+  local failed=()
+  while IFS=$'\t' read -r name files; do
+    [ -n "$name" ] || continue
+    echo "=== e2e group: $name ==="
+    cmd_reset
+    cmd_up
+    cmd_setup
+    # shellcheck disable=SC2086 -- $files is a deliberate word-split file list
+    if ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" exec vitest run $files; then
+      echo "=== group $name: PASS ==="
+    else
+      echo "=== group $name: FAIL ===" >&2
+      failed+=("$name")
+    fi
+  done < <(node "$ROOT_DIR/scripts/e2e-groups.mjs")
+  if [ "${#failed[@]}" -gt 0 ]; then
+    echo "failed groups: ${failed[*]}" >&2
+    exit 1
+  fi
+}
+
 case "$CMD" in
-  up)    cmd_up ;;
-  down)  cmd_down ;;
-  reset) cmd_reset ;;
-  setup) cmd_setup ;;
-  test)  cmd_test ;;
+  up)     cmd_up ;;
+  down)   cmd_down ;;
+  reset)  cmd_reset ;;
+  setup)  cmd_setup ;;
+  test)   cmd_test ;;
+  groups) cmd_groups ;;
   cycle)
     cmd_reset
     cmd_up

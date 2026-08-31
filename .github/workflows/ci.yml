@@ -94,6 +94,8 @@ jobs:
               test/e2e/restore.test.ts
               test/e2e/operatorOffline.test.ts
               test/e2e/arkade-script.test.ts
+              test/e2e/contractWatchState.test.ts
+              test/e2e/lookAhead.test.ts
           - package: ts-sdk
             group: exit-providers-rotation
             test_files: >-

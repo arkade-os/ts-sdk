@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { execSync } from "child_process";
 import { ElectrumWS } from "ws-electrumx-client";
 import { Address, OutScript } from "@scure/btc-signer";
 import {
@@ -9,20 +8,20 @@ import {
     WsElectrumChainSource,
 } from "../../src";
 import { networks } from "../../src/networks";
-import { waitFor } from "./utils";
+import { faucetOnchain, mineBlocks, waitFor } from "./utils";
 
 // The arkade-regtest Fulcrum service exposes its Electrum TCP endpoint as a
 // WebSocket on this port.
 const ELECTRUM_WS_URL = "ws://localhost:50003";
 
 function faucet(address: string, btc = 0.001): number {
-    execSync(`node regtest/regtest.mjs faucet ${address} ${btc} --confirm`);
+    faucetOnchain(address, Math.round(btc * 100_000_000));
     // Mine a block immediately so electrs has a stable confirmed state to
     // index. Without this the bridge can race: listunspent reports the tx
     // at height N before block.header(N) is queryable, surfacing as
     // "missingheight" errors. Other e2e suites mine after every state
     // change for the same reason (settlement.test.ts etc.).
-    execSync(`node regtest/regtest.mjs mine 1`);
+    mineBlocks(1);
     return Math.round(btc * 100_000_000);
 }
 

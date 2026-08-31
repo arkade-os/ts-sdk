@@ -41,6 +41,15 @@ export const arkdExec = "docker exec -t arkd";
 // hitting the root path makes JSON parsing fail on the HTML frontend.
 export const ESPLORA_API_URL = "http://localhost:3000/api";
 
+/**
+ * Default budget for a shell-out. Every `execSync` here MUST carry one:
+ * `execSync` blocks the worker's event loop, so vitest's `it`/hook timeouts
+ * cannot fire while one is stuck — an unbounded call hangs the whole run
+ * (`fileParallelism: false`, so every remaining file with it) and reports
+ * nothing. A timeout turns that into an ordinary test failure.
+ */
+const EXEC_TIMEOUT_MS = 120_000;
+
 let arkCliInitialized = false;
 
 function ensureArkCliInitialized(): void {
@@ -48,7 +57,7 @@ function ensureArkCliInitialized(): void {
     try {
         execSync(
             `${arkdExec} ark init --password secret --server-url localhost:7070 --explorer http://mempool_web/api`,
-            { stdio: "pipe" },
+            { stdio: "pipe", timeout: EXEC_TIMEOUT_MS },
         );
     } catch {
         // already initialized — ignore
@@ -66,8 +75,8 @@ export interface TestOnchainWallet {
     identity: Identity;
 }
 
-export function execCommand(command: string): string {
-    const result = execSync(command, { encoding: "utf8" })
+export function execCommand(command: string, timeoutMs = EXEC_TIMEOUT_MS): string {
+    const result = execSync(command, { encoding: "utf8", timeout: timeoutMs })
         .replace(/\r/g, "")
         .split("\n")
         .filter((line) => !line.includes("WARN"))
@@ -429,7 +438,10 @@ export async function rotateArkdSigner(params: {
         execSync(
             `node regtest/regtest.mjs set-signers --env .env.regtest --active ${activeSignerPriv}` +
                 (deprecatedArg ? ` --deprecated ${deprecatedArg}` : ""),
-            { stdio: "pipe" },
+            // Recreates arkd-wallet and restarts arkd, so it gets a wider budget
+            // than EXEC_TIMEOUT_MS — but still a budget: an arkd that never comes
+            // back would otherwise wedge the run with no error (see EXEC_TIMEOUT_MS).
+            { stdio: "pipe", timeout: 300_000 },
         );
     } catch (err) {
         const e = err as { stderr?: Buffer; stdout?: Buffer; message?: string };

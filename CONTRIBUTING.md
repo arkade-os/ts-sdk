@@ -4,8 +4,15 @@
 
 Integration tests live in `test/e2e/` within each package and require the Docker regtest stack.
 
-`test:integration` runs each package's full cycle (reset + up + setup + test) via
-`scripts/regtest.sh <pkg> cycle`, using `packages/<pkg>/.env.regtest`.
+`test:integration` uses `packages/<pkg>/.env.regtest`. Every package but `ts-sdk` runs one full
+cycle (reset + up + setup + test) via `scripts/regtest.sh <pkg> cycle`; `ts-sdk` runs
+`scripts/regtest.sh ts-sdk groups`, which walks the CI groups with a **fresh stack per group**.
+
+That difference is deliberate: the ts-sdk e2e files are not safe to run in one process against one
+long-lived arkd. Server state a test mutates outlives it — the rotation suites change arkd's signer
+set (and with it the `/v1/info` digest every client caches), so a whole-suite run fails other files
+with `DIGEST_MISMATCH`. `scripts/regtest.sh ts-sdk cycle` still does the single-stack pass when you
+want a quick one.
 
 ```bash
 pnpm run test:integration              # Every package, end-to-end
@@ -36,7 +43,9 @@ pnpm run regtest:reset:ts-sdk
 ```
 
 CI fans the ts-sdk e2e suite out across parallel groups by passing each group's file list to
-`regtest:test` (see the `integration` matrix in `.github/workflows/ci.yml`).
+`regtest:test` (see the `integration` matrix in `.github/workflows/ci.yml`). That matrix is the only
+definition of the groups: `scripts/e2e-groups.mjs` reads it so the local `groups` run matches CI, and
+`--check` (wired into `pnpm lint`) fails when an e2e file belongs to no group or to two.
 
 ### The stack itself
 
