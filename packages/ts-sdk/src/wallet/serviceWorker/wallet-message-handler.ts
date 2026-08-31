@@ -999,6 +999,15 @@ export class WalletMessageHandler
                 return this.contractEventsEpoch;
             case "request":
                 return this.requestEpoch;
+            default: {
+                // `never` here while the switch covers every Scope: a new
+                // member fails to compile instead of falling through. Without
+                // this (no noImplicitReturns in tsconfig) the fallthrough
+                // returns `undefined`, and `born !== undefined` makes every
+                // emitter for the new scope born stale — events lost silently.
+                const _exhaustive: never = scope;
+                throw new Error(`Unknown scope: ${_exhaustive}`);
+            }
         }
     }
 
