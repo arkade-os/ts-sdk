@@ -694,7 +694,9 @@ const notify = <T extends (...args: never[]) => void>(
  *    `settled`; a lockup fully spent by anything else ends it `refunded`.
  *    Anything the indexer could not answer is `unknown`, which is NOT an
  *    answer: the pass carries on to the steps below, whose deadlines an indexer
- *    outage has no bearing on.
+ *    outage has no bearing on. `exited` — an output unilaterally taken onchain
+ *    — ends neither the swap nor the pass: it blocks the Arkade half below,
+ *    with the L1 half left running.
  * 2. **Drive the trader's claim.** On an onchain send that is the L1 fill — see
  *    {@link nextOnchainAction}. On a receive it is the lockup itself, and it
  *    ends the pass: that leg has no step 3.
@@ -1459,7 +1461,11 @@ export class RfqSwapManager {
         //    to the solver, so the best case is a wasted callback every pass
         //    and the worst is a caller who wired it generically watching that
         //    push fail forever against a key this wallet does not hold.
-        if (swap.kind === "lightning_receive") return this.driveReceiveClaim(swap);
+        if (swap.kind === "lightning_receive") {
+            return fate.fate === "exited"
+                ? this.blockExitedLockup(swap, fate)
+                : this.driveReceiveClaim(swap);
+        }
 
         //    The L1 half. Skipped once claimed — there is nothing further to
         //    learn from chain, and the record already carries the txid.
@@ -1467,8 +1473,39 @@ export class RfqSwapManager {
             if ((await this.driveOnchain(swap)) === "handled") return;
         }
 
-        // 3. The Arkade lockup.
+        // 3. The Arkade lockup. An exit is checked per-half rather than up at
+        //    step 1 on purpose: it says nothing about the L1 fill above, which
+        //    is a different output under a different key and keeps being driven
+        //    and claimed — the same split `setOnchainState` maintains.
+        if (fate.fate === "exited") {
+            // And deferred the same way `driveArkadeRefund` defers a probe
+            // refusal: before the window an onchain-send swap's live claim keeps
+            // the label, because that is the half the trader can still act on.
+            // Relabelling it here would un-say a claim the record can prove.
+            const claiming = swap.state === "claimable" || swap.state === "claimed";
+            if (this.config.now() < swap.refundLocktime && claiming) return;
+            return this.blockExitedLockup(swap, fate);
+        }
         await this.driveArkadeRefund(swap);
+    }
+
+    /**
+     * The lockup was unilaterally exited: its outputs sit onchain under the
+     * VHTLC script, where no offchain claim or refund can reach them.
+     *
+     * `needs_counterparty` rather than a terminal state, because the money still
+     * needs action and the swap can still end either way — an onchain claim can
+     * reveal the preimage, an onchain refund can return it — and that state is
+     * documented as re-checked every pass. It must be set from HERE and not from
+     * inside `driveArkadeRefund`, whose two `unblock` calls would lift it again
+     * on the very next pass.
+     */
+    private blockExitedLockup(swap: RfqSwap, fate: Extract<LockupFate, { fate: "exited" }>): void {
+        this.block(
+            swap,
+            `the lockup was unilaterally exited (${fate.outpoints.length} output(s) onchain), ` +
+                "so no offchain spend can move it — complete the unroll and spend it onchain",
+        );
     }
 
     /**
