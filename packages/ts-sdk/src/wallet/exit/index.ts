@@ -24,7 +24,9 @@ export { createExitChainResolver } from "./resolver";
  *
  * `execute` is the wallet-side shorthand for that last step: the same
  * executor, with the exit observer wired so the wallet's own repository
- * learns the exit as it lands.
+ * re-reads each outpoint as its branch confirms and again as its sweep
+ * does — picking the exit up as it lands, indexer lag permitting. See
+ * `exitObserverFor` for why that is a prompt rather than a guarantee.
  */
 export const UnilateralExit = {
     estimate,

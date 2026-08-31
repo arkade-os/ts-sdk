@@ -904,8 +904,10 @@ for await (const event of executor) {
 ```
 
 Where the executing machine does hold the `Wallet`, `UnilateralExit.execute(wallet, pkg, opts?)`
-returns the same executor with the exit observer already wired, so the repository learns each
-branch is unrolled as it confirms.
+returns the same executor with the exit observer already wired, so the repository re-reads each
+branch as it confirms and again as its sweep does — picking the exit up as it lands, indexer lag
+permitting. The same prompt-not-guarantee caveat as `Unroll.sessionFor` above applies, with the
+sweep-confirm re-read as its own retry.
 
 Every exit terminates in a **sweep**. Unrolling only lands a VTXO back onchain still encumbered
 by its Arkade script; the funds become yours unilaterally only once a sweep spends that output
