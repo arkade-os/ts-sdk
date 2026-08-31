@@ -18,6 +18,8 @@ import { Transaction } from "../utils/transaction";
 import { DUST_AMOUNT } from "./utils";
 import { finalizeVirtualTx } from "./exit/finalizeVirtualTx";
 import { resolveUnilateralPath } from "./exit/path";
+import { exitObserverFor, notifyExitObserved, type OnExitObserved } from "./exitObserver";
+import { canSweepOnchain } from "./vtxo";
 
 /**
  * Local ChainTxType → ChainedTxType map. Duplicated (not imported from
@@ -124,6 +126,14 @@ export namespace Unroll {
              * previous behaviour (indexer only).
              */
             readonly virtualTxRepository?: VirtualTxRepository,
+            /**
+             * Fired once the chain is fully onchain (`StepType.DONE`), so a
+             * wallet repository can learn `isUnrolled` without an indexer
+             * round-trip that could not see the change anyway. Best-effort —
+             * a rejection never reaches the exit. Prefer {@link sessionFor},
+             * which wires it from the wallet.
+             */
+            readonly onExitObserved?: OnExitObserved,
         ) {}
 
         /** Create an unroll session by loading the virtual output chain from the indexer. */
@@ -133,6 +143,7 @@ export namespace Unroll {
             explorer: OnchainProvider,
             indexer: IndexerProvider,
             virtualTxRepository?: VirtualTxRepository,
+            onExitObserved?: OnExitObserved,
         ): Promise<Session> {
             const { chain } = await indexer.getVtxoChain(toUnroll);
             return new Session(
@@ -141,6 +152,7 @@ export namespace Unroll {
                 explorer,
                 indexer,
                 virtualTxRepository,
+                onExitObserved,
             );
         }
 
@@ -223,7 +235,13 @@ export namespace Unroll {
                 return {
                     type: StepType.DONE,
                     vtxoTxid: this.toUnroll.txid,
-                    do: () => Promise.resolve(),
+                    // The observation rides on `do` rather than the iterator so
+                    // a caller driving `next()` by hand fires it too.
+                    do: () =>
+                        notifyExitObserved(this.onExitObserved, {
+                            txid: this.toUnroll.txid,
+                            vout: this.toUnroll.vout,
+                        }),
                 };
             }
 
@@ -268,6 +286,30 @@ export namespace Unroll {
     }
 
     /**
+     * {@link Session.create} with everything the wallet already holds — explorer, indexer,
+     * virtual-tx cache — plus the exit observer, so the repository learns `isUnrolled` at
+     * `StepType.DONE`.
+     *
+     * Prefer this to building a `Session` by hand: an optional parameter only reaches callers who
+     * know to pass it, which is the same failure mode the seam exists to close.
+     */
+    export async function sessionFor(
+        wallet: Wallet,
+        toUnroll: Outpoint,
+        bumper: AnchorBumper,
+    ): Promise<Session> {
+        const manager = await wallet.getContractManager();
+        return Session.create(
+            toUnroll,
+            bumper,
+            wallet.onchainProvider,
+            wallet.indexerProvider,
+            wallet.virtualTxRepository,
+            exitObserverFor(manager),
+        );
+    }
+
+    /**
      * Complete the unroll of a virtual output by broadcasting the transaction that spends the CSV path.
      * @param wallet the wallet owning the virtual output(s)
      * @param vtxoTxids the txids of the virtual output(s) to complete unroll
@@ -282,6 +324,9 @@ export namespace Unroll {
     ): Promise<string> {
         const signedTx = await prepareUnrollTransaction(wallet, vtxoTxids, outputAddress);
         await wallet.onchainProvider.broadcastTransaction(signedTx.hex);
+        // The inputs ARE the exited VTXOs, so no second read is needed to name them. Refreshing
+        // is best-effort: the broadcast already succeeded and a cache write must not undo that.
+        await refreshSpentExitOutputs(wallet, signedTx);
         return signedTx.id;
     }
 }
@@ -316,9 +361,10 @@ export async function prepareUnrollTransaction(
     let totalAmount = 0n;
     const txWeightEstimator = TxWeightEstimator.create();
     for (const vtxo of vtxos) {
-        if (!vtxo.isUnrolled) {
+        if (!canSweepOnchain(vtxo)) {
             throw new Error(
-                `Vtxo ${vtxo.txid}:${vtxo.vout} is not fully unrolled, use unroll first`,
+                `Vtxo ${vtxo.txid}:${vtxo.vout} cannot be swept onchain: it is not fully unrolled ` +
+                    `(use unroll first), or its exit output was already spent`,
             );
         }
 
@@ -396,6 +442,28 @@ export async function prepareUnrollTransaction(
     const signedTx = await wallet.identity.sign(tx);
     signedTx.finalize();
     return signedTx;
+}
+
+/**
+ * Pull the authoritative state of the outpoints a completed unroll just spent, so the wallet stops
+ * reporting them under the `unrolled` balance bucket. Swallows everything: this runs after a
+ * successful broadcast.
+ */
+async function refreshSpentExitOutputs(wallet: Wallet, signedTx: Transaction): Promise<void> {
+    const outpoints: Outpoint[] = [];
+    for (let i = 0; i < signedTx.inputsLength; i++) {
+        const input = signedTx.getInput(i);
+        if (input.txid && input.index !== undefined) {
+            outpoints.push({ txid: hex.encode(input.txid), vout: input.index });
+        }
+    }
+    if (outpoints.length === 0) return;
+    try {
+        const manager = await wallet.getContractManager();
+        await manager.refreshOutpoints(outpoints);
+    } catch (e) {
+        console.error("completeUnroll: failed to refresh the spent exit outputs", e);
+    }
 }
 
 function sleep(ms: number): Promise<void> {

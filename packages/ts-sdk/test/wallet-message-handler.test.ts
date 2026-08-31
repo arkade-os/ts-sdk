@@ -1583,7 +1583,8 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 50000,
             virtualStatus: { state: "settled" },
         });
-        // Unrolling spends the virtual output, so nothing but the filter can surface it.
+        // `isUnrolled` says where the output lives, not that it was consumed: this coin is
+        // unspent, and only the filter decides whether an exited output is in scope.
         const unrolled = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 50000,
@@ -1607,6 +1608,54 @@ describe("WalletMessageHandler repo-backed reads", () => {
             "aa".repeat(32),
             "bb".repeat(32),
         ]);
+    });
+
+    it("GET_VTXOS surfaces unrolled VTXOs the spend-axis tests would have dropped", async () => {
+        setupHandler();
+        const exitedSwept = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "swept" },
+            isUnrolled: true,
+        });
+        const exitedExpired = createMockExtendedVtxo({
+            txid: "bb".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "settled" },
+            expiresAt: new Date(Date.now() - 60000),
+            isUnrolled: true,
+        });
+        const exitedSpent = createMockExtendedVtxo({
+            txid: "cc".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "spent" },
+            isSpent: true,
+            isUnrolled: true,
+        });
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [
+            exitedSwept,
+            exitedExpired,
+            exitedSpent,
+        ]);
+
+        const get = async (filter: Record<string, boolean>) =>
+            (
+                (await updater.handleMessage({
+                    ...baseMessage(),
+                    type: "GET_VTXOS",
+                    payload: { filter },
+                } as any)) as any
+            ).payload.vtxos.map((v: any) => v.txid);
+
+        // Location is decided first, so `withUnrolled` alone answers for all three and the
+        // swept/expiry/spend tests below it never run — `prepareUnrollTransaction` behind the
+        // worker needs every exited output, whatever its spend state.
+        expect(await get({ withUnrolled: true })).toEqual([
+            "aa".repeat(32),
+            "bb".repeat(32),
+            "cc".repeat(32),
+        ]);
+        expect(await get({ withRecoverable: true })).toEqual([]);
     });
 
     it("GET_BALANCE reads from repository, not indexer", async () => {
@@ -1639,7 +1688,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         });
     });
 
-    it("GET_BALANCE excludes unrolled VTXOs that are not marked isSpent", async () => {
+    it("GET_BALANCE buckets an unrolled VTXO as unrolled instead of dropping it", async () => {
         setupHandler();
         const settled = createMockExtendedVtxo({
             txid: "aa".repeat(32),
@@ -1660,12 +1709,88 @@ describe("WalletMessageHandler repo-backed reads", () => {
             type: "GET_BALANCE",
         } as any);
 
+        // Exited but unspent: out of every spendable bucket, still the user's money in `total`.
         expect(response).toMatchObject({
             type: "BALANCE",
             payload: {
                 settled: 100000,
                 preconfirmed: 0,
                 available: 100000,
+                recoverable: 0,
+                pendingRecovery: 0,
+                unrolled: 50000,
+                total: 150000,
+            },
+        });
+    });
+
+    it("GET_BALANCE reports an unrolled swept VTXO as unrolled, not recoverable", async () => {
+        setupHandler();
+        const settled = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 100000,
+            virtualStatus: { state: "settled" },
+        });
+        // Swept AND exited: a batch cannot lift an output that already sits onchain, so the
+        // location wins over the recovery test.
+        const exitedSwept = createMockExtendedVtxo({
+            txid: "bb".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "swept" },
+            isUnrolled: true,
+        });
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, exitedSwept]);
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_BALANCE",
+        } as any);
+
+        expect(response).toMatchObject({
+            type: "BALANCE",
+            payload: {
+                settled: 100000,
+                available: 100000,
+                recoverable: 0,
+                pendingRecovery: 0,
+                unrolled: 50000,
+                total: 150000,
+            },
+        });
+    });
+
+    it("GET_BALANCE drops an unrolled VTXO that was also spent", async () => {
+        setupHandler();
+        const settled = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 100000,
+            virtualStatus: { state: "settled" },
+        });
+        // The completed unroll: exited, then swept onchain. The repository read is unfiltered,
+        // so only the terminal-spend guard keeps this out of `unrolled` and out of `total`.
+        const exitedSpent = createMockExtendedVtxo({
+            txid: "bb".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "spent" },
+            isSpent: true,
+            isUnrolled: true,
+        });
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, exitedSpent]);
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_BALANCE",
+        } as any);
+
+        expect(response).toMatchObject({
+            type: "BALANCE",
+            payload: {
+                settled: 100000,
+                preconfirmed: 0,
+                available: 100000,
+                recoverable: 0,
+                pendingRecovery: 0,
+                unrolled: 0,
                 total: 100000,
             },
         });

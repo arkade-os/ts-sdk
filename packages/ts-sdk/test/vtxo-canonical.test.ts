@@ -3,6 +3,7 @@ import {
     EXPIRY_MIN_PLAUSIBLE_MS,
     canRecoverOnchain,
     canSpendOffchain,
+    canSweepOnchain,
     convertVtxo,
     getNormalizedVtxos,
     hasTerminalSpend,
@@ -218,11 +219,58 @@ describe("truth table", () => {
         expect(canRecoverOnchain(v, now)).toBe(false);
     });
 
-    it("row 9: unrolled without isSpent → terminal", () => {
+    it("row 9: unrolled without isSpent → onchain, not terminal", () => {
+        // The location axis. `hasTerminalSpend` mirrors NArk's `IsSpent()` and
+        // says nothing about where the output lives, so it stays false — but no
+        // batch and no offchain spend can reach the coin, so both capability
+        // predicates refuse it and `canSweepOnchain` claims it instead.
         const v = coin({ isUnrolled: true, isSpent: false, spentBy: "" });
-        expect(hasTerminalSpend(v)).toBe(true);
+        expect(hasTerminalSpend(v)).toBe(false);
         expect(canSpendOffchain(v, now)).toBe(false);
         expect(canRecoverOnchain(v, now)).toBe(false);
+        expect(canSweepOnchain(v)).toBe(true);
+    });
+
+    it("row 10: unrolled AND swept → still only sweepable, never recoverable", () => {
+        // Without the `!isUnrolled` clause in `canRecoverOnchain` this coin
+        // would be offered to a recovery batch, which cannot lift an output
+        // that already lives onchain.
+        const v = coin({ isUnrolled: true, isSwept: true });
+        expect(canRecoverOnchain(v, now)).toBe(false);
+        expect(canSpendOffchain(v, now)).toBe(false);
+        expect(canSweepOnchain(v)).toBe(true);
+    });
+
+    it("row 11: unrolled and then spent → no capability at all", () => {
+        // The exit output was swept away by `completeUnroll`; nothing is left.
+        for (const over of [
+            { isSpent: true, spentBy: "" },
+            { spentBy: "33".repeat(32) },
+            { settledBy: "44".repeat(32) },
+        ]) {
+            const v = coin({ isUnrolled: true, ...over });
+            expect(hasTerminalSpend(v)).toBe(true);
+            expect(canSweepOnchain(v)).toBe(false);
+            expect(canSpendOffchain(v, now)).toBe(false);
+            expect(canRecoverOnchain(v, now)).toBe(false);
+        }
+    });
+
+    it("the three capabilities partition the unspent set", () => {
+        for (const v of [
+            coin(),
+            coin({ isSwept: true }),
+            coin({ expiresAt: PAST }),
+            coin({ isUnrolled: true }),
+            coin({ isUnrolled: true, isSwept: true }),
+        ]) {
+            const claims = [
+                canSpendOffchain(v, now),
+                canRecoverOnchain(v, now),
+                canSweepOnchain(v),
+            ].filter(Boolean);
+            expect(claims).toHaveLength(1);
+        }
     });
 });
 
@@ -341,11 +389,23 @@ describe("deprecated compatibility wrappers", () => {
         expect(isExpired(coin({ expiresAt: FUTURE }))).toBe(false);
     });
 
-    it("rows 6, 8, and 9 narrow isSpendable/isRecoverable — only ever toward 'spent'", () => {
+    it("rows 6 and 8 narrow isSpendable/isRecoverable — only ever toward 'spent'", () => {
         expect(isSpendable(coin({ isSpent: true, spentBy: "" }))).toBe(false);
         expect(isSpendable(coin({ isSpent: false, settledBy: "44".repeat(32) }))).toBe(false);
-        expect(isSpendable(coin({ isUnrolled: true, isSpent: false }))).toBe(false);
         expect(isRecoverable(coin({ isSwept: true, settledBy: "44".repeat(32) }))).toBe(false);
+    });
+
+    it("row 9 is where the wrappers are WIDE: an exited coin reads spendable", () => {
+        // True to their documented contract — "has not been consumed" — and
+        // exactly why exit safety may not be built on them. `canSpendOffchain`
+        // is the predicate that knows.
+        const exited = coin({ isUnrolled: true, isSpent: false });
+        expect(isSpendable(exited)).toBe(true);
+        expect(canSpendOffchain(exited, { timestamp: NOW })).toBe(false);
+        expect(isRecoverable(coin({ isUnrolled: true, isSwept: true }))).toBe(true);
+        expect(
+            canRecoverOnchain(coin({ isUnrolled: true, isSwept: true }), { timestamp: NOW }),
+        ).toBe(false);
     });
 });
 

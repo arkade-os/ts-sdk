@@ -411,9 +411,9 @@ export interface WalletBalance {
      * obtainable split under a different predicate and is not counted here.
      *
      * Subtract this from `settled + preconfirmed`, never from `total`. `total`
-     * also carries {@link boarding}, {@link recoverable} and
-     * {@link pendingRecovery}, which are still the user's funds — netting a
-     * bucket out of it drops them from the figure with no signal.
+     * also carries {@link boarding}, {@link recoverable}, {@link pendingRecovery}
+     * and {@link unrolled}, which are still the user's funds — netting a bucket
+     * out of it drops them from the figure with no signal.
      */
     gated: number;
     /**
@@ -443,7 +443,19 @@ export interface WalletBalance {
      */
     pendingRecovery: number;
 
-    /** Total balance across offchain, recoverable, pending-recovery, and boarding funds. */
+    /**
+     * Funds whose unilateral exit already happened — the output is onchain
+     * behind its CSV timelock, so `Unroll.completeUnroll` is the only thing
+     * that moves it. Excluded from `available`/`settled`/`preconfirmed`, from
+     * `recoverable` (no batch can lift an onchain output), and from coin
+     * selection — but still the wallet's funds, so counted in `total`.
+     */
+    unrolled: number;
+
+    /**
+     * Total balance across offchain, recoverable, pending-recovery, unrolled,
+     * and boarding funds.
+     */
     total: number;
 
     /** Asset balance entries (`assetId` & `amount`) the wallet owns. */
@@ -453,7 +465,8 @@ export interface WalletBalance {
      * The subset of {@link assets} generic spending will accept, i.e. the asset
      * analogue of {@link available}. `assets - availableAssets` is what is held
      * but not selectable, for the {@link gated} and {@link intentLocked} causes
-     * plus recovery — assets have no per-cause split of their own.
+     * plus recovery and {@link unrolled} — assets have no per-cause split of
+     * their own.
      */
     availableAssets: Asset[];
 }
@@ -939,6 +952,7 @@ import type { NormalizedExtendedVirtualCoin } from "./vtxo";
 export {
     canRecoverOnchain,
     canSpendOffchain,
+    canSweepOnchain,
     convertVtxo,
     getAllNormalizedVtxos,
     getNormalizedVtxos,

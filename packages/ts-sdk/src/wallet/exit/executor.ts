@@ -1,4 +1,5 @@
 import { OnchainProvider } from "../../providers/onchain";
+import { notifyExitObserved, type OnExitObserved } from "../exitObserver";
 import { ExitPackage, ExitStep, SweepStep } from "./types";
 
 /**
@@ -51,6 +52,29 @@ export interface ExitFeeWallet {
 
 type TxStatus = { confirmed: boolean; blockHeight?: number; blockTime?: number };
 
+export interface ExecutorOptions {
+    pollIntervalMs?: number;
+    feeWallet?: ExitFeeWallet;
+    /** Abort to stop execution.
+     *
+     * Iteration then rejects with `signal.reason`. Calling `abort()`
+     * with no argument yields an error whose `name` is `"AbortError"`;
+     * a custom reason is forwarded as-is, matching `fetch` and
+     * `AbortSignal.prototype.throwIfAborted`.
+     *
+     * Already-broadcast transactions are not recalled; the executor is
+     * idempotent, so a later run resumes from the chain. */
+    signal?: AbortSignal;
+    /**
+     * Fired per VTXO once every step serving its branch is onchain, and again
+     * once its sweep confirms — the two moments an exit becomes observable.
+     * Best-effort: a rejection never reaches the exit, which is the whole point
+     * of a keyless disaster-recovery path. `UnilateralExit.execute` wires it
+     * from a wallet; passing it here keeps the bare executor provider-only.
+     */
+    onExitObserved?: OnExitObserved;
+}
+
 /**
  * Keyless, stateless executor for a pre-signed exit package.
  *
@@ -65,27 +89,36 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
 
     private readonly signal?: AbortSignal;
 
+    private readonly onExitObserved?: OnExitObserved;
+
     constructor(
         readonly pkg: ExitPackage,
         readonly provider: OnchainProvider,
-        opts?: {
-            pollIntervalMs?: number;
-            feeWallet?: ExitFeeWallet;
-            /** Abort to stop execution.
-             *
-             * Iteration then rejects with `signal.reason`. Calling `abort()`
-             * with no argument yields an error whose `name` is `"AbortError"`;
-             * a custom reason is forwarded as-is, matching `fetch` and
-             * `AbortSignal.prototype.throwIfAborted`.
-             *
-             * Already-broadcast transactions are not recalled; the executor is
-             * idempotent, so a later run resumes from the chain. */
-            signal?: AbortSignal;
-        },
+        opts?: ExecutorOptions,
     ) {
         this.pollIntervalMs = opts?.pollIntervalMs ?? 5_000;
         this.feeWallet = opts?.feeWallet;
         this.signal = opts?.signal;
+        this.onExitObserved = opts?.onExitObserved;
+    }
+
+    /**
+     * Per-VTXO branch progress, which the executor otherwise does not track:
+     * `dead` / `done` are per-step, and a VTXO is only onchain once EVERY
+     * `package`/`bump` step naming it has confirmed. (`broadcast` — the funding
+     * splitter — carries no `forVtxos` and serves no single VTXO.)
+     */
+    private branchSteps(): Map<string, Set<number>> {
+        const byVtxo = new Map<string, Set<number>>();
+        this.pkg.steps.forEach((step, i) => {
+            if (step.kind !== "package" && step.kind !== "bump") return;
+            for (const vtxo of step.forVtxos) {
+                let steps = byVtxo.get(vtxo);
+                if (!steps) byVtxo.set(vtxo, (steps = new Set()));
+                steps.add(i);
+            }
+        });
+        return byVtxo;
     }
 
     /**
@@ -137,6 +170,23 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
         throwIfAborted(this.signal); // before anything is broadcast
         const dead = new Set<string>(); // outpoints whose branch failed
 
+        const branchSteps = this.branchSteps();
+        const onchainSteps = new Set<number>();
+        const branchObserved = new Set<string>();
+        // Fired BEFORE the matching yield: a consumer that `break`s out of the
+        // loop leaves the generator suspended forever, and the repository write
+        // must not be the thing that gets stranded.
+        const observeBranch = async (stepIndex: number, forVtxos?: string[]) => {
+            onchainSteps.add(stepIndex);
+            for (const vtxo of forVtxos ?? []) {
+                if (branchObserved.has(vtxo)) continue;
+                const steps = branchSteps.get(vtxo);
+                if (!steps || ![...steps].every((i) => onchainSteps.has(i))) continue;
+                branchObserved.add(vtxo);
+                await this.observe(vtxo);
+            }
+        };
+
         if (this.pkg.validUntil && Date.now() / 1000 > this.pkg.validUntil) {
             yield {
                 stepIndex: -1,
@@ -174,6 +224,7 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
                 step.kind === "package" || step.kind === "bump" ? step.parentTxid : step.txid;
             const existing = await this.status(anchorTxid);
             if (existing?.confirmed) {
+                await observeBranch(i, forVtxos);
                 yield {
                     stepIndex: i,
                     kind: step.kind,
@@ -232,6 +283,7 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
                 }
             }
             await this.waitConfirmed(anchorTxid);
+            await observeBranch(i, forVtxos);
             yield {
                 stepIndex: i,
                 kind: step.kind,
@@ -267,6 +319,10 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
                 const swept = await this.status(step.txid);
                 if (swept?.confirmed) {
                     done.add(index);
+                    // Second observation for this VTXO: its exit output is
+                    // spent now, which is a further state change worth
+                    // persisting. `refreshOutpoints` is idempotent.
+                    await this.observe(step.vtxo);
                     yield {
                         stepIndex: index,
                         kind: "sweep",
@@ -334,5 +390,17 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
             }
             if (done.size < pending.length) await this.sleep();
         }
+    }
+
+    /** `"txid:vout"` -> outpoint, then hand it to the hook. A malformed entry is skipped. */
+    private async observe(outpoint: string): Promise<void> {
+        if (!this.onExitObserved) return;
+        const sep = outpoint.lastIndexOf(":");
+        // `Number("")` is 0, so the empty test is what stops `"txid:"` being
+        // observed as vout 0 — a different outpoint than the package named.
+        const rest = outpoint.slice(sep + 1);
+        const vout = Number(rest);
+        if (sep <= 0 || rest === "" || !Number.isInteger(vout)) return;
+        await notifyExitObserved(this.onExitObserved, { txid: outpoint.slice(0, sep), vout });
     }
 }
