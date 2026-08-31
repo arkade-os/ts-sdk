@@ -804,6 +804,41 @@ describe("Executor exit observation", () => {
         ]);
     });
 
+    it("skips a malformed forVtxos entry rather than inventing an outpoint for it", async () => {
+        // `Number("")` is 0, so a trailing-colon entry would otherwise be
+        // observed as vout 0 — a real outpoint, and a different one than the
+        // package named. Reporting the wrong outpoint is worse than reporting
+        // none: the repository would refresh a coin nobody exited.
+        const script = scriptedProvider();
+        script.register("parent1-hex", P1);
+        const observed: { txid: string; vout: number }[] = [];
+        const pkg = pkgOf([
+            {
+                kind: "package",
+                parentTxid: P1,
+                parentHex: "parent1-hex",
+                childTxid: C1,
+                childHex: "child1-hex",
+                forVtxos: ["deadbeef:", ":0", "nocolon", "deadbeef:abc", `${P1}:1`],
+            },
+        ]);
+
+        const events = await run(
+            new Executor(pkg, script.provider, {
+                pollIntervalMs: 1,
+                onExitObserved: (o) => void observed.push({ ...o }),
+            }),
+            (e, s) => {
+                if (e.status === "broadcast" && e.txid) s.confirm(e.txid);
+            },
+            script,
+        );
+
+        // Only the well-formed entry is observed; the step itself still runs.
+        expect(observed).toEqual([{ txid: P1, vout: 1 }]);
+        expect(events.map((e) => e.status)).toEqual(["broadcast", "confirmed"]);
+    });
+
     it("does not let a rejecting hook break the exit", async () => {
         const errors: unknown[] = [];
         const realError = console.error;
