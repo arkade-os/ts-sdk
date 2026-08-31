@@ -14,8 +14,16 @@ import {
 import { IWallet, ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
 import type { IntentFeeConfig } from "../src/arkfee";
 import { Wallet } from "../src/wallet/wallet";
+import { Batch } from "../src/wallet/batch";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
+import { createBoardingProgramScript } from "../src/script/boarding";
+import { SingleKey } from "../src/identity/singleKey";
+import { extendCoinWithTapscript } from "../src/wallet/utils";
+import { InputSignerRouter } from "../src/wallet/inputSignerRouter";
+import { networks } from "../src/networks";
+import { ArkAddress } from "../src/script/address";
 import { hex } from "@scure/base";
+import { sha256 } from "@scure/btc-signer/utils.js";
 
 type MockWalletOptions = {
     contractManager?: {
@@ -2665,6 +2673,167 @@ describe("VtxoManager - Periodic settle cooldown", () => {
 });
 
 describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
+    it("keeps named boarding eligible and retries with a fresh session after blocked and VTXO_BANNED-style rejection", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-08-31T12:31:16Z"));
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const commitmentTxid = "cc".repeat(32);
+        const batchJoin = vi.spyOn(Batch, "join").mockResolvedValue(commitmentTxid);
+
+        let manager: VtxoManager | undefined;
+        try {
+            const key = (fill: number) => SingleKey.fromPrivateKey(new Uint8Array(32).fill(fill));
+            const identity = key(1);
+            let prepareCalls = 0;
+            const sessionPublicKeys: string[] = [];
+            const registerDigests: string[] = [];
+            const signingAdapter = {
+                publicKey: await key(2).xOnlyPublicKey(),
+                prepareRegistration: vi.fn(async () => {
+                    const call = ++prepareCalls;
+                    if (call === 1) {
+                        return { status: "blocked" as const, reason: "registration not expired" };
+                    }
+                    return {
+                        status: "ready" as const,
+                        handle: `attempt-${call - 1}`,
+                        registerExpireAt: Math.floor(Date.now() / 1000) + 120,
+                    };
+                }),
+                registerIntent: vi.fn(async (request: any) => {
+                    sessionPublicKeys.push(request.message.cosigners_public_keys[0]);
+                    registerDigests.push(
+                        hex.encode(
+                            sha256(
+                                new TextEncoder().encode(
+                                    JSON.stringify({
+                                        proof: request.psbt,
+                                        message: request.message,
+                                    }),
+                                ),
+                            ),
+                        ),
+                    );
+                    return sessionPublicKeys.length === 1
+                        ? { status: "definitely_not_submitted" as const }
+                        : { status: "registered" as const, intentId: "intent-retry" };
+                }),
+                submitCommitment: vi.fn().mockResolvedValue({ status: "submitted" as const }),
+                releaseIntent: vi.fn().mockResolvedValue({ status: "released" as const }),
+            };
+            const boardingScript = createBoardingProgramScript(
+                {
+                    name: "retry-board",
+                    boardingPubKey: await identity.xOnlyPublicKey(),
+                    cosignerPubKey: signingAdapter.publicKey,
+                    recoveryPubKey: await key(4).xOnlyPublicKey(),
+                },
+                await key(3).xOnlyPublicKey(),
+                { type: "seconds", value: 604_672n },
+            );
+            const boarding = extendCoinWithTapscript(boardingScript, {
+                txid: "11".repeat(32),
+                vout: 0,
+                value: 10_000,
+                status: {
+                    confirmed: true,
+                    block_time: Math.floor(Date.now() / 1000) - 60,
+                },
+            });
+            const walletAddress =
+                "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g";
+            const recipientAddress = ArkAddress.decode(walletAddress);
+            const contractManager = {
+                onContractEvent: vi.fn().mockReturnValue(() => undefined),
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+            };
+            const wallet = Object.create(Wallet.prototype) as Wallet & Record<string, any>;
+            Object.assign(wallet, {
+                identity,
+                network: networks.mutinynet,
+                onchainProvider: {},
+                arkProvider: {
+                    getInfo: vi.fn().mockResolvedValue({
+                        fees: { intentFee: {} },
+                        vtxoMaxAmount: -1n,
+                    }),
+                    getEventStream: vi.fn().mockImplementation(() => ({
+                        next: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+                        return: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+                        [Symbol.asyncIterator]() {
+                            return this;
+                        },
+                    })),
+                },
+                dustAmount: 330n,
+                boardingSigningAdapter: signingAdapter,
+                _boardingTapscript: boardingScript,
+                _signerRouter: new InputSignerRouter({
+                    identity,
+                    contractRepository: { getContracts: async () => [] } as never,
+                    boardingPkScript: boardingScript.pkScript,
+                }),
+                _contractManager: contractManager,
+                _pendingSpendOutpoints: new Set<string>(),
+                _txLock: Promise.resolve(),
+                getAddress: vi.fn().mockResolvedValue(walletAddress),
+                getBoardingUtxos: vi.fn().mockResolvedValue([boarding]),
+                getSpendableVtxos: vi.fn().mockResolvedValue([]),
+                logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+                recipientAddressContext: vi.fn().mockReturnValue({
+                    hrp: recipientAddress.hrp,
+                    signerSet: {
+                        active: hex.encode(recipientAddress.serverPubKey),
+                        deprecated: new Map(),
+                    },
+                }),
+                createBatchHandler: vi.fn().mockReturnValue({}),
+                updateDbAfterSettle: vi.fn().mockResolvedValue(undefined),
+                maybeRotateBoardingAfterBoard: vi.fn().mockResolvedValue(undefined),
+                // Keep this fixture on the named-boarding path only.
+                rotateServerSigner: undefined,
+            });
+
+            manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                deprecatedSignerMigration: false,
+                autoRenewVtxos: false,
+                pollIntervalMs: 60_000,
+            });
+
+            await vi.advanceTimersByTimeAsync(1_100);
+            expect(signingAdapter.prepareRegistration).toHaveBeenCalledTimes(1);
+            expect(signingAdapter.registerIntent).not.toHaveBeenCalled();
+            expect((manager as any).knownBoardingUtxos).not.toContain(
+                `${boarding.txid}:${boarding.vout}`,
+            );
+
+            await vi.advanceTimersByTimeAsync(120_000);
+            expect(signingAdapter.prepareRegistration).toHaveBeenCalledTimes(2);
+            expect(signingAdapter.registerIntent).toHaveBeenCalledTimes(1);
+            expect((manager as any).knownBoardingUtxos).not.toContain(
+                `${boarding.txid}:${boarding.vout}`,
+            );
+
+            await vi.advanceTimersByTimeAsync(240_000);
+            expect(signingAdapter.prepareRegistration).toHaveBeenCalledTimes(3);
+            expect(signingAdapter.registerIntent).toHaveBeenCalledTimes(2);
+            expect((manager as any).knownBoardingUtxos).toContain(
+                `${boarding.txid}:${boarding.vout}`,
+            );
+            expect(sessionPublicKeys).toHaveLength(2);
+            expect(new Set(sessionPublicKeys).size).toBe(2);
+            expect(new Set(registerDigests).size).toBe(2);
+            expect(signingAdapter.releaseIntent).not.toHaveBeenCalled();
+            expect(batchJoin).toHaveBeenCalledOnce();
+        } finally {
+            await manager?.dispose();
+            batchJoin.mockRestore();
+            consoleError.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
     const mockPubkey = new Uint8Array(32).fill(0x01);
     const csvScript = CSVMultisigTapscript.encode({
         timelock: { type: "seconds", value: 604672n },
