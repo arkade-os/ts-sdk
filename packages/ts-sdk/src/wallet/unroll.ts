@@ -128,9 +128,11 @@ export namespace Unroll {
             readonly virtualTxRepository?: VirtualTxRepository,
             /**
              * Fired once the chain is fully onchain (`StepType.DONE`), so a
-             * wallet repository can learn `isUnrolled` without an indexer
-             * round-trip that could not see the change anyway. Best-effort —
-             * a rejection never reaches the exit. Prefer {@link sessionFor},
+             * wallet repository can be prompted to re-read the outpoint —
+             * delta sync never would, filtering as it does on creation time.
+             * Fired ONCE, so an observer that reads a lagging indexer gets no
+             * second chance; see {@link exitObserverFor}. Best-effort — a
+             * rejection never reaches the exit. Prefer {@link sessionFor},
              * which wires it from the wallet.
              */
             readonly onExitObserved?: OnExitObserved,
@@ -287,8 +289,9 @@ export namespace Unroll {
 
     /**
      * {@link Session.create} with everything the wallet already holds — explorer, indexer,
-     * virtual-tx cache — plus the exit observer, so the repository learns `isUnrolled` at
-     * `StepType.DONE`.
+     * virtual-tx cache — plus the exit observer, which re-reads the outpoint at `StepType.DONE`
+     * rather than waiting for a delta sync that cannot see the change. That single fire is a
+     * prompt and not a guarantee — see {@link exitObserverFor}.
      *
      * Prefer this to building a `Session` by hand: an optional parameter only reaches callers who
      * know to pass it, which is the same failure mode the seam exists to close.

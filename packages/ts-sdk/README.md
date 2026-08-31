@@ -797,10 +797,18 @@ for await (const step of session) {
 ```
 
 `Unroll.sessionFor` is `Session.create` with the wallet's explorer, indexer and
-virtual-tx cache filled in, plus the exit observer wired: at `StepType.DONE` the
-wallet's own repository learns the virtual output is now unrolled, and its value moves
-into the `unrolled` balance bucket. Nothing else would tell it — delta sync filters on
-creation time, so it never sees a status change on an older virtual output.
+virtual-tx cache filled in, plus the exit observer wired: at `StepType.DONE` it re-reads
+the outpoint from the indexer, so the value moves into the `unrolled` balance bucket
+without waiting for a sync that would never bring it. Nothing else would tell the wallet
+— delta sync filters on creation time, so it never sees a status change on an older
+virtual output.
+
+That re-read is a prompt rather than a guarantee: `StepType.DONE` means your Esplora
+endpoint saw the exit confirm, and the Arkade indexer may not have marked the output
+`isUnrolled` yet. The session fires once, so a re-read that lands early simply leaves the
+wallet where it would have been anyway, and the next thing to refresh that outpoint picks
+the exit up. `UnilateralExit` fires twice per virtual output — branch-confirmed and
+sweep-confirmed — and by the sweep the exit has been onchain for at least the CSV delay.
 
 If you hold no `Wallet` — driving an exit from providers alone — build the session with
 the lower-level `Unroll.Session.create(vtxo, bumper, explorer, indexer,

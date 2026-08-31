@@ -20,6 +20,14 @@ export type OnExitObserved = (outpoint: Outpoint) => void | Promise<void>;
 /**
  * Adapt a contract manager into an {@link OnExitObserved}: the wallet-side half of the seam, kept
  * out of `exit/` so the dependency direction stays outward.
+ *
+ * **A prompt, not a guarantee.** The hook fires when the EXPLORER reports the exit confirmed, and
+ * `refreshOutpoints` then asks the INDEXER. If arkd has not yet marked the output `isUnrolled` the
+ * refresh writes the state it does report — or returns silently when it names no vtxo at all — and
+ * nothing here retries. A miss leaves the wallet exactly where it was before this seam existed: it
+ * learns the exit whenever something else next refreshes the outpoint. The executor's second fire
+ * at sweep-confirm is the natural retry, and by then the exit has been onchain for at least the
+ * CSV delay.
  */
 export function exitObserverFor(
     manager: Pick<IContractManager, "refreshOutpoints">,

@@ -68,6 +68,10 @@ export interface ExecutorOptions {
     /**
      * Fired per VTXO once every step serving its branch is onchain, and again
      * once its sweep confirms — the two moments an exit becomes observable.
+     * Two fires rather than one is what makes an observer reading a lagging
+     * indexer recoverable here: by the sweep the exit has been onchain for at
+     * least the CSV delay.
+     *
      * Best-effort: a rejection never reaches the exit, which is the whole point
      * of a keyless disaster-recovery path. `UnilateralExit.execute` wires it
      * from a wallet; passing it here keeps the bare executor provider-only.

@@ -5,9 +5,11 @@ import { Executor, type ExecutorOptions } from "./executor";
 import type { ExitPackage } from "./types";
 
 /**
- * An {@link Executor} with the wallet's exit observer already wired, so the repository learns
- * `isUnrolled` as each branch confirms and the balance moves into the `unrolled` bucket without an
- * indexer round-trip — which could not see the change anyway, delta sync filtering on creation time.
+ * An {@link Executor} with the wallet's exit observer already wired, so the repository re-reads
+ * each outpoint as its branch confirms and again as its sweep does, moving the value into the
+ * `unrolled` balance bucket without waiting for a delta sync — which could not see the change
+ * anyway, filtering as it does on creation time. What the re-read learns depends on the indexer
+ * having caught up; see `exitObserverFor`.
  *
  * The bare `Executor` stays keyless and provider-only; this is the wallet-side convenience that
  * makes the default path correct, because an opt-in parameter only reaches callers who know to pass
