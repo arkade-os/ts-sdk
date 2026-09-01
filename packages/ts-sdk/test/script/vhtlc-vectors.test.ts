@@ -5,7 +5,7 @@ import fixture from "../fixtures/vhtlc-v2-nine-leaf.json";
 
 /**
  * Cross-SDK conformance vectors for {@link VHTLC.ScriptV2}'s nine-leaf tree
- * (the full `emulatorCovenants` suite — claim, refund and timelocked refund
+ * (the full `nonInteractiveParameters` suite — claim, refund and timelocked refund
  * covenant leaves, no `legacy` marker). C#, Go and Rust implementations are
  * checked against the same fixture —
  * see `test/fixtures/vhtlc-v2-nine-leaf.json`'s own `comment` field for how to
@@ -44,7 +44,7 @@ function optionsFromFixture(o: typeof fixture.options): VHTLC.Options {
         // suite per leaf; both leaves carry the SAME emulator key by design,
         // which is exactly what the group's single `emulatorPubkey` encodes.
         // `withoutReceiver: true` is the full suite — no `legacy` marker.
-        emulatorCovenants: {
+        nonInteractiveParameters: {
             receiverPkScript: hex.decode(o.nonInteractiveClaim.receiverPkScript),
             emulatorPubkey: hex.decode(o.nonInteractiveClaim.emulatorPubkey),
             senderPkScript: hex.decode(o.nonInteractiveRefund.senderPkScript),

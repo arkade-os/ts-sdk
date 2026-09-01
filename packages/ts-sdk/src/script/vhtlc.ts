@@ -64,7 +64,7 @@ export namespace VHTLC {
          * only behind a NEW option, so re-deriving a lockup with the SDK
          * that quoted it reproduces its address byte-for-byte.
          */
-        emulatorCovenants?: {
+        nonInteractiveParameters?: {
             /**
              * The emulator service's public key, 32-byte x-only or 33-byte
              * compressed. ONE key, tweaked per covenant destination, becomes
@@ -237,7 +237,7 @@ export namespace VHTLC {
             let arkadeScriptNir: Bytes | undefined;
             let nonInteractiveRefundScript: Bytes | undefined;
             let nonInteractiveRefundWithoutReceiverScript: Bytes | undefined;
-            const covenants = options.emulatorCovenants;
+            const covenants = options.nonInteractiveParameters;
             if (covenants) {
                 arkadeScriptNic = enforcePayToMaybeAsset(covenants.receiverPkScript, options.asset);
                 nonInteractiveClaimScript = ConditionMultisigTapscript.encode({
@@ -439,13 +439,13 @@ export namespace VHTLC {
      * - **unilateralClaim**: Receiver can claim unilaterally after delay
      * - **unilateralRefund**: Sender and receiver can refund unilaterally after delay
      * - **unilateralRefundWithoutReceiver**: Sender can refund unilaterally after delay
-     * - **nonInteractiveClaim** (with `emulatorCovenants`): server + emulator
+     * - **nonInteractiveClaim** (with `nonInteractiveParameters`): server + emulator
      *   can push the receiver's claim, pinned to a pre-committed destination
-     * - **nonInteractiveRefund** (with `emulatorCovenants`): server + receiver
+     * - **nonInteractiveRefund** (with `nonInteractiveParameters`): server + receiver
      *   + emulator can push the sender's refund immediately, no timelock,
      *   pinned to a pre-committed destination — recoverable even if the
      *   sender's own key is lost
-     * - **nonInteractiveRefundWithoutReceiver** (with `emulatorCovenants`):
+     * - **nonInteractiveRefundWithoutReceiver** (with `nonInteractiveParameters`):
      *   server + emulator can push the sender's refund after `refundLocktime`,
      *   pinned to a pre-committed destination — the only refund tier needing
      *   no participant signature at all
@@ -455,7 +455,7 @@ export namespace VHTLC {
      * preimage. This class is unchanged and stays available as-is.
      *
      * **Pre-existing limitation: the `vhtlc` contract handler registers none
-     * of the covenant leaves.** `emulatorCovenants` builds on this class
+     * of the covenant leaves.** `nonInteractiveParameters` builds on this class
      * exactly as it does on {@link ScriptV2} — both extend the same
      * `BaseScript` where those leaves are constructed. But the `vhtlc`
      * contract handler (`src/contracts/handlers/vhtlc.ts`) round-trips none
@@ -528,13 +528,13 @@ export namespace VHTLC {
         // one outward difference is a pkScript matching a non-asset address,
         // which is not something a caller thinks to check. Refuse instead of
         // dropping it.
-        if (options.asset !== undefined && !options.emulatorCovenants) {
-            throw new Error("asset has no effect without emulatorCovenants");
+        if (options.asset !== undefined && !options.nonInteractiveParameters) {
+            throw new Error("asset has no effect without nonInteractiveParameters");
         }
 
-        if (options.emulatorCovenants) {
+        if (options.nonInteractiveParameters) {
             const { emulatorPubkey, receiverPkScript, senderPkScript, legacy } =
-                options.emulatorCovenants;
+                options.nonInteractiveParameters;
             if (!emulatorPubkey || (emulatorPubkey.length !== 32 && emulatorPubkey.length !== 33)) {
                 throw new Error("Invalid public key length (emulator)");
             }
@@ -549,7 +549,7 @@ export namespace VHTLC {
             // not exist, and TS types are no check at all from JS.
             if (legacy !== undefined && legacy !== "preTimelockedRefund") {
                 throw new Error(
-                    `emulatorCovenants.legacy must be "preTimelockedRefund" when set, got ${JSON.stringify(legacy)}`,
+                    `nonInteractiveParameters.legacy must be "preTimelockedRefund" when set, got ${JSON.stringify(legacy)}`,
                 );
             }
         }
@@ -644,7 +644,7 @@ function isP2trPkScript(pkScript: Bytes): boolean {
 
 /**
  * The covenant: "this input's output pays the given P2TR script, value >=
- * input". Shared by every leaf {@link VHTLC.Options.emulatorCovenants}
+ * input". Shared by every leaf {@link VHTLC.Options.nonInteractiveParameters}
  * builds — only the destination and the tier it gates differ.
  *
  * `PUSHCURRENTINPUTINDEX` as the output index is not an assumption about how

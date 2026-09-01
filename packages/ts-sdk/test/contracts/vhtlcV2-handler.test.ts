@@ -98,7 +98,7 @@ describe("VHTLCV2ContractHandler", () => {
             unilateralClaimDelay: { type: "blocks", value: 10n },
             unilateralRefundDelay: { type: "blocks", value: 12n },
             unilateralRefundWithoutReceiverDelay: { type: "blocks", value: 14n },
-            emulatorCovenants: {
+            nonInteractiveParameters: {
                 receiverPkScript: hex.decode(RECEIVER_PK_SCRIPT),
                 senderPkScript: hex.decode(SENDER_PK_SCRIPT),
                 emulatorPubkey: hex.decode(EMULATOR),
@@ -119,7 +119,7 @@ describe("VHTLCV2ContractHandler", () => {
     it("round-trips the covenant leaves through serialize/deserialize", () => {
         const params = fullParams();
         const typed = VHTLCV2ContractHandler.deserializeParams(params);
-        expect(typed.emulatorCovenants).toBeDefined();
+        expect(typed.nonInteractiveParameters).toBeDefined();
 
         const reserialized = VHTLCV2ContractHandler.serializeParams(typed);
         expect(reserialized).toEqual(params);
@@ -132,7 +132,7 @@ describe("VHTLCV2ContractHandler", () => {
         const params = fullParams({ nonInteractiveRefundWithoutReceiver: "1" });
         const typed = VHTLCV2ContractHandler.deserializeParams(params);
         // Flag present → the full suite → no legacy marker.
-        expect(typed.emulatorCovenants?.legacy).toBeUndefined();
+        expect(typed.nonInteractiveParameters?.legacy).toBeUndefined();
 
         const reserialized = VHTLCV2ContractHandler.serializeParams(typed);
         expect(reserialized).toEqual(params);
@@ -153,7 +153,7 @@ describe("VHTLCV2ContractHandler", () => {
         // SDKs wrote for eight-leaf rows, so those rows read back unchanged.
         const params = fullParams();
         const typed = VHTLCV2ContractHandler.deserializeParams(params);
-        expect(typed.emulatorCovenants?.legacy).toBe("preTimelockedRefund");
+        expect(typed.nonInteractiveParameters?.legacy).toBe("preTimelockedRefund");
 
         const serialized = VHTLCV2ContractHandler.serializeParams(typed);
         // Omitted entirely — never a "false"/"undefined" string in a row.
@@ -311,7 +311,7 @@ describe("VHTLCV2ContractHandler", () => {
             refundNoReceiverDelay: "14",
         };
         const typed = VHTLCV2ContractHandler.deserializeParams(params);
-        expect(typed.emulatorCovenants).toBeUndefined();
+        expect(typed.nonInteractiveParameters).toBeUndefined();
         // No `"undefined"` string keys leaking into a persisted row.
         expect(VHTLCV2ContractHandler.serializeParams(typed)).toEqual(params);
         expect(

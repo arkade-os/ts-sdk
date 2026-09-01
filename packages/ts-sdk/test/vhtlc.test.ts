@@ -157,7 +157,7 @@ describe("VHTLC address", () => {
             unilateralRefundWithoutReceiverDelay: { type: "seconds" as const, value: 1536n },
         });
 
-        it("omits all three covenant leaves when emulatorCovenants is not passed", () => {
+        it("omits all three covenant leaves when nonInteractiveParameters is not passed", () => {
             const script = new VHTLC.Script(baseOptions());
             expect(script.nonInteractiveClaimScript).toBeUndefined();
             expect(script.nonInteractiveRefundScript).toBeUndefined();
@@ -177,7 +177,7 @@ describe("VHTLC address", () => {
             // receiverPkScript + emulatorPubkey only).
             const script = new VHTLC.Script({
                 ...baseOptions(),
-                emulatorCovenants: { receiverPkScript, senderPkScript, emulatorPubkey },
+                nonInteractiveParameters: { receiverPkScript, senderPkScript, emulatorPubkey },
             });
             expect(script.nonInteractiveClaimScript).toBeDefined();
             // preimage condition + VERIFY, then <server> CHECKSIGVERIFY <tweaked> CHECKSIG
@@ -214,7 +214,7 @@ describe("VHTLC address", () => {
             const emulatorPubkey = key(5);
             const script = new VHTLC.Script({
                 ...baseOptions(),
-                emulatorCovenants: { receiverPkScript, senderPkScript, emulatorPubkey },
+                nonInteractiveParameters: { receiverPkScript, senderPkScript, emulatorPubkey },
             });
             expect(script.nonInteractiveRefundScript).toBeDefined();
             // <server> CHECKSIGVERIFY <receiver> CHECKSIGVERIFY <tweaked> CHECKSIG —
@@ -253,7 +253,7 @@ describe("VHTLC address", () => {
             const base = new VHTLC.Script(baseOptions());
             const extended = new VHTLC.Script({
                 ...baseOptions(),
-                emulatorCovenants: {
+                nonInteractiveParameters: {
                     receiverPkScript: p2tr(key(4)),
                     senderPkScript: p2tr(key(6)),
                     emulatorPubkey: key(5),
@@ -273,12 +273,12 @@ describe("VHTLC address", () => {
         it("rejects a non-P2TR receiverPkScript or senderPkScript — wrong length", () => {
             // One bad field at a time, the other destination kept valid: the
             // suite is all-or-nothing, so every rejection goes through the
-            // single `emulatorCovenants` group validation.
+            // single `nonInteractiveParameters` group validation.
             expect(
                 () =>
                     new VHTLC.Script({
                         ...baseOptions(),
-                        emulatorCovenants: {
+                        nonInteractiveParameters: {
                             receiverPkScript: key(4),
                             senderPkScript: p2tr(key(6)),
                             emulatorPubkey: key(5),
@@ -289,7 +289,7 @@ describe("VHTLC address", () => {
                 () =>
                     new VHTLC.Script({
                         ...baseOptions(),
-                        emulatorCovenants: {
+                        nonInteractiveParameters: {
                             receiverPkScript: p2tr(key(4)),
                             senderPkScript: key(6),
                             emulatorPubkey: key(5),
@@ -304,7 +304,7 @@ describe("VHTLC address", () => {
                     () =>
                         new VHTLC.Script({
                             ...baseOptions(),
-                            emulatorCovenants: {
+                            nonInteractiveParameters: {
                                 receiverPkScript: p2tr(key(4)),
                                 senderPkScript: p2tr(key(6)),
                                 emulatorPubkey,
@@ -325,7 +325,7 @@ describe("VHTLC address", () => {
                 () =>
                     new VHTLC.Script({
                         ...baseOptions(),
-                        emulatorCovenants: {
+                        nonInteractiveParameters: {
                             receiverPkScript: opReturnShaped,
                             senderPkScript: p2tr(key(6)),
                             emulatorPubkey: key(5),
@@ -336,7 +336,7 @@ describe("VHTLC address", () => {
                 () =>
                     new VHTLC.Script({
                         ...baseOptions(),
-                        emulatorCovenants: {
+                        nonInteractiveParameters: {
                             receiverPkScript: p2tr(key(4)),
                             senderPkScript: opReturnShaped,
                             emulatorPubkey: key(5),
@@ -345,7 +345,7 @@ describe("VHTLC address", () => {
             ).toThrow(/P2TR/);
         });
 
-        it("rejects an emulatorCovenants group missing a destination script with the same clean error as a wrong-length one — not a raw TypeError", () => {
+        it("rejects an nonInteractiveParameters group missing a destination script with the same clean error as a wrong-length one — not a raw TypeError", () => {
             // The emulatorPubkey check just above already guards with `!x ||`;
             // the destination check originally didn't, so an object present
             // but missing this one field crashed on `undefined.length` instead
@@ -354,7 +354,7 @@ describe("VHTLC address", () => {
                 () =>
                     new VHTLC.Script({
                         ...baseOptions(),
-                        emulatorCovenants: {
+                        nonInteractiveParameters: {
                             senderPkScript: p2tr(key(6)),
                             emulatorPubkey: key(5),
                         } as never,
@@ -364,7 +364,7 @@ describe("VHTLC address", () => {
                 () =>
                     new VHTLC.Script({
                         ...baseOptions(),
-                        emulatorCovenants: {
+                        nonInteractiveParameters: {
                             receiverPkScript: p2tr(key(4)),
                             emulatorPubkey: key(5),
                         } as never,
@@ -415,14 +415,14 @@ describe("VHTLC address", () => {
             const receiverPkScript = p2tr(key(4));
             const senderPkScript = p2tr(key(6));
             const emulatorPubkey = key(5);
-            const emulatorCovenants = { receiverPkScript, senderPkScript, emulatorPubkey };
+            const nonInteractiveParameters = { receiverPkScript, senderPkScript, emulatorPubkey };
             const v1 = new VHTLC.Script({
                 ...baseOptions(),
-                emulatorCovenants,
+                nonInteractiveParameters,
             });
             const v2 = new VHTLC.ScriptV2({
                 ...baseOptions(),
-                emulatorCovenants,
+                nonInteractiveParameters,
             });
 
             expect(v2.nonInteractiveClaimScript).toBeDefined();
@@ -448,7 +448,7 @@ describe("VHTLC address", () => {
             const senderPkScript = p2tr(key(6));
             const opts = {
                 ...baseOptions(),
-                emulatorCovenants: {
+                nonInteractiveParameters: {
                     receiverPkScript: p2tr(key(4)),
                     senderPkScript,
                     emulatorPubkey: key(5),
@@ -474,7 +474,7 @@ describe("VHTLC address", () => {
                 () =>
                     new VHTLC.ScriptV2({
                         ...baseOptions(),
-                        emulatorCovenants: {
+                        nonInteractiveParameters: {
                             receiverPkScript: key(4),
                             senderPkScript: p2tr(key(6)),
                             emulatorPubkey: key(5),
@@ -508,7 +508,7 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
     const withAsset = (extra: object = {}) =>
         new VHTLC.ScriptV2({
             ...baseOptions(),
-            emulatorCovenants: suite,
+            nonInteractiveParameters: suite,
             ...extra,
         });
 
@@ -595,7 +595,7 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
         // two changes that each had to leave the default path's BYTES alone —
         // and did: the `strict` claim bound came and went without moving them
         // (opt-in, default off, and now removed unused), and the per-leaf
-        // covenant options merged into the all-or-nothing `emulatorCovenants`
+        // covenant options merged into the all-or-nothing `nonInteractiveParameters`
         // group. A claim-only or refund-only tree is no longer expressible, so
         // those four vectors are dropped — the API they pinned is gone. The
         // eight-leaf "suite" shape is what `legacy: "preTimelockedRefund"`
@@ -616,25 +616,25 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
             ],
             [
                 "suite, legacy eight-leaf",
-                { emulatorCovenants: legacySuite },
+                { nonInteractiveParameters: legacySuite },
                 "5120d155531ea89a92eac969c5e5205607b9debba9a4e66453c9410e9b6ca38e4eda",
                 "5120d8880eda3ad3281604f27e5b5dcd851631acb974f9d8aecf18a9e13e3a439f5b",
             ],
             [
                 "suite, nine leaves (the default)",
-                { emulatorCovenants: suite },
+                { nonInteractiveParameters: suite },
                 "5120b279a2f2ec1683c7118d78fa4a971ffb9a830adfb6c3665daa54239e5b6e9e31",
                 "512058ef69965bc6378ee1feb3f5ad2e577e884eded58bcf3c77ddf6ad37f403f64b",
             ],
             [
                 "asset + suite, legacy eight-leaf",
-                { emulatorCovenants: legacySuite, asset },
+                { nonInteractiveParameters: legacySuite, asset },
                 "5120dd8f3358c9d8300d57772c6450f1d310086d45e5903aa1808637d8dd3e5ffea0",
                 "5120869d1ad5a5bced06a50c883c718c8e25f531168a8f536469ca58e28360a87a8e",
             ],
             [
                 "asset + suite, nine leaves (the default)",
-                { emulatorCovenants: suite, asset },
+                { nonInteractiveParameters: suite, asset },
                 "512055c316b67e22dd00f6d97c61d22f962bacb7da2d33c2ec3b23021f73f3dad65a",
                 "51207106ec590b0082ca87b86e7d3ce29bb584d3d255ad799b4973378a9849455a3c",
             ],
@@ -660,7 +660,7 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
                     ...baseOptions(),
                     asset,
                 }),
-        ).toThrow(/no effect without emulatorCovenants/);
+        ).toThrow(/no effect without nonInteractiveParameters/);
         // The suite present, the asset binds: no per-leaf subset to require.
         expect(() => withAsset({ asset })).not.toThrow();
     });
@@ -672,12 +672,12 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
         // asserted, or v1 is carrying an untested money path.
         const v1 = new VHTLC.Script({
             ...baseOptions(),
-            emulatorCovenants: suite,
+            nonInteractiveParameters: suite,
             asset,
         });
         const v1NoAsset = new VHTLC.Script({
             ...baseOptions(),
-            emulatorCovenants: suite,
+            nonInteractiveParameters: suite,
         });
         expect(hex.encode(v1.pkScript)).not.toBe(hex.encode(v1NoAsset.pkScript));
         expect(() => new VHTLC.Script({ ...baseOptions(), asset })).toThrow(/no effect without/);
@@ -721,12 +721,12 @@ describe("nonInteractiveRefundWithoutReceiver", () => {
     const suite = { receiverPkScript, senderPkScript, emulatorPubkey };
 
     it('is built with the suite by default, and withheld only by legacy: "preTimelockedRefund"', () => {
-        const full = new VHTLC.ScriptV2({ ...base, emulatorCovenants: suite });
+        const full = new VHTLC.ScriptV2({ ...base, nonInteractiveParameters: suite });
         expect(full.nonInteractiveRefundWithoutReceiverScript).toBeDefined();
 
         const legacy = new VHTLC.ScriptV2({
             ...base,
-            emulatorCovenants: { ...suite, legacy: "preTimelockedRefund" },
+            nonInteractiveParameters: { ...suite, legacy: "preTimelockedRefund" },
         });
         expect(legacy.nonInteractiveRefundWithoutReceiverScript).toBeUndefined();
         expect(() => legacy.nonInteractiveRefundWithoutReceiver()).toThrow(
@@ -739,10 +739,10 @@ describe("nonInteractiveRefundWithoutReceiver", () => {
     });
 
     it("legacy withholds exactly one leaf — the other eight stay byte-identical and in position", () => {
-        const full = new VHTLC.ScriptV2({ ...base, emulatorCovenants: suite });
+        const full = new VHTLC.ScriptV2({ ...base, nonInteractiveParameters: suite });
         const legacy = new VHTLC.ScriptV2({
             ...base,
-            emulatorCovenants: { ...suite, legacy: "preTimelockedRefund" },
+            nonInteractiveParameters: { ...suite, legacy: "preTimelockedRefund" },
         });
 
         expect(full.scripts.length).toBe(9);
@@ -762,7 +762,7 @@ describe("nonInteractiveRefundWithoutReceiver", () => {
         );
     });
 
-    it("is absent with the whole suite when emulatorCovenants is not passed — six leaves", () => {
+    it("is absent with the whole suite when nonInteractiveParameters is not passed — six leaves", () => {
         const bare = new VHTLC.ScriptV2(base);
         expect(bare.scripts.length).toBe(6);
         expect(bare.nonInteractiveClaimScript).toBeUndefined();
@@ -776,7 +776,7 @@ describe("nonInteractiveRefundWithoutReceiver", () => {
     it("is CLTVMultisig{refundLocktime, [server, nonInteractiveRefund's own cosigner]}", () => {
         const script = new VHTLC.ScriptV2({
             ...base,
-            emulatorCovenants: suite,
+            nonInteractiveParameters: suite,
         });
 
         const cosigner = arkade.computeArkadeScriptPublicKey(

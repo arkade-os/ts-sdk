@@ -175,7 +175,7 @@ describe("non-interactive refund without receiver (VHTLC.ScriptV2 covenant leaf)
             unilateralClaimDelay: { type: "seconds", value: 512n },
             unilateralRefundDelay: { type: "seconds", value: 1024n },
             unilateralRefundWithoutReceiverDelay: { type: "seconds", value: 1536n },
-            emulatorCovenants: {
+            nonInteractiveParameters: {
                 receiverPkScript: randomP2TR(),
                 senderPkScript,
                 emulatorPubkey: schnorr.getPublicKey(new Uint8Array(32).fill(5)),

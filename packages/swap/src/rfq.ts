@@ -772,7 +772,7 @@ export const unilateralRefundWithoutReceiverDelay = (claimDelay: number): number
  * (server + emulator, pays the solver's own `receiverPkScript`, no solver
  * signature needed), `nonInteractiveRefund` (server + solver + emulator, pays
  * the trader's own `refundPkScript`, no timelock and no trader signature
- * needed — see {@link VHTLC.Options.emulatorCovenants}'s doc comment for why
+ * needed — see {@link VHTLC.Options.nonInteractiveParameters}'s doc comment for why
  * that matters), and its timelocked twin `nonInteractiveRefundWithoutReceiver`
  * (server + emulator alone, after `refundLocktime` — the only refund tier
  * needing no participant at all). Nine leaves in all, unless `legacy` says
@@ -805,7 +805,7 @@ export function lightningSendVtxoScript(params: {
      * covenant key can be derived; the trader does not otherwise use or trust
      * this value. P2TR pkScript, 34 bytes. */
     receiverPkScript: Uint8Array;
-    /** LEGACY REBUILD ONLY — see {@link VHTLC.Options.emulatorCovenants}'s
+    /** LEGACY REBUILD ONLY — see {@link VHTLC.Options.nonInteractiveParameters}'s
      * `legacy` field. Set only to re-derive a lockup funded before the
      * timelocked refund leaf shipped; {@link matchQuotedLockup} passes it when
      * the quote's own address says the solver quoted that shape. */
@@ -826,7 +826,7 @@ export function lightningSendVtxoScript(params: {
         unilateralRefundWithoutReceiverDelay: seconds(
             unilateralRefundWithoutReceiverDelay(params.claimDelay),
         ),
-        emulatorCovenants: {
+        nonInteractiveParameters: {
             receiverPkScript: params.receiverPkScript,
             senderPkScript: params.refundPkScript,
             emulatorPubkey: params.emulatorPubkey,
@@ -1608,7 +1608,7 @@ export function receiveVtxoScript(params: {
         unilateralRefundWithoutReceiverDelay: seconds(
             unilateralRefundWithoutReceiverDelay(params.claimDelay),
         ),
-        emulatorCovenants: {
+        nonInteractiveParameters: {
             receiverPkScript: params.payoutPkScript,
             senderPkScript: params.solverRefundPkScript,
             emulatorPubkey: params.emulatorPubkey,

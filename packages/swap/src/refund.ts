@@ -579,7 +579,7 @@ export async function pushRefundWithoutReceiver(
     }
 
     const refundPkScript =
-        input.refundPkScript ?? input.script.options.emulatorCovenants?.senderPkScript;
+        input.refundPkScript ?? input.script.options.nonInteractiveParameters?.senderPkScript;
     if (!refundPkScript) {
         throw new Error(
             "no refund destination: the contract carries no emulator covenant suite, so pass refundPkScript explicitly",

@@ -450,7 +450,7 @@ describe("asset-denominated non-interactive covenant", () => {
             unilateralClaimDelay: { type: "seconds", value: 512n },
             unilateralRefundDelay: { type: "seconds", value: 1024n },
             unilateralRefundWithoutReceiverDelay: { type: "seconds", value: 1536n },
-            emulatorCovenants: {
+            nonInteractiveParameters: {
                 receiverPkScript: payee,
                 senderPkScript: FILLER_SENDER_PK_SCRIPT,
                 emulatorPubkey: schnorr.getPublicKey(new Uint8Array(32).fill(5)),

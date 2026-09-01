@@ -73,15 +73,15 @@ export interface VHTLCV2ContractParams {
     };
     /**
      * The emulator covenant suite, all or nothing — mirrors {@link
-     * VHTLC.Options.emulatorCovenants} exactly, including the legacy selector:
+     * VHTLC.Options.nonInteractiveParameters} exactly, including the legacy selector:
      * a row funded before the timelocked refund leaf shipped round-trips with
      * `legacy: "preTimelockedRefund"` and re-derives its eight-leaf shape.
      */
-    emulatorCovenants?: {
+    nonInteractiveParameters?: {
         receiverPkScript: Uint8Array;
         emulatorPubkey: Uint8Array;
         senderPkScript: Uint8Array;
-        /** @see VHTLC.Options.emulatorCovenants.legacy */
+        /** @see VHTLC.Options.nonInteractiveParameters.legacy */
         legacy?: "preTimelockedRefund";
     };
 }
@@ -174,7 +174,7 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
     },
 
     serializeParams(params: VHTLCV2ContractParams): Record<string, string> {
-        const covenants = params.emulatorCovenants;
+        const covenants = params.nonInteractiveParameters;
         return {
             sender: hex.encode(params.sender),
             receiver: hex.encode(params.receiver),
@@ -332,7 +332,7 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
             ),
             ...(claim &&
                 refund && {
-                    emulatorCovenants: {
+                    nonInteractiveParameters: {
                         receiverPkScript: claim.destination,
                         senderPkScript: refund.destination,
                         emulatorPubkey: claim.emulatorPubkey,
