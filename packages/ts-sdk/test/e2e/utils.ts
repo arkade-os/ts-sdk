@@ -50,6 +50,19 @@ export const ESPLORA_API_URL = "http://localhost:3000/api";
  */
 const EXEC_TIMEOUT_MS = 120_000;
 
+/**
+ * Per-attempt budget and attempt count for {@link beforeEachFaucet}.
+ *
+ * Redeeming a note joins a round, and a round arkd aborts — a co-registered
+ * intent it cannot fund, another participant that never sends its forfeits —
+ * takes every intent in it down without telling the clients, so the CLI waits
+ * on a batch that will never come. Three tries at 30s each still fit inside the
+ * old single 120s budget, and a round is ~5s, so a healthy redeem never sees
+ * the deadline.
+ */
+const FAUCET_ATTEMPT_TIMEOUT_MS = 30_000;
+const FAUCET_ATTEMPTS = 3;
+
 /** Shell budget for `set-signers`: it recreates arkd-wallet and restarts arkd. */
 const ROTATE_EXEC_TIMEOUT_MS = 300_000;
 
@@ -319,8 +332,21 @@ export async function createVtxo(alice: TestArkWallet, amount: number): Promise<
 // ark send can't spend them), so we always redeem a fresh note.
 export async function beforeEachFaucet(): Promise<void> {
     ensureArkCliInitialized();
-    const noteStr = execCommand(`${arkdExec} arkd note --amount 200000`);
-    execCommand(`${arkdExec} ark redeem-notes -n ${noteStr} --password secret`);
+    for (let attempt = 1; attempt <= FAUCET_ATTEMPTS; attempt++) {
+        // A fresh note per attempt: the abandoned one is only a credit voucher,
+        // and reusing it would race whatever the dropped round did with it.
+        const noteStr = execCommand(`${arkdExec} arkd note --amount 200000`);
+        try {
+            execCommand(
+                `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`,
+                FAUCET_ATTEMPT_TIMEOUT_MS,
+            );
+            return;
+        } catch (err) {
+            const timedOut = (err as { code?: string }).code === "ETIMEDOUT";
+            if (!timedOut || attempt === FAUCET_ATTEMPTS) throw err;
+        }
+    }
 }
 
 export function setFees(fees: IntentFeeConfig): void {

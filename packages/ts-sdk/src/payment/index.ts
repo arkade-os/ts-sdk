@@ -14,18 +14,12 @@ import type { Wallet } from "../index";
 
 /**
  * Default payment router with the Wallet-only rails: `ark` (off-chain send) and
- * `onchain` (collaborative exit). Lightning and chain-swap rails live in
- * `@arkade-os/boltz-swap`, which ships a `createDefaultPaymentRouter(wallet,
- * swaps)` overload composing the full set.
- *
- * The default priority is `["ark", "lightning", "onchain"]` — the wallet's
- * Ark > Lightning > on-chain ladder. `"lightning"` is listed so it ranks
- * correctly once the boltz rail is added; it is simply absent here.
+ * `onchain` (collaborative exit), ranked in that order.
  */
 export function createDefaultPaymentRouter(wallet: Wallet): PaymentRouter {
     return new PaymentRouter({
         wallet,
-        prefs: { priority: ["ark", "lightning", "onchain"] },
+        prefs: { priority: ["ark", "onchain"] },
     })
         .use(arkRail())
         .use(onchainRail());

@@ -2,10 +2,9 @@
 // round-trip an offer payload through encodeOffer/decodeOffer byte-for-byte.
 // Run after `pnpm build`: `pnpm smoke:dist`.
 //
-// Unlike the Boltz script's structural-only subpath check, the backends here
-// import types only from @arkade-os/sdk/repositories/*, so nothing survives to
-// runtime and a real import is safe — and it is the import, not the file-
-// existence walk, that catches a broken exports map.
+// The backends here import types only from @arkade-os/sdk/repositories/*, so
+// nothing survives to runtime and a real import is safe — and it is the
+// import, not a file-existence walk, that catches a broken exports map.
 //
 // So every import here goes through the package name, not `../dist/...`: a
 // relative path resolves whatever is on disk and would pass with the exports

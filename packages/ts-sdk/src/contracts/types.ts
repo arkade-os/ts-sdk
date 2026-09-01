@@ -371,8 +371,8 @@ export interface DiscoveredContract {
 
 /**
  * Read-only context the scanner injects into every `discoverAt` call.
- * The boltz/swap handler does NOT receive its Boltz client here — it
- * closes over its own client at registration time.
+ * A handler needing an external service client closes over it at
+ * registration time; this context never carries one.
  */
 export interface DiscoveryDeps {
     indexerProvider: IndexerProvider;

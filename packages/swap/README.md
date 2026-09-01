@@ -150,8 +150,8 @@ Realm — since the two record types have different keys and no consumer wants t
 
 **Records are stored whole.** The SQLite and Realm backends serialize each record to **JSON** in a
 `data` column, with only `status` / `createdAt` (and an RFQ record's `state` / `updatedAt`) mapped
-out for querying — so a field they do not know about survives, which is what the `quote`-shaped
-extension in `MIGRATION.md` relies on. It is also what keeps an RFQ record's corridor `profile`
+out for querying — so a field they do not know about survives, which is what a consumer's
+cast-extended record relies on. It is also what keeps an RFQ record's corridor `profile`
 intact: `profile.hashlock` is a nested object holding the payment hash and any preimage material, and
 a field-mapped backend is exactly what would lose it. JSON is
 the boundary, though, and it is narrower than IndexedDB's structured clone: a `Date` in a
