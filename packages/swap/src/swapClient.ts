@@ -13,6 +13,7 @@ import {
     BTC_ASSET_ID,
     addAssetSwap,
     getAssetSwaps,
+    getAssetSwapsOrThrow,
     preimageForSwapRecord,
     updateAssetSwap,
     type AssetSwap,
@@ -136,7 +137,13 @@ export interface SwapClientDeps {
      * wallet's own, so no server URL is passed in (arkade-os/ts-sdk#734). */
     wallet: IWallet;
     repository: AssetSwapRepository;
-    /** Never called for a spot market. */
+    /** The rendezvous for a corridor market; never called for a spot one.
+     *
+     * The market's own `base_corridor`/`quote_corridor` are what route a swap
+     * here rather than to the offer path, so whoever publishes the market
+     * chooses which backend you are asked to open a transport to. Resolve one
+     * only for markets from an index you trust — this client does not, and
+     * cannot, check that a market named a corridor honestly. */
     transportFor: (market: DiscoveredMarket) => RfqTransport;
     discovery: Omit<DiscoverMarketsOptions, "repository">;
     /** BOLT11 decoder for the solver's hold invoice; required to quote lightning receives. */
@@ -162,6 +169,9 @@ export interface SwapClient {
     accept(quote: SwapQuote): Promise<UnifiedSwap>;
     /** Spot only: the covenant's cooperative reclaim. */
     cancel(fundingTxid: string): Promise<void>;
+    /** Every swap this client knows of, both families and both live and ended
+     * — not a live-only view. The RFQ half is bounded by what the manager has
+     * loaded and by `RFQ_SWAP_RETENTION_SECONDS`. */
     swaps(): Promise<UnifiedSwap[]>;
     onUpdate(listener: (swap: UnifiedSwap) => void): () => void;
     start(): Promise<void>;
@@ -300,10 +310,24 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
         }
     };
 
+    // `addSwap` polls a running manager, so the manager's own listener may
+    // already have announced this swap by the time it returns — and a second
+    // emission carrying the same object is a duplicate, not an update. The
+    // explicit notify stays for the case that produces no transition (a
+    // stopped manager, or a first pass that leaves the swap `pending`), which
+    // is the only signal a consumer gets that the swap exists at all.
     const admit = async (swap: RfqSwap, origin: RfqSwapOrigin): Promise<UnifiedSwap> => {
-        await manager.addSwap(swap, origin);
+        let announced = false;
+        const heard = manager.onSwapUpdate((updated) => {
+            if (updated.rfqId === swap.rfqId) announced = true;
+        });
+        try {
+            await manager.addSwap(swap, origin);
+        } finally {
+            heard();
+        }
         const unified: UnifiedSwap = { family: "rfq", swap };
-        notify(unified);
+        if (!announced) notify(unified);
         return unified;
     };
 
@@ -422,7 +446,7 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
                     lockupPkScript: request.swapPkScript,
                     lockup: { script: request.script, address: request.address },
                     paymentHash,
-                    refundLocktime: request.quote.refund_locktime!,
+                    refundLocktime: request.refundLocktime,
                     htlc: request.htlc,
                     minConfirmations: request.minConfirmations,
                     createdAt: now,
@@ -452,7 +476,9 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
         quote,
         accept,
         cancel: async (fundingTxid) => {
-            const swaps = await getAssetSwaps(repository);
+            // the throwing reader: this path writes, and a dead backend read as
+            // `[]` would report a stored swap as "no such swap" and skip it
+            const swaps = await getAssetSwapsOrThrow(repository);
             const swap = swaps.find((s) => s.id === fundingTxid);
             if (!swap) throw new Error(`no offer swap with funding txid ${fundingTxid}`);
             if (swap.status !== "pending") {
@@ -465,10 +491,13 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
                 fundingTxid,
             });
         },
-        // live RFQ swaps only; terminal history stays on repository.getAllRfqSwaps()
+        // Both families, live AND terminal — the offer half reads the whole
+        // stored history, and the RFQ half is every swap the manager holds.
+        // Its history is what `start()` restored plus what this session
+        // accepted; records past `RFQ_SWAP_RETENTION_SECONDS` are pruned.
         swaps: async () => {
             const offers = await getAssetSwaps(repository);
-            const rfq = await manager.getPendingSwaps();
+            const rfq = await manager.getAllSwaps();
             return [
                 ...offers.map((swap): UnifiedSwap => ({ family: "offer", swap })),
                 ...rfq.map((swap): UnifiedSwap => ({ family: "rfq", swap })),

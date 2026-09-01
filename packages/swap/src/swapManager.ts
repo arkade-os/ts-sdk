@@ -1166,6 +1166,20 @@ export class RfqSwapManager {
         return [...this.monitored.values()];
     }
 
+    /**
+     * Every swap this manager holds — {@link getPendingSwaps} plus the ones
+     * that already ended. The two sets are disjoint: a swap leaves `monitored`
+     * as it enters `finished`.
+     *
+     * The finished half is what this process has seen, which after
+     * {@link restoreFromRepository} is the stored history minus what retention
+     * pruned. A manager that has restored nothing answers with the live swaps
+     * alone.
+     */
+    async getAllSwaps(): Promise<RfqSwap[]> {
+        return [...this.monitored.values(), ...this.finished.values()];
+    }
+
     async hasSwap(rfqId: string): Promise<boolean> {
         return this.monitored.has(rfqId);
     }
