@@ -12,6 +12,7 @@ import {
     VtxoScript,
     type EmulatorInfo,
     type EmulatorProvider,
+    type IContractManager,
     type Identity,
 } from "../src";
 import { getVirtualTxs, mintCoin } from "./helpers/prevArkTx";
@@ -129,19 +130,36 @@ function stubProviders(server: Uint8Array, emulatorKey: Uint8Array) {
     return { arkProvider, indexer, emulator, captured };
 }
 
+/**
+ * Minimal `IContractManager` that reports every script it is asked about as
+ * registered, holding `vtxos`. The test builds exactly one contract, so echoing
+ * the queried script is enough to put `getUtxos` on the manager-backed branch.
+ */
+function stubManager(vtxos: unknown[]): IContractManager {
+    return {
+        async getContracts(filter?: { script?: string }) {
+            return [{ script: filter?.script }];
+        },
+        async getContractsWithVtxos(filter?: { script?: string }) {
+            return [{ contract: { script: filter?.script }, vtxos }];
+        },
+    } as unknown as IContractManager;
+}
+
 describe("arkade.Arkade / ArkadeContract", () => {
     const server = xOnly();
     const emulatorKey = xOnly();
     const receiver = xOnly(); // 32-byte witness program
     const args = { hash: HASH, receiver, amount: AMOUNT };
 
-    async function connect(identity?: Identity) {
+    async function connect(opts: { identity?: Identity; contractManager?: IContractManager } = {}) {
         const { arkProvider, indexer, emulator, captured } = stubProviders(server, emulatorKey);
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
             indexer,
-            identity,
+            identity: opts.identity,
+            contractManager: opts.contractManager,
             network: networks.regtest,
             // connect() takes the co-signer key from the network, not from the
             // emulator's own getInfo, so this fixture key has to come in as the
@@ -175,6 +193,23 @@ describe("arkade.Arkade / ArkadeContract", () => {
         const { ark } = await connect();
         const contract = ark.contract(htlcProgram(), args);
         expect(await contract.getBalance()).toBe(BigInt(COIN.value));
+    });
+
+    it("getUtxos drops exited and spent coins, keeping the healthy sibling", async () => {
+        const { ark: probe } = await connect();
+        const script = hex.encode(probe.contract(htlcProgram(), args).pkScript);
+
+        const healthy = { ...mintCoin(7_000), script, isSpent: false };
+        const exited = { ...mintCoin(3_000), script, isSpent: false, isUnrolled: true };
+        const spent = { ...mintCoin(1_000), script, isSpent: true };
+
+        const { ark } = await connect({ contractManager: stubManager([healthy, exited, spent]) });
+        const contract = ark.contract(htlcProgram(), args);
+
+        // The value also proves the manager branch ran: the fallback indexer
+        // would have answered with COIN (10_000) instead.
+        expect((await contract.getUtxos()).map((u) => u.txid)).toEqual([healthy.txid]);
+        expect(await contract.getBalance()).toBe(7_000n);
     });
 
     it("send() resolves the covenant + encodes the witness ([0] → empty push)", async () => {
@@ -212,7 +247,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
 
     it("defaults declared 'server'/'user' params to the client keys", async () => {
         const userKey = xOnly();
-        const { ark } = await connect(stubIdentity(userKey));
+        const { ark } = await connect({ identity: stubIdentity(userKey) });
         const program = exitProgram();
         const defaulted = ark.contract(program);
         const explicit = ark.contract(program, { server, user: userKey });
@@ -239,7 +274,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
             });
 
         it("derives the same contract as one connected with a full provider", async () => {
-            const { ark: full } = await connect(identity);
+            const { ark: full } = await connect({ identity });
             const lean = await connectInfoOnly();
 
             expect(lean.contract(exitProgram()).address).toBe(full.contract(exitProgram()).address);

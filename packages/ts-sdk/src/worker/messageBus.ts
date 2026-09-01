@@ -60,6 +60,11 @@ export interface MessageHandler<
      * Called once when the SW is starting up
      * @param services - Providers and wallet instances available to the handler.
      * @param repositories - Repositories available to the handler.
+     * @param channel - Push channel to clients, for responses that answer no
+     * request. Use it instead of holding events for the next {@link tick}.
+     * The channel is scoped to the generation it was handed out in: after a
+     * bus re-init or `stop()` it goes inert on its own, so retaining one past
+     * `stop()` cannot post.
      **/
     start(
         services: {
@@ -69,6 +74,9 @@ export interface MessageHandler<
         },
         repositories: {
             walletRepository: WalletRepository;
+        },
+        channel?: {
+            broadcast(response: RES): void;
         },
     ): Promise<void>;
 
@@ -211,6 +219,11 @@ export class MessageBus {
     }>;
     private readonly boundOnMessage = this.onMessage.bind(this);
     private readonly intentRepository?: IntentRepository;
+    /** Pending broadcasts, drained FIFO by a single {@link drain} loop. */
+    private broadcastQueue: ResponseEnvelope[] = [];
+    private draining = false;
+    /** Bumped wherever the generation owning the queued broadcasts ends. */
+    private broadcastEpoch = 0;
 
     /** Create the service-worker message bus with repositories and handler configuration. */
     constructor(
@@ -264,6 +277,9 @@ export class MessageBus {
         this.running = false;
         this.tickInProgress = false;
         this.initialized = false;
+        // Before the handlers' own stop(), so anything they emit while tearing
+        // down is already on the dead generation.
+        this.invalidateBroadcasts();
 
         if (this.tickTimeout !== null) {
             self.clearTimeout(this.tickTimeout);
@@ -279,6 +295,94 @@ export class MessageBus {
         self.removeEventListener("message", this.boundOnMessage);
 
         await Promise.all(Array.from(this.handlers.values()).map((updater) => updater.stop()));
+    }
+
+    /** Invalidate every broadcast belonging to the outgoing generation. */
+    private invalidateBroadcasts(): void {
+        this.broadcastEpoch++;
+        this.broadcastQueue.length = 0;
+    }
+
+    private broadcastToClients(responses: ResponseEnvelope[]): void {
+        this.broadcastQueue.push(...responses);
+        void this.drain();
+    }
+
+    /**
+     * Single fan-out loop, so pushes and tick responses keep one FIFO order.
+     * A helper posting per response would race: `clients.matchAll()` gives no
+     * cross-call resolution order, and it would de-batch `runTick`.
+     */
+    private async drain(): Promise<void> {
+        if (this.draining) return;
+        this.draining = true;
+        try {
+            while (this.broadcastQueue.length) {
+                const epoch = this.broadcastEpoch;
+                const batch = this.broadcastQueue.splice(0);
+                if (!this.running) {
+                    this.logDroppedBroadcasts(batch, "bus stopped");
+                    return;
+                }
+
+                let clients: readonly Client[];
+                try {
+                    clients = await self.clients.matchAll({
+                        includeUncontrolled: true,
+                        type: "window",
+                    });
+                } catch (err) {
+                    this.logDroppedBroadcasts(batch, "clients.matchAll failed", err);
+                    continue; // lose the batch, never the loop
+                }
+
+                if (!this.running) {
+                    this.logDroppedBroadcasts(batch, "bus stopped during matchAll");
+                    return;
+                }
+                if (this.broadcastEpoch !== epoch) {
+                    this.logDroppedBroadcasts(batch, "re-init landed during matchAll");
+                    continue;
+                }
+
+                for (const message of batch) {
+                    for (const client of clients) {
+                        try {
+                            client.postMessage(message);
+                        } catch (err) {
+                            // a non-cloneable payload or a dead client must not
+                            // cost the other windows their message
+                            if (this.debug)
+                                console.warn(`[${message.tag}] broadcast to client failed`, err);
+                        }
+                    }
+                }
+            }
+        } catch {
+            // never let a rejection escape a `void this.drain()` call
+        } finally {
+            this.draining = false;
+            // Events no longer ride the tick, so there is no periodic recovery:
+            // an early return must not leave work queued with nobody draining.
+            if (this.running && this.broadcastQueue.length) void this.drain();
+        }
+    }
+
+    /**
+     * A dropped batch has no periodic recovery to fall back on now that events
+     * no longer ride the tick, so name the loss under {@link Options.debug}.
+     */
+    private logDroppedBroadcasts(
+        batch: ResponseEnvelope[],
+        reason: string,
+        ...error: unknown[]
+    ): void {
+        if (!this.debug) return;
+        console.warn(
+            `dropping ${batch.length} broadcast(s): ${reason}`,
+            batch.map((response) => response.tag),
+            ...error,
+        );
     }
 
     private scheduleNextTick() {
@@ -318,18 +422,7 @@ export class MessageBus {
                     if (this.debug)
                         console.log(`[${updater.messageTag}] outgoing tick response:`, response);
                     if (response && response.length > 0) {
-                        self.clients
-                            .matchAll({
-                                includeUncontrolled: true,
-                                type: "window",
-                            })
-                            .then((clients) => {
-                                for (const message of response) {
-                                    clients.forEach((client) => {
-                                        client.postMessage(message);
-                                    });
-                                }
-                            });
+                        this.broadcastToClients(response);
                     }
                 } catch (err) {
                     if (this.debug) console.error(`[${updater.messageTag}] tick failed`, err);
@@ -376,6 +469,18 @@ export class MessageBus {
             self.clearTimeout(this.tickTimeout);
             this.tickTimeout = null;
         }
+        // `running` stays true across a re-init, so only the epoch can drop a
+        // batch already in flight when the outgoing handlers stop.
+        this.invalidateBroadcasts();
+        const epoch = this.broadcastEpoch;
+        // One channel per generation, shared by every handler started here. The
+        // bus, not the implementor, is what makes a retained channel inert.
+        const channel = {
+            broadcast: (response: ResponseEnvelope) => {
+                if (epoch !== this.broadcastEpoch) return;
+                this.broadcastToClients([response]);
+            },
+        };
         if (this.initialized) {
             // Clear the flag first so onMessage() rejects incoming messages
             this.initialized = false;
@@ -395,9 +500,7 @@ export class MessageBus {
         try {
             for (const updater of this.handlers.values()) {
                 if (this.debug) console.log(`Starting updater: ${updater.messageTag}`);
-                await updater.start(services, {
-                    walletRepository: this.walletRepository,
-                });
+                await updater.start(services, { walletRepository: this.walletRepository }, channel);
                 started.push(updater);
             }
         } catch (err) {

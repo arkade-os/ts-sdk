@@ -332,6 +332,28 @@ describe("VtxoManager - deprecated-signer migration", () => {
         expect(report.signers.find((s) => s.signerPubKey === DEP_DUE)?.vtxoCount).toBe(2);
     });
 
+    it("excludes an exited VTXO from the migration send and from the per-signer rollup", async () => {
+        // Unlike the no-expiry case above, an exit is not merely unsendable: it
+        // is no longer under the deprecated signer's custody at all, so it must
+        // not be counted as a holding awaiting migration either.
+        const script = "default-" + DEP_DUE;
+        const exited = makeVtxo(script, 4000);
+        (exited as { isUnrolled: boolean }).isUnrolled = true;
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [cwv(DEP_DUE, [makeVtxo(script, 5000), exited])],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        const inputs = sendSelectedVtxosToSelf.mock.calls[0][0] as ExtendedContractVtxo[];
+        expect(inputs.map((v) => v.value)).toEqual([5000]);
+        const row = report.signers.find((s) => s.signerPubKey === DEP_DUE)!;
+        expect(row.vtxoCount).toBe(1);
+        expect(row.totalValue).toBe(5000);
+    });
+
     it("applies a mid-session rotation first when the wallet's own signer is deprecated", async () => {
         const { wallet, rotateServerSigner, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             walletSigner: DEP_A, // wallet was built before the rotation
@@ -1114,6 +1136,41 @@ describe("VtxoManager - post-cutoff lifecycle reporting (Section 6)", () => {
         expect(row.recoverableValue).toBe(0);
         expect(row.awaitingSweepCount).toBe(0);
         expect(row.nextSweepEta).toBeUndefined();
+    });
+
+    it("keeps an exited VTXO out of the EXPIRED rollup and out of the sweep ETA", async () => {
+        const script = "default-" + DEP_EXPIRED;
+        const etaSoon = Date.now() + 100_000;
+        const etaFar = Date.now() + 200_000;
+        // Exited on both legs of the split: one not yet swept, one swept.
+        const exitedAwaiting = makeVtxoWithExpiry(script, 4000, "settled", etaSoon);
+        (exitedAwaiting as { isUnrolled: boolean }).isUnrolled = true;
+        const exitedSwept = makeVtxo(script, 7000, "swept");
+        (exitedSwept as { isUnrolled: boolean }).isUnrolled = true;
+        const { wallet } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_EXPIRED, cutoffDate: BigInt(NOW_S - 100) }]),
+            contractsWithVtxos: [
+                cwv(DEP_EXPIRED, [
+                    makeVtxoWithExpiry(script, 5000, "settled", etaFar),
+                    exitedAwaiting,
+                    exitedSwept,
+                ]),
+            ],
+        });
+
+        const row = (await newManager(wallet).getDeprecatedSignerStatus()).find(
+            (s) => s.signerPubKey === DEP_EXPIRED,
+        )!;
+
+        expect(row.vtxoCount).toBe(1);
+        expect(row.totalValue).toBe(5000);
+        expect(row.awaitingSweepCount).toBe(1);
+        expect(row.awaitingSweepValue).toBe(5000);
+        expect(row.recoverableCount).toBe(0);
+        expect(row.recoverableValue).toBe(0);
+        // The exit's nearer expiry must not be advertised as a recovery ETA: no
+        // sweep will ever make that coin recoverable.
+        expect(row.nextSweepEta).toBe(etaFar);
     });
 
     it("transitions awaitingSweep → recoverableNow on sweep, and recovery drains the swept set", async () => {

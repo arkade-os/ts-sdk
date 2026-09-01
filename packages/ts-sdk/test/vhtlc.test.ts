@@ -3,6 +3,7 @@ import { RelativeTimelock, VHTLC, arkade } from "../src";
 import vhtlcFixtures from "./fixtures/vhtlc.json";
 import { hex } from "@scure/base";
 import { ArkadeScript } from "../src/arkade/script";
+import { CLTVMultisigTapscript } from "../src/script/tapscript";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
 describe("VHTLC address", () => {
@@ -731,6 +732,97 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
         expect(() => withAsset({ asset: { ...asset, groupIndex: -1 } })).toThrow(/\[0, 65535\]/);
         expect(() => withAsset({ asset: { ...asset, groupIndex: 0x10000 } })).toThrow(
             /\[0, 65535\]/,
+        );
+    });
+});
+
+describe("nonInteractiveRefundWithoutReceiver", () => {
+    const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
+    const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
+
+    const senderPk = key(1);
+    const receiverPk = key(2);
+    const serverPk = key(3);
+    const preimageHash = new Uint8Array(20).fill(9);
+    const emulatorPubkey = key(5);
+    const senderPkScript = p2tr(key(6));
+
+    const base = {
+        sender: senderPk,
+        receiver: receiverPk,
+        server: serverPk,
+        preimageHash,
+        refundLocktime: 1000n,
+        unilateralClaimDelay: { type: "blocks", value: 100n } as const,
+        unilateralRefundDelay: { type: "blocks", value: 102n } as const,
+        unilateralRefundWithoutReceiverDelay: { type: "blocks", value: 103n } as const,
+    };
+
+    it("is absent unless opted in, and the pkScript is unchanged", () => {
+        const without = new VHTLC.ScriptV2({
+            ...base,
+            nonInteractiveRefund: { senderPkScript, emulatorPubkey },
+        });
+        expect(without.nonInteractiveRefundWithoutReceiverScript).toBeUndefined();
+        expect(() => without.nonInteractiveRefundWithoutReceiver()).toThrow(
+            "VHTLC has no non-interactive refund-without-receiver leaf",
+        );
+
+        // The claim in this test's title, actually checked: gaining the
+        // capability to opt in must not perturb the pkScript for a caller
+        // who doesn't. Compared against the same options with the flag
+        // spelled out as explicitly false — the other way "not opted in"
+        // can be written.
+        const explicitlyOff = new VHTLC.ScriptV2({
+            ...base,
+            nonInteractiveRefund: { senderPkScript, emulatorPubkey, withoutReceiver: false },
+        });
+        expect(hex.encode(explicitlyOff.pkScript)).toBe(hex.encode(without.pkScript));
+    });
+
+    it("adds exactly one leaf and changes the pkScript when opted in", () => {
+        const without = new VHTLC.ScriptV2({
+            ...base,
+            nonInteractiveRefund: { senderPkScript, emulatorPubkey },
+        });
+        const with_ = new VHTLC.ScriptV2({
+            ...base,
+            nonInteractiveRefund: { senderPkScript, emulatorPubkey, withoutReceiver: true },
+        });
+
+        expect(with_.scripts.length).toBe(without.scripts.length + 1);
+        expect(hex.encode(with_.pkScript)).not.toBe(hex.encode(without.pkScript));
+
+        // The other eight leaves are byte-identical AND in the same
+        // position — the new leaf is appended, never interleaved, since
+        // leaf order decides the taproot merkle root. (`toContain` on
+        // `.encode()`'s raw tap-tree bytes would only check for byte-VALUE
+        // membership, which almost any buffer satisfies trivially; this
+        // checks the actual per-leaf script list instead.)
+        expect(with_.scripts.slice(0, without.scripts.length).map(hex.encode)).toEqual(
+            without.scripts.map(hex.encode),
+        );
+    });
+
+    it("is CLTVMultisig{refundLocktime, [server, nonInteractiveRefund's own cosigner]}", () => {
+        const script = new VHTLC.ScriptV2({
+            ...base,
+            nonInteractiveRefund: { senderPkScript, emulatorPubkey, withoutReceiver: true },
+        });
+
+        const cosigner = arkade.computeArkadeScriptPublicKey(
+            emulatorPubkey,
+            script.nonInteractiveRefundArkadeScript!,
+        );
+        const expected = CLTVMultisigTapscript.encode({
+            absoluteTimelock: base.refundLocktime,
+            pubkeys: [serverPk, cosigner],
+        }).script;
+
+        expect(script.nonInteractiveRefundWithoutReceiverScript).toBe(hex.encode(expected));
+        // Same covenant bytes as the immediate leaf — one destination, one covenant.
+        expect(hex.encode(script.nonInteractiveRefundWithoutReceiverArkadeScript!)).toBe(
+            hex.encode(script.nonInteractiveRefundArkadeScript!),
         );
     });
 });

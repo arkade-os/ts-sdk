@@ -339,6 +339,10 @@ export async function fetchVtxoCreatedAtByTxid(
  * `isSpent: true` with an empty `spentBy` (settlement inputs needing no forfeit are written that
  * way), so a `spentBy || settledBy` definition would classify a spent VTXO as spendable — inflating
  * balance and selecting it for a send that must fail.
+ *
+ * `isUnrolled` is deliberately **not** part of this union: it says where the output lives, not that
+ * it was consumed. Mirrors NArk's `ArkVtxo.IsSpent()`. The location axis is {@link canSweepOnchain},
+ * which the two capability predicates below subtract instead.
  */
 export function hasTerminalSpend(vtxo: VirtualCoin): boolean {
     const n = normalizeVtxo(vtxo);
@@ -369,7 +373,7 @@ export function isPastExpiry(vtxo: VirtualCoin, now: TimeHeight): boolean {
 /** Whether a virtual output can be spent in an offchain transaction. The send/coin-selection test. */
 export function canSpendOffchain(vtxo: VirtualCoin, now: TimeHeight): boolean {
     const n = normalizeVtxo(vtxo);
-    return !hasTerminalSpend(n) && !(n.isSwept || isPastExpiry(n, now));
+    return !hasTerminalSpend(n) && !n.isUnrolled && !(n.isSwept || isPastExpiry(n, now));
 }
 
 /**
@@ -378,7 +382,23 @@ export function canSpendOffchain(vtxo: VirtualCoin, now: TimeHeight): boolean {
  */
 export function canRecoverOnchain(vtxo: VirtualCoin, now: TimeHeight): boolean {
     const n = normalizeVtxo(vtxo);
-    return !hasTerminalSpend(n) && (n.isSwept || isPastExpiry(n, now));
+    return !hasTerminalSpend(n) && !n.isUnrolled && (n.isSwept || isPastExpiry(n, now));
+}
+
+/**
+ * Whether a virtual output's exit already happened: the output lives onchain and `completeUnroll`
+ * is the only remedy. The third and last capability, on the location axis rather than the spend
+ * one — together the three partition the live set, since this claims every unrolled coin and the
+ * other two refuse them.
+ *
+ * @remarks
+ * The ts-sdk analogue of NArk's `OnchainSweepService` filter, minus the expiry clause: the relevant
+ * maturity here is the exit tx's CSV timelock, which `prepareUnrollTransaction` checks against the
+ * chain tip, not the batch expiry.
+ */
+export function canSweepOnchain(vtxo: VirtualCoin): boolean {
+    const n = normalizeVtxo(vtxo);
+    return !hasTerminalSpend(n) && !!n.isUnrolled;
 }
 
 // --- fee estimation ----------------------------------------------------------------------------
@@ -436,8 +456,8 @@ export function isVirtualCoin<T>(input: T): input is T & VirtualCoin {
  * @param vtxo - virtual output to inspect
  * @returns `true` when the virtual output has not been consumed
  *
- * @deprecated Ambiguous: `true` for swept or expired virtual outputs, which cannot in fact be spent
- * offchain. Use {@link canSpendOffchain}.
+ * @deprecated Ambiguous: `true` for swept, expired or unrolled virtual outputs, none of which can
+ * in fact be spent offchain. Use {@link canSpendOffchain}.
  */
 export function isSpendable(vtxo: VirtualCoin): boolean {
     return !hasTerminalSpend(vtxo);
@@ -450,7 +470,8 @@ export function isSpendable(vtxo: VirtualCoin): boolean {
  * @returns `true` when the virtual output is swept but not yet consumed
  *
  * @deprecated Swept-only: ignores virtual outputs that are past expiry but not yet swept, which are
- * equally recoverable. Use {@link canRecoverOnchain}.
+ * equally recoverable, and claims unrolled ones, which are not recoverable at all. Use
+ * {@link canRecoverOnchain}.
  */
 export function isRecoverable(vtxo: VirtualCoin): boolean {
     const n = normalizeVtxo(vtxo);

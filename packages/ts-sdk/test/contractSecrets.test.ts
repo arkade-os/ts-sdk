@@ -33,6 +33,7 @@ import {
     provisionClaimSecret,
     provisionRefundKey,
 } from "../src/wallet/contractSecrets";
+import { ArkAddress } from "../src/script/address";
 
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -45,6 +46,21 @@ let descriptorAt: (index: number) => string;
  * signer — the two pieces the derivation depends on. Everything else an
  * `IWallet` has is irrelevant here and left off.
  */
+/**
+ * A dummy server pubkey used to mint valid-looking ArkAddresses in tests.
+ * The address exists only to give provisionRefundKey a decodable pkScript —
+ * tests do not actually send to it.
+ */
+const DUMMY_SERVER_PUBKEY = new Uint8Array(32).fill(0x02);
+
+/** Encode a valid ArkAddress whose vtxo taproot key is the identity's pubkey. */
+async function fakeGetAddress(identity: {
+    xOnlyPublicKey(): Promise<Uint8Array>;
+}): Promise<string> {
+    const vtxoKey = await identity.xOnlyPublicKey();
+    return new ArkAddress(DUMMY_SERVER_PUBKEY, vtxoKey, "tark").encode();
+}
+
 const hdWallet = async (repository = new InMemoryWalletRepository()) => {
     const identity = MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false });
     const provider = await HDDescriptorProvider.create(identity, repository);
@@ -62,12 +78,19 @@ const hdWallet = async (repository = new InMemoryWalletRepository()) => {
             async signerForDescriptor(descriptor: string) {
                 return new DescriptorIdentity({ descriptor, signer: provider, base: identity });
             },
+            getAddress: () => fakeGetAddress(identity),
         } as unknown as IWallet,
     };
 };
 
 /** A wallet with no descriptor surface at all: its identity is its policy. */
-const staticWallet = () => ({ identity: SingleKey.fromRandomBytes() }) as unknown as IWallet;
+const staticWallet = () => {
+    const identity = SingleKey.fromRandomBytes();
+    return {
+        identity,
+        getAddress: () => fakeGetAddress(identity),
+    } as unknown as IWallet;
+};
 
 const indexOf = (descriptor: string): number => strictSigningDescriptorIndex(descriptor)!;
 
@@ -131,31 +154,45 @@ describe("buildSaltedPreimageMessage", () => {
 });
 
 describe("provisionRefundKey", () => {
-    it("gives every artifact its own key on an HD wallet", async () => {
-        // The regression test for peeking instead of allocating: a peek
-        // returns the same descriptor until the wallet rotates.
+    it("reuses the identity key on every call — no HD index is consumed", async () => {
+        // provisionRefundKey now binds to the wallet's identity key, not to a
+        // fresh HD child. Every call for the same wallet returns the same
+        // descriptor and pubkey, and the HD watermark does not advance.
         const { wallet } = await hdWallet();
         const keys = [
             await provisionRefundKey(wallet),
             await provisionRefundKey(wallet),
             await provisionRefundKey(wallet),
         ];
-        expect(new Set(keys.map((k) => k.descriptor)).size).toBe(3);
-        expect(new Set(keys.map((k) => hex.encode(k.pubkey))).size).toBe(3);
-        // and the pubkey really is the descriptor's key, not the baseline one
+        // All three calls return the same identity descriptor.
+        expect(new Set(keys.map((k) => k.descriptor)).size).toBe(1);
+        expect(new Set(keys.map((k) => hex.encode(k.pubkey))).size).toBe(1);
+        // The pubkey is the wallet's own identity key.
+        const identityPubkey = hex.encode(await wallet.identity.xOnlyPublicKey());
         for (const k of keys) {
-            expect(
-                hex.encode(await (await contractSigner(wallet, k.descriptor)).xOnlyPublicKey()),
-            ).toBe(hex.encode(k.pubkey));
+            expect(hex.encode(k.pubkey)).toBe(identityPubkey);
         }
+        // The descriptor is not per-artifact — it is the bare identity descriptor.
+        expect(isPerArtifactDescriptor(keys[0].descriptor)).toBe(false);
+        // pkScript is returned and is a non-empty Uint8Array.
+        for (const k of keys) {
+            expect(k.pkScript).toBeInstanceOf(Uint8Array);
+            expect(k.pkScript.length).toBeGreaterThan(0);
+        }
+        // The HD watermark has not advanced: getCurrentSigningDescriptor is still undefined.
+        expect(
+            await (
+                wallet as unknown as { getCurrentSigningDescriptor(): Promise<string | undefined> }
+            ).getCurrentSigningDescriptor(),
+        ).toBeUndefined();
     });
 
-    it("refuses a descriptor the wallet cannot sign for, before anything is funded", async () => {
+    it("provisionClaimSecret refuses a descriptor the wallet cannot sign for, before anything is funded", async () => {
         // A wallet whose allocator hands back another seed's descriptor — a
         // worker rebound to a second identity, a restore onto the wrong seed.
-        // Deriving the leaf key would succeed anyway (it is pure parsing), so
-        // without a signer check the covenant binds a key we cannot spend and
-        // the failure surfaces at refund time, funded.
+        // provisionRefundKey is not affected because it no longer calls the
+        // allocator; it binds to wallet.identity directly. But provisionClaimSecret
+        // calls provisionDescriptor which does call getNextSigningDescriptor.
         const { wallet } = await hdWallet();
         const other = MnemonicIdentity.fromMnemonic(
             "legal winner thank year wave sausage worth useful legal winner thank yellow",
@@ -173,9 +210,9 @@ describe("provisionRefundKey", () => {
             signerForDescriptor: (d: string) => resolveDescriptorSigner(d, wallet.identity),
         } as unknown as IWallet;
 
-        await expect(provisionRefundKey(rogue)).rejects.toThrow(/holds no key/);
-        // and the claim-secret path inherits it, including the arm that
-        // supplies its own preimage and so never derives one
+        // provisionRefundKey uses identity directly — rogue allocator has no effect.
+        await expect(provisionRefundKey(rogue)).resolves.toBeDefined();
+        // provisionClaimSecret still calls the allocator and gets a foreign descriptor.
         await expect(provisionClaimSecret(rogue)).rejects.toThrow(/holds no key/);
         await expect(
             provisionClaimSecret(rogue, { preimage: new Uint8Array(32).fill(1) }),
@@ -204,17 +241,83 @@ describe("provisionRefundKey", () => {
         );
     });
 
-    it("answers with the identity key on a wallet that cannot allocate", async () => {
-        // The wallet's policy, not the consumer's: static means the same key,
-        // and the consumer never learns which case it got.
-        const wallet = staticWallet();
-        const first = await provisionRefundKey(wallet);
-        const second = await provisionRefundKey(wallet);
+    it("answers with the identity key on any wallet — static or HD", async () => {
+        // provisionRefundKey always reuses wallet.identity. Static wallets
+        // behave as before; HD wallets no longer bump an index.
+        for (const makeWallet of [staticWallet, () => hdWallet().then((r) => r.wallet)]) {
+            const wallet = await makeWallet();
+            const first = await provisionRefundKey(wallet);
+            const second = await provisionRefundKey(wallet);
 
-        expect(first.descriptor).toBe(second.descriptor);
-        expect(first.descriptor).toBe(`tr(${hex.encode(await wallet.identity.xOnlyPublicKey())})`);
-        expect(hex.encode(first.pubkey)).toBe(hex.encode(await wallet.identity.xOnlyPublicKey()));
-        expect(isPerArtifactDescriptor(first.descriptor)).toBe(false);
+            expect(first.descriptor).toBe(second.descriptor);
+            expect(first.descriptor).toBe(
+                `tr(${hex.encode(await wallet.identity.xOnlyPublicKey())})`,
+            );
+            expect(hex.encode(first.pubkey)).toBe(
+                hex.encode(await wallet.identity.xOnlyPublicKey()),
+            );
+            expect(isPerArtifactDescriptor(first.descriptor)).toBe(false);
+            // pkScript matches the wallet address
+            const address = await wallet.getAddress();
+            const { pkScript } = ArkAddress.decode(address);
+            expect(hex.encode(first.pkScript)).toBe(hex.encode(pkScript));
+            // address comes back alongside, decoding to that same script
+            expect(first.address).toBe(address);
+            expect(hex.encode(ArkAddress.decode(first.address).pkScript)).toBe(
+                hex.encode(first.pkScript),
+            );
+        }
+    });
+
+    it("pairs address and pkScript from one read, even when getAddress rotates", async () => {
+        // The quote's refund address and the covenant's refundPkScript must
+        // name the same script. A wallet that rotates its receive address
+        // between two reads would pair script A with address B if each field
+        // came from its own getAddress() call — both come from one read, and
+        // this fails if a second read ever feeds either.
+        const { wallet } = await hdWallet();
+        const first = await wallet.getAddress();
+        const rotated = new ArkAddress(
+            DUMMY_SERVER_PUBKEY,
+            new Uint8Array(32).fill(0x07),
+            "tark",
+        ).encode();
+        let addressReads = 0;
+        const rotating = {
+            ...wallet,
+            getAddress: async () => (addressReads++ === 0 ? first : rotated),
+        } as unknown as IWallet;
+
+        const key = await provisionRefundKey(rotating);
+        expect(addressReads).toBe(1);
+        expect(key.address).toBe(first);
+        expect(hex.encode(ArkAddress.decode(key.address).pkScript)).toBe(hex.encode(key.pkScript));
+    });
+
+    it("refuses when the identity key diverges between the descriptor and the guard read", async () => {
+        // Defense in depth for a hand-rolled IWallet whose identity answers
+        // inconsistently: identityDescriptor encodes the first read, and a
+        // second read naming a different key would put the lockup's refund
+        // path and the refund destination on different keys. A correct wallet
+        // can never reach this — contractSigner has already matched the
+        // signer to the descriptor — so the throw must come from this guard.
+        const stable = SingleKey.fromRandomBytes();
+        const other = SingleKey.fromRandomBytes();
+        let identityReads = 0;
+        const wallet = {
+            identity: {
+                xOnlyPublicKey: async () =>
+                    (identityReads++ === 0 ? stable : other).xOnlyPublicKey(),
+            },
+            // HD surface: contractSigner resolves through signerForDescriptor,
+            // which answers with a stable, correct signer — only the
+            // identity's own reads diverge.
+            getCurrentSigningDescriptor: async () => undefined,
+            getUsedSigningDescriptors: async () => [],
+            signerForDescriptor: async () => stable,
+        } as unknown as IWallet;
+
+        await expect(provisionRefundKey(wallet)).rejects.toThrow(/does not match wallet identity/);
     });
 });
 
@@ -364,8 +467,10 @@ describe("provisionClaimSecret", () => {
         // A per-artifact descriptor that cannot sign deterministically is a
         // broken wallet, not a fallback case — the salted arm's tolerance must
         // not leak into this one.
+        // Use provisionClaimSecret to obtain an HD child descriptor: provisionRefundKey
+        // no longer allocates one.
         const { wallet } = await hdWallet();
-        const { descriptor } = await provisionRefundKey(wallet);
+        const { descriptor } = await provisionClaimSecret(wallet);
         const identity = (wallet as unknown as { identity: Record<string, unknown> }).identity;
         const broken = {
             identity,
@@ -373,6 +478,7 @@ describe("provisionClaimSecret", () => {
             getNextSigningDescriptor: async () => descriptor,
             getUsedSigningDescriptors: async () => [],
             advanceSigningDescriptorWatermark: async () => {},
+            getAddress: () => fakeGetAddress(identity as { xOnlyPublicKey(): Promise<Uint8Array> }),
             // A COMPLETE identity for the right key that simply cannot sign
             // deterministically — otherwise `contractSigner` refuses it as
             // watch-only first and this asserts the wrong refusal.
@@ -419,10 +525,13 @@ describe("contractSigner", () => {
         // wrong key, so the refusal comes from checking the KEY of what came
         // back, not from asking the wallet what shape it is.
         const { wallet } = await hdWallet();
+        // Use provisionClaimSecret (not provisionRefundKey) to get an HD child
+        // descriptor — provisionRefundKey now always returns the identity descriptor,
+        // which the identity key IS the right answer for.
         // Burn index 0 first: a fresh seed's baseline key aliases the index-0
-        // child key, and an aliased key would be a RIGHT answer.
-        await provisionRefundKey(wallet);
-        const { descriptor } = await provisionRefundKey(wallet);
+        // child key, and an aliased key would be a RIGHT answer for index 0.
+        await provisionClaimSecret(wallet);
+        const { descriptor } = await provisionClaimSecret(wallet);
         const broken = {
             ...wallet,
             signerForDescriptor: async () => wallet.identity,
@@ -506,14 +615,17 @@ describe("contractPreimage", () => {
 describe("adoptContractDescriptor", () => {
     it("claims a restored index so the next artifact cannot reuse it", async () => {
         // Reallocating it would derive that artifact's preimage for a new one.
+        // Use provisionClaimSecret (not provisionRefundKey) to advance the HD watermark —
+        // provisionRefundKey no longer allocates a fresh index.
         const source = await hdWallet();
         let ahead = "";
-        for (let i = 0; i < 3; i++) ahead = (await provisionRefundKey(source.wallet)).descriptor;
+        for (let i = 0; i < 3; i++) ahead = (await provisionClaimSecret(source.wallet)).descriptor;
 
         const fresh = await hdWallet();
         await adoptContractDescriptor(fresh.wallet, ahead);
 
-        const next = (await provisionRefundKey(fresh.wallet)).descriptor;
+        // provisionClaimSecret still allocates a fresh index, so the next one is beyond `ahead`.
+        const next = (await provisionClaimSecret(fresh.wallet)).descriptor;
         expect(next).not.toBe(ahead);
         expect(indexOf(next)).toBeGreaterThan(indexOf(ahead));
     });
@@ -560,7 +672,9 @@ describe("adoptContractDescriptor", () => {
         expect(spy).not.toHaveBeenCalled();
 
         // and an own artifact still adopts through the same path
-        const own = (await provisionRefundKey(wallet)).descriptor;
+        // (using provisionClaimSecret since provisionRefundKey returns the identity
+        // descriptor which has no HD index to adopt)
+        const own = (await provisionClaimSecret(wallet)).descriptor;
         await adoptContractDescriptor(honest, own);
         expect(spy).toHaveBeenCalledWith(own);
     });

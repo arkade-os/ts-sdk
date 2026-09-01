@@ -82,6 +82,8 @@ export interface VHTLCV2ContractParams {
     nonInteractiveRefund?: {
         senderPkScript: Uint8Array;
         emulatorPubkey: Uint8Array;
+        /** @see VHTLC.Options.nonInteractiveRefund.withoutReceiver */
+        withoutReceiver?: boolean;
     };
 }
 
@@ -129,21 +131,22 @@ function decodeCovenantLeaf<K extends string>(
  * the same ScriptV2 the two uses would fight over one row.
  *
  * **Which leaves this offers, and why the set is smaller than the ladder.**
- * ScriptV2 has eight leaves; a wallet holding ONE of the two participant keys
+ * ScriptV2 has nine leaves; a wallet holding ONE of the two participant keys
  * can satisfy four of them, and offering a leaf whose signature the caller
  * cannot produce is worse than offering fewer — it turns a refusal into a
  * transaction that gets built and then rejected.
  *
- * | leaf                              | needs                          | offered |
- * |-----------------------------------|--------------------------------|---------|
- * | `claim`                           | receiver + server, preimage    | yes, to the receiver |
- * | `refund`                          | sender + receiver + server     | no — needs the counterparty live |
- * | `refundWithoutReceiver`           | sender + server, CLTV          | yes, to the sender |
- * | `unilateralClaim`                 | receiver, CSV                  | yes, to the receiver |
- * | `unilateralRefund`                | sender + receiver, CSV         | no — needs the counterparty live |
- * | `unilateralRefundWithoutReceiver` | sender, CSV                    | yes, to the sender |
- * | `nonInteractiveClaim`             | server + emulator              | no — the wallet holds neither key |
- * | `nonInteractiveRefund`            | server + receiver + emulator   | no — the wallet holds neither key |
+ * | leaf                                  | needs                          | offered |
+ * |---------------------------------------|--------------------------------|---------|
+ * | `claim`                               | receiver + server, preimage    | yes, to the receiver |
+ * | `refund`                              | sender + receiver + server     | no — needs the counterparty live |
+ * | `refundWithoutReceiver`               | sender + server, CLTV          | yes, to the sender |
+ * | `unilateralClaim`                     | receiver, CSV                  | yes, to the receiver |
+ * | `unilateralRefund`                    | sender + receiver, CSV         | no — needs the counterparty live |
+ * | `unilateralRefundWithoutReceiver`     | sender, CSV                    | yes, to the sender |
+ * | `nonInteractiveClaim`                 | server + emulator              | no — the wallet holds neither key |
+ * | `nonInteractiveRefund`                | server + receiver + emulator   | no — the wallet holds neither key |
+ * | `nonInteractiveRefundWithoutReceiver` | server + emulator, CLTV        | no — the wallet holds neither key |
  *
  * The two omitted interactive leaves are the same two the `vhtlc` handler
  * omits, for the same reason: `refund` and `unilateralRefund` both need the
@@ -212,6 +215,13 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                 nonInteractiveRefundEmulatorPubkey: hex.encode(
                     params.nonInteractiveRefund.emulatorPubkey,
                 ),
+                // Spread rather than a "false"/"undefined" string: a dropped
+                // flag re-derives the EIGHT-leaf script, a different pkScript,
+                // and registration dies at `upsertContractRow` with an opaque
+                // `Script mismatch`. Same silent-drop class as the asset keys.
+                ...(params.nonInteractiveRefund.withoutReceiver && {
+                    nonInteractiveRefundWithoutReceiver: "1",
+                }),
             }),
             // The asset must round-trip, and its absence here used to be silent
             // in the worst way. `ContractManager` re-derives a contract from
@@ -258,6 +268,24 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                     "would re-derive the default claim covenant, which is weaker than the row asked for",
             );
         }
+        // Same silent-drop shape as the two checks above, one flag further in:
+        // a row naming this flag without the leaf it extends, or read as "not
+        // set", would re-derive a script missing this leaf.
+        if (params.nonInteractiveRefundWithoutReceiver !== undefined && !refund) {
+            throw new Error(
+                "nonInteractiveRefundWithoutReceiver without the nonInteractiveRefund keys it " +
+                    "extends: reading this as 'not set' would re-derive a script without the leaf",
+            );
+        }
+        if (
+            params.nonInteractiveRefundWithoutReceiver !== undefined &&
+            params.nonInteractiveRefundWithoutReceiver !== "1"
+        ) {
+            throw new Error(
+                `nonInteractiveRefundWithoutReceiver must be "1" when present, got ` +
+                    JSON.stringify(params.nonInteractiveRefundWithoutReceiver),
+            );
+        }
         const asset =
             params.assetTxid !== undefined && params.assetGroupIndex !== undefined
                 ? {
@@ -295,6 +323,9 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                 nonInteractiveRefund: {
                     senderPkScript: refund.destination,
                     emulatorPubkey: refund.emulatorPubkey,
+                    ...(params.nonInteractiveRefundWithoutReceiver === "1" && {
+                        withoutReceiver: true,
+                    }),
                 },
             }),
         };

@@ -354,8 +354,11 @@ describe("findLockupVtxos", () => {
     });
 
     /** Filter-aware, unlike `fakeIndexer`: the two sets are disjoint here, which
-     * is what makes a swept output visible or not. */
-    const byFilterIndexer = (spendable: LockupVtxo[], recoverable: LockupVtxo[]): RefundIndexer =>
+     * is what makes a swept output visible or not. `isUnrolled` is the wire's,
+     * not `LockupVtxo`'s — the point is that it never survives the mapping. */
+    type IndexedVtxo = LockupVtxo & { isUnrolled?: boolean };
+
+    const byFilterIndexer = (spendable: IndexedVtxo[], recoverable: IndexedVtxo[]): RefundIndexer =>
         ({
             getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
                 vtxos: opts?.recoverableOnly ? recoverable : opts?.spendableOnly ? spendable : [],
@@ -385,6 +388,42 @@ describe("findLockupVtxos", () => {
             { ...live, recoverable: false },
             { ...swept, recoverable: true },
         ]);
+    });
+
+    it("drops an unrolled output the indexer still lists as spendable", async () => {
+        // arkd is not depended on to exclude a unilateral exit from
+        // `spendableOnly`, and `LockupVtxo` carries no flag to pass one along —
+        // so anything that reached the mapping would be indistinguishable from
+        // the live output beside it and would be signed into a refund that no
+        // offchain leaf can land. The live sibling proves the drop is the
+        // output's own, not the whole response being discarded.
+        const script = swapScript();
+        const live = { txid: "ee".repeat(32), vout: 0, value: 3_000, recoverable: false };
+        const exited = {
+            txid: "ef".repeat(32),
+            vout: 1,
+            value: 6_000,
+            recoverable: false,
+            isUnrolled: true,
+        };
+        const found = await findLockupVtxos(byFilterIndexer([live, exited], []), script.pkScript);
+        expect(found).toEqual([live]);
+    });
+
+    it("drops an unrolled output from the recoverable half too", async () => {
+        // Both queries feed one loop, so the exclusion has to hold on the side
+        // whose outputs are already un-spendable for a different reason.
+        const script = swapScript();
+        const swept = { txid: "f0".repeat(32), vout: 0, value: 2_500, recoverable: false };
+        const exited = {
+            txid: "f1".repeat(32),
+            vout: 3,
+            value: 9_000,
+            recoverable: false,
+            isUnrolled: true,
+        };
+        const found = await findLockupVtxos(byFilterIndexer([], [swept, exited]), script.pkScript);
+        expect(found).toEqual([{ ...swept, recoverable: true }]);
     });
 
     it("counts an output appearing in both sets exactly once", async () => {
@@ -529,6 +568,38 @@ describe("refundIfUnresolved", () => {
         ).rejects.toThrow(/FORFEIT_CLOSURE_LOCKED/);
     });
 
+    it("reports nothing to refund when the lockup's only output was unrolled", async () => {
+        // The output is unspent, but onchain behind its CSV: no offchain leaf
+        // reaches it. Pushing anyway would fail every retry until
+        // `attemptDeadline` and then rethrow — burning the window on a spend
+        // that was never going to land.
+        const operator = fakeOperator();
+        let pushes = 0;
+        const watched = {
+            ...operator,
+            getInfo: async () => {
+                pushes += 1;
+                return operator.getInfo();
+            },
+        } as unknown as FakeOperator;
+        const exited = { txid: "66".repeat(32), vout: 0, value: 8_000, isUnrolled: true };
+        const indexer = {
+            getVtxos: async (opts?: { spendableOnly?: boolean }) => ({
+                vtxos: opts?.spendableOnly ? [exited] : [],
+            }),
+        } as unknown as RefundIndexer;
+
+        const result = await refundIfUnresolved(fakeTransport(["quoted"]), watched, indexer, {
+            ...baseInput(),
+            now: () => REFUND_LOCKTIME + 1,
+        });
+
+        expect(result.outcome).toBe("nothing_to_refund");
+        // The outcome alone would pass while the doomed push still went out.
+        expect(pushes).toBe(0);
+        expect(operator.submitted).toEqual([]);
+    });
+
     it("reports an empty lockup instead of failing", async () => {
         const operator = fakeOperator();
         const result = await refundIfUnresolved(
@@ -569,6 +640,8 @@ describe("readLockupFate", () => {
         vout: number;
         spentBy: string;
         isSpent?: boolean;
+        settledBy?: string;
+        isUnrolled?: boolean;
         arkTxId?: string;
     }
 
@@ -656,6 +729,52 @@ describe("readLockupFate", () => {
 
     it("claims no spend when the lockup is still open", async () => {
         expect(await read(fateIndexer([{ ...OUT_A, spentBy: "" }]))).toEqual({ fate: "open" });
+    });
+
+    it("reports an unrolled output as exited rather than open", async () => {
+        // Unspent, but sitting onchain under the VHTLC script: neither the
+        // claim nor any refund leaf can be spent offchain against it. Reading
+        // it as a swap that is merely still running would leave a caller
+        // waiting on a resolution nobody is able to produce.
+        const fate = await read(fateIndexer([{ ...OUT_A, spentBy: "", isUnrolled: true }]));
+        expect(fate).toEqual({ fate: "exited", outpoints: [OUT_A] });
+    });
+
+    it("finds the exit wherever the indexer happens to list it", async () => {
+        // Scanned over the whole set, not in outpoint order: an in-loop test
+        // would hit the plain unspent output first and answer `open`, making
+        // the fate depend on the order the indexer returned rows in.
+        const fate = await read(
+            fateIndexer([
+                { ...OUT_A, spentBy: "" },
+                { ...OUT_B, spentBy: "", isUnrolled: true },
+            ]),
+        );
+        expect(fate).toEqual({ fate: "exited", outpoints: [OUT_B] });
+    });
+
+    it("leaves an exited output that was then spent on the ordinary spent path", async () => {
+        // `completeUnroll` already moved it, so the exit is history and the
+        // witness is what says how the swap ended. Reporting `exited` here
+        // would throw away hash-verified proof of a claim.
+        const spend = spendOf(OUT_A, [PREIMAGE]);
+        const fate = await read(
+            fateIndexer([{ ...OUT_A, spentBy: spend.txid, isUnrolled: true }], [spend]),
+        );
+        expect(fate).toEqual({
+            fate: "claimed",
+            preimage: PREIMAGE,
+            spends: [{ checkpointTxid: spend.txid, arkTxid: undefined }],
+        });
+    });
+
+    it("reads a settled-only output as spent, not as money still sitting there", async () => {
+        // The third spend fact, carried by the SDK's `hasTerminalSpend` and by
+        // nothing else here: `settledBy` with no `spentBy` and no `isSpent`
+        // means the output was renewed away, and a `spentBy`-only test would
+        // call the empty lockup `open`.
+        const settled = { ...OUT_A, spentBy: "", settledBy: "e1".repeat(32) };
+        expect(await read(fateIndexer([settled]))).toEqual({ fate: "unknown" });
     });
 
     it("claims no spend when a spend was not named, or could not be produced", async () => {

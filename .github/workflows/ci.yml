@@ -95,6 +95,7 @@ jobs:
               test/e2e/exitDataCapture.test.ts
               test/e2e/vhtlc.test.ts
               test/e2e/non-interactive-htlc.test.ts
+              test/e2e/non-interactive-refund-without-receiver.test.ts
               test/e2e/indexer.test.ts
               test/e2e/electrum.test.ts
               test/e2e/onchain.test.ts

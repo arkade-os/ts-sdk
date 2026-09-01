@@ -446,11 +446,16 @@ describe("Common", () => {
 
                 await new Promise((resolve) => setTimeout(resolve, 5000));
 
-                const session = await Unroll.Session.create(
+                const balanceBeforeExit = await alice.wallet.getBalance();
+
+                // `sessionFor` over `Session.create`: it wires the exit observer,
+                // so the repository learns the exit at DONE rather than waiting
+                // for a delta sync that filters on creation time and would never
+                // see it.
+                const session = await Unroll.sessionFor(
+                    alice.wallet,
                     { txid: vtxo.txid, vout: vtxo.vout },
                     onchainAlice,
-                    onchainAlice.provider,
-                    new RestIndexerProvider("http://localhost:7070"),
                 );
 
                 for await (const done of session) {
@@ -467,6 +472,15 @@ describe("Common", () => {
                 });
                 expect(virtualCoinsAfterExit).toHaveLength(1);
                 expect(virtualCoinsAfterExit[0].isUnrolled).toBe(true);
+                // Hidden from the default read: the exit is not something a send
+                // or a settlement can build on.
+                expect(await alice.wallet.getVtxos()).toHaveLength(0);
+
+                // The money moved buckets, it did not disappear.
+                const balanceAfterExit = await alice.wallet.getBalance();
+                expect(balanceAfterExit.unrolled).toBe(vtxo.value);
+                expect(balanceAfterExit.available).toBe(balanceBeforeExit.available - vtxo.value);
+                expect(balanceAfterExit.total).toBe(balanceBeforeExit.total);
             });
 
             it("should reject complete-unroll before unilateral exit delay matures", {

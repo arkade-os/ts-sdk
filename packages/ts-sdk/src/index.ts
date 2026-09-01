@@ -34,7 +34,9 @@ import type {
 import {
     isHDWalletCapable,
     isHDAllocationCapable,
+    isAddressAllocationCapable,
     ForeignDescriptorError,
+    WalletCannotAllocateAddressError,
     resolveDescriptorSigner,
 } from "./wallet/hdWalletCapable";
 import {
@@ -56,7 +58,11 @@ import type {
     ProvisionedClaimSecret,
     ProvisionedKey,
 } from "./wallet/contractSecrets";
-import type { HDAllocationCapable, HDWalletCapable } from "./wallet/hdWalletCapable";
+import type {
+    AddressAllocationCapable,
+    HDAllocationCapable,
+    HDWalletCapable,
+} from "./wallet/hdWalletCapable";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
@@ -80,6 +86,9 @@ import {
     GetArkadeInfoOptions,
     NormalizedVtxoPage,
     BaseWalletConfig,
+    GetNewAddressesOptions,
+    NewAddress,
+    NewAddressType,
     WalletConfig,
     WalletMode,
     ReadonlyWalletConfig,
@@ -106,6 +115,7 @@ import {
     // VTXO capability predicates
     canRecoverOnchain,
     canSpendOffchain,
+    canSweepOnchain,
     hasTerminalSpend,
     isPastExpiry,
     isVirtualCoin,
@@ -236,6 +246,7 @@ import {
     ScheduledSession,
     FeeInfo,
 } from "./providers/ark";
+import { CachingArkProvider } from "./providers/cachingArk";
 import {
     DelegateProvider,
     DelegatorProvider,
@@ -355,6 +366,8 @@ import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
 import { TxWeightEstimator, type VSize } from "./utils/txSizeEstimator";
 import { Unroll } from "./wallet/unroll";
+import { exitObserverFor, notifyExitObserved } from "./wallet/exitObserver";
+import type { OnExitObserved } from "./wallet/exitObserver";
 import {
     UnilateralExit,
     createExitChainResolver,
@@ -371,6 +384,7 @@ import type {
     ExitVtxoInfo,
     ExitOptions,
     ExecutorEvent,
+    ExecutorOptions,
     ExitFeeWallet,
     ExitCaptureMode,
     ExitChainResolver,
@@ -582,7 +596,9 @@ export {
     isHDDeterministicSignCapable,
     isHDWalletCapable,
     isHDAllocationCapable,
+    isAddressAllocationCapable,
     ForeignDescriptorError,
+    WalletCannotAllocateAddressError,
     resolveDescriptorSigner,
     ARKADE_SALTED_PREIMAGE_TAG,
     ARKADE_SWAP_PREIMAGE_TAG,
@@ -626,6 +642,7 @@ export {
     ElectrumOnchainProvider,
     WsElectrumChainSource,
     RestArkProvider,
+    CachingArkProvider,
     DigestMismatchError,
     FetchError,
     RestIndexerProvider,
@@ -760,6 +777,10 @@ export {
     P2A,
     Unroll,
     UnilateralExit,
+    // Exit-observed seam
+    exitObserverFor,
+    notifyExitObserved,
+    type OnExitObserved,
     createExitChainResolver,
     serializeExitPackage,
     deserializeExitPackage,
@@ -807,6 +828,7 @@ export {
     // VTXO capability predicates
     canRecoverOnchain,
     canSpendOffchain,
+    canSweepOnchain,
     hasTerminalSpend,
     isPastExpiry,
     isVirtualCoin,
@@ -855,6 +877,9 @@ export type {
     GetArkadeInfoOptions,
     NormalizedVtxoPage,
     BaseWalletConfig,
+    GetNewAddressesOptions,
+    NewAddress,
+    NewAddressType,
     WalletConfig,
     WalletMode,
     ReadonlyWalletConfig,
@@ -892,6 +917,7 @@ export type {
     HDDeterministicSignCapable,
     HDWalletCapable,
     HDAllocationCapable,
+    AddressAllocationCapable,
     DeterministicSigner,
     ProvisionedClaimSecret,
     ProvisionedKey,
@@ -1011,6 +1037,7 @@ export type {
     ExitVtxoInfo,
     ExitOptions,
     ExecutorEvent,
+    ExecutorOptions,
     ExitFeeWallet,
     // Storage
     StorageConfig,

@@ -558,7 +558,12 @@ export class ArkadeContract<P extends Program = Program> {
             const [registered] = await manager.getContracts({ script: scriptHex });
             if (registered) {
                 const [withVtxos] = await manager.getContractsWithVtxos({ script: scriptHex });
-                return (withVtxos?.vtxos ?? []).filter((v) => !hasTerminalSpend(v));
+                // Not `canSpendOffchain`: that would also drop swept coins,
+                // which this accessor has always returned. Only the exited ones
+                // are new, and they are spendable by nothing offchain.
+                return (withVtxos?.vtxos ?? []).filter(
+                    (v) => !hasTerminalSpend(v) && !v.isUnrolled,
+                );
             }
         }
         if (!this.client.indexer) {

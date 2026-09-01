@@ -129,6 +129,57 @@ describe("VHTLCV2ContractHandler", () => {
         );
     });
 
+    it("round-trips withoutReceiver, and a dropped flag would change the script", () => {
+        const params = fullParams({ nonInteractiveRefundWithoutReceiver: "1" });
+        const typed = VHTLCV2ContractHandler.deserializeParams(params);
+        expect(typed.nonInteractiveRefund?.withoutReceiver).toBe(true);
+
+        const reserialized = VHTLCV2ContractHandler.serializeParams(typed);
+        expect(reserialized).toEqual(params);
+        expect(reserialized.nonInteractiveRefundWithoutReceiver).toBe("1");
+
+        // Dropping the flag must re-derive a DIFFERENT script — silently
+        // re-deriving the eight-leaf script is the exact failure this
+        // round-trip exists to prevent, which would otherwise surface only
+        // as an opaque `Script mismatch` at registration.
+        const withoutFlag = fullParams();
+        expect(hex.encode(VHTLCV2ContractHandler.createScript(params).pkScript)).not.toBe(
+            hex.encode(VHTLCV2ContractHandler.createScript(withoutFlag).pkScript),
+        );
+    });
+
+    it("omits the key entirely when not opted in", () => {
+        const typed = VHTLCV2ContractHandler.deserializeParams(fullParams());
+        expect(typed.nonInteractiveRefund?.withoutReceiver).toBeUndefined();
+        const serialized = VHTLCV2ContractHandler.serializeParams(typed);
+        expect("nonInteractiveRefundWithoutReceiver" in serialized).toBe(false);
+    });
+
+    it("refuses withoutReceiver without the nonInteractiveRefund keys it extends", () => {
+        const params = {
+            sender: SENDER,
+            receiver: RECEIVER,
+            server: SERVER,
+            hash: HASH,
+            refundLocktime: "800000",
+            claimDelay: "10",
+            refundDelay: "12",
+            refundNoReceiverDelay: "14",
+            nonInteractiveRefundWithoutReceiver: "1",
+        };
+        expect(() => VHTLCV2ContractHandler.deserializeParams(params)).toThrow(
+            /without the nonInteractiveRefund keys it extends/,
+        );
+    });
+
+    it('refuses a withoutReceiver value other than "1"', () => {
+        expect(() =>
+            VHTLCV2ContractHandler.deserializeParams(
+                fullParams({ nonInteractiveRefundWithoutReceiver: "true" }),
+            ),
+        ).toThrow(/must be "1" when present/);
+    });
+
     it("round-trips the ASSET, so a re-derived contract is not silently sat-only", () => {
         // The failure this closes was silent in the worst way. `ContractManager`
         // re-derives a contract from these params; with no `asset` key the

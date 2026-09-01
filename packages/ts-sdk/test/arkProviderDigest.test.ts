@@ -3,9 +3,8 @@ import { RestArkProvider, DigestMismatchError } from "../src/providers/ark";
 
 const SIGNER = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
-/** A 200 /v1/info response advertising the given digest. */
-function okInfo(digest: string) {
-    return { ok: true, json: async () => ({ signerPubkey: SIGNER, digest }) };
+function okInfo(digest: string, signerPubkey: string = SIGNER) {
+    return { ok: true, json: async () => ({ signerPubkey, digest }) };
 }
 
 /** A rejected non-/info response whose body carries the given marker. */
@@ -129,6 +128,70 @@ describe("RestArkProvider server-info digest negotiation", () => {
         await provider.getInfo(); // moved: the rotation signal
         expect(seen).toHaveLength(1);
         expect(digestOf(provider)).toBe("d2");
+    });
+
+    it("getInfo emits onServerInfoChanged when a refresh returns a changed digest", async () => {
+        const ROTATED = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+        const provider = new RestArkProvider("http://ark.test");
+        let digest = "d1";
+        let signer = SIGNER;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => okInfo(digest, signer)),
+        );
+        await provider.getInfo();
+
+        const seen: { signerPubkey: string; digest: string }[] = [];
+        provider.onServerInfoChanged((info) => seen.push(info));
+
+        digest = "d2";
+        signer = ROTATED;
+        await provider.getInfo();
+
+        expect(seen).toHaveLength(1);
+        expect(seen[0].signerPubkey).toBe(ROTATED);
+        expect(seen[0].digest).toBe("d2");
+        expect(digestOf(provider)).toBe("d2");
+    });
+
+    it("getInfo emits when a previously empty digest changes", async () => {
+        const ROTATED = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+        const provider = new RestArkProvider("http://ark.test");
+        let digest = "";
+        let signer = SIGNER;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => okInfo(digest, signer)),
+        );
+
+        const seen: { signerPubkey: string; digest: string }[] = [];
+        provider.onServerInfoChanged((info) => seen.push(info));
+
+        await provider.getInfo();
+        expect(seen).toHaveLength(0);
+
+        digest = "d1";
+        signer = ROTATED;
+        await provider.getInfo();
+
+        expect(seen).toHaveLength(1);
+        expect(seen[0].signerPubkey).toBe(ROTATED);
+        expect(seen[0].digest).toBe("d1");
+    });
+
+    it("getInfo does not emit on first populate or on an unchanged digest", async () => {
+        const provider = new RestArkProvider("http://ark.test");
+        const seen: unknown[] = [];
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => okInfo("d1")),
+        );
+        provider.onServerInfoChanged((info) => seen.push(info));
+
+        await provider.getInfo();
+        await provider.getInfo();
+
+        expect(seen).toHaveLength(0);
     });
 
     it("on DIGEST_MISMATCH refreshes + emits onServerInfoChanged + throws (no silent retry)", async () => {
