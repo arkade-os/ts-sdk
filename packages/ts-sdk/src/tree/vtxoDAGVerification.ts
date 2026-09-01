@@ -448,22 +448,43 @@ export async function reconstructAndValidateVtxoDAG(
     }
 
     // 4b. Wire relationships with Cycle Detection
+    const MAX_DAG_NODES = 10000;
+    if (allNodes.size > MAX_DAG_NODES) {
+        throw new VtxoVerificationError(
+            `DAG size ${allNodes.size} exceeds maximum allowed nodes (${MAX_DAG_NODES})`,
+            "DAG_TOO_LARGE",
+        );
+    }
+
+    const globalVisited = new Set<string>();
+    const visiting = new Set<string>();
+
     for (const node of allNodes.values()) {
-        const pathVisited = new Set<string>();
-        let tracer: DAGNode | null = node;
-        while (tracer) {
-            if (pathVisited.has(tracer.txid)) {
-                throw new VtxoVerificationError(
-                    `Cycle detected at ${tracer.txid}`,
-                    "CYCLE_DETECTED",
-                );
+        if (!globalVisited.has(node.txid)) {
+            let tracer: DAGNode | null = node;
+            const currentPath: string[] = [];
+
+            while (tracer && !globalVisited.has(tracer.txid)) {
+                if (visiting.has(tracer.txid)) {
+                    throw new VtxoVerificationError(
+                        `Cycle detected at ${tracer.txid}`,
+                        "CYCLE_DETECTED",
+                    );
+                }
+                visiting.add(tracer.txid);
+                currentPath.push(tracer.txid);
+
+                const input = tracer.tx.getInput(0);
+                if (!input.txid) break;
+                const pTxid = hex.encode(input.txid);
+                if (pTxid === actualCommitmentTxid) break;
+                tracer = allNodes.get(pTxid) ?? null;
             }
-            pathVisited.add(tracer.txid);
-            const input = tracer.tx.getInput(0);
-            if (!input.txid) break;
-            const pTxid = hex.encode(input.txid);
-            if (pTxid === actualCommitmentTxid) break;
-            tracer = allNodes.get(pTxid) ?? null;
+
+            for (const visitedTxid of currentPath) {
+                visiting.delete(visitedTxid);
+                globalVisited.add(visitedTxid);
+            }
         }
 
         const input = node.tx.getInput(0);

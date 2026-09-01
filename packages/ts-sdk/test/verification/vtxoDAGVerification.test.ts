@@ -115,7 +115,7 @@ export function createVirtualTx(
     tx.addInput({
         txid: hexTxid,
         index: parentVout,
-        sequence: opts?.sequence ?? 0xffffffff,
+        sequence: opts?.sequence ?? 0xfffffffe,
         witnessUtxo: {
             amount: outputs.reduce((sum, o) => sum + o.amount, 0n),
             script: p2trScript,
@@ -527,11 +527,11 @@ describe("VTXO DAG Verification", () => {
             // nLockTime uses block height, but CLTV uses timestamp
             const constraints = {
                 nLockTime: 800000, // block-based
-                nSequence: 0xffffffff,
+                nSequence: 0xfffffffe, // non-final so BIP 65 allows CLTV
                 csvValues: [],
                 cltvValues: [1700000000], // time-based (UNIX timestamp)
                 lockTimeType: "blocks" as const,
-                sequenceType: "final" as const,
+                sequenceType: "disabled" as const,
                 isKeyPathSpend: false,
             };
 
@@ -543,11 +543,11 @@ describe("VTXO DAG Verification", () => {
         it("should fail when CLTV block height is not yet satisfiable", () => {
             const constraints = {
                 nLockTime: 999999,
-                nSequence: 0xffffffff,
+                nSequence: 0xfffffffe, // non-final so BIP 65 allows CLTV
                 csvValues: [],
                 cltvValues: [999999],
                 lockTimeType: "blocks" as const,
-                sequenceType: "final" as const,
+                sequenceType: "disabled" as const,
                 isKeyPathSpend: false,
             };
 

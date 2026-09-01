@@ -247,24 +247,33 @@ export function validateTimelockConsistency(constraints: TimelockConstraints, tx
     if (isKeyPathSpend) return;
 
     // ── Rule 1: CSV requires relative timelock to be enabled ─────────────
-    if (csvValues.length > 0 && sequenceType === "final") {
+    if (csvValues.length > 0 && (sequenceType === "final" || sequenceType === "disabled")) {
         throw new VtxoVerificationError(
-            `Transaction ${txid} uses OP_CSV but nSequence=0xFFFFFFFF (relative timelock disabled by BIP 68)`,
+            `Transaction ${txid} uses OP_CSV but nSequence disables relative timelocks (BIP 68)`,
             "TIMELOCK_INCONSISTENT",
             { txid, nSequence: nSequence.toString(16), csvValues },
         );
     }
 
-    // ── Rule 2: CLTV requires a non-zero nLockTime ──────────────────────
-    if (cltvValues.length > 0 && nLockTime === 0) {
-        // Find the max CLTV value — if all are 0, that's fine
-        const maxCltv = Math.max(...cltvValues);
-        if (maxCltv > 0) {
+    // ── Rule 2: CLTV requires a non-zero nLockTime and non-final nSequence ──
+    if (cltvValues.length > 0) {
+        if (sequenceType === "final") {
             throw new VtxoVerificationError(
-                `Transaction ${txid} uses OP_CLTV (max value=${maxCltv}) but nLockTime=0`,
+                `Transaction ${txid} uses OP_CLTV but nSequence=0xFFFFFFFF (nLockTime disabled by BIP 65)`,
                 "TIMELOCK_INCONSISTENT",
-                { txid, nLockTime, cltvValues },
+                { txid, nSequence: nSequence.toString(16), cltvValues },
             );
+        }
+        if (nLockTime === 0) {
+            // Find the max CLTV value — if all are 0, that's fine
+            const maxCltv = Math.max(...cltvValues);
+            if (maxCltv > 0) {
+                throw new VtxoVerificationError(
+                    `Transaction ${txid} uses OP_CLTV (max value=${maxCltv}) but nLockTime=0`,
+                    "TIMELOCK_INCONSISTENT",
+                    { txid, nLockTime, cltvValues },
+                );
+            }
         }
     }
 
