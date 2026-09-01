@@ -574,6 +574,11 @@ const expiringVtxos = await manager.getExpiringVtxos()
 const urgentlyExpiring = await manager.getExpiringVtxos(60_000)
 ```
 
+A virtual output whose unilateral exit already happened is never offered for renewal, and the
+exported `isVtxoExpiringSoon` answers `false` for one whatever its batch expiry says: "expiring
+soon" is a renewal signal, and no batch can take an output that already lives onchain. Its remedy
+is `Unroll.completeUnroll`, and its value shows up in `balance.unrolled`.
+
 #### Boarding Input Sweep
 
 When a boarding input's CSV timelock expires, it can no longer be onboarded into Arkade cooperatively. The sweep feature detects these expired UTXOs and builds a raw onchain transaction that spends them via the unilateral exit path back to a fresh boarding address, restarting the timelock.
