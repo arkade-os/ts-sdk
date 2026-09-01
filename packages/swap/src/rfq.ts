@@ -369,10 +369,7 @@ export const assertPairLength = (pair: string): void => {
  * Throws {@link AddressMismatch} only when NONE of the candidates match.
  * Returns the address that matched, so calls chain exactly as before.
  */
-export const verifyLockupAddress = (
-    quote: RfqQuote,
-    derivedAddress: string | string[],
-): string => {
+export const verifyLockupAddress = (quote: RfqQuote, derivedAddress: string | string[]): string => {
     const quoted = quote.profile?.lockup_address;
     const candidates = Array.isArray(derivedAddress) ? derivedAddress : [derivedAddress];
     const matched = candidates.find((address) => address === quoted);
@@ -1227,11 +1224,8 @@ export function deriveOnchainSend(input: {
         refundPkScript: ArkAddress.decode(input.refundAddress).pkScript,
     };
     // Two candidates, one match — see matchQuotedLockup.
-    const { script, address } = matchQuotedLockup(
-        quote,
-        input.hrp,
-        input.serverPubkey,
-        (legacy) => lightningSendVtxoScript({ ...treeParams, ...(legacy !== undefined && { legacy }) }),
+    const { script, address } = matchQuotedLockup(quote, input.hrp, input.serverPubkey, (legacy) =>
+        lightningSendVtxoScript({ ...treeParams, ...(legacy !== undefined && { legacy }) }),
     );
 
     // Named so the inputs can be handed back: `OnchainHtlc` carries only
@@ -1922,11 +1916,8 @@ export function deriveOnchainReceive(input: {
         payoutPkScript: ArkAddress.decode(input.payoutAddress).pkScript,
     };
     // Two candidates, one match — see matchQuotedLockup.
-    const { script, address } = matchQuotedLockup(
-        quote,
-        input.hrp,
-        input.serverPubkey,
-        (legacy) => receiveVtxoScript({ ...treeParams, ...(legacy !== undefined && { legacy }) }),
+    const { script, address } = matchQuotedLockup(quote, input.hrp, input.serverPubkey, (legacy) =>
+        receiveVtxoScript({ ...treeParams, ...(legacy !== undefined && { legacy }) }),
     );
 
     const htlc = onchainHtlcScript(
