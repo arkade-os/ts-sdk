@@ -5138,8 +5138,12 @@ export class Wallet
         // regardless: the proof describes every input by the contract's P2TR
         // pkScript, which is a lie for an OP_RETURN outpoint and would have the
         // server reject the whole proof. It is excluded by value, since the
-        // indexer reports subdust under that same P2TR script.
-        const drainable = vtxos.filter((vtxo) => !isSubdust(vtxo, this.dustAmount));
+        // indexer reports subdust under that same P2TR script. An exited output
+        // is excluded by state instead: it lives onchain, so no pending sweep
+        // naming it can ever be finalized.
+        const drainable = vtxos.filter(
+            (vtxo) => !isSubdust(vtxo, this.dustAmount) && !vtxo.isUnrolled,
+        );
         if (drainable.length > 0) {
             let drained = { count: 0, swept: 0, claimed: new Set<string>() };
             try {
