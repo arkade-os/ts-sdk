@@ -36,7 +36,6 @@ function tapBranchHash(a: Uint8Array, b: Uint8Array): Uint8Array {
  */
 export function verifyNodeTaproot(node: DAGNode): void {
     const input = node.tx.getInput(0);
-    const witnessUtxo = input.witnessUtxo;
     const internalKey = input.tapInternalKey;
     const merkleRoot = input.tapMerkleRoot;
 
@@ -48,12 +47,20 @@ export function verifyNodeTaproot(node: DAGNode): void {
     }
 
     // 1. Verify Tweaked Pubkey Consistency
-    if (witnessUtxo && witnessUtxo.script) {
+    let expectedScript: Uint8Array | undefined;
+    if (node.ancestor) {
+        const ancestorOutput = node.ancestor.tx.getOutput(node.ancestorOutputIndex ?? 0);
+        expectedScript = ancestorOutput.script;
+    } else if (node.prevOutContext) {
+        expectedScript = node.prevOutContext.script;
+    }
+
+    if (expectedScript) {
         const rootBytes = merkleRoot || new Uint8Array(0);
         const [tweakedKey] = taprootTweakPubkey(internalKey, rootBytes);
-        const expectedScript = new Uint8Array([0x51, 0x20, ...tweakedKey]);
+        const computedScript = new Uint8Array([0x51, 0x20, ...tweakedKey]);
 
-        if (!equalBytes(witnessUtxo.script, expectedScript)) {
+        if (!equalBytes(expectedScript, computedScript)) {
             throw new VtxoVerificationError(
                 `Invalid Taproot Tweak for transaction ${node.txid}`,
                 "INVALID_TAPROOT_TWEAK",
@@ -141,6 +148,13 @@ function verifyMerkleProof(
     if (numSteps < 0 || !Number.isInteger(numSteps)) {
         throw new VtxoVerificationError(
             `Invalid control block length in ${txid}`,
+            "INVALID_MERKLE_PROOF",
+        );
+    }
+
+    if (numSteps > 128) {
+        throw new VtxoVerificationError(
+            `Taproot tree depth exceeds maximum allowed (128) in ${txid}`,
             "INVALID_MERKLE_PROOF",
         );
     }

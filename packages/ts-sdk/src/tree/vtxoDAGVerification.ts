@@ -566,13 +566,15 @@ export async function reconstructAndValidateVtxoDAG(
             currentTime: blockchainInfo.medianTime,
             commitmentHeight: onchainStatus.confirmed ? onchainStatus.blockHeight : undefined,
         };
-        verifyDAGTimelocks(anchoringLeaf, chainState);
+        verifyDAGTimelocks(anchoringLeaf, chainState, diagnostics);
     }
 
     verifyDAGHashPreimages(anchoringLeaf, witnessPreimages);
 
+    const isValid = checkpointValidations.every((cv) => cv.expiryCoherent && cv.parentChainValid);
+
     return {
-        valid: true,
+        valid: isValid,
         vtxoRoot: vtxoRoot,
         anchoringLeaf: anchoringLeaf,
         commitmentTxid: actualCommitmentTxid,

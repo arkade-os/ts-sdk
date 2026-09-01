@@ -341,6 +341,7 @@ export function validateTimelockSatisfiability(
     constraints: TimelockConstraints,
     chainState: ChainState,
     txid: string,
+    diagnostics?: string[],
 ): void {
     const { nLockTime, cltvValues, csvValues, lockTimeType, sequenceType, isKeyPathSpend } =
         constraints;
@@ -415,16 +416,25 @@ export function validateTimelockSatisfiability(
         if (chainState.commitmentHeight !== undefined) {
             const depth = chainState.currentHeight - chainState.commitmentHeight;
             if (maxCsv > depth) {
-                throw new VtxoVerificationError(
-                    `Transaction ${txid} CSV requires ${maxCsv} blocks but current commitment depth is only ${depth} blocks`,
-                    "TIMELOCK_UNSATISFIABLE",
-                    {
-                        txid,
-                        csvRequired: maxCsv,
-                        currentDepth: depth,
-                        commitmentHeight: chainState.commitmentHeight,
-                    },
-                );
+                if (maxCsv > 0xffff) {
+                    throw new VtxoVerificationError(
+                        `Transaction ${txid} CSV requires ${maxCsv} blocks, which exceeds the BIP 68 maximum 16-bit value`,
+                        "TIMELOCK_UNSATISFIABLE",
+                        {
+                            txid,
+                            csvRequired: maxCsv,
+                            currentDepth: depth,
+                            commitmentHeight: chainState.commitmentHeight,
+                        },
+                    );
+                }
+
+                if (diagnostics) {
+                    const remaining = maxCsv - depth;
+                    diagnostics.push(
+                        `  ! VTXO ${txid} has a CSV delay of ${maxCsv} blocks. Commitment has ${depth} confirmations. (Remaining delay: ${remaining} blocks)`,
+                    );
+                }
             }
         } else {
             // If commitmentHeight is missing, we perform a sanity check against total height
@@ -450,31 +460,44 @@ export function validateTimelockSatisfiability(
  *   2. Validates internal consistency.
  *   3. Validates satisfiability against the current chain state.
  *
- * @param rootNode   The root of the reconstructed DAG.
+ * @param node       The node of the DAG to validate.
  * @param chainState Current blockchain state (height + MTP).
+ * @param diagnostics Optional diagnostic output array.
  * @throws VtxoVerificationError on any timelock violation.
  */
-export function verifyDAGTimelocks(rootNode: DAGNode, chainState: ChainState): void {
+export function verifyNodeTimelocks(
+    node: DAGNode,
+    chainState: ChainState,
+    diagnostics?: string[],
+): void {
+    const constraints = extractTimelockConstraints(node);
+
+    // Only run validation if there are actual timelock constraints
+    const hasTimelocks =
+        constraints.nLockTime > 0 ||
+        constraints.sequenceType !== "final" ||
+        constraints.csvValues.length > 0 ||
+        constraints.cltvValues.length > 0;
+
+    if (hasTimelocks) {
+        validateTimelockConsistency(constraints, node.txid);
+        validateTimelockSatisfiability(constraints, chainState, node.txid, diagnostics);
+    }
+}
+
+export function verifyDAGTimelocks(
+    rootNode: DAGNode,
+    chainState: ChainState,
+    diagnostics?: string[],
+): void {
     const stack: DAGNode[] = [rootNode];
 
     while (stack.length > 0) {
-        const node = stack.pop()!;
-        const constraints = extractTimelockConstraints(node);
-
-        // Only run validation if there are actual timelock constraints
-        const hasTimelocks =
-            constraints.nLockTime > 0 ||
-            constraints.sequenceType !== "final" ||
-            constraints.csvValues.length > 0 ||
-            constraints.cltvValues.length > 0;
-
-        if (hasTimelocks) {
-            validateTimelockConsistency(constraints, node.txid);
-            validateTimelockSatisfiability(constraints, chainState, node.txid);
-        }
+        const current = stack.pop()!;
+        verifyNodeTimelocks(current, chainState, diagnostics);
 
         // Add children to stack for iterative processing
-        for (const child of node.children.values()) {
+        for (const child of current.children.values()) {
             stack.push(child);
         }
     }

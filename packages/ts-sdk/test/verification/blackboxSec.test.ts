@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { hex, base64 } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { p2tr } from "@scure/btc-signer/payment.js";
@@ -57,7 +57,9 @@ describe("Black Box Security Audit: Malicious ASP Resilience", () => {
     });
 
     it("MIRAGE: should reject a VTXO when the commitment is found but NOT confirmed", async () => {
-        const commitmentRaw = createVirtualTx(fakeCommitmentTxid(203), 0, [{ amount: 100000n }]);
+        const commitmentRaw = createVirtualTx(fakeCommitmentTxid(203), 0, [
+            { amount: 100000n, script: makeP2TRScript(1) },
+        ]);
         const commitmentTxid = commitmentRaw.txid;
 
         // Found in node, but NOT confirmed
@@ -170,19 +172,19 @@ describe("Black Box Security Audit: Malicious ASP Resilience", () => {
     });
 
     it("FORGERY: should reject trivial OP_TRUE script injections for policy bypass", async () => {
-        const commitmentRaw = createVirtualTx(fakeCommitmentTxid(701), 0, [
-            { amount: 100000n, script: makeP2TRScript(1) },
-        ]);
-        const commitmentTxid = commitmentRaw.txid;
-        onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
-        onchain.confirmedTxids.add(commitmentTxid);
-
         // MALICIOUS SCRIPT: just OP_TRUE (0x51).
         const trivialScript = new Uint8Array([0x51]);
         const internalKey = schnorr.getPublicKey(TEST_PRIVKEYS[1]);
 
         // Use p2tr helper to get a perfectly formatted but conceptually malicious leaf
         const tr = p2tr(internalKey, { script: trivialScript }, undefined, true);
+
+        const commitmentRaw = createVirtualTx(fakeCommitmentTxid(701), 0, [
+            { amount: 100000n, script: tr.script },
+        ]);
+        const commitmentTxid = commitmentRaw.txid;
+        onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
+        onchain.confirmedTxids.add(commitmentTxid);
 
         const vtxoTx = createVirtualTx(commitmentTxid, 0, [{ amount: 100000n }], {
             parentScript: tr.script,
@@ -245,15 +247,25 @@ describe("Black Box Security Audit: Malicious ASP Resilience", () => {
     });
 
     it("DOS / CYCLE: should violently reject a malicious DAG that contains an infinite loop to prevent SDK crash", async () => {
-        const commitmentRaw = createVirtualTx(fakeCommitmentTxid(998), 0, [
-            { amount: 100000n, script: makeP2TRScript(1) },
+        const commitmentRaw = createVirtualTx(fakeCommitmentTxid(16), 0, [
+            { amount: 100000n, script: makeP2TRScript(0) },
         ]);
         const commitmentTxid = commitmentRaw.txid;
         onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
         onchain.confirmedTxids.add(commitmentTxid);
 
-        const fakeRoot = "vtxo_infinity_root";
-        const fakeChild = "vtxo_infinity_loop";
+        const txA = createVirtualTx(fakeCommitmentTxid(999), 0, [{ amount: 111n }]);
+        const txB = createVirtualTx(fakeCommitmentTxid(888), 0, [{ amount: 222n }]);
+        const fakeRoot = txA.txid;
+        const fakeChild = txB.txid;
+
+        // Save original bytes so computeTxid calculates the original hashes
+        const originalBytesA = txA.tx.toBytes(true, false);
+        const originalBytesB = txB.tx.toBytes(true, false);
+
+        // Mutate inputs to create a cryptographic cycle artificially
+        txA.tx.inputs[0].txid = hex.decode(fakeChild);
+        txB.tx.inputs[0].txid = hex.decode(fakeRoot);
 
         indexer.chain = [
             {
@@ -268,23 +280,28 @@ describe("Black Box Security Audit: Malicious ASP Resilience", () => {
                 type: ChainTxType.TREE,
                 spends: [fakeRoot],
             },
-            {
-                txid: commitmentTxid,
-                expiresAt: "2000000000",
-                type: ChainTxType.COMMITMENT,
-                spends: [],
-            },
+            { txid: commitmentTxid, expiresAt: "3000", type: ChainTxType.COMMITMENT, spends: [] },
         ];
 
-        const tx1 = createVirtualTx(fakeChild, 0, [{ amount: 100n }]);
-        const tx2 = createVirtualTx(fakeRoot, 0, [{ amount: 100n }]);
+        indexer.virtualTxs.set(fakeRoot, base64.encode(txA.tx.toPSBT()));
+        indexer.virtualTxs.set(fakeChild, base64.encode(txB.tx.toPSBT()));
 
-        indexer.virtualTxs.set(fakeRoot, base64.encode(tx1.tx.toPSBT()));
-        indexer.virtualTxs.set(fakeChild, base64.encode(tx2.tx.toPSBT()));
+        // Monkey-patch toBytes to return original bytes so computeTxid succeeds
+        // We restore it in the finally block
+        const originalToBytes = txA.tx.constructor.prototype.toBytes;
+        txA.tx.constructor.prototype.toBytes = function (this: any, ...args: any[]) {
+            if (this.outputs[0].amount === 111n) return originalBytesA;
+            if (this.outputs[0].amount === 222n) return originalBytesB;
+            return originalToBytes.apply(this, args);
+        };
 
-        await expect(
-            reconstructAndValidateVtxoDAG({ txid: fakeRoot, vout: 0 }, indexer, onchain),
-        ).rejects.toThrow(/CYCLE_DETECTED|INPUT_CHAIN_BREAK|TXID_MISMATCH|MISSING_TX/);
+        try {
+            await expect(
+                reconstructAndValidateVtxoDAG({ txid: fakeRoot, vout: 0 }, indexer, onchain),
+            ).rejects.toThrow(/CYCLE_DETECTED/);
+        } finally {
+            txA.tx.constructor.prototype.toBytes = originalToBytes;
+        }
     });
 
     it("ORPHAN / DISTRACTION: should reject a payload containing unreachable corrupted sub-graphs", async () => {
@@ -302,7 +319,8 @@ describe("Black Box Security Audit: Malicious ASP Resilience", () => {
         });
 
         // Orphan/distraction branch that has NO anchor to the commitment tx
-        const orphanTx = createVirtualTx("completely_fake_parent_tx", 0, [{ amount: 1000n }]);
+        const fakeParent = fakeCommitmentTxid(9999);
+        const orphanTx = createVirtualTx(fakeParent, 0, [{ amount: 1000n }]);
 
         signVirtualTx(vtxoTx.tx, 0, TEST_PRIVKEYS[1], [
             { script: makeP2TRScript(1), amount: 50000n },
@@ -312,14 +330,14 @@ describe("Black Box Security Audit: Malicious ASP Resilience", () => {
             {
                 txid: vtxoTx.txid,
                 expiresAt: "2000000000",
-                type: ChainTxType.ARK,
+                type: ChainTxType.TREE,
                 spends: [commitmentTxid],
             },
             {
                 txid: orphanTx.txid,
                 expiresAt: "2000000000",
                 type: ChainTxType.TREE,
-                spends: ["completely_fake_parent_tx"],
+                spends: [fakeParent],
             },
             {
                 txid: commitmentTxid,

@@ -8,7 +8,7 @@ import type {
     VerificationIndexerProvider,
     VerificationOnchainProvider,
 } from "../tree/vtxoDAGVerification.js";
-import { reconstructAndValidateVtxoDAG, computeTxid } from "../tree/vtxoDAGVerification.js";
+import { computeTxid, verifyVtxoComplete } from "../tree/vtxoDAGVerification.js";
 import { StorageCrypto } from "../utils/cryptoUtils.js";
 
 export interface SovereignExitData {
@@ -173,10 +173,16 @@ export async function onReceiveVtxo(
     onchain: VerificationOnchainProvider,
     storage: VerificationStorageProvider,
     masterKey: Uint8Array,
+    minConfirmations: number = 1,
 ): Promise<{ success: boolean; diagnostics: string[]; error?: string }> {
     try {
         // 1. Run rigorous multi-layered verification (DAG, Sigs, Taproot, Timelocks, HTLCs)
-        const verificationResult = await reconstructAndValidateVtxoDAG(outpoint, indexer, onchain);
+        const verificationResult = await verifyVtxoComplete(
+            outpoint,
+            indexer,
+            onchain,
+            minConfirmations,
+        );
 
         // 2. Persist Sovereign Exit Data locally, cutting ASP ties for exiting
         await persistVtxoForExit(verificationResult, storage, masterKey);

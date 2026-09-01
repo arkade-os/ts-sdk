@@ -23,6 +23,7 @@ import { hex } from "@scure/base";
 import { type DAGNode, VtxoVerificationError } from "./vtxoDAGVerification.js";
 import { taprootTweakPubkey, equalBytes } from "@scure/btc-signer/utils.js";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
+import { Script } from "@scure/btc-signer/script.js";
 
 // SIGHASH_DEFAULT (0x00) is the standard for Taproot key-path spends in Ark
 const SIGHASH_DEFAULT = 0x00;
@@ -249,6 +250,59 @@ function verifyNodeScriptPathSignature(node: DAGNode): void {
                 "INVALID_SIGNATURE",
                 { txid },
             );
+        }
+    }
+
+    // ── Completeness Check: Ensure all keys in the matched leaf have signatures ──
+    const suppliedKeys = new Set(tapScriptSig.map(([keyInfo]) => hex.encode(keyInfo.pubKey)));
+
+    // Group matched scripts by leafHash to verify completeness per leaf
+    const checkedLeafHashes = new Set(
+        tapScriptSig.map(([keyInfo]) => hex.encode(keyInfo.leafHash)),
+    );
+
+    for (const leafHashHex of checkedLeafHashes) {
+        // Find the matched script for this leaf hash
+        const leafHashBytes = hex.decode(leafHashHex);
+        let matchingScript: Uint8Array | undefined;
+        for (const leaf of tapLeafScript) {
+            const scriptWithVer = leaf[1];
+            if (scriptWithVer && scriptWithVer.length > 0) {
+                const script = scriptWithVer.slice(0, -1);
+                const ver = scriptWithVer[scriptWithVer.length - 1];
+                const hash = tapLeafHash(script, ver);
+                if (equalBytes(hash, leafHashBytes)) {
+                    matchingScript = script;
+                    break;
+                }
+            }
+        }
+
+        if (matchingScript) {
+            let decoded: (string | number | bigint | Uint8Array)[];
+            try {
+                decoded = Script.decode(matchingScript);
+            } catch (e) {
+                throw new VtxoVerificationError(
+                    `Failed to decode tapleaf script in ${txid} for completeness check`,
+                    "INVALID_ARK_SCRIPT",
+                );
+            }
+
+            const expectedKeys = decoded.filter(
+                (item): item is Uint8Array =>
+                    item instanceof Uint8Array && (item.length === 32 || item.length === 33),
+            );
+
+            for (const key of expectedKeys) {
+                if (!suppliedKeys.has(hex.encode(key))) {
+                    throw new VtxoVerificationError(
+                        `Transaction ${txid} is missing a script-path signature for key ${hex.encode(key)} in leaf ${leafHashHex}`,
+                        "INCOMPLETE_SIGNATURES",
+                        { txid, leafHash: leafHashHex, missingKey: hex.encode(key) },
+                    );
+                }
+            }
         }
     }
 }

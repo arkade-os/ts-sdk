@@ -101,7 +101,10 @@ export function createVirtualTx(
         tapMerkleRoot?: Uint8Array;
     },
 ): { tx: Transaction; psbtB64: string; txid: string } {
-    const hexTxid = parentTxid.length === 64 ? parentTxid : fakeCommitmentTxid(1);
+    if (parentTxid.length !== 64) {
+        throw new Error(`Invalid parentTxid length: ${parentTxid.length}, expected 64`);
+    }
+    const hexTxid = parentTxid;
     const p2trScript = opts?.parentScript ?? makeP2TRScript(0);
     const tx = new Transaction({
         version: 2,
@@ -131,7 +134,7 @@ export function createVirtualTx(
         const out = outputs[i];
         tx.addOutput({
             amount: out.amount,
-            script: out.script ?? makeP2TRScript(i + 1),
+            script: out.script ?? makeP2TRScript(i),
         });
     }
 
@@ -1146,10 +1149,15 @@ describe("VTXO DAG Verification", () => {
             onchain.txs.set(commitmentTxid, hex.encode(commitmentRaw.tx.toBytes()));
             onchain.confirmedTxids.add(commitmentTxid);
 
-            const intermediateTx = createVirtualTx(commitmentTxid, 0, [{ amount: 200000n }], {
-                parentScript: makeP2TRScript(0),
-                tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[0]),
-            });
+            const intermediateTx = createVirtualTx(
+                commitmentTxid,
+                0,
+                [{ amount: 200000n, script: makeP2TRScript(1) }],
+                {
+                    parentScript: makeP2TRScript(0),
+                    tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[0]),
+                },
+            );
             signVirtualTx(intermediateTx.tx, 0, TEST_PRIVKEYS[0], [
                 { script: makeP2TRScript(0), amount: 200000n },
             ]);

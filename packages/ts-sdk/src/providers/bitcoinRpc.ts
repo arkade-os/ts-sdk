@@ -68,6 +68,7 @@ export class BitcoinRpcProvider implements VerificationOnchainProvider {
         public readonly url: string = "http://localhost:18443",
         private readonly user: string = "user",
         private readonly pass: string = "password",
+        private readonly timeoutMs: number = 30000,
     ) {}
 
     /**
@@ -76,19 +77,33 @@ export class BitcoinRpcProvider implements VerificationOnchainProvider {
     private async call<T>(method: string, params: any[] = []): Promise<T> {
         const auth = base64.encode(new TextEncoder().encode(`${this.user}:${this.pass}`));
 
-        const response = await fetch(this.url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Basic ${auth}`,
-            },
-            body: JSON.stringify({
-                jsonrpc: "1.0",
-                id: this.rpcId++,
-                method,
-                params,
-            }),
-        });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+
+        let response: Response;
+        try {
+            response = await fetch(this.url, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Basic ${auth}`,
+                },
+                body: JSON.stringify({
+                    jsonrpc: "1.0",
+                    id: this.rpcId++,
+                    method,
+                    params,
+                }),
+                signal: controller.signal,
+            });
+        } catch (error: any) {
+            if (error.name === "AbortError") {
+                throw new BitcoinRpcError(`RPC Request timed out after ${this.timeoutMs}ms`, 408);
+            }
+            throw new BitcoinRpcError(`Network error: ${error.message}`, -1);
+        } finally {
+            clearTimeout(timeoutId);
+        }
 
         if (!response.ok) {
             if (response.status === 401) {

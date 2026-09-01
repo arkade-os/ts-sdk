@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { hex, base64 } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
@@ -15,6 +15,7 @@ import {
     reconstructAndValidateVtxoDAG,
     ChainTxType,
     VtxoVerificationError,
+    computeTxid,
 } from "../../src/tree/vtxoDAGVerification.js";
 import { verifyDAGSignatures } from "../../src/tree/signatureVerification.js";
 
@@ -43,11 +44,11 @@ describe("Red Team: Stress & DoS Audit", () => {
         const mockTx = {
             inputsLength: 1,
             getInput: (index: number) => {
-                if (index === 0) {
-                    return {
-                        tapLeafScript: [[controlBlock, leafScript]],
-                    };
-                }
+                return {
+                    tapInternalKey: internalKey,
+                    tapMerkleRoot: new Uint8Array(32),
+                    tapLeafScript: [[controlBlock, new Uint8Array([...leafScript, 0xc0])]],
+                };
                 return {};
             },
         } as any;
@@ -65,7 +66,7 @@ describe("Red Team: Stress & DoS Audit", () => {
                 descendant: null,
                 rawPsbt: "",
             } as any),
-        ).toThrow();
+        ).toThrowError(/depth exceeds maximum/);
     });
 
     /**
@@ -75,24 +76,51 @@ describe("Red Team: Stress & DoS Audit", () => {
     it("should immediately detect and reject a cyclic DAG (Ouroboros Attack)", async () => {
         const commitment = fakeCommitmentTxid(0);
 
-        const txA = "aa".repeat(32);
-        const txB = "bb".repeat(32);
+        const txA = createVirtualTx(fakeCommitmentTxid(999), 0, [{ amount: 111111n }]);
+        const txB = createVirtualTx(fakeCommitmentTxid(888), 0, [{ amount: 222222n }]);
+        const fakeRoot = txA.txid;
+        const fakeChild = txB.txid;
 
-        const psbtA = createVirtualTx(txB, 0, [{ amount: 100000n }]).tx.toPSBT();
-        const psbtB = createVirtualTx(txA, 0, [{ amount: 100000n }]).tx.toPSBT();
+        const originalBytesA = txA.tx.toBytes(true, false);
+        const originalBytesB = txB.tx.toBytes(true, false);
+
+        // Mutate inputs to create a cryptographic cycle artificially
+        txA.tx.inputs[0].txid = hex.decode(fakeChild);
+        txB.tx.inputs[0].txid = hex.decode(fakeRoot);
 
         indexer.chain = [
-            { txid: txA, expiresAt: "2000000000", type: ChainTxType.TREE, spends: [txB] },
-            { txid: txB, expiresAt: "2000000000", type: ChainTxType.TREE, spends: [txA] },
-            { txid: commitment, expiresAt: "2000000000", type: ChainTxType.COMMITMENT, spends: [] },
+            {
+                txid: fakeRoot,
+                expiresAt: "2000000000",
+                type: ChainTxType.TREE,
+                spends: [fakeChild],
+            },
+            {
+                txid: fakeChild,
+                expiresAt: "2000000000",
+                type: ChainTxType.TREE,
+                spends: [fakeRoot],
+            },
+            { txid: commitment, expiresAt: "3000", type: ChainTxType.COMMITMENT, spends: [] },
         ];
 
-        indexer.virtualTxs.set(txA, base64.encode(psbtA));
-        indexer.virtualTxs.set(txB, base64.encode(psbtB));
+        indexer.virtualTxs.set(fakeRoot, base64.encode(txA.tx.toPSBT()));
+        indexer.virtualTxs.set(fakeChild, base64.encode(txB.tx.toPSBT()));
 
-        await expect(
-            reconstructAndValidateVtxoDAG({ txid: txA, vout: 0 }, indexer, onchain),
-        ).rejects.toThrow();
+        const originalToBytes = txA.tx.constructor.prototype.toBytes;
+        txA.tx.constructor.prototype.toBytes = function (this: any, ...args: any[]) {
+            if (this.outputs[0].amount === 111111n) return originalBytesA;
+            if (this.outputs[0].amount === 222222n) return originalBytesB;
+            return originalToBytes.apply(this, args);
+        };
+
+        try {
+            await expect(
+                reconstructAndValidateVtxoDAG({ txid: fakeRoot, vout: 0 }, indexer, onchain),
+            ).rejects.toThrow(/CYCLE_DETECTED/);
+        } finally {
+            txA.tx.constructor.prototype.toBytes = originalToBytes;
+        }
     });
 
     /**
@@ -113,13 +141,24 @@ describe("Red Team: Stress & DoS Audit", () => {
         const virtualTxs = new Map<string, string>();
 
         for (let i = 0; i < count; i++) {
-            const vTx = createVirtualTx(lastTxid, 0, [{ amount: 100000n }], {
-                tapInternalKey: schnorr.getPublicKey(TEST_PRIVKEYS[1]),
-            });
+            const internalKey = schnorr.getPublicKey(TEST_PRIVKEYS[1]);
+            const vTx = createVirtualTx(
+                lastTxid,
+                0,
+                [{ amount: 100000n, script: makeP2TRScript(1) }],
+                {
+                    tapInternalKey: internalKey,
+                    parentScript: makeP2TRScript(1),
+                },
+            );
 
             // Ensure the ROOT (first node created) has an INVALID signature
             if (i === 0) {
                 vTx.tx.updateInput(0, { tapKeySig: new Uint8Array(64).fill(0xde) });
+            } else {
+                signVirtualTx(vTx.tx, 0, TEST_PRIVKEYS[1], [
+                    { script: makeP2TRScript(1), amount: 100000n },
+                ]);
             }
 
             virtualTxs.set(vTx.txid, base64.encode(vTx.tx.toPSBT()));
@@ -134,9 +173,9 @@ describe("Red Team: Stress & DoS Audit", () => {
 
         const outpoint = { txid: lastTxid, vout: 0 };
 
-        // Should fail on invalid signature / root mismatch
+        // Should fail on invalid signature
         await expect(verifyVtxoComplete(outpoint, indexer, onchain)).rejects.toThrow(
-            /INVALID_TAPROOT_TWEAK|INVALID_SIGNATURE/,
+            /INVALID_SIGNATURE/,
         );
     }, 60000);
 });
