@@ -455,6 +455,12 @@ export interface WalletBalance {
     /**
      * Total balance across offchain, recoverable, pending-recovery, unrolled,
      * and boarding funds.
+     *
+     * One known main-thread-only wedge: while a `settle` or `sendBitcoin` is in
+     * flight its inputs are withheld from every bucket, including this one. That
+     * state lives on the `Wallet` instance driving the spend, so a service-worker
+     * client reading the same repository still counts them until the spend
+     * settles. Both sides converge when it does.
      */
     total: number;
 

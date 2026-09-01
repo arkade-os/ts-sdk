@@ -441,6 +441,15 @@ const PENDING_RECOVERY_REASON =
     "is past its operator signer's rotation cutoff — the operator will not co-sign it until it recovers";
 
 /**
+ * The fourth reason generic selection drops a coin. Reported from the raw
+ * snapshot rather than through the other exclusions: {@link filterSnapshotVtxos}
+ * removes unrolled coins before they reach that call, so an exclusion there
+ * could never match.
+ */
+const UNROLLED_REASON =
+    "was unilaterally exited and lives onchain — `Unroll.completeUnroll` is the only spend that reaches it";
+
+/**
  * What signer classification needs of a snapshot: contract params and the coins
  * under them. Structural rather than {@link ContractWithVtxos} so a repository-
  * built snapshot — the worker's, whose VTXOs carry no `contractScript` — can be
@@ -1285,6 +1294,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 "is locked by an in-flight settlement intent",
             ),
         ]);
+        // Its own call over its own array: the set above cannot contain these,
+        // and widening it to the raw snapshot would report every terminally-spent
+        // coin under a gated contract as gated. Skipped when the caller asked for
+        // unrolled coins — those were not excluded. A completed unroll stays out:
+        // `completeUnroll` no longer reaches it either.
+        if (!filter?.withUnrolled) {
+            logExcludedVtxos(
+                "getSpendableVtxos",
+                snapshot
+                    .flatMap((contract) => contract.vtxos)
+                    .filter((vtxo) => vtxo.isUnrolled && !hasTerminalSpend(vtxo)),
+                [() => UNROLLED_REASON],
+            );
+        }
         return unlocked;
     }
 
