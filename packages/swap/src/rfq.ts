@@ -1247,6 +1247,11 @@ export async function requestOnchainSend(
     /** `profile.min_confirmations`; gates when the L1 fill becomes claimable,
      * and part of what a restored swap needs to drive its own claim. */
     minConfirmations: number;
+    /** The arkade lockup's refund deadline, as the covenant was built with it.
+     * Read this rather than `quote.refund_locktime`: that field is optional on
+     * the wire, a solver may carry the value in `profile` instead, and
+     * `deriveOnchainSend` is what settles which one this contract used. */
+    refundLocktime: number;
     /** The VHTLC `sender` x-only key, bound into the covenant. Public. */
     senderPubkey: Uint8Array;
     /** How the preimage and the `sender` key are recovered later — map it
@@ -1330,6 +1335,7 @@ export async function requestOnchainSend(
         htlcParams: derived.htlcParams,
         l1Network: derived.l1Network,
         minConfirmations: derived.minConfirmations,
+        refundLocktime: derived.refundLocktime,
         senderPubkey,
         secrets,
     };

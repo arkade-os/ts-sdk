@@ -193,6 +193,7 @@ export {
     type LockupVtxo,
     type RefundIndexer,
     type RefundOutcome,
+    type SwapOperator,
 } from "./refund";
 export { arkadeRefunder, type ArkadeRefunderDeps } from "./arkadeRefunder";
 export {
@@ -239,3 +240,15 @@ export {
     type RfqSwapActivityDeps,
     type SwapActivityInput,
 } from "./activity";
+export {
+    createSwapClient,
+    type LightningReceiveQuote,
+    type LightningSendQuote,
+    type OnchainSendQuote,
+    type SpotQuote,
+    type SwapClient,
+    type SwapClientDeps,
+    type SwapQuote,
+    type SwapQuoteInput,
+    type UnifiedSwap,
+} from "./swapClient";

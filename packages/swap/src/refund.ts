@@ -123,6 +123,17 @@ export async function awaitRfqResolution(
 // ── The refundWithoutReceiver push ───────────────────────────────────────────
 
 /** The indexer surface the lockup lookup needs. */
+/**
+ * What a push needs from the operator: the broadcast pair, plus the info read
+ * that supplies `checkpointTapscript`.
+ *
+ * Narrow on purpose. A wallet's own connection satisfies it —
+ * `getArkadeBroadcaster()` for the pair and `getArkadeInfo()` for the read — so
+ * a plugin composes one from the wallet it already has and never opens a second
+ * connection of its own (#734). A full `ArkProvider` still fits, structurally.
+ */
+export type SwapOperator = Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+
 export type RefundIndexer = Pick<RestIndexerProvider, "getVtxos">;
 
 /** A still-refundable virtual output sitting at the swap lockup. */
@@ -539,7 +550,7 @@ export async function readLockupFate(
  * would be worse still: it would report success over money that never moved.
  */
 export async function pushRefundWithoutReceiver(
-    operator: ArkProvider,
+    operator: SwapOperator,
     input: {
         contract: InstanceType<typeof VHTLC.ScriptV2>;
         /** The `sender` signer. Build it from the swap record with
@@ -693,7 +704,7 @@ export type RefundOutcome =
  */
 export async function refundIfUnresolved(
     transport: RfqTransport,
-    operator: ArkProvider,
+    operator: SwapOperator,
     indexer: RefundIndexer,
     input: {
         rfqId: string;
