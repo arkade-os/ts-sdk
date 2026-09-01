@@ -342,7 +342,7 @@ export function validateTimelockSatisfiability(
     chainState: ChainState,
     txid: string,
     diagnostics?: string[],
-): void {
+): boolean {
     const { nLockTime, cltvValues, csvValues, lockTimeType, sequenceType, isKeyPathSpend } =
         constraints;
 
@@ -404,6 +404,7 @@ export function validateTimelockSatisfiability(
     // Note: In a real Ark deployment, virtual txs are never broadcast
     // on-chain unless there's a dispute. The CSV check here validates that
     // the constraints COULD be satisfied if the tx were broadcast.
+    let satisfied = true;
     if (!isKeyPathSpend && sequenceType === "blocks" && csvValues.length > 0) {
         const maxCsv = Math.max(
             ...csvValues
@@ -429,10 +430,11 @@ export function validateTimelockSatisfiability(
                     );
                 }
 
+                satisfied = false;
                 if (diagnostics) {
                     const remaining = maxCsv - depth;
                     diagnostics.push(
-                        `  ! VTXO ${txid} has a CSV delay of ${maxCsv} blocks. Commitment has ${depth} confirmations. (Remaining delay: ${remaining} blocks)`,
+                        `  ! VTXO ${txid} has a CSV delay of ${maxCsv} blocks. Commitment has ${depth} confirmations. (Remaining delay: ${remaining} blocks; not immediately broadcastable)`,
                     );
                 }
             }
@@ -448,6 +450,8 @@ export function validateTimelockSatisfiability(
             }
         }
     }
+
+    return satisfied;
 }
 
 // ─── Entry Point: Recursive DAG Validation ───────────────────────────────────
@@ -463,13 +467,14 @@ export function validateTimelockSatisfiability(
  * @param node       The node of the DAG to validate.
  * @param chainState Current blockchain state (height + MTP).
  * @param diagnostics Optional diagnostic output array.
+ * @returns true if all timelocks are fully mature/satisfied; false if immature.
  * @throws VtxoVerificationError on any timelock violation.
  */
 export function verifyNodeTimelocks(
     node: DAGNode,
     chainState: ChainState,
     diagnostics?: string[],
-): void {
+): boolean {
     const constraints = extractTimelockConstraints(node);
 
     // Only run validation if there are actual timelock constraints
@@ -481,24 +486,30 @@ export function verifyNodeTimelocks(
 
     if (hasTimelocks) {
         validateTimelockConsistency(constraints, node.txid);
-        validateTimelockSatisfiability(constraints, chainState, node.txid, diagnostics);
+        return validateTimelockSatisfiability(constraints, chainState, node.txid, diagnostics);
     }
+    return true;
 }
 
 export function verifyDAGTimelocks(
     rootNode: DAGNode,
     chainState: ChainState,
     diagnostics?: string[],
-): void {
+): boolean {
+    let allSatisfied = true;
     const stack: DAGNode[] = [rootNode];
 
     while (stack.length > 0) {
         const current = stack.pop()!;
-        verifyNodeTimelocks(current, chainState, diagnostics);
+        const satisfied = verifyNodeTimelocks(current, chainState, diagnostics);
+        if (!satisfied) {
+            allSatisfied = false;
+        }
 
         // Add children to stack for iterative processing
         for (const child of current.children.values()) {
             stack.push(child);
         }
     }
+    return allSatisfied;
 }

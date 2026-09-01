@@ -149,8 +149,14 @@ export interface DAGNode {
 
 /** Validation result for the DAG. */
 export interface DAGValidationResult {
-    /** Whether all validations passed. */
+    /** Whether all validations passed and the DAG is structurally sound and authentic. */
     valid: boolean;
+
+    /** Whether all relative and absolute timelocks have matured under current chain state. */
+    timelocksSatisfied: boolean;
+
+    /** Whether the VTXO is structurally valid and immediately broadcastable on L1. */
+    broadcastable: boolean;
 
     /** The reconstructed VTXO Root (the starting point). */
     vtxoRoot: DAGNode;
@@ -179,9 +185,9 @@ export interface CheckpointValidation {
     txid: string;
     /** Whether the checkpoint's expiry is coherent with the sweep delay. */
     expiryCoherent: boolean;
-    /** Whether the checkpoint references the correct parent output. */
+    /** Whether the checkpoint's parent was found and validated in the chain. */
     parentChainValid: boolean;
-    /** Human-readable notes. */
+    /** Detailed notes / diagnostic strings for this checkpoint. */
     notes: string[];
 }
 
@@ -262,6 +268,19 @@ const Errors = {
             `Checkpoint ${txid} has incoherent expiry: ${details}`,
             "CHECKPOINT_EXPIRY_INCOHERENT",
             { txid },
+        ),
+
+    CHECKPOINT_PARENT_MISMATCH: (txid: string, details: string) =>
+        new VtxoVerificationError(
+            `Checkpoint ${txid} ancestor error: ${details}`,
+            "CHECKPOINT_PARENT_MISMATCH",
+            { txid },
+        ),
+
+    MALFORMED_VTXO_TREE: (details: string) =>
+        new VtxoVerificationError(
+            `Malformed VTXO tree structure: ${details}`,
+            "MALFORMED_VTXO_TREE",
         ),
 
     ORPHAN_TX: (txid: string) =>
@@ -560,21 +579,25 @@ export async function reconstructAndValidateVtxoDAG(
     for (const node of allNodes.values()) verifyNodeTaproot(node);
     verifyDAGSignatures(anchoringLeaf);
 
+    let timelocksSatisfied = true;
     if (blockchainInfo) {
         const chainState = {
             currentHeight: blockchainInfo.height,
             currentTime: blockchainInfo.medianTime,
             commitmentHeight: onchainStatus.confirmed ? onchainStatus.blockHeight : undefined,
         };
-        verifyDAGTimelocks(anchoringLeaf, chainState, diagnostics);
+        timelocksSatisfied = verifyDAGTimelocks(anchoringLeaf, chainState, diagnostics);
     }
 
     verifyDAGHashPreimages(anchoringLeaf, witnessPreimages);
 
     const isValid = checkpointValidations.every((cv) => cv.expiryCoherent && cv.parentChainValid);
+    const broadcastable = isValid && timelocksSatisfied;
 
     return {
         valid: isValid,
+        timelocksSatisfied,
+        broadcastable,
         vtxoRoot: vtxoRoot,
         anchoringLeaf: anchoringLeaf,
         commitmentTxid: actualCommitmentTxid,
@@ -827,22 +850,30 @@ function validateCheckpoints(
 
         // 1. Verify checkpoint has ancestors in the chain ─────────────────────
         if (node.chainTx.spends.length === 0) {
-            notes.push("WARNING: Checkpoint has no ancestor references in chain data");
+            notes.push("FAIL: Checkpoint has no ancestor references in chain data");
             parentChainValid = false;
+            throw Errors.CHECKPOINT_PARENT_MISMATCH(
+                txid,
+                "Checkpoint has no ancestor references in chain data",
+            );
         }
 
         // Verify input chaining (already done globally, but double-check)
         const input = node.tx.getInput(0);
         if (!input.txid) {
-            notes.push("ERROR: Checkpoint has no input txid");
+            notes.push("FAIL: Checkpoint has no input txid");
             parentChainValid = false;
+            throw Errors.MALFORMED_VTXO_TREE(`Checkpoint ${txid} has no input txid`);
         } else {
             const ancestorTxid = hex.encode(input.txid);
             const ancestorInChain = chainLookup.get(ancestorTxid);
 
             if (!ancestorInChain) {
-                notes.push(
-                    `WARNING: Checkpoint ancestor ${ancestorTxid} not found in chain metadata`,
+                notes.push(`FAIL: Checkpoint ancestor ${ancestorTxid} not found in chain metadata`);
+                parentChainValid = false;
+                throw Errors.CHECKPOINT_PARENT_MISMATCH(
+                    txid,
+                    `Checkpoint ancestor ${ancestorTxid} not found in chain metadata`,
                 );
             } else {
                 notes.push(`Ancestor in chain: ${ancestorTxid} (type: ${ancestorInChain.type})`);
@@ -916,6 +947,9 @@ function validateCheckpoints(
         if (node.tx.inputsLength !== 1) {
             notes.push(`FAIL: Checkpoint has ${node.tx.inputsLength} inputs (must be exactly 1)`);
             parentChainValid = false;
+            throw Errors.MALFORMED_VTXO_TREE(
+                `Checkpoint ${txid} has ${node.tx.inputsLength} inputs (must be exactly 1)`,
+            );
         }
 
         const valid = expiryCoherent && parentChainValid;
@@ -1087,6 +1121,14 @@ export async function verifyVtxoComplete(
         commitmentTxid,
     );
 
+    if (!dagResult.valid) {
+        throw new VtxoVerificationError(
+            `VTXO DAG verification failed for ${vtxoOutpoint.txid}:${vtxoOutpoint.vout}: invalid checkpoint or structural validation`,
+            "VERIFICATION_FAILED",
+            { vtxoOutpoint, checkpointValidations: dagResult.checkpointValidations },
+        );
+    }
+
     // Phase 2: On-chain anchoring verification (throttled)
     // COMPLIANCE TASK 3.1: Live verification of depth, scripts, and amounts against on-chain data.
     const onchainStatus = await globalOnchainLimiter.run(async () => {
@@ -1145,6 +1187,7 @@ export async function verifyVtxoComplete(
 
     return {
         ...dagResult,
+        broadcastable: dagResult.broadcastable && onchainStatus.confirmed,
         onchainStatus,
     };
 }

@@ -113,6 +113,11 @@ export async function persistVtxoForExit(
     if (!masterKey || masterKey.length === 0) {
         throw new Error("Security Error: Storage Master Key is required for persistence.");
     }
+    if (!result.valid) {
+        throw new Error(
+            "Security Error: Cannot persist invalid VTXO DAG verification result for sovereign exit",
+        );
+    }
     const broadcastSequence = extractExitSequence(result.anchoringLeaf, result.vtxoRoot.txid);
 
     const exitData: SovereignExitData = {
@@ -174,7 +179,7 @@ export async function onReceiveVtxo(
     storage: VerificationStorageProvider,
     masterKey: Uint8Array,
     minConfirmations: number = 1,
-): Promise<{ success: boolean; diagnostics: string[]; error?: string }> {
+): Promise<{ success: boolean; diagnostics: string[]; broadcastable?: boolean; error?: string }> {
     try {
         // 1. Run rigorous multi-layered verification (DAG, Sigs, Taproot, Timelocks, HTLCs)
         const verificationResult = await verifyVtxoComplete(
@@ -187,11 +192,17 @@ export async function onReceiveVtxo(
         // 2. Persist Sovereign Exit Data locally, cutting ASP ties for exiting
         await persistVtxoForExit(verificationResult, storage, masterKey);
 
+        const statusNote = verificationResult.broadcastable
+            ? "✓ Exit path is immediately broadcastable on-chain"
+            : "! Exit path is secured locally (timelocks pending on-chain maturity)";
+
         return {
             success: true,
+            broadcastable: verificationResult.broadcastable,
             diagnostics: [
                 ...verificationResult.diagnostics,
                 ` Local sovereign exit data secured for ${outpoint.txid}`,
+                statusNote,
             ],
         };
     } catch (error: any) {

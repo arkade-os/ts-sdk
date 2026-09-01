@@ -289,10 +289,7 @@ function verifyNodeScriptPathSignature(node: DAGNode): void {
                 );
             }
 
-            const expectedKeys = decoded.filter(
-                (item): item is Uint8Array =>
-                    item instanceof Uint8Array && (item.length === 32 || item.length === 33),
-            );
+            const expectedKeys = extractSigningKeysFromScript(decoded);
 
             for (const key of expectedKeys) {
                 if (!suppliedKeys.has(hex.encode(key))) {
@@ -305,6 +302,31 @@ function verifyNodeScriptPathSignature(node: DAGNode): void {
             }
         }
     }
+}
+
+/**
+ * Extracts public keys that participate in cryptographic signature checks.
+ *
+ * Compliance Note (Finding N2):
+ * Rather than blindly treating all 32/33-byte data pushes as public keys (which would
+ * conflate 32-byte hash preimages in VHTLC/submarine swap scripts or internal keys with
+ * signing pubkeys), this extractor only collects buffers that are directly evaluated by
+ * CHECKSIG, CHECKSIGVERIFY, or CHECKSIGADD.
+ */
+function extractSigningKeysFromScript(
+    decoded: (string | number | bigint | Uint8Array)[],
+): Uint8Array[] {
+    const keys: Uint8Array[] = [];
+    for (let i = 0; i < decoded.length; i++) {
+        const item = decoded[i];
+        if (item instanceof Uint8Array && (item.length === 32 || item.length === 33)) {
+            const next = decoded[i + 1];
+            if (next === "CHECKSIG" || next === "CHECKSIGVERIFY" || next === "CHECKSIGADD") {
+                keys.push(item);
+            }
+        }
+    }
+    return keys;
 }
 
 /**

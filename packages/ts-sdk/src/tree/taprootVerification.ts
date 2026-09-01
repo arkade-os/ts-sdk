@@ -293,6 +293,172 @@ function isCollaborativeMultisigTemplate(
     return false;
 }
 
+function isKey(item: any): item is Uint8Array {
+    return item instanceof Uint8Array && (item.length === 32 || item.length === 33);
+}
+
+function isHashOpcode(op: any): boolean {
+    return op === "SHA256" || op === "HASH160" || op === "RIPEMD160" || op === "HASH256";
+}
+
+/**
+ * Validates whether a script matches the standard Ark unilateral exit template:
+ * - <sequence> CHECKSEQUENCEVERIFY DROP <pubkey> CHECKSIG
+ * - <sequence> CHECKSEQUENCEVERIFY DROP <multisig_template>
+ * - <condition> VERIFY <sequence> CHECKSEQUENCEVERIFY DROP <pubkey> CHECKSIG / <multisig_template>
+ */
+function isArkStandardExitTemplate(decoded: (string | number | bigint | Uint8Array)[]): boolean {
+    let ops = decoded;
+    const verifyIdx = decoded.lastIndexOf("VERIFY");
+    if (verifyIdx !== -1 && verifyIdx < decoded.length - 4) {
+        ops = decoded.slice(verifyIdx + 1);
+    }
+
+    if (ops.length >= 5 && ops[1] === "CHECKSEQUENCEVERIFY" && ops[2] === "DROP") {
+        const remaining = ops.slice(3);
+        if (remaining.length === 2 && isKey(remaining[0]) && remaining[1] === "CHECKSIG") {
+            return true;
+        }
+        if (isCollaborativeMultisigTemplate(remaining)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Validates whether a script matches a submarine swap HTLC claim template:
+ * - <hash> <HASH_OP> EQUALVERIFY <pubkey> CHECKSIG
+ * - <hash> <HASH_OP> EQUAL VERIFY <pubkey> CHECKSIG
+ * - <pubkey> CHECKSIGVERIFY <hash> <HASH_OP> EQUAL
+ * - <condition> VERIFY <pubkey> CHECKSIG
+ */
+function isSwapClaimTemplate(decoded: (string | number | bigint | Uint8Array)[]): boolean {
+    if (decoded.length === 5) {
+        // [hash_bytes, HASH_OP, "EQUALVERIFY", pubkey, "CHECKSIG"]
+        if (
+            decoded[0] instanceof Uint8Array &&
+            isHashOpcode(decoded[1]) &&
+            decoded[2] === "EQUALVERIFY" &&
+            isKey(decoded[3]) &&
+            decoded[4] === "CHECKSIG"
+        ) {
+            return true;
+        }
+        // [HASH_OP, hash_bytes, "EQUALVERIFY", pubkey, "CHECKSIG"] (standard Bitcoin script)
+        if (
+            isHashOpcode(decoded[0]) &&
+            decoded[1] instanceof Uint8Array &&
+            decoded[2] === "EQUALVERIFY" &&
+            isKey(decoded[3]) &&
+            decoded[4] === "CHECKSIG"
+        ) {
+            return true;
+        }
+        // [pubkey, "CHECKSIGVERIFY", hash_bytes, HASH_OP, "EQUAL"]
+        if (
+            isKey(decoded[0]) &&
+            decoded[1] === "CHECKSIGVERIFY" &&
+            decoded[2] instanceof Uint8Array &&
+            isHashOpcode(decoded[3]) &&
+            decoded[4] === "EQUAL"
+        ) {
+            return true;
+        }
+        // [pubkey, "CHECKSIGVERIFY", HASH_OP, hash_bytes, "EQUAL"]
+        if (
+            isKey(decoded[0]) &&
+            decoded[1] === "CHECKSIGVERIFY" &&
+            isHashOpcode(decoded[2]) &&
+            decoded[3] instanceof Uint8Array &&
+            decoded[4] === "EQUAL"
+        ) {
+            return true;
+        }
+    }
+
+    if (decoded.length === 6) {
+        if (
+            decoded[0] instanceof Uint8Array &&
+            isHashOpcode(decoded[1]) &&
+            decoded[2] === "EQUAL" &&
+            decoded[3] === "VERIFY" &&
+            isKey(decoded[4]) &&
+            decoded[5] === "CHECKSIG"
+        ) {
+            return true;
+        }
+        if (
+            isHashOpcode(decoded[0]) &&
+            decoded[1] instanceof Uint8Array &&
+            decoded[2] === "EQUAL" &&
+            decoded[3] === "VERIFY" &&
+            isKey(decoded[4]) &&
+            decoded[5] === "CHECKSIG"
+        ) {
+            return true;
+        }
+    }
+
+    const verifyIdx = decoded.lastIndexOf("VERIFY");
+    if (verifyIdx !== -1 && verifyIdx < decoded.length - 1) {
+        const prefix = decoded.slice(0, verifyIdx);
+        const hasHashLock = prefix.some((op) => isHashOpcode(op));
+        const suffix = decoded.slice(verifyIdx + 1);
+        if (hasHashLock) {
+            if (suffix.length === 2 && isKey(suffix[0]) && suffix[1] === "CHECKSIG") {
+                return true;
+            }
+            if (isCollaborativeMultisigTemplate(suffix)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Validates whether a script matches a submarine swap HTLC refund template:
+ * - <locktime> CHECKLOCKTIMEVERIFY DROP <pubkey> CHECKSIG
+ * - <pubkey> CHECKSIGVERIFY <locktime> CHECKLOCKTIMEVERIFY (Boltz submarine refund)
+ * - <locktime> CHECKLOCKTIMEVERIFY DROP <multisig_template>
+ * - <sequence> CHECKSEQUENCEVERIFY DROP <pubkey> CHECKSIG (also matches ArkStandardExit)
+ */
+function isSwapRefundTemplate(decoded: (string | number | bigint | Uint8Array)[]): boolean {
+    if (decoded.length === 4) {
+        // [pubkey, "CHECKSIGVERIFY", locktime, "CHECKLOCKTIMEVERIFY" | "CHECKSEQUENCEVERIFY"]
+        if (
+            isKey(decoded[0]) &&
+            decoded[1] === "CHECKSIGVERIFY" &&
+            (decoded[3] === "CHECKLOCKTIMEVERIFY" || decoded[3] === "CHECKSEQUENCEVERIFY")
+        ) {
+            return true;
+        }
+    }
+
+    let ops = decoded;
+    const verifyIdx = decoded.lastIndexOf("VERIFY");
+    if (verifyIdx !== -1 && verifyIdx < decoded.length - 4) {
+        ops = decoded.slice(verifyIdx + 1);
+    }
+
+    if (
+        ops.length >= 5 &&
+        (ops[1] === "CHECKLOCKTIMEVERIFY" || ops[1] === "CHECKSEQUENCEVERIFY") &&
+        ops[2] === "DROP"
+    ) {
+        const remaining = ops.slice(3);
+        if (remaining.length === 2 && isKey(remaining[0]) && remaining[1] === "CHECKSIG") {
+            return true;
+        }
+        if (isCollaborativeMultisigTemplate(remaining)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
     if (!script || script.length === 0) {
         throw new VtxoVerificationError(`Empty tapleaf script in ${txid}`, "SECURITY_VIOLATION");
@@ -324,46 +490,21 @@ function verifyArkExitPolicy(script: Uint8Array, txid: string): void {
         );
     }
 
-    // ── Key Presence Verification ──
-    const keys = decoded.filter(
-        (item): item is Uint8Array =>
-            item instanceof Uint8Array && (item.length === 32 || item.length === 33),
-    );
-    const hasKey = keys.length > 0;
-
-    // ── Standard Ark Exit Policy & Submarine Swap HTLC Policies ──
-    const hasCSV = decoded.some((op) => op === "CHECKSEQUENCEVERIFY");
-    const hasCLTV = decoded.some((op) => op === "CHECKLOCKTIMEVERIFY");
-    const checkSigOps = decoded.filter(
-        (op) => op === "CHECKSIG" || op === "CHECKSIGVERIFY" || op === "CHECKSIGADD",
-    );
-    const hasCheckSig = checkSigOps.length > 0;
-    const hasHash = decoded.some(
-        (op) => op === "SHA256" || op === "HASH160" || op === "RIPEMD160" || op === "HASH256",
-    );
-
-    const isArkStandard = hasCSV && hasCheckSig && hasKey;
-    const isSwapClaim = hasHash && hasCheckSig && hasKey;
-    const isSwapRefund = (hasCLTV || hasCSV) && hasCheckSig && hasKey;
-
-    // Collaborative / forfeit multisig:
-    // Note (Protocol Invariant): Forfeit scripts and collaborative leaves intentionally carry no CSV timelock.
-    // In the Ark protocol, collaborative spends and forfeit clauses require 2-of-2 co-signing by both the
-    // user and the ASP (mutual consent), enabling instant off-chain transitions and immediate forfeit sweeps
-    // upon settlement without requiring an on-chain delay.
-    //
-    // Security Invariant (Finding C / Finding 11 - Template Matching):
-    // Rather than loose opcode counting (which could be bypassed by decorative keys or vacuous CHECKSIG+DROP sequences),
-    // collaborative leaves must strictly match explicit allowlisted BIP 342 multisig templates:
-    //   - <pk1> CHECKSIGVERIFY <pk2> CHECKSIG (BIP 342 2-of-2 CHECKSIGVERIFY chain)
-    //   - <pk1> CHECKSIG <pk2> CHECKSIGADD 2 NUMEQUAL/EQUAL (BIP 342 2-of-2 CHECKSIGADD)
-    //   - Conditional multisig: <condition> VERIFY <multisig_template>
-    // In all cases, at least 2 distinct public keys must participate in active signature enforcement.
+    // Security Invariant (Finding 11 - Structural Template Matching):
+    // Rather than loose opcode presence checks (which could be fooled by dead branches or decorative opcodes),
+    // every tapleaf script must strictly match an allowlisted structural template:
+    //   1. Standard Ark Unilateral Exit: <sequence> CSV DROP <pubkey> CHECKSIG (or collaborative multisig)
+    //   2. Submarine Swap HTLC Claim: <hash> <HASH_OP> EQUALVERIFY <pubkey> CHECKSIG
+    //   3. Submarine Swap HTLC Refund: <locktime> CLTV/CSV DROP <pubkey> CHECKSIG
+    //   4. Collaborative Multisig / Forfeit: BIP 342 2-of-2 CHECKSIGVERIFY or CHECKSIGADD chain
+    const isArkStandard = isArkStandardExitTemplate(decoded);
+    const isSwapClaim = isSwapClaimTemplate(decoded);
+    const isSwapRefund = isSwapRefundTemplate(decoded);
     const isCollaborativeMultisig = isCollaborativeMultisigTemplate(decoded);
 
     if (!isArkStandard && !isSwapClaim && !isSwapRefund && !isCollaborativeMultisig) {
         throw new VtxoVerificationError(
-            `Tapleaf script in ${txid} does not follow Ark exit policy (CSV+CHECKSIG), Swap policy (HTLC), or Collaborative Multisig template (>=2 distinct keys in standard 2-of-2 format)`,
+            `Tapleaf script in ${txid} does not follow Ark exit policy (CSV+CHECKSIG template), Swap policy (HTLC template), or Collaborative Multisig template (>=2 distinct keys in standard 2-of-2 format)`,
             "INVALID_ARK_SCRIPT",
         );
     }

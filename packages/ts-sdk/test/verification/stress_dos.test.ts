@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { Transaction } from "@scure/btc-signer/transaction.js";
 import { hex, base64 } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
@@ -107,19 +108,25 @@ describe("Red Team: Stress & DoS Audit", () => {
         indexer.virtualTxs.set(fakeRoot, base64.encode(txA.tx.toPSBT()));
         indexer.virtualTxs.set(fakeChild, base64.encode(txB.tx.toPSBT()));
 
-        const originalToBytes = txA.tx.constructor.prototype.toBytes;
-        txA.tx.constructor.prototype.toBytes = function (this: any, ...args: any[]) {
-            if (this.outputs[0].amount === 111111n) return originalBytesA;
-            if (this.outputs[0].amount === 222222n) return originalBytesB;
-            return originalToBytes.apply(this, args);
-        };
+        const origFromPSBT = Transaction.fromPSBT;
+        const spy = vi
+            .spyOn(Transaction, "fromPSBT")
+            .mockImplementation((bytes: any, opts: any) => {
+                const tx = origFromPSBT(bytes, opts);
+                if (tx.getOutput(0).amount === 111111n) {
+                    (tx as any).toBytes = () => originalBytesA;
+                } else if (tx.getOutput(0).amount === 222222n) {
+                    (tx as any).toBytes = () => originalBytesB;
+                }
+                return tx;
+            });
 
         try {
             await expect(
                 reconstructAndValidateVtxoDAG({ txid: fakeRoot, vout: 0 }, indexer, onchain),
             ).rejects.toThrow(/CYCLE_DETECTED/);
         } finally {
-            txA.tx.constructor.prototype.toBytes = originalToBytes;
+            spy.mockRestore();
         }
     });
 
