@@ -158,20 +158,27 @@ describe("VHTLC address", () => {
             unilateralRefundWithoutReceiverDelay: { type: "seconds" as const, value: 1536n },
         });
 
-        it("omits both non-interactive leaves, and their addresses, when neither option is passed", () => {
+        it("omits all three covenant leaves when emulatorCovenants is not passed", () => {
             const script = new VHTLC.Script(baseOptions());
             expect(script.nonInteractiveClaimScript).toBeUndefined();
             expect(script.nonInteractiveRefundScript).toBeUndefined();
+            expect(script.nonInteractiveRefundWithoutReceiverScript).toBeUndefined();
             expect(() => script.nonInteractiveClaim()).toThrow(/no non-interactive claim leaf/);
             expect(() => script.nonInteractiveRefund()).toThrow(/no non-interactive refund leaf/);
         });
 
         it("builds nonInteractiveClaim as preimage + server + covenant-tweaked emulator key, pinned to receiverPkScript", () => {
             const receiverPkScript = p2tr(key(4));
+            const senderPkScript = p2tr(key(6));
             const emulatorPubkey = key(5);
+            // The suite is all-or-nothing, so the claim leaf cannot be built
+            // alone — the assertions below are on that leaf within the full
+            // suite, whose refund leaves cannot alter its bytes (see the
+            // tweak assertion: the claim tweak is a function of
+            // receiverPkScript + emulatorPubkey only).
             const script = new VHTLC.Script({
                 ...baseOptions(),
-                nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+                emulatorCovenants: { receiverPkScript, senderPkScript, emulatorPubkey },
             });
             expect(script.nonInteractiveClaimScript).toBeDefined();
             // preimage condition + VERIFY, then <server> CHECKSIGVERIFY <tweaked> CHECKSIG
@@ -203,11 +210,12 @@ describe("VHTLC address", () => {
         });
 
         it("builds nonInteractiveRefund as server + receiver + covenant-tweaked emulator key, no timelock, pinned to senderPkScript", () => {
+            const receiverPkScript = p2tr(key(4));
             const senderPkScript = p2tr(key(6));
             const emulatorPubkey = key(5);
             const script = new VHTLC.Script({
                 ...baseOptions(),
-                nonInteractiveRefund: { senderPkScript, emulatorPubkey },
+                emulatorCovenants: { receiverPkScript, senderPkScript, emulatorPubkey },
             });
             expect(script.nonInteractiveRefundScript).toBeDefined();
             // <server> CHECKSIGVERIFY <receiver> CHECKSIGVERIFY <tweaked> CHECKSIG —
@@ -242,12 +250,15 @@ describe("VHTLC address", () => {
             expect(hex.encode(arkadeScript)).toBe(hex.encode(enforcePayTo(senderPkScript)));
         });
 
-        it("produces a different address when the two non-interactive leaves are added, but leaves the base six byte-identical", () => {
+        it("produces a different address when the covenant suite is added, but leaves the base six byte-identical", () => {
             const base = new VHTLC.Script(baseOptions());
             const extended = new VHTLC.Script({
                 ...baseOptions(),
-                nonInteractiveClaim: { receiverPkScript: p2tr(key(4)), emulatorPubkey: key(5) },
-                nonInteractiveRefund: { senderPkScript: p2tr(key(6)), emulatorPubkey: key(5) },
+                emulatorCovenants: {
+                    receiverPkScript: p2tr(key(4)),
+                    senderPkScript: p2tr(key(6)),
+                    emulatorPubkey: key(5),
+                },
             });
             expect(hex.encode(extended.pkScript)).not.toBe(hex.encode(base.pkScript));
             expect(extended.claimScript).toBe(base.claimScript);
@@ -261,20 +272,47 @@ describe("VHTLC address", () => {
         });
 
         it("rejects a non-P2TR receiverPkScript or senderPkScript — wrong length", () => {
+            // One bad field at a time, the other destination kept valid: the
+            // suite is all-or-nothing, so every rejection goes through the
+            // single `emulatorCovenants` group validation.
             expect(
                 () =>
                     new VHTLC.Script({
                         ...baseOptions(),
-                        nonInteractiveClaim: { receiverPkScript: key(4), emulatorPubkey: key(5) },
+                        emulatorCovenants: {
+                            receiverPkScript: key(4),
+                            senderPkScript: p2tr(key(6)),
+                            emulatorPubkey: key(5),
+                        },
                     }),
             ).toThrow(/P2TR/);
             expect(
                 () =>
                     new VHTLC.Script({
                         ...baseOptions(),
-                        nonInteractiveRefund: { senderPkScript: key(6), emulatorPubkey: key(5) },
+                        emulatorCovenants: {
+                            receiverPkScript: p2tr(key(4)),
+                            senderPkScript: key(6),
+                            emulatorPubkey: key(5),
+                        },
                     }),
             ).toThrow(/P2TR/);
+        });
+
+        it("rejects a malformed emulatorPubkey", () => {
+            for (const emulatorPubkey of [new Uint8Array(31), new Uint8Array(34)]) {
+                expect(
+                    () =>
+                        new VHTLC.Script({
+                            ...baseOptions(),
+                            emulatorCovenants: {
+                                receiverPkScript: p2tr(key(4)),
+                                senderPkScript: p2tr(key(6)),
+                                emulatorPubkey,
+                            },
+                        }),
+                ).toThrow(/Invalid public key length \(emulator\)/);
+            }
         });
 
         it("rejects a non-P2TR receiverPkScript or senderPkScript — right length, wrong witness version", () => {
@@ -288,8 +326,9 @@ describe("VHTLC address", () => {
                 () =>
                     new VHTLC.Script({
                         ...baseOptions(),
-                        nonInteractiveClaim: {
+                        emulatorCovenants: {
                             receiverPkScript: opReturnShaped,
+                            senderPkScript: p2tr(key(6)),
                             emulatorPubkey: key(5),
                         },
                     }),
@@ -298,7 +337,8 @@ describe("VHTLC address", () => {
                 () =>
                     new VHTLC.Script({
                         ...baseOptions(),
-                        nonInteractiveRefund: {
+                        emulatorCovenants: {
+                            receiverPkScript: p2tr(key(4)),
                             senderPkScript: opReturnShaped,
                             emulatorPubkey: key(5),
                         },
@@ -306,7 +346,7 @@ describe("VHTLC address", () => {
             ).toThrow(/P2TR/);
         });
 
-        it("rejects a nonInteractiveClaim/nonInteractiveRefund missing its destination script with the same clean error as a wrong-length one — not a raw TypeError", () => {
+        it("rejects an emulatorCovenants group missing a destination script with the same clean error as a wrong-length one — not a raw TypeError", () => {
             // The emulatorPubkey check just above already guards with `!x ||`;
             // the destination check originally didn't, so an object present
             // but missing this one field crashed on `undefined.length` instead
@@ -315,14 +355,20 @@ describe("VHTLC address", () => {
                 () =>
                     new VHTLC.Script({
                         ...baseOptions(),
-                        nonInteractiveClaim: { emulatorPubkey: key(5) } as never,
+                        emulatorCovenants: {
+                            senderPkScript: p2tr(key(6)),
+                            emulatorPubkey: key(5),
+                        } as never,
                     }),
             ).toThrow(/P2TR/);
             expect(
                 () =>
                     new VHTLC.Script({
                         ...baseOptions(),
-                        nonInteractiveRefund: { emulatorPubkey: key(5) } as never,
+                        emulatorCovenants: {
+                            receiverPkScript: p2tr(key(4)),
+                            emulatorPubkey: key(5),
+                        } as never,
                     }),
             ).toThrow(/P2TR/);
         });
@@ -368,14 +414,16 @@ describe("VHTLC address", () => {
 
         it("carries the SIZE-32 check on nonInteractiveClaim too — it shares the same preimage condition as claim/unilateralClaim", () => {
             const receiverPkScript = p2tr(key(4));
+            const senderPkScript = p2tr(key(6));
             const emulatorPubkey = key(5);
+            const emulatorCovenants = { receiverPkScript, senderPkScript, emulatorPubkey };
             const v1 = new VHTLC.Script({
                 ...baseOptions(),
-                nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+                emulatorCovenants,
             });
             const v2 = new VHTLC.ScriptV2({
                 ...baseOptions(),
-                nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+                emulatorCovenants,
             });
 
             expect(v2.nonInteractiveClaimScript).toBeDefined();
@@ -395,14 +443,17 @@ describe("VHTLC address", () => {
             expect(v2Tail).toBe(v1Tail);
         });
 
-        it("leaves refund-side leaves — refund, refundWithoutReceiver, unilateralRefund*, nonInteractiveRefund — byte-identical to V1", () => {
+        it("leaves refund-side leaves — refund, refundWithoutReceiver, unilateralRefund*, nonInteractiveRefund* — byte-identical to V1", () => {
             // None of these gate on the preimage at all, so the version split
             // must not touch them.
             const senderPkScript = p2tr(key(6));
-            const emulatorPubkey = key(5);
             const opts = {
                 ...baseOptions(),
-                nonInteractiveRefund: { senderPkScript, emulatorPubkey },
+                emulatorCovenants: {
+                    receiverPkScript: p2tr(key(4)),
+                    senderPkScript,
+                    emulatorPubkey: key(5),
+                },
             };
             const v1 = new VHTLC.Script(opts);
             const v2 = new VHTLC.ScriptV2(opts);
@@ -414,14 +465,21 @@ describe("VHTLC address", () => {
                 v1.unilateralRefundWithoutReceiverScript,
             );
             expect(v2.nonInteractiveRefundScript).toBe(v1.nonInteractiveRefundScript);
+            expect(v2.nonInteractiveRefundWithoutReceiverScript).toBe(
+                v1.nonInteractiveRefundWithoutReceiverScript,
+            );
         });
 
-        it("still rejects a non-P2TR nonInteractiveClaim/nonInteractiveRefund destination, same as V1", () => {
+        it("still rejects a non-P2TR covenant destination, same as V1", () => {
             expect(
                 () =>
                     new VHTLC.ScriptV2({
                         ...baseOptions(),
-                        nonInteractiveClaim: { receiverPkScript: key(4), emulatorPubkey: key(5) },
+                        emulatorCovenants: {
+                            receiverPkScript: key(4),
+                            senderPkScript: p2tr(key(6)),
+                            emulatorPubkey: key(5),
+                        },
                     }),
             ).toThrow(/P2TR/);
         });
@@ -445,12 +503,13 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
     const receiverPkScript = p2tr(key(4));
     const emulatorPubkey = key(5);
     const asset = { txid: new Uint8Array(32).fill(0xab), groupIndex: 2 };
+    /** The covenant suite these tests build on — all-or-nothing since the per-leaf options were merged. */
+    const suite = { receiverPkScript, senderPkScript: p2tr(key(6)), emulatorPubkey };
 
     const withAsset = (extra: object = {}) =>
         new VHTLC.ScriptV2({
             ...baseOptions(),
-            nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
-            nonInteractiveRefund: { senderPkScript: p2tr(key(6)), emulatorPubkey },
+            emulatorCovenants: suite,
             ...extra,
         });
 
@@ -465,7 +524,7 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
         expect(explicitlyNone.nonInteractiveRefundScript).toBe(sats.nonInteractiveRefundScript);
     });
 
-    it("changes ONLY the two non-interactive leaves", () => {
+    it("changes ONLY the covenant leaves", () => {
         // Every other leaf is a signature path asserting nothing about value,
         // so an asset must make no difference to them. This is what "mostly
         // just the non-interactive paths" means, checked rather than asserted.
@@ -480,9 +539,14 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
             sats.unilateralRefundWithoutReceiverScript,
         );
 
-        // ...and the two that DO change, change.
+        // ...and the three that DO change, change — the timelocked refund
+        // leaf shares nonInteractiveRefund's covenant and cosigner, so the
+        // asset reaches it through the same tweak.
         expect(assets.nonInteractiveClaimScript).not.toBe(sats.nonInteractiveClaimScript);
         expect(assets.nonInteractiveRefundScript).not.toBe(sats.nonInteractiveRefundScript);
+        expect(assets.nonInteractiveRefundWithoutReceiverScript).not.toBe(
+            sats.nonInteractiveRefundWithoutReceiverScript,
+        );
         // which necessarily moves the address
         expect(hex.encode(assets.pkScript)).not.toBe(hex.encode(sats.pkScript));
     });
@@ -531,7 +595,7 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
     const strictClaim = (strict: object, extra: object = {}) =>
         withAsset({
             asset,
-            nonInteractiveClaim: { receiverPkScript, emulatorPubkey, strict },
+            emulatorCovenants: { ...suite, strict },
             ...extra,
         });
 
@@ -547,8 +611,16 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
         // verified identical at the commit that added it, across all seven
         // shapes and both script versions. A change that moves the default path
         // fails here instead of making funded contracts underivable.
-        const claimLeaf = { receiverPkScript, emulatorPubkey };
-        const refundLeaf = { senderPkScript: p2tr(key(6)), emulatorPubkey };
+        //
+        // Two renames since, both from the per-leaf options merging into the
+        // all-or-nothing `emulatorCovenants` group. A claim-only or refund-only
+        // tree is no longer expressible, so those four vectors are dropped —
+        // the API they pinned is gone. And the eight-leaf "both leaves" shape
+        // is what `legacy: "preTimelockedRefund"` now builds: the same eight
+        // leaves, byte for byte, while the group's default gained the
+        // timelocked refund leaf. The nine-leaf vectors were captured at that
+        // refactor and pin the new default going forward.
+        const legacySuite = { ...suite, legacy: "preTimelockedRefund" as const };
         const shapes: [string, object, string, string][] = [
             [
                 "bare",
@@ -557,40 +629,28 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
                 "5120f2612eed370d3603672b7e256635fdb1e8fdf2636853175cc0dbec585d50679e",
             ],
             [
-                "claim only",
-                { nonInteractiveClaim: claimLeaf },
-                "5120bbc33adb5e0f81ad7fd3a14380cf5d552815bdadfbffeaa1ab4938c486e16bbd",
-                "51207b87979f8e028ea914a8a53e088650c99fdcf61696cf539dc1d6412bbac88deb",
-            ],
-            [
-                "refund only",
-                { nonInteractiveClaim: undefined, nonInteractiveRefund: refundLeaf },
-                "5120699c92a6ed1b32cc9ab346d17eb9960de311172388e5f6c50212e0e91984a0d0",
-                "5120915ced574d918f70128ef16160f3b72ac05dad06e27162fffb90b33f4d2ee5c2",
-            ],
-            [
-                "both leaves",
-                { nonInteractiveClaim: claimLeaf, nonInteractiveRefund: refundLeaf },
+                "suite, legacy eight-leaf",
+                { emulatorCovenants: legacySuite },
                 "5120d155531ea89a92eac969c5e5205607b9debba9a4e66453c9410e9b6ca38e4eda",
                 "5120d8880eda3ad3281604f27e5b5dcd851631acb974f9d8aecf18a9e13e3a439f5b",
             ],
             [
-                "asset + both",
-                { nonInteractiveClaim: claimLeaf, nonInteractiveRefund: refundLeaf, asset },
+                "suite, nine leaves (the default)",
+                { emulatorCovenants: suite },
+                "5120b279a2f2ec1683c7118d78fa4a971ffb9a830adfb6c3665daa54239e5b6e9e31",
+                "512058ef69965bc6378ee1feb3f5ad2e577e884eded58bcf3c77ddf6ad37f403f64b",
+            ],
+            [
+                "asset + suite, legacy eight-leaf",
+                { emulatorCovenants: legacySuite, asset },
                 "5120dd8f3358c9d8300d57772c6450f1d310086d45e5903aa1808637d8dd3e5ffea0",
                 "5120869d1ad5a5bced06a50c883c718c8e25f531168a8f536469ca58e28360a87a8e",
             ],
             [
-                "asset + claim only",
-                { nonInteractiveClaim: claimLeaf, nonInteractiveRefund: undefined, asset },
-                "5120e2d876c066c379b809f0c52eedc1cfb0820bf02ad9c08ed01fdc61221de89bf1",
-                "5120e768c26de90c1450f06492c212c12d2d0927fbefff866b16939ecd52d3cde9f1",
-            ],
-            [
-                "asset + refund only",
-                { nonInteractiveClaim: undefined, nonInteractiveRefund: refundLeaf, asset },
-                "51201c2b6772a07dccfa83eb07210c420d73d928d72b3d03f5e88888858743cad280",
-                "5120e953cff4c35d60942bdfbd7a741d19ebbf9ebc499f381a9d16f6945bfe317d6f",
+                "asset + suite, nine leaves (the default)",
+                { emulatorCovenants: suite, asset },
+                "512055c316b67e22dd00f6d97c61d22f962bacb7da2d33c2ec3b23021f73f3dad65a",
+                "51207106ec590b0082ca87b86e7d3ce29bb584d3d255ad799b4973378a9849455a3c",
             ],
         ];
         for (const [name, extra, v2, v1] of shapes) {
@@ -608,7 +668,7 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
         const plain = withAsset({ asset });
         const explicitlyNotStrict = withAsset({
             asset,
-            nonInteractiveClaim: { receiverPkScript, emulatorPubkey, strict: undefined },
+            emulatorCovenants: { ...suite, strict: undefined },
         });
         expect(hex.encode(explicitlyNotStrict.pkScript)).toBe(hex.encode(plain.pkScript));
     });
@@ -664,47 +724,28 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
         // ...and its mirror: an asset bound on a contract that binds no asset.
         expect(() =>
             withAsset({
-                nonInteractiveClaim: {
-                    receiverPkScript,
-                    emulatorPubkey,
-                    strict: { amount: 1n, assetAmount: 1n },
-                },
+                emulatorCovenants: { ...suite, strict: { amount: 1n, assetAmount: 1n } },
             }),
         ).toThrow(/assetAmount has no effect without asset/);
     });
 
     it("refuses an asset that no leaf would bind, instead of silently dropping it", () => {
-        // THE SILENT CASE. Both non-interactive leaves are optional, and they are
-        // the only ones carrying the covenant — the signature leaves assert
-        // nothing about value. So `asset` with neither leaf used to build a
-        // sat-only contract and say nothing: the caller funds it believing the
-        // asset is bound, and ANY spend satisfying the sat covenant walks off
-        // with the asset. The only outward difference is a pkScript that happens
-        // to match a non-asset address, which is not something a caller checks.
+        // THE SILENT CASE. The covenant suite is opt-in, and its leaves are the
+        // only ones carrying the covenant — the signature leaves assert nothing
+        // about value. So `asset` without the suite used to build a sat-only
+        // contract and say nothing: the caller funds it believing the asset is
+        // bound, and ANY spend satisfying the sat covenant walks off with the
+        // asset. The only outward difference is a pkScript that happens to
+        // match a non-asset address, which is not something a caller checks.
         expect(
             () =>
                 new VHTLC.ScriptV2({
                     ...baseOptions(),
                     asset,
                 }),
-        ).toThrow(/no effect without/);
-        // One leaf is enough to bind it, so neither is required individually.
-        expect(
-            () =>
-                new VHTLC.ScriptV2({
-                    ...baseOptions(),
-                    nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
-                    asset,
-                }),
-        ).not.toThrow();
-        expect(
-            () =>
-                new VHTLC.ScriptV2({
-                    ...baseOptions(),
-                    nonInteractiveRefund: { senderPkScript: p2tr(key(6)), emulatorPubkey },
-                    asset,
-                }),
-        ).not.toThrow();
+        ).toThrow(/no effect without emulatorCovenants/);
+        // The suite present, the asset binds: no per-leaf subset to require.
+        expect(() => withAsset({ asset })).not.toThrow();
     });
 
     it("binds the asset on VHTLC.Script (v1) too, which inherits the same base", () => {
@@ -714,12 +755,12 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
         // asserted, or v1 is carrying an untested money path.
         const v1 = new VHTLC.Script({
             ...baseOptions(),
-            nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+            emulatorCovenants: suite,
             asset,
         });
         const v1NoAsset = new VHTLC.Script({
             ...baseOptions(),
-            nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+            emulatorCovenants: suite,
         });
         expect(hex.encode(v1.pkScript)).not.toBe(hex.encode(v1NoAsset.pkScript));
         expect(() => new VHTLC.Script({ ...baseOptions(), asset })).toThrow(/no effect without/);
@@ -745,6 +786,7 @@ describe("nonInteractiveRefundWithoutReceiver", () => {
     const serverPk = key(3);
     const preimageHash = new Uint8Array(20).fill(9);
     const emulatorPubkey = key(5);
+    const receiverPkScript = p2tr(key(4));
     const senderPkScript = p2tr(key(6));
 
     const base = {
@@ -758,56 +800,66 @@ describe("nonInteractiveRefundWithoutReceiver", () => {
         unilateralRefundWithoutReceiverDelay: { type: "blocks", value: 103n } as const,
     };
 
-    it("is absent unless opted in, and the pkScript is unchanged", () => {
-        const without = new VHTLC.ScriptV2({
+    /** The covenant suite, as the group takes it — the leaf this describe pins is part of it by DEFAULT. */
+    const suite = { receiverPkScript, senderPkScript, emulatorPubkey };
+
+    it('is built with the suite by default, and withheld only by legacy: "preTimelockedRefund"', () => {
+        const full = new VHTLC.ScriptV2({ ...base, emulatorCovenants: suite });
+        expect(full.nonInteractiveRefundWithoutReceiverScript).toBeDefined();
+
+        const legacy = new VHTLC.ScriptV2({
             ...base,
-            nonInteractiveRefund: { senderPkScript, emulatorPubkey },
+            emulatorCovenants: { ...suite, legacy: "preTimelockedRefund" },
         });
-        expect(without.nonInteractiveRefundWithoutReceiverScript).toBeUndefined();
-        expect(() => without.nonInteractiveRefundWithoutReceiver()).toThrow(
+        expect(legacy.nonInteractiveRefundWithoutReceiverScript).toBeUndefined();
+        expect(() => legacy.nonInteractiveRefundWithoutReceiver()).toThrow(
             "VHTLC has no non-interactive refund-without-receiver leaf",
         );
-
-        // The claim in this test's title, actually checked: gaining the
-        // capability to opt in must not perturb the pkScript for a caller
-        // who doesn't. Compared against the same options with the flag
-        // spelled out as explicitly false — the other way "not opted in"
-        // can be written.
-        const explicitlyOff = new VHTLC.ScriptV2({
-            ...base,
-            nonInteractiveRefund: { senderPkScript, emulatorPubkey, withoutReceiver: false },
-        });
-        expect(hex.encode(explicitlyOff.pkScript)).toBe(hex.encode(without.pkScript));
+        // Withholding the leaf moves the address — a legacy lockup and a
+        // full-suite one never collide, which is what makes "which shape did
+        // this quote opt into" answerable by an address comparison.
+        expect(hex.encode(legacy.pkScript)).not.toBe(hex.encode(full.pkScript));
     });
 
-    it("adds exactly one leaf and changes the pkScript when opted in", () => {
-        const without = new VHTLC.ScriptV2({
+    it("legacy withholds exactly one leaf — the other eight stay byte-identical and in position", () => {
+        const full = new VHTLC.ScriptV2({ ...base, emulatorCovenants: suite });
+        const legacy = new VHTLC.ScriptV2({
             ...base,
-            nonInteractiveRefund: { senderPkScript, emulatorPubkey },
-        });
-        const with_ = new VHTLC.ScriptV2({
-            ...base,
-            nonInteractiveRefund: { senderPkScript, emulatorPubkey, withoutReceiver: true },
+            emulatorCovenants: { ...suite, legacy: "preTimelockedRefund" },
         });
 
-        expect(with_.scripts.length).toBe(without.scripts.length + 1);
-        expect(hex.encode(with_.pkScript)).not.toBe(hex.encode(without.pkScript));
+        expect(full.scripts.length).toBe(9);
+        expect(legacy.scripts.length).toBe(8);
+        expect(full.scripts.length).toBe(legacy.scripts.length + 1);
 
-        // The other eight leaves are byte-identical AND in the same
-        // position — the new leaf is appended, never interleaved, since
+        // The eight leaves the legacy shape keeps are byte-identical AND in
+        // the same position — the ninth is appended, never interleaved, since
         // leaf order decides the taproot merkle root. (`toContain` on
         // `.encode()`'s raw tap-tree bytes would only check for byte-VALUE
         // membership, which almost any buffer satisfies trivially; this
-        // checks the actual per-leaf script list instead.)
-        expect(with_.scripts.slice(0, without.scripts.length).map(hex.encode)).toEqual(
-            without.scripts.map(hex.encode),
+        // checks the actual per-leaf script list instead.) It is also what
+        // "byte-identical to the pre-suite eight-leaf shape" means: that
+        // shape was these same eight leaves in this same order.
+        expect(full.scripts.slice(0, legacy.scripts.length).map(hex.encode)).toEqual(
+            legacy.scripts.map(hex.encode),
+        );
+    });
+
+    it("is absent with the whole suite when emulatorCovenants is not passed — six leaves", () => {
+        const bare = new VHTLC.ScriptV2(base);
+        expect(bare.scripts.length).toBe(6);
+        expect(bare.nonInteractiveClaimScript).toBeUndefined();
+        expect(bare.nonInteractiveRefundScript).toBeUndefined();
+        expect(bare.nonInteractiveRefundWithoutReceiverScript).toBeUndefined();
+        expect(() => bare.nonInteractiveRefundWithoutReceiver()).toThrow(
+            "VHTLC has no non-interactive refund-without-receiver leaf",
         );
     });
 
     it("is CLTVMultisig{refundLocktime, [server, nonInteractiveRefund's own cosigner]}", () => {
         const script = new VHTLC.ScriptV2({
             ...base,
-            nonInteractiveRefund: { senderPkScript, emulatorPubkey, withoutReceiver: true },
+            emulatorCovenants: suite,
         });
 
         const cosigner = arkade.computeArkadeScriptPublicKey(

@@ -65,6 +65,18 @@ const PREIMAGE = new Uint8Array(32).fill(0x42);
 // RIPEMD160(SHA256(PREIMAGE)) — same constant the sibling non-interactive test uses.
 const PREIMAGE_HASH = hex.decode("8739f40ec4dbf569dcb38134c6e7310908566981");
 
+/**
+ * Filler for the covenant suite's refund destination. The byte-equality proofs
+ * below read only `nonInteractiveClaimArkadeScript`, which is a function of
+ * `receiverPkScript` alone — but the suite is all-or-nothing, so a valid P2TR
+ * `senderPkScript` must be present for the group to build at all.
+ */
+const FILLER_SENDER_PK_SCRIPT = Uint8Array.from([
+    0x51,
+    0x20,
+    ...schnorr.getPublicKey(new Uint8Array(32).fill(6)),
+]);
+
 /** Sat carrier the asset VTXO rides on. Assets do not travel without one. */
 const CARRIER_SATS = 10_000n;
 const ASSET_SUPPLY = 1_000n;
@@ -526,8 +538,9 @@ describe("asset-denominated non-interactive covenant", () => {
             unilateralClaimDelay: { type: "seconds", value: 512n },
             unilateralRefundDelay: { type: "seconds", value: 1024n },
             unilateralRefundWithoutReceiverDelay: { type: "seconds", value: 1536n },
-            nonInteractiveClaim: {
+            emulatorCovenants: {
                 receiverPkScript: payee,
+                senderPkScript: FILLER_SENDER_PK_SCRIPT,
                 emulatorPubkey: schnorr.getPublicKey(new Uint8Array(32).fill(5)),
             },
             asset: { txid: parsed.txid, groupIndex: parsed.groupIndex },
@@ -646,8 +659,9 @@ describe("asset-denominated non-interactive covenant", () => {
                 unilateralClaimDelay: { type: "seconds", value: 512n },
                 unilateralRefundDelay: { type: "seconds", value: 1024n },
                 unilateralRefundWithoutReceiverDelay: { type: "seconds", value: 1536n },
-                nonInteractiveClaim: {
+                emulatorCovenants: {
                     receiverPkScript: payee,
+                    senderPkScript: FILLER_SENDER_PK_SCRIPT,
                     emulatorPubkey: schnorr.getPublicKey(new Uint8Array(32).fill(5)),
                     strict: { amount: STRICT_SATS_QUOTE, assetAmount: STRICT_ASSET_QUOTE },
                 },

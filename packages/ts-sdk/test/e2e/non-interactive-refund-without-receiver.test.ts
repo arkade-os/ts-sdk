@@ -163,7 +163,9 @@ describe("non-interactive refund without receiver (VHTLC.ScriptV2 covenant leaf)
         // compare its ArkadeScript, byte for byte, against `resolveAsm` on
         // the artifact above. Every other VHTLC.Options field is filler —
         // none of it reaches this leaf's ArkadeScript, only `senderPkScript`
-        // does (see `enforcePayToMaybeAsset`).
+        // does (see `enforcePayToMaybeAsset`). `receiverPkScript` included:
+        // the covenant suite is all-or-nothing, so the group will not build
+        // without it, but no byte of it leaves the claim covenant it names.
         const fromSdk = new VHTLC.ScriptV2({
             preimageHash: new Uint8Array(20).fill(0x11),
             sender: schnorr.getPublicKey(new Uint8Array(32).fill(1)),
@@ -173,10 +175,10 @@ describe("non-interactive refund without receiver (VHTLC.ScriptV2 covenant leaf)
             unilateralClaimDelay: { type: "seconds", value: 512n },
             unilateralRefundDelay: { type: "seconds", value: 1024n },
             unilateralRefundWithoutReceiverDelay: { type: "seconds", value: 1536n },
-            nonInteractiveRefund: {
+            emulatorCovenants: {
+                receiverPkScript: randomP2TR(),
                 senderPkScript,
                 emulatorPubkey: schnorr.getPublicKey(new Uint8Array(32).fill(5)),
-                withoutReceiver: true,
             },
         }).nonInteractiveRefundWithoutReceiverArkadeScript!;
         const program = nirWithoutReceiverProgram(refundLocktime);
