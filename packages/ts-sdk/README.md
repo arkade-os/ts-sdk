@@ -575,7 +575,7 @@ const urgentlyExpiring = await manager.getExpiringVtxos(60_000)
 ```
 
 A virtual output whose unilateral exit already happened is never offered for renewal, and the
-exported `isVtxoExpiringSoon` answers `false` for one whatever its batch expiry says: "expiring
+exported `isVtxoExpiringSoon` answers `false` for it regardless of its batch expiry: "expiring
 soon" is a renewal signal, and no batch can take an output that already lives onchain. Its remedy
 is `Unroll.completeUnroll`, and its value shows up in `balance.unrolled`.
 

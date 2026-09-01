@@ -920,9 +920,10 @@ describe("main-thread / worker balance parity", () => {
      * silently drops them and reports `unrolled: 0` forever.
      *
      * Scoped to `unrolled` and `total` on purpose. `_pendingSpendOutpoints` is
-     * main-thread-only state — written around `settle`/`sendBitcoin` by the
-     * instance driving the spend — so mid-send the two sides legitimately
-     * disagree, and an all-buckets assertion would trip on it. Not a bug to
+     * main-thread-only state — the VTXO inputs of an in-flight `send`,
+     * `sendBitcoin` or `settle`, written by the instance driving it — so
+     * mid-send the two sides legitimately disagree, and an all-buckets assertion
+     * would trip on it. Not a bug to
      * repair by widening the worker's balance read: the fix for a consumer that
      * ever needs agreement mid-send is a `SPEND_STARTED`/`SPEND_SETTLED` event on
      * the existing bus, not a balance-read change.

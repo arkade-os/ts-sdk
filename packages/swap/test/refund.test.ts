@@ -109,7 +109,7 @@ const fakeOperator = (
     } as unknown as FakeOperator;
 };
 
-const fakeIndexer = (vtxos: LockupVtxo[]): RefundIndexer & { scripts: string[][] } => {
+const fakeIndexer = (vtxos: LockupVtxo[]): LockupSpendIndexer & { scripts: string[][] } => {
     const scripts: string[][] = [];
     return {
         scripts,
@@ -118,7 +118,7 @@ const fakeIndexer = (vtxos: LockupVtxo[]): RefundIndexer & { scripts: string[][]
             return { vtxos };
         },
         getVirtualTxs: async () => ({ txs: [] }),
-    } as unknown as RefundIndexer & { scripts: string[][] };
+    } as unknown as LockupSpendIndexer & { scripts: string[][] };
 };
 
 const statusOf = (state: string): RfqStatus => ({
