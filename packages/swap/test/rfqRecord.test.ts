@@ -15,6 +15,7 @@ import { VHTLCV2ContractHandler } from "@arkade-os/sdk";
 import {
     RFQ_SWAP_RETENTION_SECONDS,
     createRfqSwapRecord,
+    normalizeRfqSwapRecord,
     rebuildRfqSwap,
     rfqSwapOriginOf,
     shouldRetainRfqSwap,
@@ -23,7 +24,7 @@ import {
     type RfqSwapOrigin,
     type RfqSwapRecord,
 } from "../src/rfqRecord";
-import { lightningSendVtxoScript, receiveVtxoScript } from "../src/rfq";
+import { lightningSendContract, lightningReceiveContract } from "../src/rfq";
 import { onchainHtlcScript } from "../src/onchainHtlc";
 import type { LightningReceiveSwap, LightningSendSwap, RfqSwapState } from "../src/swapManager";
 
@@ -36,25 +37,25 @@ const REFUND_LOCKTIME = 1_900_000_000;
 // 512 — the same 4096 the rest of the suite uses.
 const CLAIM_DELAY = 4096;
 const PAYMENT_HASH = "d4".repeat(32);
-const SERVER = key(3);
+const OPERATOR_PUBKEY = key(3);
 
 /** The two halves a consumer holds: the row's params, and the address that was
  * funded. Built the way the entry points build them, so the fixture exercises
  * the real `serializeParams` round trip rather than a hand-written record. */
-const lockupOf = (script: ReturnType<typeof receiveVtxoScript>) => ({
-    params: VHTLCV2ContractHandler.serializeParams(script.options),
-    address: script.address("tark", SERVER).encode(),
+const lockupOf = (contract: ReturnType<typeof lightningReceiveContract>) => ({
+    params: VHTLCV2ContractHandler.serializeParams(contract.options),
+    address: contract.address("tark", OPERATOR_PUBKEY).encode(),
     // The live swap watches this, and the record stores only the address it
     // decodes from — so a fixture that let the two disagree would be a swap no
     // consumer could build.
-    pkScript: script.pkScript,
+    pkScript: contract.pkScript,
 });
 
 const SEND_LOCKUP = lockupOf(
-    lightningSendVtxoScript({
+    lightningSendContract({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
-        serverPubkey: SERVER,
+        operatorPubkey: OPERATOR_PUBKEY,
         paymentHash: PAYMENT_HASH,
         claimDelay: CLAIM_DELAY,
         emulatorPubkey: key(9),
@@ -65,10 +66,10 @@ const SEND_LOCKUP = lockupOf(
 );
 
 const RECEIVE_LOCKUP = lockupOf(
-    receiveVtxoScript({
+    lightningReceiveContract({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
-        serverPubkey: SERVER,
+        operatorPubkey: OPERATOR_PUBKEY,
         paymentHash: PAYMENT_HASH,
         claimDelay: CLAIM_DELAY,
         emulatorPubkey: key(9),
@@ -205,13 +206,13 @@ describe("rebuildRfqSwap", () => {
             createRfqSwapRecord(receiveOrigin, swapOf(receiveOrigin)),
             {
                 ...swapOf(receiveOrigin, "claimed"),
-                claimArkTxid: "ab".repeat(32),
+                claimTxid: "ab".repeat(32),
             } as LightningReceiveSwap,
         );
-        expect(record.profile.claimArkTxid).toBe("ab".repeat(32));
+        expect(record.profile.claimTxid).toBe("ab".repeat(32));
 
         const rebuilt = rebuildRfqSwap(record, RECEIVE_LOCKUP.params) as LightningReceiveSwap;
-        expect(rebuilt.claimArkTxid).toBe("ab".repeat(32));
+        expect(rebuilt.claimTxid).toBe("ab".repeat(32));
     });
 });
 
@@ -410,11 +411,11 @@ describe("updateRfqSwapRecord", () => {
         const moved = updateRfqSwapRecord(record, {
             ...swapOf(sendOrigin, "refunded"),
             updatedAt: 2_000,
-            refundArkTxid: "ff".repeat(32),
+            refundTxid: "ff".repeat(32),
         } as LightningSendSwap);
 
         expect(moved.state).toBe("refunded");
-        expect(moved.refundArkTxid).toBe("ff".repeat(32));
+        expect(moved.refundTxid).toBe("ff".repeat(32));
         expect(moved.updatedAt).toBe(2_000);
         // the immutable half is untouched, corridor keys included
         expect(hashlockOf(moved).paymentHash).toBe(hashlockOf(sendOrigin).paymentHash);
@@ -439,10 +440,10 @@ describe("updateRfqSwapRecord", () => {
     });
 
     it("carries the caller's funding txid, which no corridor projects", () => {
-        const origin = { ...sendOrigin, fundingArkTxid: "f0".repeat(32) };
+        const origin = { ...sendOrigin, fundingTxid: "f0".repeat(32) };
         const record = createRfqSwapRecord(origin, swapOf(origin));
-        expect(record.fundingArkTxid).toBe("f0".repeat(32));
-        expect(updateRfqSwapRecord(record, swapOf(origin, "settled")).fundingArkTxid).toBe(
+        expect(record.fundingTxid).toBe("f0".repeat(32));
+        expect(updateRfqSwapRecord(record, swapOf(origin, "settled")).fundingTxid).toBe(
             "f0".repeat(32),
         );
     });
@@ -495,7 +496,7 @@ describe("shouldRetainRfqSwap", () => {
  *
  * A record IS an origin plus manager state, so passing one where an origin is
  * wanted type-checks — and quietly carries the old state's `failure`,
- * `blockedReason` and `refundArkTxid` into the next `createRfqSwapRecord`,
+ * `blockedReason` and `refundTxid` into the next `createRfqSwapRecord`,
  * where `managerState` cannot clear them because it omits what the live swap
  * no longer has. That is the same trap `updateRfqSwapRecord` strips those
  * fields to avoid, and this is the other half of it.
@@ -506,8 +507,8 @@ describe("rfqSwapOriginOf", () => {
         state: "failed",
         failure: "the push was refused",
         blockedReason: "no signer for this descriptor",
-        refundArkTxid: "ff".repeat(32),
-        lockupSpendArkTxids: ["ab".repeat(32)],
+        refundTxid: "ff".repeat(32),
+        lockupSpendTxids: ["ab".repeat(32)],
     };
 
     it("keeps every request-time fact", () => {
@@ -523,8 +524,8 @@ describe("rfqSwapOriginOf", () => {
         expect(rebuilt.state).toBe("pending");
         expect(rebuilt.failure).toBeUndefined();
         expect(rebuilt.blockedReason).toBeUndefined();
-        expect(rebuilt.refundArkTxid).toBeUndefined();
-        expect(rebuilt.lockupSpendArkTxids).toBeUndefined();
+        expect(rebuilt.refundTxid).toBeUndefined();
+        expect(rebuilt.lockupSpendTxids).toBeUndefined();
     });
 
     it("gives the profile its own top-level object, so a new key does not reach the record", () => {
@@ -542,10 +543,10 @@ describe("rfqSwapOriginOf", () => {
 describe("the spend that ended the swap", () => {
     it("round-trips through the record and back onto the live swap", () => {
         const spends = ["ab".repeat(32), "cd".repeat(32)];
-        const swap = { ...swapOf(sendOrigin, "settled"), lockupSpendArkTxids: spends };
+        const swap = { ...swapOf(sendOrigin, "settled"), lockupSpendTxids: spends };
         const record = createRfqSwapRecord(sendOrigin, swap);
-        expect(record.lockupSpendArkTxids).toEqual(spends);
-        expect(rebuildRfqSwap(record, paramsOf(sendOrigin)).lockupSpendArkTxids).toEqual(spends);
+        expect(record.lockupSpendTxids).toEqual(spends);
+        expect(rebuildRfqSwap(record, paramsOf(sendOrigin)).lockupSpendTxids).toEqual(spends);
     });
 
     it("is cleared by an update whose swap no longer carries it", () => {
@@ -553,8 +554,72 @@ describe("the spend that ended the swap", () => {
         // REPLACED, so a field the live swap dropped leaves the record.
         const record = createRfqSwapRecord(sendOrigin, {
             ...swapOf(sendOrigin, "settled"),
-            lockupSpendArkTxids: ["ab".repeat(32)],
+            lockupSpendTxids: ["ab".repeat(32)],
         });
-        expect(updateRfqSwapRecord(record, swapOf(sendOrigin)).lockupSpendArkTxids).toBeUndefined();
+        expect(updateRfqSwapRecord(record, swapOf(sendOrigin)).lockupSpendTxids).toBeUndefined();
+    });
+});
+
+/**
+ * Records written before the txid rename are on disk at consumers: the record
+ * fields shipped in `0.0.8`, and the receive corridor's `profile.claimArkTxid`
+ * as far back as `0.0.6`. Backends store the record whole, so nothing renames
+ * them at the storage layer — every read through this module has to.
+ */
+describe("a record written under the old txid names", () => {
+    /** The shape `0.0.9` and earlier wrote. Cast because the current type no
+     * longer declares these — which is the whole point. */
+    const legacy = (record: RfqSwapRecord, over: Record<string, unknown>): RfqSwapRecord => {
+        const { fundingTxid, refundTxid, lockupSpendTxids, ...rest } = record;
+        return { ...rest, ...over } as RfqSwapRecord;
+    };
+
+    it("rebuilds with the txids the old names carried", () => {
+        const stored = legacy(createRfqSwapRecord(sendOrigin, swapOf(sendOrigin, "refunded")), {
+            fundingArkTxid: "ab".repeat(32),
+            refundArkTxid: "cd".repeat(32),
+            lockupSpendArkTxids: ["ef".repeat(32)],
+        });
+        const rebuilt = rebuildRfqSwap(stored, paramsOf(sendOrigin));
+
+        expect(rebuilt.refundTxid).toBe("cd".repeat(32));
+        expect(rebuilt.lockupSpendTxids).toEqual(["ef".repeat(32)]);
+        expect(rfqSwapOriginOf(stored).fundingTxid).toBe("ab".repeat(32));
+    });
+
+    it("keeps a receive leg's claim, so the value gate stays disarmed", () => {
+        // The sharpest one: with `claimTxid` lost, `partiallyClaimed` reads
+        // false and an underfunded lockup whose preimage is already public
+        // gets blocked instead of drained.
+        const record = createRfqSwapRecord(receiveOrigin, swapOf(receiveOrigin, "claimed"));
+        const { claimTxid: _current, ...profile } = record.profile;
+        const stored = { ...record, profile: { ...profile, claimArkTxid: "ab".repeat(32) } };
+
+        const rebuilt = rebuildRfqSwap(stored, paramsOf(receiveOrigin)) as LightningReceiveSwap;
+        expect(rebuilt.claimTxid).toBe("ab".repeat(32));
+    });
+
+    it("is written back without them, so the rename costs one pass", () => {
+        const stored = legacy(createRfqSwapRecord(sendOrigin, swapOf(sendOrigin, "refunded")), {
+            fundingArkTxid: "ab".repeat(32),
+            refundArkTxid: "cd".repeat(32),
+        });
+        const written = updateRfqSwapRecord(stored, {
+            ...swapOf(sendOrigin, "refunded"),
+            refundTxid: "cd".repeat(32),
+        });
+
+        expect(written.fundingTxid).toBe("ab".repeat(32));
+        expect(written.refundTxid).toBe("cd".repeat(32));
+        expect(written).not.toHaveProperty("fundingArkTxid");
+        expect(written).not.toHaveProperty("refundArkTxid");
+    });
+
+    it("leaves a current record alone", () => {
+        const record = createRfqSwapRecord(sendOrigin, {
+            ...swapOf(sendOrigin, "refunded"),
+            refundTxid: "cd".repeat(32),
+        });
+        expect(normalizeRfqSwapRecord(record)).toBe(record);
     });
 });

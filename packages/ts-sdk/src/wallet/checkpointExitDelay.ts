@@ -11,10 +11,11 @@ export const DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS = 86_400n;
 /**
  * Wall-clock floor for the checkpoint exit delay on regtest (~2 blocks nominal).
  *
- * Deliberately lower than {@link REGTEST_MIN_BATCH_EXPIRY_SECONDS "../wallet/batchExpiry"} — this
- * repo's own regtest envs run `ARKD_CHECKPOINT_EXIT_DELAY` as low as 5 blocks
- * (`packages/boltz-swap/.env.regtest`), so the floor must clear that while still rejecting a
- * 1-block attack.
+ * Deliberately lower than {@link REGTEST_MIN_BATCH_EXPIRY_SECONDS "../wallet/batchExpiry"} — it
+ * was sized to clear an `ARKD_CHECKPOINT_EXIT_DELAY` of 5 blocks while still rejecting a 1-block
+ * attack. No env in this repo goes below 20 any more (the 5-block one shipped with the removed
+ * boltz-swap package), so there is room to tighten this; left as-is until someone confirms no
+ * external regtest deployment relies on the lower bound.
  */
 export const REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS = 1_200n;
 
@@ -54,7 +55,7 @@ const HOSTED_MIN_CHECKPOINT_EXIT_DELAY_SECONDS: Partial<Record<NetworkName, bigi
     mutinynet: MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
 };
 
-/** Bounds applied to a server-supplied `ArkInfo.checkpointTapscript`. */
+/** Bounds applied to a server-supplied `ArkadeInfo.checkpointTapscript`. */
 export type CheckpointExitDelayPolicy = {
     /** Minimum wall-clock delay in seconds, after normalization. */
     minSeconds: bigint;
@@ -69,7 +70,7 @@ export type CheckpointExitDelayPolicy = {
      * arkd always builds the checkpoint tapscript from its own `forfeitPubkey`
      * (`internal/core/application/service.go`), so this should be the
      * `forfeitPubkey` the caller already trusts — pinned wallet state where one
-     * exists, otherwise the same `ArkInfo` response's own `forfeitPubkey` field
+     * exists, otherwise the same `ArkadeInfo` response's own `forfeitPubkey` field
      * as a self-consistency check.
      */
     advertisedForfeitPubkey?: Bytes;

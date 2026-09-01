@@ -10,22 +10,6 @@ import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
-const state = vi.hoisted(() => ({
-    arkInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
-}));
-
-vi.mock("@arkade-os/sdk", async (importOriginal) => {
-    const mod = await importOriginal<typeof import("@arkade-os/sdk")>();
-    return {
-        ...mod,
-        RestArkProvider: class {
-            async getInfo() {
-                return state.arkInfo;
-            }
-        },
-    };
-});
-
 import {
     ArkAddress,
     DescriptorIdentity,
@@ -39,7 +23,7 @@ import {
 import {
     LIGHTNING_SEND_PAIR,
     ONCHAIN_SEND_PAIR,
-    lightningSendVtxoScript,
+    lightningSendContract,
     requestLightningSend,
     requestOnchainSend,
     type RfqQuote,
@@ -58,16 +42,23 @@ const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, .
 
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-const SERVER = key(3);
+const OPERATOR_PUBKEY = key(3);
 const SOLVER = key(1);
 const RECEIVER_PK_SCRIPT = p2tr(key(1));
 const EMULATOR_PUBKEY = key(9);
 const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
 const PAYOUT_PUBKEY = key(15);
 const HTLC_PUBKEY = key(11);
-const REFUND_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
+const REFUND_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
 
-state.arkInfo.signerPubkey = hex.encode(SERVER);
+/** What both wallets below answer for the server they are connected to —
+ * one object, so the covenant derived in-flow and the one the transport stubs
+ * build from OPERATOR_PUBKEY cannot drift. */
+const ARK_INFO = {
+    signerPubkey: hex.encode(OPERATOR_PUBKEY),
+    unilateralExitDelay: 4096,
+    network: "regtest",
+};
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
@@ -81,6 +72,7 @@ const hdWallet = async (): Promise<IWallet> => {
     return {
         identity,
         getAddress: async () => REFUND_ADDRESS,
+        getArkadeInfo: async () => ARK_INFO,
         // Both entrypoints register the lockup before returning an address to
         // fund; what they write is `rfqRegister.test.ts`'s subject.
         getContractManager: async () => ({ createContract: async () => ({}) }),
@@ -101,6 +93,7 @@ const staticWallet = (rows: { params: Record<string, string> }[] = []): IWallet 
     ({
         identity: SingleKey.fromHex(STATIC_WALLET_KEY),
         getAddress: async () => REFUND_ADDRESS,
+        getArkadeInfo: async () => ARK_INFO,
         // Both entrypoints register the lockup before returning an address to
         // fund.
         getContractManager: async () => ({
@@ -115,10 +108,10 @@ const staticWallet = (rows: { params: Record<string, string> }[] = []): IWallet 
 const lightningTransport = (): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
-        const script = lightningSendVtxoScript({
+        const contract = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
             emulatorPubkey: EMULATOR_PUBKEY,
@@ -138,7 +131,7 @@ const lightningTransport = (): RfqTransport => ({
             refund_locktime: REFUND_LOCKTIME,
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
-                lockup_address: script.address("tark", SERVER).encode(),
+                lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
             },
         } satisfies RfqQuote;
     },
@@ -162,10 +155,10 @@ const onchainTransport = (seen: { paymentHash?: string; senderPubkey?: string })
         const profile = (payload as { profile: Record<string, unknown> }).profile;
         seen.paymentHash = profile.payment_hash as string;
         seen.senderPubkey = profile.client_refund_pubkey as string;
-        const lockup = lightningSendVtxoScript({
+        const lockup = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: seen.paymentHash,
             claimDelay: 4096,
             emulatorPubkey: EMULATOR_PUBKEY,
@@ -193,7 +186,7 @@ const onchainTransport = (seen: { paymentHash?: string; senderPubkey?: string })
             valid_until: VALID_UNTIL,
             refund_locktime: REFUND_LOCKTIME,
             profile: {
-                lockup_address: lockup.address("tark", SERVER).encode(),
+                lockup_address: lockup.address("tark", OPERATOR_PUBKEY).encode(),
                 htlc_pubkey: hex.encode(HTLC_PUBKEY),
                 htlc_locktime: HTLC_LOCKTIME,
                 htlc_address: htlc.address,
@@ -213,10 +206,10 @@ describe("requestLightningSend and the corridor spread", () => {
     const spreadTransport = (fromAmount: number, toAmount: number): RfqTransport => ({
         async requestQuote(payload) {
             const profile = (payload as { profile: Record<string, unknown> }).profile;
-            const script = lightningSendVtxoScript({
+            const contract = lightningSendContract({
                 solverPubkey: SOLVER,
                 refundLocktime: REFUND_LOCKTIME,
-                serverPubkey: SERVER,
+                operatorPubkey: OPERATOR_PUBKEY,
                 paymentHash: PAYMENT_HASH,
                 claimDelay: 4096,
                 emulatorPubkey: EMULATOR_PUBKEY,
@@ -236,7 +229,7 @@ describe("requestLightningSend and the corridor spread", () => {
                 refund_locktime: REFUND_LOCKTIME,
                 profile: {
                     receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
-                    lockup_address: script.address("tark", SERVER).encode(),
+                    lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
                 },
             } satisfies RfqQuote;
         },
@@ -248,19 +241,17 @@ describe("requestLightningSend and the corridor spread", () => {
 
     it("funds from_amount — the invoice PLUS the fee, never the bare invoice", async () => {
         const wallet = await hdWallet();
-        const result = await requestLightningSend(
-            wallet,
-            "http://ark",
-            spreadTransport(1072, 1000),
-            { emulatorPubkey: EMULATOR_PUBKEY_HEX, invoice: INVOICE },
-        );
+        const result = await requestLightningSend(wallet, spreadTransport(1072, 1000), {
+            emulatorPubkey: EMULATOR_PUBKEY_HEX,
+            invoice: INVOICE,
+        });
         expect(result.fundAmount).toBe(1072);
     });
 
     it("refuses a quote whose to_amount reprices the invoice", async () => {
         const wallet = await hdWallet();
         await expect(
-            requestLightningSend(wallet, "http://ark", spreadTransport(1000, 999), {
+            requestLightningSend(wallet, spreadTransport(1000, 999), {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 invoice: INVOICE,
             }),
@@ -270,7 +261,7 @@ describe("requestLightningSend and the corridor spread", () => {
     it("refuses a quote whose from_amount is below the invoice — a negative spread is not a quote", async () => {
         const wallet = await hdWallet();
         await expect(
-            requestLightningSend(wallet, "http://ark", spreadTransport(999, 1000), {
+            requestLightningSend(wallet, spreadTransport(999, 1000), {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 invoice: INVOICE,
             }),
@@ -280,22 +271,20 @@ describe("requestLightningSend and the corridor spread", () => {
 /**
  * The loop a persisting consumer depends on: what the entry point hands back
  * must rebuild the very covenant it just funded. Without it a consumer would
- * re-fetch `getInfo()` and re-derive the tree itself, and any drift between the
- * two derivations is a lockup nobody can spend.
+ * re-fetch `getArkadeInfo()` and re-derive the tree itself, and any drift
+ * between the two derivations is a lockup nobody can spend.
  */
-describe("treeParams round-trips to the funded script", () => {
+describe("contractParams round-trips to the funded script", () => {
     it.each([
         ["hd", async () => await hdWallet()],
         ["static", async () => staticWallet()],
     ] as const)("on a %s wallet", async (_kind, makeWallet) => {
-        const result = await requestLightningSend(
-            await makeWallet(),
-            "http://ark",
-            lightningTransport(),
-            { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
-        );
+        const result = await requestLightningSend(await makeWallet(), lightningTransport(), {
+            invoice: INVOICE,
+            emulatorPubkey: EMULATOR_PUBKEY_HEX,
+        });
 
-        const rebuilt = lightningSendVtxoScript(result.treeParams);
+        const rebuilt = lightningSendContract(result.contractParams);
         expect(hex.encode(rebuilt.pkScript)).toBe(hex.encode(result.swapPkScript));
         expect(hex.encode(rebuilt.pkScript)).toBe(hex.encode(result.script.pkScript));
     });
@@ -308,12 +297,10 @@ describe("treeParams round-trips to the funded script", () => {
         // absent from it: the covenant comes from the contract row the same
         // call registered, so there is no second copy to drift.
         const rows: { params: Record<string, string> }[] = [];
-        const result = await requestLightningSend(
-            staticWallet(rows),
-            "http://ark",
-            lightningTransport(),
-            { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
-        );
+        const result = await requestLightningSend(staticWallet(rows), lightningTransport(), {
+            invoice: INVOICE,
+            emulatorPubkey: EMULATOR_PUBKEY_HEX,
+        });
 
         const record = createRfqSwapRecord(
             {
@@ -321,7 +308,7 @@ describe("treeParams round-trips to the funded script", () => {
                 lockupAddress: result.address,
                 // One call, both corridor keys. Hand-mapping is what drops the
                 // salt on a static wallet — see the claim-secret tests below.
-                profile: rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                profile: rfqSecretsProfile(result.secrets, result.contractParams.paymentHash),
                 amount: result.fundAmount,
             },
             {
@@ -329,8 +316,8 @@ describe("treeParams round-trips to the funded script", () => {
                 rfqId: result.rfqId,
                 state: "pending",
                 lockupPkScript: result.swapPkScript,
-                paymentHash: result.treeParams.paymentHash,
-                refundLocktime: result.treeParams.refundLocktime,
+                paymentHash: result.contractParams.paymentHash,
+                refundLocktime: result.contractParams.refundLocktime,
                 createdAt: 1,
                 updatedAt: 1,
             },
@@ -338,31 +325,29 @@ describe("treeParams round-trips to the funded script", () => {
 
         const rebuilt = rebuildRfqSwap(record, rows[0].params);
         expect(hex.encode(rebuilt.lockupPkScript)).toBe(hex.encode(result.swapPkScript));
-        expect(rebuilt.refundLocktime).toBe(result.treeParams.refundLocktime);
+        expect(rebuilt.refundLocktime).toBe(result.contractParams.refundLocktime);
     });
 
     it("carries the inputs no quote and no second round trip could supply", async () => {
-        const result = await requestLightningSend(
-            staticWallet(),
-            "http://ark",
-            lightningTransport(),
-            { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
-        );
-        // serverPubkey and claimDelay come from this wallet's own getInfo(),
+        const result = await requestLightningSend(staticWallet(), lightningTransport(), {
+            invoice: INVOICE,
+            emulatorPubkey: EMULATOR_PUBKEY_HEX,
+        });
+        // serverPubkey and claimDelay come from this wallet's own getArkadeInfo(),
         // emulatorPubkey from a per-network pin, refundPkScript from decoding an
         // address. None of them is on the quote.
-        expect(result.treeParams.serverPubkey).toHaveLength(32);
-        expect(result.treeParams.emulatorPubkey).toHaveLength(32);
-        expect(result.treeParams.claimDelay % 512).toBe(0);
-        expect(result.treeParams.refundPkScript.length).toBeGreaterThan(0);
-        expect(result.treeParams.paymentHash).toBe(INVOICE.paymentHash);
+        expect(result.contractParams.operatorPubkey).toHaveLength(32);
+        expect(result.contractParams.emulatorPubkey).toHaveLength(32);
+        expect(result.contractParams.claimDelay % 512).toBe(0);
+        expect(result.contractParams.refundPkScript.length).toBeGreaterThan(0);
+        expect(result.contractParams.paymentHash).toBe(INVOICE.paymentHash);
     });
 });
 
 describe("requestLightningSend on an HD wallet", () => {
     it("returns a descriptor and no key material", async () => {
         const wallet = await hdWallet();
-        const result = await requestLightningSend(wallet, "http://ark", lightningTransport(), {
+        const result = await requestLightningSend(wallet, lightningTransport(), {
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
             invoice: INVOICE,
         });
@@ -384,7 +369,7 @@ describe("requestOnchainSend on an HD wallet", () => {
     it("commits to the derived preimage and returns neither it nor the key", async () => {
         const wallet = await hdWallet();
         const seen: { paymentHash?: string; senderPubkey?: string } = {};
-        const result = await requestOnchainSend(wallet, "http://ark", onchainTransport(seen), {
+        const result = await requestOnchainSend(wallet, onchainTransport(seen), {
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
             amount: 100_000,
             amountSide: "to",
@@ -413,8 +398,8 @@ describe("requestOnchainSend on an HD wallet", () => {
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
         };
 
-        await requestOnchainSend(wallet, "http://ark", onchainTransport(first), params);
-        await requestOnchainSend(wallet, "http://ark", onchainTransport(second), params);
+        await requestOnchainSend(wallet, onchainTransport(first), params);
+        await requestOnchainSend(wallet, onchainTransport(second), params);
 
         expect(second.senderPubkey).not.toBe(first.senderPubkey);
         expect(second.paymentHash).not.toBe(first.paymentHash);
@@ -425,7 +410,7 @@ describe("requestOnchainSend on an HD wallet", () => {
         const preimage = new Uint8Array(32).fill(7);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         try {
-            const result = await requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+            const result = await requestOnchainSend(wallet, onchainTransport({}), {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 100_000,
                 amountSide: "to",
@@ -462,7 +447,7 @@ describe("requestOnchainSend on an HD wallet", () => {
         const preimage = new Uint8Array(32).fill(8);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         try {
-            const result = await requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+            const result = await requestOnchainSend(wallet, onchainTransport({}), {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 100_000,
                 amountSide: "to",
@@ -496,7 +481,7 @@ describe("requestOnchainSend on an HD wallet", () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         try {
             const send = () =>
-                requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+                requestOnchainSend(wallet, onchainTransport({}), {
                     emulatorPubkey: EMULATOR_PUBKEY_HEX,
                     amount: 100_000,
                     amountSide: "to",
@@ -543,7 +528,7 @@ describe("requestOnchainSend on an HD wallet", () => {
         // and the difference between it and `preimageHex` is what they mean,
         // not what they look like.
         const send = (wallet: IWallet) =>
-            requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+            requestOnchainSend(wallet, onchainTransport({}), {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 100_000,
                 amountSide: "to",
@@ -573,7 +558,7 @@ const stringLeaves = (value: unknown): string[] => {
 
 describe("what an RFQ record stores about its corridor's keys", () => {
     const onchainSend = (wallet: IWallet) =>
-        requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+        requestOnchainSend(wallet, onchainTransport({}), {
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
             amount: 100_000,
             amountSide: "to",
@@ -581,7 +566,7 @@ describe("what an RFQ record stores about its corridor's keys", () => {
         });
 
     const send = (wallet: IWallet) =>
-        requestLightningSend(wallet, "http://ark", lightningTransport(), {
+        requestLightningSend(wallet, lightningTransport(), {
             invoice: INVOICE,
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
         });
@@ -649,15 +634,15 @@ describe("what an RFQ record stores about its corridor's keys", () => {
                 {
                     kind: "lightning_send",
                     lockupAddress: result.address,
-                    profile: rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                    profile: rfqSecretsProfile(result.secrets, result.contractParams.paymentHash),
                 },
                 {
                     kind: "lightning_send",
                     rfqId: result.rfqId,
                     state: "pending",
                     lockupPkScript: result.swapPkScript,
-                    paymentHash: result.treeParams.paymentHash,
-                    refundLocktime: result.treeParams.refundLocktime,
+                    paymentHash: result.contractParams.paymentHash,
+                    refundLocktime: result.contractParams.refundLocktime,
                     createdAt: 1,
                     updatedAt: 1,
                 },
@@ -667,7 +652,7 @@ describe("what an RFQ record stores about its corridor's keys", () => {
                 signingDescriptor: result.secrets.descriptor,
             });
             expect(record.profile.hashlock).toEqual({
-                paymentHash: result.treeParams.paymentHash,
+                paymentHash: result.contractParams.paymentHash,
             });
             expect(JSON.stringify(record)).not.toContain("preimage");
             // the reader answers "this leg has none", not a projection that
@@ -687,12 +672,10 @@ describe("a corridor with no hashlock at all", () => {
     const KIND = "lightning_send" as const;
 
     it("round-trips a signer with no hashlock and no preimage anywhere", async () => {
-        const result = await requestLightningSend(
-            staticWallet(),
-            "http://ark",
-            lightningTransport(),
-            { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
-        );
+        const result = await requestLightningSend(staticWallet(), lightningTransport(), {
+            invoice: INVOICE,
+            emulatorPubkey: EMULATOR_PUBKEY_HEX,
+        });
         const profile = rfqSecretsProfile(result.secrets); // no payment hash
         expect(profile.hashlock).toBeUndefined();
 
@@ -719,8 +702,8 @@ describe("a corridor with no hashlock at all", () => {
                     lockupPkScript: result.swapPkScript,
                     // the live type still requires it; the RECORD does not, which
                     // is the follow-up this cast marks
-                    paymentHash: result.treeParams.paymentHash,
-                    refundLocktime: result.treeParams.refundLocktime,
+                    paymentHash: result.contractParams.paymentHash,
+                    refundLocktime: result.contractParams.refundLocktime,
                     createdAt: 1,
                     updatedAt: 1,
                 },

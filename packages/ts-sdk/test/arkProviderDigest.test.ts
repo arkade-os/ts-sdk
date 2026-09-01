@@ -87,6 +87,50 @@ describe("RestArkProvider server-info digest negotiation", () => {
         expect(digestOf(provider)).toBe("dX");
     });
 
+    it("getInfo budgets its fetch, and the abort classifies as retryable", async () => {
+        // A black-holed connection hangs an unbudgeted fetch past the
+        // service-worker page deadline (20s), so the worker never reaches its
+        // snapshot fallback. The budget aborts first; the rejection must then
+        // classify RETRYABLE or the fallback would treat it as terminal.
+        const provider = new RestArkProvider("http://ark.test");
+        const fetchSpy = vi.fn(async (_url: string, init?: { signal?: AbortSignal }) => {
+            expect(init?.signal).toBeInstanceOf(AbortSignal);
+            return okInfo("d1");
+        });
+        vi.stubGlobal("fetch", fetchSpy);
+        await provider.getInfo();
+        expect(fetchSpy).toHaveBeenCalled();
+
+        // The TimeoutError this signal rejects with classifies retryable —
+        // pinned with the rest of the classifier in ark-info-snapshot.test.ts.
+    });
+
+    it("getInfo emits onServerInfoChanged when the digest moved — and only then", async () => {
+        // A read is also a rotation signal (PR #803 review): without this, an
+        // info read after the operator rotated advances the cached digest,
+        // arkd stops answering DIGEST_MISMATCH, and the one event-driven
+        // rotation trigger is suppressed by the act of reading.
+        const provider = new RestArkProvider("http://ark.test");
+        const digests = ["d1", "d1", "d2"];
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => okInfo(digests.shift()!)),
+        );
+
+        const seen: { digest?: string }[] = [];
+        provider.onServerInfoChanged((info) => seen.push(info));
+
+        await provider.getInfo(); // boot read: no previous digest, silent
+        expect(seen).toHaveLength(0);
+
+        await provider.getInfo(); // unchanged digest: silent
+        expect(seen).toHaveLength(0);
+
+        await provider.getInfo(); // moved: the rotation signal
+        expect(seen).toHaveLength(1);
+        expect(digestOf(provider)).toBe("d2");
+    });
+
     it("on DIGEST_MISMATCH refreshes + emits onServerInfoChanged + throws (no silent retry)", async () => {
         const provider = new RestArkProvider("http://ark.test");
         let submitAttempts = 0;

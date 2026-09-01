@@ -484,43 +484,159 @@ describe("asset-denominated non-interactive covenant", () => {
         expect(vtxo.txid).toBe(txid);
     });
 
-    it(
-        "spends a covenant PROVEN byte-identical to VHTLC.ScriptV2's own",
-        { timeout: 180000 },
-        async () => {
-            // THE GAP THIS CLOSES. Every other test here runs a probe artifact, so
-            // the emulator had never executed the byte sequence `ScriptV2` actually
-            // builds — the one a consumer locks funds to. A stack-order or counting
-            // quirk in it would leave every asset contract unspendable on its
-            // covenant leaves, and no test would say so.
-            // A receiver of this test's own: the module-level one is already paid
-            // by the test above, so waiting on it returns THAT spend's vtxo and
-            // the txid assertion below compares two unrelated transactions.
-            const payee = randomP2TR();
-            const alice = await createTestArkWallet();
-            const aliceAddress = await alice.wallet.getAddress();
-            faucetOffchain(aliceAddress!, Number(CARRIER_SATS) * 6);
-            await waitFor(
-                async () => (await alice.wallet.getBalance()).total >= Number(CARRIER_SATS),
-            );
+    it("spends a covenant PROVEN byte-identical to VHTLC.ScriptV2's own", {
+        timeout: 180000,
+    }, async () => {
+        // THE GAP THIS CLOSES. Every other test here runs a probe artifact, so
+        // the emulator had never executed the byte sequence `ScriptV2` actually
+        // builds — the one a consumer locks funds to. A stack-order or counting
+        // quirk in it would leave every asset contract unspendable on its
+        // covenant leaves, and no test would say so.
+        // A receiver of this test's own: the module-level one is already paid
+        // by the test above, so waiting on it returns THAT spend's vtxo and
+        // the txid assertion below compares two unrelated transactions.
+        const payee = randomP2TR();
+        const alice = await createTestArkWallet();
+        const aliceAddress = await alice.wallet.getAddress();
+        faucetOffchain(aliceAddress!, Number(CARRIER_SATS) * 6);
+        await waitFor(async () => (await alice.wallet.getBalance()).total >= Number(CARRIER_SATS));
 
-            const { assetId } = await alice.wallet.assetManager.issue({
-                amount: ASSET_SUPPLY,
-                metadata: { decimals: 0, name: "ScriptV2 Shaped", ticker: "SV2" },
-            });
-            await waitFor(
-                async () =>
-                    assetBalanceOf(await alice.wallet.getBalance(), assetId) >= ASSET_LOCKED,
-            );
-            const parsed = assetExt.AssetId.fromString(assetId);
-            const assetTxid = Uint8Array.from(parsed.txid).reverse();
-            const assetGidx = BigInt(parsed.groupIndex);
+        const { assetId } = await alice.wallet.assetManager.issue({
+            amount: ASSET_SUPPLY,
+            metadata: { decimals: 0, name: "ScriptV2 Shaped", ticker: "SV2" },
+        });
+        await waitFor(
+            async () => assetBalanceOf(await alice.wallet.getBalance(), assetId) >= ASSET_LOCKED,
+        );
+        const parsed = assetExt.AssetId.fromString(assetId);
+        const assetTxid = Uint8Array.from(parsed.txid).reverse();
+        const assetGidx = BigInt(parsed.groupIndex);
 
-            // THE PROOF, and the reason this is worth more than the spend below.
-            // `resolveAsm` binds the artifact's placeholders exactly as the compiler
-            // does, so this compares the bytes the emulator is about to run against
-            // the bytes `ScriptV2` emits for the same asset and destination. Equal
-            // means the spend exercises ScriptV2's covenant, not a lookalike.
+        // THE PROOF, and the reason this is worth more than the spend below.
+        // `resolveAsm` binds the artifact's placeholders exactly as the compiler
+        // does, so this compares the bytes the emulator is about to run against
+        // the bytes `ScriptV2` emits for the same asset and destination. Equal
+        // means the spend exercises ScriptV2's covenant, not a lookalike.
+        const fromSdk = new VHTLC.ScriptV2({
+            preimageHash: PREIMAGE_HASH,
+            sender: schnorr.getPublicKey(new Uint8Array(32).fill(1)),
+            receiver: schnorr.getPublicKey(new Uint8Array(32).fill(2)),
+            server: schnorr.getPublicKey(new Uint8Array(32).fill(3)),
+            refundLocktime: 1_800_000_000n,
+            unilateralClaimDelay: { type: "seconds", value: 512n },
+            unilateralRefundDelay: { type: "seconds", value: 1024n },
+            unilateralRefundWithoutReceiverDelay: { type: "seconds", value: 1536n },
+            nonInteractiveClaim: {
+                receiverPkScript: payee,
+                emulatorPubkey: schnorr.getPublicKey(new Uint8Array(32).fill(5)),
+            },
+            asset: { txid: parsed.txid, groupIndex: parsed.groupIndex },
+        }).nonInteractiveClaimArkadeScript!;
+        const fromArtifact = arkade.resolveAsm(
+            scriptV2Shaped.functions.claim.arkadeScript.asm as never,
+            {
+                hash: PREIMAGE_HASH,
+                receiver: payee.slice(2),
+                assetTxid,
+                assetGidx,
+            },
+        );
+        expect(hex.encode(fromArtifact)).toBe(hex.encode(fromSdk));
+
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            indexer: indexerProvider,
+            identity: alice.identity,
+            emulator,
+            network: networks.regtest,
+        });
+        const contract = ark.contract(scriptV2Shaped, {
+            hash: PREIMAGE_HASH,
+            receiver: payee.slice(2),
+            assetTxid,
+            assetGidx,
+        });
+
+        await alice.wallet.send({
+            address: contract.address,
+            amount: Number(CARRIER_SATS),
+            assets: [{ assetId, amount: ASSET_LOCKED }],
+        });
+        await waitForVtxo(indexerProvider, contract.pkScript);
+
+        // Everything through to output 0. Input-relative on both quantities, so
+        // the whole input must arrive — no second output, and none needed: the
+        // misdirection cases live on the probe artifact, which differs from this
+        // only in the index literal and the sat clause form.
+        const { txid } = await contract.functions
+            .claim(PREIMAGE)
+            .withAsset({
+                assetId,
+                inputs: [{ vin: 0, amount: ASSET_LOCKED }],
+                outputs: [{ vout: 0, amount: ASSET_LOCKED }],
+            })
+            .to(payee, CARRIER_SATS)
+            .send();
+
+        const [vtxo] = await waitForVtxo(indexerProvider, payee);
+        expect(vtxo.txid).toBe(txid);
+    });
+
+    it("executes the STRICT quoted bound, proven byte-identical to VHTLC.ScriptV2's own", {
+        timeout: 300000,
+    }, async () => {
+        // THE GAP THIS CLOSES. `strict` inserts four tokens into each of two
+        // clauses and no VM had ever run them: the byte-equality proof above
+        // builds a claim leaf WITHOUT `strict`, and the unit tests assert only
+        // that the quoted pushes are PRESENT in the decoded token array, not
+        // where. A transposition that compares the quote against itself passes
+        // every one of them, spends fine, and enforces nothing of the quote —
+        // which is the whole reason a caller opts in. Byte-pinning cannot find
+        // that; this can, and it is the same class as the reversed txid the
+        // header describes.
+        const alice = await createTestArkWallet();
+        const aliceAddress = await alice.wallet.getAddress();
+        faucetOffchain(aliceAddress!, Number(CARRIER_SATS) * 12);
+        await waitFor(
+            async () => (await alice.wallet.getBalance()).total >= Number(CARRIER_SATS) * 4,
+        );
+
+        const { assetId } = await alice.wallet.assetManager.issue({
+            amount: STRICT_ASSET_SUPPLY,
+            metadata: { decimals: 0, name: "Strict Quote", ticker: "STQ" },
+        });
+        await waitFor(
+            async () =>
+                assetBalanceOf(await alice.wallet.getBalance(), assetId) >= STRICT_ASSET_SUPPLY,
+        );
+        const parsed = assetExt.AssetId.fromString(assetId);
+        const assetTxid = Uint8Array.from(parsed.txid).reverse();
+        const assetGidx = BigInt(parsed.groupIndex);
+
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            indexer: indexerProvider,
+            identity: alice.identity,
+            emulator,
+            network: networks.regtest,
+        });
+
+        /**
+         * One lockup, PROVEN to carry ScriptV2's strict covenant before it is
+         * funded. Three of them below, differing only in payee — hence in
+         * address — so each underfunding case gets a lockup of its own rather
+         * than a second VTXO behind a shared address, which a claim could pick
+         * either of.
+         */
+        const proven = (payee: Uint8Array) => {
+            const binds = {
+                hash: PREIMAGE_HASH,
+                receiver: payee.slice(2),
+                assetTxid,
+                assetGidx,
+                quotedAsset: STRICT_ASSET_QUOTE,
+                quotedSats: STRICT_SATS_QUOTE,
+            };
             const fromSdk = new VHTLC.ScriptV2({
                 preimageHash: PREIMAGE_HASH,
                 sender: schnorr.getPublicKey(new Uint8Array(32).fill(1)),
@@ -533,255 +649,117 @@ describe("asset-denominated non-interactive covenant", () => {
                 nonInteractiveClaim: {
                     receiverPkScript: payee,
                     emulatorPubkey: schnorr.getPublicKey(new Uint8Array(32).fill(5)),
+                    strict: { amount: STRICT_SATS_QUOTE, assetAmount: STRICT_ASSET_QUOTE },
                 },
                 asset: { txid: parsed.txid, groupIndex: parsed.groupIndex },
             }).nonInteractiveClaimArkadeScript!;
             const fromArtifact = arkade.resolveAsm(
-                scriptV2Shaped.functions.claim.arkadeScript.asm as never,
-                {
-                    hash: PREIMAGE_HASH,
-                    receiver: payee.slice(2),
-                    assetTxid,
-                    assetGidx,
-                },
+                scriptV2StrictShaped.functions.claim.arkadeScript.asm as never,
+                binds,
             );
             expect(hex.encode(fromArtifact)).toBe(hex.encode(fromSdk));
+            return ark.contract(scriptV2StrictShaped, binds);
+        };
 
-            const ark = await arkade.Arkade.connect({
-                arkade: arkProvider,
-                indexer: indexerProvider,
-                identity: alice.identity,
-                emulator,
-                network: networks.regtest,
-            });
-            const contract = ark.contract(scriptV2Shaped, {
-                hash: PREIMAGE_HASH,
-                receiver: payee.slice(2),
-                assetTxid,
-                assetGidx,
-            });
-
+        /** Fund one lockup and wait for it to be visible. */
+        const fund = async (address: string, pkScript: Uint8Array, sats: bigint, units: bigint) => {
+            await waitFor(
+                async () => assetBalanceOf(await alice.wallet.getBalance(), assetId) >= units,
+            );
             await alice.wallet.send({
-                address: contract.address,
-                amount: Number(CARRIER_SATS),
-                assets: [{ assetId, amount: ASSET_LOCKED }],
+                address,
+                amount: Number(sats),
+                assets: [{ assetId, amount: units }],
             });
-            await waitForVtxo(indexerProvider, contract.pkScript);
+            await waitForVtxo(indexerProvider, pkScript);
+        };
 
-            // Everything through to output 0. Input-relative on both quantities, so
-            // the whole input must arrive — no second output, and none needed: the
-            // misdirection cases live on the probe artifact, which differs from this
-            // only in the index literal and the sat clause form.
-            const { txid } = await contract.functions
-                .claim(PREIMAGE)
-                .withAsset({
-                    assetId,
-                    inputs: [{ vin: 0, amount: ASSET_LOCKED }],
-                    outputs: [{ vout: 0, amount: ASSET_LOCKED }],
-                })
-                .to(payee, CARRIER_SATS)
-                .send();
+        const payeePaid = randomP2TR();
+        const payeeShortAsset = randomP2TR();
+        const payeeShortSats = randomP2TR();
+        const payeeControl = randomP2TR();
+        const paid = proven(payeePaid);
+        const shortAsset = proven(payeeShortAsset);
+        const shortSats = proven(payeeShortSats);
 
-            const [vtxo] = await waitForVtxo(indexerProvider, payee);
-            expect(vtxo.txid).toBe(txid);
-        },
-    );
+        await fund(paid.address, paid.pkScript, STRICT_SATS_QUOTE, STRICT_ASSET_QUOTE);
+        await fund(shortAsset.address, shortAsset.pkScript, STRICT_SATS_QUOTE, STRICT_ASSET_SHORT);
+        await fund(shortSats.address, shortSats.pkScript, STRICT_SATS_SHORT, STRICT_ASSET_QUOTE);
 
-    it(
-        "executes the STRICT quoted bound, proven byte-identical to VHTLC.ScriptV2's own",
-        { timeout: 300000 },
-        async () => {
-            // THE GAP THIS CLOSES. `strict` inserts four tokens into each of two
-            // clauses and no VM had ever run them: the byte-equality proof above
-            // builds a claim leaf WITHOUT `strict`, and the unit tests assert only
-            // that the quoted pushes are PRESENT in the decoded token array, not
-            // where. A transposition that compares the quote against itself passes
-            // every one of them, spends fine, and enforces nothing of the quote —
-            // which is the whole reason a caller opts in. Byte-pinning cannot find
-            // that; this can, and it is the same class as the reversed txid the
-            // header describes.
-            const alice = await createTestArkWallet();
-            const aliceAddress = await alice.wallet.getAddress();
-            faucetOffchain(aliceAddress!, Number(CARRIER_SATS) * 12);
-            await waitFor(
-                async () => (await alice.wallet.getBalance()).total >= Number(CARRIER_SATS) * 4,
-            );
-
-            const { assetId } = await alice.wallet.assetManager.issue({
-                amount: STRICT_ASSET_SUPPLY,
-                metadata: { decimals: 0, name: "Strict Quote", ticker: "STQ" },
-            });
-            await waitFor(
-                async () =>
-                    assetBalanceOf(await alice.wallet.getBalance(), assetId) >= STRICT_ASSET_SUPPLY,
-            );
-            const parsed = assetExt.AssetId.fromString(assetId);
-            const assetTxid = Uint8Array.from(parsed.txid).reverse();
-            const assetGidx = BigInt(parsed.groupIndex);
-
-            const ark = await arkade.Arkade.connect({
-                arkade: arkProvider,
-                indexer: indexerProvider,
-                identity: alice.identity,
-                emulator,
-                network: networks.regtest,
-            });
-
-            /**
-             * One lockup, PROVEN to carry ScriptV2's strict covenant before it is
-             * funded. Three of them below, differing only in payee — hence in
-             * address — so each underfunding case gets a lockup of its own rather
-             * than a second VTXO behind a shared address, which a claim could pick
-             * either of.
-             */
-            const proven = (payee: Uint8Array) => {
-                const binds = {
-                    hash: PREIMAGE_HASH,
-                    receiver: payee.slice(2),
-                    assetTxid,
-                    assetGidx,
-                    quotedAsset: STRICT_ASSET_QUOTE,
-                    quotedSats: STRICT_SATS_QUOTE,
-                };
-                const fromSdk = new VHTLC.ScriptV2({
-                    preimageHash: PREIMAGE_HASH,
-                    sender: schnorr.getPublicKey(new Uint8Array(32).fill(1)),
-                    receiver: schnorr.getPublicKey(new Uint8Array(32).fill(2)),
-                    server: schnorr.getPublicKey(new Uint8Array(32).fill(3)),
-                    refundLocktime: 1_800_000_000n,
-                    unilateralClaimDelay: { type: "seconds", value: 512n },
-                    unilateralRefundDelay: { type: "seconds", value: 1024n },
-                    unilateralRefundWithoutReceiverDelay: { type: "seconds", value: 1536n },
-                    nonInteractiveClaim: {
-                        receiverPkScript: payee,
-                        emulatorPubkey: schnorr.getPublicKey(new Uint8Array(32).fill(5)),
-                        strict: { amount: STRICT_SATS_QUOTE, assetAmount: STRICT_ASSET_QUOTE },
-                    },
-                    asset: { txid: parsed.txid, groupIndex: parsed.groupIndex },
-                }).nonInteractiveClaimArkadeScript!;
-                const fromArtifact = arkade.resolveAsm(
-                    scriptV2StrictShaped.functions.claim.arkadeScript.asm as never,
-                    binds,
-                );
-                expect(hex.encode(fromArtifact)).toBe(hex.encode(fromSdk));
-                return ark.contract(scriptV2StrictShaped, binds);
-            };
-
-            /** Fund one lockup and wait for it to be visible. */
-            const fund = async (
-                address: string,
-                pkScript: Uint8Array,
-                sats: bigint,
-                units: bigint,
-            ) => {
-                await waitFor(
-                    async () => assetBalanceOf(await alice.wallet.getBalance(), assetId) >= units,
-                );
-                await alice.wallet.send({
-                    address,
-                    amount: Number(sats),
-                    assets: [{ assetId, amount: units }],
-                });
-                await waitForVtxo(indexerProvider, pkScript);
-            };
-
-            const payeePaid = randomP2TR();
-            const payeeShortAsset = randomP2TR();
-            const payeeShortSats = randomP2TR();
-            const payeeControl = randomP2TR();
-            const paid = proven(payeePaid);
-            const shortAsset = proven(payeeShortAsset);
-            const shortSats = proven(payeeShortSats);
-
-            await fund(paid.address, paid.pkScript, STRICT_SATS_QUOTE, STRICT_ASSET_QUOTE);
-            await fund(
-                shortAsset.address,
-                shortAsset.pkScript,
-                STRICT_SATS_QUOTE,
-                STRICT_ASSET_SHORT,
-            );
-            await fund(
-                shortSats.address,
-                shortSats.pkScript,
-                STRICT_SATS_SHORT,
-                STRICT_ASSET_QUOTE,
-            );
-
-            // THE ASSET QUOTE IS LOAD-BEARING. Everything the lockup holds goes to
-            // output 0, so conservation, the count bound and the sat clause are all
-            // satisfied — an UNDERFUNDED lockup is the only shape where the quote
-            // and the input disagree, and refusing it is the whole point of opting
-            // in. A quote compared against itself co-signs this.
-            await expect(
-                shortAsset.functions
-                    .claim(PREIMAGE)
-                    .withAsset({
-                        assetId,
-                        inputs: [{ vin: 0, amount: STRICT_ASSET_SHORT }],
-                        outputs: [{ vout: 0, amount: STRICT_ASSET_SHORT }],
-                    })
-                    .to(payeeShortAsset, STRICT_SATS_QUOTE)
-                    .send(),
-            ).rejects.toThrow(/emulator/);
-
-            // ...and so is the SAT quote, which lives in the other clause. Same
-            // shape, short on the carrier instead of the asset.
-            await expect(
-                shortSats.functions
-                    .claim(PREIMAGE)
-                    .withAsset({
-                        assetId,
-                        inputs: [{ vin: 0, amount: STRICT_ASSET_QUOTE }],
-                        outputs: [{ vout: 0, amount: STRICT_ASSET_QUOTE }],
-                    })
-                    .to(payeeShortSats, STRICT_SATS_SHORT)
-                    .send(),
-            ).rejects.toThrow(/emulator/);
-
-            // THE CONTROL, and without it the two rejections above prove nothing.
-            // An underfunded lockup could be unspendable for reasons that have
-            // nothing to do with the quote, and both cases would still go red on
-            // cue. So: the SAME underfunding, against the DEFAULT covenant — the
-            // non-strict artifact, differing only in the four tokens `strict`
-            // inserts — is ACCEPTED. What refuses the spends above is therefore the
-            // quoted bound and nothing else.
-            const control = ark.contract(scriptV2Shaped, {
-                hash: PREIMAGE_HASH,
-                receiver: payeeControl.slice(2),
-                assetTxid,
-                assetGidx,
-            });
-            await fund(control.address, control.pkScript, STRICT_SATS_SHORT, STRICT_ASSET_SHORT);
-            await control.functions
+        // THE ASSET QUOTE IS LOAD-BEARING. Everything the lockup holds goes to
+        // output 0, so conservation, the count bound and the sat clause are all
+        // satisfied — an UNDERFUNDED lockup is the only shape where the quote
+        // and the input disagree, and refusing it is the whole point of opting
+        // in. A quote compared against itself co-signs this.
+        await expect(
+            shortAsset.functions
                 .claim(PREIMAGE)
                 .withAsset({
                     assetId,
                     inputs: [{ vin: 0, amount: STRICT_ASSET_SHORT }],
                     outputs: [{ vout: 0, amount: STRICT_ASSET_SHORT }],
                 })
-                .to(payeeControl, STRICT_SATS_SHORT)
-                .send();
-            await waitForVtxo(indexerProvider, payeeControl);
+                .to(payeeShortAsset, STRICT_SATS_QUOTE)
+                .send(),
+        ).rejects.toThrow(/emulator/);
 
-            // A lockup that meets both quotes is claimable, so the bounds refuse
-            // underfunding rather than everything. This is also the case that
-            // answers the operand-width question: `STRICT_ASSET_QUOTE` needs five
-            // bytes to encode, and the emulator compares it against an introspected
-            // amount here.
-            const { txid } = await paid.functions
+        // ...and so is the SAT quote, which lives in the other clause. Same
+        // shape, short on the carrier instead of the asset.
+        await expect(
+            shortSats.functions
                 .claim(PREIMAGE)
                 .withAsset({
                     assetId,
                     inputs: [{ vin: 0, amount: STRICT_ASSET_QUOTE }],
                     outputs: [{ vout: 0, amount: STRICT_ASSET_QUOTE }],
                 })
-                .to(payeePaid, STRICT_SATS_QUOTE)
-                .send();
+                .to(payeeShortSats, STRICT_SATS_SHORT)
+                .send(),
+        ).rejects.toThrow(/emulator/);
 
-            const [vtxo] = await waitForVtxo(indexerProvider, payeePaid);
-            expect(vtxo.txid).toBe(txid);
-        },
-    );
+        // THE CONTROL, and without it the two rejections above prove nothing.
+        // An underfunded lockup could be unspendable for reasons that have
+        // nothing to do with the quote, and both cases would still go red on
+        // cue. So: the SAME underfunding, against the DEFAULT covenant — the
+        // non-strict artifact, differing only in the four tokens `strict`
+        // inserts — is ACCEPTED. What refuses the spends above is therefore the
+        // quoted bound and nothing else.
+        const control = ark.contract(scriptV2Shaped, {
+            hash: PREIMAGE_HASH,
+            receiver: payeeControl.slice(2),
+            assetTxid,
+            assetGidx,
+        });
+        await fund(control.address, control.pkScript, STRICT_SATS_SHORT, STRICT_ASSET_SHORT);
+        await control.functions
+            .claim(PREIMAGE)
+            .withAsset({
+                assetId,
+                inputs: [{ vin: 0, amount: STRICT_ASSET_SHORT }],
+                outputs: [{ vout: 0, amount: STRICT_ASSET_SHORT }],
+            })
+            .to(payeeControl, STRICT_SATS_SHORT)
+            .send();
+        await waitForVtxo(indexerProvider, payeeControl);
+
+        // A lockup that meets both quotes is claimable, so the bounds refuse
+        // underfunding rather than everything. This is also the case that
+        // answers the operand-width question: `STRICT_ASSET_QUOTE` needs five
+        // bytes to encode, and the emulator compares it against an introspected
+        // amount here.
+        const { txid } = await paid.functions
+            .claim(PREIMAGE)
+            .withAsset({
+                assetId,
+                inputs: [{ vin: 0, amount: STRICT_ASSET_QUOTE }],
+                outputs: [{ vout: 0, amount: STRICT_ASSET_QUOTE }],
+            })
+            .to(payeePaid, STRICT_SATS_QUOTE)
+            .send();
+
+        const [vtxo] = await waitForVtxo(indexerProvider, payeePaid);
+        expect(vtxo.txid).toBe(txid);
+    });
 });
 
 async function waitFor(pred: () => Promise<boolean>, timeoutMs = 30000) {

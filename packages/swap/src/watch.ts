@@ -34,7 +34,6 @@
 import { base64, hex } from "@scure/base";
 import {
     ArkAddress,
-    RestIndexerProvider,
     Transaction,
     type ContractEvent,
     type ContractVtxo,
@@ -43,7 +42,7 @@ import {
 import { RETIRABLE, retireOfferContract } from "./coverage";
 import { decodeOffer, OFFER_CONTRACT_KIND } from "./offer";
 import type { AssetSwapRepository } from "./repository";
-import { classifyDepositSpend, spendTxidsOf, type RestoreIndexer, type SpendKind } from "./restore";
+import { classifyDepositSpend, spendTxidsOf, type SpendKind } from "./restore";
 import {
     getAssetSwaps,
     updateAssetSwapBestEffort,
@@ -88,9 +87,6 @@ export interface OfferSwapWatcher {
 
 export interface WatchOfferSwapsParams {
     wallet: IWallet;
-    /** Same URL `createOffer`/`cancelOffer` take; used to read a spending tx
-     * when the exact classifier cannot answer. */
-    arkServerUrl: string;
     repository: AssetSwapRepository;
     /** Called after a change is persisted. A notification, not a store. */
     onUpdate?: (swap: AssetSwap) => void;
@@ -109,16 +105,22 @@ export interface WatchOfferSwapsParams {
  */
 export async function watchOfferSwaps({
     wallet,
-    arkServerUrl,
     repository,
     onUpdate,
 }: WatchOfferSwapsParams): Promise<OfferSwapWatcher> {
-    const manager = await wallet.getContractManager();
+    // Independent, and on a service-worker wallet the first two are each a
+    // round trip to the worker — serialized they cost twice the startup.
+    // The reader is the wallet's own, so that read stays inside the worker
+    // rather than opening a second connection page-side.
+    const [manager, address, indexer] = await Promise.all([
+        wallet.getContractManager(),
+        wallet.getAddress(),
+        wallet.getArkadeReader(),
+    ]);
     // Current server key at watcher start. TODO: persist the funding-time key
     // with swap records; a signer rotation during a long session makes leaf
     // classification return indeterminate rather than guessing.
-    const serverPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;
-    const indexer: RestoreIndexer = new RestIndexerProvider(arkServerUrl);
+    const operatorPubkey = ArkAddress.decode(address).serverPubKey;
 
     // events arrive independently but the update is read-modify-write over
     // the whole list, so two concurrent handlers would lose one of the writes
@@ -142,7 +144,7 @@ export async function watchOfferSwaps({
             const { txs } = await indexer.getVirtualTxs(candidates);
             return classifyDepositSpend(
                 decodeOffer(hex.decode(swap.offerHex)),
-                serverPubkey,
+                operatorPubkey,
                 txs.map((psbt) => Transaction.fromPSBT(base64.decode(psbt))),
                 { txid: vtxo.txid, vout: vtxo.vout },
             );

@@ -1,5 +1,0 @@
-{
-  "javascript.format.semicolons": "insert",
-  "typescript.format.semicolons": "insert",
-  "prettier.semi": true
-}

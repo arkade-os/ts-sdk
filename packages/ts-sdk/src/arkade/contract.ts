@@ -33,6 +33,11 @@
  * param must be bound, every `$name` reference must be declared, and bound
  * values are validated against their type at compilation.
  *
+ * A covenant spend needs an `indexer`, not just an `emulator`: the co-signing
+ * service resolves each input's prevout pkScript from the previous ark tx the
+ * PSBT carries, and only the indexer can supply those bytes. Pure tapscript
+ * spends go straight to arkd and need neither.
+ *
  * @example
  * ```typescript
  * const htlcProgram = {
@@ -74,7 +79,7 @@ import type { ArkProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
 import type { Identity } from "../identity";
-import type { VirtualCoin } from "../wallet";
+import type { ArkadeBroadcaster, VirtualCoin } from "../wallet";
 import { getNormalizedVtxos, hasTerminalSpend } from "../wallet";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
@@ -86,6 +91,7 @@ import {
     type ArkTxInput,
 } from "../utils/arkTransaction";
 import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
+import { attachPrevArkTxs, PrevTxUnavailableError } from "../utils/prevoutTx";
 import { Transaction } from "../utils/transaction";
 import { ANCHOR_PKSCRIPT } from "../utils/anchor";
 import { Extension } from "../extension";
@@ -182,10 +188,13 @@ export interface Utxo {
     vout: number;
     value: number;
     /**
-     * The ark transaction that created this VTXO. Required only by continuation
-     * /recursive covenants that inspect the input's provenance; when set, the SDK
-     * attaches it as the PrevArkTx field.
+     * Raw wire bytes of the ark transaction that created this VTXO, attached as
+     * the PrevArkTx field on input 0.
      *
+     * An override, not the only channel: covenant spends resolve the previous
+     * tx of every input through the client's indexer. Supply it when the tx is
+     * not yet indexable — a recursive covenant spending the output of an ark tx
+     * the caller just built — and the resolved value is suppressed for input 0.
      */
     sourceTx?: Uint8Array;
 }
@@ -221,18 +230,42 @@ export type CallableFunctions = Record<
 
 // --- Arkade client ---------------------------------------------------------
 
+/**
+ * What {@link Arkade} needs from the Arkade server.
+ *
+ * Only `getInfo` is required — see {@link ArkadeConnectOptions.arkade} for why.
+ * Named so a caller building a derivation-only client has a type to import
+ * rather than reaching into the options bag.
+ */
+export type ArkadeServerProvider = Pick<ArkProvider, "getInfo"> & Partial<ArkadeBroadcaster>;
+
 /** Options for {@link Arkade.connect}. */
 export interface ArkadeConnectOptions {
-    /** The Ark/Arkade server provider. */
-    arkade: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+    /**
+     * The Arkade server provider.
+     *
+     * Only `getInfo` is required: it is what resolves the server key and
+     * checkpoint closure, and it is all a client needs to derive, register and
+     * inspect contracts. `submitTx`/`finalizeTx` are needed solely to
+     * broadcast, so a client built without them throws at `.send()` — the same
+     * deferred, explicit failure an absent `indexer` gives `getUtxos()` and an
+     * absent `emulator` gives a covenant spend. That lets a caller that already
+     * holds the server info (`wallet.getArkadeInfo()`) connect without a
+     * provider of its own, and without a second `/v1/info` round-trip.
+     */
+    arkade: ArkadeServerProvider;
     /**
      * The co-signing (introspector/emulator) service. Optional: only required for
      * contracts whose functions have an `arkadeScript` (covenant paths). Pure
      * tapscript contracts (multisig/timelock/hashlock) don't need it.
      */
     emulator?: EmulatorProvider;
-    /** Indexer — enables `getUtxos`/`getBalance` and coin auto-selection. */
-    indexer?: Pick<IndexerProvider, "getVtxos">;
+    /**
+     * Indexer — enables `getUtxos`/`getBalance` and coin auto-selection, and
+     * resolves the previous ark txs a covenant spend must carry (see
+     * {@link attachPrevArkTxs}). Required for covenant spends.
+     */
+    indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
     /** Signer for paths that require a user signature; optional for watch-only. */
     identity?: Identity;
     /** Network for address derivation; defaults to the SDK default. */
@@ -266,7 +299,7 @@ export interface ArkadeConnectOptions {
  * so spinning up contracts is synchronous.
  */
 export class Arkade {
-    readonly arkProvider: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+    readonly arkProvider: ArkadeServerProvider;
     /** The co-signing service, or undefined for emulator-less (pure tapscript) usage. */
     readonly emulator: EmulatorProvider | undefined;
     readonly network: Network;
@@ -283,7 +316,7 @@ export class Arkade {
      */
     readonly emulatorKey: Uint8Array | undefined;
     readonly checkpoint: CSVMultisigTapscript.Type;
-    readonly indexer?: Pick<IndexerProvider, "getVtxos">;
+    readonly indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
     readonly identity?: Identity;
     /** The signing identity's x-only public key, resolved at connect — identifies which inputs the wallet signs. */
     readonly userKey?: Uint8Array;
@@ -291,13 +324,13 @@ export class Arkade {
     readonly contractManager?: IContractManager;
 
     private constructor(fields: {
-        arkProvider: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+        arkProvider: ArkadeServerProvider;
         emulator: EmulatorProvider | undefined;
         network: Network;
         serverKey: Uint8Array;
         emulatorKey: Uint8Array | undefined;
         checkpoint: CSVMultisigTapscript.Type;
-        indexer?: Pick<IndexerProvider, "getVtxos">;
+        indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
         identity?: Identity;
         userKey?: Uint8Array;
         contractManager?: IContractManager;
@@ -658,9 +691,30 @@ export class ArkadeTransactionBuilder {
         );
 
         // Continuation context for recursive covenants — the parent ark tx that
-        // created the spent coin.
+        // created the spent coin. An explicit `sourceTx` overrides the resolved
+        // value below, which skips inputs that already carry the field (the
+        // emulator refuses an input bearing two).
         if (coin.sourceTx) {
             setArkPsbtField(arkTx, 0, PrevArkTxField, coin.sourceTx);
+        }
+
+        // Emulator v0.0.7+ requires PrevArkTx on every input of a submitted ark
+        // tx. Ark tx input i spends checkpoint i, which spends inputs[i] — so
+        // the tx to carry is the coin's own creating tx, not the checkpoint.
+        // Only the covenant path goes through the emulator; arkd-direct spends
+        // stay byte-identical.
+        if (this.fn.arkadeScript) {
+            const indexer = this.contract.client.indexer;
+            if (!indexer) {
+                throw new PrevTxUnavailableError(
+                    "covenant spends require an `indexer` on the Arkade client to resolve the previous ark tx of each input",
+                );
+            }
+            await attachPrevArkTxs(
+                arkTx,
+                [coin.txid, ...this.fundingCoins.map((c) => c.txid)],
+                indexer,
+            );
         }
 
         const condition = (def.tapscript.witness ?? []).map((w) => this.witnessBytes(w));
@@ -735,8 +789,17 @@ export class ArkadeTransactionBuilder {
         if (!client.identity) {
             throw new Error("a signing identity is required for non-covenant spends");
         }
+        // Checked alongside the identity, before anything is signed: a client
+        // connected for derivation/registration alone has no way to broadcast,
+        // and should say so rather than after collecting signatures.
+        const ark = client.arkProvider;
+        if (!ark.submitTx || !ark.finalizeTx) {
+            throw new Error(
+                "broadcasting requires an `arkade` provider with `submitTx`/`finalizeTx` on the Arkade client",
+            );
+        }
         const signedArk = await this.signArk(arkTx, userInputs);
-        const res = await client.arkProvider.submitTx(
+        const res = await ark.submitTx(
             base64.encode(signedArk.toPSBT()),
             checkpoints.map((c) => base64.encode(c.toPSBT())),
         );
@@ -747,7 +810,7 @@ export class ArkadeTransactionBuilder {
                 base64.encode((await client.identity!.sign(server, [0])).toPSBT()),
             ),
         );
-        await client.arkProvider.finalizeTx(res.arkTxid, finalCps);
+        await ark.finalizeTx(res.arkTxid, finalCps);
         return {
             txid: res.arkTxid,
             signedArkTx: res.finalArkTx,

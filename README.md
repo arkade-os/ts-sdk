@@ -1,13 +1,12 @@
 # Arkade Monorepo
 
-TypeScript packages for the Arkade Bitcoin wallet ecosystem — on-chain/off-chain wallets via the Ark protocol and Lightning/chain swaps via Boltz.
+TypeScript packages for the Arkade Bitcoin wallet ecosystem — on-chain/off-chain wallets via the Ark protocol and Arkade Intents asset swaps.
 
 ## Packages
 
 | Package | Description |
 |---------|-------------|
 | [`@arkade-os/sdk`](packages/ts-sdk/) | Bitcoin wallet SDK with Taproot and Ark protocol support |
-| [`@arkade-os/boltz-swap`](packages/boltz-swap/) | Lightning and chain swaps using Boltz |
 | [`@arkade-os/swap`](packages/swap/) | Client-side Arkade Intents asset swaps: market discovery, offers, RFQ, restore |
 
 The [`regtest/`](regtest/) directory is a shared regtest environment, vendored as the
@@ -31,7 +30,7 @@ pnpm run build            # Build all packages (ts-sdk first, then the plugins)
 pnpm test                 # Run all unit and integration tests
 pnpm run test:unit        # Run unit tests across packages
 pnpm run test:integration # Run integration tests across packages against regtest
-pnpm run lint             # Check formatting (prettier)
+pnpm run lint             # Check formatting (biome)
 ```
 
 ### Running a single test
@@ -47,7 +46,7 @@ pnpm -C packages/ts-sdk vitest run -t "test name pattern"
 ### Integration tests
 
 Integration tests run against the shared regtest stack; `pnpm run test:integration` cycles every
-package's suite (ts-sdk, boltz-swap, swap, and the swap RFQ profile) end-to-end. See
+package's suite (ts-sdk, swap, and the swap RFQ profile) end-to-end. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for per-package stack control, running selected test files, and
 how CI fans the ts-sdk e2e suite out across parallel groups.
 
@@ -64,12 +63,12 @@ After regenerating, sanity-check that source links in the generated HTML point t
 
 ## Releasing
 
-Releases run from the repository root and are package-scoped (`sdk`, `boltz-swap`, `swap`, or `all`),
-each with its own version and tag. Releasing `sdk` also bumps the dependents (`boltz-swap`, `swap`),
-so they never stay pinned to a stale SDK:
+Releases run from the repository root and are package-scoped (`sdk`, `swap`, or `all`), each with
+its own version and tag. Releasing `sdk` also bumps the dependents (`swap`), so they never stay
+pinned to a stale SDK:
 
 ```bash
-pnpm run release -- sdk patch           # SDK + dependent boltz-swap/swap patch
+pnpm run release -- sdk patch           # SDK + dependent swap patch
 pnpm run release:dry-run -- sdk patch   # Preview the plan without changing files
 pnpm run release:cleanup                # Restore manifests, delete local tags
 ```

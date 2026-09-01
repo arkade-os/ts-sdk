@@ -18,15 +18,15 @@ import {
     SingleKey,
     Transaction,
     getArkPsbtFields,
+    type ArkProvider,
 } from "@arkade-os/sdk";
 
-import { receiveVtxoScript } from "../src/rfq";
+import { lightningReceiveContract } from "../src/rfq";
 import {
     LockupAmountMismatchError,
     awaitLockupFunding,
     claimReceiveLockup,
     pushClaim,
-    type ClaimArkProvider,
 } from "../src/claim";
 import { LockupNeedsRecoveryError, type LockupVtxo, type RefundIndexer } from "../src/refund";
 
@@ -44,10 +44,10 @@ const DESTINATION_PK_SCRIPT = p2tr(key(21));
  * reference solver: solver = key(1) (VHTLC sender), trader = key(13)
  * (receiver), server = key(3), emulator = key(9). */
 const swapScript = () =>
-    receiveVtxoScript({
+    lightningReceiveContract({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
-        serverPubkey: key(3),
+        operatorPubkey: key(3),
         paymentHash: hex.encode(sha256(PREIMAGE)),
         claimDelay: 4096,
         emulatorPubkey: key(9),
@@ -71,50 +71,50 @@ const VTXOS: LockupVtxo[] = [
 const EXPECTED_AMOUNT = 100_000;
 
 /** A scripted arkd, same contract as refund.test.ts's. */
-type FakeArk = ClaimArkProvider & {
-    submitted: { arkTx: string; checkpoints: string[] }[];
-    finalized: { arkTxid: string; checkpoints: string[] }[];
+type FakeOperator = ArkProvider & {
+    submitted: { tx: string; checkpoints: string[] }[];
+    finalized: { txid: string; checkpoints: string[] }[];
 };
 
 /** The Ark server's own key — key(3) in the covenant above. */
-const SERVER_SIGNER = SingleKey.fromPrivateKey(priv(3));
+const OPERATOR_SIGNER = SingleKey.fromPrivateKey(priv(3));
 
-const serverCosign = async (psbt: string): Promise<string> =>
-    base64.encode((await SERVER_SIGNER.sign(Transaction.fromPSBT(base64.decode(psbt)))).toPSBT());
+const operatorCosign = async (psbt: string): Promise<string> =>
+    base64.encode((await OPERATOR_SIGNER.sign(Transaction.fromPSBT(base64.decode(psbt)))).toPSBT());
 
 /** A scripted arkd that countersigns like the real one — `pushClaim` verifies
  * those signatures before finalizing, so a mute fake would prove nothing. */
-const fakeArk = (
+const fakeOperator = (
     over: {
         checkpointsFor?: (submitted: string[]) => string[];
         /** Answer without countersigning, as a server that never signed. */
         cosign?: boolean;
-        finalArkTx?: (signed: string) => string | undefined;
+        finalTx?: (signed: string) => string | undefined;
     } = {},
-): FakeArk => {
-    const submitted: { arkTx: string; checkpoints: string[] }[] = [];
-    const finalized: { arkTxid: string; checkpoints: string[] }[] = [];
+): FakeOperator => {
+    const submitted: { tx: string; checkpoints: string[] }[] = [];
+    const finalized: { txid: string; checkpoints: string[] }[] = [];
     const cosign = over.cosign ?? true;
     return {
         submitted,
         finalized,
         getInfo: async () => ({ checkpointTapscript: CHECKPOINT_TAPSCRIPT }),
-        submitTx: async (arkTx: string, checkpoints: string[]) => {
-            submitted.push({ arkTx, checkpoints });
+        submitTx: async (tx: string, checkpoints: string[]) => {
+            submitted.push({ tx, checkpoints });
             const answered = over.checkpointsFor ? over.checkpointsFor(checkpoints) : checkpoints;
-            const finalArkTx = cosign ? await serverCosign(arkTx) : arkTx;
+            const finalTx = cosign ? await operatorCosign(tx) : tx;
             return {
-                arkTxid: Transaction.fromPSBT(base64.decode(arkTx)).id,
-                finalArkTx: over.finalArkTx ? over.finalArkTx(finalArkTx) : finalArkTx,
+                arkTxid: Transaction.fromPSBT(base64.decode(tx)).id,
+                finalArkTx: over.finalTx ? over.finalTx(finalTx) : finalTx,
                 signedCheckpointTxs: cosign
-                    ? await Promise.all(answered.map(serverCosign))
+                    ? await Promise.all(answered.map(operatorCosign))
                     : answered,
             };
         },
-        finalizeTx: async (arkTxid: string, checkpoints: string[]) => {
-            finalized.push({ arkTxid, checkpoints });
+        finalizeTx: async (txid: string, checkpoints: string[]) => {
+            finalized.push({ txid, checkpoints });
         },
-    } as unknown as FakeArk;
+    } as unknown as FakeOperator;
 };
 
 /** The leaf script the ark tx's single input actually spends. */
@@ -126,10 +126,10 @@ const spentLeafOf = (psbt: string): string => {
 
 describe("pushClaim", () => {
     it("spends the claim leaf, signed by the trader's receiver key, preimage attached", async () => {
-        const script = swapScript();
-        const ark = fakeArk();
-        const result = await pushClaim(ark, {
-            script,
+        const contract = swapScript();
+        const operator = fakeOperator();
+        const result = await pushClaim(operator, {
+            contract: contract,
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: VTXOS,
@@ -137,31 +137,31 @@ describe("pushClaim", () => {
             expectedAmount: EXPECTED_AMOUNT,
         });
 
-        expect(ark.submitted).toHaveLength(1);
+        expect(operator.submitted).toHaveLength(1);
         // The exact leaf bytes, control block stripped — the claim leaf and no
         // other.
-        expect(spentLeafOf(ark.submitted[0]!.arkTx)).toBe(script.claimScript);
+        expect(spentLeafOf(operator.submitted[0]!.tx)).toBe(contract.claimScript);
         // One aggregate output to the trader's destination, for the full amount.
-        const arkTx = Transaction.fromPSBT(base64.decode(ark.submitted[0]!.arkTx));
-        expect(arkTx.outputsLength).toBeGreaterThan(0);
-        expect(hex.encode(arkTx.getOutput(0)!.script!)).toBe(hex.encode(DESTINATION_PK_SCRIPT));
-        expect(arkTx.getOutput(0)!.amount).toBe(BigInt(100_000));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0]!.tx));
+        expect(tx.outputsLength).toBeGreaterThan(0);
+        expect(hex.encode(tx.getOutput(0)!.script!)).toBe(hex.encode(DESTINATION_PK_SCRIPT));
+        expect(tx.getOutput(0)!.amount).toBe(BigInt(100_000));
         expect(result.amount).toBe(100_000);
         // The preimage rides the condition-witness field on the ark
         // transaction, attached after signing…
-        const conditionFields = getArkPsbtFields(arkTx, 0, ConditionWitness);
+        const conditionFields = getArkPsbtFields(tx, 0, ConditionWitness);
         expect(conditionFields).toHaveLength(1);
         expect(hex.encode(conditionFields[0]![0]!)).toBe(hex.encode(PREIMAGE));
         // …and finalize got the checkpoints back signed.
-        expect(ark.finalized).toHaveLength(1);
-        expect(ark.finalized[0]!.arkTxid).toBe(result.arkTxid);
+        expect(operator.finalized).toHaveLength(1);
+        expect(operator.finalized[0]!.txid).toBe(result.txid);
     });
 
     it("attaches the preimage only after signing — the server's INVALID_SIGNATURE ordering", async () => {
         // A signer that records whether the ConditionWitness field was already
         // present AT SIGN TIME: it must not be, or the signature covers a
         // different payload than the one submitted.
-        const script = swapScript();
+        const contract = swapScript();
         let fieldPresentAtSignTime = false;
         const probe = {
             ...RECEIVER,
@@ -175,8 +175,8 @@ describe("pushClaim", () => {
                 return RECEIVER.sign(tx, inputIndexes);
             },
         };
-        await pushClaim(fakeArk(), {
-            script,
+        await pushClaim(fakeOperator(), {
+            contract: contract,
             receiver: probe,
             preimage: PREIMAGE,
             vtxos: VTXOS,
@@ -187,10 +187,10 @@ describe("pushClaim", () => {
     });
 
     it("refuses a preimage that cannot open the script, before signing anything", async () => {
-        const ark = fakeArk();
+        const operator = fakeOperator();
         await expect(
-            pushClaim(ark, {
-                script: swapScript(),
+            pushClaim(operator, {
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: new Uint8Array(32).fill(8),
                 vtxos: VTXOS,
@@ -198,13 +198,13 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(/does not match/);
-        expect(ark.submitted).toHaveLength(0);
+        expect(operator.submitted).toHaveLength(0);
     });
 
     it("refuses a swept output rather than submitting a spend that cannot succeed", async () => {
         await expect(
-            pushClaim(fakeArk(), {
-                script: swapScript(),
+            pushClaim(fakeOperator(), {
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "33".repeat(32), vout: 0, value: 5_000, recoverable: true }],
@@ -218,10 +218,10 @@ describe("pushClaim", () => {
     // only the value says anything is wrong. Claiming anyway publishes `P` and
     // lets the solver settle the payer's HTLC in full.
     it("refuses a lockup funded below the agreed amount, with nothing signed or submitted", async () => {
-        const ark = fakeArk();
+        const operator = fakeOperator();
         await expect(
-            pushClaim(ark, {
-                script: swapScript(),
+            pushClaim(operator, {
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "44".repeat(32), vout: 0, value: 330, recoverable: false }],
@@ -230,7 +230,7 @@ describe("pushClaim", () => {
             }),
         ).rejects.toThrow(LockupAmountMismatchError);
         // `P` reaches the Ark server at submit, so this is the whole guarantee.
-        expect(ark.submitted).toHaveLength(0);
+        expect(operator.submitted).toHaveLength(0);
     });
 
     // NaN and undefined fail every comparison, so an unchecked one does not
@@ -239,10 +239,10 @@ describe("pushClaim", () => {
         ["NaN", Number.NaN],
         ["missing from an older record", undefined as unknown as number],
     ])("refuses an expectedAmount that is %s instead of comparing against it", async (_, bad) => {
-        const ark = fakeArk();
+        const operator = fakeOperator();
         await expect(
-            pushClaim(ark, {
-                script: swapScript(),
+            pushClaim(operator, {
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "44".repeat(32), vout: 0, value: 330, recoverable: false }],
@@ -250,14 +250,14 @@ describe("pushClaim", () => {
                 expectedAmount: bad,
             }),
         ).rejects.toMatchObject({ reason: "invalid_gate_input" });
-        expect(ark.submitted).toHaveLength(0);
+        expect(operator.submitted).toHaveLength(0);
     });
 
     it("refuses a lockup whose indexed value is not a number", async () => {
-        const ark = fakeArk();
+        const operator = fakeOperator();
         await expect(
-            pushClaim(ark, {
-                script: swapScript(),
+            pushClaim(operator, {
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "44".repeat(32), vout: 0, value: Number.NaN, recoverable: false }],
@@ -265,14 +265,14 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toMatchObject({ reason: "lockup_malformed" });
-        expect(ark.submitted).toHaveLength(0);
+        expect(operator.submitted).toHaveLength(0);
     });
 
     it("sums across outputs and tolerates overfunding", async () => {
         // VTXOS is 60_000 + 40_000: neither output covers the amount alone.
-        const split = fakeArk();
+        const split = fakeOperator();
         await pushClaim(split, {
-            script: swapScript(),
+            contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: VTXOS,
@@ -281,9 +281,9 @@ describe("pushClaim", () => {
         });
         expect(split.submitted).toHaveLength(1);
 
-        const over = fakeArk();
+        const over = fakeOperator();
         const result = await pushClaim(over, {
-            script: swapScript(),
+            contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: VTXOS,
@@ -294,9 +294,9 @@ describe("pushClaim", () => {
     });
 
     it("claims the remainder of a partially-claimed lockup regardless of the amount", async () => {
-        const ark = fakeArk();
-        const result = await pushClaim(ark, {
-            script: swapScript(),
+        const operator = fakeOperator();
+        const result = await pushClaim(operator, {
+            contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: [{ txid: "55".repeat(32), vout: 0, value: 1_000, recoverable: false }],
@@ -308,8 +308,8 @@ describe("pushClaim", () => {
 
         // Including one whose record predates the field: `P` is already
         // public, so refusing here would strand the remainder for nothing.
-        const older = await pushClaim(fakeArk(), {
-            script: swapScript(),
+        const older = await pushClaim(fakeOperator(), {
+            contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: [{ txid: "55".repeat(32), vout: 0, value: 1_000, recoverable: false }],
@@ -322,8 +322,8 @@ describe("pushClaim", () => {
 
     it("refuses a swept output before the amount is even considered", async () => {
         await expect(
-            pushClaim(fakeArk(), {
-                script: swapScript(),
+            pushClaim(fakeOperator(), {
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "33".repeat(32), vout: 0, value: 330, recoverable: true }],
@@ -336,10 +336,10 @@ describe("pushClaim", () => {
     // Not a guard on `P` — that reached the server at submit — but on being
     // told the claim landed when nothing was co-signed.
     it("refuses to finalize a claim the server did not co-sign", async () => {
-        const ark = fakeArk({ cosign: false });
+        const operator = fakeOperator({ cosign: false });
         await expect(
-            pushClaim(ark, {
-                script: swapScript(),
+            pushClaim(operator, {
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: VTXOS,
@@ -347,14 +347,14 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(/not signed by the server/);
-        expect(ark.finalized).toHaveLength(0);
+        expect(operator.finalized).toHaveLength(0);
     });
 
     it("fails closed when the server returns no final ark tx to check", async () => {
-        const ark = fakeArk({ finalArkTx: () => undefined });
+        const operator = fakeOperator({ finalTx: () => undefined });
         await expect(
-            pushClaim(ark, {
-                script: swapScript(),
+            pushClaim(operator, {
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: VTXOS,
@@ -362,13 +362,13 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(/no final ark tx to verify/);
-        expect(ark.finalized).toHaveLength(0);
+        expect(operator.finalized).toHaveLength(0);
     });
 
     it("throws on nothing to claim", async () => {
         await expect(
-            pushClaim(fakeArk(), {
-                script: swapScript(),
+            pushClaim(fakeOperator(), {
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [],
@@ -394,9 +394,9 @@ describe("awaitLockupFunding + claimReceiveLockup", () => {
 
     it("waits for the lockup, then claims it in one call", async () => {
         const indexer = indexerOver([[], VTXOS]);
-        const ark = fakeArk();
-        const result = await claimReceiveLockup(indexer, ark, {
-            script: swapScript(),
+        const operator = fakeOperator();
+        const result = await claimReceiveLockup(indexer, operator, {
+            contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
             swapPkScript: swapScript().pkScript,
@@ -404,7 +404,7 @@ describe("awaitLockupFunding + claimReceiveLockup", () => {
             expectedAmount: EXPECTED_AMOUNT,
             pollMs: 1,
         });
-        expect(ark.submitted).toHaveLength(1);
+        expect(operator.submitted).toHaveLength(1);
         expect(result.amount).toBe(100_000);
     });
 

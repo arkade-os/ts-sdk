@@ -26,15 +26,13 @@ import { hex } from "@scure/base";
 import { concatBytes } from "@scure/btc-signer/utils.js";
 import {
     ArkAddress,
-    RestArkProvider,
-    RestIndexerProvider,
     arkade,
     asset,
-    getNetwork,
+    networkFromArkadeInfo,
     resolveEmulatorPubkey,
     toXOnlySignerHex,
+    type ArkadeInfo,
     type IWallet,
-    type NetworkName,
 } from "@arkade-os/sdk";
 
 import wantAssetProgram from "./swap-want-asset.program.json";
@@ -96,7 +94,7 @@ type SwapProgramBinding = {
  * Deliberately absent from the package index -- not public API. */
 export function swapProgramBinding(
     offer: Omit<Offer, "swapPkScript">,
-    serverPubkey: Uint8Array,
+    operatorPubkey: Uint8Array,
 ): SwapProgramBinding {
     // a wrong-width script would bind a truncated makerWP into the covenant and
     // only surface as an unspendable address once the user funds it
@@ -108,7 +106,7 @@ export function swapProgramBinding(
         args: {
             makerWP: offer.makerPkScript.subarray(2),
             wantAmount: offer.wantAmount,
-            server: serverPubkey,
+            server: operatorPubkey,
             user: offer.makerPublicKey,
             // internal byte order
             ...(offer.wantAsset && {
@@ -117,7 +115,7 @@ export function swapProgramBinding(
             }),
         },
         keys: {
-            serverKey: serverPubkey,
+            serverKey: operatorPubkey,
             userKey: offer.makerPublicKey,
             emulatorKey: offer.emulatorPubkey,
         },
@@ -125,11 +123,11 @@ export function swapProgramBinding(
 }
 
 /** Compile the offer's contract: program + args -> taproot tree. */
-export function offerVtxoScript(
+export function offerContract(
     offer: Omit<Offer, "swapPkScript">,
-    serverPubkey: Uint8Array,
+    operatorPubkey: Uint8Array,
 ): InstanceType<typeof arkade.ArkadeProgramScript> {
-    const { program, args, keys } = swapProgramBinding(offer, serverPubkey);
+    const { program, args, keys } = swapProgramBinding(offer, operatorPubkey);
     return new arkade.ArkadeProgramScript(program, args, keys);
 }
 
@@ -300,22 +298,25 @@ export const OFFER_CONTRACT_KIND = "asset-swap-offer";
  */
 async function registerOfferContract(
     wallet: IWallet,
-    arkServerUrl: string,
-    network: NetworkName,
+    info: ArkadeInfo,
     binding: Omit<Offer, "swapPkScript">,
-    serverPubkey: Uint8Array,
+    operatorPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
 ): Promise<void> {
-    const { program, args, keys } = swapProgramBinding(binding, serverPubkey);
+    const { program, args, keys } = swapProgramBinding(binding, operatorPubkey);
     const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
-        arkade: new RestArkProvider(arkServerUrl),
-        indexer: new RestIndexerProvider(arkServerUrl),
+        // Registration derives and persists; it never broadcasts and never
+        // reads UTXOs, so the only thing the client needs off the server is the
+        // info the caller already resolved. Handing that back — rather than a
+        // provider built from a URL — is what lets `createOffer` take just a
+        // wallet, and spares a second `/v1/info` round-trip.
+        arkade: { getInfo: async () => info },
         identity: wallet.identity,
         // without this the row's `address` would be derived against the SDK's
         // default network while its script is right — a row that disagrees with
         // the address the user is about to fund
-        network: getNetwork(network),
+        network: networkFromArkadeInfo(info),
         contractManager,
     });
     const contract = new arkade.ArkadeContract(client, program, args, keys);
@@ -339,11 +340,11 @@ async function registerOfferContract(
  * you deposit, embedding the returned extension, and the solver does the rest:
  *
  *   // BTC -> asset
- *   const o = await createOffer(wallet, ARK, { wantAmount: 1000n, wantAsset })
+ *   const o = await createOffer(wallet, { wantAmount: 1000n, wantAsset })
  *   await wallet.send({ address: o.address, amount: 1000, extensions: [o.extension] })
  *
  *   // asset -> BTC (the sats are the VTXO carrier for the asset)
- *   const o = await createOffer(wallet, ARK, { wantAmount: 1000n, offerAsset })
+ *   const o = await createOffer(wallet, { wantAmount: 1000n, offerAsset })
  *   await wallet.send({ address: o.address, amount: 500,
  *                       assets: [{ assetId, amount: 1000n }],
  *                       extensions: [o.extension] })
@@ -358,7 +359,6 @@ async function registerOfferContract(
  */
 export async function createOffer(
     wallet: IWallet,
-    arkServerUrl: string,
     params: {
         wantAmount: bigint;
         wantAsset?: asset.AssetId;
@@ -387,12 +387,16 @@ export async function createOffer(
         throw new Error("set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC)");
     }
     const [info, makerAddress, makerPublicKey] = await Promise.all([
-        new RestArkProvider(arkServerUrl).getInfo(),
+        // requireLive: this info binds signerPubkey into the covenant — a
+        // snapshot could derive an address the operator no longer co-signs
+        // for, so an unreachable operator fails the call instead (fail closed,
+        // the same behaviour the pre-#734 caller-held provider had)
+        wallet.getArkadeInfo({ requireLive: true }),
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    const serverPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
-    const network = getNetwork(info.network as NetworkName);
+    const operatorPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
+    const network = networkFromArkadeInfo(info);
     const emuKey = hex.decode(
         toXOnlySignerHex(resolveEmulatorPubkey(network, params.emulatorPubkey)),
     );
@@ -408,25 +412,18 @@ export async function createOffer(
         makerPublicKey,
         emulatorPubkey: emuKey,
     };
-    const script = offerVtxoScript(binding, serverPubKey);
+    const script = offerContract(binding, operatorPubKey);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
 
-    await registerOfferContract(
-        wallet,
-        arkServerUrl,
-        info.network as NetworkName,
-        binding,
-        serverPubKey,
-        script.pkScript,
-    );
+    await registerOfferContract(wallet, info, binding, operatorPubKey, script.pkScript);
 
     const payload = encodeOffer(offer);
     return {
         offerHex: hex.encode(payload),
         extension: { type: OFFER_PACKET_TYPE, payload },
-        // VtxoScript.address owns address construction; assembling an ArkAddress
+        // the contract's .address() builds the address; assembling an ArkAddress
         // from tweakedPublicKey here would silently miss any future step it gains
-        address: script.address(network.hrp, serverPubKey).encode(),
+        address: script.address(network.hrp, operatorPubKey).encode(),
         swapPkScript: script.pkScript,
     };
 }
@@ -462,8 +459,8 @@ export async function createOffer(
  * Identical offers derive the same address, so `fundingTxid` selects the exact
  * deposit; without it the address must hold exactly one spendable VTXO — with
  * several, cancel refuses to guess and throws.
- * `swapAddress` (the funded address) pins the server key the covenant was
- * built with, so cancel keeps working across a server signer rotation; without
+ * `swapAddress` (the funded address) pins the operator key the covenant was
+ * built with, so cancel keeps working across an operator signer rotation; without
  * it a rotated key is detected and reported rather than reading as a missing
  * VTXO.
  *
@@ -484,10 +481,14 @@ export async function createOffer(
  * returns, so a spend event that arrives in that window finds a `cancelling`
  * record and classifies the spend by its covenant leaf instead — the same
  * answer, one indexer read more.
+ *
+ * Takes no server URL, like every other entrypoint here: broadcast comes from
+ * `wallet.getArkadeBroadcaster()` and the indexer fallback from
+ * `wallet.getArkadeReader()`, so the wallet's own connection is the only one
+ * used (#734).
  */
 export async function cancelOffer(
     wallet: IWallet,
-    arkServerUrl: string,
     offerHex: string,
     opts: {
         repository: AssetSwapRepository;
@@ -498,10 +499,17 @@ export async function cancelOffer(
     const { repository, fundingTxid, swapAddress } = opts;
     const offer = decodeOffer(hex.decode(offerHex));
 
-    const contractManager = await wallet.getContractManager();
+    const [contractManager, info, reader, broadcaster] = await Promise.all([
+        wallet.getContractManager(),
+        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getArkadeReader(),
+        wallet.getArkadeBroadcaster(),
+    ]);
     const client = await arkade.Arkade.connect({
-        arkade: new RestArkProvider(arkServerUrl),
-        indexer: new RestIndexerProvider(arkServerUrl),
+        // info the wallet already holds, plus its broadcast pair — the shape
+        // `ArkadeServerProvider` describes, without a second `/v1/info`
+        arkade: { getInfo: async () => info, ...broadcaster },
+        indexer: reader,
         identity: wallet.identity,
         // registered offers resolve their VTXOs from the contract repository
         // instead of a direct indexer query; the indexer above stays as the
@@ -514,16 +522,18 @@ export async function cancelOffer(
 
     // Rebuild the contract with the offer's own keys (not the client's) so the
     // derived script matches the funded swap address exactly.
-    const serverKey = swapAddress ? ArkAddress.decode(swapAddress).serverPubKey : client.serverKey;
-    const { program, args, keys } = swapProgramBinding(offer, serverKey);
+    const operatorPubkey = swapAddress
+        ? ArkAddress.decode(swapAddress).serverPubKey
+        : client.serverKey;
+    const { program, args, keys } = swapProgramBinding(offer, operatorPubkey);
     // the offer's TLV pins the script the deposit was funded to; if the rebuild
-    // disagrees, this server key is not the one the covenant was built with
+    // disagrees, this operator key is not the one the covenant was built with
     // (rotated since funding, or a wrong swapAddress) — getUtxos would just
     // return nothing, so fail with the diagnosis instead
     const rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
     if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {
         throw new Error(
-            "rebuilt covenant does not match the offer's swapPkScript — the server " +
+            "rebuilt covenant does not match the offer's swapPkScript — the operator " +
                 "signing key has likely rotated since funding; pass swapAddress (the " +
                 "funded address) to pin the original key",
         );

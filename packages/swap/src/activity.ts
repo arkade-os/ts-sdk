@@ -8,11 +8,12 @@ import { hex } from "@scure/base";
 import { isRfqSwapTerminal, type RfqSwapState } from "./swapManager";
 import type { LockupSpendIndexer } from "./refund";
 import { rfqCorridorHandlers } from "./rfqCorridor";
-// Side-effecting, as in `rfqRecord.ts`: the type-only import below erases, so
-// nothing else here would register the handlers this reads.
+// Side-effecting, as in `rfqRecord.ts`: the handlers this reads register
+// themselves on import, and nothing here should rely on another module having
+// pulled them in first.
 import "./rfqCorridors";
 import type { AssetSwapRepository } from "./repository";
-import type { RfqSwapRecord } from "./rfqRecord";
+import { normalizeRfqSwapRecord, type RfqSwapRecord } from "./rfqRecord";
 
 /**
  * One swap, flattened to what grouping needs: an identity, a corridor, an
@@ -125,7 +126,7 @@ export interface RfqSwapActivityDeps {
     repository: Pick<AssetSwapRepository, "getAllRfqSwaps">;
     /**
      * Consulted only for what a record cannot answer: a record written before
-     * `fundingArkTxid` existed, and the counterparty's spend on a swap that
+     * `fundingTxid` existed, and the counterparty's spend on a swap that
      * ended without a refund of ours.
      *
      * Optional because the stored fields are the primary source — cheaper, and
@@ -140,7 +141,7 @@ export interface RfqSwapActivityDeps {
  * groups on.
  *
  * The txids come from four places, in order of preference: the record's own
- * `fundingArkTxid` and `refundArkTxid`, the corridor's `activityTxids` (the
+ * `fundingTxid` and `refundTxid`, the corridor's `activityTxids` (the
  * receive leg's Arkade claim, the onchain leg's L1 one), and — only when the
  * first two cannot answer — one read of the lockup's VTXOs.
  *
@@ -156,12 +157,15 @@ export async function rfqSwapActivityInputs(
 }
 
 async function activityInputOf(
-    record: RfqSwapRecord,
+    stored: RfqSwapRecord,
     indexer?: LockupSpendIndexer,
 ): Promise<SwapActivityInput> {
+    // Reads straight off the repository, so a record written before the txid
+    // fields were renamed reaches this untouched by the manager.
+    const record = normalizeRfqSwapRecord(stored);
     const txids = new Set<string>();
-    if (record.fundingArkTxid) txids.add(record.fundingArkTxid);
-    if (record.refundArkTxid) txids.add(record.refundArkTxid);
+    if (record.fundingTxid) txids.add(record.fundingTxid);
+    if (record.refundTxid) txids.add(record.refundTxid);
     const handler = rfqCorridorHandlers.getOrThrow(record.kind);
     for (const txid of handler.activityTxids?.(record.profile) ?? []) txids.add(txid);
     // The manager stamps these from the chain read that ended the swap, which
@@ -169,18 +173,16 @@ async function activityInputOf(
     // costs a lockup read per terminal swap, on the path least able to afford
     // one. Drained before the fallback below, so a record that already knows
     // never reaches the network.
-    for (const txid of record.lockupSpendArkTxids ?? []) txids.add(txid);
+    for (const txid of record.lockupSpendTxids ?? []) txids.add(txid);
 
     // The counterparty's spend is what ended a swap the trader did not refund
     // itself — a solver claim on a send leg, a solver reclaim on a receive one.
     // Unknown only when neither the trader's own refund nor the manager's stamp
     // names it.
     const spendUnknown =
-        isRfqSwapTerminal(record.state) &&
-        !record.refundArkTxid &&
-        !record.lockupSpendArkTxids?.length;
-    if (indexer && (!record.fundingArkTxid || spendUnknown)) {
-        for (const txid of await lockupTxids(indexer, record, !record.fundingArkTxid)) {
+        isRfqSwapTerminal(record.state) && !record.refundTxid && !record.lockupSpendTxids?.length;
+    if (indexer && (!record.fundingTxid || spendUnknown)) {
+        for (const txid of await lockupTxids(indexer, record, !record.fundingTxid)) {
             txids.add(txid);
         }
     }

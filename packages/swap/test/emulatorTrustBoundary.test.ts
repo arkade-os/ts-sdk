@@ -14,42 +14,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { ArkAddress, SingleKey, asset, type IWallet } from "@arkade-os/sdk";
+import { ArkAddress, CSVMultisigTapscript, SingleKey, asset, type IWallet } from "@arkade-os/sdk";
 
 // cancel.test.ts's pattern: spread the real module, override only the
-// network seam these functions must never touch (RestEmulatorProvider) plus
-// the one they legitimately still call (RestArkProvider), stubbed.
-const state = vi.hoisted(() => ({
-    arkInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
-}));
-
+// network seam these functions must never touch (RestEmulatorProvider).
+// Nothing else needs stubbing: the server info these three used to fetch over
+// the wire now comes off the wallet itself (`getArkadeInfo`), so none of them
+// constructs a provider at all.
 vi.mock("@arkade-os/sdk", async (importOriginal) => {
     const mod = await importOriginal<typeof import("@arkade-os/sdk")>();
-    // the factory is hoisted above this file's imports, so re-import inside it
-    const { hex: hexCodec } = await import("@scure/base");
     return {
         ...mod,
-        RestArkProvider: class {
-            async getInfo() {
-                // `createOffer` registers the covenant with the contract
-                // manager, and `Arkade.connect` decodes this — derived from
-                // whatever signer key the test set, so the two cannot drift.
-                return {
-                    ...state.arkInfo,
-                    checkpointTapscript: hexCodec.encode(
-                        mod.CSVMultisigTapscript.encode({
-                            timelock: { type: "blocks", value: 10n },
-                            pubkeys: [hexCodec.decode(state.arkInfo.signerPubkey)],
-                        }).script,
-                    ),
-                };
-            }
-        },
-        RestIndexerProvider: class {
-            async getVtxos() {
-                return { vtxos: [] };
-            }
-        },
         RestEmulatorProvider: class {
             constructor() {
                 throw new Error(
@@ -66,7 +41,7 @@ import {
     AddressMismatch,
     LIGHTNING_SEND_PAIR,
     ONCHAIN_SEND_PAIR,
-    lightningSendVtxoScript,
+    lightningSendContract,
     requestLightningSend,
     requestOnchainSend,
     type RfqQuote,
@@ -78,16 +53,30 @@ import { createOffer, decodeOffer } from "../src/offer";
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
 
-const SERVER = key(3);
+const OPERATOR_PUBKEY = key(3);
 const SOLVER = key(1);
 const RECEIVER_PK_SCRIPT = p2tr(key(1));
 const EMULATOR_PUBKEY = key(9);
 const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
 const PREIMAGE = new Uint8Array(32).fill(7);
 const PAYMENT_HASH = paymentHashOf(PREIMAGE);
-const REFUND_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
+const REFUND_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
 
-state.arkInfo.signerPubkey = hex.encode(SERVER);
+/** What this wallet answers for the server it is connected to. `createOffer`
+ * registers the covenant with the contract manager, and `Arkade.connect`
+ * decodes `checkpointTapscript` — derived from the same OPERATOR_PUBKEY key the quotes
+ * below are built with, so the two cannot drift. */
+const ARK_INFO = {
+    signerPubkey: hex.encode(OPERATOR_PUBKEY),
+    unilateralExitDelay: 4096,
+    network: "regtest",
+    checkpointTapscript: hex.encode(
+        CSVMultisigTapscript.encode({
+            timelock: { type: "blocks", value: 10n },
+            pubkeys: [OPERATOR_PUBKEY],
+        }).script,
+    ),
+};
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
@@ -102,6 +91,10 @@ const wallet = {
     // cannot sign, since it could never refund the leg it funds
     identity: SingleKey.fromRandomBytes(),
     getAddress: async () => REFUND_ADDRESS,
+    // The server info every entrypoint here used to fetch from `arkServerUrl`
+    // is now the wallet's own answer — one object, so a covenant derived
+    // in-flow and one derived by the transport stub agree by construction.
+    getArkadeInfo: async () => ARK_INFO,
     // Every maker entrypoint here registers its covenant with the contract
     // manager before handing back an address — `createOffer` via
     // `registerOfferContract`, the two request* paths via
@@ -125,10 +118,10 @@ const lightningTransport = (forEmulatorPubkey: Uint8Array): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
         const senderPubkey = hex.decode(profile.client_refund_pubkey as string);
-        const script = lightningSendVtxoScript({
+        const contract = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
             emulatorPubkey: forEmulatorPubkey,
@@ -148,7 +141,7 @@ const lightningTransport = (forEmulatorPubkey: Uint8Array): RfqTransport => ({
             refund_locktime: REFUND_LOCKTIME,
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
-                lockup_address: script.address("tark", SERVER).encode(),
+                lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
             },
         } satisfies RfqQuote;
     },
@@ -160,20 +153,15 @@ const lightningTransport = (forEmulatorPubkey: Uint8Array): RfqTransport => ({
 
 describe("requestLightningSend never touches the emulator", () => {
     it("funds using the caller-supplied emulatorPubkey, without constructing RestEmulatorProvider", async () => {
-        const result = await requestLightningSend(
-            wallet,
-            "http://ark",
-            lightningTransport(EMULATOR_PUBKEY),
-            {
-                emulatorPubkey: EMULATOR_PUBKEY_HEX,
-                invoice: {
-                    raw: "lnbc1...",
-                    paymentHash: PAYMENT_HASH,
-                    amountSats: 1000,
-                    expiresAt: NOW + 7200,
-                },
+        const result = await requestLightningSend(wallet, lightningTransport(EMULATOR_PUBKEY), {
+            emulatorPubkey: EMULATOR_PUBKEY_HEX,
+            invoice: {
+                raw: "lnbc1...",
+                paymentHash: PAYMENT_HASH,
+                amountSats: 1000,
+                expiresAt: NOW + 7200,
             },
-        );
+        });
         expect(result.address.startsWith("tark1")).toBe(true);
     });
 
@@ -182,7 +170,7 @@ describe("requestLightningSend never touches the emulator", () => {
         // than the caller passes in — proving emulatorPubkey is load-bearing
         // in the derivation, not a dead parameter
         await expect(
-            requestLightningSend(wallet, "http://ark", lightningTransport(key(29)), {
+            requestLightningSend(wallet, lightningTransport(key(29)), {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 invoice: {
                     raw: "lnbc1...",
@@ -203,10 +191,10 @@ describe("requestOnchainSend never touches the emulator", () => {
         async requestQuote(payload) {
             const profile = (payload as { profile: Record<string, unknown> }).profile;
             const senderPubkey = hex.decode(profile.client_refund_pubkey as string);
-            const lockupScript = lightningSendVtxoScript({
+            const lockupScript = lightningSendContract({
                 solverPubkey: SOLVER,
                 refundLocktime: REFUND_LOCKTIME,
-                serverPubkey: SERVER,
+                operatorPubkey: OPERATOR_PUBKEY,
                 paymentHash: PAYMENT_HASH,
                 claimDelay: 4096,
                 emulatorPubkey: forEmulatorPubkey,
@@ -234,7 +222,7 @@ describe("requestOnchainSend never touches the emulator", () => {
                 valid_until: VALID_UNTIL,
                 refund_locktime: REFUND_LOCKTIME,
                 profile: {
-                    lockup_address: lockupScript.address("tark", SERVER).encode(),
+                    lockup_address: lockupScript.address("tark", OPERATOR_PUBKEY).encode(),
                     htlc_pubkey: hex.encode(HTLC_PUBKEY),
                     htlc_locktime: HTLC_LOCKTIME,
                     htlc_address: htlc.address,
@@ -250,18 +238,13 @@ describe("requestOnchainSend never touches the emulator", () => {
     });
 
     it("funds using the caller-supplied emulatorPubkey, without constructing RestEmulatorProvider", async () => {
-        const result = await requestOnchainSend(
-            wallet,
-            "http://ark",
-            onchainTransport(EMULATOR_PUBKEY),
-            {
-                emulatorPubkey: EMULATOR_PUBKEY_HEX,
-                amount: 100_000,
-                amountSide: "to",
-                payoutPubkey: PAYOUT_PUBKEY,
-                preimage: PREIMAGE,
-            },
-        );
+        const result = await requestOnchainSend(wallet, onchainTransport(EMULATOR_PUBKEY), {
+            emulatorPubkey: EMULATOR_PUBKEY_HEX,
+            amount: 100_000,
+            amountSide: "to",
+            payoutPubkey: PAYOUT_PUBKEY,
+            preimage: PREIMAGE,
+        });
         expect(result.address.startsWith("tark1")).toBe(true);
         expect(result.htlc.address).toBeTruthy();
     });
@@ -273,7 +256,7 @@ describe("requestOnchainSend never touches the emulator", () => {
         // `emulatorPubkey` on this entrypoint would pass the success case above
         // and only be caught by whoever funded a lockup they cannot spend.
         await expect(
-            requestOnchainSend(wallet, "http://ark", onchainTransport(key(29)), {
+            requestOnchainSend(wallet, onchainTransport(key(29)), {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 100_000,
                 amountSide: "to",
@@ -287,7 +270,7 @@ describe("requestOnchainSend never touches the emulator", () => {
 describe("createOffer never touches the emulator", () => {
     it("embeds the caller-supplied emulatorPubkey, without constructing RestEmulatorProvider", async () => {
         const wantAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
-        const offer = await createOffer(wallet, "http://ark", {
+        const offer = await createOffer(wallet, {
             wantAmount: 1000n,
             wantAsset,
             emulatorPubkey: EMULATOR_PUBKEY_HEX,

@@ -236,6 +236,9 @@ export function convertVtxo(vtxo: Vtxo): NormalizedVirtualCoin {
 
 // --- provider boundary -------------------------------------------------------------------------
 
+/** What a normalized VTXO read answers with. @see getNormalizedVtxos */
+export type NormalizedVtxoPage = { vtxos: NormalizedVirtualCoin[]; page?: PageResponse };
+
 /**
  * The only sanctioned way for SDK logic to read VTXOs from an `IndexerProvider`: a drop-in for
  * `provider.getVtxos()` that normalizes whatever came back. A cheap pass-through for the built-in
@@ -244,7 +247,7 @@ export function convertVtxo(vtxo: Vtxo): NormalizedVirtualCoin {
 export async function getNormalizedVtxos(
     provider: Pick<IndexerProvider, "getVtxos">,
     opts?: GetVtxosOptions,
-): Promise<{ vtxos: NormalizedVirtualCoin[]; page?: PageResponse }> {
+): Promise<NormalizedVtxoPage> {
     const { vtxos, page } = await provider.getVtxos(opts);
     return { vtxos: vtxos.map(normalizeVtxo), page };
 }

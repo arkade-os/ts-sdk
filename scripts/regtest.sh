@@ -11,13 +11,20 @@
 # types — see that file's header. The profiles share ports, so only one stack
 # can be up at a time.
 #
-# Usage: scripts/regtest.sh <ts-sdk|boltz-swap|swap|swap-rfq> <up|down|reset|setup|test|cycle> [test file...]
+# Usage: scripts/regtest.sh <ts-sdk|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]
 #   up     – clean + start with the package's .env.regtest
 #   down   – stop the stack (preserves data)
 #   reset  – clean (remove containers, volumes)
 #   setup  – run the package's test/setup waiter
 #   test   – run the package's vitest e2e suite or selected files (assumes stack is up)
 #   cycle  – reset + up + setup + test (full integration run)
+#   groups – ts-sdk only: run each CI group in turn, on a fresh stack per group
+#
+# `cycle` runs every e2e file in ONE vitest process against ONE long-lived stack.
+# CI never does that — it splits the suite into groups, each with its own stack —
+# and the shared arkd is what makes a whole-suite run flaky: server config a test
+# mutates (fees, signer rotation) outlives it and breaks later files. Prefer
+# `groups` for a full local run; keep `cycle` for a quick single-stack pass.
 
 set -euo pipefail
 
@@ -25,7 +32,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REGTEST_DIR="$ROOT_DIR/regtest"
 
 usage() {
-  echo "Usage: $0 <ts-sdk|boltz-swap|swap|swap-rfq> <up|down|reset|setup|test|cycle> [test file...]" >&2
+  echo "Usage: $0 <ts-sdk|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]" >&2
   exit 1
 }
 
@@ -44,8 +51,8 @@ TEST_FILES=("$@")
 # A profile resolves to a package directory plus an env-file suffix; a plain
 # package name is the profile with no suffix.
 case "$PKG" in
-  ts-sdk|boltz-swap|swap) PKG_DIR="$PKG"; ENV_SUFFIX="" ;;
-  swap-rfq)               PKG_DIR="swap"; ENV_SUFFIX=".rfq" ;;
+  ts-sdk|swap) PKG_DIR="$PKG"; ENV_SUFFIX="" ;;
+  swap-rfq)    PKG_DIR="swap"; ENV_SUFFIX=".rfq" ;;
   *) usage ;;
 esac
 
@@ -79,9 +86,6 @@ cmd_setup() {
     ts-sdk)
       pnpm -C "$ROOT_DIR/packages/ts-sdk" exec node test/setup.mjs
       ;;
-    boltz-swap)
-      pnpm -C "$ROOT_DIR/packages/boltz-swap" exec node test/e2e/setup.mjs
-      ;;
     swap)
       pnpm -C "$ROOT_DIR/packages/swap" exec node test/e2e/setup.mjs
       ;;
@@ -95,13 +99,6 @@ cmd_test() {
         ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" exec vitest run "${TEST_FILES[@]}"
       else
         ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" run test:integration
-      fi
-      ;;
-    boltz-swap)
-      if [ "${#TEST_FILES[@]}" -gt 0 ]; then
-        pnpm -C "$ROOT_DIR/packages/boltz-swap" exec vitest run "${TEST_FILES[@]}"
-      else
-        pnpm -C "$ROOT_DIR/packages/boltz-swap" run test:integration
       fi
       ;;
     swap)
@@ -121,12 +118,55 @@ cmd_test() {
   esac
 }
 
+# Run each CI group on its own fresh stack, mirroring the integration matrix.
+# Keeps going after a failing group so one bad group does not hide the rest;
+# exits non-zero if any failed.
+cmd_groups() {
+  if [ "$PKG" != "ts-sdk" ]; then
+    echo "groups: only defined for ts-sdk" >&2
+    exit 1
+  fi
+  # Read the list before looping so a discovery failure is fatal: piped straight
+  # into `while`, a non-zero exit would yield no lines and report a vacuous pass.
+  local groups
+  if ! groups=$(node "$ROOT_DIR/scripts/e2e-groups.mjs"); then
+    echo "groups: could not read the e2e groups from the CI matrix" >&2
+    exit 1
+  fi
+  local failed=()
+  while IFS=$'\t' read -r name files; do
+    [ -n "$name" ] || continue
+    echo "=== e2e group: $name ==="
+    # Testing the stack steps as a condition exempts them from `set -e`, which
+    # would otherwise abort the whole run on one bad bring-up and hide every
+    # later group — the opposite of what this command is for.
+    if ! { cmd_reset && cmd_up && cmd_setup; }; then
+      echo "=== group $name: FAIL (stack setup) ===" >&2
+      failed+=("$name")
+      continue
+    fi
+    # $files is a deliberate word-split file list.
+    # shellcheck disable=SC2086
+    if ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" exec vitest run $files; then
+      echo "=== group $name: PASS ==="
+    else
+      echo "=== group $name: FAIL ===" >&2
+      failed+=("$name")
+    fi
+  done <<< "$groups"
+  if [ "${#failed[@]}" -gt 0 ]; then
+    echo "failed groups: ${failed[*]}" >&2
+    exit 1
+  fi
+}
+
 case "$CMD" in
-  up)    cmd_up ;;
-  down)  cmd_down ;;
-  reset) cmd_reset ;;
-  setup) cmd_setup ;;
-  test)  cmd_test ;;
+  up)     cmd_up ;;
+  down)   cmd_down ;;
+  reset)  cmd_reset ;;
+  setup)  cmd_setup ;;
+  test)   cmd_test ;;
+  groups) cmd_groups ;;
   cycle)
     cmd_reset
     cmd_up

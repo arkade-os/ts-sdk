@@ -12,6 +12,28 @@ React Native does not, so install `react-native-get-random-values` (or `expo-cry
 it before this package. `crypto.subtle` is not used. `EventSource` and `WebSocket` are needed only
 by the watch and relay transports, both of which take an injected implementation.
 
+**The covenant-deriving entry points need a wallet and nothing else.** `createOffer`,
+`requestLightningSend`, `requestLightningReceive`, `requestOnchainSend` and
+`requestOnchainReceive` take their server facts from `wallet.getArkadeInfo()`: the network and
+signer key, plus the unilateral-exit delay for the four `request*` calls. The wallet is the single
+place that knows which server it speaks to, so there is no URL to thread through and no second
+`/v1/info` round-trip *per call*. Each entrypoint still performs its own live read (deliberately —
+covenant derivation requires live info and fails closed offline); a session creating many offers
+pays one read per offer until the SDK grows a `CachingClientTransport`-style memo (the NArk
+reference's answer), noted as follow-up on `ArkadeInfo`.
+
+No offer entrypoint here takes a server URL. `cancelOffer` and `watchOfferSwaps` need more than
+server info — cancel broadcasts the refund and falls back to the indexer for a deposit made
+before contract registration existed, and the watcher reads spending transactions — so they
+ask the wallet for those too: `wallet.getArkadeReader()` for chain reads and
+`wallet.getArkadeBroadcaster()` for `submitTx`/`finalizeTx`. On a service-worker wallet both
+are proxied to the worker, so these reads stay on the wallet's own connection.
+The RFQ restore/refund/claim helpers still take provider instances. An `ArkadeReader`
+satisfies their *indexer* parameter structurally — `restoreAssetSwaps` can be fed
+`await wallet.getArkadeReader()` today — while `arkadeRefunder` and `claim`/`refund` also
+want an ark provider (`getInfo` plus the broadcast pair), buildable from
+`wallet.getArkadeInfo()` and `wallet.getArkadeBroadcaster()`.
+
 ## Roles
 
 Arkade Intents names two participants:
@@ -76,7 +98,7 @@ funds an offer should keep cancelling within reach.
 
 1. **`offer`** — the swap covenant itself. Two program JSONs (want-BTC / want-asset), the
    `Offer` type, the TLV wire codec (`encodeOffer`/`decodeOffer`, `OFFER_PACKET_TYPE`), address
-   derivation (`offerVtxoScript`), and the user-side operations `createOffer`/`cancelOffer`. Identical
+   derivation (`offerContract`), and the user-side operations `createOffer`/`cancelOffer`. Identical
    offers always derive identical swap addresses — the program JSONs are hashed into the address,
    so their bytes are frozen (guarded by a golden test).
 2. **`markets`** — solver discovery and pricing guardrails: `discoverMarkets` (1-hour cached
@@ -128,8 +150,8 @@ Realm — since the two record types have different keys and no consumer wants t
 
 **Records are stored whole.** The SQLite and Realm backends serialize each record to **JSON** in a
 `data` column, with only `status` / `createdAt` (and an RFQ record's `state` / `updatedAt`) mapped
-out for querying — so a field they do not know about survives, which is what the `quote`-shaped
-extension in `MIGRATION.md` relies on. It is also what keeps an RFQ record's corridor `profile`
+out for querying — so a field they do not know about survives, which is what a consumer's
+cast-extended record relies on. It is also what keeps an RFQ record's corridor `profile`
 intact: `profile.hashlock` is a nested object holding the payment hash and any preimage material, and
 a field-mapped backend is exactly what would lose it. JSON is
 the boundary, though, and it is narrower than IndexedDB's structured clone: a `Date` in a
@@ -200,11 +222,11 @@ the rest:
 
 ```ts
 // BTC -> asset
-const o = await createOffer(wallet, ARK, { wantAmount: 1000n, wantAsset });
+const o = await createOffer(wallet, { wantAmount: 1000n, wantAsset });
 await wallet.send({ address: o.address, amount: 1000, extensions: [o.extension] });
 
 // asset -> BTC (the sats are the VTXO carrier for the asset)
-const o = await createOffer(wallet, ARK, { wantAmount: 1000n, offerAsset });
+const o = await createOffer(wallet, { wantAmount: 1000n, offerAsset });
 await wallet.send({
     address: o.address,
     amount: 500,
@@ -238,7 +260,7 @@ offer bytes themselves are recoverable from the funding tx if the record is lost
 ## Live status
 
 ```ts
-const watcher = await watchOfferSwaps({ wallet, arkServerUrl: ARK, repository, onUpdate: render });
+const watcher = await watchOfferSwaps({ wallet, repository, onUpdate: render });
 // later
 watcher.stop();
 ```
@@ -260,7 +282,7 @@ repository.
 ## Cancelling: the refund path
 
 ```ts
-const txid = await cancelOffer(wallet, ARK, swap.offerHex, {
+const txid = await cancelOffer(wallet, swap.offerHex, {
     repository,
     fundingTxid: swap.fundingTxid,
     swapAddress: swap.swapAddress,
@@ -322,7 +344,7 @@ message anywhere: **acceptance is funding**.
 import { httpTransport, requestLightningSend } from "@arkade-os/swap";
 
 // invoice facts from YOUR OWN decoder — the module takes facts, not a decoder
-const swap = await requestLightningSend(wallet, arkServerUrl, httpTransport(solverUrl), {
+const swap = await requestLightningSend(wallet, httpTransport(solverUrl), {
     invoice: { raw: bolt11, paymentHash, amountSats, expiresAt },
 });
 // quote verified against the LOCAL derivation and gated; now fund and go offline:
@@ -395,7 +417,7 @@ import {
     swapSecretsToRecord,
 } from "@arkade-os/swap";
 
-const swap = await requestOnchainSend(wallet, arkServerUrl, httpTransport(solverUrl), {
+const swap = await requestOnchainSend(wallet, httpTransport(solverUrl), {
     amount: 100_000,
     amountSide: "to",
     payoutPubkey,
@@ -812,7 +834,7 @@ Notes from before 0.0.1, kept for consumers who tracked the branch.
   silently overwritten.
 - **`readLockupFate` names the spends it observed.** `claimed` and `returned` now carry
   `spends: readonly LockupSpend[]`, one per spent lockup output, with the `checkpointTxid` that
-  `spentBy` names and the `arkTxid` that rode it. History correlation wants `arkTxid`; the
+  `spentBy` names and the `txid` that rode it. History correlation wants `txid`; the
   checkpoint txid is the wrong value to correlate on alone. `unknown` and `open` claim no spend.
 
 - **Every derived address changed again, in both corridors — the unilateral ladder was re-spaced.**
@@ -884,8 +906,8 @@ stored?)`. The returned `ProvisionedKey` / `ProvisionedClaimSecret` replace `Swa
   quote at `verifyLockupAddress`. Upgrade both sides before expecting fills.
 - **`cancelOffer` and `restoreAssetSwaps` take an options object.** `cancelOffer(wallet, url,
 offerHex, { repository, fundingTxid?, swapAddress? })` — the repository is required because the
-  call now records its own outcome. `restoreAssetSwaps(indexer, txs, existingIds, { serverPubkey,
-scanned? })` — the server key is required because a spend is classified by rebuilding the
+  call now records its own outcome. `restoreAssetSwaps(indexer, txs, existingIds, { operatorPubkey,
+scanned? })` — the operator key is required because a spend is classified by rebuilding the
   covenant and matching the leaf it took.
 - **`isCancelSpend` is gone**, replaced by `classifySpend`, and `Tx.assets` with it. The old test
   read what a transaction moved, which a wallet reports as a _net_ delta: once the deposit is a
@@ -927,7 +949,7 @@ scanned? })` — the server key is required because a spend is classified by reb
             kind: "lightning_receive",
             lockupAddress: result.address,
             profile: {
-                ...rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                ...rfqSecretsProfile(result.secrets, result.contractParams.paymentHash),
                 expectedAmount: result.expectedAmount,
                 payoutAddress: result.payoutAddress,
             },
@@ -997,7 +1019,7 @@ scanned? })` — the server key is required because a spend is classified by reb
   when `persisted` is true — the callback is documented as following a persisted change, and a
   consumer caching from it must not run ahead of the store.
 - **`lightningSendProgram` and `htlcSendProgram` are gone** along with the program-artifact layer
-  they compiled. Derive scripts through `lightningSendVtxoScript` / `onchainHtlcScript`.
+  they compiled. Derive scripts through `lightningSendContract` / `onchainHtlcScript`.
 - **The receive corridors are wired, and the wire shape settled.** `lightningReceiveRequest` is
   new; `onchainReceiveRequest`'s profile now matches the shipped solver schema (`payment_hash`,
   `claim_packet`, `refund_pubkey`, `payout_address`, `payout_pubkey` — the earlier
@@ -1008,7 +1030,7 @@ scanned? })` — the server key is required because a spend is classified by reb
   corridor's fee — and refuses quotes whose `to_amount` reprices the invoice; solvers charge
   per-corridor fees on all four pairs, and funding the bare invoice amount underfunds by exactly
   the fee.
-- **`lightningSendVtxoScript` takes two new required fields**: `senderPubkey` (the trader's VHTLC
+- **`lightningSendContract` takes two new required fields**: `senderPubkey` (the trader's VHTLC
   sender key — generate, persist, see `requestLightningSend`) and `receiverPkScript` (the solver's
   claim destination, from `profile.receiver_pk_script`). Callers that built the lockup directly
   must supply both; callers going through `requestLightningSend` are unaffected.

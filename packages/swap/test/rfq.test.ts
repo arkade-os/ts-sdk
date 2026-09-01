@@ -25,7 +25,7 @@ import {
     expectQuote,
     httpTransport,
     lightningSendRequest,
-    lightningSendVtxoScript,
+    lightningSendContract,
     newRfqId,
     offerTermsFromQuote,
     relayTransport,
@@ -63,7 +63,7 @@ const quoteFixture = (over: Partial<RfqQuote> = {}): RfqQuote => ({
     ...over,
 });
 
-describe("lightningSendVtxoScript", () => {
+describe("lightningSendContract", () => {
     // Any change to these pinned bytes changes every lockup address and needs
     // coordinated trader/solver deployment — see "Breaking changes" in the
     // README. A version mismatch refuses quotes (verifyLockupAddress), it does
@@ -101,9 +101,9 @@ describe("lightningSendVtxoScript", () => {
     const SENDER_PUBKEY = key(13);
 
     const script = () =>
-        lightningSendVtxoScript({
+        lightningSendContract({
             solverPubkey: key(1),
-            serverPubkey: key(3),
+            operatorPubkey: key(3),
             paymentHash: PAYMENT_HASH,
             refundLocktime: 1_800_000_000,
             claimDelay: 4096,
@@ -193,9 +193,9 @@ describe("lightningSendVtxoScript", () => {
 
     it("derives the HASH160 commitment from the payment hash — the trader never sees P", () => {
         // Same script from the payment hash alone; a different hash, different tree.
-        const other = lightningSendVtxoScript({
+        const other = lightningSendContract({
             solverPubkey: key(1),
-            serverPubkey: key(3),
+            operatorPubkey: key(3),
             paymentHash: hex.encode(sha256(new Uint8Array(32).fill(8))),
             refundLocktime: 1_800_000_000,
             claimDelay: 4096,
@@ -208,9 +208,9 @@ describe("lightningSendVtxoScript", () => {
     });
 
     it("produces a different address when the sender key changes", () => {
-        const other = lightningSendVtxoScript({
+        const other = lightningSendContract({
             solverPubkey: key(1),
-            serverPubkey: key(3),
+            operatorPubkey: key(3),
             paymentHash: PAYMENT_HASH,
             refundLocktime: 1_800_000_000,
             claimDelay: 4096,
@@ -223,9 +223,9 @@ describe("lightningSendVtxoScript", () => {
     });
 
     it("produces a different address when the receiver payout script changes", () => {
-        const other = lightningSendVtxoScript({
+        const other = lightningSendContract({
             solverPubkey: key(1),
-            serverPubkey: key(3),
+            operatorPubkey: key(3),
             paymentHash: PAYMENT_HASH,
             refundLocktime: 1_800_000_000,
             claimDelay: 4096,
@@ -239,7 +239,7 @@ describe("lightningSendVtxoScript", () => {
 });
 
 describe("unilateralClaimDelay", () => {
-    it("rounds the server's exit delay UP to BIP68 granularity, as the solver does", () => {
+    it("rounds the operator's exit delay UP to BIP68 granularity, as the solver does", () => {
         expect(unilateralClaimDelay(4096)).toBe(4096);
         expect(unilateralClaimDelay(4000)).toBe(4096);
         expect(unilateralClaimDelay(604672)).toBe(604672);
@@ -249,7 +249,7 @@ describe("unilateralClaimDelay", () => {
         expect(() => unilateralClaimDelay(144)).toThrow(/512/);
     });
 
-    it("keeps all three tiers BIP68-encodable at the maximum server delay", () => {
+    it("keeps all three tiers BIP68-encodable at the maximum operator delay", () => {
         // the cap sits SOLO_REFUND_HEADROOM_SECONDS below BIP68's 0xffff * 512
         // ceiling so the solo refund stacked above claimDelay still encodes
         const max = 0xffff * 512 - SOLO_REFUND_HEADROOM_SECONDS;
@@ -261,9 +261,9 @@ describe("unilateralClaimDelay", () => {
         // leaf's sequence encoded — this threw from inside the tapscript
         // encoder before the cap accounted for the stacked tiers
         expect(() =>
-            lightningSendVtxoScript({
+            lightningSendContract({
                 solverPubkey: key(1),
-                serverPubkey: key(3),
+                operatorPubkey: key(3),
                 paymentHash: "da".repeat(32),
                 refundLocktime: 1_800_000_000,
                 claimDelay: claim,
@@ -275,7 +275,7 @@ describe("unilateralClaimDelay", () => {
         ).not.toThrow();
     });
 
-    it("rejects a server delay whose solo refund would overflow BIP68", () => {
+    it("rejects an operator delay whose solo refund would overflow BIP68", () => {
         expect(() => unilateralClaimDelay(0xffff * 512 - SOLO_REFUND_HEADROOM_SECONDS + 1)).toThrow(
             /BIP68/,
         );
@@ -565,7 +565,9 @@ describe("relayTransport", () => {
                 constructor() {
                     super(reply);
                 }
-            } as unknown as new (url: string) => RelaySocket,
+            } as unknown as new (
+                url: string,
+            ) => RelaySocket,
             timeoutMs: 1000,
         });
 

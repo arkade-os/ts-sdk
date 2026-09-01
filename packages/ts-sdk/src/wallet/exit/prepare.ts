@@ -6,6 +6,7 @@ import { TxWeightEstimator } from "../../utils/txSizeEstimator";
 import { selectCoins } from "../onchain";
 import { DUST_AMOUNT } from "../utils";
 import {
+    CHILD_OUTPUT_DUST,
     computeExitLayout,
     ExitOptions,
     resolveFeeRate,
@@ -114,7 +115,10 @@ export async function prepare(opts: ExitOptions): Promise<ExitPackage> {
             totals: {
                 txCount: bumpSteps.length * 2 + sweepSteps.length,
                 totalFeeSats: stepFees + sweepFees,
-                fundingRequiredSats: stepFees,
+                // Fees plus the single dust floor the recycling change output
+                // must keep clear; see the note in `estimate.ts`. Must match
+                // the quote `estimate` gives for the same package.
+                fundingRequiredSats: bumpSteps.length > 0 ? stepFees + CHILD_OUTPUT_DUST : 0,
                 recoveredSats: recovered,
             },
             vtxos: layout.infos,

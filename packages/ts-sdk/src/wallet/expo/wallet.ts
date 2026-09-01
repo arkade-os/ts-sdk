@@ -3,6 +3,9 @@ import { Wallet, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
 import { RestArkProvider } from "../../providers/ark";
 import type {
+    ArkadeBroadcaster,
+    ArkadeReader,
+    GetArkadeInfoOptions,
     IWallet,
     IAssetManager,
     WalletBalance,
@@ -15,7 +18,7 @@ import type {
     Recipient,
     SendParams,
 } from "..";
-import type { SettlementEvent } from "../../providers/ark";
+import type { ArkadeInfo, SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
 import type { HDAllocationCapable, HDWalletCapable } from "../hdWalletCapable";
 import type { IContractManager } from "../../contracts/contractManager";
@@ -300,6 +303,18 @@ export class ExpoWallet implements IWallet, HDWalletCapable, HDAllocationCapable
 
     getBoardingAddress(): Promise<string> {
         return this.wallet.getBoardingAddress();
+    }
+
+    getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
+        return this.wallet.getArkadeInfo(opts);
+    }
+
+    getArkadeReader(): Promise<ArkadeReader> {
+        return this.wallet.getArkadeReader();
+    }
+
+    getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
+        return this.wallet.getArkadeBroadcaster();
     }
 
     getBalance(): Promise<WalletBalance> {

@@ -104,8 +104,8 @@ describe.each(backends)("AssetSwapRepository (%s)", (_, create) => {
         ).toBeUndefined();
     });
 
-    // MIGRATION.md tells consumers to extend the record by cast, so a backend
-    // that writes only the declared columns must fail here. The fixture is
+    // Consumers extend the record by cast, so a backend that writes only the
+    // declared columns must fail here. The fixture is
     // JSON-safe on purpose: a Date or bigint would NOT round-trip equally
     // across backends, so asserting parity on one would assert something untrue.
     it("round-trips an unknown consumer field", async () => {
@@ -319,7 +319,7 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
 
     it("carries the caller's funding txid through the round trip", async () => {
         await using repository = create();
-        const record = { ...rfqRecord("r1"), fundingArkTxid: "f0".repeat(32) };
+        const record = { ...rfqRecord("r1"), fundingTxid: "f0".repeat(32) };
         await repository.saveRfqSwap(record);
         expect(await repository.getRfqSwap("r1")).toEqual(record);
     });

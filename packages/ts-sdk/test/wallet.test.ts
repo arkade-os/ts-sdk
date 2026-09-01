@@ -1607,7 +1607,12 @@ describe("ReadonlyWallet", () => {
         });
 
         expect(readonlyWallet).toBeInstanceOf(ReadonlyWallet);
-        expect(mockFetch).toHaveBeenCalledWith(`${DEFAULT_ARKADE_SERVER_URL}/v1/info`);
+        // the URL is the claim; the second argument carries the fetch's own
+        // timeout budget (an AbortSignal where the runtime has one)
+        expect(mockFetch).toHaveBeenCalledWith(
+            `${DEFAULT_ARKADE_SERVER_URL}/v1/info`,
+            expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        );
     });
 
     it("should query balance with ReadonlyWallet", async () => {

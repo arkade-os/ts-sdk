@@ -30,6 +30,7 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
+    type ArkProvider,
     type Identity,
     type VHTLC,
     claimWithPreimageIdentity,
@@ -40,14 +41,10 @@ import {
     LockupNeedsRecoveryError,
     findLockupVtxos,
     type LockupVtxo,
-    type RefundArkProvider,
     type RefundIndexer,
 } from "./refund";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** The Ark surface the claim push needs — the same seam the refund push uses. */
-export type ClaimArkProvider = RefundArkProvider;
 
 /**
  * The lockup is funded for less than the swap agreed.
@@ -121,10 +118,10 @@ const assertFiniteAmount = (value: number, reason: string, label: string): void 
  * solver refunds hours later" into an immediate failure.
  */
 export async function pushClaim(
-    ark: ClaimArkProvider,
+    operator: ArkProvider,
     input: {
-        /** The receive-direction covenant (see `receiveVtxoScript`). */
-        script: InstanceType<typeof VHTLC.ScriptV2>;
+        /** The receive-direction covenant (see `lightningReceiveContract`). */
+        contract: InstanceType<typeof VHTLC.ScriptV2>;
         /** The trader's `receiver` signer. Build it from the swap's `secrets`
          * with `contractSigner` — on an HD wallet that resolves
          * from the seed, with no stored key bytes anywhere. */
@@ -144,14 +141,14 @@ export async function pushClaim(
          * the remainder. */
         partiallyClaimed?: boolean;
     },
-): Promise<{ arkTxid: string; amount: number }> {
+): Promise<{ txid: string; amount: number }> {
     if (input.vtxos.length === 0) throw new Error("nothing to claim: no funded outputs");
 
     const swept = input.vtxos.filter((vtxo) => vtxo.recoverable);
     if (swept.length > 0) {
         throw new LockupNeedsRecoveryError(
             swept.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
-            input.script.options.refundLocktime,
+            input.contract.options.refundLocktime,
         );
     }
 
@@ -171,29 +168,29 @@ export async function pushClaim(
         }
     }
 
-    const committed = input.script.options.preimageHash;
+    const committed = input.contract.options.preimageHash;
     if (hex.encode(ripemd160(sha256(input.preimage))) !== hex.encode(committed)) {
         throw new Error("preimage does not match the covenant's payment hash");
     }
 
-    const info = await ark.getInfo();
-    let serverUnrollScript: CSVMultisigTapscript.Type;
+    const info = await operator.getInfo();
+    let operatorUnrollScript: CSVMultisigTapscript.Type;
     try {
-        serverUnrollScript = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
+        operatorUnrollScript = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
     } catch {
-        throw new Error("invalid checkpointTapscript from the Arkade server");
+        throw new Error("invalid checkpointTapscript from the operator");
     }
 
-    const leaf = input.script.claim();
-    const tapTree = input.script.encode();
+    const leaf = input.contract.claim();
+    const tapTree = input.contract.encode();
 
     // The core primitive owns build → sign → submit → match → finalize; this
     // module supplies only what is swap-specific: the claim leaf, the preimage
-    // signer, and the server key to check the response against — the covenant
+    // signer, and the operator key to check the response against — the covenant
     // already carries it, so it is not a caller obligation.
-    const arkTxid = await signAndSubmitOffchainTx({
+    const txid = await signAndSubmitOffchainTx({
         identity: claimWithPreimageIdentity(input.receiver, input.preimage),
-        provider: ark,
+        provider: operator,
         inputs: input.vtxos.map((vtxo) => ({
             txid: vtxo.txid,
             vout: vtxo.vout,
@@ -204,10 +201,10 @@ export async function pushClaim(
         // One aggregate output: unlike the covenant refund, this leaf inspects
         // nothing about the output set.
         outputs: [{ script: input.destinationPkScript, amount: BigInt(locked) }],
-        serverUnrollScript,
-        verifyServerSignatures: { serverPubkey: input.script.options.server },
+        serverUnrollScript: operatorUnrollScript,
+        verifyServerSignatures: { serverPubkey: input.contract.options.server },
     });
-    return { arkTxid, amount: locked };
+    return { txid, amount: locked };
 }
 
 /**
@@ -252,20 +249,20 @@ export async function awaitLockupFunding(
  */
 export async function claimReceiveLockup(
     indexer: RefundIndexer,
-    ark: ClaimArkProvider,
+    operator: ArkProvider,
     input: Parameters<typeof pushClaim>[1] & {
         /** The covenant's scriptPubKey, from the request flow's `swapPkScript`. */
         swapPkScript: Uint8Array;
         pollMs?: number;
         deadline?: number;
     },
-): Promise<{ arkTxid: string; amount: number }> {
+): Promise<{ txid: string; amount: number }> {
     const vtxos = await awaitLockupFunding(indexer, input.swapPkScript, {
         pollMs: input.pollMs,
         deadline: input.deadline,
     });
-    return pushClaim(ark, {
-        script: input.script,
+    return pushClaim(operator, {
+        contract: input.contract,
         receiver: input.receiver,
         preimage: input.preimage,
         vtxos,

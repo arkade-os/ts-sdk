@@ -7,6 +7,136 @@ This file covers the **0.4.x** line. Pre-0.4 release history (0.3.x and
 earlier) lives in `git log` — those entries were not written in this
 style and have not been backfilled.
 
+## [Unreleased]
+
+### Breaking Changes
+
+- **`@arkade-os/swap`: the `arkServerUrl` positional is gone from the
+  five covenant-deriving entrypoints.** `createOffer(wallet, params)`,
+  and `requestLightningSend` / `requestLightningReceive` /
+  `requestOnchainSend` / `requestOnchainReceive` as
+  `request*(wallet, transport, params)`. Each reads the server's
+  network and signer key — and, for the four `request*` calls, its
+  unilateral-exit delay — from `wallet.getArkadeInfo()`
+  instead of building a `RestArkProvider` from a URL, so a caller
+  holding a wallet holds everything these need and pays no second
+  `/v1/info` round-trip per call (each entrypoint still performs its own
+  live read — deliberately, see the `requireLive` entry below). Drop the argument at every call site; nothing
+  else about these calls changed. (#734)
+- **`@arkade-os/swap`: `cancelOffer` and `watchOfferSwaps` lose their
+  server URL too.** `cancelOffer(wallet, offerHex, opts)` and
+  `watchOfferSwaps({ wallet, repository })`. These two need more than
+  server info — cancel broadcasts and falls back to the indexer for a
+  deposit made before contract registration existed, and the watcher
+  reads spending transactions — so they now take those from the wallet
+  as well, through the two seams below. No *offer* entrypoint takes a
+  server URL now. The RFQ restore/refund/claim helpers still take
+  provider instances: an `ArkadeReader` satisfies their *indexer*
+  parameter structurally, while their ark-provider parameter wants
+  `getInfo` plus the broadcast pair — buildable from
+  `wallet.getArkadeInfo()` and `wallet.getArkadeBroadcaster()`.
+  Converting their callers is follow-up work. (#734)
+- **`Arkade.arkProvider` narrowed to `ArkadeServerProvider`.** The
+  provider a connected client exposes now types `submitTx`/`finalizeTx`
+  as optional, mirroring what `Arkade.connect` accepts. Reaching
+  through the field to broadcast — `client.arkProvider.submitTx(...)`
+  — no longer compiles. Broadcast through the transaction builder's
+  `.send()`, which runs the same submit/finalize behind an explicit
+  capability check, or keep your own reference to the provider you
+  handed `connect`. Type-only: the field still holds that provider
+  untouched, so there is no runtime or on-disk effect. (#734)
+
+### Features
+
+- **`IReadonlyWallet.getArkadeInfo()`.** The wallet is the single place
+  that knows which Arkade server it speaks to, so a plugin needs only
+  the wallet, never a server URL of its own. It answers with the live
+  `ArkadeInfo` and falls back to the snapshot persisted at wallet
+  construction when the server is unreachable, so an offline wallet
+  still answers; implemented across the standard, service-worker and
+  Expo wallets. Additive for consumers, but **third-party `IWallet` /
+  `IReadonlyWallet` implementations must add the method** — a
+  compile-time break for external implementers only, with no runtime
+  or on-disk effect. (#734)
+- **`IReadonlyWallet.getArkadeReader()` and
+  `IWallet.getArkadeBroadcaster()`.** Chain reads and broadcast, taken
+  from the wallet rather than from a URL a caller carries. `ArkadeReader`
+  is `getVtxos` + `getVirtualTxs`; `ArkadeBroadcaster` is
+  `submitTx` + `finalizeTx`.
+  The split is the readonly/full line: reading is a readonly capability,
+  broadcasting is not. On the typed surface a readonly wallet — and
+  every `toReadonly()` view — exposes no way to submit (`protected` is
+  erased at runtime, so this is a compile-time boundary, not a
+  sandbox); the readonly service-worker enforces it at runtime too,
+  refusing `SUBMIT_TX`/`FINALIZE_TX` outright.
+  `ArkadeReader.getVtxos()` queries the server for arbitrary scripts and
+  is distinct from `IReadonlyWallet.getVtxos()`, which answers the
+  wallet's own outputs from repositories. It is shaped as
+  `getNormalizedVtxos`, so everything leaving the seam carries its
+  canonical facts — the guarantee `check-provider-boundary.mjs` enforces
+  inside the SDK, now extended to consumers. Deliberately not the whole
+  `IndexerProvider`/`ArkProvider`: a caller reaching further would be
+  talking to the server behind the wallet's back, which a service-worker
+  wallet cannot even express.
+  Implemented across the standard, service-worker and Expo wallets; on a
+  service-worker wallet both are proxied to the worker, so a plugin
+  shares the wallet's connection instead of opening a second one outside
+  its rate gate and caches. Additive for consumers, but **third-party
+  `IWallet` / `IReadonlyWallet` implementations must add both methods**
+  — a compile-time break for external implementers only, with no runtime
+  or on-disk effect. (#734)
+- **`getArkadeInfo({ requireLive: true })`, and honest freshness.** The
+  snapshot fallback is now opt-out for callers that must not derive from
+  a cache: with `requireLive` the read throws when the operator is
+  unreachable. The five covenant-deriving swap entrypoints and
+  `cancelOffer` use it, restoring their pre-#734 fail-closed behaviour —
+  a stale snapshot there binds a covenant to a key the operator may no
+  longer co-sign for. Every read now also updates
+  `getProviderConnectionState()`, so a wallet that booted offline and
+  recovered stops reporting `degraded` (and the inverse stops claiming
+  `online`). (#803 review)
+- **An info read is now a rotation signal, not its suppressor.**
+  `RestArkProvider.getInfo()` caches the digest that rides `X-Digest`;
+  previously a read after the operator rotated advanced it silently, so
+  arkd stopped answering `DIGEST_MISMATCH` and `onServerInfoChanged`
+  never fired. `getInfo()` now emits `onServerInfoChanged` when the
+  digest *moved* (boot read and the mismatch path's own refresh stay
+  silent), so the wallet re-derives instead of spending on a stale
+  epoch. The live `/v1/info` fetch also carries a 12s budget where the
+  runtime has `AbortSignal.timeout`, keeping the service-worker snapshot
+  fallback reachable on a black-holed connection. (#803 review)
+- **Typed error names survive the service-worker boundary for real.**
+  The structured-clone algorithm normalizes a custom `Error.name`
+  (`ProviderUnavailableError`, `ReadonlyWalletError`, …) to `"Error"` —
+  the earlier claim that `cause.name` survived was certified by a test
+  stub that copied `name` verbatim. The worker now sends the name beside
+  the error as plain data (`ResponseEnvelope.errorName`) and the page
+  restores it before rejecting, so `cause.name` genuinely is the thing
+  a page can branch on. Wire-compatible in both directions; against an
+  older worker the page sees the clone-normalized name, as it always
+  did. (#803 review)
+- **`ArkInfo` renamed to `ArkadeInfo`.** The type name now matches the
+  product and the accessor that returns it. `ArkInfo` is kept as a
+  deprecated alias (`export type ArkInfo = ArkadeInfo`), both are
+  exported from `@arkade-os/sdk`, and every existing import keeps
+  resolving — nothing to change today. (#734)
+- **`ArkadeConnectOptions.arkade` widened: only `getInfo` is
+  required.** `submitTx` / `finalizeTx` are optional now — `getInfo` is
+  what resolves the server key and checkpoint closure, which is all a
+  client needs to derive, register and inspect contracts. A client
+  built without the two broadcast methods throws at `.send()` on the
+  pure-tapscript path — the same deferred, explicit failure an absent
+  `indexer` gives `getUtxos()` and an absent `emulator` gives a covenant
+  spend.
+  That lets a caller already holding the server info connect with
+  `arkade: { getInfo: async () => info }` and no provider of its own,
+  and without a second `/v1/info` round-trip. A widening on the input,
+  so every existing `Arkade.connect` call still type-checks; the
+  matching narrowing on the `Arkade.arkProvider` field it hands back is
+  listed under Breaking Changes above. The shape is exported as
+  `ArkadeServerProvider`, so a caller building a derivation-only client
+  has a name to import. (#734)
+
 ## [0.4.23] - 2026-05-04
 
 ### Breaking Changes

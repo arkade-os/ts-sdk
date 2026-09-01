@@ -61,7 +61,7 @@ export interface LightningReceiveProfile extends Record<string, unknown> {
      * preimage that is already public, and a swap that did claim is relabelled
      * `needs_counterparty` once its window shuts.
      */
-    claimArkTxid?: string;
+    claimTxid?: string;
 }
 
 export const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfile> = {
@@ -74,7 +74,7 @@ export const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfil
         const receive = swap as LightningReceiveSwap;
         return {
             expectedAmount: receive.expectedAmount,
-            ...(receive.claimArkTxid ? { claimArkTxid: receive.claimArkTxid } : {}),
+            ...(receive.claimTxid ? { claimTxid: receive.claimTxid } : {}),
         };
     },
 
@@ -93,7 +93,7 @@ export const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfil
         return {
             ...hydrateHashlock(profile),
             expectedAmount: profile.expectedAmount,
-            ...(profile.claimArkTxid ? { claimArkTxid: profile.claimArkTxid } : {}),
+            ...(profile.claimTxid ? { claimTxid: profile.claimTxid } : {}),
         };
     },
 
@@ -101,7 +101,7 @@ export const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfil
     // ours to use.
     claimSecret: (profile) => ({ ...profile.signer, ...profile.hashlock }),
 
-    activityTxids: (profile) => (profile.claimArkTxid ? [profile.claimArkTxid] : []),
+    activityTxids: (profile) => (profile.claimTxid ? [profile.claimTxid] : []),
 };
 
 /** `arkade:BTC->onchain:BTC`. */

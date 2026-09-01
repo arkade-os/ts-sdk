@@ -5,10 +5,15 @@ import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, equalBytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
-import { DEFAULT_ARKADE_SERVER_URL, getNetwork, Network, NetworkName } from "../networks";
+import {
+    DEFAULT_ARKADE_SERVER_URL,
+    Network,
+    NetworkName,
+    networkFromArkadeInfo,
+} from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
-    ArkInfo,
+    ArkadeInfo,
     ArkProvider,
     BatchFinalizationEvent,
     BatchStartedEvent,
@@ -48,6 +53,9 @@ import {
 } from "./vtxo";
 import {
     ArkTransaction,
+    ArkadeBroadcaster,
+    ArkadeReader,
+    GetArkadeInfoOptions,
     Asset,
     Coin,
     ExtendedCoin,
@@ -650,15 +658,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
     protected _arkServerPublicKey: Bytes;
 
     /**
-     * Whether this wallet was constructed from live operator server-info
-     * (`"live"`) or from a cached snapshot because the operator was unreachable
-     * (`"cache"`). Freshness signal for {@link getProviderConnectionState}.
+     * Whether the LATEST server-info resolution answered live (`"live"`) or
+     * from the cached snapshot because the operator was unreachable
+     * (`"cache"`). Seeded at construction and updated by every
+     * {@link getArkadeInfo} read, so a wallet that booted offline and
+     * recovered stops reporting degraded — and one that just fell back stops
+     * claiming online. Freshness signal for
+     * {@link getProviderConnectionState}.
      */
     protected _serverInfoSource: ServerInfoSource = "live";
 
     /**
-     * Epoch-ms of the last known live operator contact: construction time on the
-     * `live` boot path, the cached snapshot's `savedAt` on the `cache` path.
+     * Epoch-ms of the last known live operator contact: the most recent live
+     * resolution (construction or a later {@link getArkadeInfo}), or the
+     * cached snapshot's `savedAt` when the latest resolution fell back.
      */
     protected _serverInfoLastOnlineAt?: number;
 
@@ -668,13 +681,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Composed provider-connection freshness: the boot server-info source
-     * (Arkade) combined with the contract-manager's indexer-sync health, if the
-     * manager has been initialized. Reads no live provider state — it never
-     * forces a `ContractManager` to construct — so it is safe for readonly
-     * callers that only use address/balance APIs.
+     * Composed provider-connection freshness: the LATEST server-info
+     * resolution (boot, or any later {@link getArkadeInfo} read) combined with
+     * the contract-manager's indexer-sync health, if the manager has been
+     * initialized. Reads no live provider state — it never forces a
+     * `ContractManager` to construct — so it is safe for readonly callers
+     * that only use address/balance APIs.
      *
-     *  - Boot fell back to a cached snapshot → degraded on `arkade` (`cache`).
+     *  - Latest resolution fell back to the cached snapshot → degraded on
+     *    `arkade` (`cache`).
      *  - Otherwise, if the contract manager has degraded to repository data →
      *    degraded on `indexer` (`repository`).
      *  - Otherwise online.
@@ -724,6 +739,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly identity: ReadonlyIdentity,
         readonly network: Network,
         readonly onchainProvider: OnchainProvider,
+        /**
+         * Narrowed to what a readonly wallet legitimately needs — the only use
+         * here is {@link getArkadeInfo}. `protected` stops an outside caller
+         * reaching it; the `Pick` stops this class growing a use for
+         * `submitTx`. `Wallet` re-widens both below.
+         */
+        protected readonly arkProvider: Pick<ArkProvider, "getInfo">,
         readonly indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -765,7 +787,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * x-only hex of the operator's deprecated signer keys (from
-     * `ArkInfo.deprecatedSigners`), cached for the OFFLINE read/watch paths.
+     * `ArkadeInfo.deprecatedSigners`), cached for the OFFLINE read/watch paths.
      * The boarding watch/history surfaces ({@link getBoardingAddresses},
      * {@link getBoardingTxs}) fan out over {current} ∪ this set so a deposit at
      * a boarding address minted under a now-rotated operator signer keeps being
@@ -851,6 +873,72 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     get arkServerPublicKey(): Bytes {
         return this._arkServerPublicKey;
+    }
+
+    /**
+     * Server info for the Arkade server this wallet is connected to, resolved
+     * exactly as construction resolves it: live wins, a retryable failure
+     * falls back to the snapshot persisted at boot, a terminal one propagates.
+     *
+     * Live rather than the pinned boot snapshot because the fields callers
+     * come here for — `signerPubkey`, `checkpointTapscript`, `fees` — are the
+     * ones a mid-session rotation moves, and a covenant built against a
+     * superseded signer is unspendable.
+     *
+     * One rotation caveat: reading does NOT re-pin the wallet —
+     * {@link arkServerPublicKey}, {@link dustAmount} and the tapscripts move
+     * only through `handleServerInfoChanged`/`rotateServerSigner` — so inside
+     * a rotation window this can report epoch N+1 while the wallet still
+     * spends on N. The window closes on its own: a read that observes a moved
+     * digest makes the provider emit `onServerInfoChanged`, which is what
+     * drives that rotation. A caller about to bind the answer into a covenant
+     * passes `{ requireLive: true }` and fails closed instead of receiving
+     * the boot snapshot.
+     *
+     * @returns The Arkade server's info
+     * @see ArkadeInfo
+     */
+    async getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
+        const { info, source, lastOnlineAt } = await resolveArkInfo(
+            this.arkProvider,
+            this.walletRepository,
+            opts,
+        );
+        // The resolution just learned whether the operator is reachable, so
+        // {@link getProviderConnectionState} tracks the LATEST resolution
+        // rather than staying pinned to the boot-time verdict — a wallet that
+        // booted offline and recovered stops reporting "degraded", and one
+        // that just fell back to the snapshot stops claiming "online". This is
+        // also what makes fail-closed expressible: read, then check the state.
+        this._serverInfoSource = source;
+        if (source === "live") {
+            this._serverInfoLastOnlineAt = Date.now();
+        } else if (lastOnlineAt !== undefined) {
+            this._serverInfoLastOnlineAt = lastOnlineAt;
+        }
+        return info;
+    }
+
+    /**
+     * Chain reads against this wallet's server for scripts it does not own.
+     *
+     * Binds the wallet's own `indexerProvider` — which may be an Expo or
+     * injected one that a caller's hand-built `RestIndexerProvider` would
+     * silently bypass. `getVtxos` goes through
+     * {@link getNormalizedVtxos}, which is what makes every VTXO leaving the
+     * seam carry its canonical facts.
+     *
+     * A bound object rather than the provider itself, so an `IReadonlyWallet`
+     * holder gets `getVtxos`/`getVirtualTxs` and nothing else at runtime.
+     * (`indexerProvider` is still public on the concrete classes, unlike
+     * `arkProvider`, so this narrows the interface rather than the field.)
+     */
+    async getArkadeReader(): Promise<ArkadeReader> {
+        const indexer = this.indexerProvider;
+        return {
+            getVtxos: (opts) => getNormalizedVtxos(indexer, opts),
+            getVirtualTxs: (txids, opts) => indexer.getVirtualTxs(txids, opts),
+        };
     }
 
     /**
@@ -959,7 +1047,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             lastOnlineAt: serverInfoLastOnlineAt,
         } = await resolveArkInfo(arkProvider, walletRepository);
 
-        const network = getNetwork(info.network as NetworkName);
+        const network = networkFromArkadeInfo(info);
 
         // Guard: detect identity/server network mismatch for seed-based identities.
         // A mainnet descriptor (xpub, coin type 0) connected to a testnet server
@@ -1103,6 +1191,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             config.identity,
             setup.network,
             setup.onchainProvider,
+            setup.arkProvider,
             setup.indexerProvider,
             setup.serverPubKey,
             setup.offchainTapscript,
@@ -2315,7 +2404,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             const newActive = toXOnlySignerHex(info.signerPubkey);
             const current = toXOnlySignerHex(hex.encode(this.arkServerPublicKey));
             if (newActive !== current) {
-                // `onServerInfoChanged` delivers the full refreshed `ArkInfo`, so
+                // `onServerInfoChanged` delivers the full refreshed `ArkadeInfo`, so
                 // the new epoch's checkpoint script is in hand — thread it
                 // through so the rotated wallet builds checkpoints against the
                 // new server signer. A bad/empty value throws here and is caught
@@ -2329,6 +2418,29 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             console.warn("server-signer rotation on info change failed", e);
         }
     }
+
+    /**
+     * Await an `onServerInfoChanged` handler still applying a rotation.
+     *
+     * The provider emits synchronously but {@link handleServerInfoChanged} runs
+     * off the emit, so between the two a caller can observe a half-applied
+     * rotation: {@link rotateServerSigner} persists the active signer's contract
+     * rows *before* committing the tapscripts, so `arkServerPublicKey` still
+     * reads the old key while the new key's rows are already in the repository.
+     * A path that refreshes server info and then reads signer-derived state must
+     * drain the chain first, or it both reads that torn state and races the
+     * handler for the rotation itself.
+     *
+     * Resolves once the chain is idle; a handler that threw already logged, and
+     * its rejection is swallowed here.
+     *
+     * @internal Invoked by {@link dispose} and the {@link VtxoManager} migration
+     * pass; not part of the stable public API.
+     */
+    async settleServerInfoChanges(): Promise<void> {
+        await this._serverInfoInFlight?.catch(() => undefined);
+    }
+
     private _receiveRotatorInstalled = false;
 
     /**
@@ -2428,7 +2540,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     /**
      * Output script for checkpoint transactions, decoded from the server's
      * `checkpointTapscript`. Server-controlled state: pinned at construction
-     * and re-sourced from a fresh `ArkInfo` on server-signer rotation. Read it
+     * and re-sourced from a fresh `ArkadeInfo` on server-signer rotation. Read it
      * through {@link serverUnrollScript}; write it only through
      * {@link setServerUnrollScriptForRotation}.
      */
@@ -2441,7 +2553,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     /**
      * @internal Sole write path for `serverUnrollScript` after construction.
      * Called by {@link Wallet._doRotateServerSigner} with the checkpoint script
-     * sourced from the fresh `ArkInfo` that triggered the rotation, so the send
+     * sourced from the fresh `ArkadeInfo` that triggered the rotation, so the send
      * path builds checkpoints against the new server epoch. External code must
      * treat `serverUnrollScript` as read-only.
      */
@@ -3019,11 +3131,35 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
     public readonly settlementConfig: SettlementConfig | false;
 
+    /**
+     * Re-widened to public: a full wallet's provider is part of its API
+     * (`ExpoWallet` and the delegate manager read it), while `ReadonlyWallet`
+     * keeps it protected so a readonly view cannot hand out `submitTx`.
+     */
+    declare readonly arkProvider: ArkProvider;
+
+    /**
+     * Broadcast access bound to this wallet's server, so a plugin needs only
+     * the wallet.
+     *
+     * Defined here and not on {@link ReadonlyWallet} for the same reason
+     * `arkProvider` is protected there: a readonly wallet, and every
+     * `toReadonly()` view, must not be able to submit.
+     */
+    async getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
+        const ark = this.arkProvider;
+        return {
+            submitTx: (signedArkTx, checkpointTxs) => ark.submitTx(signedArkTx, checkpointTxs),
+            finalizeTx: (arkTxid, finalCheckpointTxs) =>
+                ark.finalizeTx(arkTxid, finalCheckpointTxs),
+        };
+    }
+
     protected constructor(
         identity: Identity,
         network: Network,
         onchainProvider: OnchainProvider,
-        readonly arkProvider: ArkProvider,
+        arkProvider: ArkProvider,
         indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -3052,6 +3188,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             identity,
             network,
             onchainProvider,
+            arkProvider,
             indexerProvider,
             arkServerPublicKey,
             offchainTapscript,
@@ -3162,7 +3299,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // dispose the contract manager underneath it.
         this._serverInfoUnsub?.();
         this._serverInfoUnsub = undefined;
-        await this._serverInfoInFlight?.catch(() => undefined);
+        await this.settleServerInfoChanges();
 
         // Tear down the rotation subscription + drain in-flight rotations
         // first so no late `vtxo_received` event can queue work on a
@@ -3384,6 +3521,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             readonlyIdentity,
             this.network,
             this.onchainProvider,
+            this.arkProvider,
             this.indexerProvider,
             this.arkServerPublicKey,
             this.offchainTapscript,
@@ -4633,7 +4771,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * before a signer rotation was built under the old key, so rebuilding
      * against the current key alone would leave it pending forever.
      */
-    private checkpointUnrollCandidates(info: ArkInfo): CSVMultisigTapscript.Type[] {
+    private checkpointUnrollCandidates(info: ArkadeInfo): CSVMultisigTapscript.Type[] {
         const current = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
         const candidates = [this._serverUnrollScript, current];
         for (const deprecated of signerSetFromInfo(info).deprecated.keys()) {

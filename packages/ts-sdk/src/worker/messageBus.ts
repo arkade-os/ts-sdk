@@ -34,6 +34,16 @@ export type ResponseEnvelope = {
     tag: string;
     id?: string;
     error?: Error;
+    /**
+     * `error.name`, carried beside the error as an ordinary string. The
+     * structured-clone algorithm serializes an Error's `name` only from the
+     * built-in whitelist (Error, TypeError, RangeError, …) — a custom name
+     * like `ProviderUnavailableError` reaches the page as `"Error"`. A plain
+     * property survives verbatim, so the page restores it before rejecting.
+     * Absent from workers built before it existed; the page then sees the
+     * clone-normalized name, exactly as it always did.
+     */
+    errorName?: string;
     broadcast?: boolean;
 };
 export interface MessageHandler<
@@ -708,6 +718,15 @@ export class MessageBus {
                     messageType: context.messageType,
                 });
             return;
+        }
+        // postMessage's structured clone normalizes a custom Error name to
+        // "Error"; a plain-string copy survives, and the page restores it.
+        // Stamped HERE — the single egress — so the bus's own typed errors
+        // (MessageBusInitializingError, ServiceWorkerTimeoutError, …) and
+        // every handler's, present or future, all carry their names without
+        // each site remembering to.
+        if (response.error instanceof Error && !response.errorName) {
+            response.errorName = response.error.name;
         }
         source.postMessage(response);
     }

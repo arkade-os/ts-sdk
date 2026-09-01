@@ -1,8 +1,9 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     asset,
+    CSVMultisigTapscript,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     ProviderUnavailableError,
@@ -16,58 +17,57 @@ import {
 import { createOffer, OFFER_CONTRACT_KIND, OFFER_CONTRACT_LABEL } from "../src/offer";
 
 // the covenant derivation, Arkade.connect, ArkadeContract and register() are
-// all real here — only the network seam (the three Rest* providers) and the
-// contract manager are stubbed, so a writer that omits or misspells the escrow
-// marker fails this test rather than passing on a hand-built fixture
+// all real here — only the wallet's view of the server and the contract manager
+// are stubbed, so a writer that omits or misspells the escrow marker fails this
+// test rather than passing on a hand-built fixture
 const makerKey = hex.decode("3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1");
 const makerAddress =
     "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65wq0wnmwgr4nglzx999xqx7xahllp4gfh6638wkrjt5tl3k7c8vy6frzj2";
 
-const state = vi.hoisted(() => ({
+// ── The server both wallets below answer for ────────────────────────────────
+//
+// `createOffer` reads its info off the wallet, so this is the single source of
+// truth for the covenant: the fake wallet hands it back directly and the real
+// `ReadonlyWallet` further down resolves it through a stubbed `arkProvider`.
+// One fixture, so the two derive against the same server.
+
+const SIGNER_PUBKEY = "02" + "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
+
+// derived from the signer key rather than pinned, the way arkd advertises it:
+// a checkpoint committing to some other key would describe a different server
+const checkpointTapscript = hex.encode(
+    CSVMultisigTapscript.encode({
+        timelock: { type: "blocks", value: 10n },
+        pubkeys: [hex.decode(SIGNER_PUBKEY.slice(2))],
+    }).script,
+);
+
+const arkInfo = () => ({
+    boardingExitDelay: 144n,
+    checkpointTapscript,
+    deprecatedSigners: [],
+    digest: "d",
+    dust: 1000n,
+    fees: { intentFee: {}, txFeeRate: "0" },
+    forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+    forfeitPubkey: SIGNER_PUBKEY,
+    network: "regtest",
+    serviceStatus: {},
+    sessionDuration: 3600n,
+    signerPubkey: SIGNER_PUBKEY,
+    unilateralExitDelay: 4096n,
+    utxoMaxAmount: -1n,
+    utxoMinAmount: 0n,
+    version: "1",
+    vtxoMaxAmount: -1n,
+    vtxoMinAmount: 0n,
+});
+
+const state = {
     created: [] as Record<string, unknown>[],
     watched: [] as [string, string][],
     createContract: undefined as ((params: Record<string, unknown>) => unknown) | undefined,
-}));
-
-vi.mock("@arkade-os/sdk", async (importOriginal) => {
-    const mod = await importOriginal<typeof import("@arkade-os/sdk")>();
-    // the factory is hoisted above this file's imports, so re-import inside it
-    const { hex } = await import("@scure/base");
-    const checkpointTapscript = hex.encode(
-        mod.CSVMultisigTapscript.encode({
-            timelock: { type: "blocks", value: 10n },
-            pubkeys: [
-                hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"),
-            ],
-        }).script,
-    );
-    return {
-        ...mod,
-        RestArkProvider: class {
-            async getInfo() {
-                return {
-                    signerPubkey:
-                        "02" + "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
-                    checkpointTapscript,
-                    network: "regtest",
-                };
-            }
-        },
-        RestIndexerProvider: class {
-            async getVtxos() {
-                return { vtxos: [] };
-            }
-        },
-        RestEmulatorProvider: class {
-            async getInfo() {
-                return {
-                    signerPubkey:
-                        "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
-                };
-            }
-        },
-    };
-});
+};
 
 const contractManager = {
     createContract: async (params: Record<string, unknown>) => {
@@ -83,6 +83,7 @@ const contractManager = {
 const wallet = {
     identity: { xOnlyPublicKey: async () => makerKey },
     getAddress: async () => makerAddress,
+    getArkadeInfo: async () => arkInfo(),
     getContractManager: async () => contractManager,
 } as unknown as IWallet;
 
@@ -90,7 +91,7 @@ const wallet = {
 const emulatorPubkey = "02466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27";
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
 const create = (maker: IWallet = wallet) =>
-    createOffer(maker, "http://ark", {
+    createOffer(maker, {
         wantAmount: BigInt(50_000),
         wantAsset: testAsset,
         emulatorPubkey,
@@ -152,30 +153,6 @@ describe("offer contract registration", () => {
 });
 
 // ── Re-offering a retired script, against a real contract manager ────────────
-
-const SIGNER_PUBKEY = "02" + "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
-
-const arkInfo = () => ({
-    boardingExitDelay: 144n,
-    checkpointTapscript:
-        "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
-    deprecatedSigners: [],
-    digest: "d",
-    dust: 1000n,
-    fees: { intentFee: {}, txFeeRate: "0" },
-    forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
-    forfeitPubkey: SIGNER_PUBKEY,
-    network: "regtest",
-    serviceStatus: {},
-    sessionDuration: 3600n,
-    signerPubkey: SIGNER_PUBKEY,
-    unilateralExitDelay: 4096n,
-    utxoMaxAmount: -1n,
-    utxoMinAmount: 0n,
-    version: "1",
-    vtxoMaxAmount: -1n,
-    vtxoMinAmount: 0n,
-});
 
 /** Offline: every indexer read fails retryably, so the row still persists. */
 const offlineIndexer = () =>

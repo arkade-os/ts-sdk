@@ -12,6 +12,10 @@
  * swap at a time, remembers where each one got to, and tells the caller when
  * something happened. That is this module.
  *
+ * TODO: `packages/boltz-swap` is gone. This paragraph and the three bullets
+ * under it are framed as a diff against its `SwapManager`, so the rationale
+ * needs restating on its own terms.
+ *
  * The shape is deliberately the one `packages/boltz-swap`'s `SwapManager`
  * arrived at — monitor a set, act automatically through injected callbacks,
  * persist through an injected `saveSwap` or a repository of its own, expose
@@ -58,6 +62,9 @@
  *   poll interval is already that retry cadence and
  *   {@link REFUND_MTP_LAG_SECONDS} is already that deadline. A second backoff
  *   on top would only fight the first.
+ *
+ *   TODO: the `skipped`/`retryAt` contrast above points at the removed
+ *   boltz-swap — restate why the atomicity matters without it.
  *
  * **The manager owns WHEN, the caller owns HOW.** It holds the observation
  * seams (a {@link LockupSpendIndexer} for the Arkade side, and `ChainSource`
@@ -179,7 +186,7 @@ interface RfqSwapCommon {
     createdAt: number;
     updatedAt: number;
     /** Set once the trader's own `refundWithoutReceiver` push landed. */
-    refundArkTxid?: string;
+    refundTxid?: string;
     /**
      * The ark transactions that SPENT the lockup, stamped from the chain read
      * that ended the swap — `LockupFate.spends`, whichever verdict it reached.
@@ -188,8 +195,8 @@ interface RfqSwapCommon {
      * a solver reclaim on a receive, and — the exception — the trader's own
      * claim when a receive settles. What they have in common is that no local
      * action produced them, so nothing else on this record can name them:
-     * {@link refundArkTxid} names only a push this wallet made, and
-     * `claimArkTxid` only a submission it made.
+     * {@link refundTxid} names only a push this wallet made, and
+     * `claimTxid` only a submission it made.
      *
      * Stamped so a terminal record answers "which transaction ended this" from
      * storage. Without it the only source is another read of the lockup — a
@@ -197,10 +204,10 @@ interface RfqSwapCommon {
      * has to pay on the offline-first path where it is least affordable.
      *
      * Absent when the swap ended without a chain verdict, or when the indexer
-     * named the checkpoint but not the ark transaction — the same `arkTxid`
+     * named the checkpoint but not the ark transaction — the same `txid`
      * `LockupSpend` declares optional, for the same reason.
      */
-    lockupSpendArkTxids?: string[];
+    lockupSpendTxids?: string[];
     /** Why `state` is `failed`. */
     failure?: string;
     /** Why `state` is `needs_counterparty`. Distinct from {@link failure},
@@ -264,7 +271,7 @@ export interface LightningReceiveSwap extends RfqSwapCommon {
     expectedAmount: number;
     /** Our Arkade claim's txid, once submitted. Set from the callback's return
      * and never from a chain read — the chain's answer is `settled`. */
-    claimArkTxid?: string;
+    claimTxid?: string;
 }
 
 /**
@@ -276,8 +283,8 @@ export interface LightningReceiveSwap extends RfqSwapCommon {
  * writes and rebuilds these itself, through
  * {@link RfqSwapManager.restoreFromRepository}. A caller keeping its own store
  * projects it in {@link RfqSwapManagerCallbacks.saveSwap} instead, rebuilds it
- * on restart the way it was made — `lightningSendVtxoScript` /
- * `receiveVtxoScript` / `onchainHtlcScript` over the quote's binding fields —
+ * on restart the way it was made — `lightningSendContract` /
+ * `lightningReceiveContract` / `onchainHtlcScript` over the quote's binding fields —
  * and hands the result to {@link RfqSwapManager.start}.
  *
  * **`onchain:BTC->arkade:BTC` is deliberately not a member yet.** Its Arkade
@@ -357,7 +364,7 @@ export function nextOnchainAction(input: {
 
 /** What the trader's own `refundWithoutReceiver` push returned, or `null` when
  * the lockup held nothing to return. */
-export type ArkadeRefundResult = { arkTxid: string; amount: number } | null;
+export type ArkadeRefundResult = { txid: string; amount: number } | null;
 
 /**
  * The money-moving half, injected. The manager decides when; these do it.
@@ -408,7 +415,7 @@ export interface RfqSwapManagerCallbacks {
              * funding that arrived piecemeal can still be swept. */
             partiallyClaimed: boolean;
         },
-    ) => Promise<{ arkTxid: string; amount: number }>;
+    ) => Promise<{ txid: string; amount: number }>;
     /**
      * Push `refundWithoutReceiver` for every output at the lockup. See
      * `pushRefundWithoutReceiver`; return `null` for an empty lockup. Never
@@ -525,7 +532,7 @@ export interface RfqSwapManagerConfig {
 
 /** The contract-manager surface this needs, narrowed for injection — the same
  * seam style as {@link LockupSpendIndexer} and `refund.ts`'s
- * {@link RefundArkProvider}, and satisfied structurally by a real
+ * `RefundIndexer`, and satisfied structurally by a real
  * `ContractManager` (`await wallet.getContractManager()`). */
 export type SwapContractRegistry = Pick<
     IContractManager,
@@ -1520,7 +1527,7 @@ export class RfqSwapManager {
             // A submitted claim keeps its label: `claimed` is still the truest
             // thing the record knows, and replacing it with a refusal would
             // un-say it. Only a swap that never got one is reported blocked.
-            if (swap.claimArkTxid) return;
+            if (swap.claimTxid) return;
             return this.block(
                 swap,
                 "the claim window closed with the lockup unclaimed — only the solver can act now",
@@ -1533,7 +1540,7 @@ export class RfqSwapManager {
         // way there is nothing further to observe and no move left to make.
         // Ending the wait at all costs the distinction between them.
         const failure = this.lastClaimError.get(swap.rfqId);
-        if (failure && !swap.claimArkTxid) {
+        if (failure && !swap.claimTxid) {
             // The one shape that is not an ordinary unwind: this wallet had a
             // claimable lockup and could not take it. `failed` rather than
             // `refunded` so an awaiting caller is told, instead of reading a
@@ -1560,7 +1567,7 @@ export class RfqSwapManager {
         // A claim of ours is already out, so `P` is public: the value gate has
         // nothing left to protect, and holding the remainder back over it would
         // strand the trader's own money.
-        const partiallyClaimed = swap.claimArkTxid !== undefined;
+        const partiallyClaimed = swap.claimTxid !== undefined;
         if (partiallyClaimed && !this.hasUnclaimedOutpoint(swap.rfqId, vtxos)) {
             // Everything here has already been through the callback. The
             // indexer simply has not caught up with the spend yet, and
@@ -1619,12 +1626,12 @@ export class RfqSwapManager {
         if (!this.config.enableAutoActions) return;
 
         try {
-            const { arkTxid } = await this.callbacks.claimLockup(swap, vtxos, { partiallyClaimed });
+            const { txid } = await this.callbacks.claimLockup(swap, vtxos, { partiallyClaimed });
             this.lastClaimError.delete(swap.rfqId);
             // Recorded only on success: a claim that threw must be retried, and
             // these outputs are still there to retry with.
             this.rememberClaimed(swap.rfqId, vtxos);
-            swap.claimArkTxid = arkTxid;
+            swap.claimTxid = txid;
             // Touched independently of the label below, which today does the
             // persisting on its own — a re-claim comes back through
             // `claimable`, so `claimed` is a real transition either way. What
@@ -1795,7 +1802,7 @@ export class RfqSwapManager {
         try {
             const pushed = await this.callbacks.refundArkade(swap);
             if (pushed) {
-                swap.refundArkTxid = pushed.arkTxid;
+                swap.refundTxid = pushed.txid;
                 this.touch(swap);
             }
             // An empty lockup lands here too, and this is the ONE place the
@@ -1905,7 +1912,7 @@ export class RfqSwapManager {
     /**
      * Record which ark transactions ended the lockup.
      *
-     * Only the ones the indexer actually named: `LockupSpend.arkTxid` is
+     * Only the ones the indexer actually named: `LockupSpend.txid` is
      * optional, and a checkpoint txid is not what history correlates on — a
      * record carrying one would name a transaction the wallet's own activity
      * never shows. Fewer txids is the right failure here.
@@ -1915,11 +1922,11 @@ export class RfqSwapManager {
      * verdict once.
      */
     private stampLockupSpends(swap: RfqSwap, spends: readonly LockupSpend[]): void {
-        const arkTxids = spends
-            .map((spend) => spend.arkTxid)
+        const txids = spends
+            .map((spend) => spend.txid)
             .filter((txid): txid is string => txid !== undefined);
-        if (arkTxids.length === 0) return;
-        swap.lockupSpendArkTxids = arkTxids;
+        if (txids.length === 0) return;
+        swap.lockupSpendTxids = txids;
         this.touch(swap);
     }
 
@@ -2001,7 +2008,7 @@ export class RfqSwapManager {
         try {
             // Read-then-write per pass rather than caching the record: the
             // store is the system of record, and a consumer that edited a
-            // record's origin half — a `fundingArkTxid` learned late, a
+            // record's origin half — a `fundingTxid` learned late, a
             // corridor field its own code owns — must not have that edit
             // overwritten by a copy this manager took at boot.
             const stored = await repository.getRfqSwap(swap.rfqId);
@@ -2029,10 +2036,9 @@ export class RfqSwapManager {
     /**
      * Drop a terminal swap from monitoring and report it exactly once.
      *
-     * `onSwapCompleted` and `onSwapFailed` are mutually exclusive here, unlike
-     * Boltz's manager, which fires completion for every swap that leaves
-     * monitoring including the failed ones — a listener named "completed" that
-     * also fires on failure is a trap worth not inheriting.
+     * `onSwapCompleted` and `onSwapFailed` are mutually exclusive here: a
+     * listener named "completed" that also fires on failure is a trap, so a
+     * swap that leaves monitoring reports through exactly one of them.
      */
     private finalize(swap: RfqSwap): void {
         if (!this.monitored.has(swap.rfqId)) return;
@@ -2082,7 +2088,7 @@ const traderClaimTxid = (swap: RfqSwap): string | undefined => {
         case "onchain_send":
             return swap.claimTxid;
         case "lightning_receive":
-            return swap.claimArkTxid;
+            return swap.claimTxid;
         default:
             return undefined;
     }
@@ -2105,14 +2111,14 @@ const isPayoutDecided = (swap: RfqSwap): boolean =>
 
 const outcomeOf = (swap: RfqSwap): RfqSwapOutcome => {
     // A receive swap that ended `refunded` was lost: the solver took the lockup
-    // back, so a `claimArkTxid` on it names a submission the chain never took.
+    // back, so a `claimTxid` on it names a submission the chain never took.
     // Reporting it would put a claim txid on the one outcome where the trader
     // has nothing — the single combination in which `txid` present would not
     // mean an action that landed. The record still carries it for diagnosis.
     const lostReceive = swap.kind === "lightning_receive" && swap.state === "refunded";
     return {
         state: swap.state,
-        txid: lostReceive ? swap.refundArkTxid : (traderClaimTxid(swap) ?? swap.refundArkTxid),
+        txid: lostReceive ? swap.refundTxid : (traderClaimTxid(swap) ?? swap.refundTxid),
     };
 };
 

@@ -226,6 +226,8 @@ Wallets read onchain state (UTXOs, transactions, fee rates, chain tip) through a
 
 If you don't pass a provider explicitly, `OnchainWallet` and `Wallet.create({ ... })` both default to `EsploraProvider` pointing at the URL in `ESPLORA_URL[networkName]`.
 
+> **New:** the interface also requires `getRawTransaction(txid): Promise<Uint8Array>`, the raw wire bytes of a transaction. Emulator v0.0.7+ demands the previous transaction of every input a covenant spend or intent proof carries, and a boarding or commitment parent has no off-chain source. Both shipped providers implement it; a custom `OnchainProvider` has to add it.
+
 #### Default URLs
 
 The SDK ships with reachable defaults for each network — bitcoin, signet, and mutinynet point at Ark Labs–operated deployments; testnet falls back to mempool.space; regtest assumes a local [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) stack (esplora API on `http://localhost:3000/api`).
@@ -718,13 +720,44 @@ const wallet = await Wallet.create({
 })
 
 // Get fee information from the server
-const { fees: feeInfo } = await wallet.arkProvider.getInfo();
+const { fees: feeInfo } = await wallet.getArkadeInfo();
 
 const exitTxid = await new Ramps(wallet).offboard(
   'bc1p...',
   feeInfo
 );
 ```
+
+`getArkadeInfo()` is part of the `IReadonlyWallet` interface, so the same call works on the
+service-worker and Expo wallets too. It answers with the server's live `ArkadeInfo`, falling back
+to the snapshot persisted at wallet construction when the server is unreachable.
+
+### Talking to the server through the wallet
+
+`getArkadeInfo()` is one of three seams that let a plugin work from a wallet alone, never a
+server URL of its own:
+
+| Seam | Interface | For |
+| --- | --- | --- |
+| `getArkadeInfo()` | `IReadonlyWallet` | Network, signer key, delays, dust, fees, limits |
+| `getArkadeReader()` | `IReadonlyWallet` | Chain reads for scripts the wallet does not own |
+| `getArkadeBroadcaster()` | `IWallet` | `submitTx` / `finalizeTx` |
+
+```typescript
+const reader = await wallet.getArkadeReader();
+const { vtxos } = await reader.getVtxos({ scripts: [covenantScriptHex], spendableOnly: true });
+const { txs } = await reader.getVirtualTxs([spendTxid]);
+```
+
+`getVtxos()` here queries the server for an arbitrary script — distinct from
+`wallet.getVtxos()`, which answers the wallet's own outputs from local repositories. Everything
+it returns is normalized, so each VTXO carries its canonical facts.
+
+Broadcasting sits on `IWallet` rather than `IReadonlyWallet` on purpose: a readonly wallet must
+not submit, and a service-worker wallet in readonly mode refuses the message outright.
+
+All three are proxied to the worker on a service-worker wallet, so a plugin shares the wallet's
+connection instead of opening a second one outside its rate gate and caches.
 
 ### Unilateral Exit
 
@@ -1046,13 +1079,12 @@ The `StorageAdapter` API is deprecated. Use repositories instead. If you omit `s
 > Anything related to contract repository migration must be handled by the
 > package that created the contracts. The SDK doesn't manage external contracts
 > in V1; data persisted by other packages remains untouched in its original
-> location. For example, see `@arkade-os/boltz-swap`'s `migrateToSwapRepository`
-> for migrating legacy `reverseSwaps` / `submarineSwaps` collections.
+> location.
 
 #### Repository Versioning
 
 `WalletRepository`, `ContractRepository`, and `SwapRepository` (in
-`@arkade-os/boltz-swap`) each declare a `readonly version` field with a literal
+`@arkade-os/swap`) each declare a `readonly version` field with a literal
 type. All built-in implementations set this to the current version. If you
 maintain a custom repository implementation, TypeScript will produce a compile
 error when the version is bumped, signaling that a semantic update is required:
@@ -1437,7 +1469,7 @@ For integration tests, use the root commands (`pnpm run test:integration:ts-sdk`
 
 ### Releasing
 
-Package-local releases are disabled. Releases run from the monorepo root and are package-scoped: `pnpm run release -- sdk patch` bumps `@arkade-os/sdk`, creates a `@arkade-os/sdk/<version>` tag, and also bumps `@arkade-os/boltz-swap` (which depends on SDK via `workspace:*`). See the [root README](../../README.md#releasing) for full flags and `pnpm run release -- --help`.
+Package-local releases are disabled. Releases run from the monorepo root and are package-scoped: `pnpm run release -- sdk patch` bumps `@arkade-os/sdk`, creates a `@arkade-os/sdk/<version>` tag, and also bumps `@arkade-os/swap` (which depends on SDK via `workspace:*`). See the [root README](../../README.md#releasing) for full flags and `pnpm run release -- --help`.
 
 ## License
 

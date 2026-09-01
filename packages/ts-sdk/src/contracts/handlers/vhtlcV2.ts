@@ -113,7 +113,7 @@ function decodeCovenantLeaf<K extends string>(
 /**
  * Handler for {@link VHTLC.ScriptV2} — the VHTLC whose preimage leaves carry an
  * explicit `OP_SIZE 32 OP_EQUALVERIFY` before the hash check, and which the RFQ
- * swap corridor builds (`@arkade-os/swap`'s `lightningSendVtxoScript`).
+ * swap corridor builds (`@arkade-os/swap`'s `lightningSendContract`).
  *
  * **Why a separate type string rather than a flag on `vhtlc`.** A handler's
  * `type` names the script class it derives, the way every other registered type
@@ -519,10 +519,9 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
      *
      * **It carries a CLTV, and callers must respect it.** A settlement built on
      * this leaf is only valid once `refundLocktime` has matured, so a recovery
-     * round that sweeps this VTXO early is rejected by the server. That is the
-     * same constraint `packages/boltz-swap` encodes as "pre-CLTV recoverable →
-     * skipped"; nothing in this handler can enforce it, because the annotation
-     * is derived per contract and knows no clock. `recoverVtxos` filters on
+     * round that sweeps this VTXO early is rejected by the server. Nothing in
+     * this handler can enforce it, because the annotation is derived per
+     * contract and knows no clock. `recoverVtxos` filters on
      * {@link assertSpendableNow} for it.
      *
      * **Role-blind.** A receiver's row gets the same leaf, which names keys that

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createTestOnchainWallet } from "./utils";
-import { execSync } from "child_process";
+import { createTestOnchainWallet, faucetOnchain } from "./utils";
 
 describe("Onchain integration tests", () => {
     it("should perform a complete onchain roundtrip payment", { timeout: 30000 }, async () => {
@@ -16,7 +15,7 @@ describe("Onchain integration tests", () => {
 
         // Fund Alice's address using the regtest faucet
         const faucetAmountSats = 0.001 * 100_000_000; // Amount in sats
-        execSync(`node regtest/regtest.mjs faucet ${alice.wallet.address} 0.001 --confirm`);
+        faucetOnchain(alice.wallet.address, faucetAmountSats);
 
         // Wait for the faucet transaction to be processed
         await new Promise((resolve) => setTimeout(resolve, 5000));

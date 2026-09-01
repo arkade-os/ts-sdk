@@ -3,7 +3,7 @@
  * fund — and check the wallet then treats the lockup as owned-but-escrowed.
  *
  * This is `swap.test.ts`'s escrow test for the other corridor, and the reason
- * it needs its own stack: `lightningSendVtxoScript` emits SECONDS-typed
+ * it needs its own stack: `lightningSendContract` emits SECONDS-typed
  * timelocks on all three unilateral tiers, and `unilateralClaimDelay` refuses a
  * server exit delay below 512s — so on the offer suite's block-typed arkd
  * (`ARKD_UNILATERAL_EXIT_DELAY=20`) `requestLightningSend` throws before it
@@ -26,7 +26,6 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     REGTEST_EMULATOR_PUBKEY,
-    RestArkProvider,
     RestIndexerProvider,
     SingleKey,
     Wallet,
@@ -36,7 +35,7 @@ import {
     SWAP_LOCKUP_CONTRACT_KIND,
     SWAP_LOCKUP_CONTRACT_LABEL,
     SWAP_LOCKUP_CONTRACT_TYPE,
-    lightningSendVtxoScript,
+    lightningSendContract,
     registerLockupContract,
     requestLightningSend,
     unilateralClaimDelay,
@@ -44,7 +43,7 @@ import {
     type RfqTransport,
 } from "../../src";
 
-const ARK_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";
 const arkdExec = "docker exec -t arkd";
 
@@ -83,10 +82,10 @@ const waitFor = async (
     throw new Error("timeout in waitFor");
 };
 
-const indexer = new RestIndexerProvider(ARK_URL);
+const indexer = new RestIndexerProvider(OPERATOR_URL);
 let wallet: Wallet;
 let emulatorPubkey: Uint8Array;
-let serverPubkey: Uint8Array;
+let operatorPubkey: Uint8Array;
 let claimDelay: number;
 let hrp: string;
 
@@ -106,10 +105,10 @@ const stubTransport = (): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
         const refundLocktime = NOW() + 24 * 3600;
-        const script = lightningSendVtxoScript({
+        const contract = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime,
-            serverPubkey,
+            operatorPubkey,
             paymentHash: PAYMENT_HASH,
             claimDelay,
             emulatorPubkey,
@@ -129,7 +128,7 @@ const stubTransport = (): RfqTransport => ({
             refund_locktime: refundLocktime,
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
-                lockup_address: script.address(hrp, serverPubkey).encode(),
+                lockup_address: contract.address(hrp, operatorPubkey).encode(),
             },
         } satisfies RfqQuote;
     },
@@ -142,7 +141,7 @@ const stubTransport = (): RfqTransport => ({
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: ARK_URL,
+        arkServerUrl: OPERATOR_URL,
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -160,10 +159,11 @@ beforeAll(async () => {
     execCommand(`${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`);
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
 
-    // The stub solver has to derive the same script the maker will, so it needs
-    // the same server-derived inputs `requestLightningSend` reads for itself.
-    const info = await new RestArkProvider(ARK_URL).getInfo();
-    serverPubkey = xOnly(hex.decode(info.signerPubkey));
+    // The stub solver has to derive the same script the maker will, so it reads
+    // the server through the same seam `requestLightningSend` now uses — a
+    // second provider built from a URL would only agree by coincidence.
+    const info = await wallet.getArkadeInfo();
+    operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     hrp = ArkAddress.decode(address).hrp;
 
@@ -177,7 +177,7 @@ describe("RFQ lockup registration (regtest)", () => {
     let lockupScript: string;
 
     it("registers the lockup before the maker can fund it", async () => {
-        swap = await requestLightningSend(wallet, ARK_URL, stubTransport(), {
+        swap = await requestLightningSend(wallet, stubTransport(), {
             invoice: {
                 raw: "lnbcrt10u1p",
                 paymentHash: PAYMENT_HASH,

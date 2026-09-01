@@ -2,10 +2,9 @@
 // round-trip an offer payload through encodeOffer/decodeOffer byte-for-byte.
 // Run after `pnpm build`: `pnpm smoke:dist`.
 //
-// Unlike the Boltz script's structural-only subpath check, the backends here
-// import types only from @arkade-os/sdk/repositories/*, so nothing survives to
-// runtime and a real import is safe — and it is the import, not the file-
-// existence walk, that catches a broken exports map.
+// The backends here import types only from @arkade-os/sdk/repositories/*, so
+// nothing survives to runtime and a real import is safe — and it is the
+// import, not a file-existence walk, that catches a broken exports map.
 //
 // So every import here goes through the package name, not `../dist/...`: a
 // relative path resolves whatever is on disk and would pass with the exports
@@ -18,7 +17,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hex } from "@scure/base";
 import { ArkAddress, asset } from "@arkade-os/sdk";
-import { encodeOffer, decodeOffer, offerVtxoScript } from "@arkade-os/swap";
+import { encodeOffer, decodeOffer, offerContract } from "@arkade-os/swap";
 import { SQLiteAssetSwapRepository } from "@arkade-os/swap/repositories/sqlite";
 import {
     AssetSwapRealmSchemas,
@@ -74,7 +73,7 @@ if (AssetSwapRealmSchemas.length !== 4) {
     throw new Error(`expected 4 Realm schemas, got ${AssetSwapRealmSchemas.length}`);
 }
 
-const server = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
+const operatorPubkey = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
 const offer = {
     swapPkScript: new Uint8Array(0),
     wantAmount: 50_000n,
@@ -86,9 +85,9 @@ const offer = {
     emulatorPubkey: hex.decode("466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"),
 };
 
-const script = offerVtxoScript(offer, server);
-offer.swapPkScript = script.pkScript;
-const address = new ArkAddress(server, script.tweakedPublicKey, "tark").encode();
+const contract = offerContract(offer, operatorPubkey);
+offer.swapPkScript = contract.pkScript;
+const address = new ArkAddress(operatorPubkey, contract.tweakedPublicKey, "tark").encode();
 
 const payload = encodeOffer(offer);
 const roundtripped = encodeOffer(decodeOffer(payload));
