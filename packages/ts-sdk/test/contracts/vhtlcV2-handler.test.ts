@@ -216,33 +216,22 @@ describe("VHTLCV2ContractHandler", () => {
         );
     });
 
-    it("round-trips the STRICT claim bound, which is opt-in and therefore droppable", () => {
-        // Dropping it re-derives the DEFAULT claim covenant — weaker than the row
-        // asked for — and dies at `upsertContractRow` with an opaque `Script
-        // mismatch`. The failure is identical to the asset drop above and just as
-        // silent, which is why an opt-in field needs the round-trip most: nothing
-        // else signals its absence.
-        const params = fullParams({
-            assetTxid: ASSET_TXID,
-            assetGroupIndex: "7",
-            strictClaimAmount: "50000",
-            strictClaimAssetAmount: "1234",
-        });
-        const typed = VHTLCV2ContractHandler.deserializeParams(params);
-        expect(typed.emulatorCovenants?.strict).toEqual({ amount: 50_000n, assetAmount: 1234n });
-        expect(VHTLCV2ContractHandler.serializeParams(typed)).toEqual(params);
-
-        // ...and it derives a DIFFERENT script from the same contract without it.
-        const loose = fullParams({ assetTxid: ASSET_TXID, assetGroupIndex: "7" });
-        expect(hex.encode(VHTLCV2ContractHandler.createScript(params).pkScript)).not.toBe(
-            hex.encode(VHTLCV2ContractHandler.createScript(loose).pkScript),
-        );
-    });
-
-    it("refuses a strict ASSET bound with no strict sat bound", () => {
-        // Reading it as "not strict" would re-derive the default covenant. The
-        // mirror case (sats without asset, on an asset contract) is refused by
-        // the script layer's own validation, which this defers to.
+    it("refuses a row carrying the REMOVED strict claim keys, instead of re-deriving loosely", () => {
+        // The strict bound shipped in 0.4.67 and earlier and is gone now. A row
+        // written in that window carries a claim covenant this build cannot
+        // re-derive; reading the keys as absent would rebuild the DEFAULT
+        // covenant — a different pkScript — and die at `upsertContractRow` with
+        // an opaque `Script mismatch`. Either key alone names the row.
+        expect(() =>
+            VHTLCV2ContractHandler.deserializeParams(
+                fullParams({
+                    assetTxid: ASSET_TXID,
+                    assetGroupIndex: "7",
+                    strictClaimAmount: "50000",
+                    strictClaimAssetAmount: "1234",
+                }),
+            ),
+        ).toThrow(/strict claim params/);
         expect(() =>
             VHTLCV2ContractHandler.deserializeParams(
                 fullParams({
@@ -251,7 +240,7 @@ describe("VHTLCV2ContractHandler", () => {
                     strictClaimAssetAmount: "1234",
                 }),
             ),
-        ).toThrow(/without strictClaimAmount/);
+        ).toThrow(/strict claim params/);
     });
 
     it("refuses half an asset rather than deriving a sat-only script from it", () => {

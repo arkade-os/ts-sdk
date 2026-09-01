@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { RelativeTimelock, VHTLC, arkade } from "../src";
 import vhtlcFixtures from "./fixtures/vhtlc.json";
 import { hex } from "@scure/base";
-import { ArkadeScript } from "../src/arkade/script";
 import { CLTVMultisigTapscript } from "../src/script/tapscript";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
@@ -591,35 +590,22 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
         expect(hex.encode(mine.txid)).toBe(before);
     });
 
-    /** An asset contract whose claim leaf opts into the quoted bound. */
-    const strictClaim = (strict: object, extra: object = {}) =>
-        withAsset({
-            asset,
-            emulatorCovenants: { ...suite, strict },
-            ...extra,
-        });
-
-    it("derives the pkScript it derived BEFORE strict existed, for every shape", () => {
-        // GOLDEN VECTORS, and what they are compared against is the point. The
-        // sibling test asserts `strict: undefined` equals omitting it — nearly a
-        // tautology in JS, since both are `undefined` on the property. What that
-        // cannot show is that ADDING the option left the default path's BYTES
-        // alone, and those bytes ARE the address of every contract already
-        // funded.
+    it("derives the same pkScript bytes it always has, for every shape", () => {
+        // GOLDEN VECTORS. Captured from b43534b and pinned ever since, through
+        // two changes that each had to leave the default path's BYTES alone —
+        // and did: the `strict` claim bound came and went without moving them
+        // (opt-in, default off, and now removed unused), and the per-leaf
+        // covenant options merged into the all-or-nothing `emulatorCovenants`
+        // group. A claim-only or refund-only tree is no longer expressible, so
+        // those four vectors are dropped — the API they pinned is gone. The
+        // eight-leaf "suite" shape is what `legacy: "preTimelockedRefund"`
+        // builds: the same eight leaves, byte for byte, while the group's
+        // default gained the timelocked refund leaf. The nine-leaf vectors were
+        // captured at that refactor and pin the new default going forward.
         //
-        // Captured from b43534b — the commit before `strict` existed — and
-        // verified identical at the commit that added it, across all seven
-        // shapes and both script versions. A change that moves the default path
-        // fails here instead of making funded contracts underivable.
-        //
-        // Two renames since, both from the per-leaf options merging into the
-        // all-or-nothing `emulatorCovenants` group. A claim-only or refund-only
-        // tree is no longer expressible, so those four vectors are dropped —
-        // the API they pinned is gone. And the eight-leaf "both leaves" shape
-        // is what `legacy: "preTimelockedRefund"` now builds: the same eight
-        // leaves, byte for byte, while the group's default gained the
-        // timelocked refund leaf. The nine-leaf vectors were captured at that
-        // refactor and pin the new default going forward.
+        // Those bytes ARE the address of every contract already funded: a
+        // change that moves the default path fails here instead of making
+        // funded contracts underivable.
         const legacySuite = { ...suite, legacy: "preTimelockedRefund" as const };
         const shapes: [string, object, string, string][] = [
             [
@@ -658,75 +644,6 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
             expect(hex.encode(new VHTLC.ScriptV2(options).pkScript), `${name} (v2)`).toBe(v2);
             expect(hex.encode(new VHTLC.Script(options).pkScript), `${name} (v1)`).toBe(v1);
         }
-    });
-
-    it("leaves EVERY byte unchanged when strict is omitted", () => {
-        // The compatibility property the option rests on. `strict` compiles into
-        // the leaf, hence the emulator key, hence the address — so if merely
-        // ADDING the option moved the default bytes, every already-funded
-        // contract would change address.
-        const plain = withAsset({ asset });
-        const explicitlyNotStrict = withAsset({
-            asset,
-            emulatorCovenants: { ...suite, strict: undefined },
-        });
-        expect(hex.encode(explicitlyNotStrict.pkScript)).toBe(hex.encode(plain.pkScript));
-    });
-
-    it("ADDS the quoted bound to conservation rather than replacing it", () => {
-        // Alone, `out >= quoted` leaves everything above the quote unconstrained
-        // — an overfunded lockup's surplus could be routed anywhere. A strict
-        // claim must still carry the input comparison.
-        const built = strictClaim({
-            amount: 0x1a2b3c4d5e6f7788n,
-            assetAmount: 0x1122334455667788n,
-        });
-        const ops = ArkadeScript.decode(built.nonInteractiveClaimArkadeScript!).map((op) =>
-            op instanceof Uint8Array ? hex.encode(op) : String(op),
-        );
-        // Conservation, still there, on both quantities.
-        expect(ops).toContain("INSPECTINPUTVALUE");
-        expect(ops).toContain("INSPECTINASSETLOOKUP");
-        // ...and the quotes, added.
-        const push = (v: bigint) =>
-            hex.encode(ArkadeScript.decode(ArkadeScript.encode([v]))[0] as Uint8Array);
-        expect(ops).toContain(push(0x1a2b3c4d5e6f7788n));
-        expect(ops).toContain(push(0x1122334455667788n));
-    });
-
-    it("binds the quote to the CLAIM leaf only — the refund leaf is untouched", () => {
-        // A refund returns what arrived. If the quote reached the refund covenant,
-        // re-quoting would move where an already-funded contract can refund TO.
-        const plain = withAsset({ asset });
-        const strict = strictClaim({ amount: 5_000n, assetAmount: 7n });
-        expect(hex.encode(strict.nonInteractiveClaimArkadeScript!)).not.toBe(
-            hex.encode(plain.nonInteractiveClaimArkadeScript!),
-        );
-        expect(hex.encode(strict.nonInteractiveRefundArkadeScript!)).toBe(
-            hex.encode(plain.nonInteractiveRefundArkadeScript!),
-        );
-    });
-
-    it("refuses every way of asking for HALF the enforcement", () => {
-        // A zero bound is satisfied by every output, including one carrying none
-        // of the asset — enforcement-shaped and enforcing nothing.
-        expect(() => strictClaim({ amount: 0n, assetAmount: 1n })).toThrow(
-            /amount must be positive/,
-        );
-        expect(() => strictClaim({ amount: 1n, assetAmount: 0n })).toThrow(
-            /assetAmount must be positive/,
-        );
-        // The dangerous one: strict on the sat CARRIER while the asset — the
-        // actual amount — goes unbounded.
-        expect(() => strictClaim({ amount: 1n })).toThrow(
-            /would leave the asset amount unenforced/,
-        );
-        // ...and its mirror: an asset bound on a contract that binds no asset.
-        expect(() =>
-            withAsset({
-                emulatorCovenants: { ...suite, strict: { amount: 1n, assetAmount: 1n } },
-            }),
-        ).toThrow(/assetAmount has no effect without asset/);
     });
 
     it("refuses an asset that no leaf would bind, instead of silently dropping it", () => {

@@ -81,8 +81,6 @@ export interface VHTLCV2ContractParams {
         receiverPkScript: Uint8Array;
         emulatorPubkey: Uint8Array;
         senderPkScript: Uint8Array;
-        /** @see VHTLC.Options.emulatorCovenants.strict */
-        strict?: { amount: bigint; assetAmount?: bigint };
         /** @see VHTLC.Options.emulatorCovenants.legacy */
         legacy?: "preTimelockedRefund";
     };
@@ -204,16 +202,6 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                 nonInteractiveClaimEmulatorPubkey: hex.encode(covenants.emulatorPubkey),
                 nonInteractiveRefundSenderPkScript: hex.encode(covenants.senderPkScript),
                 nonInteractiveRefundEmulatorPubkey: hex.encode(covenants.emulatorPubkey),
-                // The opt-in quoted bound. Dropping it re-derives the DEFAULT
-                // claim covenant — a strictly weaker one — and registration dies
-                // at `upsertContractRow` with an opaque `Script mismatch`. Same
-                // silent-drop class as the asset keys above.
-                ...(covenants.strict && {
-                    strictClaimAmount: covenants.strict.amount.toString(),
-                    ...(covenants.strict.assetAmount !== undefined && {
-                        strictClaimAssetAmount: covenants.strict.assetAmount.toString(),
-                    }),
-                }),
                 // The legacy marker is precisely the ABSENCE of this key: a
                 // row carrying it re-derives the full suite (nine leaves), a
                 // row lacking it the pre-timelocked-refund eight — the same
@@ -293,10 +281,16 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                 "asset params are incomplete: assetTxid and assetGroupIndex must both be present or both absent",
             );
         }
-        if (params.strictClaimAssetAmount !== undefined && params.strictClaimAmount === undefined) {
+        // A row written by a strict-capable release (0.4.67 and earlier) carries
+        // a quoted bound compiled into its claim leaf. The option is gone, so
+        // that bound cannot be re-derived here — and reading the row as "not
+        // strict" would rebuild the DEFAULT covenant, a different pkScript, and
+        // die at `upsertContractRow` with an opaque `Script mismatch`. Name it.
+        if (params.strictClaimAmount !== undefined || params.strictClaimAssetAmount !== undefined) {
             throw new Error(
-                "strictClaimAssetAmount without strictClaimAmount: reading this as 'not strict' " +
-                    "would re-derive the default claim covenant, which is weaker than the row asked for",
+                "strict claim params on a stored row: the strict claim bound was removed " +
+                    "and this row's lockup cannot be re-derived without it — restore it with " +
+                    "the SDK version that wrote it",
             );
         }
         // Same silent-drop shape as the two checks above, one flag further in:
@@ -342,14 +336,6 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                         receiverPkScript: claim.destination,
                         senderPkScript: refund.destination,
                         emulatorPubkey: claim.emulatorPubkey,
-                        ...(params.strictClaimAmount !== undefined && {
-                            strict: {
-                                amount: BigInt(params.strictClaimAmount),
-                                ...(params.strictClaimAssetAmount !== undefined && {
-                                    assetAmount: BigInt(params.strictClaimAssetAmount),
-                                }),
-                            },
-                        }),
                         // Absence of the flag IS the legacy marker — the same
                         // encoding older SDKs wrote for eight-leaf rows.
                         ...(params.nonInteractiveRefundWithoutReceiver !== "1" && {
