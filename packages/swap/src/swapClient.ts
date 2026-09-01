@@ -5,14 +5,7 @@
  * rendezvous, two arkade legs mean a card-priced offer covenant.
  */
 import { hex } from "@scure/base";
-import {
-    ArkAddress,
-    RestArkProvider,
-    RestIndexerProvider,
-    asset,
-    contractSigner,
-    type IWallet,
-} from "@arkade-os/sdk";
+import { ArkAddress, asset, contractSigner, type IWallet } from "@arkade-os/sdk";
 import { quoteOffer, type DiscoveredMarket, type OfferPlan } from "@arkade-os/solver-discovery";
 import { createOffer, cancelOffer } from "./offer";
 import { discoverMarkets, type DiscoverMarketsOptions } from "./markets";
@@ -43,7 +36,7 @@ import {
     type RfqSwapManagerDeps,
 } from "./swapManager";
 import { createRfqSwapRecord, type RfqSwapOrigin } from "./rfqRecord";
-import type { RefundArkProvider } from "./refund";
+import type { LockupSpendIndexer, SwapOperator } from "./refund";
 import { rfqClaimSecretOf, rfqSecretsProfile } from "./rfqProfileParts";
 import { onchainSendProfile } from "./rfqCorridors";
 import { arkadeRefunder } from "./arkadeRefunder";
@@ -139,9 +132,9 @@ export type SwapQuote = SpotQuote | LightningSendQuote | LightningReceiveQuote |
 export type UnifiedSwap = { family: "offer"; swap: AssetSwap } | { family: "rfq"; swap: RfqSwap };
 
 export interface SwapClientDeps {
+    /** The server connection too: every provider below defaults to this
+     * wallet's own, so no server URL is passed in (arkade-os/ts-sdk#734). */
     wallet: IWallet;
-    /** Drops once IWallet exposes the server connection (arkade-os/ts-sdk#734). */
-    arkServerUrl: string;
     repository: AssetSwapRepository;
     /** Never called for a spot market. */
     transportFor: (market: DiscoveredMarket) => RfqTransport;
@@ -157,8 +150,10 @@ export interface SwapClientDeps {
      * without it the manager reports onchain claims as blocked. */
     claimOnchain?: RfqSwapManagerCallbacks["claimOnchain"];
     emulatorPubkey?: string;
-    ark?: RefundArkProvider;
-    indexer?: RestIndexerProvider;
+    /** Overrides the wallet's own connection; for tests and for a caller that
+     * must reach a different operator. */
+    ark?: SwapOperator;
+    indexer?: LockupSpendIndexer;
 }
 
 export interface SwapClient {
@@ -175,9 +170,34 @@ export interface SwapClient {
 }
 
 export function createSwapClient(deps: SwapClientDeps): SwapClient {
-    const { wallet, arkServerUrl, repository, transportFor } = deps;
-    const ark = deps.ark ?? new RestArkProvider(arkServerUrl);
-    const indexer = deps.indexer ?? new RestIndexerProvider(arkServerUrl);
+    const { wallet, repository, transportFor } = deps;
+
+    // Resolved on first use, not here: `createSwapClient` stays synchronous,
+    // and a client that is only ever asked for `markets()` never opens a
+    // connection at all. `getInfo` is not memoized — it backs the
+    // `checkpointTapscript` read on every push, and a stale one derives a
+    // checkpoint the operator will not co-sign.
+    let broadcaster: Promise<Awaited<ReturnType<IWallet["getArkadeBroadcaster"]>>> | undefined;
+    const broadcasting = () => (broadcaster ??= wallet.getArkadeBroadcaster());
+    const ark: SwapOperator = deps.ark ?? {
+        getInfo: () => wallet.getArkadeInfo({ requireLive: true }),
+        submitTx: async (...args) => (await broadcasting()).submitTx(...args),
+        finalizeTx: async (...args) => (await broadcasting()).finalizeTx(...args),
+    };
+
+    let reader: Promise<Awaited<ReturnType<IWallet["getArkadeReader"]>>> | undefined;
+    const reading = () => (reader ??= wallet.getArkadeReader());
+    const indexer: LockupSpendIndexer = deps.indexer ?? {
+        getVtxos: async (opts) => {
+            // The reader reads for NAMED foreign scripts — it has no "the
+            // wallet's own" default to fall back on, and every call here is a
+            // lockup lookup that passes them.
+            if (!opts)
+                throw new Error("getVtxos on the swap indexer requires scripts or outpoints");
+            return (await reading()).getVtxos(opts);
+        },
+        getVirtualTxs: async (...args) => (await reading()).getVirtualTxs(...args),
+    };
 
     // contracts is filled in at start(); the manager holds deps by reference
     const managerDeps: RfqSwapManagerDeps = { indexer, chain: deps.chain, repository };
@@ -209,7 +229,7 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
         const payoutAddress = (record.profile as { payoutAddress?: string }).payoutAddress;
         if (!payoutAddress) throw new Error(`rfq swap ${swap.rfqId} carries no payoutAddress`);
         return pushClaim(ark, {
-            script,
+            contract: script,
             receiver: await contractSigner(wallet, secret.signingDescriptor),
             preimage: await preimageForSwapRecord(wallet, secret),
             vtxos,
@@ -220,7 +240,7 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
     };
 
     manager.setCallbacks({
-        refundArkade: arkadeRefunder({ ark, indexer, wallet, repository }),
+        refundArkade: arkadeRefunder({ operator: ark, indexer, wallet, repository }),
         claimLockup,
         ...(deps.claimOnchain ? { claimOnchain: deps.claimOnchain } : {}),
     });
@@ -243,12 +263,10 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
             case "ln_send": {
                 // inputs validated before transportFor opens a connection
                 const invoice = need(input.invoice, "the invoice to pay", kind);
-                const request = await requestLightningSend(
-                    wallet,
-                    arkServerUrl,
-                    transportFor(market),
-                    { invoice, emulatorPubkey: deps.emulatorPubkey },
-                );
+                const request = await requestLightningSend(wallet, transportFor(market), {
+                    invoice,
+                    emulatorPubkey: deps.emulatorPubkey,
+                });
                 return { kind, market, request };
             }
             case "ln_receive": {
@@ -259,12 +277,7 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
                     maxPayAmount: input.maxPayAmount,
                     emulatorPubkey: deps.emulatorPubkey,
                 };
-                const request = await requestLightningReceive(
-                    wallet,
-                    arkServerUrl,
-                    transportFor(market),
-                    params,
-                );
+                const request = await requestLightningReceive(wallet, transportFor(market), params);
                 return { kind, market, request, invoice: request.invoice };
             }
             case "onchain_send": {
@@ -276,12 +289,7 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
                     preimage: input.preimage,
                     emulatorPubkey: deps.emulatorPubkey,
                 };
-                const request = await requestOnchainSend(
-                    wallet,
-                    arkServerUrl,
-                    transportFor(market),
-                    params,
-                );
+                const request = await requestOnchainSend(wallet, transportFor(market), params);
                 return { kind, market, request };
             }
             case "onchain_receive":
@@ -317,7 +325,7 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
                 const { plan } = accepted;
                 const depositIsBtc = plan.deposit.asset.id === BTC_ASSET_ID;
                 // keyed on the receive side: the covenant binds what the fill delivers
-                const offer = await createOffer(wallet, arkServerUrl, {
+                const offer = await createOffer(wallet, {
                     wantAmount: plan.receive.atomic,
                     ...(plan.receive.asset.id === BTC_ASSET_ID
                         ? { offerAsset: asset.AssetId.fromString(plan.deposit.asset.id) }
@@ -360,8 +368,8 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
                     lockupPkScript: request.swapPkScript,
                     lockup: { script: request.script, address: request.address },
                     // the trader's own decode, never the solver's echo
-                    paymentHash: request.treeParams.paymentHash,
-                    refundLocktime: request.treeParams.refundLocktime,
+                    paymentHash: request.contractParams.paymentHash,
+                    refundLocktime: request.contractParams.refundLocktime,
                     createdAt: now,
                     updatedAt: now,
                 };
@@ -375,7 +383,7 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
                     address: request.address,
                     amount: request.fundAmount,
                 });
-                return admit(swap, { ...origin, fundingArkTxid: txid });
+                return admit(swap, { ...origin, fundingTxid: txid });
             }
             case "ln_receive": {
                 // nothing to fund: the solver funds the lockup once the invoice is paid
@@ -388,7 +396,7 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
                     lockupPkScript: request.swapPkScript,
                     lockup: { script: request.script, address: request.address },
                     paymentHash,
-                    refundLocktime: request.treeParams.refundLocktime,
+                    refundLocktime: request.contractParams.refundLocktime,
                     expectedAmount: request.expectedAmount,
                     createdAt: now,
                     updatedAt: now,
@@ -433,7 +441,7 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
                     address: request.address,
                     amount: request.fundAmount,
                 });
-                return admit(swap, { ...origin, fundingArkTxid: txid });
+                return admit(swap, { ...origin, fundingTxid: txid });
             }
         }
     };
@@ -452,7 +460,7 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
             }
             // written before spending so the watcher cannot read the cancel as a fill
             await updateAssetSwap(repository, fundingTxid, { status: "cancelling" });
-            await cancelOffer(wallet, arkServerUrl, swap.offerHex, {
+            await cancelOffer(wallet, swap.offerHex, {
                 repository,
                 fundingTxid,
             });
@@ -476,7 +484,6 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
             await manager.start();
             watcher ??= await watchOfferSwaps({
                 wallet,
-                arkServerUrl,
                 repository,
                 onUpdate: (swap) => notify({ family: "offer", swap }),
             });

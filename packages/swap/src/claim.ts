@@ -30,7 +30,6 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
-    type ArkProvider,
     type Identity,
     type VHTLC,
     claimWithPreimageIdentity,
@@ -42,6 +41,7 @@ import {
     findLockupVtxos,
     type LockupVtxo,
     type RefundIndexer,
+    type SwapOperator,
 } from "./refund";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -118,7 +118,7 @@ const assertFiniteAmount = (value: number, reason: string, label: string): void 
  * solver refunds hours later" into an immediate failure.
  */
 export async function pushClaim(
-    operator: ArkProvider,
+    operator: SwapOperator,
     input: {
         /** The receive-direction covenant (see `lightningReceiveContract`). */
         contract: InstanceType<typeof VHTLC.ScriptV2>;
@@ -249,7 +249,7 @@ export async function awaitLockupFunding(
  */
 export async function claimReceiveLockup(
     indexer: RefundIndexer,
-    operator: ArkProvider,
+    operator: SwapOperator,
     input: Parameters<typeof pushClaim>[1] & {
         /** The covenant's scriptPubKey, from the request flow's `swapPkScript`. */
         swapPkScript: Uint8Array;

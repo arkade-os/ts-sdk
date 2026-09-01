@@ -193,6 +193,7 @@ export {
     type LockupVtxo,
     type RefundIndexer,
     type RefundOutcome,
+    type SwapOperator,
 } from "./refund";
 export { arkadeRefunder, type ArkadeRefunderDeps } from "./arkadeRefunder";
 export {

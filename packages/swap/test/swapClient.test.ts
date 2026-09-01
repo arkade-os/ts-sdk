@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { asset, ArkAddress, RestIndexerProvider, Transaction } from "@arkade-os/sdk";
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { encodeOffer, offerVtxoScript, OFFER_CONTRACT_KIND, type Offer } from "../src/offer";
+import { encodeOffer, offerContract, OFFER_CONTRACT_KIND, type Offer } from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
 import { createSwapClient, type UnifiedSwap } from "../src/swapClient";
@@ -31,7 +31,6 @@ const makeClient = (over: Partial<Parameters<typeof createSwapClient>[0]> = {}) 
     const feed = vi.fn(async () => new Response(JSON.stringify({ bitcoin: { usd: 50_000 } })));
     const client = createSwapClient({
         wallet: {} as never,
-        arkServerUrl: "http://localhost:7070",
         repository,
         transportFor,
         discovery: {
@@ -109,7 +108,7 @@ describe("createSwapClient — one update stream over both families", () => {
             makerPublicKey: key("22"),
             emulatorPubkey: key("33"),
         };
-        const script = offerVtxoScript(binding, SERVER_KEY);
+        const script = offerContract(binding, SERVER_KEY);
         const offer: Offer = { ...binding, swapPkScript: script.pkScript };
         const swap: AssetSwap = {
             id: FUNDING_TXID,
@@ -135,6 +134,8 @@ describe("createSwapClient — one update stream over both families", () => {
                 },
                 setContractWatchState: async () => {},
             }),
+            // the watcher reads spending txs through this seam — see watch.test.ts
+            getArkadeReader: async () => ({ getVirtualTxs }),
         } as never;
 
         const fulfillTx = (() => {
@@ -144,11 +145,9 @@ describe("createSwapClient — one update stream over both families", () => {
             tx.addOutput({ script: binding.makerPkScript, amount: BigInt(992) });
             return tx;
         })();
-        const getVirtualTxs = vi
-            .spyOn(RestIndexerProvider.prototype, "getVirtualTxs")
-            .mockResolvedValue({
-                txs: [Buffer.from(fulfillTx.toPSBT()).toString("base64")],
-            } as never);
+        const getVirtualTxs = vi.fn().mockResolvedValue({
+            txs: [Buffer.from(fulfillTx.toPSBT()).toString("base64")],
+        });
 
         const { client, repository } = makeClient({ wallet });
         await addAssetSwap(repository, swap);
@@ -172,7 +171,6 @@ describe("createSwapClient — one update stream over both families", () => {
             });
         } finally {
             await client.stop();
-            getVirtualTxs.mockRestore();
         }
 
         const offerUpdates = updates.filter((u) => u.family === "offer");

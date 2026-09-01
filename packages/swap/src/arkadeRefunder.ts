@@ -15,15 +15,20 @@
  * the second as `needs_recovery`, and catching either here would turn a state
  * the trader must act on into a retry that grinds the window away.
  */
-import type { ArkProvider, IWallet } from "@arkade-os/sdk";
-import { findLockupVtxos, pushRefundWithoutReceiver, type RefundIndexer } from "./refund";
+import type { IWallet } from "@arkade-os/sdk";
+import {
+    findLockupVtxos,
+    pushRefundWithoutReceiver,
+    type RefundIndexer,
+    type SwapOperator,
+} from "./refund";
 import { RefundNotLocallyPossibleError, senderIdentityForSwapRecord } from "./refundBlocked";
 import { rfqSignerOf } from "./rfqProfileParts";
 import type { AssetSwapRepository } from "./repository";
 import type { ArkadeRefundResult, RfqSwap } from "./swapManager";
 
 export interface ArkadeRefunderDeps {
-    operator: ArkProvider;
+    operator: SwapOperator;
     indexer: RefundIndexer;
     /** Asked for the descriptor's signer; never asked to mint a key. */
     wallet: IWallet;
