@@ -3,7 +3,7 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { pubECDSA, pubSchnorr } from "@scure/btc-signer/utils.js";
 import { SigHash } from "@scure/btc-signer";
 import { hex } from "@scure/base";
-import { Transaction } from "../utils/transaction";
+import { assertAllowedSighashTypes, Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, signAsync } from "@noble/secp256k1";
 import {
@@ -355,6 +355,10 @@ export class SeedIdentity implements HDCapableIdentity {
         const txCpy = tx.clone();
 
         if (!inputIndexes) {
+            // scure skips an input whose declared sighash is outside the policy,
+            // which the "No inputs signed" catch below would report as nothing to do
+            assertAllowedSighashTypes(txCpy, ALLOWED_SIGHASH);
+
             try {
                 if (!txCpy.sign(key, ALLOWED_SIGHASH)) {
                     throw new Error("Failed to sign transaction");

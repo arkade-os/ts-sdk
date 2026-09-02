@@ -302,4 +302,41 @@ describe("SingleKey sighash policy", () => {
     ])("still signs an input declaring %s", async (_name, sighashType) => {
         await expect(spendOwnKeyPath(sighashType)).resolves.toBeDefined();
     });
+    // Bulk signing (no inputIndexes) delegates to scure's `sign`, which skips an
+    // input it may not sign rather than reporting it. Without a preflight that is
+    // indistinguishable from "nothing to sign".
+    async function spendTwo(sighashTypes: (number | undefined)[]) {
+        const key = SingleKey.fromPrivateKey(new Uint8Array(32).fill(3));
+        const pay = p2tr(await key.xOnlyPublicKey());
+        const tx = new Transaction({ allowUnknownOutputs: true });
+        sighashTypes.forEach((sighashType, i) =>
+            tx.addInput({
+                ...pay,
+                txid: new Uint8Array(32).fill(i + 1),
+                index: 0,
+                witnessUtxo: { script: pay.script, amount: 1000n },
+                sighashType,
+            }),
+        );
+        tx.addOutput({ script: P2TR_OUT, amount: 900n });
+        return key.sign(tx);
+    }
+
+    it("does not return an unsigned tx when every input is disallowed", async () => {
+        await expect(spendTwo([SigHash.NONE, SigHash.NONE])).rejects.toThrow(
+            /Unallowed sighash type 0x02 for input 0/,
+        );
+    });
+
+    it("does not silently skip a disallowed input alongside an allowed one", async () => {
+        await expect(spendTwo([SigHash.DEFAULT, SigHash.SINGLE])).rejects.toThrow(
+            /Unallowed sighash type 0x03 for input 1/,
+        );
+    });
+
+    it("still bulk signs when every input is allowed", async () => {
+        const signed = await spendTwo([SigHash.DEFAULT, undefined]);
+        expect(signed.getInput(0).tapKeySig).toBeDefined();
+        expect(signed.getInput(1).tapKeySig).toBeDefined();
+    });
 });

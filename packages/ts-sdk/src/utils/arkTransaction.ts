@@ -14,7 +14,9 @@ import {
 import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { ConditionWitness, setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
-import { Transaction } from "./transaction";
+import { assertAllowedSighashTypes, formatSighash, Transaction } from "./transaction";
+
+export { assertAllowedSighashTypes };
 import { ArkAddress } from "../script/address";
 import { Extension } from "../extension";
 import { ServerResponseMismatchError } from "../providers/errors";
@@ -205,32 +207,6 @@ export function hasBoardingTxExpired(
     const now = BigInt(Math.floor(Date.now() / 1000));
     const blockTime = BigInt(Math.floor(coin.status.block_time));
     return blockTime + boardingTimelock.value <= now;
-}
-
-/**
- * Formats a sighash type as a hex string (e.g., 0x01)
- */
-function formatSighash(type: number): string {
-    return `0x${type.toString(16).padStart(2, "0")}`;
-}
-
-/**
- * Reject a counterparty-supplied PSBT that declares a sighash type outside
- * `allowedSighashTypes` on any input, before it reaches a signer. An input
- * carrying no explicit type is left alone: the signer treats a taproot input
- * as {@link SigHash.DEFAULT}.
- */
-export function assertAllowedSighashTypes(
-    tx: Transaction,
-    allowedSighashTypes: number[] = [SigHash.DEFAULT],
-): void {
-    for (let i = 0; i < tx.inputsLength; i++) {
-        const declared = tx.getInput(i).sighashType;
-        if (declared === undefined) continue;
-        if (!allowedSighashTypes.includes(declared)) {
-            throw new Error(`Unallowed sighash type ${formatSighash(declared)} for input ${i}.`);
-        }
-    }
 }
 
 /**
