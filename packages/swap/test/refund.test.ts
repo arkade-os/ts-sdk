@@ -38,13 +38,15 @@ const SENDER_PRIVATE_KEY = priv(13);
 /** The sender key as the signer the refund path now takes. */
 const SENDER = SingleKey.fromPrivateKey(SENDER_PRIVATE_KEY);
 const REFUND_PK_SCRIPT = p2tr(key(5));
+/** `sha256(P)` for the golden participant set — what `refundIfUnresolved` now takes. */
+const SWAP_PAYMENT_HASH = hex.encode(sha256(new Uint8Array(32).fill(7)));
 
 /** The same golden participant set rfq.test.ts pins the script bytes against. */
 const swapScript = () =>
     lightningSendVtxoScript({
         solverPubkey: key(1),
         serverPubkey: key(3),
-        paymentHash: hex.encode(sha256(new Uint8Array(32).fill(7))),
+        paymentHash: SWAP_PAYMENT_HASH,
         refundLocktime: REFUND_LOCKTIME,
         claimDelay: 4096,
         emulatorPubkey: key(9),
@@ -107,7 +109,7 @@ const fakeOperator = (
     } as unknown as FakeOperator;
 };
 
-const fakeIndexer = (vtxos: LockupVtxo[]): RefundIndexer & { scripts: string[][] } => {
+const fakeIndexer = (vtxos: LockupVtxo[]): LockupSpendIndexer & { scripts: string[][] } => {
     const scripts: string[][] = [];
     return {
         scripts,
@@ -115,7 +117,8 @@ const fakeIndexer = (vtxos: LockupVtxo[]): RefundIndexer & { scripts: string[][]
             scripts.push(opts?.scripts ?? []);
             return { vtxos };
         },
-    } as unknown as RefundIndexer & { scripts: string[][] };
+        getVirtualTxs: async () => ({ txs: [] }),
+    } as unknown as LockupSpendIndexer & { scripts: string[][] };
 };
 
 const statusOf = (state: string): RfqStatus => ({
@@ -467,6 +470,7 @@ describe("refundIfUnresolved", () => {
         rfqId: RFQ_ID,
         script: swapScript(),
         sender: SENDER,
+        paymentHash: SWAP_PAYMENT_HASH,
         refundLocktime: REFUND_LOCKTIME,
         pollMs: 1,
     });
@@ -515,7 +519,8 @@ describe("refundIfUnresolved", () => {
             getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
                 vtxos: opts?.recoverableOnly ? [swept] : [],
             }),
-        } as unknown as RefundIndexer;
+            getVirtualTxs: async () => ({ txs: [] }),
+        } as unknown as LockupSpendIndexer;
 
         const result = await refundIfUnresolved(fakeTransport(["quoted"]), operator, indexer, {
             ...baseInput(),
@@ -570,35 +575,85 @@ describe("refundIfUnresolved", () => {
         ).rejects.toThrow(/FORFEIT_CLOSURE_LOCKED/);
     });
 
-    it("reports nothing to refund when the lockup's only output was unrolled", async () => {
-        // The output is unspent, but onchain behind its CSV: no offchain leaf
-        // reaches it. Pushing anyway would fail every retry until
-        // `attemptDeadline` and then rethrow — burning the window on a spend
-        // that was never going to land.
+    /** An operator that counts how many times a push started building. */
+    const watchedOperator = () => {
         const operator = fakeOperator();
         let pushes = 0;
-        const watched = {
+        const provider = {
             ...operator,
             getInfo: async () => {
                 pushes += 1;
                 return operator.getInfo();
             },
         } as unknown as RefundArkProvider;
-        const exited = { txid: "66".repeat(32), vout: 0, value: 8_000, isUnrolled: true };
-        const indexer = {
-            getVtxos: async (opts?: { spendableOnly?: boolean }) => ({
-                vtxos: opts?.spendableOnly ? [exited] : [],
-            }),
-        } as unknown as RefundIndexer;
+        return { operator, provider, pushes: () => pushes };
+    };
 
-        const result = await refundIfUnresolved(fakeTransport(["quoted"]), watched, indexer, {
+    const EXITED = { txid: "66".repeat(32), vout: 0, value: 8_000, isUnrolled: true };
+
+    it("reports an exited lockup instead of pushing a refund that cannot land", async () => {
+        // The output is unspent, but onchain behind its CSV: no offchain leaf
+        // reaches it. `nothing_to_refund` would read as "already resolved" over
+        // money still sitting at the script.
+        const { operator, provider, pushes } = watchedOperator();
+        const indexer = {
+            getVtxos: async () => ({ vtxos: [EXITED] }),
+            getVirtualTxs: async () => ({ txs: [] }),
+        } as unknown as LockupSpendIndexer;
+
+        const result = await refundIfUnresolved(fakeTransport(["quoted"]), provider, indexer, {
+            ...baseInput(),
+            now: () => REFUND_LOCKTIME + 1,
+        });
+
+        expect(result.outcome).toBe("exited");
+        if (result.outcome === "exited") {
+            expect(result.outpoints).toEqual([`${"66".repeat(32)}:0`]);
+        }
+        // The outcome alone would pass while the doomed push still went out.
+        expect(pushes()).toBe(0);
+        expect(operator.submitted).toEqual([]);
+    });
+
+    it("does not report `exited` for an exit output that was already spent", async () => {
+        // The exit happened AND the onchain output was swept: that is history,
+        // not a remedy the caller can still act on, so the fate's terminal-spend
+        // guard drops it and the ordinary path answers.
+        const { operator, provider, pushes } = watchedOperator();
+        const indexer = {
+            getVtxos: async () => ({ vtxos: [{ ...EXITED, isSpent: true, spentBy: "" }] }),
+            getVirtualTxs: async () => ({ txs: [] }),
+        } as unknown as LockupSpendIndexer;
+
+        const result = await refundIfUnresolved(fakeTransport(["quoted"]), provider, indexer, {
             ...baseInput(),
             now: () => REFUND_LOCKTIME + 1,
         });
 
         expect(result.outcome).toBe("nothing_to_refund");
-        // The outcome alone would pass while the doomed push still went out.
-        expect(pushes).toBe(0);
+        expect(pushes()).toBe(0);
+        expect(operator.submitted).toEqual([]);
+    });
+
+    it("still refuses the push when the fate read learns nothing about an exited output", async () => {
+        // Defense in depth: the fate query comes back empty (indexer lag), so
+        // nothing says `exited` — and `findLockupVtxos`'s own drop is what keeps
+        // the doomed push from going out and burning the whole window.
+        const { operator, provider, pushes } = watchedOperator();
+        const indexer = {
+            getVtxos: async (opts?: { spendableOnly?: boolean }) => ({
+                vtxos: opts?.spendableOnly ? [EXITED] : [],
+            }),
+            getVirtualTxs: async () => ({ txs: [] }),
+        } as unknown as LockupSpendIndexer;
+
+        const result = await refundIfUnresolved(fakeTransport(["quoted"]), provider, indexer, {
+            ...baseInput(),
+            now: () => REFUND_LOCKTIME + 1,
+        });
+
+        expect(result.outcome).toBe("nothing_to_refund");
+        expect(pushes()).toBe(0);
         expect(operator.submitted).toEqual([]);
     });
 

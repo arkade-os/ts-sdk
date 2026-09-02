@@ -72,7 +72,7 @@ function _typecheckStrongInputs(ark: arkade.Arkade) {
     c.functions.nope();
 }
 
-function stubProviders(server: Uint8Array, emulatorKey: Uint8Array) {
+function stubProviders(server: Uint8Array, emulatorKey: Uint8Array, indexerVtxos?: unknown[]) {
     const checkpointTapscript = hex.encode(
         CSVMultisigTapscript.encode({
             timelock: { type: "blocks", value: 10n },
@@ -90,7 +90,7 @@ function stubProviders(server: Uint8Array, emulatorKey: Uint8Array) {
     };
     const indexer = {
         async getVtxos() {
-            return { vtxos: [{ ...COIN } as any] };
+            return { vtxos: (indexerVtxos ?? [{ ...COIN }]) as any[] };
         },
         getVirtualTxs,
     };
@@ -138,8 +138,12 @@ describe("arkade.Arkade / ArkadeContract", () => {
     const receiver = xOnly(); // 32-byte witness program
     const args = { hash: HASH, receiver, amount: AMOUNT };
 
-    async function connect(contractManager?: IContractManager) {
-        const { arkProvider, indexer, emulator, captured } = stubProviders(server, emulatorKey);
+    async function connect(contractManager?: IContractManager, indexerVtxos?: unknown[]) {
+        const { arkProvider, indexer, emulator, captured } = stubProviders(
+            server,
+            emulatorKey,
+            indexerVtxos,
+        );
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
@@ -193,6 +197,22 @@ describe("arkade.Arkade / ArkadeContract", () => {
 
         // The value also proves the manager branch ran: the fallback indexer
         // would have answered with COIN (10_000) instead.
+        expect((await contract.getUtxos()).map((u) => u.txid)).toEqual([healthy.txid]);
+        expect(await contract.getBalance()).toBe(7_000n);
+    });
+
+    // Paired with the manager-branch test above: the two branches must answer
+    // the same about an exited coin, so neither may be narrowed alone.
+    it("drops them in the no-manager fallback too, whatever spendableOnly returns", async () => {
+        // A spent coin too: `spendableOnly` is the server's answer, and a stale
+        // or proxying indexer that returns one must not reach the caller either.
+        const healthy = { ...mintCoin(7_000), isSpent: false };
+        const exited = { ...mintCoin(3_000), isSpent: false, isUnrolled: true };
+        const spent = { ...mintCoin(1_000), isSpent: true };
+
+        const { ark } = await connect(undefined, [healthy, exited, spent]);
+        const contract = ark.contract(htlcProgram(), args);
+
         expect((await contract.getUtxos()).map((u) => u.txid)).toEqual([healthy.txid]);
         expect(await contract.getBalance()).toBe(7_000n);
     });
