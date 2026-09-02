@@ -144,7 +144,7 @@
     "scripts": {
         "build": "pnpm run build:runtime && pnpm run build:types",
         "build:runtime": "tsup",
-        "build:types": "tsup --config tsup.types.config.ts",
+        "build:types": "tsc --project tsconfig.declarations.json && node scripts/prepare-declarations.mjs",
         "smoke:dist": "node scripts/smoke-dist.mjs",
         "typecheck": "tsc --noEmit",
         "check:vtxo": "node scripts/check-virtual-status.mjs && node scripts/check-provider-boundary.mjs",

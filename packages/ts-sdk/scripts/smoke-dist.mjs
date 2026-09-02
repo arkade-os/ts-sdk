@@ -100,7 +100,7 @@ function* walkDistFiles(dir) {
     }
 }
 
-const relImport = /(?:from|import)\s+["'](\.[^"']+)["']/g;
+const relImport = /(?:from\s+|import\s*(?:\(\s*)?)["'](\.[^"']+)["']/g;
 const stripComments = (src) =>
     src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 let dtsChecked = 0;
@@ -324,7 +324,7 @@ void [
 `;
 const declarationProbePath = join(consumer, "declaration-probe.ts");
 writeFileSync(declarationProbePath, declarationProbe);
-{
+const compileDeclarationProbe = (probePath, label) => {
     const tscPath = require.resolve("typescript/bin/tsc");
     const r = runNode(
         [
@@ -340,13 +340,70 @@ writeFileSync(declarationProbePath, declarationProbe);
             "ES2022",
             "--lib",
             "ES2022,DOM,WebWorker",
-            declarationProbePath,
+            probePath,
         ],
         consumer,
     );
-    if (r.status === 0) ok("strict TypeScript consumer compiles against public declarations");
-    else fail("declaration consumer: " + (r.stderr || r.stdout).trim());
+    if (r.status === 0) ok(`${label} compiles against public declarations`);
+    else fail(`${label}: ` + (r.stderr || r.stdout).trim());
+};
+compileDeclarationProbe(declarationProbePath, "strict ESM TypeScript consumer");
+
+const commonJsDeclarationProbe = `
+import sdk = require("@arkade-os/sdk");
+
+class VaultBoardScript extends sdk.VtxoScript {
+    leaf(scriptHex: string): sdk.TapLeafScript {
+        return this.findLeaf(scriptHex);
+    }
+
+    exits() {
+        return this.exitPaths();
+    }
 }
+
+declare const adapter: sdk.BoardingSigningAdapter;
+declare const feeConfig: sdk.IntentFeeConfig;
+declare const ready: sdk.PreparedBoardingRegistration;
+declare const validated: sdk.ValidatedBoardingBatch;
+declare const worker: sdk.ServiceWorkerWallet;
+
+const preparation: Promise<sdk.BoardingPreparationResult> = adapter.prepareRegistration({
+    inputs: [],
+    recipients: [],
+});
+const createBoarding: typeof sdk.createBoardingProgramScript = sdk.createBoardingProgramScript;
+const createWorker: typeof sdk.ServiceWorkerWallet.create = sdk.ServiceWorkerWallet.create;
+const stopWorker: typeof sdk.ServiceWorkerWallet.stop = sdk.ServiceWorkerWallet.stop;
+const disposeWorker: Promise<void> = worker.dispose();
+const workerOwnedIdentity: Pick<
+    Parameters<typeof sdk.ServiceWorkerWallet.create>[0],
+    "workerOwnedIdentity"
+> = { workerOwnedIdentity: true };
+const settlementConfig: Pick<sdk.SettlementConfig, "autoRenewVtxos"> = {
+    autoRenewVtxos: false,
+};
+const Handler: typeof sdk.WalletMessageHandler = sdk.WalletMessageHandler;
+const Script: typeof VaultBoardScript = VaultBoardScript;
+
+void [
+    preparation,
+    feeConfig,
+    createBoarding,
+    createWorker,
+    stopWorker,
+    disposeWorker,
+    workerOwnedIdentity,
+    settlementConfig,
+    Handler,
+    Script,
+    ready,
+    validated,
+];
+`;
+const commonJsDeclarationProbePath = join(consumer, "declaration-probe.cts");
+writeFileSync(commonJsDeclarationProbePath, commonJsDeclarationProbe);
+compileDeclarationProbe(commonJsDeclarationProbePath, "strict CommonJS TypeScript consumer");
 
 // ── 7. wallet/expo/background: structural only ────────────────────────
 section("wallet/expo/background: structural files exist");
