@@ -81,6 +81,8 @@ export class SingleKey implements Identity {
             return txCpy;
         }
 
+        // no preflight here: signIdx rejects a disallowed sighash itself,
+        // rather than skipping the input the way the bulk path does
         for (const inputIndex of inputIndexes) {
             if (!txCpy.signIdx(this.key, inputIndex, ALLOWED_SIGHASH)) {
                 throw new Error(`Failed to sign input #${inputIndex}`);

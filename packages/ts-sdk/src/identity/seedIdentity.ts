@@ -371,6 +371,8 @@ export class SeedIdentity implements HDCapableIdentity {
                 }
             }
         } else {
+            // no preflight here: signIdx rejects a disallowed sighash itself,
+            // rather than skipping the input the way the bulk path does
             for (const idx of inputIndexes) {
                 if (!txCpy.signIdx(key, idx, ALLOWED_SIGHASH)) {
                     throw new Error(`Failed to sign input #${idx}`);

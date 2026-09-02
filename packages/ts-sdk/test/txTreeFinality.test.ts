@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { DEFAULT_SEQUENCE } from "@scure/btc-signer";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
 import { Transaction } from "../src/utils/transaction";
 import { TxTree } from "../src/tree/txTree";
 
@@ -69,5 +69,22 @@ describe("TxTree finality", () => {
         const tree = new TxTree(parent, new Map([[0, new TxTree(child)]]));
 
         expect(() => tree.validate()).toThrow(/unexpected locktime: 800000/);
+    });
+    // TxTree.create parses nodes from base64 PSBTs, so the finality fields have
+    // to survive that round trip, not just direct construction.
+    it("keeps the finality fields across a PSBT round trip", () => {
+        const encode = (tx: Transaction) => ({
+            txid: tx.id,
+            tx: base64.encode(tx.toPSBT()),
+            children: {},
+        });
+
+        expect(() => TxTree.create([encode(node())]).validate()).not.toThrow();
+        expect(() => TxTree.create([encode(node({ lockTime: 800_000 }))]).validate()).toThrow(
+            /unexpected locktime: 800000/,
+        );
+        expect(() => TxTree.create([encode(node({ sequence: 1000 }))]).validate()).toThrow(
+            /unexpected sequence: 1000/,
+        );
     });
 });
