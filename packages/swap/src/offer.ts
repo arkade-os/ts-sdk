@@ -47,7 +47,18 @@ import { getAssetSwapsOrThrow, updateAssetSwap, updateAssetSwapBestEffort } from
 // json imports widen "type": "pubkey" to string; parseArtifact validates at runtime
 type Artifact = Parameters<typeof arkade.parseArtifact>[0];
 
-/** The contracts — pure data, shared verbatim with any other implementation. */
+/**
+ * The contracts, one per WANT side — pure data, shared verbatim with any other
+ * implementation.
+ *
+ * **These are the base: an offer carrying an exit delay compiles to a third
+ * closure that is not in either file.** The tree is not fixed-shape — the
+ * protocol defines the exit as `iff ExitDelay`, and solverd appends it the same
+ * way (`pkg/swap/contract/offer.go`, `VtxoScript`) — so it cannot be a function
+ * in a static artifact without splitting these into one file per exit variant.
+ * {@link withExitClosure} owns that step, and the golden in `offer.test.ts`
+ * pins the artifact it produces so the whole contract is still readable as data.
+ */
 export const swapPrograms: Record<
     "wantAsset" | "wantBtc",
     ReturnType<typeof arkade.parseArtifact>
@@ -109,12 +120,23 @@ type SwapProgramBinding = {
  * Order is load-bearing. The tree is assembled from the leaf list by btcd's
  * algorithm, so `exit` must remain the third path, after `fulfill` and
  * `cancel` — moving it changes the swap address.
+ *
+ * **Why this is code and not a function in the program JSON.** Two reasons, and
+ * either alone would force it: the closure is conditional, so a static artifact
+ * carrying it would give every offer three leaves; and `csv.type` is a literal
+ * in the artifact format — only `csv.value` resolves a `$param` — so the
+ * blocks/seconds split cannot be bound per offer. Expressing this declaratively
+ * therefore means one file per (want side × none | blocks | seconds), six in
+ * all, with the `fulfill` asm duplicated three times per side and free to drift.
  */
 function withExitClosure(
     program: ReturnType<typeof arkade.parseArtifact>,
     exit: RelativeTimelock | undefined,
 ): ReturnType<typeof arkade.parseArtifact> {
     if (!exit) return program;
+    // Spread, never mutate: `swapPrograms` is module state shared by every
+    // offer, so appending in place would leave later exit-less offers compiling
+    // a third leaf — and an `$exitDelay` they never bind.
     return {
         ...program,
         // typed params are authoritative: an undeclared `$exitDelay` fails

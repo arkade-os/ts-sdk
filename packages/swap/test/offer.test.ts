@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
 import { ArkAddress, arkade, asset, type RelativeTimelock } from "@arkade-os/sdk";
-import { decodeOffer, encodeOffer, offerVtxoScript, swapProgramBinding, Offer } from "../src/offer";
+import {
+    decodeOffer,
+    encodeOffer,
+    offerVtxoScript,
+    swapProgramBinding,
+    swapPrograms,
+    Offer,
+} from "../src/offer";
 
 // deterministic keys -> the derived swap addresses must never drift (any
 // change to the program JSONs or the arg binding changes them); goldens from
@@ -15,6 +22,7 @@ const keys = {
     emulatorPubkey: hex.decode("466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"),
 };
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
+const EXIT_BLOCKS: RelativeTimelock = { type: "blocks", value: BigInt(144) };
 
 // hand-built TLV records: encodeOffer now rejects malformed offers, so the
 // decode-side coverage below assembles its foreign payloads from raw records
@@ -69,6 +77,43 @@ describe("swap offer", () => {
             expect(back.wantAsset?.toString()).toBe(offer.wantAsset?.toString());
             expect(back.offerAsset?.toString()).toBe(offer.offerAsset?.toString());
         }
+    });
+
+    it("emits the whole exit-carrying contract as artifact JSON", () => {
+        // The two program files are the base; an offer with an exit delay
+        // compiles to a third closure that is in neither. Pinning the artifact
+        // the binding produces keeps the FULL contract readable as data — the
+        // property `swapPrograms` claims — so another implementation has
+        // something to compare against rather than having to read TypeScript.
+        // It also fails loudly if the exit function's shape or the appended
+        // `exitDelay` param ever drifts, both of which move the swap address.
+        const { program } = swapProgramBinding(
+            { wantAmount: BigInt(50_000), offerAsset: testAsset, ...keys, exitDelay: EXIT_BLOCKS },
+            server,
+        );
+        expect(arkade.stringifyArtifact(program)).toBe(
+            '{"version":0,"name":"banco-asset-to-btc","params":[{"name":"makerWP","type":"pubkey"},' +
+                '{"name":"wantAmount","type":"int"},{"name":"server","type":"pubkey"},' +
+                '{"name":"user","type":"pubkey"},{"name":"exitDelay","type":"int"}],' +
+                '"functions":{"fulfill":{"tapscript":{"signers":["$server"]},"arkadeScript":' +
+                '{"asm":[0,"INSPECTOUTPUTVALUE","$wantAmount","GREATERTHANOREQUAL","VERIFY",0,' +
+                '"INSPECTOUTPUTSCRIPTPUBKEY",1,"EQUALVERIFY","$makerWP","EQUAL"]}},' +
+                '"cancel":{"tapscript":{"signers":["$user","$server"]}},' +
+                '"exit":{"tapscript":{"signers":["$user"],"csv":{"type":"blocks","value":"$exitDelay"}}}}}',
+        );
+    });
+
+    it("leaves the base programs untouched when it appends the exit", () => {
+        // withExitClosure spreads rather than mutates; a mutating version would
+        // leave every later exit-less offer compiling three leaves, silently
+        // moving its address
+        const before = arkade.stringifyArtifact(swapPrograms.wantBtc);
+        swapProgramBinding(
+            { wantAmount: BigInt(50_000), offerAsset: testAsset, ...keys, exitDelay: EXIT_BLOCKS },
+            server,
+        );
+        expect(arkade.stringifyArtifact(swapPrograms.wantBtc)).toBe(before);
+        expect(Object.keys(swapPrograms.wantBtc.functions)).toEqual(["fulfill", "cancel"]);
     });
 
     it("binds the asset group index into the covenant", () => {
