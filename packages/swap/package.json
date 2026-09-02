@@ -57,7 +57,7 @@
     ],
     "scripts": {
         "build": "tsup src/index.ts src/nostr.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
-        "typecheck": "tsc --noEmit",
+        "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
         "format": "biome format --write src test",
         "lint": "biome format src test",
         "prepack": "pnpm run build",
