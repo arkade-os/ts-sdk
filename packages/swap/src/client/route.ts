@@ -3,14 +3,15 @@
  * that settles it.
  *
  * Two invariants live in the types rather than in a check. An endpoint's
- * corridor and its asset's rail cannot disagree, because {@link Endpoint} spells
- * the asset as `AssetId<RailOf<C>>`. And `onchain -> arkade` is not in
+ * corridor and its asset cannot disagree, because {@link Endpoint} is a union
+ * with one member per corridor and each member types its asset as
+ * {@link AssetOn} of that one corridor. And `onchain -> arkade` is not in
  * {@link Route} at all, so once a route has been resolved the misroute is a
  * compile error; before resolution it is `UnsupportedRoute`, thrown ahead of
  * RFQ disclosure, artifact creation, persistence and funding.
  */
-import type { AssetId } from "./assetId";
-import type { CorridorId, RailOf } from "./corridor";
+import type { AssetId, AssetPart } from "./assetId";
+import type { Corridor, CorridorId, RailOf } from "./corridor";
 import type { Hex } from "./primitives";
 
 /**
@@ -40,18 +41,42 @@ export type Instrument =
       };
 
 /**
+ * The asset ids corridor `C` can carry.
+ *
+ * On the three bitcoin-family corridors the corridor names no network, so the
+ * tie is the rail alone. On an EVM corridor it is more than that: `eip155:8453`
+ * *is* the CAIP-2 chain part its assets are spelled with, so the asset id has to
+ * start with the corridor id verbatim. Enforcing only the rail there would admit
+ * `eip155:1/erc20:…` on a Base corridor — the same near-miss `sameAsset` refuses
+ * one layer up, an address being a chain's fact and not a token's.
+ */
+export type AssetOn<C extends CorridorId> = C extends Corridor
+    ? AssetId<RailOf<C>>
+    : `${C}/${AssetPart}`;
+
+/**
  * An asset on a corridor, with the instrument that settles it.
  *
  * `corridor` is a cross-check rather than an input: every id already carries
  * its rail. Typing `asset` against that rail is what makes the cross-check free
  * — there is no value in which the two disagree.
+ *
+ * Distributed over `C` rather than written as one object whose two fields both
+ * mention it: `{ corridor: C; asset: AssetOn<C> }` at `C = CorridorId` widens
+ * *each field independently* to its own union, and correlates nothing —
+ * `{ corridor: "arkade", asset: "bitcoin:…" }` satisfies it. The conditional
+ * makes `Endpoint` the union of the four single-corridor shapes instead, so the
+ * pairing survives the default type argument, which is the case every unwitnessed
+ * `Endpoint` in a signature lands on.
  */
-export interface Endpoint<C extends CorridorId = CorridorId> {
-    corridor: C;
-    asset: AssetId<RailOf<C>>;
-    /** Resolved by the client, never constructed by callers. */
-    instrument: Instrument;
-}
+export type Endpoint<C extends CorridorId = CorridorId> = C extends CorridorId
+    ? {
+          corridor: C;
+          asset: AssetOn<C>;
+          /** Resolved by the client, never constructed by callers. */
+          instrument: Instrument;
+      }
+    : never;
 
 /** Shorthand for one corridor's endpoint, as the route union spells it. */
 export type Ep<C extends CorridorId> = Endpoint<C>;
@@ -77,13 +102,20 @@ export type Route =
  * `corridor` stays because it is the typed axis `route.ts` already ties to the
  * asset's rail — a cross-check, where `chain?: string | number` was a copy.
  */
-export type Artifact =
-    | { kind: "invoice"; bolt11: string }
-    | {
+export type Artifact = { kind: "invoice"; bolt11: string } | DepositArtifact;
+
+/**
+ * The deposit half of {@link Artifact}, distributed over the corridor for the
+ * reason {@link Endpoint} is: `corridor` is only a cross-check if a value cannot
+ * spell it against an asset from another corridor.
+ */
+export type DepositArtifact<C extends CorridorId = CorridorId> = C extends CorridorId
+    ? {
           kind: "deposit";
-          corridor: CorridorId;
+          corridor: C;
           address: string;
-          asset: AssetId;
+          asset: AssetOn<C>;
           amount: bigint;
           expiresAt?: number;
-      };
+      }
+    : never;
