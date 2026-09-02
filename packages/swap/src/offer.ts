@@ -35,6 +35,7 @@ import {
     toXOnlySignerHex,
     type IWallet,
     type NetworkName,
+    type RelativeTimelock,
 } from "@arkade-os/sdk";
 
 import wantAssetProgram from "./swap-want-asset.program.json";
@@ -76,6 +77,14 @@ export interface Offer {
     makerPublicKey: Uint8Array;
     /** Covenant co-signer (emulator) x-only key (32 bytes). */
     emulatorPubkey: Uint8Array;
+    /** Partial-fill numerator. Reserved wire space in V1: carried through the
+     * codec so an offer that sets it decodes, never interpreted here. */
+    ratioNum?: bigint;
+    /** Partial-fill denominator. Set with {@link Offer.ratioNum} or not at all. */
+    ratioDen?: bigint;
+    /** The maker's unilateral exit path. Present adds a third closure to the
+     * taproot tree, so it changes `swapPkScript` — see {@link offerVtxoScript}. */
+    exitDelay?: RelativeTimelock;
 }
 
 /** The program + argument/key binding of an offer's contract. Single source for
@@ -89,6 +98,36 @@ type SwapProgramBinding = {
     args: ConstructorParameters<typeof arkade.ArkadeProgramScript>[1];
     keys: ConstructorParameters<typeof arkade.ArkadeProgramScript>[2];
 };
+
+/**
+ * Append the maker's unilateral exit closure to a program.
+ *
+ * A CSV closure of the maker alone: the signer key is deliberately absent, so
+ * once the VTXO is unrolled onchain and the delay elapses the maker spends it
+ * without anyone's cooperation. `cancel` stays the cooperative route.
+ *
+ * Order is load-bearing. The tree is assembled from the leaf list by btcd's
+ * algorithm, so `exit` must remain the third path, after `fulfill` and
+ * `cancel` — moving it changes the swap address.
+ */
+function withExitClosure(
+    program: ReturnType<typeof arkade.parseArtifact>,
+    exit: RelativeTimelock | undefined,
+): ReturnType<typeof arkade.parseArtifact> {
+    if (!exit) return program;
+    return {
+        ...program,
+        // typed params are authoritative: an undeclared `$exitDelay` fails
+        // validateProgram instead of compiling against an unbound value
+        params: [...(program.params ?? []), { name: "exitDelay", type: "int" }],
+        functions: {
+            ...program.functions,
+            exit: {
+                tapscript: { signers: ["$user"], csv: { type: exit.type, value: "$exitDelay" } },
+            },
+        },
+    };
+}
 
 /** Exported for the asset-id vector tests: the covenant is committed behind an
  * emulator-derived key, so the pushed asset bytes never appear in a leaf script
@@ -104,7 +143,10 @@ export function swapProgramBinding(
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
     }
     return {
-        program: offer.wantAsset ? swapPrograms.wantAsset : swapPrograms.wantBtc,
+        program: withExitClosure(
+            offer.wantAsset ? swapPrograms.wantAsset : swapPrograms.wantBtc,
+            offer.exitDelay,
+        ),
         args: {
             makerWP: offer.makerPkScript.subarray(2),
             wantAmount: offer.wantAmount,
@@ -115,6 +157,7 @@ export function swapProgramBinding(
                 wantAssetTxid: offer.wantAsset.txid.slice().reverse(),
                 wantAssetGroupIndex: offer.wantAsset.groupIndex,
             }),
+            ...(offer.exitDelay && { exitDelay: offer.exitDelay.value }),
         },
         keys: {
             serverKey: serverPubkey,
@@ -155,8 +198,14 @@ const FIELDS = {
     makerPkScript: { tag: 0x05, width: 34 },
     makerPublicKey: { tag: 0x07, width: 32 },
     emulatorPubkey: { tag: 0x08, width: 32 },
+    ratioNum: { tag: 0x09, width: 8 },
+    ratioDen: { tag: 0x0a, width: 8 },
     offerAsset: { tag: 0x0b, width: undefined },
+    exitTimelock: { tag: 0x0c, width: 9 },
 } as const;
+
+/** The `ExitTimelock` locktime types, indexed by their wire byte. */
+const EXIT_TYPES = ["blocks", "seconds"] as const;
 
 type FieldName = keyof typeof FIELDS;
 
@@ -164,6 +213,28 @@ const NAMES = Object.fromEntries(Object.entries(FIELDS).map(([k, f]) => [f.tag, 
     number,
     FieldName
 >;
+
+/** A u64 BE wire field. Rejects an out-of-range value rather than letting
+ * setBigUint64 wrap it silently — reachable at ~18.45 tokens of an 18-decimal
+ * asset — while the covenant binds the full amount. */
+function u64(name: string, value: bigint): Uint8Array {
+    if (value < BigInt(0) || value >> BigInt(64) > BigInt(0)) {
+        throw new Error(`${name} does not fit the offer wire format (u64)`);
+    }
+    const out = new Uint8Array(FIELDS.wantAmount.width);
+    new DataView(out.buffer).setBigUint64(0, value, false);
+    return out;
+}
+
+/** Read a u64 BE wire field. The width was checked when the record was parsed. */
+const readU64 = (value: Uint8Array): bigint =>
+    new DataView(value.buffer, value.byteOffset).getBigUint64(0, false);
+
+/** `0` is how the reference spells an unset ratio — it emits the record only
+ * above zero — so a zero is omitted rather than written as a record no reader
+ * honours. */
+const setRatio = (value: bigint | undefined): bigint | undefined =>
+    value !== undefined && value > BigInt(0) ? value : undefined;
 
 function tlv(type: number, value: Uint8Array): Uint8Array {
     // the length prefix is u16 — reject rather than emit a truncated length
@@ -190,26 +261,41 @@ export function encodeOffer(offer: Offer): Uint8Array {
             throw new Error(`${name} must be ${FIELDS[name].width} bytes`);
         }
     }
-    // the wire field is a fixed u64; setBigUint64 would wrap silently past 2^64
-    // (reachable at ~18.45 tokens of an 18-decimal asset) while the covenant
-    // binds the full amount — reject instead of advertising a wrapped amount
-    if (offer.wantAmount < BigInt(0) || offer.wantAmount >> BigInt(64) > BigInt(0)) {
-        throw new Error("wantAmount does not fit the offer wire format (u64)");
+    const ratioNum = setRatio(offer.ratioNum);
+    const ratioDen = setRatio(offer.ratioDen);
+    // a numerator without its denominator prices nothing
+    if ((ratioNum === undefined) !== (ratioDen === undefined)) {
+        throw new Error("offer must carry both ratioNum and ratioDen, or neither");
     }
-    const amount = new Uint8Array(FIELDS.wantAmount.width);
-    new DataView(amount.buffer).setBigUint64(0, offer.wantAmount, false);
+    // the records are emitted in the order § 2.1 of the swap protocol requires;
+    // parsers key off the type, but a canonical order keeps offer hashes stable
     const recs = [
         tlv(FIELDS.swapPkScript.tag, offer.swapPkScript),
-        tlv(FIELDS.wantAmount.tag, amount),
+        tlv(FIELDS.wantAmount.tag, u64("wantAmount", offer.wantAmount)),
     ];
     if (offer.wantAsset) recs.push(tlv(FIELDS.wantAsset.tag, offer.wantAsset.serialize()));
+    if (ratioNum !== undefined) recs.push(tlv(FIELDS.ratioNum.tag, u64("ratioNum", ratioNum)));
+    if (ratioDen !== undefined) recs.push(tlv(FIELDS.ratioDen.tag, u64("ratioDen", ratioDen)));
     if (offer.offerAsset) recs.push(tlv(FIELDS.offerAsset.tag, offer.offerAsset.serialize()));
     recs.push(
         tlv(FIELDS.makerPkScript.tag, offer.makerPkScript),
         tlv(FIELDS.makerPublicKey.tag, offer.makerPublicKey),
         tlv(FIELDS.emulatorPubkey.tag, offer.emulatorPubkey),
     );
+    if (offer.exitDelay) recs.push(tlv(FIELDS.exitTimelock.tag, encodeExitDelay(offer.exitDelay)));
     return concatBytes(...recs);
+}
+
+/** `[type: 1B][value: u64 BE]`, per § 2.2. */
+function encodeExitDelay(exit: RelativeTimelock): Uint8Array {
+    const kind = EXIT_TYPES.indexOf(exit.type);
+    if (kind < 0) throw new Error(`unknown exitDelay locktime type: ${exit.type}`);
+    // the reference narrows the wire u64 to a uint32 locktime, so a wider value
+    // derives one swap address here and another there — refuse to emit it
+    if (exit.value >> BigInt(32) > BigInt(0)) {
+        throw new Error("exitDelay does not fit the locktime field (u32)");
+    }
+    return concatBytes(Uint8Array.of(kind), u64("exitDelay", exit.value));
 }
 
 /** Parse TLV bytes into an offer. Throws on malformed or unknown records. */
@@ -242,6 +328,14 @@ export function decodeOffer(data: Uint8Array): Offer {
     for (const name of ["wantAsset", "offerAsset"] as const) {
         if (fields[name]?.length === 0) throw new Error(`missing/invalid ${name}`);
     }
+    // width is checked wherever a fixed-width record appears, not only where
+    // `need` reads it back: the optional ones have no other gate
+    for (const [name, value] of Object.entries(fields) as [FieldName, Uint8Array][]) {
+        const width: number | undefined = FIELDS[name].width;
+        if (width !== undefined && value.length !== width) {
+            throw new Error(`missing/invalid ${name}`);
+        }
+    }
     const need = (name: FieldName) => {
         const v = fields[name];
         const len: number | undefined = FIELDS[name].width;
@@ -253,15 +347,43 @@ export function decodeOffer(data: Uint8Array): Offer {
     if (Boolean(fields.wantAsset) === Boolean(fields.offerAsset)) {
         throw new Error("offer must carry exactly one of wantAsset or offerAsset");
     }
+    // a present record valued `0` contradicts itself: that is the reference's
+    // own spelling of "unset", and it emits the record only above zero
+    const readRatio = (name: "ratioNum" | "ratioDen"): bigint | undefined => {
+        const raw = fields[name];
+        if (!raw) return undefined;
+        const value = readU64(raw);
+        if (value === BigInt(0)) throw new Error(`missing/invalid ${name}`);
+        return value;
+    };
+    const ratioNum = readRatio("ratioNum");
+    const ratioDen = readRatio("ratioDen");
+    // enforced on the way in as well as out: another implementation may emit
+    // half a ratio, and half a ratio prices nothing
+    if ((ratioNum === undefined) !== (ratioDen === undefined)) {
+        throw new Error("offer must carry both ratioNum and ratioDen, or neither");
+    }
     return {
         swapPkScript: need("swapPkScript"),
-        wantAmount: new DataView(amount.buffer, amount.byteOffset).getBigUint64(0, false),
+        wantAmount: readU64(amount),
         ...(fields.wantAsset && { wantAsset: asset.AssetId.fromBytes(fields.wantAsset) }),
         ...(fields.offerAsset && { offerAsset: asset.AssetId.fromBytes(fields.offerAsset) }),
         makerPkScript: need("makerPkScript"),
         makerPublicKey: need("makerPublicKey"),
         emulatorPubkey: need("emulatorPubkey"),
+        ...(ratioNum !== undefined && { ratioNum }),
+        ...(ratioDen !== undefined && { ratioDen }),
+        ...(fields.exitTimelock && { exitDelay: decodeExitDelay(fields.exitTimelock) }),
     };
+}
+
+/** The inverse of {@link encodeExitDelay}; the 9-byte width is already checked. */
+function decodeExitDelay(value: Uint8Array): RelativeTimelock {
+    const type = EXIT_TYPES[value[0]];
+    // an unassigned locktime type is a record we cannot interpret, and reading
+    // it as blocks would derive a swap address its emitter never meant
+    if (!type) throw new Error(`unknown exitDelay locktime type: 0x${value[0].toString(16)}`);
+    return { type, value: readU64(value.subarray(1)) };
 }
 
 // ── Contract registration ────────────────────────────────────────────────────
@@ -366,6 +488,10 @@ export async function createOffer(
         /** Co-signer key override (33-byte compressed hex); see
          * {@link resolveEmulatorPubkey}. */
         emulatorPubkey?: string;
+        /** Add the maker's unilateral exit closure, spendable by this wallet
+         * alone once the VTXO is unrolled and the delay elapses. Opt-in: it is
+         * part of the covenant, so it changes the swap address. */
+        exitDelay?: RelativeTimelock;
     },
 ): Promise<{
     /** The encoded offer, hex. **Persist this** — it is the only input
@@ -407,6 +533,7 @@ export async function createOffer(
         makerPkScript: ArkAddress.decode(makerAddress).pkScript,
         makerPublicKey,
         emulatorPubkey: emuKey,
+        exitDelay: params.exitDelay,
     };
     const script = offerVtxoScript(binding, serverPubKey);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
