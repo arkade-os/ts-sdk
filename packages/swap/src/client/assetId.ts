@@ -304,8 +304,24 @@ export const assetPartOf = (id: AssetId): AssetPart => {
  * This is the whole reason the rail is the namespace: BTC's sameness is the
  * shared `slip44:0`, a comparison, where a single cross-rail id would have made
  * it a string both sides had to already agree on.
+ *
+ * The rail is the *only* half sameness drops. The CAIP-2 reference still has to
+ * agree: `arkade:regtest/slip44:0` and `bitcoin:bitcoin/slip44:0` share a coin
+ * type and nothing else — regtest BTC settles nothing on mainnet — and an ERC-20
+ * contract address repeats verbatim across every chain that copied the token, so
+ * the asset part alone would make USDT-on-mainnet the same asset as its address
+ * twin on another chain. Comparing references across rail families is safe on a
+ * plain string: a bitcoin network name is never a decimal chain id.
  */
-export const sameAsset = (a: AssetId, b: AssetId): boolean => assetPartOf(a) === assetPartOf(b);
+export const sameAsset = (a: AssetId, b: AssetId): boolean => {
+    const left = parseAssetId(a);
+    const right = parseAssetId(b);
+    return (
+        left.reference === right.reference &&
+        left.assetNamespace === right.assetNamespace &&
+        left.assetReference === right.assetReference
+    );
+};
 
 /** BTC on a bitcoin-family rail: the same coin, named once per rail. */
 export const btcOn = <R extends BitcoinRail>(rail: R, network: NetworkRef): AssetId<R> =>

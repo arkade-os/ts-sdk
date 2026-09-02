@@ -105,7 +105,7 @@ describe("asset id grammar", () => {
 });
 
 describe("sameness across rails", () => {
-    it("is the shared asset part, not a shared id", () => {
+    it("crosses rails without a shared id", () => {
         // The whole reason the rail is the namespace: one BTC per rail, and
         // sameness stays a comparison instead of a string both sides must agree on.
         expect(sameAsset(btcOn("arkade", "bitcoin"), btcOn("bitcoin", "bitcoin"))).toBe(true);
@@ -124,6 +124,25 @@ describe("sameness across rails", () => {
         const asset0 = arkadeAsset("bitcoin", issued(`${"ff".repeat(32)}0000`));
         expect(sameAsset(asset0, btcOn("arkade", "bitcoin"))).toBe(false);
         expect(issuanceOf(btcOn("arkade", "bitcoin"))).toBe(undefined);
+    });
+
+    it("drops the rail and nothing else: the network still has to agree", () => {
+        // Regtest BTC settles nothing on mainnet, on either rail. The asset
+        // part is identical in all four of these; the reference is what parts
+        // them.
+        expect(sameAsset(btcOn("arkade", "regtest"), btcOn("bitcoin", "bitcoin"))).toBe(false);
+        expect(sameAsset(btcOn("arkade", "regtest"), btcOn("arkade", "bitcoin"))).toBe(false);
+        expect(sameAsset(btcOn("bolt11", "signet"), btcOn("bolt11", "testnet"))).toBe(false);
+        expect(sameAsset(btcOn("arkade", "regtest"), btcOn("bitcoin", "regtest"))).toBe(true);
+    });
+
+    it("does not confuse a token with its address twin on another chain", () => {
+        // A contract address is unique to a chain, not across chains: the same
+        // address is deployed on many EVM chains, and comparing the asset part
+        // alone would make every one of them the same asset.
+        const usdt = "erc20:0xdac17f958d2ee523a2206206994597c13d831ec7";
+        expect(sameAsset(`eip155:1/${usdt}`, `eip155:10/${usdt}`)).toBe(false);
+        expect(sameAsset(`eip155:1/${usdt}`, `eip155:1/${usdt}`)).toBe(true);
     });
 });
 
