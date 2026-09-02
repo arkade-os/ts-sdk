@@ -7,8 +7,10 @@
  * this from `src/index.ts` today would publish a surface the milestones after
  * this one are still deciding.
  */
+export * from "./amount";
 export * from "./assetId";
 export * from "./corridor";
 export * from "./errors";
 export * from "./primitives";
+export * from "./rfqAmount";
 export * from "./route";
