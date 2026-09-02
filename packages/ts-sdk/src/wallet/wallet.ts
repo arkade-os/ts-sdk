@@ -5346,9 +5346,11 @@ export class Wallet
             try {
                 // These checkpoints already carry the server's signature; the
                 // arkadeCash key adds its own share in place.
-                const checkpointTxs = pendingTx.signedCheckpointTxs.map((checkpoint) =>
-                    Transaction.fromPSBT(base64.decode(checkpoint)),
-                );
+                const checkpointTxs = pendingTx.signedCheckpointTxs.map((checkpoint) => {
+                    const tx = Transaction.fromPSBT(base64.decode(checkpoint));
+                    assertAllowedSighashTypes(tx);
+                    return tx;
+                });
                 assertCheckpointsMatchInputs(
                     checkpointTxs,
                     inputs.map((input) => ({

@@ -15,12 +15,12 @@ import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { ConditionWitness, setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
 import { assertAllowedSighashTypes, formatSighash, Transaction } from "./transaction";
-
-export { assertAllowedSighashTypes };
 import { ArkAddress } from "../script/address";
 import { Extension } from "../extension";
 import { ServerResponseMismatchError } from "../providers/errors";
 import { toXOnly } from "./keys";
+
+export { assertAllowedSighashTypes };
 
 export type ArkTxInput = {
     // the script used to spend the virtual output
