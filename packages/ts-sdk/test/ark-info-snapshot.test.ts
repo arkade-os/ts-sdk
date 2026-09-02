@@ -12,7 +12,7 @@ import {
     type IndexerProvider,
     type OnchainProvider,
 } from "../src";
-import type { ArkInfo } from "../src/providers/ark";
+import type { ArkadeInfo } from "../src/providers/ark";
 import { FetchError } from "../src/utils/fetch";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
 import { SingleKey } from "../src/identity/singleKey";
@@ -32,7 +32,7 @@ import {
 const serverKeyHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const privKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
 
-function makeArkInfo(overrides: Partial<ArkInfo> = {}): ArkInfo {
+function makeArkInfo(overrides: Partial<ArkadeInfo> = {}): ArkadeInfo {
     return {
         boardingExitDelay: 144n,
         checkpointTapscript:
@@ -217,7 +217,7 @@ describe("loadArkInfoSnapshot / saveArkInfoSnapshot", () => {
 });
 
 describe("resolveArkInfo", () => {
-    const live = (info: ArkInfo) => ({ getInfo: async () => info });
+    const live = (info: ArkadeInfo) => ({ getInfo: async () => info });
     const failing = (err: unknown) => ({
         getInfo: async () => {
             throw err;

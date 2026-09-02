@@ -40,46 +40,6 @@
                 "default": "./dist/adapters/expo.cjs"
             }
         },
-        "./adapters/localStorage": {
-            "import": {
-                "types": "./dist/adapters/localStorage.d.ts",
-                "default": "./dist/adapters/localStorage.js"
-            },
-            "require": {
-                "types": "./dist/adapters/localStorage.d.cts",
-                "default": "./dist/adapters/localStorage.cjs"
-            }
-        },
-        "./adapters/fileSystem": {
-            "import": {
-                "types": "./dist/adapters/fileSystem.d.ts",
-                "default": "./dist/adapters/fileSystem.js"
-            },
-            "require": {
-                "types": "./dist/adapters/fileSystem.d.cts",
-                "default": "./dist/adapters/fileSystem.cjs"
-            }
-        },
-        "./adapters/indexedDB": {
-            "import": {
-                "types": "./dist/adapters/indexedDB.d.ts",
-                "default": "./dist/adapters/indexedDB.js"
-            },
-            "require": {
-                "types": "./dist/adapters/indexedDB.d.cts",
-                "default": "./dist/adapters/indexedDB.cjs"
-            }
-        },
-        "./adapters/asyncStorage": {
-            "import": {
-                "types": "./dist/adapters/asyncStorage.d.ts",
-                "default": "./dist/adapters/asyncStorage.js"
-            },
-            "require": {
-                "types": "./dist/adapters/asyncStorage.d.cts",
-                "default": "./dist/adapters/asyncStorage.cjs"
-            }
-        },
         "./repositories/sqlite": {
             "import": {
                 "types": "./dist/repositories/sqlite/index.d.ts",

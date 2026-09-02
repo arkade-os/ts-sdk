@@ -211,7 +211,6 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
     );
 
     // Per-VTXO sweep resolution.
-    const walletPubKeyHex = hex.encode((await wallet.identity.xOnlyPublicKey())!);
     const infos: ExitVtxoInfo[] = [];
     const sweeps: ExitSweepPlan[] = [];
     for (const vtxo of vtxos) {
@@ -221,7 +220,6 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
                 vtxo,
                 scriptHex: hex.encode(VtxoScript.decode(vtxo.tapTree).pkScript),
                 contractRepository: wallet.contractRepository,
-                walletPubKeyHex,
                 currentTime: Date.now(),
             });
             const sweepFee = sweepFeeFor(

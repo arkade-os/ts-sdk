@@ -6,7 +6,7 @@ import {
     isCooperativelyMigratable,
     toXOnlySignerHex,
 } from "../src/wallet/signerRotation";
-import type { ArkInfo, DeprecatedSigner } from "../src/providers/ark";
+import type { ArkadeInfo, DeprecatedSigner } from "../src/providers/ark";
 import { RestArkProvider } from "../src/providers/ark";
 
 const ACTIVE = "aa".repeat(32);
@@ -14,18 +14,18 @@ const DEPRECATED_A = "bb".repeat(32);
 const DEPRECATED_B = "cc".repeat(32);
 const UNKNOWN = "dd".repeat(32);
 
-// Minimal ArkInfo carrying only the fields the classifier reads. A missing
+// Minimal ArkadeInfo carrying only the fields the classifier reads. A missing
 // cutoffDate at a call site means "no cutoff" — normalized to the `0n` sentinel
 // arkd advertises (non-nullable field), which classifies DUE_NOW.
 function makeInfo(
     signerPubkey: string,
     deprecatedSigners: { pubkey: string; cutoffDate?: bigint }[] = [],
-): ArkInfo {
+): ArkadeInfo {
     const normalized: DeprecatedSigner[] = deprecatedSigners.map((s) => ({
         pubkey: s.pubkey,
         cutoffDate: s.cutoffDate ?? 0n,
     }));
-    return { signerPubkey, deprecatedSigners: normalized } as unknown as ArkInfo;
+    return { signerPubkey, deprecatedSigners: normalized } as unknown as ArkadeInfo;
 }
 
 const NOW = 1_700_000_000; // fixed reference Unix time (seconds)

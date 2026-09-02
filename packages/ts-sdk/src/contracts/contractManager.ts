@@ -219,14 +219,11 @@ export type RefreshVtxosOptions = {
  * A single `Discoverable` handler's discovery failure, captured during a
  * {@link IContractManager.scanContracts} run instead of aborting the loop.
  *
- * TODO(next major): rename `index` → `fromIndex` so the pair reads
- * `fromIndex`/`toIndex`. It stays `index` here only to keep this exported
- * shape backward-compatible.
  */
 export interface HandlerError {
     handler: string;
     /** The failed index, or the first index of a failed `discoverRange` window. */
-    index: number;
+    fromIndex: number;
     /** Inclusive end of a failed `discoverRange` window; absent for a single index. */
     toIndex?: number;
     error: unknown;
@@ -247,8 +244,6 @@ interface HandlerWindowProbe {
  * Outcome of a {@link IContractManager.scanContracts} run.
  */
 export interface ScanResult {
-    /** @deprecated Alias of {@link ScanResult.highestConfirmedUsedIndex}. */
-    lastIndexUsed: number;
     /**
      * Highest HD index at which any handler confirmed a contract (`-1` if none),
      * including hits past {@link ScanResult.truncatedAt}. Safe to record
@@ -395,7 +390,7 @@ export interface IContractManager extends Disposable {
      */
     assertSpendableNow?(
         vtxos: readonly AssertSpendableInput[],
-        walletPubKey?: () => Promise<string | undefined>,
+        walletDescriptor?: () => Promise<string | undefined>,
     ): Promise<void>;
 
     /**
@@ -411,7 +406,7 @@ export interface IContractManager extends Disposable {
      */
     unspendableNowReasons?(
         vtxos: readonly AssertSpendableInput[],
-        walletPubKey?: () => Promise<string | undefined>,
+        walletDescriptor?: () => Promise<string | undefined>,
     ): Promise<Map<string, string>>;
 
     /**
@@ -570,8 +565,8 @@ export type GetSpendablePathsOptions = {
     vtxo: VirtualCoin;
     /** Whether collaborative spending is available (default: true) */
     collaborative?: boolean;
-    /** Wallet's public key (hex) to determine role */
-    walletPubKey?: string;
+    /** Wallet descriptor to determine role */
+    walletDescriptor?: string;
 };
 
 /**
@@ -582,8 +577,8 @@ export type GetAllSpendingPathsOptions = {
     contractScript: string;
     /** Whether collaborative spending is available (default: true) */
     collaborative?: boolean;
-    /** Wallet's public key (hex) to determine role */
-    walletPubKey?: string;
+    /** Wallet descriptor to determine role */
+    walletDescriptor?: string;
 };
 
 /**
@@ -679,11 +674,6 @@ export interface LookAheadConfig {
      * `rotateServerSigner` fans the new signer set.
      */
     candidateDeps(): CandidateDeps;
-    /**
-     * Fired after a speculative entry at `index` is promoted to a real row.
-     * @deprecated Use `advanceWatermark`; kept for external LookAheadConfig users.
-     */
-    onPromoted?(index: number): Promise<void>;
 }
 
 /**
@@ -1158,8 +1148,7 @@ export class ContractManager implements IContractManager {
     private async advanceLookAheadWatermark(index: number): Promise<void> {
         const lookAhead = this.config.lookAhead;
         if (!lookAhead) return;
-        const advance = lookAhead.advanceWatermark ?? lookAhead.onPromoted;
-        await advance?.(index);
+        await lookAhead.advanceWatermark?.(index);
     }
 
     /**
@@ -1450,7 +1439,7 @@ export class ContractManager implements IContractManager {
                             );
                         } catch (error) {
                             probe.indeterminate.add(index);
-                            probe.errors.set(index, { handler: h.type, index, error });
+                            probe.errors.set(index, { handler: h.type, fromIndex: index, error });
                         }
                     }),
                 );
@@ -1467,7 +1456,7 @@ export class ContractManager implements IContractManager {
                 for (const e of entries) probe.indeterminate.add(e.index);
                 probe.errors.set(from, {
                     handler: h.type,
-                    index: from,
+                    fromIndex: from,
                     ...(to > from && { toIndex: to }),
                     error,
                 });
@@ -1574,7 +1563,6 @@ export class ContractManager implements IContractManager {
         }
 
         return {
-            lastIndexUsed: highestConfirmedUsedIndex,
             highestConfirmedUsedIndex,
             ...(truncatedAt !== undefined && { truncatedAt }),
             handlerErrors,
@@ -1687,9 +1675,9 @@ export class ContractManager implements IContractManager {
     /** @inheritdoc */
     async assertSpendableNow(
         vtxos: readonly AssertSpendableInput[],
-        walletPubKey?: () => Promise<string | undefined>,
+        walletDescriptor?: () => Promise<string | undefined>,
     ): Promise<void> {
-        const refused = await this.unspendableNowReasons(vtxos, walletPubKey);
+        const refused = await this.unspendableNowReasons(vtxos, walletDescriptor);
         if (refused.size === 0) return;
         // The single-input case rethrows verbatim: the handler's message names
         // the maturity and what to wait for, and that text is the deliverable.
@@ -1703,7 +1691,7 @@ export class ContractManager implements IContractManager {
     /** @inheritdoc */
     async unspendableNowReasons(
         vtxos: readonly AssertSpendableInput[],
-        walletPubKey?: () => Promise<string | undefined>,
+        walletDescriptor?: () => Promise<string | undefined>,
     ): Promise<Map<string, string>> {
         const refused = new Map<string, string>();
         if (vtxos.length === 0) return refused;
@@ -1714,9 +1702,9 @@ export class ContractManager implements IContractManager {
 
         // Only the inputs whose handler actually asks. Contracts with no
         // opinion — every type but VHTLC today — must cost nothing: no
-        // chain-tip read, and no identity access either. `walletPubKey` is a
+        // chain-tip read, and no identity access either. `walletDescriptor` is a
         // thunk for exactly that reason; resolving it eagerly made an ordinary
-        // settle depend on a key it never consults.
+        // settle depend on a descriptor it never consults.
         const asking = vtxos.filter((vtxo) => {
             const contract = byScript.get(vtxo.script);
             return (
@@ -1727,7 +1715,7 @@ export class ContractManager implements IContractManager {
         if (asking.length === 0) return refused;
 
         const tip = await this.currentChainTip();
-        const walletKey = await walletPubKey?.();
+        const walletDescriptorValue = await walletDescriptor?.();
         // Per INPUT, not per contract. A relative (CSV) timelock is measured
         // from the moment THIS coin confirmed, so two vtxos on one contract can
         // disagree about whether the same leaf is open. A batch-wide context
@@ -1743,7 +1731,7 @@ export class ContractManager implements IContractManager {
                 currentTime: Date.now(),
                 blockHeight: tip?.height,
                 chainTime: tip?.time,
-                walletPubKey: walletKey,
+                walletDescriptor: walletDescriptorValue,
                 // `isVirtualCoin` alone is too weak here: it only asks for a
                 // string `script`, which every AssertSpendableInput has, so a
                 // bare outpoint would be published as a coin with no `status`.
@@ -1942,7 +1930,7 @@ export class ContractManager implements IContractManager {
      * @param options - Options for getting spendable paths
      */
     async getSpendablePaths(options: GetSpendablePathsOptions): Promise<PathSelection[]> {
-        const { contractScript, collaborative = true, walletPubKey, vtxo } = options;
+        const { contractScript, collaborative = true, walletDescriptor, vtxo } = options;
 
         const [contract] = await this.getContracts({ script: contractScript });
         if (!contract) return [];
@@ -1957,7 +1945,7 @@ export class ContractManager implements IContractManager {
             currentTime: Date.now(),
             blockHeight: tip?.height,
             chainTime: tip?.time,
-            walletPubKey,
+            walletDescriptor,
             vtxo,
         };
 
@@ -1975,7 +1963,7 @@ export class ContractManager implements IContractManager {
      * @param options - Options for getting spending paths
      */
     async getAllSpendingPaths(options: GetAllSpendingPathsOptions): Promise<PathSelection[]> {
-        const { contractScript, collaborative = true, walletPubKey } = options;
+        const { contractScript, collaborative = true, walletDescriptor } = options;
 
         const [contract] = await this.getContracts({ script: contractScript });
         if (!contract) return [];
@@ -1987,7 +1975,7 @@ export class ContractManager implements IContractManager {
         const context: PathContext = {
             collaborative,
             currentTime: Date.now(),
-            walletPubKey,
+            walletDescriptor,
         };
 
         return handler.getAllSpendingPaths(script, contract, context);

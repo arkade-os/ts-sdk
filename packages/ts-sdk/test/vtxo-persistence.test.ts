@@ -1,13 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";
-import { WalletRepositoryImpl } from "../src/repositories/migrations/walletRepositoryImpl";
 import { IndexedDBWalletRepository } from "../src/repositories/indexedDB/walletRepository";
 import { deserializeVtxo, serializeVtxo } from "../src/repositories/serialization";
 import { getVtxosForContract } from "../src/contracts/vtxoOwnership";
-import { canRecoverOnchain, toVirtualStatus } from "../src/wallet/vtxo";
 import type { ExtendedVirtualCoin, VirtualCoin } from "../src/wallet";
-import type { StorageAdapter } from "../src/storage";
 import type { WalletRepository } from "../src/repositories/walletRepository";
 import type { TapLeafScript } from "../src/script/base";
 
@@ -21,14 +18,6 @@ const tapLeaf = (): TapLeafScript => [
 ];
 
 function makeVtxo(over: Partial<VirtualCoin> = {}): ExtendedVirtualCoin {
-    const facts = {
-        isSpent: false,
-        isSwept: true,
-        isPreconfirmed: false,
-        commitmentTxIds: ["22".repeat(32)],
-        expiresAt: EXPIRES_AT,
-        ...over,
-    };
     return {
         txid: "11".repeat(32),
         vout: 0,
@@ -37,9 +26,12 @@ function makeVtxo(over: Partial<VirtualCoin> = {}): ExtendedVirtualCoin {
         createdAt: new Date("2026-05-01T00:00:00.000Z"),
         isUnrolled: false,
         script: SCRIPT,
+        isSpent: false,
+        isSwept: true,
+        isPreconfirmed: false,
+        commitmentTxIds: ["22".repeat(32)],
+        expiresAt: EXPIRES_AT,
         spentBy: "",
-        ...facts,
-        virtualStatus: toVirtualStatus(facts),
         forfeitTapLeafScript: tapLeaf(),
         intentTapLeafScript: tapLeaf(),
         tapTree: new Uint8Array([0x00]),
@@ -47,20 +39,6 @@ function makeVtxo(over: Partial<VirtualCoin> = {}): ExtendedVirtualCoin {
     } as ExtendedVirtualCoin;
 }
 
-/** In-memory StorageAdapter backing the legacy WalletRepositoryImpl path. */
-function memoryAdapter(): StorageAdapter {
-    const store = new Map<string, string>();
-    return {
-        getItem: async (k) => store.get(k) ?? null,
-        setItem: async (k, v) => void store.set(k, v),
-        removeItem: async (k) => void store.delete(k),
-    } as StorageAdapter;
-}
-
-/**
- * Every canonical fact the capabilities read, plus a real Date for `expiresAt` — the type
- * annotation alone won't catch the ISO string a JSON round-trip leaves behind.
- */
 function expectCanonical(v: ExtendedVirtualCoin) {
     expect(v.isSwept).toBe(true);
     expect(v.isSpent).toBe(false);
@@ -69,32 +47,22 @@ function expectCanonical(v: ExtendedVirtualCoin) {
     expect(v.commitmentTxIds).toEqual(["22".repeat(32)]);
     expect(v.expiresAt).toBeInstanceOf(Date);
     expect(v.expiresAt!.getTime()).toBe(EXPIRES_AT.getTime());
-    // The compatibility projection rides along too.
-    expect(v.virtualStatus.state).toBe("swept");
 }
 
-describe("canonical facts survive save → load", () => {
-    it("shared serialization (localStorage / StorageAdapter transport)", () => {
-        // JSON.stringify/parse is what the adapter path really does to the row.
+describe("canonical facts survive save to load", () => {
+    it("shared serialization rehydrates Dates and binary tapscript data", () => {
         const wire = JSON.parse(JSON.stringify(serializeVtxo(makeVtxo())));
         expectCanonical(deserializeVtxo(wire));
     });
 
-    it("InMemory — stores by reference and never serializes", async () => {
+    it("InMemory stores by reference and preserves canonical fields", async () => {
         await using repo = new InMemoryWalletRepository();
         await repo.saveVtxos(ADDRESS, [makeVtxo()]);
         const [loaded] = await repo.getVtxos(ADDRESS);
         expectCanonical(loaded);
     });
 
-    it("legacy StorageAdapter path", async () => {
-        const repo = new WalletRepositoryImpl(memoryAdapter());
-        await repo.saveVtxos(ADDRESS, [makeVtxo()]);
-        const [loaded] = await repo.getVtxos(ADDRESS);
-        expectCanonical(loaded);
-    });
-
-    it("IndexedDB — structured clone, so canonical fields and Dates ride along", async () => {
+    it("IndexedDB structured clone preserves canonical fields and Dates", async () => {
         await using repo = new IndexedDBWalletRepository(`vtxo-canon-${Date.now()}`);
         await repo.saveVtxos(ADDRESS, [makeVtxo()]);
         const [loaded] = await repo.getVtxos(ADDRESS);
@@ -102,60 +70,64 @@ describe("canonical facts survive save → load", () => {
     });
 });
 
-describe("legacy rows that only have virtualStatus", () => {
-    it("load correctly through the shared deserializer", () => {
-        const legacy = serializeVtxo(makeVtxo()) as Record<string, unknown>;
-        // Strip every canonical fact, leaving the pre-canonical row shape on disk.
-        for (const k of ["isSwept", "isPreconfirmed", "commitmentTxIds", "expiresAt"]) {
-            delete legacy[k];
+describe("deserialization normalization", () => {
+    it("fills omitted optional facts with canonical defaults", () => {
+        const row = serializeVtxo(makeVtxo({ isSwept: false, expiresAt: undefined })) as Record<
+            string,
+            unknown
+        >;
+        for (const key of ["isSwept", "isPreconfirmed", "isSpent", "commitmentTxIds", "spentBy"]) {
+            delete row[key];
         }
-        const loaded = deserializeVtxo(JSON.parse(JSON.stringify(legacy)) as never);
-        expectCanonical(loaded);
-    });
 
-    it("load correctly from a legacy StorageAdapter row", async () => {
-        const adapter = memoryAdapter();
-        const legacy = serializeVtxo(makeVtxo()) as Record<string, unknown>;
-        for (const k of ["isSwept", "isPreconfirmed", "commitmentTxIds", "expiresAt"]) {
-            delete legacy[k];
-        }
-        await adapter.setItem(`vtxos:${ADDRESS}`, JSON.stringify([legacy]));
+        const loaded = deserializeVtxo(JSON.parse(JSON.stringify(row)) as never);
 
-        const repo = new WalletRepositoryImpl(adapter);
-        const [loaded] = await repo.getVtxos(ADDRESS);
-        expectCanonical(loaded);
+        expect(loaded.isSwept).toBe(false);
+        expect(loaded.isPreconfirmed).toBe(false);
+        expect(loaded.isSpent).toBe(false);
+        expect(loaded.commitmentTxIds).toEqual([]);
+        expect(loaded.spentBy).toBe("");
+        expect(loaded.expiresAt).toBeUndefined();
     });
 });
 
 describe("normalization is implementation-agnostic", () => {
-    it("a consumer-implemented repository returning legacy-only VTXOs still yields correct behavior", async () => {
-        // Reaches none of our serialization code — the boundary is what makes the contract true.
-        const legacy = makeVtxo() as Record<string, unknown>;
-        for (const k of ["isSwept", "isPreconfirmed", "commitmentTxIds", "expiresAt"]) {
-            delete legacy[k];
-        }
+    it("normalizes a consumer repository that returns minimal optional facts", async () => {
+        const partial = makeVtxo({
+            isSwept: undefined,
+            isPreconfirmed: undefined,
+            isSpent: undefined,
+            commitmentTxIds: undefined,
+            spentBy: undefined,
+            expiresAt: undefined,
+        }) as ExtendedVirtualCoin;
         const repo = {
-            getVtxos: async () => [legacy as unknown as ExtendedVirtualCoin],
+            getVtxos: async () => [partial],
         } as unknown as WalletRepository;
 
         const [loaded] = await getVtxosForContract(repo, { script: SCRIPT, address: ADDRESS });
 
-        expect(loaded.isSwept).toBe(true);
-        expect(loaded.commitmentTxIds).toEqual(["22".repeat(32)]);
-        expect(canRecoverOnchain(loaded, { timestamp: new Date("2026-06-01") })).toBe(true);
+        expect(loaded.isSwept).toBe(false);
+        expect(loaded.isSpent).toBe(false);
+        expect(loaded.commitmentTxIds).toEqual([]);
+        expect(loaded.spentBy).toBe("");
     });
 
-    it("normalizes even when the repository never deserializes (InMemory, by reference)", async () => {
-        const legacy = makeVtxo() as Record<string, unknown>;
-        for (const k of ["isSwept", "isPreconfirmed", "commitmentTxIds", "expiresAt"]) {
-            delete legacy[k];
-        }
+    it("normalizes even when the repository never deserializes", async () => {
+        const partial = makeVtxo({
+            isSwept: undefined,
+            isPreconfirmed: undefined,
+            isSpent: undefined,
+            commitmentTxIds: undefined,
+            spentBy: undefined,
+            expiresAt: undefined,
+        });
         await using repo = new InMemoryWalletRepository();
-        await repo.saveVtxos(ADDRESS, [legacy as unknown as ExtendedVirtualCoin]);
+        await repo.saveVtxos(ADDRESS, [partial]);
 
         const [loaded] = await getVtxosForContract(repo, { script: SCRIPT, address: ADDRESS });
 
-        expect(loaded.isSwept).toBe(true);
-        expect(loaded.expiresAt).toBeInstanceOf(Date);
+        expect(loaded.isSwept).toBe(false);
+        expect(loaded.expiresAt).toBeUndefined();
     });
 });

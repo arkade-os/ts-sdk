@@ -1,7 +1,48 @@
 import { describe, it, expect, vi } from "vitest";
 import transactionHistory from "./fixtures/transaction_history.json";
 import { VirtualCoin, TxType, ArkTransaction } from "../src/wallet";
-import { buildTransactionHistory } from "../src/utils/transactionHistory";
+import { buildTransactionHistory as buildTransactionHistoryImpl } from "../src/utils/transactionHistory";
+
+type LegacyVirtualStatus = {
+    state?: "settled" | "swept" | "spent" | "preconfirmed";
+    batchExpiry?: number;
+    commitmentTxIds?: string[];
+};
+
+function canonicalizeVtxoForTest(vtxo: VirtualCoin): VirtualCoin {
+    const legacy = (vtxo as VirtualCoin & { virtualStatus?: LegacyVirtualStatus }).virtualStatus;
+    const canonical = { ...vtxo } as VirtualCoin & { virtualStatus?: LegacyVirtualStatus };
+    delete canonical.virtualStatus;
+    if (!legacy) return canonical;
+
+    if (canonical.isSpent === undefined) canonical.isSpent = legacy.state === "spent";
+    if (canonical.isSwept === undefined) canonical.isSwept = legacy.state === "swept";
+    if (canonical.isPreconfirmed === undefined) {
+        canonical.isPreconfirmed = legacy.state === "preconfirmed";
+    }
+    if (canonical.spentBy === undefined) canonical.spentBy = "";
+    if (canonical.commitmentTxIds === undefined) {
+        canonical.commitmentTxIds = legacy.commitmentTxIds ?? [];
+    }
+    if (canonical.expiresAt === undefined && legacy.batchExpiry !== undefined) {
+        canonical.expiresAt = new Date(legacy.batchExpiry);
+    }
+    return canonical;
+}
+
+function buildTransactionHistory(
+    vtxos: VirtualCoin[],
+    allBoardingTxs: ArkTransaction[],
+    commitmentsToIgnore: Set<string>,
+    resolveTxCreatedAt?: (txids: string[]) => Promise<Map<string, number>>,
+) {
+    return buildTransactionHistoryImpl(
+        vtxos.map(canonicalizeVtxoForTest),
+        allBoardingTxs,
+        commitmentsToIgnore,
+        resolveTxCreatedAt,
+    );
+}
 
 describe("buildTransactionHistory", () => {
     // TODO FIX THIS!

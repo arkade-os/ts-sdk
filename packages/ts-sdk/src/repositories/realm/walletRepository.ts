@@ -76,7 +76,6 @@ export class RealmWalletRepository implements WalletRepository {
                         intentCb: s.intentTapLeafScript.cb,
                         intentS: s.intentTapLeafScript.s,
                         statusJson: JSON.stringify(s.status),
-                        virtualStatusJson: JSON.stringify(s.virtualStatus),
                         createdAt:
                             typeof s.createdAt === "string"
                                 ? s.createdAt
@@ -85,6 +84,17 @@ export class RealmWalletRepository implements WalletRepository {
                                   : new Date(s.createdAt).toISOString(),
                         isUnrolled: s.isUnrolled ?? false,
                         isSpent: s.isSpent === undefined ? null : s.isSpent,
+                        isSwept: s.isSwept === undefined ? null : s.isSwept,
+                        isPreconfirmed: s.isPreconfirmed === undefined ? null : s.isPreconfirmed,
+                        commitmentTxIdsJson: s.commitmentTxIds
+                            ? JSON.stringify(s.commitmentTxIds)
+                            : null,
+                        expiresAt:
+                            s.expiresAt === undefined
+                                ? null
+                                : s.expiresAt instanceof Date
+                                  ? s.expiresAt.toISOString()
+                                  : new Date(s.expiresAt).toISOString(),
                         spentBy: s.spentBy ?? null,
                         settledBy: s.settledBy ?? null,
                         arkTxId: s.arkTxId ?? null,
@@ -280,10 +290,13 @@ function vtxoObjectToDomain(obj: any): ExtendedVirtualCoin {
             s: obj.intentS,
         } as SerializedTapLeaf,
         status: JSON.parse(obj.statusJson),
-        virtualStatus: JSON.parse(obj.virtualStatusJson),
         createdAt: new Date(obj.createdAt),
         isUnrolled: obj.isUnrolled,
         isSpent: obj.isSpent === null ? undefined : obj.isSpent,
+        isSwept: obj.isSwept == null ? undefined : obj.isSwept,
+        isPreconfirmed: obj.isPreconfirmed == null ? undefined : obj.isPreconfirmed,
+        commitmentTxIds: obj.commitmentTxIdsJson ? JSON.parse(obj.commitmentTxIdsJson) : undefined,
+        expiresAt: obj.expiresAt ? new Date(obj.expiresAt) : undefined,
         spentBy: obj.spentBy ?? undefined,
         settledBy: obj.settledBy ?? undefined,
         arkTxId: obj.arkTxId ?? undefined,

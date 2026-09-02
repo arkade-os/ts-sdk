@@ -114,12 +114,17 @@ const depositVtxo = (offer: Offer, txid: string, extra: Record<string, unknown> 
     script: scriptOf(offer),
     value: 10_000,
     createdAt: new Date(1_700_000_000_000),
-    virtualStatus: { state: "settled" },
+    isSpent: false,
+    isSwept: false,
+    isPreconfirmed: false,
+    spentBy: "",
+    arkTxId: "",
+    commitmentTxIds: [],
     ...extra,
 });
 
 const spentVtxo = (offer: Offer, txid: string, spentBy: string, extra = {}) =>
-    depositVtxo(offer, txid, { virtualStatus: { state: "spent" }, arkTxId: spentBy, ...extra });
+    depositVtxo(offer, txid, { isSpent: true, spentBy, ...extra });
 
 const scan = (
     indexer: RestoreIndexer,
@@ -378,11 +383,11 @@ describe("restoreAssetSwaps", () => {
     it("keeps an unspent deposit pending and a swept one recoverable", async () => {
         const offer = makeOffer("want-asset", BigInt(992));
         const funding = fundingPsbt(offer);
-        for (const [state, status] of [
-            ["settled", "pending"],
-            ["swept", "recoverable"],
+        for (const [extra, status] of [
+            [{}, "pending"],
+            [{ isSwept: true }, "recoverable"],
         ]) {
-            const vtxo = depositVtxo(offer, funding.txid, { virtualStatus: { state } });
+            const vtxo = depositVtxo(offer, funding.txid, extra);
             const indexer = makeIndexer([funding], [vtxo]);
             const {
                 restored: [restored],

@@ -25,7 +25,7 @@ describe("operator offline (e2e)", () => {
                 pollingInterval: 2000,
             });
 
-        // 1) Create online against the live operator: persists the ArkInfo
+        // 1) Create online against the live operator: persists the ArkadeInfo
         //    snapshot and (after funding) the VTXO set into the shared repos.
         const online = await Wallet.create({
             identity,

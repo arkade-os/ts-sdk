@@ -42,11 +42,8 @@ import {
     hasTerminalSpend,
     isVirtualCoin,
     normalizeVtxo,
-    parseLegacyExpiry,
     resolveTimeHeight,
-    toBatchExpiry,
     toOffchainInputFeeParams,
-    toVirtualStatus,
     type NormalizedExtendedVirtualCoin,
     type NormalizedVirtualCoin,
     type TimeHeight,
@@ -72,7 +69,6 @@ import {
     Outpoint,
     ReadonlyWalletConfig,
     Recipient,
-    SendBitcoinParams,
     SendParams,
     SettleParams,
     TxType,
@@ -96,7 +92,6 @@ import {
     assertCheckpointsMatchInputs,
     buildOffchainTx,
     hasBoardingTxExpired,
-    isValidArkAddress,
     signAndSubmitOffchainTx,
     submitOffchainTx,
     type OffchainTxSigner,
@@ -104,7 +99,6 @@ import {
 import { toXOnly } from "../utils/keys";
 import {
     byValueDescending,
-    DEFAULT_RENEWAL_CONFIG,
     DEFAULT_SETTLEMENT_CONFIG,
     MAX_INPUTS_PER_INTENT,
     MAX_VTXOS_PER_SETTLEMENT,
@@ -194,9 +188,6 @@ import {
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./signingErrors";
-
-export const getArkadeServerUrl = ({ arkServerUrl }: { arkServerUrl?: string }) =>
-    arkServerUrl || DEFAULT_ARKADE_SERVER_URL;
 
 // Build per-input jobs for an intent proof. Index 0 of the proof is a
 // synthetic BIP-322 toSpend reference whose witnessUtxo.script mirrors
@@ -1045,35 +1036,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Extracts common logic used by both ReadonlyWallet.create() and Wallet.create().
      */
     protected static async setupWalletConfig(config: ReadonlyWalletConfig, pubKey: Uint8Array) {
-        const arkadeServerUrl = getArkadeServerUrl(config);
-
-        // Use provided arkProvider instance or create a new one from arkServerUrl
-        const arkProvider = config.arkProvider || new RestArkProvider(arkadeServerUrl);
-
-        // Resolve the indexer provider. If a full instance is supplied, use it
-        // directly. Otherwise pick a URL with priority:
-        //   1. explicit config.indexerUrl
-        //   2. URL derived from the injected arkProvider (so a custom
-        //      arkProvider does not silently pair with the public default)
-        //   3. arkadeServerUrl (only when no custom arkProvider was injected)
-        let indexerProvider = config.indexerProvider;
-        if (!indexerProvider) {
-            let indexerUrl = config.indexerUrl;
-            if (!indexerUrl) {
-                if (config.arkProvider) {
-                    const derived = extractArkProviderUrl(config.arkProvider);
-                    if (!derived) {
-                        throw new Error(
-                            "indexerUrl is required when arkProvider is provided without a discoverable serverUrl",
-                        );
-                    }
-                    indexerUrl = derived;
-                } else {
-                    indexerUrl = arkadeServerUrl;
-                }
-            }
-            indexerProvider = new RestIndexerProvider(indexerUrl);
-        }
+        const arkProvider = config.arkProvider || new RestArkProvider();
+        const indexerProvider =
+            config.indexerProvider ||
+            new RestIndexerProvider(
+                extractArkProviderUrl(arkProvider) ?? DEFAULT_ARKADE_SERVER_URL,
+            );
 
         // Instantiate the repositories BEFORE the first required server-info
         // fetch so boot can read a cached snapshot and fall back to it when the
@@ -1121,11 +1089,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
 
-        // Extract esploraUrl from provider if not explicitly provided
-        const esploraUrl = config.esploraUrl || ESPLORA_URL[info.network as NetworkName];
-
-        // Use provided onchainProvider instance or create a new one
-        const onchainProvider = config.onchainProvider || new EsploraProvider(esploraUrl);
+        const onchainProvider =
+            config.onchainProvider || new EsploraProvider(ESPLORA_URL[info.network as NetworkName]);
 
         // validate unilateral exit timelock passed in config if any
         if (config.exitTimelock) {
@@ -1171,12 +1136,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                   .getDelegateInfo()
                   .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
                   .catch(() => undefined)
-            : config.delegatorProvider
-              ? await config.delegatorProvider
-                    .getDelegateInfo()
-                    .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
-                    .catch(() => undefined)
-              : undefined;
+            : undefined;
 
         const offchainOptions = {
             pubKey,
@@ -1215,9 +1175,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             info,
             serverInfoSource,
             serverInfoLastOnlineAt,
-            delegateProvider: config.delegateProvider || config.delegatorProvider,
-            /** @deprecated alias for `delegateProvider` */
-            delegatorProvider: config.delegateProvider || config.delegatorProvider,
+            delegateProvider: config.delegateProvider,
             walletContractTimelocks,
         };
     }
@@ -1248,7 +1206,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.dustAmount,
             setup.walletRepository,
             setup.contractRepository,
-            setup.delegateProvider || setup.delegatorProvider,
+            setup.delegateProvider,
             config.watcherConfig,
             setup.walletContractTimelocks,
         );
@@ -1354,7 +1312,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * The raw reporting/recovery read: escrowed, locked and awaiting-recovery
      * funds are all present. Coin selection must use
      * {@link getSpendableVtxos} instead — feeding this straight into
-     * `settle({ inputs })` or `sendBitcoin({ selectedVtxos })` bypasses the
+     * `settle({ inputs })` or `send({ selectedVtxos })` bypasses the
      * generic-spending gate.
      *
      * @param filter - Optional flags controlling whether recoverable or unrolled VTXOs are included
@@ -1700,7 +1658,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
                             },
                             isUnrolled: true,
                             ...boardingFacts,
-                            virtualStatus: toVirtualStatus(boardingFacts),
                             spentBy: "",
                             createdAt: tx.status.confirmed
                                 ? new Date(tx.status.block_time * 1000)
@@ -3274,7 +3231,7 @@ export class Wallet
 
     /**
      * Async mutex that serializes all operations submitting VTXOs to the Arkade
-     * server (`settle`, `send`, `sendBitcoin`). This prevents VtxoManager's
+     * server (`settle`, `send`). This prevents VtxoManager's
      * background renewal from racing with user-initiated transactions for the
      * same VTXO inputs.
      */
@@ -3464,12 +3421,6 @@ export class Wallet
         }
     }
 
-    /** @deprecated Use settlementConfig instead */
-    public readonly renewalConfig: Required<Omit<WalletConfig["renewalConfig"], "enabled">> & {
-        enabled: boolean;
-        thresholdMs: number;
-    };
-
     public readonly settlementConfig: SettlementConfig | false;
 
     /**
@@ -3511,8 +3462,6 @@ export class Wallet
         dustAmount: bigint,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
-        /** @deprecated Use settlementConfig */
-        renewalConfig?: WalletConfig["renewalConfig"],
         delegateProvider?: DelegateProvider,
         watcherConfig?: WalletConfig["watcherConfig"],
         settlementConfig?: WalletConfig["settlementConfig"],
@@ -3543,29 +3492,8 @@ export class Wallet
         );
         this.identity = identity;
 
-        // Backwards-compatible: keep renewalConfig populated for any code reading it
-        this.renewalConfig = {
-            enabled: renewalConfig?.enabled ?? false,
-            ...DEFAULT_RENEWAL_CONFIG,
-            ...renewalConfig,
-        };
-
-        // Normalize: prefer settlementConfig, fall back to renewalConfig, default to enabled
-        if (settlementConfig !== undefined) {
-            this.settlementConfig = settlementConfig;
-        } else if (renewalConfig && this.renewalConfig.enabled) {
-            this.settlementConfig = {
-                vtxoThreshold: renewalConfig.thresholdMs
-                    ? renewalConfig.thresholdMs / 1000
-                    : undefined,
-            };
-        } else if (renewalConfig) {
-            // renewalConfig provided but not enabled → disabled
-            this.settlementConfig = false;
-        } else {
-            // No config at all → enabled by default
-            this.settlementConfig = { ...DEFAULT_SETTLEMENT_CONFIG };
-        }
+        this.settlementConfig =
+            settlementConfig !== undefined ? settlementConfig : { ...DEFAULT_SETTLEMENT_CONFIG };
         this._delegateManager = delegateProvider
             ? new DelegateManagerImpl(delegateProvider, arkProvider, identity)
             : undefined;
@@ -3596,7 +3524,7 @@ export class Wallet
         }
 
         this._vtxoManagerInitializing = Promise.resolve(
-            new VtxoManager(this, this.renewalConfig, this.settlementConfig),
+            new VtxoManager(this, this.settlementConfig),
         );
 
         try {
@@ -3755,8 +3683,7 @@ export class Wallet
             setup.dustAmount,
             setup.walletRepository,
             setup.contractRepository,
-            config.renewalConfig,
-            config.delegateProvider || config.delegatorProvider,
+            config.delegateProvider,
             config.watcherConfig,
             config.settlementConfig,
             setup.walletContractTimelocks,
@@ -3884,106 +3811,6 @@ export class Wallet
     /** Returns the delegate manager when delegation support is configured. */
     async getDelegateManager(): Promise<IDelegateManager | undefined> {
         return this._delegateManager;
-    }
-
-    /** @deprecated alias for @see Wallet.getDelegateManager */
-    async getDelegatorManager(): Promise<IDelegateManager | undefined> {
-        return this.getDelegateManager();
-    }
-
-    /**
-     * Send bitcoin to an Arkade address.
-     *
-     * @deprecated Use `send`.
-     * @param params - Send parameters
-     */
-    async sendBitcoin(params: SendBitcoinParams): Promise<string> {
-        if (params.amount <= 0) {
-            throw new Error("Amount must be positive");
-        }
-
-        if (!isValidArkAddress(params.address)) {
-            throw new Error("Invalid Arkade address " + params.address);
-        }
-
-        if (params.selectedVtxos && params.selectedVtxos.length > 0) {
-            void this.logUngatedInputs("sendBitcoin({ selectedVtxos })", params.selectedVtxos);
-            return this._withTxLock(async () => {
-                // Snapshot the active receive tapscript synchronously
-                // before any `await` so the change output's pkScript and
-                // the change-VTXO metadata written later by
-                // `updateDbAfterOffchainTx` are bound to the same
-                // tapscript even if `WalletReceiveRotator.rotate` fires
-                // during the offchain round-trip. Pin the server key in the
-                // same step so the address derives from one rotation epoch
-                // (`rotateServerSigner` swaps `_arkServerPublicKey` too).
-                // Snapshot the checkpoint unroll script too: rotation also
-                // swaps `_serverUnrollScript`, which `buildAndSubmitOffchainTx`
-                // would otherwise read live when building checkpoint outputs.
-                const offchainTapscript = this.offchainTapscript;
-                const serverPubKey = this.arkServerPublicKey;
-                const serverUnrollScript = this.serverUnrollScript;
-                const arkAddress = offchainTapscript.address(this.network.hrp, serverPubKey);
-
-                const selectedVtxoSum = params
-                    .selectedVtxos!.map((v) => v.value)
-                    .reduce((a, b) => a + b, 0);
-                if (selectedVtxoSum < params.amount) {
-                    throw new Error("Selected VTXOs do not cover specified amount");
-                }
-                const changeAmount = selectedVtxoSum - params.amount;
-
-                const selected = {
-                    inputs: params.selectedVtxos!,
-                    changeAmount: BigInt(changeAmount),
-                };
-
-                const outputAddress = ArkAddress.decode(params.address);
-                assertRecipientArkadeAddress(
-                    params.address,
-                    outputAddress,
-                    this.recipientAddressContext(serverPubKey),
-                );
-                const outputScript =
-                    BigInt(params.amount) < this.dustAmount
-                        ? outputAddress.subdustPkScript
-                        : outputAddress.pkScript;
-
-                const outputs: TransactionOutput[] = [
-                    {
-                        script: outputScript,
-                        amount: BigInt(params.amount),
-                    },
-                ];
-
-                // add change output if needed
-                if (selected.changeAmount > 0n) {
-                    const changeOutputScript =
-                        selected.changeAmount < this.dustAmount
-                            ? arkAddress.subdustPkScript
-                            : arkAddress.pkScript;
-
-                    outputs.push({
-                        script: changeOutputScript,
-                        amount: BigInt(selected.changeAmount),
-                    });
-                }
-
-                return this._submitOffchainSpend(selected.inputs, outputs, {
-                    sentAmount: params.amount,
-                    changeAmount: selected.changeAmount,
-                    changeVout: selected.changeAmount > 0n ? outputs.length - 1 : 0,
-                    offchainTapscript,
-                    serverPubKey,
-                    serverUnrollScript,
-                });
-            });
-        }
-
-        return this.send({
-            address: params.address,
-            amount: params.amount,
-        });
     }
 
     /**
@@ -5588,7 +5415,6 @@ export class Wallet
         }
         if (selectedVtxos) {
             // Naming inputs skips the generic-spending gate, as it does on
-            // `sendBitcoin`; report the crossing under this API's own label.
             void this.logUngatedInputs("send({ selectedVtxos })", selectedVtxos);
         }
 
@@ -5867,7 +5693,7 @@ export class Wallet
 
     /**
      * Shared tail of every Ark-transaction spend path (`send`, selected-VTXO
-     * `sendBitcoin`, and {@link sendSelectedVtxosToSelf}): hide the inputs from
+     * `send`, and {@link sendSelectedVtxosToSelf}): hide the inputs from
      * concurrent `getVtxos()`, build+submit the offchain tx, persist the spent
      * inputs and any wallet-owned (change / self) output, then release the
      * pending-spend hold. Callers own coin selection, output construction, and
@@ -6184,7 +6010,6 @@ export class Wallet
                 const spentBy = checkpointIdByOutpoint.get(`${vtxo.txid}:${vtxo.vout}`);
                 spentVtxos.push({
                     ...spentFacts,
-                    virtualStatus: toVirtualStatus(spentFacts),
                     ...(spentBy ? { spentBy } : {}),
                     arkTxId: arkTxid,
                 });
@@ -6192,7 +6017,7 @@ export class Wallet
                 for (const id of vtxo.commitmentTxIds) {
                     commitmentTxIds.add(id);
                 }
-                const vtxoExpiry = toBatchExpiry(vtxo);
+                const vtxoExpiry = vtxo.expiresAt?.getTime();
                 if (vtxoExpiry) {
                     batchExpiry = Math.min(batchExpiry, vtxoExpiry);
                 }
@@ -6209,7 +6034,7 @@ export class Wallet
                     isSwept: false,
                     isPreconfirmed: true,
                     commitmentTxIds: Array.from(commitmentTxIds),
-                    ...parseLegacyExpiry(batchExpiry),
+                    expiresAt: new Date(batchExpiry),
                 };
                 changeVtxo = {
                     txid: arkTxid,
@@ -6221,7 +6046,6 @@ export class Wallet
                     tapTree: offchainTapscript.encode(),
                     value: Number(changeAmount),
                     ...changeFacts,
-                    virtualStatus: toVirtualStatus(changeFacts),
                     spentBy: "",
                     status: {
                         confirmed: false,
@@ -6334,7 +6158,6 @@ export class Wallet
                     const settledFacts = { ...vtxo, isSpent: true };
                     spentVtxos.push({
                         ...settledFacts,
-                        virtualStatus: toVirtualStatus(settledFacts),
                         settledBy: commitmentTxid,
                     });
                 } else {
@@ -6435,8 +6258,8 @@ export function selectVirtualCoins(
     // front rather than per comparison, which would be O(n log n) normalizations.
     const sortedCoins = coins.map(normalizeVtxo).sort((a, b) => {
         // First sort by expiry if available
-        const expiryA = toBatchExpiry(a) || Number.MAX_SAFE_INTEGER;
-        const expiryB = toBatchExpiry(b) || Number.MAX_SAFE_INTEGER;
+        const expiryA = a.expiresAt?.getTime() || Number.MAX_SAFE_INTEGER;
+        const expiryB = b.expiresAt?.getTime() || Number.MAX_SAFE_INTEGER;
         if (expiryA !== expiryB) {
             return expiryA - expiryB; // Earlier expiry first
         }

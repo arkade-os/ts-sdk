@@ -21,7 +21,7 @@ describe("RestDelegateProvider request headers (CORS)", () => {
                     json: async () => ({
                         pubkey: "02abc",
                         fee: "0",
-                        delegatorAddress: "tark1validaddress",
+                        delegateAddress: "tark1validaddress",
                     }),
                 };
             }),

@@ -8,13 +8,13 @@ import {
     type IndexerProvider,
     type OnchainProvider,
 } from "../src";
-import type { ArkInfo } from "../src/providers/ark";
+import type { ArkadeInfo } from "../src/providers/ark";
 import { ReadonlySingleKey, SingleKey } from "../src/identity/singleKey";
 
 const serverKeyHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const privKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
 
-const arkInfo = (): ArkInfo => ({
+const arkInfo = (): ArkadeInfo => ({
     boardingExitDelay: 144n,
     checkpointTapscript:
         "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",

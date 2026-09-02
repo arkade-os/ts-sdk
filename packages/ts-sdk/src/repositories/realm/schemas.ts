@@ -27,13 +27,16 @@ export const ArkVtxoSchema = {
         intentS: "string",
         extraWitnessJson: "string?",
         statusJson: "string",
-        virtualStatusJson: "string",
         spentBy: "string?",
         settledBy: "string?",
         arkTxId: "string?",
         createdAt: "string", // ISO 8601
         isUnrolled: "bool",
         isSpent: "bool?",
+        isSwept: "bool?",
+        isPreconfirmed: "bool?",
+        commitmentTxIdsJson: "string?",
+        expiresAt: "string?",
         assetsJson: "string?",
         // scriptPubKey (hex) locking this VTXO, indexed so contract-scoped
         // queries can resolve ownership without touching address mapping.
@@ -209,6 +212,8 @@ export const ArkExperimentalRealmSchemas = [
  *   - v3: ArkContract.watch added (nullable). No data migration: a row
  *     without one reads as `watched`, which is the coverage every
  *     existing contract has today.
+ *   - v4: ArkVtxo.virtualStatusJson removed.
+ *   - v5: ArkVtxo stores canonical VTXO facts directly.
  *
  * The intent/virtualtx schemas ({@link ArkExperimentalRealmSchemas}) are NOT
  * counted here: they are experimental and inert, so they never move the
@@ -216,7 +221,7 @@ export const ArkExperimentalRealmSchemas = [
  * intent-schema migration steps (guarded per-schema) for consumers who opt in
  * and bump their own version.
  */
-export const ARK_REALM_SCHEMA_VERSION = 3;
+export const ARK_REALM_SCHEMA_VERSION = 5;
 
 /**
  * Run every Arkade schema migration applicable to the open Realm.

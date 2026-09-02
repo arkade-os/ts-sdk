@@ -40,7 +40,7 @@ import {
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
 import { Intent } from "../intent";
-import { isRecoverable, isSubdust, isVirtualCoin } from "../wallet";
+import { canRecoverOnchain, isSubdust, isVirtualCoin } from "../wallet";
 import { toXOnly } from "../utils/keys";
 import type { ExtendedVirtualCoin } from "../wallet";
 import type { TxTree } from "../tree/txTree";
@@ -249,7 +249,10 @@ export function createArkadeBatchHandler(
                 }
 
                 // Recoverable or subdust VTXOs don't require a forfeit tx
-                if (isRecoverable(input) || isSubdust(input, info.dust)) {
+                if (
+                    canRecoverOnchain(input, { timestamp: new Date() }) ||
+                    isSubdust(input, info.dust)
+                ) {
                     continue;
                 }
 

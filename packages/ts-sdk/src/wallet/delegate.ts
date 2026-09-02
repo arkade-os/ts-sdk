@@ -24,7 +24,6 @@ import {
 import {
     canRecoverOnchain,
     normalizeVtxo,
-    toBatchExpiry,
     toOffchainInputFeeParams,
     type NormalizedExtendedVirtualCoin,
 } from "./vtxo";
@@ -65,9 +64,6 @@ export interface IDelegateManager {
     /** Fetch delegate metadata such as pubkey, fee, and delegate address. */
     getDelegateInfo(): Promise<DelegateInfo>;
 }
-
-/** @deprecated alias for @see IDelegateManager */
-export type IDelegatorManager = IDelegateManager;
 
 export class DelegateManagerImpl implements IDelegateManager {
     /** Create a delegate manager from the configured provider, Arkade info source, and wallet identity. */
@@ -146,7 +142,7 @@ export class DelegateManagerImpl implements IDelegateManager {
                 continue;
             }
 
-            const expiry = toBatchExpiry(vtxo);
+            const expiry = vtxo.expiresAt?.getTime();
             if (!expiry) continue;
 
             const dayKey = getDayTimestamp(expiry);
@@ -214,10 +210,6 @@ export class DelegateManagerImpl implements IDelegateManager {
     }
 }
 
-/** @deprecated alias for @see DelegateManagerImpl */
-export const DelegatorManagerImpl = DelegateManagerImpl;
-export type DelegatorManagerImpl = DelegateManagerImpl;
-
 /**
  * Delegates virtual outputs to a delegation service, allowing them to manage their renewal
  * on behalf of the wallet owner.
@@ -246,8 +238,11 @@ async function delegate(
     if (!delegateAt) {
         const now = { timestamp: new Date() };
         const expiryTimestamp = vtxos
-            .filter((coin) => !canRecoverOnchain(coin, now) && toBatchExpiry(coin))
-            .reduce((min, coin) => Math.min(min, toBatchExpiry(coin)!), Number.MAX_SAFE_INTEGER);
+            .filter((coin) => !canRecoverOnchain(coin, now) && coin.expiresAt)
+            .reduce(
+                (min, coin) => Math.min(min, coin.expiresAt!.getTime()),
+                Number.MAX_SAFE_INTEGER,
+            );
         if (!expiryTimestamp || expiryTimestamp === Number.MAX_SAFE_INTEGER) {
             // if no expiry (recoverable virtual outputs), delegate 1 minute from now
             delegateAt = new Date(Date.now() + 1 * 60 * 1000);

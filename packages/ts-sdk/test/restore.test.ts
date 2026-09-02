@@ -636,7 +636,7 @@ describe("ContractManager.scanContracts", () => {
             // The swap hit at 4 reset `unused` (was 4 after 0..3 unused),
             // so the loop kept probing 5..9 instead of stopping at 4, and
             // lastIndexUsed is driven solely by the swap handler.
-            expect(res.lastIndexUsed).toBe(4);
+            expect(res.highestConfirmedUsedIndex).toBe(4);
             expect(res.handlerErrors).toEqual([]);
             // Strong regression: a buggy loop that STOPS after the first
             // hit would still satisfy lastIndexUsed===4. The handler MUST
@@ -670,10 +670,10 @@ describe("ContractManager.scanContracts", () => {
             // Resolved (did not abort), error collected with full context.
             expect(res.handlerErrors).toHaveLength(1);
             expect(res.handlerErrors[0].handler).toBe("boomfake");
-            expect(res.handlerErrors[0].index).toBe(0);
+            expect(res.handlerErrors[0].fromIndex).toBe(0);
             expect(res.handlerErrors[0].error).toBeInstanceOf(Error);
             expect((res.handlerErrors[0].error as Error).message).toBe("handler down");
-            expect(res.lastIndexUsed).toBe(-1);
+            expect(res.highestConfirmedUsedIndex).toBe(-1);
             // Loop ran exactly the single static pass.
             expect(calls).toEqual([0]);
         } finally {
@@ -700,7 +700,7 @@ describe("ContractManager.scanContracts", () => {
             expect(res.highestConfirmedUsedIndex).toBe(-1);
             expect(res.truncatedAt).toBe(0);
             expect(res.handlerErrors).toHaveLength(3);
-            expect(res.handlerErrors.map((e) => e.index)).toEqual([0, 1, 2]);
+            expect(res.handlerErrors.map((e) => e.fromIndex)).toEqual([0, 1, 2]);
             expect(res.handlerErrors.every((e) => e.handler === "boomfake")).toBe(true);
         } finally {
             mgr.dispose();
@@ -727,7 +727,7 @@ describe("ContractManager.scanContracts", () => {
             });
             expect(res.truncatedAt).toBe(3);
             expect(res.handlerErrors).toHaveLength(1);
-            expect(res.handlerErrors[0]).toMatchObject({ handler: "boomfake", index: 3 });
+            expect(res.handlerErrors[0]).toMatchObject({ handler: "boomfake", fromIndex: 3 });
             // Stopped verifying AT the hole — never probed past it.
             expect(calls).toEqual([0, 1, 2, 3]);
         } finally {
@@ -786,7 +786,7 @@ describe("ContractManager.scanContracts", () => {
             });
             expect(res.truncatedAt).toBe(1);
             expect(res.highestConfirmedUsedIndex).toBe(4);
-            expect(res.lastIndexUsed).toBe(4); // deprecated alias stays faithful
+            expect(res.highestConfirmedUsedIndex).toBe(4);
             // Persisted, not merely counted.
             const [c] = await mgr.getContracts({ script: "aabb" });
             expect(c?.type).toBe("swapfake");
@@ -886,7 +886,7 @@ describe("ContractManager.scanContracts", () => {
             expect(res.handlerErrors).toHaveLength(1);
             expect(res.handlerErrors[0]).toMatchObject({
                 handler: "rangefake",
-                index: 0,
+                fromIndex: 0,
                 toIndex: 9,
             });
             // Only the first window ran: the scan stopped at the truncation.
@@ -950,7 +950,7 @@ describe("ContractManager.scanContracts", () => {
             });
             expect(res.truncatedAt).toBe(0);
             expect(res.handlerErrors).toHaveLength(1);
-            expect(res.handlerErrors[0]).toMatchObject({ index: 0, toIndex: 4 });
+            expect(res.handlerErrors[0]).toMatchObject({ fromIndex: 0, toIndex: 4 });
             expect((res.handlerErrors[0].error as Error).message).toContain("index 3");
             // Hits the buggy handler DID return are affirmative data.
             expect(res.highestConfirmedUsedIndex).toBe(2);
@@ -1007,7 +1007,7 @@ describe("ContractManager.scanContracts", () => {
             });
             // Single pass at i=0 only; never reached the index-3 hit.
             expect(calls).toEqual([0]);
-            expect(res.lastIndexUsed).toBe(-1);
+            expect(res.highestConfirmedUsedIndex).toBe(-1);
             expect(res.handlerErrors).toEqual([]);
         } finally {
             mgr.dispose();
@@ -1204,7 +1204,7 @@ describe("ContractManager.scanContracts", () => {
                     materialize,
                     deps: makeDeps(),
                 });
-                expect(res.lastIndexUsed).toBe(4);
+                expect(res.highestConfirmedUsedIndex).toBe(4);
                 expect(res.handlerErrors).toEqual([]);
                 expect([...calls].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
             } finally {

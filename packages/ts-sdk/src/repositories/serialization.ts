@@ -25,28 +25,16 @@ export const serializeAsset = (a: Asset): SerializedAsset => ({
     amount: a.amount.toString(),
 });
 
-// Accept legacy persisted shapes where `amount` is a `number` — pre-bigint
-// data already on disk must keep round-tripping.
-export const deserializeAsset = (a: {
-    assetId: string;
-    amount: string | number | bigint;
-}): Asset => {
-    if (typeof a.amount === "number" && !Number.isSafeInteger(a.amount)) {
-        throw new Error(
-            `Unsafe legacy asset amount for ${a.assetId}; re-sync from the original source`,
-        );
-    }
-    return {
-        assetId: a.assetId,
-        amount: typeof a.amount === "bigint" ? a.amount : BigInt(a.amount),
-    };
-};
+export const deserializeAsset = (a: { assetId: string; amount: string | bigint }): Asset => ({
+    assetId: a.assetId,
+    amount: typeof a.amount === "bigint" ? a.amount : BigInt(a.amount),
+});
 
 export const serializeAssets = (assets: Asset[] | undefined): SerializedAsset[] | undefined =>
     assets?.map(serializeAsset);
 
 export const deserializeAssets = (
-    assets: Array<{ assetId: string; amount: string | number | bigint }> | undefined,
+    assets: Array<{ assetId: string; amount: string | bigint }> | undefined,
 ): Asset[] | undefined => assets?.map(deserializeAsset);
 
 export const serializeVtxo = (v: ExtendedVirtualCoin) => ({
@@ -77,11 +65,7 @@ export const deserializeTapLeaf = (t: SerializedTapLeaf): TapLeafScript => {
     return [cb, s];
 };
 
-// Normalized on the way out so rows written before canonical facts existed — and rows from the
-// column-mapped backends, whose explicit column lists don't carry them — come back with the facts
-// reconstructed from the legacy blob, and with `expiresAt` rehydrated to a real Date rather than
-// the ISO string JSON left behind. The correctness boundary is `getVtxosForContract`, which also
-// covers the backends that never reach this code.
+// Normalized on the way out so persisted Date fields are rehydrated and optional facts are present.
 export const deserializeVtxo = (o: SerializedVtxo): NormalizedExtendedVirtualCoin =>
     normalizeVtxo({
         ...o,
