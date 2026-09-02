@@ -36,6 +36,13 @@ export const ONCHAIN_ORDER_MARGIN_SECONDS = 2 * 60 * 60;
 export const ONCHAIN_CLAIM_MARGIN_SECONDS = 90 * 60;
 /** Bounds on the confirmation depth a quote may demand. */
 export const MAX_MIN_CONFIRMATIONS = 6;
+/**
+ * BIP65's boundary between the two things an absolute locktime can mean.
+ * Below it consensus reads the value as a block height; at or above it, as a
+ * unix timestamp. 500,000,000 itself is 1985-07-05 and is a timestamp, so the
+ * comparison against it is strict.
+ */
+export const LOCKTIME_THRESHOLD = 500_000_000;
 /** Conservative block interval for converting depths into wall-clock time. */
 export const ONCHAIN_SECONDS_PER_BLOCK = 600;
 /**
@@ -127,6 +134,18 @@ export function onchainHtlcScript(params: OnchainHtlcParams, network: OnchainNet
     if (!Number.isInteger(params.refundLocktime) || params.refundLocktime <= 0) {
         throw new Error(
             `refundLocktime must be a positive unix timestamp, got ${params.refundLocktime}`,
+        );
+    }
+    // The bare `number` cannot say which of the two things it means, so a
+    // height-shaped value builds a refund leaf that matures at block ~500
+    // million rather than failing — the caller that dropped a `/ 1000`, or a
+    // solver quoting a height, gets an HTLC whose refund path is dead for
+    // millennia. Nothing downstream can detect it: the address is well-formed
+    // and the funding confirms.
+    if (params.refundLocktime < LOCKTIME_THRESHOLD) {
+        throw new Error(
+            `refundLocktime ${params.refundLocktime} is below LOCKTIME_THRESHOLD ` +
+                `(${LOCKTIME_THRESHOLD}) and would be interpreted as a block height`,
         );
     }
     // Refused rather than defaulted: an unknown network reaches `btc.p2tr` as

@@ -105,6 +105,11 @@ function spentCashVtxo(cashPkScript: string): VirtualCoin {
     } as VirtualCoin;
 }
 
+/** The same VTXO after a unilateral exit: onchain now, but nothing spent it. */
+function exitedCashVtxo(cashPkScript: string): VirtualCoin {
+    return { ...spentCashVtxo(cashPkScript), isSpent: false, isUnrolled: true };
+}
+
 /** A distinct spent arkadeCash VTXO, one per index, all at the same pkScript. */
 function spentCashVtxoAt(cashPkScript: string, index: number): VirtualCoin {
     return {
@@ -308,6 +313,82 @@ describe("claimCash drain-pending accounting", () => {
         await wallet.claimCash(cash.toString());
 
         expect(finalizeTx).toHaveBeenCalledOnce();
+    });
+
+    // An exited output lives onchain: the thin sweep is an offchain spend, so
+    // it can only report the coin — and it must say so as `exited`, not as a
+    // spend that never happened.
+    it("reports an exited VTXO as `exited` and never sweeps it", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const submitTx = vi.fn();
+        const finalizeTx = vi.fn(async () => {});
+        const getPendingTxs = vi.fn(async () => []);
+
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [exitedCashVtxo(cashPkScript)]), {
+            getPendingTxs,
+            finalizeTx,
+            submitTx,
+        });
+
+        const result = await wallet.claimCash(cash.toString());
+
+        expect(submitTx).not.toHaveBeenCalled();
+        expect(finalizeTx).not.toHaveBeenCalled();
+        expect(result.swept).toBe(0);
+        expect(result.unclaimed.amount).toBe(CASH_VALUE);
+        expect(result.unclaimed.vtxos).toEqual([
+            { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "exited" },
+        ]);
+    });
+
+    // Exit is a location, spend is a fate: a coin carrying both is reported by
+    // its fate, so the terminal-spend branch deliberately runs first.
+    it("reports an exited VTXO that was also spent as already-spent", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const finalizeTx = vi.fn(async () => {});
+        const getPendingTxs = vi.fn(async () => []);
+
+        const exitedAndSpent = { ...spentCashVtxo(cashPkScript), isUnrolled: true };
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [exitedAndSpent]), {
+            getPendingTxs,
+            finalizeTx,
+        });
+
+        const result = await wallet.claimCash(cash.toString());
+
+        expect(result.swept).toBe(0);
+        expect(result.unclaimed.vtxos).toEqual([
+            { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "already-spent" },
+        ]);
+    });
+
+    // Excluded by state, not by value: the drain finalizes pending sweeps, and
+    // no sweep naming an output that already lives onchain can ever close.
+    it("keeps an exited VTXO out of the drain proof", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const finalizeTx = vi.fn(async () => {});
+        const getPendingTxs = vi.fn(async () => []);
+
+        const healthy = spentCashVtxoAt(cashPkScript, 1);
+        const exited = { ...spentCashVtxoAt(cashPkScript, 2), isSpent: false, isUnrolled: true };
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [healthy, exited]), {
+            getPendingTxs,
+            finalizeTx,
+        });
+
+        await wallet.claimCash(cash.toString());
+
+        expect(getPendingTxs).toHaveBeenCalledOnce();
+        const { proof } = (getPendingTxs.mock.calls as unknown as [{ proof: string }][])[0][0];
+        const tx = Transaction.fromPSBT(base64.decode(proof), { allowUnknown: true });
+        const inputs = Array.from({ length: tx.inputsLength }, (_, i) =>
+            hex.encode(tx.getInput(i).txid!),
+        );
+        expect(inputs).toContain(healthy.txid);
+        expect(inputs).not.toContain(exited.txid);
     });
 
     it("surfaces the recoverable token when the funding send fails", async () => {

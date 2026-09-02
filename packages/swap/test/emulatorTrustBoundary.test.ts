@@ -20,7 +20,9 @@ import { ArkAddress, SingleKey, asset, type IWallet } from "@arkade-os/sdk";
 // network seam these functions must never touch (RestEmulatorProvider) plus
 // the one they legitimately still call (RestArkProvider), stubbed.
 const state = vi.hoisted(() => ({
-    arkInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
+    // bigint, as ArkInfo declares it: createOffer builds the offer's exit
+    // closure from this value
+    arkInfo: { signerPubkey: "", unilateralExitDelay: BigInt(4096), network: "regtest" },
 }));
 
 vi.mock("@arkade-os/sdk", async (importOriginal) => {

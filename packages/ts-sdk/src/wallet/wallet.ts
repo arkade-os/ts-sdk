@@ -53,11 +53,14 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
+    GetNewAddressesOptions,
     IAssetManager,
     IReadonlyAssetManager,
     IReadonlyWallet,
     isSubdust,
     IWallet,
+    NewAddress,
+    NewAddressType,
     Outpoint,
     ReadonlyWalletConfig,
     Recipient,
@@ -89,6 +92,7 @@ import {
     submitOffchainTx,
     type OffchainTxSigner,
 } from "../utils/arkTransaction";
+import { toXOnly } from "../utils/keys";
 import {
     byValueDescending,
     DEFAULT_RENEWAL_CONFIG,
@@ -153,12 +157,18 @@ import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoOwnership";
 import {
     WalletReceiveRotator,
+    buildReceiveContract,
     signingDescriptorIndex,
     strictSigningDescriptorIndex,
 } from "./walletReceiveRotator";
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import { DescriptorProvider } from "../identity/descriptorProvider";
-import { HDWalletCapable, resolveDescriptorSigner } from "./hdWalletCapable";
+import {
+    AddressAllocationCapable,
+    HDWalletCapable,
+    WalletCannotAllocateAddressError,
+    resolveDescriptorSigner,
+} from "./hdWalletCapable";
 import { deriveDescriptorLeafPubKey, identityDescriptor } from "../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import { CandidateDeps, Contract, ContractWithVtxos, DiscoveryDeps } from "../contracts/types";
@@ -207,10 +217,9 @@ function asSendParams(args: [SendParams] | [Recipient, ...Recipient[]]): SendPar
     return { recipients: args as [Recipient, ...Recipient[]] };
 }
 
-// Built-in ArkProvider implementations (Rest/Expo) expose `serverUrl`,
-// but the interface itself does not declare a URL accessor — so this is a
-// structural read that returns undefined for custom implementations.
-function extractArkProviderUrl(provider: ArkProvider): string | undefined {
+// Built-in and decorated ArkProvider implementations may expose `serverUrl`.
+// The interface does not require it, so custom providers can return undefined.
+export function extractArkProviderUrl(provider: ArkProvider): string | undefined {
     const serverUrl = (provider as { serverUrl?: unknown }).serverUrl;
     return typeof serverUrl === "string" && serverUrl.length > 0 ? serverUrl : undefined;
 }
@@ -223,6 +232,28 @@ function extractArkProviderUrl(provider: ArkProvider): string | undefined {
 export const DEFAULT_LOOK_AHEAD_WINDOW = 20;
 
 /**
+ * A {@link NewAddress} plus the two fields only the wallet needs: the built
+ * tapscript (so the deprecated boarding allocator can swap its display
+ * script) and whether an index was actually burned (so it does not announce a
+ * rotation that did not happen on a wallet with no stream).
+ *
+ * Discriminated on `type` rather than carrying a widened tapscript, so the
+ * boarding branch narrows to {@link DefaultVtxo.Script} on its own. For that
+ * to pay off, {@link Wallet.mintAddress} has to build each flavour inside its
+ * own branch: a `type === "boarding" ? … : …` expression widens the result
+ * before the union ever sees it, and the narrowing is then bought back with
+ * an unchecked cast — precisely where the wallet's displayed boarding script
+ * gets written.
+ *
+ * @internal Never crosses the public API — {@link Wallet.getNewAddresses}
+ * projects it down to {@link NewAddress}.
+ */
+type AllocatedAddress = NewAddress & { allocated: boolean } & (
+        | { type: "boarding"; tapscript: DefaultVtxo.Script }
+        | { type: "default"; tapscript: DefaultVtxo.Script | DelegateVtxo.Script }
+    );
+
+/**
  * Maximum caller-requested HD descriptors materialized past the watermark by
  * getUsedSigningDescriptors(). Bounds plugin/restore probes without changing
  * the wallet's actual allocation watermark.
@@ -233,16 +264,6 @@ export const MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD = 1_000;
 // Kept so existing wallets can still discover and spend VTXOs sent to the
 // legacy address after arkd starts advertising a different delay.
 const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
-
-// Normalize a server signer pubkey to the x-only (32-byte) form script
-// encoding requires (CSVMultisigTapscript.encode throws on anything else).
-// A 33-byte compressed key drops its parity prefix; a 32-byte key is already
-// x-only. Mirrors the setup path's `hex.decode(info.signerPubkey).slice(1)`.
-function toXOnlyPubKey(pubkey: Uint8Array): Uint8Array {
-    if (pubkey.length === 33) return pubkey.slice(1);
-    if (pubkey.length === 32) return pubkey;
-    throw new Error(`invalid signer pubkey length: expected 32 or 33, got ${pubkey.length}`);
-}
 
 function delayToTimelock(delay: bigint): RelativeTimelock {
     return {
@@ -395,13 +416,19 @@ export function filterSnapshotVtxos(
             if (pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
                 return false;
             }
-            if (!hasTerminalSpend(vtxo)) {
-                if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
-                    return false;
-                }
-                return true;
+            // Location before spend: `withUnrolled` is authoritative for an
+            // exited coin whatever else is true of it, which is also what
+            // preserves today's behaviour for unrolled-and-spent coins.
+            if (vtxo.isUnrolled) {
+                return !!f.withUnrolled;
             }
-            return !!(f.withUnrolled && vtxo.isUnrolled);
+            if (hasTerminalSpend(vtxo)) {
+                return false;
+            }
+            if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
+                return false;
+            }
+            return true;
         });
 }
 
@@ -412,6 +439,15 @@ export function filterSnapshotVtxos(
  */
 const PENDING_RECOVERY_REASON =
     "is past its operator signer's rotation cutoff — the operator will not co-sign it until it recovers";
+
+/**
+ * The fourth reason generic selection drops a coin. Reported from the raw
+ * snapshot rather than through the other exclusions: {@link filterSnapshotVtxos}
+ * removes unrolled coins before they reach that call, so an exclusion there
+ * could never match.
+ */
+const UNROLLED_REASON =
+    "was unilaterally exited and lives onchain — `Unroll.completeUnroll` is the only spend that reaches it";
 
 /**
  * What signer classification needs of a snapshot: contract params and the coins
@@ -499,6 +535,8 @@ export interface BoardingUtxoGroup {
  * - `subdust` — below dust, so it sits at an OP_RETURN script with no spendable
  *   leaf. Unspendable as cash; `createCash` prevents minting these.
  * - `already-spent` — someone else claimed it first.
+ * - `exited` — unilaterally exited onchain, so the offchain sweep cannot reach it;
+ *   `Unroll.completeUnroll` is the remedy.
  * - `has-assets` — asset-bearing; the BTC-only sweep would burn the assets.
  * - `sweep-failed` — spendable, but its own sweep was rejected.
  */
@@ -506,6 +544,7 @@ export type ArkadeCashUnclaimedReason =
     | "swept"
     | "subdust"
     | "already-spent"
+    | "exited"
     | "has-assets"
     | "sweep-failed";
 
@@ -1036,17 +1075,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
         };
 
         // Generate tapscripts for offchain and boarding address
-        const serverPubKey = hex.decode(info.signerPubkey).slice(1);
+        const serverPubKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
 
         const delegatePubKey = config.delegateProvider
             ? await config.delegateProvider
                   .getDelegateInfo()
-                  .then((info) => hex.decode(info.pubkey).slice(1))
+                  .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
                   .catch(() => undefined)
             : config.delegatorProvider
               ? await config.delegatorProvider
                     .getDelegateInfo()
-                    .then((info) => hex.decode(info.pubkey).slice(1))
+                    .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
                     .catch(() => undefined)
               : undefined;
 
@@ -1170,7 +1209,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
             this.getBoardingUtxos(),
             this.contractSnapshot(),
         ]);
-        const vtxos = filterSnapshotVtxos(snapshot, undefined, this._pendingSpendOutpoints);
+        // Explicit, not the default filter: the default drops unrolled coins,
+        // and `computeOffchainBalance` cannot report a bucket it never sees.
+        const vtxos = filterSnapshotVtxos(
+            snapshot,
+            { withRecoverable: true, withUnrolled: true },
+            this._pendingSpendOutpoints,
+        );
 
         // boarding
         let confirmed = 0;
@@ -1206,6 +1251,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             intentLocked: offchain.intentLocked,
             recoverable: offchain.recoverable,
             pendingRecovery: offchain.pendingRecovery,
+            unrolled: offchain.unrolled,
             total: totalBoarding + offchain.total,
             assets: offchain.assets,
             availableAssets: offchain.availableAssets,
@@ -1248,6 +1294,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 "is locked by an in-flight settlement intent",
             ),
         ]);
+        // Its own call over its own array: the set above cannot contain these,
+        // and widening it to the raw snapshot would report every terminally-spent
+        // coin under a gated contract as gated. Skipped when the caller asked for
+        // unrolled coins — those were not excluded. A completed unroll stays out:
+        // `completeUnroll` no longer reaches it either.
+        if (!filter?.withUnrolled) {
+            logExcludedVtxos(
+                "getSpendableVtxos",
+                snapshot
+                    .flatMap((contract) => contract.vtxos)
+                    .filter((vtxo) => vtxo.isUnrolled && !hasTerminalSpend(vtxo)),
+                [() => UNROLLED_REASON],
+            );
+        }
         return unlocked;
     }
 
@@ -2269,7 +2329,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
  * });
  * ```
  */
-export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
+export class Wallet
+    extends ReadonlyWallet
+    implements IWallet, HDWalletCapable, AddressAllocationCapable
+{
     static MIN_FEE_RATE = 1; // sats/vbyte
 
     override readonly identity: Identity;
@@ -2338,6 +2401,29 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             console.warn("server-signer rotation on info change failed", e);
         }
     }
+
+    /**
+     * Await an `onServerInfoChanged` handler still applying a rotation.
+     *
+     * The provider emits synchronously but {@link handleServerInfoChanged} runs
+     * off the emit, so between the two a caller can observe a half-applied
+     * rotation: {@link rotateServerSigner} persists the active signer's contract
+     * rows *before* committing the tapscripts, so `arkServerPublicKey` still
+     * reads the old key while the new key's rows are already in the repository.
+     * A path that refreshes server info and then reads signer-derived state must
+     * drain the chain first, or it both reads that torn state and races the
+     * handler for the rotation itself.
+     *
+     * Resolves once the chain is idle; a handler that threw already logged, and
+     * its rejection is swallowed here.
+     *
+     * @internal Invoked by {@link dispose} and the {@link VtxoManager} migration
+     * pass; not part of the stable public API.
+     */
+    async settleServerInfoChanges(): Promise<void> {
+        await this._serverInfoInFlight?.catch(() => undefined);
+    }
+
     private _receiveRotatorInstalled = false;
 
     /**
@@ -2491,55 +2577,323 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * provider and keeps a single index-0 boarding address for its lifetime,
      * so this returns the existing {@link getBoardingAddress} unchanged
      * (no rotation, no index burned).
+     *
+     * **Behaviour change.** A wallet configured with a custom
+     * {@link DescriptorProvider} (`walletMode: <provider>`) now rotates here.
+     * It previously did not: allocation went through the contract manager,
+     * which only wires an `allocate` hook for {@link HDDescriptorProvider}, so
+     * such a wallet read as "declined to allocate" and silently kept its
+     * index-0 boarding address forever. Those wallets now burn an index per
+     * call — including via {@link maybeRotateBoardingAfterBoard}, which fires
+     * on every settle that consumes a boarding UTXO. Funds at retired
+     * addresses stay reachable: each rotation persists its `boarding` contract
+     * before swapping, and {@link getBoardingUtxos} fans out over the full
+     * historical set.
+     *
+     * @deprecated Use {@link getNewAddresses} — it mints any combination of
+     * address types at one shared index, and reports the contract row behind
+     * each. Note the difference in display behaviour: this method *swaps* the
+     * advertised boarding address, where `getNewAddresses` mints side
+     * addresses and leaves {@link getBoardingAddress} alone. To keep this
+     * method's behaviour, keep calling this method.
      */
     async getNewBoardingAddress(): Promise<string> {
-        const provider = this._descriptorProvider;
-        if (!provider) {
-            // Static / `auto`: single fixed boarding address, no rotation.
-            return this.getBoardingAddress();
+        // `allocateAddresses` persists before it returns, so the swap below
+        // only ever runs on a registered script: if registration throws, the
+        // wallet keeps displaying the previous (registered) boarding address —
+        // never an unwatched one (mirrors `rotate()`).
+        const [minted] = await this.allocateAddresses(["boarding"], false, true);
+        // A wallet with no index to burn — or a provider that declined to
+        // allocate — leaves the display address untouched, exactly as the
+        // pre-`getNewAddresses` implementation did.
+        if (!minted?.allocated) return this.getBoardingAddress();
+        // `type` narrows the tapscript to `DefaultVtxo.Script`, so this write
+        // path takes no unchecked cast.
+        if (minted.type === "boarding") this.setBoardingTapscriptForRotation(minted.tapscript);
+        return minted.address;
+    }
+
+    /**
+     * Allocate a *fresh* address of each requested type, all derived from one
+     * newly allocated HD index.
+     *
+     * This is the explicit allocator the receive path otherwise lacks:
+     * {@link getAddress} and {@link getBoardingAddress} are stable reads of the
+     * wallet's display addresses, and the display receive address only advances
+     * when a payment arrives ({@link WalletReceiveRotator} rotates on
+     * `vtxo_received`). Issuing a second address before the first is paid — one
+     * invoice for Alice, another for Bob — has to go through here.
+     *
+     * Each call:
+     *
+     * - allocates **one** index from the shared HD stream, however many types
+     *   were asked for, so a `default` + `boarding` pair are siblings rather
+     *   than two burnt indices;
+     * - builds each requested script at that index, preserving every other
+     *   option of the wallet's current script for that flavour (including a
+     *   delegate wallet's `delegate` shape);
+     * - persists each as an `active` contract carrying its `signingDescriptor`,
+     *   so the ContractWatcher monitors it, the balance counts it, and
+     *   {@link signerForDescriptor} can recover the key;
+     * - slides the look-ahead band, since the watermark moved past indices an
+     *   external issuer may still be handing out.
+     *
+     * The minted rows are deliberately left **untagged**: the boot lookups
+     * adopt the newest {@link WALLET_RECEIVE_SOURCE}-tagged row as the display
+     * address, and a side address issued to one counterparty must not become
+     * the address the wallet advertises to everyone else. {@link getAddress}
+     * and {@link getBoardingAddress} are unchanged by this call.
+     *
+     * A wallet with no HD stream (`walletMode: 'static'` / `'auto'`) has one
+     * address per flavour for its lifetime. Without `forceNew` it returns those
+     * — the real persisted rows, no index burned; with `forceNew` it throws
+     * {@link WalletCannotAllocateAddressError} rather than hand back an address
+     * that is not in fact fresh.
+     *
+     * @example
+     * ```typescript
+     * const [invoice] = await wallet.getNewAddresses({ forceNew: true });
+     * // hand `invoice.address` to Alice, keep the descriptor with the invoice
+     * const signer = await wallet.signerForDescriptor(invoice.signingDescriptor);
+     * ```
+     */
+    async getNewAddresses(opts?: GetNewAddressesOptions): Promise<NewAddress[]> {
+        const minted = await this.allocateAddresses(
+            opts?.types ?? ["default"],
+            opts?.forceNew ?? false,
+            false,
+        );
+        // Drop the internal tapscript/type/allocated fields: the display swap is
+        // the caller's business only inside this class.
+        return minted.map(({ address, signingDescriptor, contract }) => ({
+            address,
+            signingDescriptor,
+            contract,
+        }));
+    }
+
+    /**
+     * Shared allocation core behind {@link getNewAddresses} and the deprecated
+     * {@link getNewBoardingAddress}, so the two cannot drift on what an
+     * allocation costs or what gets persisted.
+     *
+     * @param tagSource - Tag the persisted rows {@link WALLET_RECEIVE_SOURCE},
+     * making the next boot adopt them as the display address. Only the
+     * deprecated boarding allocator passes `true`; `getNewAddresses` mints side
+     * addresses and must not hijack what the wallet advertises.
+     */
+    private async allocateAddresses(
+        types: readonly NewAddressType[],
+        forceNew: boolean,
+        tagSource: boolean,
+    ): Promise<AllocatedAddress[]> {
+        // Before anything is allocated: an empty request that burned an index
+        // would report success while handing back nothing, leaving a gap in the
+        // stream that no contract row explains.
+        if (types.length === 0) {
+            throw new Error("getNewAddresses: `types` must name at least one address type");
         }
 
         const manager = await this.getContractManager();
-        const descriptor = await manager.getNextSigningDescriptor();
-        if (!descriptor) return this.getBoardingAddress();
-        const pubKey = deriveDescriptorLeafPubKey(descriptor);
-        const newBoarding = new DefaultVtxo.Script({
+        const provider = this._descriptorProvider;
+        // One allocation for the whole call — every requested type derives from
+        // the same index.
+        //
+        // The built-in HD provider is allocated through the contract manager,
+        // which owns cross-context serialization and slides the look-ahead band
+        // with the watermark. A custom provider has neither: `lookAheadConfig()`
+        // only wires the band for an `HDDescriptorProvider`, so the manager has
+        // no `allocate` hook and would answer `undefined` — reading as "declined
+        // to allocate" for a provider that allocates perfectly well. Ask it
+        // directly. Without any provider there is no stream to advance at all.
+        const descriptor = !provider
+            ? undefined
+            : provider instanceof HDDescriptorProvider
+              ? await manager.getNextSigningDescriptor()
+              : await provider.getNextSigningDescriptor();
+
+        if (!descriptor) {
+            if (forceNew) {
+                throw new WalletCannotAllocateAddressError(
+                    provider
+                        ? "the descriptor provider declined to allocate an index"
+                        : "this wallet has no HD stream (walletMode 'static' / 'auto')",
+                );
+            }
+            // Re-register the current display scripts: `createContract` is
+            // first-wins on script, so this returns the rows already persisted
+            // at construction rather than minting anything.
+            return this.currentAddresses(manager, types);
+        }
+
+        const allocated: AllocatedAddress[] = [];
+        try {
+            for (const type of types) {
+                allocated.push(await this.mintAddress(manager, type, descriptor, tagSource, true));
+            }
+        } finally {
+            // The watermark moved past offchain indices an external issuer may
+            // still be handing out, so the band has to slide (and keep covering
+            // the low side). In `finally` because the watermark moves before the
+            // first contract is written: a type that fails partway through still
+            // leaves the band trailing the stream, and skipping the slide would
+            // strand it there until the next successful allocation.
+            //
+            // Best-effort: the allocation is already committed, so a failed
+            // slide must not replace the caller's error — or fail the call.
+            try {
+                await manager.refillLookAhead();
+            } catch (e) {
+                console.warn("look-ahead refill after address allocation failed", e);
+            }
+        }
+        return allocated;
+    }
+
+    /**
+     * The wallet's existing display addresses, as persisted contract rows —
+     * the honest answer for a wallet with no index to burn.
+     *
+     * Each type is minted from the descriptor that already owns its display
+     * script ({@link displayDescriptor}), not from the identity key, so the
+     * returned `signingDescriptor` is the one that signs for the returned
+     * `address` even on a wallet that has rotated.
+     */
+    private async currentAddresses(
+        manager: ContractManager,
+        types: readonly NewAddressType[],
+    ): Promise<AllocatedAddress[]> {
+        const out: AllocatedAddress[] = [];
+        for (const type of types) {
+            const descriptor = await this.displayDescriptor(manager, type);
+            out.push(await this.mintAddress(manager, type, descriptor, false, false));
+        }
+        return out;
+    }
+
+    /**
+     * The descriptor that owns the wallet's current display script for `type`,
+     * read off the row the wallet persisted when it adopted that script.
+     *
+     * Deriving it from the identity instead is only correct for a wallet that
+     * never rotates. On one that has — an HD wallet whose provider later
+     * declines to allocate — the display script belongs to an HD child, and
+     * pairing its address with the identity descriptor hands the caller a
+     * {@link NewAddress} whose `signingDescriptor` resolves, via
+     * {@link signerForDescriptor}, to a signer holding the wrong key.
+     *
+     * Falls back to the identity's pathless `tr(pubkey)` when no row carries a
+     * descriptor: the static / `auto` case, where the identity key genuinely
+     * owns the display script and this is what `getNextSigningDescriptor`
+     * answers too. (The index-0 baselines registered at construction carry no
+     * `signingDescriptor` metadata, so those wallets take this path.)
+     */
+    private async displayDescriptor(
+        manager: ContractManager,
+        type: NewAddressType,
+    ): Promise<string> {
+        const display = type === "boarding" ? this._boardingTapscript : this.offchainTapscript;
+        const [row] = await manager.getContracts({ script: hex.encode(display.pkScript) });
+        const persisted = row?.metadata?.signingDescriptor;
+        if (typeof persisted === "string") return persisted;
+        return identityDescriptor(this.identity);
+    }
+
+    /**
+     * Build, persist and shape one address of `type` owned by `descriptor` —
+     * the single build-and-register path behind both {@link allocateAddresses}
+     * and {@link currentAddresses}, so a freshly allocated address and a
+     * re-registered display address cannot disagree on what gets written.
+     *
+     * The descriptor is the sole source of the script's owner key in both
+     * branches. Deriving one flavour from the descriptor and the other from a
+     * tapscript field is what lets `address` and `signingDescriptor` drift
+     * apart.
+     */
+    private async mintAddress(
+        manager: ContractManager,
+        type: NewAddressType,
+        descriptor: string,
+        tagSource: boolean,
+        allocated: boolean,
+    ): Promise<AllocatedAddress> {
+        // Persist before returning: an address the caller hands out but the
+        // watcher never saw is one whose payment silently never lands.
+        if (type === "boarding") {
+            const built = this.buildBoardingContract(
+                deriveDescriptorLeafPubKey(descriptor),
+                descriptor,
+                tagSource,
+            );
+            const contract = await manager.createContract(built.params);
+            return {
+                type,
+                // `built.tapscript` is a `DefaultVtxo.Script` here without a
+                // cast — the branch, not a widened local, does the narrowing.
+                tapscript: built.tapscript,
+                // A boarding row persists the *ark* encoding of its script, so
+                // `contract.address` is unusable for an onchain sender: the
+                // onchain form has to be re-derived.
+                address: built.tapscript.onchainAddress(this.network),
+                signingDescriptor: descriptor,
+                contract,
+                allocated,
+            };
+        }
+        const built = buildReceiveContract(
+            this.offchainTapscript,
+            descriptor,
+            this.network.hrp,
+            tagSource,
+        );
+        const contract = await manager.createContract(built.params);
+        return {
+            type,
+            tapscript: built.tapscript,
+            // Offchain rows already store the address they advertise, and
+            // reading it back keeps a coalesced row (`createContract` is
+            // first-wins on script) honest about what was actually persisted.
+            address: contract.address,
+            signingDescriptor: descriptor,
+            contract,
+            allocated,
+        };
+    }
+
+    /**
+     * Build the boarding contract owned by `pubKey`, keeping every other option
+     * of the wallet's current boarding tapscript (notably the boarding-exit
+     * CSV, which is index-independent). The offchain analogue lives in
+     * {@link buildReceiveContract}.
+     */
+    private buildBoardingContract(
+        pubKey: Bytes,
+        descriptor: string,
+        tagSource: boolean,
+    ): { tapscript: DefaultVtxo.Script; params: CreateContractParams } {
+        const tapscript = new DefaultVtxo.Script({
             ...this._boardingTapscript.options,
             pubKey,
         });
-        const csvTimelock = newBoarding.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
-
-        // Persist BEFORE swapping the visible tapscript: if registration
-        // throws, the wallet keeps displaying the previous (registered)
-        // boarding address — never an unwatched one (mirrors `rotate()`).
-        await manager.createContract({
-            type: "boarding",
+        const csvTimelock = tapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        return {
+            tapscript,
             params: {
-                pubKey: hex.encode(pubKey),
-                serverPubKey: hex.encode(newBoarding.options.serverPubKey),
-                csvTimelock: timelockToSequence(csvTimelock).toString(),
+                type: "boarding",
+                params: {
+                    pubKey: hex.encode(pubKey),
+                    serverPubKey: hex.encode(tapscript.options.serverPubKey),
+                    csvTimelock: timelockToSequence(csvTimelock).toString(),
+                },
+                script: hex.encode(tapscript.pkScript),
+                address: tapscript.address(this.network.hrp, this.arkServerPublicKey).encode(),
+                state: "active",
+                metadata: {
+                    ...(tagSource && { source: WALLET_RECEIVE_SOURCE }),
+                    signingDescriptor: descriptor,
+                },
             },
-            script: hex.encode(newBoarding.pkScript),
-            address: newBoarding.address(this.network.hrp, this.arkServerPublicKey).encode(),
-            state: "active",
-            metadata: {
-                source: WALLET_RECEIVE_SOURCE,
-                signingDescriptor: descriptor,
-            },
-        });
-
-        this.setBoardingTapscriptForRotation(newBoarding);
-        // Boarding shares the HD index stream, so this allocation moved the
-        // watermark past an offchain index an external issuer may still hand
-        // out — the band has to slide (and keep covering it on the low side).
-        // Best-effort: the boarding address is already allocated and committed,
-        // so a failed band slide must not fail the allocation.
-        try {
-            await manager.refillLookAhead();
-        } catch (e) {
-            console.warn("look-ahead refill after boarding allocation failed", e);
-        }
-        return newBoarding.onchainAddress(this.network);
+        };
     }
 
     /**
@@ -2673,7 +3027,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * the stable public API.
      */
     async rotateServerSigner(newServerPubKey: Bytes, checkpointTapscript: string): Promise<void> {
-        const xonly = toXOnlyPubKey(newServerPubKey);
+        const xonly = toXOnly(newServerPubKey, "ark signer key");
 
         // Decode and validate the new epoch's checkpoint script FIRST, before
         // any persistence. The checkpoint script is server-controlled state the
@@ -2945,9 +3299,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // snapshot rather than `this.offchainTapscript.options.serverPubKey`
         // avoids mixing a stale instance signer with fresh history.
         const arkInfo = await this.arkProvider.getInfo();
-        const currentSignerPubKey = toXOnlyPubKey(hex.decode(arkInfo.signerPubkey));
+        const currentSignerPubKey = toXOnly(hex.decode(arkInfo.signerPubkey), "ark signer key");
         const deprecatedSignerPubKeys = arkInfo.deprecatedSigners.map((s) =>
-            toXOnlyPubKey(hex.decode(s.pubkey)),
+            toXOnly(hex.decode(s.pubkey), "deprecated signer key"),
         );
 
         const deps: DiscoveryDeps = {
@@ -3171,7 +3525,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // dispose the contract manager underneath it.
         this._serverInfoUnsub?.();
         this._serverInfoUnsub = undefined;
-        await this._serverInfoInFlight?.catch(() => undefined);
+        await this.settleServerInfoChanges();
 
         // Tear down the rotation subscription + drain in-flight rotations
         // first so no late `vtxo_received` event can queue work on a
@@ -3241,7 +3595,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
         // parse the server forfeit address
         // server is expecting funds to be sent to this address
-        const forfeitPubkey = hex.decode(setup.info.forfeitPubkey).slice(1);
+        const forfeitPubkey = toXOnly(hex.decode(setup.info.forfeitPubkey), "forfeit key");
         const forfeitAddress = Address(setup.network).decode(setup.info.forfeitAddress);
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
@@ -3961,7 +4315,10 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * `typeof` guard skips the arknote strings settle also accepts.
      *
      * No-ops for static / `auto` wallets (no descriptor provider — boarding
-     * stays on its fixed index-0 address). Best-effort and non-fatal: the
+     * stays on its fixed index-0 address). Wallets on a custom
+     * {@link DescriptorProvider} DO rotate here now, where they previously
+     * no-opped — see the behaviour-change note on {@link
+     * getNewBoardingAddress}. Best-effort and non-fatal: the
      * settle has already committed and its txid must be returned, so a
      * rotation failure is logged and swallowed rather than thrown. Funds at
      * the retired boarding address remain discoverable — the old `boarding`
@@ -4217,9 +4574,11 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     throw new Error("Sweep tap tree root not set");
                 }
 
-                const xOnlyPublicKeys = event.cosignersPublicKeys.map((k) => k.slice(2));
+                const xOnlyPublicKeys = event.cosignersPublicKeys.map((k) =>
+                    hex.encode(toXOnly(hex.decode(k), "cosigner key")),
+                );
                 const signerPublicKey = await session.getPublicKey();
-                const xonlySignerPublicKey = signerPublicKey.subarray(1);
+                const xonlySignerPublicKey = toXOnly(signerPublicKey, "signer key");
 
                 if (!xOnlyPublicKeys.includes(hex.encode(xonlySignerPublicKey))) {
                     // not a cosigner, skip the signing
@@ -4779,8 +5138,12 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // regardless: the proof describes every input by the contract's P2TR
         // pkScript, which is a lie for an OP_RETURN outpoint and would have the
         // server reject the whole proof. It is excluded by value, since the
-        // indexer reports subdust under that same P2TR script.
-        const drainable = vtxos.filter((vtxo) => !isSubdust(vtxo, this.dustAmount));
+        // indexer reports subdust under that same P2TR script. An exited output
+        // is excluded by state instead: it lives onchain, so no pending sweep
+        // naming it can ever be finalized.
+        const drainable = vtxos.filter(
+            (vtxo) => !isSubdust(vtxo, this.dustAmount) && !vtxo.isUnrolled,
+        );
         if (drainable.length > 0) {
             let drained = { count: 0, swept: 0, claimed: new Set<string>() };
             try {
@@ -4877,6 +5240,12 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         for (const vtxo of vtxos) {
             if (hasTerminalSpend(vtxo)) {
                 unclaimed.push(cashReport(vtxo, "already-spent"));
+            } else if (vtxo.isUnrolled) {
+                // Exited onchain. The thin sweep is an offchain spend, so it
+                // cannot reach the output whatever its dust or sweep state —
+                // hence before both of those checks, and with its own reason:
+                // the remedy is `completeUnroll`, not a settlement.
+                unclaimed.push(cashReport(vtxo, "exited"));
             } else if (isSubdust(vtxo, this.dustAmount)) {
                 // Subdust lives at an OP_RETURN output: no forfeit leaf, nothing
                 // to spend, and no settlement can lift it out on its own. The

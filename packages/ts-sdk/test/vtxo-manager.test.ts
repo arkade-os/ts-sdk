@@ -13,7 +13,7 @@ import {
 } from "../src/wallet/vtxo-manager";
 import { IWallet, ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
 import type { IntentFeeConfig } from "../src/arkfee";
-import { Wallet } from "../src/wallet/wallet";
+import { filterSnapshotVtxos, Wallet } from "../src/wallet/wallet";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { hex } from "@scure/base";
 
@@ -258,6 +258,19 @@ describe("VtxoManager - Recovery", () => {
             expect(balance.vtxoCount).toBe(1);
         });
 
+        it("should not count an unrolled VTXO, even when swept", async () => {
+            // The exit already moved it on-chain: no batch can reclaim it, so
+            // recovery must neither promise nor price it.
+            const exited = { ...createMockVtxo(4000, "swept"), isUnrolled: true } as any;
+            const wallet = createMockWallet([createMockVtxo(5000, "swept"), exited]);
+            const manager = new VtxoManager(wallet);
+
+            const balance = await manager.getRecoverableBalance();
+
+            expect(balance.recoverable).toBe(5000n);
+            expect(balance.vtxoCount).toBe(1);
+        });
+
         it("should include preconfirmed subdust in recoverable balance", async () => {
             const wallet = createMockWallet([
                 createMockVtxo(5000, "swept", false), // Recoverable
@@ -322,6 +335,27 @@ describe("VtxoManager - Recovery", () => {
                             amount: 8000n,
                         },
                     ],
+                },
+                undefined,
+            );
+        });
+
+        it("should not settle an unrolled VTXO, and should ask the wallet not to hand one back", async () => {
+            const healthy = createMockVtxo(5000, "swept");
+            const exited = { ...createMockVtxo(4000, "swept"), isUnrolled: true } as any;
+            const wallet = createMockWallet([healthy, exited], "arkade1myaddress");
+            const manager = new VtxoManager(wallet);
+
+            await manager.recoverVtxos();
+
+            expect(wallet.getVtxos).toHaveBeenCalledWith({
+                withRecoverable: true,
+                withUnrolled: false,
+            });
+            expect(wallet.settle).toHaveBeenCalledWith(
+                {
+                    inputs: [healthy],
+                    outputs: [{ address: "arkade1myaddress", amount: 5000n }],
                 },
                 undefined,
             );
@@ -791,6 +825,25 @@ describe("VtxoManager - Renewal utilities", () => {
             const thresholdMs = 10_000; // 10 seconds threshold
             expect(isVtxoExpiringSoon(vtxo, thresholdMs)).toBe(false);
         });
+
+        it("should return false for an unrolled VTXO expiring within threshold", () => {
+            // The arm the past-expiry test below cannot reach: there the early
+            // "already expired" return answers first, so the exclusion under
+            // test never runs.
+            const now = Date.now();
+            const expiring = (isUnrolled: boolean) =>
+                ({
+                    txid: isUnrolled ? "exited" : "healthy",
+                    vout: 0,
+                    value: 1000,
+                    createdAt: new Date(now - 90_000),
+                    virtualStatus: { state: "settled", batchExpiry: now + 10_000 },
+                    isUnrolled,
+                }) as ExtendedVirtualCoin;
+
+            expect(isVtxoExpiringSoon(expiring(false), 20_000)).toBe(true);
+            expect(isVtxoExpiringSoon(expiring(true), 20_000)).toBe(false);
+        });
     });
 
     describe("getExpiringVtxos", () => {
@@ -881,6 +934,66 @@ describe("VtxoManager - Renewal utilities", () => {
             });
 
             expect(expiring).toHaveLength(0);
+        });
+
+        it("should not offer an unrolled VTXO for renewal once it is past expiry", () => {
+            // NArk renews `Unrolled` eagerly; ts-sdk cannot re-batch an exit
+            // output at all, so here the same fact excludes instead.
+            const now = Date.now();
+            const createdAt = new Date(now - 100_000);
+            const expired = (txid: string, value: number, isUnrolled: boolean) =>
+                ({
+                    txid,
+                    vout: 0,
+                    value,
+                    createdAt,
+                    virtualStatus: { state: "settled", batchExpiry: now - 5_000 },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    isUnrolled,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now - 5_000),
+                }) as ExtendedVirtualCoin;
+
+            const expiring = getExpiringAndRecoverableVtxos(
+                [expired("healthy", 3000, false), expired("exited", 4000, true)],
+                10_000,
+                330n,
+                { timestamp: new Date() },
+            );
+
+            expect(expiring.map((v) => v.txid)).toEqual(["healthy"]);
+        });
+
+        it("should not offer an unrolled subdust VTXO for renewal", () => {
+            // Subdust is a value property, orthogonal to expiry, so this coin
+            // never reaches `isVtxoExpiringSoon`'s guard — only the filter's own
+            // leading exclusion keeps it out.
+            const subdust = (txid: string, isUnrolled: boolean) =>
+                ({
+                    txid,
+                    vout: 0,
+                    value: 100, // below the 330 dust threshold
+                    createdAt: new Date(Date.now() - 100_000),
+                    virtualStatus: { state: "settled" }, // no expiry
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    isUnrolled,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                }) as ExtendedVirtualCoin;
+
+            const expiring = getExpiringAndRecoverableVtxos(
+                [subdust("healthy", false), subdust("exited", true)],
+                10_000,
+                330n,
+                { timestamp: new Date() },
+            );
+
+            expect(expiring.map((v) => v.txid)).toEqual(["healthy"]);
         });
 
         it("should return recoverable and subdust VTXOs", () => {
@@ -1017,6 +1130,42 @@ describe("VtxoManager - Renewal", () => {
             expect(expiring).toHaveLength(2);
             expect(expiring[0].txid).toBe("vtxo1");
             expect(expiring[1].txid).toBe("vtxo2");
+        });
+
+        it("should exclude an unrolled VTXO expiring within the threshold", async () => {
+            const now = Date.now();
+            const soon = (txid: string, value: number, isUnrolled: boolean) =>
+                ({
+                    txid,
+                    vout: 0,
+                    value,
+                    createdAt: new Date(now - 100_000),
+                    virtualStatus: { state: "settled", batchExpiry: now + 40_000 },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    isUnrolled,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 40_000),
+                }) as ExtendedVirtualCoin;
+            const vtxos = [soon("healthy", 5000, false), soon("exited", 3000, true)];
+            const wallet = createMockWallet(vtxos);
+            // The bare mock hands back the snapshot verbatim; the real wallet
+            // reads it through `filterSnapshotVtxos`, which is where the exit is
+            // dropped — so the renewal selection only holds if the manager asks
+            // for a filter that leaves `withUnrolled` off.
+            (wallet.getSpendableVtxos as any).mockImplementation(async (filter: any) =>
+                filterSnapshotVtxos([{ vtxos } as any], filter, new Set()),
+            );
+            const manager = new VtxoManager(wallet, {
+                enabled: true,
+                thresholdMs: 100_000,
+            });
+
+            const expiring = await manager.getExpiringVtxos();
+
+            expect(expiring.map((v) => v.txid)).toEqual(["healthy"]);
         });
 
         it("should return empty array when no VTXOs have expiry set", async () => {

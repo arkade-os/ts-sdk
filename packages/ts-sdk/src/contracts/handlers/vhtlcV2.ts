@@ -47,9 +47,9 @@ const parseGroupIndex = (raw: string): number => {
  * The eight mandatory fields are `VHTLCContractParams` verbatim — the two
  * script versions take the same {@link VHTLC.Options}, so a divergent shape
  * here would be a difference with no cause. What V1's handler has no field for
- * is the two optional covenant leaves, and those are exactly what the swap
- * corridor's lockup carries, so leaving them out would make this handler unable
- * to round-trip the contract it exists to serve.
+ * is the emulator covenant suite, and that is exactly what the swap corridor's
+ * lockup carries, so leaving it out would make this handler unable to
+ * round-trip the contract it exists to serve.
  */
 export interface VHTLCV2ContractParams {
     sender: Uint8Array;
@@ -71,17 +71,18 @@ export interface VHTLCV2ContractParams {
         /** The asset group index within that genesis transaction. */
         groupIndex: number;
     };
-    /** @see VHTLC.Options.nonInteractiveClaim */
-    nonInteractiveClaim?: {
+    /**
+     * The emulator covenant suite, all or nothing — mirrors {@link
+     * VHTLC.Options.nonInteractiveParameters} exactly, including the legacy selector:
+     * a row funded before the timelocked refund leaf shipped round-trips with
+     * `legacy: "preTimelockedRefund"` and re-derives its eight-leaf shape.
+     */
+    nonInteractiveParameters?: {
         receiverPkScript: Uint8Array;
         emulatorPubkey: Uint8Array;
-        /** @see VHTLC.Options.nonInteractiveClaim.strict */
-        strict?: { amount: bigint; assetAmount?: bigint };
-    };
-    /** @see VHTLC.Options.nonInteractiveRefund */
-    nonInteractiveRefund?: {
         senderPkScript: Uint8Array;
-        emulatorPubkey: Uint8Array;
+        /** @see VHTLC.Options.nonInteractiveParameters.legacy */
+        legacy?: "preTimelockedRefund";
     };
 }
 
@@ -129,21 +130,22 @@ function decodeCovenantLeaf<K extends string>(
  * the same ScriptV2 the two uses would fight over one row.
  *
  * **Which leaves this offers, and why the set is smaller than the ladder.**
- * ScriptV2 has eight leaves; a wallet holding ONE of the two participant keys
+ * ScriptV2 has nine leaves; a wallet holding ONE of the two participant keys
  * can satisfy four of them, and offering a leaf whose signature the caller
  * cannot produce is worse than offering fewer — it turns a refusal into a
  * transaction that gets built and then rejected.
  *
- * | leaf                              | needs                          | offered |
- * |-----------------------------------|--------------------------------|---------|
- * | `claim`                           | receiver + server, preimage    | yes, to the receiver |
- * | `refund`                          | sender + receiver + server     | no — needs the counterparty live |
- * | `refundWithoutReceiver`           | sender + server, CLTV          | yes, to the sender |
- * | `unilateralClaim`                 | receiver, CSV                  | yes, to the receiver |
- * | `unilateralRefund`                | sender + receiver, CSV         | no — needs the counterparty live |
- * | `unilateralRefundWithoutReceiver` | sender, CSV                    | yes, to the sender |
- * | `nonInteractiveClaim`             | server + emulator              | no — the wallet holds neither key |
- * | `nonInteractiveRefund`            | server + receiver + emulator   | no — the wallet holds neither key |
+ * | leaf                                  | needs                          | offered |
+ * |---------------------------------------|--------------------------------|---------|
+ * | `claim`                               | receiver + server, preimage    | yes, to the receiver |
+ * | `refund`                              | sender + receiver + server     | no — needs the counterparty live |
+ * | `refundWithoutReceiver`               | sender + server, CLTV          | yes, to the sender |
+ * | `unilateralClaim`                     | receiver, CSV                  | yes, to the receiver |
+ * | `unilateralRefund`                    | sender + receiver, CSV         | no — needs the counterparty live |
+ * | `unilateralRefundWithoutReceiver`     | sender, CSV                    | yes, to the sender |
+ * | `nonInteractiveClaim`                 | server + emulator              | no — the wallet holds neither key |
+ * | `nonInteractiveRefund`                | server + receiver + emulator   | no — the wallet holds neither key |
+ * | `nonInteractiveRefundWithoutReceiver` | server + emulator, CLTV        | no — the wallet holds neither key |
  *
  * The two omitted interactive leaves are the same two the `vhtlc` handler
  * omits, for the same reason: `refund` and `unilateralRefund` both need the
@@ -172,6 +174,7 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
     },
 
     serializeParams(params: VHTLCV2ContractParams): Record<string, string> {
+        const covenants = params.nonInteractiveParameters;
         return {
             sender: hex.encode(params.sender),
             receiver: hex.encode(params.receiver),
@@ -183,35 +186,33 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
             refundNoReceiverDelay: timelockToSequence(
                 params.unilateralRefundWithoutReceiverDelay,
             ).toString(),
+            // The on-disk keys keep their per-leaf names even though the typed
+            // param is ONE group: rows written by older SDKs carry exactly
+            // these keys, and changing the storage encoding would orphan them.
+            // The group maps onto them without loss — one emulator key serves
+            // both covenant destinations by construction (see the option's doc
+            // on VHTLC.Options), so the two emulator-key columns always hold
+            // the same value on a row written from here.
+            //
             // Spread rather than written as `undefined`: a `Record<string,
             // string>` round-tripped through a repository must not gain keys
             // whose value is the string "undefined".
-            ...(params.nonInteractiveClaim && {
-                nonInteractiveClaimReceiverPkScript: hex.encode(
-                    params.nonInteractiveClaim.receiverPkScript,
-                ),
-                nonInteractiveClaimEmulatorPubkey: hex.encode(
-                    params.nonInteractiveClaim.emulatorPubkey,
-                ),
-                // The opt-in quoted bound. Dropping it re-derives the DEFAULT
-                // claim covenant — a strictly weaker one — and registration dies
-                // at `upsertContractRow` with an opaque `Script mismatch`. Same
-                // silent-drop class as the asset keys above.
-                ...(params.nonInteractiveClaim.strict && {
-                    strictClaimAmount: params.nonInteractiveClaim.strict.amount.toString(),
-                    ...(params.nonInteractiveClaim.strict.assetAmount !== undefined && {
-                        strictClaimAssetAmount:
-                            params.nonInteractiveClaim.strict.assetAmount.toString(),
-                    }),
+            ...(covenants && {
+                nonInteractiveClaimReceiverPkScript: hex.encode(covenants.receiverPkScript),
+                nonInteractiveClaimEmulatorPubkey: hex.encode(covenants.emulatorPubkey),
+                nonInteractiveRefundSenderPkScript: hex.encode(covenants.senderPkScript),
+                nonInteractiveRefundEmulatorPubkey: hex.encode(covenants.emulatorPubkey),
+                // The legacy marker is precisely the ABSENCE of this key: a
+                // row carrying it re-derives the full suite (nine leaves), a
+                // row lacking it the pre-timelocked-refund eight — the same
+                // encoding older SDKs wrote for eight-leaf rows, so those rows
+                // read back unchanged. Spread rather than a "false"/"undefined"
+                // string: a dropped flag re-derives the EIGHT-leaf script, a
+                // different pkScript, and registration dies at
+                // `upsertContractRow` with an opaque `Script mismatch`.
+                ...(covenants.legacy === undefined && {
+                    nonInteractiveRefundWithoutReceiver: "1",
                 }),
-            }),
-            ...(params.nonInteractiveRefund && {
-                nonInteractiveRefundSenderPkScript: hex.encode(
-                    params.nonInteractiveRefund.senderPkScript,
-                ),
-                nonInteractiveRefundEmulatorPubkey: hex.encode(
-                    params.nonInteractiveRefund.emulatorPubkey,
-                ),
             }),
             // The asset must round-trip, and its absence here used to be silent
             // in the worst way. `ContractManager` re-derives a contract from
@@ -242,6 +243,34 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
             "nonInteractiveRefundEmulatorPubkey",
             "nonInteractiveRefund",
         );
+        // The covenant suite is all-or-nothing in the typed params, but the
+        // on-disk keys predate that: a row written by an older SDK could name
+        // one leaf's pair without the other's. Such a row has no group
+        // representation — building one would mean inventing the missing
+        // half — so refuse it by name rather than drop a leaf silently.
+        if ((claim === undefined) !== (refund === undefined)) {
+            throw new Error(
+                "emulator covenant params are all-or-nothing: the claim keys " +
+                    "(nonInteractiveClaim*) and the refund keys (nonInteractiveRefund*) must " +
+                    "both be present or both absent — a row carrying one side was written " +
+                    "for a leaf subset this handler no longer derives",
+            );
+        }
+        // Both pairs decoded. One emulator key serves both destinations in the
+        // group; a row naming two DIFFERENT keys was legal for an older SDK
+        // and is unrepresentable now. Rebuilding with either one would move
+        // the pkScript, so name it instead.
+        if (
+            claim &&
+            refund &&
+            hex.encode(claim.emulatorPubkey) !== hex.encode(refund.emulatorPubkey)
+        ) {
+            throw new Error(
+                "emulator covenant params name two different emulator pubkeys: the suite " +
+                    "derives both covenant cosigners from ONE key, so this row cannot be " +
+                    "rebuilt as a group",
+            );
+        }
         // Both halves or neither: a txid without its group index names no asset,
         // and an index without a txid names nothing at all. Either alone is a
         // corrupt row rather than a contract that happens to lack an asset, and
@@ -252,10 +281,34 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                 "asset params are incomplete: assetTxid and assetGroupIndex must both be present or both absent",
             );
         }
-        if (params.strictClaimAssetAmount !== undefined && params.strictClaimAmount === undefined) {
+        // A row written by a strict-capable release (0.4.67 and earlier) carries
+        // a quoted bound compiled into its claim leaf. The option is gone, so
+        // that bound cannot be re-derived here — and reading the row as "not
+        // strict" would rebuild the DEFAULT covenant, a different pkScript, and
+        // die at `upsertContractRow` with an opaque `Script mismatch`. Name it.
+        if (params.strictClaimAmount !== undefined || params.strictClaimAssetAmount !== undefined) {
             throw new Error(
-                "strictClaimAssetAmount without strictClaimAmount: reading this as 'not strict' " +
-                    "would re-derive the default claim covenant, which is weaker than the row asked for",
+                "strict claim params on a stored row: the strict claim bound was removed " +
+                    "and this row's lockup cannot be re-derived without it — restore it with " +
+                    "the SDK version that wrote it",
+            );
+        }
+        // Same silent-drop shape as the two checks above, one flag further in:
+        // a row naming this flag without the suite it extends, or read as "not
+        // set", would re-derive a script missing the timelocked refund leaf.
+        if (params.nonInteractiveRefundWithoutReceiver !== undefined && !refund) {
+            throw new Error(
+                "nonInteractiveRefundWithoutReceiver without the emulator covenant keys it " +
+                    "extends: reading this as 'not set' would re-derive a script without the leaf",
+            );
+        }
+        if (
+            params.nonInteractiveRefundWithoutReceiver !== undefined &&
+            params.nonInteractiveRefundWithoutReceiver !== "1"
+        ) {
+            throw new Error(
+                `nonInteractiveRefundWithoutReceiver must be "1" when present, got ` +
+                    JSON.stringify(params.nonInteractiveRefundWithoutReceiver),
             );
         }
         const asset =
@@ -277,26 +330,19 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
             unilateralRefundWithoutReceiverDelay: sequenceToTimelock(
                 Number(params.refundNoReceiverDelay),
             ),
-            ...(claim && {
-                nonInteractiveClaim: {
-                    receiverPkScript: claim.destination,
-                    emulatorPubkey: claim.emulatorPubkey,
-                    ...(params.strictClaimAmount !== undefined && {
-                        strict: {
-                            amount: BigInt(params.strictClaimAmount),
-                            ...(params.strictClaimAssetAmount !== undefined && {
-                                assetAmount: BigInt(params.strictClaimAssetAmount),
-                            }),
-                        },
-                    }),
-                },
-            }),
-            ...(refund && {
-                nonInteractiveRefund: {
-                    senderPkScript: refund.destination,
-                    emulatorPubkey: refund.emulatorPubkey,
-                },
-            }),
+            ...(claim &&
+                refund && {
+                    nonInteractiveParameters: {
+                        receiverPkScript: claim.destination,
+                        senderPkScript: refund.destination,
+                        emulatorPubkey: claim.emulatorPubkey,
+                        // Absence of the flag IS the legacy marker — the same
+                        // encoding older SDKs wrote for eight-leaf rows.
+                        ...(params.nonInteractiveRefundWithoutReceiver !== "1" && {
+                            legacy: "preTimelockedRefund" as const,
+                        }),
+                    },
+                }),
         };
     },
 

@@ -41,6 +41,7 @@ import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
 import { Intent } from "../intent";
 import { isRecoverable, isSubdust, isVirtualCoin } from "../wallet";
+import { toXOnly } from "../utils/keys";
 import type { ExtendedVirtualCoin } from "../wallet";
 import type { TxTree } from "../tree/txTree";
 
@@ -120,7 +121,7 @@ export function createArkadeBatchHandler(
 
             const sweepTapscript = CSVMultisigTapscript.encode({
                 timelock,
-                pubkeys: [hex.decode(info.forfeitPubkey).subarray(1)],
+                pubkeys: [toXOnly(hex.decode(info.forfeitPubkey), "forfeit key")],
             }).script;
 
             sweepTapTreeRoot = tapLeafHash(sweepTapscript);
@@ -132,8 +133,10 @@ export function createArkadeBatchHandler(
             vtxoTree: TxTree,
         ): Promise<{ skip: boolean }> => {
             const signerPubKey = await session.getPublicKey();
-            const xonlySignerPubKey = signerPubKey.subarray(1);
-            const xOnlyPubkeys = event.cosignersPublicKeys.map((k) => k.slice(2));
+            const xonlySignerPubKey = toXOnly(signerPubKey, "signer key");
+            const xOnlyPubkeys = event.cosignersPublicKeys.map((k) =>
+                hex.encode(toXOnly(hex.decode(k), "cosigner key")),
+            );
 
             if (!xOnlyPubkeys.includes(hex.encode(xonlySignerPubKey))) {
                 return { skip: true };

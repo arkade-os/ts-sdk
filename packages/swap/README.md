@@ -7,6 +7,11 @@ Node-specific APIs, so it runs in Node, the browser, and React Native alike. Fou
 ship — in-memory (anywhere, nothing outlives the process), IndexedDB (browser), SQLite and Realm
 (React Native, on subpath entry points) — see "Storage backends" below.
 
+The one global the core API requires is `crypto.getRandomValues`. Node and browsers have it;
+React Native does not, so install `react-native-get-random-values` (or `expo-crypto`) and import
+it before this package. `crypto.subtle` is not used. `EventSource` and `WebSocket` are needed only
+by the watch and relay transports, both of which take an injected implementation.
+
 ## Roles
 
 Arkade Intents names two participants:
@@ -754,6 +759,23 @@ through their stored `preimageHex` or their HD descriptor, and `DB_VERSION` is u
 
 Notes from before 0.0.1, kept for consumers who tracked the branch.
 
+- **`refundIfUnresolved` reports an exited lockup, and its input gained `paymentHash`.**
+  `RefundOutcome` has a new `{ outcome: "exited"; outpoints; status }` variant: a lockup whose
+  outputs were unilaterally exited lives onchain under the VHTLC script, where no offchain refund
+  reaches it. It used to come back as `nothing_to_refund`, which reads as "already resolved" over
+  money still sitting at the script — the swept case gets `needs_recovery` for the same reason, and
+  this is deliberately **not** that variant: recovery into a fresh batch is a spend no batch can
+  make for an onchain output. Complete the unroll and spend the outputs onchain instead.
+
+  Two required changes for direct callers. The input gains **`paymentHash`** (`sha256(P)` hex — the
+  quote's `payment_hash`, which callers already hold): the exit is read through `readLockupFate`,
+  and the VHTLC script cannot supply it, since its `preimageHash` is a `hash160` of the same secret.
+  And the `indexer` parameter widened from `RefundIndexer` to **`LockupSpendIndexer`**, so it must
+  now carry `getVirtualTxs` as well as `getVtxos` — a real `RestIndexerProvider` already does.
+
+  A lockup funded in two sends of which only one exited reports `exited` for the whole thing and
+  leaves the live half unrefunded. That matches `RfqSwapManager`, which reports the same lockup
+  `exited` on the same any-output rule; the two must not disagree.
 - **`RfqSwapManager` can own its own persistence.** New optional
   `RfqSwapManagerDeps.repository`, new `restoreFromRepository()` and `pruneRetiredSwaps()`, and
   `addSwap(swap, origin?)` gains an optional second argument. Nothing narrows and nothing is

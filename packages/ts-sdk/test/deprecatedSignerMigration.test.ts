@@ -142,6 +142,12 @@ interface MigrationMockOptions {
     address?: string;
     /** Boarding groups returned by `getBoardingUtxosForSigners` (Section 7). */
     boardingGroups?: BoardingUtxoGroup[];
+    /**
+     * x-only hex the wallet lands on when `settleServerInfoChanges` drains —
+     * models the real wallet applying a rotation off an `onServerInfoChanged`
+     * emit that its own `getInfo` produced.
+     */
+    rotateOnSettle?: string;
 }
 
 function createMigrationMockWallet(opts: MigrationMockOptions) {
@@ -163,6 +169,9 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
     // The migration pass refreshes the wallet's deprecated-signer cache from the
     // fresh info snapshot (the real Wallet inherits this from ReadonlyWallet).
     const refreshDeprecatedSigners = vi.fn();
+    const settleServerInfoChanges = vi.fn(async () => {
+        if (opts.rotateOnSettle) arkServerPublicKey = hex.decode(opts.rotateOnSettle);
+    });
 
     const wallet = {
         get arkServerPublicKey() {
@@ -170,6 +179,7 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
         },
         arkProvider: { getInfo },
         refreshDeprecatedSigners,
+        settleServerInfoChanges,
         rotateServerSigner,
         getContractManager: vi.fn().mockResolvedValue({
             getContractsWithVtxos,
@@ -202,6 +212,7 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
         getBoardingUtxosForSigners,
         getInfo,
         refreshDeprecatedSigners,
+        settleServerInfoChanges,
     };
 }
 
@@ -321,6 +332,28 @@ describe("VtxoManager - deprecated-signer migration", () => {
         expect(report.signers.find((s) => s.signerPubKey === DEP_DUE)?.vtxoCount).toBe(2);
     });
 
+    it("excludes an exited VTXO from the migration send and from the per-signer rollup", async () => {
+        // Unlike the no-expiry case above, an exit is not merely unsendable: it
+        // is no longer under the deprecated signer's custody at all, so it must
+        // not be counted as a holding awaiting migration either.
+        const script = "default-" + DEP_DUE;
+        const exited = makeVtxo(script, 4000);
+        (exited as { isUnrolled: boolean }).isUnrolled = true;
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [cwv(DEP_DUE, [makeVtxo(script, 5000), exited])],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        const inputs = sendSelectedVtxosToSelf.mock.calls[0][0] as ExtendedContractVtxo[];
+        expect(inputs.map((v) => v.value)).toEqual([5000]);
+        const row = report.signers.find((s) => s.signerPubKey === DEP_DUE)!;
+        expect(row.vtxoCount).toBe(1);
+        expect(row.totalValue).toBe(5000);
+    });
+
     it("applies a mid-session rotation first when the wallet's own signer is deprecated", async () => {
         const { wallet, rotateServerSigner, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             walletSigner: DEP_A, // wallet was built before the rotation
@@ -336,6 +369,58 @@ describe("VtxoManager - deprecated-signer migration", () => {
         expect(report.rotated).toBe(true);
         expect(report.vtxos?.migrated).toHaveLength(1);
         expect(sendSelectedVtxosToSelf).toHaveBeenCalledOnce();
+    });
+
+    it("credits a rotation its own info refresh applied, instead of racing it", async () => {
+        // A `getInfo` can surface a rotated operator config, which the wallet
+        // applies off that emit rather than inline. The pass must drain that
+        // handler before classifying — otherwise it reads a wallet whose new
+        // signer's contract rows are persisted but whose `arkServerPublicKey`
+        // still holds the old key — and must still report `rotated`, even
+        // though by then it has nothing left to rotate itself.
+        const {
+            wallet,
+            rotateServerSigner,
+            sendSelectedVtxosToSelf,
+            settleServerInfoChanges,
+            getContractsWithVtxos,
+        } = createMigrationMockWallet({
+            walletSigner: DEP_A,
+            rotateOnSettle: ACTIVE,
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 5000) }]),
+            contractsWithVtxos: [cwv(DEP_A, [makeVtxo("default-" + DEP_A, 8000)])],
+        });
+
+        const report = await newManager(wallet).migrateDeprecatedSignerVtxos();
+
+        expect(settleServerInfoChanges).toHaveBeenCalledOnce();
+        expect(settleServerInfoChanges.mock.invocationCallOrder[0]).toBeLessThan(
+            getContractsWithVtxos.mock.invocationCallOrder[0],
+        );
+        expect(rotateServerSigner).not.toHaveBeenCalled();
+        expect(report.rotated).toBe(true);
+        expect(report.vtxos?.migrated).toHaveLength(1);
+        expect(sendSelectedVtxosToSelf).toHaveBeenCalledOnce();
+    });
+
+    it("settles an in-flight rotation before reporting deprecated-signer status", async () => {
+        const { wallet, settleServerInfoChanges, getContractsWithVtxos } =
+            createMigrationMockWallet({
+                walletSigner: DEP_A,
+                rotateOnSettle: ACTIVE,
+                info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 5000) }]),
+                contractsWithVtxos: [cwv(DEP_A, [makeVtxo("default-" + DEP_A, 8000)])],
+            });
+
+        const status = await newManager(wallet).getDeprecatedSignerStatus();
+
+        expect(settleServerInfoChanges).toHaveBeenCalledOnce();
+        expect(settleServerInfoChanges.mock.invocationCallOrder[0]).toBeLessThan(
+            getContractsWithVtxos.mock.invocationCallOrder[0],
+        );
+        // Classified from the settled snapshot: DEP_A is deprecated, not the
+        // wallet's own (now rotated away) signer.
+        expect(status.map((s) => s.signerPubKey)).toEqual([DEP_A]);
     });
 
     it("does not rotate or migrate when the wallet's own signer is unknown", async () => {
@@ -1051,6 +1136,41 @@ describe("VtxoManager - post-cutoff lifecycle reporting (Section 6)", () => {
         expect(row.recoverableValue).toBe(0);
         expect(row.awaitingSweepCount).toBe(0);
         expect(row.nextSweepEta).toBeUndefined();
+    });
+
+    it("keeps an exited VTXO out of the EXPIRED rollup and out of the sweep ETA", async () => {
+        const script = "default-" + DEP_EXPIRED;
+        const etaSoon = Date.now() + 100_000;
+        const etaFar = Date.now() + 200_000;
+        // Exited on both legs of the split: one not yet swept, one swept.
+        const exitedAwaiting = makeVtxoWithExpiry(script, 4000, "settled", etaSoon);
+        (exitedAwaiting as { isUnrolled: boolean }).isUnrolled = true;
+        const exitedSwept = makeVtxo(script, 7000, "swept");
+        (exitedSwept as { isUnrolled: boolean }).isUnrolled = true;
+        const { wallet } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_EXPIRED, cutoffDate: BigInt(NOW_S - 100) }]),
+            contractsWithVtxos: [
+                cwv(DEP_EXPIRED, [
+                    makeVtxoWithExpiry(script, 5000, "settled", etaFar),
+                    exitedAwaiting,
+                    exitedSwept,
+                ]),
+            ],
+        });
+
+        const row = (await newManager(wallet).getDeprecatedSignerStatus()).find(
+            (s) => s.signerPubKey === DEP_EXPIRED,
+        )!;
+
+        expect(row.vtxoCount).toBe(1);
+        expect(row.totalValue).toBe(5000);
+        expect(row.awaitingSweepCount).toBe(1);
+        expect(row.awaitingSweepValue).toBe(5000);
+        expect(row.recoverableCount).toBe(0);
+        expect(row.recoverableValue).toBe(0);
+        // The exit's nearer expiry must not be advertised as a recovery ETA: no
+        // sweep will ever make that coin recoverable.
+        expect(row.nextSweepEta).toBe(etaFar);
     });
 
     it("transitions awaitingSweep → recoverableNow on sweep, and recovery drains the swept set", async () => {

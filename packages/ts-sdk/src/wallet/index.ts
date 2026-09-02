@@ -15,6 +15,7 @@ import {
     VirtualTxRepository,
 } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
+import type { Contract } from "../contracts/types";
 import { IDelegateManager } from "./delegate";
 import type { Activity, ActivityRegistry } from "./activity";
 import type { ExitCaptureMode } from "./exit/capture";
@@ -56,6 +57,62 @@ import { DelegateProvider } from "../providers/delegate";
  *   provider.
  */
 export type WalletMode = "auto" | "static" | "hd" | DescriptorProvider;
+
+/**
+ * Address flavours {@link Wallet.getNewAddresses} can mint. Both derive from
+ * the same HD index within one call — `default` is the offchain Arkade
+ * receive script, `boarding` the onchain deposit script.
+ */
+export type NewAddressType = "default" | "boarding";
+
+/** Options for {@link Wallet.getNewAddresses}. */
+export interface GetNewAddressesOptions {
+    /**
+     * Flavours to mint, in the order they are returned.
+     *
+     * @defaultValue `["default"]`
+     */
+    types?: readonly NewAddressType[];
+    /**
+     * Require a genuinely fresh index. A wallet with no HD stream to advance
+     * (`walletMode: 'static'` / `'auto'`, or a provider that declines to
+     * allocate) throws {@link WalletCannotAllocateAddressError} rather than
+     * silently handing back the address it already gave you — which, for a
+     * caller issuing one address per counterparty, surfaces only as two
+     * people paying the same script.
+     *
+     * @defaultValue `false`
+     */
+    forceNew?: boolean;
+}
+
+/** One minted address and the contract row backing it. */
+export interface NewAddress {
+    /**
+     * The address to hand out: the onchain address for `boarding`, the Arkade
+     * address for `default`.
+     *
+     * Not always `contract.address`. A boarding row persists the *ark*
+     * encoding of its script, so reading `contract.address` on a boarding
+     * entry yields an address no onchain sender can pay.
+     */
+    address: string;
+    /**
+     * The descriptor this address was derived from — hand it to
+     * `signerForDescriptor` to recover the key later. Every entry from a
+     * single call carries the same one, because they share an index.
+     *
+     * Also present on `contract.metadata.signingDescriptor`, but surfaced here
+     * typed: `Contract.metadata` is `Record<string, unknown>`, so reading it
+     * there costs the caller an `as string` on the one field they are most
+     * likely to persist beside an invoice.
+     */
+    signingDescriptor: string;
+    /**
+     * The persisted, watched contract row — script, type, state and metadata.
+     */
+    contract: Contract;
+}
 
 /**
  * Base configuration options shared by all wallet types.
@@ -354,9 +411,9 @@ export interface WalletBalance {
      * obtainable split under a different predicate and is not counted here.
      *
      * Subtract this from `settled + preconfirmed`, never from `total`. `total`
-     * also carries {@link boarding}, {@link recoverable} and
-     * {@link pendingRecovery}, which are still the user's funds — netting a
-     * bucket out of it drops them from the figure with no signal.
+     * also carries {@link boarding}, {@link recoverable}, {@link pendingRecovery}
+     * and {@link unrolled}, which are still the user's funds — netting a bucket
+     * out of it drops them from the figure with no signal.
      */
     gated: number;
     /**
@@ -386,7 +443,26 @@ export interface WalletBalance {
      */
     pendingRecovery: number;
 
-    /** Total balance across offchain, recoverable, pending-recovery, and boarding funds. */
+    /**
+     * Funds whose unilateral exit already happened — the output is onchain
+     * behind its CSV timelock, so `Unroll.completeUnroll` is the only thing
+     * that moves it. Excluded from `available`/`settled`/`preconfirmed`, from
+     * `recoverable` (no batch can lift an onchain output), and from coin
+     * selection — but still the wallet's funds, so counted in `total`.
+     */
+    unrolled: number;
+
+    /**
+     * Total balance across offchain, recoverable, pending-recovery, unrolled,
+     * and boarding funds.
+     *
+     * One known main-thread-only wedge: while a spend is in flight — `send`,
+     * `sendBitcoin` or `settle` — its VTXO inputs are withheld from every bucket,
+     * including this one. Boarding inputs are not: only virtual coins enter the
+     * set. That state lives on the `Wallet` instance driving the spend, so a
+     * service-worker client reading the same repository still counts them until
+     * the spend settles. Both sides converge when it does.
+     */
     total: number;
 
     /** Asset balance entries (`assetId` & `amount`) the wallet owns. */
@@ -396,7 +472,8 @@ export interface WalletBalance {
      * The subset of {@link assets} generic spending will accept, i.e. the asset
      * analogue of {@link available}. `assets - availableAssets` is what is held
      * but not selectable, for the {@link gated} and {@link intentLocked} causes
-     * plus recovery — assets have no per-cause split of their own.
+     * plus recovery and {@link unrolled} — assets have no per-cause split of
+     * their own.
      */
     availableAssets: Asset[];
 }
@@ -882,6 +959,7 @@ import type { NormalizedExtendedVirtualCoin } from "./vtxo";
 export {
     canRecoverOnchain,
     canSpendOffchain,
+    canSweepOnchain,
     convertVtxo,
     getAllNormalizedVtxos,
     getNormalizedVtxos,
@@ -922,7 +1000,15 @@ export type GetVtxosFilter = {
     /** Include swept but still unspent virtual outputs. */
     withRecoverable?: boolean;
 
-    /** Include virtual outputs that have been unrolled onchain. */
+    /**
+     * Include virtual outputs that have been unrolled onchain.
+     *
+     * Authoritative on the *location* axis and only that: an exited output is
+     * returned whatever else is true of it, spent ones included. So unlike
+     * {@link withRecoverable}, this flag does not narrow to a capability —
+     * test {@link canSweepOnchain} before acting on what comes back.
+     * `Unroll.prepareUnrollTransaction`, the flag's main consumer, does.
+     */
     withUnrolled?: boolean;
 };
 

@@ -56,6 +56,35 @@ describe("EsploraProvider", () => {
         });
     });
 
+    describe("getRawTransaction", () => {
+        it("decodes the /hex endpoint into wire bytes", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                // Esplora's plain-text response is newline-terminated on some
+                // deployments; hex.decode rejects the stray byte.
+                text: () => Promise.resolve("0200000001ab\n"),
+            });
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const raw = await provider.getRawTransaction("deadbeef");
+
+            expect(mockFetch).toHaveBeenCalledWith("http://localhost:3000/tx/deadbeef/hex");
+            expect(Array.from(raw)).toEqual([0x02, 0x00, 0x00, 0x00, 0x01, 0xab]);
+        });
+
+        it("throws with the txid on a failed fetch", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: false,
+                text: () => Promise.resolve("Transaction not found"),
+            });
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            await expect(provider.getRawTransaction("deadbeef")).rejects.toThrow(
+                /deadbeef.*Transaction not found/,
+            );
+        });
+    });
+
     describe("getFeeRate", () => {
         const mockFeeResponse = {
             "1": 80,

@@ -6,6 +6,8 @@ import {
     ArkTransaction,
     ExtendedCoin,
     GetVtxosFilter,
+    GetNewAddressesOptions,
+    NewAddress,
     StorageConfig,
     IReadonlyWallet,
     IReadonlyAssetManager,
@@ -30,7 +32,11 @@ import {
     serializeSigningIdentity,
     isSigningIdentity,
 } from "../../identity";
-import type { HDWalletCapable, HDAllocationCapable } from "../hdWalletCapable";
+import type {
+    HDWalletCapable,
+    HDAllocationCapable,
+    AddressAllocationCapable,
+} from "../hdWalletCapable";
 import { resolveDescriptorSigner } from "../hdWalletCapable";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
@@ -125,6 +131,8 @@ import {
     RequestGetCurrentSigningDescriptor,
     ResponseGetCurrentSigningDescriptor,
     RequestGetNextSigningDescriptor,
+    RequestGetNewAddresses,
+    ResponseGetNewAddresses,
     ResponseGetNextSigningDescriptor,
     RequestGetUsedSigningDescriptors,
     ResponseGetUsedSigningDescriptors,
@@ -199,6 +207,9 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // Allocation is a local repository write plus a fire-and-forget band
     // slide — no indexer round trip on the request path.
     GET_NEXT_SIGNING_DESCRIPTOR: 10_000,
+    // Same shape as the bare allocation above, plus one contract write per
+    // requested type — still local, still no indexer round trip.
+    GET_NEW_ADDRESSES: 10_000,
     GET_USED_SIGNING_DESCRIPTORS: 20_000,
     ADVANCE_SIGNING_DESCRIPTOR_WATERMARK: 10_000,
 
@@ -1557,7 +1568,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
 export class ServiceWorkerWallet
     extends ServiceWorkerReadonlyWallet
-    implements IWallet, HDWalletCapable, HDAllocationCapable
+    implements IWallet, HDWalletCapable, HDAllocationCapable, AddressAllocationCapable
 {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
@@ -1769,6 +1780,36 @@ export class ServiceWorkerWallet
             return (response as ResponseGetNextSigningDescriptor).payload.descriptor;
         } catch (error) {
             throw new Error(`Failed to allocate next signing descriptor: ${error}`);
+        }
+    }
+
+    /**
+     * @see Wallet.getNewAddresses
+     *
+     * Proxied as a single request rather than rebuilt page-side out of
+     * {@link getNextSigningDescriptor}: the worker owns the HD watermark *and*
+     * the contract repository, so splitting the operation would let a page burn
+     * an index and then fail to register the script, leaving an address nothing
+     * watches.
+     *
+     * Note the error shape — `WalletCannotAllocateAddressError` is thrown
+     * worker-side and cannot cross the message boundary as a class, so a
+     * `forceNew` refusal surfaces here as a plain `Error` carrying its message
+     * (and the worker-side error as `cause`). Callers that must branch on the
+     * refusal match the message rather than `instanceof`.
+     */
+    async getNewAddresses(opts?: GetNewAddressesOptions): Promise<NewAddress[]> {
+        const message: RequestGetNewAddresses = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_NEW_ADDRESSES",
+            ...(opts ? { payload: opts } : {}),
+        };
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetNewAddresses).payload.addresses;
+        } catch (error) {
+            throw new Error(`Failed to allocate new addresses: ${error}`, { cause: error });
         }
     }
 

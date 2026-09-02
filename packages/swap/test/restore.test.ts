@@ -25,7 +25,12 @@ const EMULATOR_KEY = key("33");
 // a script whose key is not a point
 const MAKER_PK_SCRIPT = new Uint8Array([0x51, 0x20, ...key("55")]);
 
-const makeOffer = (side: "want-asset" | "want-btc", wantAmount: bigint): Offer => {
+const makeOffer = (
+    side: "want-asset" | "want-btc",
+    wantAmount: bigint,
+    /** Present adds the exit closure, so the offer compiles to three leaves. */
+    exitDelay?: { type: "blocks" | "seconds"; value: bigint },
+): Offer => {
     const binding: Omit<Offer, "swapPkScript"> = {
         wantAmount,
         ...(side === "want-asset"
@@ -34,6 +39,7 @@ const makeOffer = (side: "want-asset" | "want-btc", wantAmount: bigint): Offer =
         makerPkScript: MAKER_PK_SCRIPT,
         makerPublicKey: MAKER_KEY,
         emulatorPubkey: EMULATOR_KEY,
+        ...(exitDelay ? { exitDelay } : {}),
     };
     return { ...binding, swapPkScript: offerVtxoScript(binding, SERVER_KEY).pkScript };
 };
@@ -53,11 +59,15 @@ const fundingPsbt = (offer: Offer): { psbt: string; txid: string } => {
 
 /**
  * A spend of one or more deposits, each input carrying the covenant leaf it
- * took. This is what the classifier reads: `cancel` returns the deposit,
- * `fulfill` is the solver paying for it.
+ * took. This is what the classifier reads: `cancel` and `exit` return the
+ * deposit, `fulfill` is the solver paying for it.
  */
 const spendPsbt = (
-    spends: { offer: Offer; deposit: { txid: string; vout: number }; via: "cancel" | "fulfill" }[],
+    spends: {
+        offer: Offer;
+        deposit: { txid: string; vout: number };
+        via: "cancel" | "fulfill" | "exit";
+    }[],
 ): { psbt: string; txid: string } => {
     const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
     for (const { offer, deposit, via } of spends) {
@@ -131,6 +141,41 @@ describe("classifySpend", () => {
         const parse = (psbt: string) => Transaction.fromPSBT(base64.decode(psbt));
         expect(classifySpend(offer, SERVER_KEY, parse(cancel.psbt), deposit)).toBe("cancelled");
         expect(classifySpend(offer, SERVER_KEY, parse(fill.psbt), deposit)).toBe("fulfilled");
+    });
+
+    it("reports a unilateral exit as cancelled — the deposit came back either way", async () => {
+        // An unclassified exit would be worse than imprecise: no status is
+        // written, so the swap stays `pending`, the restore scan re-queues it
+        // forever, and retireOfferContract never runs — leaving a dead script
+        // in the subscription and the failsafe poll for the wallet's lifetime.
+        const offer = makeOffer("want-btc", BigInt(21_000), { type: "blocks", value: BigInt(144) });
+        const deposit = { txid: "ab".repeat(32), vout: 0 };
+        const parse = (psbt: string) => Transaction.fromPSBT(base64.decode(psbt));
+
+        const exit = spendPsbt([{ offer, deposit, via: "exit" }]);
+        expect(classifySpend(offer, SERVER_KEY, parse(exit.psbt), deposit)).toBe("cancelled");
+
+        // the other two leaves still answer for themselves on a 3-leaf offer
+        const cancel = spendPsbt([{ offer, deposit, via: "cancel" }]);
+        const fill = spendPsbt([{ offer, deposit, via: "fulfill" }]);
+        expect(classifySpend(offer, SERVER_KEY, parse(cancel.psbt), deposit)).toBe("cancelled");
+        expect(classifySpend(offer, SERVER_KEY, parse(fill.psbt), deposit)).toBe("fulfilled");
+    });
+
+    it("leaves an exit-less offer with nothing to match the exit leaf against", async () => {
+        // functionByName("exit") is undefined there, and a filter that let an
+        // undefined leaf through would match any spend carrying no tapleaf
+        const withExit = makeOffer("want-btc", BigInt(21_000), {
+            type: "blocks",
+            value: BigInt(144),
+        });
+        const withoutExit = makeOffer("want-btc", BigInt(21_000));
+        const deposit = { txid: "ab".repeat(32), vout: 0 };
+        const exitSpend = Transaction.fromPSBT(
+            base64.decode(spendPsbt([{ offer: withExit, deposit, via: "exit" }]).psbt),
+        );
+        // the exit leaf of a DIFFERENT covenant is not this offer's route back
+        expect(classifySpend(withoutExit, SERVER_KEY, exitSpend, deposit)).toBe("indeterminate");
     });
 
     it("classifies each deposit by its own input when one tx spends several", async () => {

@@ -113,61 +113,59 @@ describe("unilateral exit packages", () => {
         );
     });
 
-    it(
-        "graph mode: funds the exit from an ephemeral fee wallet",
-        { timeout: 300_000 },
-        async () => {
-            const alice = await createTestArkWallet();
-            await createVtxo(alice, 60_000);
+    it("graph mode: funds the exit from an ephemeral fee wallet", {
+        timeout: 300_000,
+    }, async () => {
+        const alice = await createTestArkWallet();
+        await createVtxo(alice, 60_000);
 
-            const dest = await createTestOnchainWallet();
+        const dest = await createTestOnchainWallet();
 
-            // The preparer's wallet signs the sweeps; no fee wallet is used at
-            // prepare time in graph mode.
-            const feeWalletForPrepare = await OnchainWallet.create(alice.identity, "regtest");
-            const opts = {
-                wallet: alice.wallet,
-                onchainWallet: feeWalletForPrepare,
-                sweepAddress: dest.wallet.address,
-                feeRate: 2,
-                mode: "graph" as const,
-            };
+        // The preparer's wallet signs the sweeps; no fee wallet is used at
+        // prepare time in graph mode.
+        const feeWalletForPrepare = await OnchainWallet.create(alice.identity, "regtest");
+        const opts = {
+            wallet: alice.wallet,
+            onchainWallet: feeWalletForPrepare,
+            sweepAddress: dest.wallet.address,
+            feeRate: 2,
+            mode: "graph" as const,
+        };
 
-            // quote: funding is the CPFP fee budget, to be sent at execution
-            const quote = await UnilateralExit.estimate(opts);
-            expect(quote.totals.fundingRequiredSats).toBeGreaterThan(0);
+        // quote: funding is the CPFP fee budget, to be sent at execution
+        const quote = await UnilateralExit.estimate(opts);
+        expect(quote.totals.fundingRequiredSats).toBeGreaterThan(0);
 
-            const pkg = await UnilateralExit.prepare(opts);
-            expect(pkg.mode).toBe("graph");
-            expect(pkg.steps.some((s) => s.kind === "broadcast")).toBe(false);
-            expect(pkg.steps.some((s) => s.kind === "bump")).toBe(true);
+        const pkg = await UnilateralExit.prepare(opts);
+        expect(pkg.mode).toBe("graph");
+        expect(pkg.steps.some((s) => s.kind === "broadcast")).toBe(false);
+        expect(pkg.steps.some((s) => s.kind === "bump")).toBe(true);
 
-            // The executor's fee wallet is an INDEPENDENT ephemeral key — mirrors
-            // the web UI generating a throwaway key and asking the user to fund it.
-            const ephemeral = await createTestOnchainWallet();
-            faucetOnchain(ephemeral.wallet.address, pkg.totals.fundingRequiredSats + 30_000);
-            await waitFor(
-                async () => (await ephemeral.wallet.getCoins()).some((c) => c.status.confirmed),
-                { timeout: 30_000 },
-            );
+        // The executor's fee wallet is an INDEPENDENT ephemeral key — mirrors
+        // the web UI generating a throwaway key and asking the user to fund it.
+        const ephemeral = await createTestOnchainWallet();
+        faucetOnchain(ephemeral.wallet.address, pkg.totals.fundingRequiredSats + 30_000);
+        await waitFor(
+            async () => (await ephemeral.wallet.getCoins()).some((c) => c.status.confirmed),
+            { timeout: 30_000 },
+        );
 
-            const events = await driveExecutor(pkg, ephemeral.wallet.provider, ephemeral.wallet);
-            expect(events.filter((e) => e.status === "failed")).toHaveLength(0);
-            expect(
-                events.filter((e) => e.kind === "bump" && e.status === "confirmed").length,
-            ).toBeGreaterThan(0);
-            expect(
-                events.filter((e) => e.kind === "sweep" && e.status === "confirmed"),
-            ).toHaveLength(1);
+        const events = await driveExecutor(pkg, ephemeral.wallet.provider, ephemeral.wallet);
+        expect(events.filter((e) => e.status === "failed")).toHaveLength(0);
+        expect(
+            events.filter((e) => e.kind === "bump" && e.status === "confirmed").length,
+        ).toBeGreaterThan(0);
+        expect(events.filter((e) => e.kind === "sweep" && e.status === "confirmed")).toHaveLength(
+            1,
+        );
 
-            await waitFor(
-                async () =>
-                    (await confirmedBalance(ephemeral.wallet.provider, dest.wallet.address)) ===
-                    pkg.totals.recoveredSats,
-                { timeout: 30_000 },
-            );
-        },
-    );
+        await waitFor(
+            async () =>
+                (await confirmedBalance(ephemeral.wallet.provider, dest.wallet.address)) ===
+                pkg.totals.recoveredSats,
+            { timeout: 30_000 },
+        );
+    });
 
     it("dedupes shared ancestors across two vtxos", { timeout: 300_000 }, async () => {
         const alice = await createTestArkWallet();
@@ -223,107 +221,104 @@ describe("unilateral exit packages", () => {
         );
     });
 
-    it(
-        "exits a vhtlc as receiver with the preimage (condition witness)",
-        { timeout: 300_000 },
-        async () => {
-            const alice = await createTestArkWallet();
-            await createVtxo(alice, 30_000);
-            const bob = await createTestArkWallet();
+    it("exits a vhtlc as receiver with the preimage (condition witness)", {
+        timeout: 300_000,
+    }, async () => {
+        const alice = await createTestArkWallet();
+        await createVtxo(alice, 30_000);
+        const bob = await createTestArkWallet();
 
-            const preimage = new TextEncoder().encode("exit-package-preimage");
-            const preimageHash = hash160(preimage);
-            const vhtlcParams = {
-                preimageHash,
-                sender: (await alice.identity.xOnlyPublicKey())!,
-                receiver: (await bob.identity.xOnlyPublicKey())!,
-                server: SERVER_KEY,
-                refundLocktime: 1000n,
-                unilateralClaimDelay: { type: "blocks", value: 9n } as const,
-                unilateralRefundDelay: { type: "blocks", value: 50n } as const,
-                unilateralRefundWithoutReceiverDelay: { type: "blocks", value: 50n } as const,
-            };
-            const vhtlcScript = new VHTLC.Script(vhtlcParams);
-            const vhtlcAddress = vhtlcScript.address(networks.regtest.hrp, SERVER_KEY).encode();
+        const preimage = new TextEncoder().encode("exit-package-preimage");
+        const preimageHash = hash160(preimage);
+        const vhtlcParams = {
+            preimageHash,
+            sender: (await alice.identity.xOnlyPublicKey())!,
+            receiver: (await bob.identity.xOnlyPublicKey())!,
+            server: SERVER_KEY,
+            refundLocktime: 1000n,
+            unilateralClaimDelay: { type: "blocks", value: 9n } as const,
+            unilateralRefundDelay: { type: "blocks", value: 50n } as const,
+            unilateralRefundWithoutReceiverDelay: { type: "blocks", value: 50n } as const,
+        };
+        const vhtlcScript = new VHTLC.Script(vhtlcParams);
+        const vhtlcAddress = vhtlcScript.address(networks.regtest.hrp, SERVER_KEY).encode();
 
-            // fund the vhtlc in a settlement so the chain stays short
-            await alice.wallet.settle({
-                inputs: await alice.wallet.getVtxos(),
-                outputs: [{ address: vhtlcAddress, amount: 30_000n }],
-            });
+        // fund the vhtlc in a settlement so the chain stays short
+        await alice.wallet.settle({
+            inputs: await alice.wallet.getVtxos(),
+            outputs: [{ address: vhtlcAddress, amount: 30_000n }],
+        });
 
-            // register the contract (with the preimage) in bob's repository.
-            // NOTE: registration goes straight to the repository, so this
-            // exercises the exit flow's explicit-outpoint path without any
-            // wallet-side VTXO tracking. It never goes through
-            // `ContractManager`, and so is untouched by the `vhtlc` handler's
-            // generic-spending gate, which filters generic selection only.
-            await bob.wallet.contractRepository.saveContract({
-                type: "vhtlc",
-                params: {
-                    ...VHTLCContractHandler.serializeParams(vhtlcParams),
-                    preimage: hex.encode(preimage),
-                },
-                script: hex.encode(vhtlcScript.pkScript),
-                address: vhtlcAddress,
-                state: "active",
-                createdAt: Date.now(),
-            });
+        // register the contract (with the preimage) in bob's repository.
+        // NOTE: registration goes straight to the repository, so this
+        // exercises the exit flow's explicit-outpoint path without any
+        // wallet-side VTXO tracking. It never goes through
+        // `ContractManager`, and so is untouched by the `vhtlc` handler's
+        // generic-spending gate, which filters generic selection only.
+        await bob.wallet.contractRepository.saveContract({
+            type: "vhtlc",
+            params: {
+                ...VHTLCContractHandler.serializeParams(vhtlcParams),
+                preimage: hex.encode(preimage),
+            },
+            script: hex.encode(vhtlcScript.pkScript),
+            address: vhtlcAddress,
+            state: "active",
+            createdAt: Date.now(),
+        });
 
-            // locate the funded vhtlc outpoint on the indexer
-            let outpoint: { txid: string; vout: number } | undefined;
-            await waitFor(
-                async () => {
-                    const res = await bob.wallet.indexerProvider.getVtxos({
-                        scripts: [hex.encode(vhtlcScript.pkScript)],
-                        spendableOnly: true,
-                    });
-                    if (res.vtxos.length !== 1) return false;
-                    outpoint = { txid: res.vtxos[0].txid, vout: res.vtxos[0].vout };
-                    return true;
-                },
-                { timeout: 30_000 },
-            );
+        // locate the funded vhtlc outpoint on the indexer
+        let outpoint: { txid: string; vout: number } | undefined;
+        await waitFor(
+            async () => {
+                const res = await bob.wallet.indexerProvider.getVtxos({
+                    scripts: [hex.encode(vhtlcScript.pkScript)],
+                    spendableOnly: true,
+                });
+                if (res.vtxos.length !== 1) return false;
+                outpoint = { txid: res.vtxos[0].txid, vout: res.vtxos[0].vout };
+                return true;
+            },
+            { timeout: 30_000 },
+        );
 
-            const feeWallet = await OnchainWallet.create(bob.identity, "regtest");
-            const dest = await createTestOnchainWallet();
-            const opts = {
-                wallet: bob.wallet,
-                onchainWallet: feeWallet,
-                sweepAddress: dest.wallet.address,
-                feeRate: 2,
-                vtxos: [outpoint!],
-            };
+        const feeWallet = await OnchainWallet.create(bob.identity, "regtest");
+        const dest = await createTestOnchainWallet();
+        const opts = {
+            wallet: bob.wallet,
+            onchainWallet: feeWallet,
+            sweepAddress: dest.wallet.address,
+            feeRate: 2,
+            vtxos: [outpoint!],
+        };
 
-            const quote = await UnilateralExit.estimate(opts);
-            const active = quote.vtxos.filter((v) => !v.skipped);
-            expect(active).toHaveLength(1);
-            expect(active[0].path).toBe("vhtlc:unilateral");
-            expect(active[0].delay).toEqual({ type: "blocks", value: 9 });
+        const quote = await UnilateralExit.estimate(opts);
+        const active = quote.vtxos.filter((v) => !v.skipped);
+        expect(active).toHaveLength(1);
+        expect(active[0].path).toBe("vhtlc:unilateral");
+        expect(active[0].delay).toEqual({ type: "blocks", value: 9 });
 
-            faucetOnchain(feeWallet.address, quote.totals.fundingRequiredSats + 20_000);
-            await waitFor(
-                async () => (await feeWallet.getCoins()).some((c) => c.status.confirmed),
-                { timeout: 30_000 },
-            );
+        faucetOnchain(feeWallet.address, quote.totals.fundingRequiredSats + 20_000);
+        await waitFor(async () => (await feeWallet.getCoins()).some((c) => c.status.confirmed), {
+            timeout: 30_000,
+        });
 
-            const pkg = await UnilateralExit.prepare(opts);
-            mineBlocks(1);
+        const pkg = await UnilateralExit.prepare(opts);
+        mineBlocks(1);
 
-            // ground truth for condition-witness stack order: the sweep must
-            // be accepted by real consensus with [sig, preimage, script, cb]
-            const events = await driveExecutor(pkg, feeWallet.provider);
-            expect(events.filter((e) => e.status === "failed")).toHaveLength(0);
-            expect(
-                events.filter((e) => e.kind === "sweep" && e.status === "confirmed"),
-            ).toHaveLength(1);
+        // ground truth for condition-witness stack order: the sweep must
+        // be accepted by real consensus with [sig, preimage, script, cb]
+        const events = await driveExecutor(pkg, feeWallet.provider);
+        expect(events.filter((e) => e.status === "failed")).toHaveLength(0);
+        expect(events.filter((e) => e.kind === "sweep" && e.status === "confirmed")).toHaveLength(
+            1,
+        );
 
-            await waitFor(
-                async () =>
-                    (await confirmedBalance(feeWallet.provider, dest.wallet.address)) ===
-                    pkg.totals.recoveredSats,
-                { timeout: 30_000 },
-            );
-        },
-    );
+        await waitFor(
+            async () =>
+                (await confirmedBalance(feeWallet.provider, dest.wallet.address)) ===
+                pkg.totals.recoveredSats,
+            { timeout: 30_000 },
+        );
+    });
 });

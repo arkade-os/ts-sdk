@@ -52,6 +52,7 @@ import {
     assertSubmittedArkTxid,
     buildOffchainTx,
     getArkPsbtFields,
+    hasTerminalSpend,
     matchServerCheckpoints,
 } from "@arkade-os/sdk";
 
@@ -140,12 +141,15 @@ export interface LockupVtxo {
      * It is still the trader's money and it is still visible, which is why
      * {@link findLockupVtxos} returns it. What it is not is refundable by
      * {@link pushRefundWithoutReceiver}: that builds an offchain Ark
-     * transaction, and the SDK's own predicates make the two states mutually
-     * exclusive — `canSpendOffchain` is false exactly when `canRecoverOnchain`
-     * is true (`wallet/vtxo.ts`), and the latter is documented as "must be
-     * recovered into a fresh batch rather than spent offchain". Holding the
-     * trader's `sender` key does not change that; a sweep removes the leaf from
-     * the live tree, not the signature from the trader.
+     * transaction, and the SDK's own predicates put the two states on opposite
+     * sides — `canSpendOffchain` is false whenever `canRecoverOnchain` is true
+     * (`wallet/vtxo.ts`), and the latter is documented as "must be recovered
+     * into a fresh batch rather than spent offchain". Holding the trader's
+     * `sender` key does not change that; a sweep removes the leaf from the live
+     * tree, not the signature from the trader.
+     *
+     * Opposite, but not exhaustive: an unrolled output satisfies neither, and
+     * {@link findLockupVtxos} drops those before they reach this type at all.
      *
      * `packages/boltz-swap` splits on exactly this fact rather than working
      * around it: `settleRefundWithoutReceiver` sends a live VTXO through an
@@ -247,6 +251,20 @@ export class LockupNeedsRecoveryError extends Error {
  * That function refuses the recoverable ones by name rather than submitting a
  * spend the server must reject.
  *
+ * **Unrolled outputs are the one exception, and are dropped.** A unilaterally
+ * exited output lives onchain behind its CSV; no offchain spend of any leaf can
+ * reach it, and `LockupVtxo` carries no field to say so, so a caller could not
+ * tell it apart from a live one. Whether arkd returns such an output under
+ * `spendableOnly` is not determinable from here, so the exclusion is made
+ * defensively rather than assumed. It costs the two waiting callers nothing
+ * they wanted: `awaitLockupFunding` keeps waiting for a claimable lockup
+ * instead of publishing `P` into a spend that cannot land, and
+ * `refundIfUnresolved` reports rather than grinding a doomed push to its
+ * deadline. Both that function and `RfqSwapManager` name the exit through
+ * {@link readLockupFate}, which queries unfiltered and reports it as `exited`;
+ * this drop is the second line, and what still refuses the push on a pass where
+ * the fate read learned nothing.
+ *
  * This read — not the RFQ's reported state — is the authority on whether
  * there is anything left at the lockup.
  *
@@ -277,6 +295,10 @@ export async function findLockupVtxos(
         [recoverable.vtxos ?? [], true],
     ] as const) {
         for (const vtxo of vtxos) {
+            // Dropped here, before the map: `LockupVtxo` discards the flag, so
+            // this is the last point at which an exited output can be told
+            // apart from a live one.
+            if (vtxo.isUnrolled) continue;
             // Deduped by outpoint: the two filters are disjoint today, but an
             // output counted twice would be added twice to the refund's
             // aggregate output and make a transaction that cannot be built.
@@ -327,6 +349,23 @@ export type LockupFate =
     /** Fully spent, and nothing that spent it revealed a matching preimage —
      * so the money went back to the trader. See {@link readLockupFate}. */
     | { fate: "returned"; spends: readonly LockupSpend[] }
+    /**
+     * At least one output was unilaterally exited: it sits onchain under the
+     * VHTLC script, where no offchain claim or refund can reach it.
+     *
+     * Not terminal, and not a loss. The money is still under the same script
+     * with the same leaves, so `completeUnroll` plus an onchain spend can still
+     * end the swap either way — which is why this outranks `open`: an output
+     * that is "still unspent" but unreachable is not a swap that is merely
+     * running.
+     *
+     * It outranks a verdict too, on a lockup where a sibling output was claimed
+     * or returned. That is the rule `open` already sets, not a new one: the
+     * unspent test short-circuits before any witness is read, so a partially
+     * resolved lockup has never reported `claimed`/`returned`. What changes is
+     * only that such a lockup now says why it is unresolved.
+     */
+    | { fate: "exited"; outpoints: readonly { txid: string; vout: number }[] }
     /** Nothing was learned: no outputs visible, an output spent by nothing the
      * indexer names, a spend it could not produce, or a blob that would not
      * decode. Never an answer. */
@@ -386,6 +425,11 @@ const candidateWitnessItems = (tx: Transaction, inputIndex: number): Uint8Array[
  * response to `unknown` is the same as to `open`: keep watching, and let the
  * refund timelock — which no outage can move — be what ends the wait.
  *
+ * **An exit is read before anything else, and over the whole set.** It is the
+ * one fact that makes an unspent output unreachable, so it outranks `open`; and
+ * it is scanned across every output rather than in outpoint order, so which
+ * output happens to come first cannot change the answer.
+ *
  * Ask-the-indexer, don't-trust-local-state: read fresh on every poll, never
  * cached, the same posture {@link findLockupVtxos} already establishes.
  */
@@ -401,15 +445,23 @@ export async function readLockupFate(
     const all = vtxos ?? [];
     if (all.length === 0) return { fate: "unknown" };
 
+    const exited = all.filter((vtxo) => vtxo.isUnrolled && !hasTerminalSpend(vtxo));
+    if (exited.length > 0) {
+        return {
+            fate: "exited",
+            outpoints: exited.map((vtxo) => ({ txid: vtxo.txid, vout: vtxo.vout })),
+        };
+    }
+
     const spentBy = new Map<string, LockupSpend>();
     let everySpendNamed = true;
     for (const vtxo of all) {
-        // Unions all three spend facts rather than trusting `spentBy` alone:
-        // the wire contract permits `isSpent: true` with an EMPTY `spentBy`,
-        // so a `spentBy`-only test would read an output that is gone as one
-        // still sitting there. Same union — and the same reason — as the SDK's
-        // own `hasTerminalSpend`.
-        if (!vtxo.isSpent && !vtxo.spentBy && !vtxo.settledBy) return { fate: "open" };
+        // The SDK's own predicate, not a fourth copy of it: it unions all three
+        // spend facts rather than trusting `spentBy` alone, because the wire
+        // contract permits `isSpent: true` with an EMPTY `spentBy` and a
+        // `spentBy`-only test would read an output that is gone as one still
+        // sitting there.
+        if (!hasTerminalSpend(vtxo)) return { fate: "open" };
         // `spentBy` is the EMPTY STRING, not absent, when there is nothing to
         // name, so this is a truthiness test and never a presence one. When it
         // IS set it names the CHECKPOINT transaction, which is exactly the one
@@ -493,9 +545,9 @@ export async function readLockupFate(
  * {@link refundIfUnresolved}, which retries.
  *
  * **Swept outputs are refused, not attempted.** This is an OFFCHAIN spend, and
- * a swept output is no longer a live leaf: `canSpendOffchain` and
- * `canRecoverOnchain` are mutually exclusive by construction, so a recoverable
- * input cannot be spent this way whatever key signs it (see
+ * a swept output is no longer a live leaf: `canSpendOffchain` is false wherever
+ * `canRecoverOnchain` is true, so a recoverable input cannot be spent this way
+ * whatever key signs it (see
  * {@link LockupVtxo.recoverable}). Because every input lands in ONE aggregate
  * transaction, a single swept output would take the live ones down with it —
  * so the whole push is refused with {@link LockupNeedsRecoveryError} naming the
@@ -529,10 +581,10 @@ export async function pushRefundWithoutReceiver(
     }
 
     const refundPkScript =
-        input.refundPkScript ?? input.script.options.nonInteractiveRefund?.senderPkScript;
+        input.refundPkScript ?? input.script.options.nonInteractiveParameters?.senderPkScript;
     if (!refundPkScript) {
         throw new Error(
-            "no refund destination: the contract carries no nonInteractiveRefund leaf, so pass refundPkScript explicitly",
+            "no refund destination: the contract carries no emulator covenant suite, so pass refundPkScript explicitly",
         );
     }
 
@@ -621,7 +673,18 @@ export type RefundOutcome =
           outpoints: string[];
           vtxos: LockupVtxo[];
           status: RfqStatus | null;
-      };
+      }
+    /**
+     * The lockup was unilaterally exited: its outputs sit onchain under the VHTLC
+     * script, where no offchain refund can reach them. Returned rather than
+     * retried: no amount of waiting changes where the money lives. Complete the
+     * unroll and spend the outputs onchain — then there is nothing left to refund.
+     *
+     * Distinct from {@link RefundOutcome} `needs_recovery` on purpose: that
+     * variant's remedy is recovery into a fresh batch, which is a spend no batch
+     * can make for an output that is already onchain.
+     */
+    | { outcome: "exited"; outpoints: string[]; status: RfqStatus | null };
 
 /**
  * Ask first, then fall back: watch the swap for the solver to resolve it, and
@@ -650,6 +713,20 @@ export type RefundOutcome =
  *   is gone the CLTV refund is not "not yet" but "not this way", so it returns
  *   `needs_recovery` naming the outpoints rather than retrying until the
  *   deadline. Recover them and call again.
+ * - **An exited lockup ends it the same way, and is checked first.** Each pass
+ *   past the deadline asks {@link readLockupFate} before reading what is
+ *   refundable, so an output that has been unilaterally exited returns `exited`
+ *   instead of feeding a push that cannot land. It costs one extra `getVtxos`
+ *   per such pass (three where there were two), plus a `getVirtualTxs` on a
+ *   fully-spent lockup; only the pass that returns `exited` saves the other two.
+ *   Paid to prevent a push that would otherwise be retried to the deadline and
+ *   then rethrown. A failing fate read is swallowed, not raised: it is a
+ *   shortcut, and losing it must not end a wait the ordinary path could answer.
+ *
+ *   A lockup funded in two sends of which only one exited reports `exited` for
+ *   the whole thing and leaves the live half unrefunded. That is deliberate:
+ *   `RfqSwapManager` reports the same lockup `exited` on the same any-output
+ *   rule, and the two must not disagree.
  *
  * Safe to call late, and safe to call again: a caller recovering from a crash
  * well past the deadline skips straight to the push, and a lockup that is
@@ -658,12 +735,18 @@ export type RefundOutcome =
 export async function refundIfUnresolved(
     transport: RfqTransport,
     ark: RefundArkProvider,
-    indexer: RefundIndexer,
+    indexer: LockupSpendIndexer,
     input: {
         rfqId: string;
         script: InstanceType<typeof VHTLC.ScriptV2>;
         /** @see pushRefundWithoutReceiver */
         sender: Identity;
+        /**
+         * `sha256(P)`, hex — the quote's `payment_hash`, as {@link readLockupFate}
+         * takes it. Not derivable from `script`, whose `preimageHash` is a
+         * `hash160` of the same secret.
+         */
+        paymentHash: string;
         /** `refund_locktime` from the quote, unix seconds. */
         refundLocktime: number;
         /** Defaults to the contract's own committed refund destination. */
@@ -685,6 +768,31 @@ export async function refundIfUnresolved(
         if (status && isResolved(status.state)) return { outcome: "resolved", status };
 
         if (now() >= input.refundLocktime) {
+            // Before the refundable read, not after it: the point is to prevent
+            // the doomed push, not to interpret its refusal a pass too late.
+            //
+            // Guarded because it is an addition to this path, not a replacement:
+            // the fate read reaches `getVirtualTxs`, which nothing here called
+            // before, and a transient failure there must not end a refund wait
+            // the ordinary path below would have answered. `RfqSwapManager`
+            // guards the same call for the same reason.
+            let fate: LockupFate = { fate: "unknown" };
+            try {
+                fate = await readLockupFate(indexer, {
+                    swapPkScript: input.script.pkScript,
+                    paymentHash: input.paymentHash,
+                });
+            } catch {
+                // `findLockupVtxos`'s own drop still refuses the doomed push.
+            }
+            if (fate.fate === "exited") {
+                return {
+                    outcome: "exited",
+                    outpoints: fate.outpoints.map((o) => `${o.txid}:${o.vout}`),
+                    status,
+                };
+            }
+
             const vtxos = await findLockupVtxos(indexer, input.script.pkScript);
             if (vtxos.length === 0) return { outcome: "nothing_to_refund", status };
             try {

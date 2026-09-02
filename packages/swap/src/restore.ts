@@ -111,10 +111,19 @@ export type SpendKind = "cancelled" | "fulfilled" | "indeterminate";
 /**
  * Classify a spend by the covenant leaf it took.
  *
- * The covenant's whole vocabulary is two leaves: `cancel` returns the deposit
- * to the user, `fulfill` is the solver paying for it. A submitted ark tx keeps
- * each input's `tapLeafScript`, so the spend *states* which one it used — this
- * reads an answer rather than inferring one.
+ * The vocabulary is what became of the deposit, not which key moved it:
+ * `fulfill` is the solver paying for it, and everything else returns it to the
+ * user. A submitted ark tx keeps each input's `tapLeafScript`, so the spend
+ * *states* which one it used — this reads an answer rather than inferring one.
+ *
+ * **`exit` reports `cancelled`, like `cancel` does.** The two differ in who had
+ * to agree — `cancel` is cooperative with the signer, `exit` is the maker alone
+ * after a delay — but not in outcome: the deposit went back unfilled either
+ * way, which is the question this answers. Reporting the exit leaf as
+ * `indeterminate` instead would be worse than imprecise: no status is written,
+ * so the swap stays `pending`, `restoreAssetSwaps` re-queues it on every scan,
+ * and `retireOfferContract` never runs — leaving a dead script in the
+ * subscription and the failsafe poll for the life of the wallet.
  *
  * **Hand it the transaction that actually spends the deposit outpoint, which is
  * the checkpoint, not the ark tx.** A spend is two linked transactions: the
@@ -145,12 +154,16 @@ export function classifySpend(
     spendTx: Transaction,
     deposit: { txid: string; vout: number },
 ): SpendKind {
-    let leaves: { cancel?: Uint8Array; fulfill?: Uint8Array };
+    let leaves: { returned: Uint8Array[]; fulfill?: Uint8Array };
     try {
         const script = offerVtxoScript(offer, serverPubkey);
         if (hex.encode(script.pkScript) !== hex.encode(offer.swapPkScript)) return "indeterminate";
         leaves = {
-            cancel: script.functionByName("cancel")?.leafScript,
+            // both routes that hand the deposit back; `exit` is absent on an
+            // offer that carries no exit closure, and drops out here
+            returned: ["cancel", "exit"]
+                .map((name) => script.functionByName(name)?.leafScript)
+                .filter((leaf): leaf is Uint8Array => leaf !== undefined),
             fulfill: script.functionByName("fulfill")?.leafScript,
         };
     } catch {
@@ -165,12 +178,12 @@ export function classifySpend(
         if (hex.encode(input.txid) !== deposit.txid) continue;
         for (const leaf of input.tapLeafScript ?? []) {
             const spent = hex.encode(scriptFromTapLeafScript(leaf));
-            if (leaves.cancel && spent === hex.encode(leaves.cancel)) return "cancelled";
+            if (leaves.returned.some((back) => spent === hex.encode(back))) return "cancelled";
             if (leaves.fulfill && spent === hex.encode(leaves.fulfill)) return "fulfilled";
         }
     }
-    // the deposit left the covenant by neither leaf (a batch forfeit, say), the
-    // spend carries no tapleaf, or this is the wrong half of the spend
+    // the deposit left the covenant by none of its leaves (a batch forfeit,
+    // say), the spend carries no tapleaf, or this is the wrong half of the spend
     return "indeterminate";
 }
 
@@ -350,8 +363,10 @@ export async function restoreAssetSwaps(
                 vout: vtxo.vout,
             });
             if (kind === "indeterminate") {
-                // the spender is not fetchable yet, or took neither covenant
-                // leaf: retry rather than persist a label that later scans skip
+                // the spender is not fetchable yet, or took none of the
+                // covenant's leaves: retry rather than persist a label that
+                // later scans skip. Both are transient or foreign — every leaf
+                // the covenant itself offers, exit included, classifies.
                 unresolved.add(fundingTx.redeemTxid);
                 continue;
             }

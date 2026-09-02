@@ -1,12 +1,13 @@
 import { estimate } from "./estimate";
 import type { ExitOptions } from "./estimate";
+import { execute } from "./execute";
 import { Executor } from "./executor";
 import { prepare } from "./prepare";
 
 export * from "./types";
 export { ExitPathError, resolveUnilateralPath } from "./path";
 export type { ResolvedExitPath } from "./path";
-export type { ExecutorEvent, ExitFeeWallet } from "./executor";
+export type { ExecutorEvent, ExecutorOptions, ExitFeeWallet } from "./executor";
 export type { ExitOptions } from "./estimate";
 export type { ExitCaptureMode } from "./capture";
 export type { ExitChainResolver, ExitDataSource } from "./resolver";
@@ -20,10 +21,17 @@ export { createExitChainResolver } from "./resolver";
  * VTXOs onchain and broadcasts the fee-funding splitter; `Executor` drives
  * the resulting package to completion with nothing but an
  * Esplora-compatible endpoint — no keys, no Arkade infrastructure.
+ *
+ * `execute` is the wallet-side shorthand for that last step: the same
+ * executor, with the exit observer wired so the wallet's own repository
+ * re-reads each outpoint as its branch confirms and again as its sweep
+ * does — picking the exit up as it lands, indexer lag permitting. See
+ * `exitObserverFor` for why that is a prompt rather than a guarantee.
  */
 export const UnilateralExit = {
     estimate,
     prepare,
+    execute,
     Executor,
 } as const;
 

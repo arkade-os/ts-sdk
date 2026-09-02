@@ -39,6 +39,10 @@ export type StoredArkInfoSnapshot = {
         boardingExitDelay: string;
         /** Absent on snapshots written before the operator advertised it. */
         vtxoTreeExpiry?: string;
+        /** Absent on snapshots written before the operator advertised it. */
+        maxTxWeight?: string;
+        /** Absent on snapshots written before the operator advertised it. */
+        maxOpReturnOutputs?: string;
         sessionDuration: string;
         dust: string;
         fees: FeeInfo;
@@ -89,6 +93,8 @@ export function serializeArkInfoSnapshot(info: ArkInfo, savedAt: number): Stored
             unilateralExitDelay: info.unilateralExitDelay.toString(),
             boardingExitDelay: info.boardingExitDelay.toString(),
             vtxoTreeExpiry: info.vtxoTreeExpiry?.toString(),
+            maxTxWeight: info.maxTxWeight?.toString(),
+            maxOpReturnOutputs: info.maxOpReturnOutputs?.toString(),
             sessionDuration: info.sessionDuration.toString(),
             dust: info.dust.toString(),
             fees: info.fees,
@@ -149,6 +155,9 @@ export function hydrateArkInfo(snapshot: StoredArkInfoSnapshot): ArkInfo {
         signerPubkey: a.signerPubkey,
         unilateralExitDelay: BigInt(a.unilateralExitDelay),
         vtxoTreeExpiry: a.vtxoTreeExpiry !== undefined ? BigInt(a.vtxoTreeExpiry) : undefined,
+        maxTxWeight: a.maxTxWeight !== undefined ? BigInt(a.maxTxWeight) : undefined,
+        maxOpReturnOutputs:
+            a.maxOpReturnOutputs !== undefined ? BigInt(a.maxOpReturnOutputs) : undefined,
         utxoMaxAmount: BigInt(a.utxoMaxAmount),
         utxoMinAmount: BigInt(a.utxoMinAmount),
         version: a.version,
@@ -231,8 +240,10 @@ export function parseStoredArkInfoSnapshot(raw: unknown): StoredArkInfoSnapshot 
     ]) {
         assertDecimalString(a[field], `arkInfo.${field}`);
     }
-    if (a.vtxoTreeExpiry !== undefined) {
-        assertDecimalString(a.vtxoTreeExpiry, "arkInfo.vtxoTreeExpiry");
+    for (const field of ["vtxoTreeExpiry", "maxTxWeight", "maxOpReturnOutputs"]) {
+        if (a[field] !== undefined) {
+            assertDecimalString(a[field], `arkInfo.${field}`);
+        }
     }
     assertFeeInfo(a.fees, "arkInfo.fees");
 

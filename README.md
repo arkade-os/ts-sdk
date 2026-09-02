@@ -1,13 +1,13 @@
 # Arkade Monorepo
 
-TypeScript packages for the Arkade Bitcoin wallet ecosystem — on-chain/off-chain wallets via the Ark protocol and Lightning/chain swaps via Boltz.
+TypeScript packages for the Arkade Bitcoin wallet ecosystem — on-chain/off-chain wallets via the Ark protocol and Arkade Intents asset swaps.
 
 ## Packages
 
 | Package | Description |
 |---------|-------------|
 | [`@arkade-os/sdk`](packages/ts-sdk/) | Bitcoin wallet SDK with Taproot and Ark protocol support |
-| [`@arkade-os/boltz-swap`](packages/boltz-swap/) | Lightning and chain swaps using Boltz |
+| [`@arkade-os/boltz-swap`](packages/boltz-swap/) | **Deprecated, unmaintained.** Lightning and chain swaps using Boltz |
 | [`@arkade-os/swap`](packages/swap/) | Client-side Arkade Intents asset swaps: market discovery, offers, RFQ, restore |
 
 The [`regtest/`](regtest/) directory is a shared regtest environment, vendored as the
@@ -31,7 +31,7 @@ pnpm run build            # Build all packages (ts-sdk first, then the plugins)
 pnpm test                 # Run all unit and integration tests
 pnpm run test:unit        # Run unit tests across packages
 pnpm run test:integration # Run integration tests across packages against regtest
-pnpm run lint             # Check formatting (prettier)
+pnpm run lint             # Check formatting (biome)
 ```
 
 ### Running a single test

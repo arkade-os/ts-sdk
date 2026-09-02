@@ -1,5 +1,6 @@
 import { hex } from "@scure/base";
 import type { ArkInfo } from "../providers/ark";
+import { toXOnly } from "../utils/keys";
 
 /**
  * Machine-readable classification of a contract's server signer relative to a
@@ -70,15 +71,13 @@ export interface SignerSet {
 /**
  * Normalize a server signer pubkey hex to the x-only (32-byte) form contract
  * scripts and `params.serverPubKey` use. A 33-byte compressed key drops its
- * parity prefix; a 32-byte key is canonicalized to lowercase. Mirrors the
- * wallet's `hex.decode(info.signerPubkey).slice(1)` setup path so the active
+ * parity prefix; a 32-byte key is canonicalized to lowercase. The active
  * signer and the deprecated signers (which arkd may advertise compressed)
  * compare equal to the x-only `params.serverPubKey` persisted on contracts.
  */
 export function toXOnlySignerHex(pubkeyHex: string): string {
     const bytes = hex.decode(pubkeyHex);
-    if (bytes.length === 33) return hex.encode(bytes.slice(1));
-    if (bytes.length === 32) return hex.encode(bytes);
+    if (bytes.length === 32 || bytes.length === 33) return hex.encode(toXOnly(bytes, "signer key"));
     throw new Error(`invalid signer pubkey length: expected 32 or 33 bytes, got ${bytes.length}`);
 }
 

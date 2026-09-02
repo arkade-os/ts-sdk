@@ -38,13 +38,15 @@ const SENDER_PRIVATE_KEY = priv(13);
 /** The sender key as the signer the refund path now takes. */
 const SENDER = SingleKey.fromPrivateKey(SENDER_PRIVATE_KEY);
 const REFUND_PK_SCRIPT = p2tr(key(5));
+/** `sha256(P)` for the golden participant set — what `refundIfUnresolved` now takes. */
+const SWAP_PAYMENT_HASH = hex.encode(sha256(new Uint8Array(32).fill(7)));
 
 /** The same golden participant set rfq.test.ts pins the script bytes against. */
 const swapScript = () =>
     lightningSendVtxoScript({
         solverPubkey: key(1),
         serverPubkey: key(3),
-        paymentHash: hex.encode(sha256(new Uint8Array(32).fill(7))),
+        paymentHash: SWAP_PAYMENT_HASH,
         refundLocktime: REFUND_LOCKTIME,
         claimDelay: 4096,
         emulatorPubkey: key(9),
@@ -69,18 +71,18 @@ const VTXOS: LockupVtxo[] = [
  * does, plus its own signature) and reports the ark txid it was submitted.
  * Typed against the production contract so a change to RefundArkProvider
  * breaks the fake at compile time. */
-type FakeArk = RefundArkProvider & {
+type FakeOperator = RefundArkProvider & {
     submitted: { arkTx: string; checkpoints: string[] }[];
     finalized: { arkTxid: string; checkpoints: string[] }[];
 };
 
-const fakeArk = (
+const fakeOperator = (
     over: {
         checkpointTapscript?: string;
         checkpointsFor?: (submitted: string[]) => string[];
         failSubmit?: () => Error | undefined;
     } = {},
-): FakeArk => {
+): FakeOperator => {
     const submitted: { arkTx: string; checkpoints: string[] }[] = [];
     const finalized: { arkTxid: string; checkpoints: string[] }[] = [];
     return {
@@ -104,10 +106,10 @@ const fakeArk = (
         finalizeTx: async (arkTxid: string, checkpoints: string[]) => {
             finalized.push({ arkTxid, checkpoints });
         },
-    } as unknown as FakeArk;
+    } as unknown as FakeOperator;
 };
 
-const fakeIndexer = (vtxos: LockupVtxo[]): RefundIndexer & { scripts: string[][] } => {
+const fakeIndexer = (vtxos: LockupVtxo[]): LockupSpendIndexer & { scripts: string[][] } => {
     const scripts: string[][] = [];
     return {
         scripts,
@@ -115,7 +117,8 @@ const fakeIndexer = (vtxos: LockupVtxo[]): RefundIndexer & { scripts: string[][]
             scripts.push(opts?.scripts ?? []);
             return { vtxos };
         },
-    } as unknown as RefundIndexer & { scripts: string[][] };
+        getVirtualTxs: async () => ({ txs: [] }),
+    } as unknown as LockupSpendIndexer & { scripts: string[][] };
 };
 
 const statusOf = (state: string): RfqStatus => ({
@@ -154,29 +157,29 @@ const spentLeafOf = (psbt: string): string => {
 describe("pushRefundWithoutReceiver", () => {
     it("spends the refundWithoutReceiver leaf, signed by the trader's own sender key", async () => {
         const script = swapScript();
-        const ark = fakeArk();
-        await pushRefundWithoutReceiver(ark, {
+        const operator = fakeOperator();
+        await pushRefundWithoutReceiver(operator, {
             script,
             sender: SENDER,
             vtxos: VTXOS,
         });
 
-        expect(ark.submitted).toHaveLength(1);
+        expect(operator.submitted).toHaveLength(1);
         // Not `refund` (needs the solver) and not a unilateral leaf (needs an
         // exit): the CLTV leaf is the only one a stranded trader can drive.
-        expect(spentLeafOf(ark.submitted[0].arkTx)).toBe(script.refundWithoutReceiverScript);
+        expect(spentLeafOf(operator.submitted[0].arkTx)).toBe(script.refundWithoutReceiverScript);
 
         // SingleKey.sign() swallows "No inputs signed", so an unsigned tx would
         // otherwise sail through to submitTx and be rejected only server-side.
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].arkTx));
         for (let i = 0; i < tx.inputsLength; i++) {
             expect(tx.getInput(i).tapScriptSig?.length).toBeGreaterThan(0);
         }
     });
 
     it("carries the CLTV locktime and an nLockTime-enabling sequence", async () => {
-        const ark = fakeArk();
-        await pushRefundWithoutReceiver(ark, {
+        const operator = fakeOperator();
+        await pushRefundWithoutReceiver(operator, {
             script: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
@@ -185,14 +188,14 @@ describe("pushRefundWithoutReceiver", () => {
         // Without both of these the spend is simply not consensus-valid — and
         // nothing in this package restates the locktime, so this is the check
         // that the CLTV leaf (not a timelock-free one) was handed to the builder.
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].arkTx));
         expect(tx.lockTime).toBe(REFUND_LOCKTIME);
         expect(tx.getInput(0).sequence).toBeLessThan(0xffffffff);
     });
 
     it("returns every funded output to the contract's own committed destination", async () => {
-        const ark = fakeArk();
-        const result = await pushRefundWithoutReceiver(ark, {
+        const operator = fakeOperator();
+        const result = await pushRefundWithoutReceiver(operator, {
             script: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
@@ -201,30 +204,30 @@ describe("pushRefundWithoutReceiver", () => {
         // Both deposits, aggregated: refunding vtxos[0] alone would strand the
         // rest at a script whose other refund paths are all longer.
         expect(result.amount).toBe(100_000);
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].arkTx));
         expect(tx.inputsLength).toBe(2);
         expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(REFUND_PK_SCRIPT));
         expect(tx.getOutput(0).amount).toBe(BigInt(100_000));
-        expect(ark.finalized).toHaveLength(1);
-        expect(ark.finalized[0].arkTxid).toBe(result.arkTxid);
+        expect(operator.finalized).toHaveLength(1);
+        expect(operator.finalized[0].arkTxid).toBe(result.arkTxid);
     });
 
     it("honours an explicit destination override", async () => {
-        const ark = fakeArk();
+        const operator = fakeOperator();
         const elsewhere = p2tr(key(21));
-        await pushRefundWithoutReceiver(ark, {
+        await pushRefundWithoutReceiver(operator, {
             script: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
             refundPkScript: elsewhere,
         });
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].arkTx));
         expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(elsewhere));
     });
 
     it("refuses an empty lockup instead of pushing an inputless transaction", async () => {
         await expect(
-            pushRefundWithoutReceiver(fakeArk(), {
+            pushRefundWithoutReceiver(fakeOperator(), {
                 script: swapScript(),
                 sender: SENDER,
                 vtxos: [],
@@ -242,26 +245,26 @@ describe("pushRefundWithoutReceiver", () => {
          * this case through `joinBatch` instead of an offchain tx.
          */
         it("refuses rather than submitting a spend the server must reject", async () => {
-            const ark = fakeArk();
+            const operator = fakeOperator();
             const swept: LockupVtxo[] = [
                 { txid: "33".repeat(32), vout: 0, value: 5_000, recoverable: true },
             ];
             await expect(
-                pushRefundWithoutReceiver(ark, {
+                pushRefundWithoutReceiver(operator, {
                     script: swapScript(),
                     sender: SENDER,
                     vtxos: swept,
                 }),
             ).rejects.toThrow(LockupNeedsRecoveryError);
             // Nothing was sent: the point is to refuse before the round trip.
-            expect(ark.submitted).toEqual([]);
+            expect(operator.submitted).toEqual([]);
         });
 
         it("names the outpoints that need recovering", async () => {
             const swept: LockupVtxo[] = [
                 { txid: "33".repeat(32), vout: 2, value: 5_000, recoverable: true },
             ];
-            const error: unknown = await pushRefundWithoutReceiver(fakeArk(), {
+            const error: unknown = await pushRefundWithoutReceiver(fakeOperator(), {
                 script: swapScript(),
                 sender: SENDER,
                 vtxos: swept,
@@ -285,30 +288,30 @@ describe("pushRefundWithoutReceiver", () => {
             // would take the live ones down with it. Refusing names the fix;
             // silently dropping it would report success over money that never
             // moved.
-            const ark = fakeArk();
+            const operator = fakeOperator();
             const mixed: LockupVtxo[] = [
                 { ...VTXOS[0], recoverable: false },
                 { txid: "44".repeat(32), vout: 1, value: 9_000, recoverable: true },
             ];
             await expect(
-                pushRefundWithoutReceiver(ark, {
+                pushRefundWithoutReceiver(operator, {
                     script: swapScript(),
                     sender: SENDER,
                     vtxos: mixed,
                 }),
             ).rejects.toThrow(LockupNeedsRecoveryError);
-            expect(ark.submitted).toEqual([]);
+            expect(operator.submitted).toEqual([]);
         });
 
         it("still pushes when every output is live", async () => {
-            const ark = fakeArk();
+            const operator = fakeOperator();
             const live: LockupVtxo[] = VTXOS.map((v) => ({ ...v, recoverable: false }));
-            await pushRefundWithoutReceiver(ark, {
+            await pushRefundWithoutReceiver(operator, {
                 script: swapScript(),
                 sender: SENDER,
                 vtxos: live,
             });
-            expect(ark.submitted).toHaveLength(1);
+            expect(operator.submitted).toHaveLength(1);
         });
     });
 
@@ -317,7 +320,7 @@ describe("pushRefundWithoutReceiver", () => {
         // same script — so the sender key can sign it perfectly well, and only
         // matching it against the locally built set catches the swap. (A
         // malformed stand-in would prove nothing: signing would fail anyway.)
-        const capture = fakeArk();
+        const capture = fakeOperator();
         await pushRefundWithoutReceiver(capture, {
             script: swapScript(),
             sender: SENDER,
@@ -325,20 +328,20 @@ describe("pushRefundWithoutReceiver", () => {
         });
         const foreignCheckpoint = capture.submitted[0].checkpoints[0];
 
-        const ark = fakeArk({ checkpointsFor: () => [foreignCheckpoint] });
+        const operator = fakeOperator({ checkpointsFor: () => [foreignCheckpoint] });
         await expect(
-            pushRefundWithoutReceiver(ark, {
+            pushRefundWithoutReceiver(operator, {
                 script: swapScript(),
                 sender: SENDER,
                 vtxos: [VTXOS[0]],
             }),
         ).rejects.toThrow(/does not match any submitted checkpoint/);
-        expect(ark.finalized).toHaveLength(0);
+        expect(operator.finalized).toHaveLength(0);
     });
 
     it("reports a malformed checkpointTapscript rather than failing deep in the builder", async () => {
         await expect(
-            pushRefundWithoutReceiver(fakeArk({ checkpointTapscript: "00" }), {
+            pushRefundWithoutReceiver(fakeOperator({ checkpointTapscript: "00" }), {
                 script: swapScript(),
                 sender: SENDER,
                 vtxos: VTXOS,
@@ -356,8 +359,11 @@ describe("findLockupVtxos", () => {
     });
 
     /** Filter-aware, unlike `fakeIndexer`: the two sets are disjoint here, which
-     * is what makes a swept output visible or not. */
-    const byFilterIndexer = (spendable: LockupVtxo[], recoverable: LockupVtxo[]): RefundIndexer =>
+     * is what makes a swept output visible or not. `isUnrolled` is the wire's,
+     * not `LockupVtxo`'s — the point is that it never survives the mapping. */
+    type IndexedVtxo = LockupVtxo & { isUnrolled?: boolean };
+
+    const byFilterIndexer = (spendable: IndexedVtxo[], recoverable: IndexedVtxo[]): RefundIndexer =>
         ({
             getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
                 vtxos: opts?.recoverableOnly ? recoverable : opts?.spendableOnly ? spendable : [],
@@ -387,6 +393,42 @@ describe("findLockupVtxos", () => {
             { ...live, recoverable: false },
             { ...swept, recoverable: true },
         ]);
+    });
+
+    it("drops an unrolled output the indexer still lists as spendable", async () => {
+        // arkd is not depended on to exclude a unilateral exit from
+        // `spendableOnly`, and `LockupVtxo` carries no flag to pass one along —
+        // so anything that reached the mapping would be indistinguishable from
+        // the live output beside it and would be signed into a refund that no
+        // offchain leaf can land. The live sibling proves the drop is the
+        // output's own, not the whole response being discarded.
+        const script = swapScript();
+        const live = { txid: "ee".repeat(32), vout: 0, value: 3_000, recoverable: false };
+        const exited = {
+            txid: "ef".repeat(32),
+            vout: 1,
+            value: 6_000,
+            recoverable: false,
+            isUnrolled: true,
+        };
+        const found = await findLockupVtxos(byFilterIndexer([live, exited], []), script.pkScript);
+        expect(found).toEqual([live]);
+    });
+
+    it("drops an unrolled output from the recoverable half too", async () => {
+        // Both queries feed one loop, so the exclusion has to hold on the side
+        // whose outputs are already un-spendable for a different reason.
+        const script = swapScript();
+        const swept = { txid: "f0".repeat(32), vout: 0, value: 2_500, recoverable: false };
+        const exited = {
+            txid: "f1".repeat(32),
+            vout: 3,
+            value: 9_000,
+            recoverable: false,
+            isUnrolled: true,
+        };
+        const found = await findLockupVtxos(byFilterIndexer([], [swept, exited]), script.pkScript);
+        expect(found).toEqual([{ ...swept, recoverable: true }]);
     });
 
     it("counts an output appearing in both sets exactly once", async () => {
@@ -428,22 +470,23 @@ describe("refundIfUnresolved", () => {
         rfqId: RFQ_ID,
         script: swapScript(),
         sender: SENDER,
+        paymentHash: SWAP_PAYMENT_HASH,
         refundLocktime: REFUND_LOCKTIME,
         pollMs: 1,
     });
 
     it("stops without refunding when the solver resolved it", async () => {
         for (const state of RFQ_RESOLVED_STATES) {
-            const ark = fakeArk();
+            const operator = fakeOperator();
             const result = await refundIfUnresolved(
                 fakeTransport([state]),
-                ark,
+                operator,
                 fakeIndexer(VTXOS),
                 { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
             );
             expect(result.outcome).toBe("resolved");
             // even though the deadline had passed and the lockup looked funded
-            expect(ark.submitted).toHaveLength(0);
+            expect(operator.submitted).toHaveLength(0);
         }
     });
 
@@ -452,15 +495,15 @@ describe("refundIfUnresolved", () => {
         // lockup in every one of them; treating "terminal" as "done" would
         // walk away from the money.
         for (const state of ["refused", "expired", "stuck"]) {
-            const ark = fakeArk();
+            const operator = fakeOperator();
             const result = await refundIfUnresolved(
                 fakeTransport([state]),
-                ark,
+                operator,
                 fakeIndexer(VTXOS),
                 { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
             );
             expect(result.outcome).toBe("refunded");
-            expect(ark.submitted).toHaveLength(1);
+            expect(operator.submitted).toHaveLength(1);
         }
     });
 
@@ -470,15 +513,16 @@ describe("refundIfUnresolved", () => {
         // way". Burning the whole `attemptDeadline` window on it and then
         // rethrowing would waste the time the caller needed to RECOVER the
         // outputs and finish the refund properly.
-        const ark = fakeArk();
+        const operator = fakeOperator();
         const swept = { txid: "55".repeat(32), vout: 3, value: 8_000 };
         const indexer = {
             getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
                 vtxos: opts?.recoverableOnly ? [swept] : [],
             }),
-        } as unknown as RefundIndexer;
+            getVirtualTxs: async () => ({ txs: [] }),
+        } as unknown as LockupSpendIndexer;
 
-        const result = await refundIfUnresolved(fakeTransport(["quoted"]), ark, indexer, {
+        const result = await refundIfUnresolved(fakeTransport(["quoted"]), operator, indexer, {
             ...baseInput(),
             now: () => REFUND_LOCKTIME + 1,
         });
@@ -488,31 +532,31 @@ describe("refundIfUnresolved", () => {
             expect(result.outpoints).toEqual([`${"55".repeat(32)}:3`]);
             expect(result.vtxos).toEqual([{ ...swept, recoverable: true }]);
         }
-        expect(ark.submitted).toEqual([]);
+        expect(operator.submitted).toEqual([]);
     });
 
     it("waits while the refund window is shut, then pushes once it opens", async () => {
-        const ark = fakeArk();
+        const operator = fakeOperator();
         let clock = REFUND_LOCKTIME - 3;
         const result = await refundIfUnresolved(
             fakeTransport(["quoted"]),
-            ark,
+            operator,
             fakeIndexer(VTXOS),
             { ...baseInput(), now: () => clock++ },
         );
         expect(result.outcome).toBe("refunded");
         if (result.outcome === "refunded") expect(result.amount).toBe(100_000);
-        expect(ark.submitted).toHaveLength(1);
+        expect(operator.submitted).toHaveLength(1);
     });
 
     it("retries a push refused while median-time-past lags, then succeeds", async () => {
         let attempts = 0;
-        const ark = fakeArk({
+        const operator = fakeOperator({
             failSubmit: () => (++attempts <= 2 ? new Error("FORFEIT_CLOSURE_LOCKED") : undefined),
         });
         const result = await refundIfUnresolved(
             fakeTransport(["quoted"]),
-            ark,
+            operator,
             fakeIndexer(VTXOS),
             { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
         );
@@ -521,9 +565,9 @@ describe("refundIfUnresolved", () => {
     });
 
     it("rethrows the server's refusal once the attempt window closes", async () => {
-        const ark = fakeArk({ failSubmit: () => new Error("FORFEIT_CLOSURE_LOCKED") });
+        const operator = fakeOperator({ failSubmit: () => new Error("FORFEIT_CLOSURE_LOCKED") });
         await expect(
-            refundIfUnresolved(fakeTransport(["quoted"]), ark, fakeIndexer(VTXOS), {
+            refundIfUnresolved(fakeTransport(["quoted"]), operator, fakeIndexer(VTXOS), {
                 ...baseInput(),
                 now: () => REFUND_LOCKTIME + 1,
                 attemptDeadline: REFUND_LOCKTIME,
@@ -531,14 +575,101 @@ describe("refundIfUnresolved", () => {
         ).rejects.toThrow(/FORFEIT_CLOSURE_LOCKED/);
     });
 
-    it("reports an empty lockup instead of failing", async () => {
-        const ark = fakeArk();
-        const result = await refundIfUnresolved(fakeTransport(["stuck"]), ark, fakeIndexer([]), {
+    /** An operator that counts how many times a push started building. */
+    const watchedOperator = () => {
+        const operator = fakeOperator();
+        let pushes = 0;
+        const provider = {
+            ...operator,
+            getInfo: async () => {
+                pushes += 1;
+                return operator.getInfo();
+            },
+        } as unknown as RefundArkProvider;
+        return { operator, provider, pushes: () => pushes };
+    };
+
+    const EXITED = { txid: "66".repeat(32), vout: 0, value: 8_000, isUnrolled: true };
+
+    it("reports an exited lockup instead of pushing a refund that cannot land", async () => {
+        // The output is unspent, but onchain behind its CSV: no offchain leaf
+        // reaches it. `nothing_to_refund` would read as "already resolved" over
+        // money still sitting at the script.
+        const { operator, provider, pushes } = watchedOperator();
+        const indexer = {
+            getVtxos: async () => ({ vtxos: [EXITED] }),
+            getVirtualTxs: async () => ({ txs: [] }),
+        } as unknown as LockupSpendIndexer;
+
+        const result = await refundIfUnresolved(fakeTransport(["quoted"]), provider, indexer, {
             ...baseInput(),
             now: () => REFUND_LOCKTIME + 1,
         });
+
+        expect(result.outcome).toBe("exited");
+        if (result.outcome === "exited") {
+            expect(result.outpoints).toEqual([`${"66".repeat(32)}:0`]);
+        }
+        // The outcome alone would pass while the doomed push still went out.
+        expect(pushes()).toBe(0);
+        expect(operator.submitted).toEqual([]);
+    });
+
+    it("does not report `exited` for an exit output that was already spent", async () => {
+        // The exit happened AND the onchain output was swept: that is history,
+        // not a remedy the caller can still act on, so the fate's terminal-spend
+        // guard drops it and the ordinary path answers.
+        const { operator, provider, pushes } = watchedOperator();
+        const indexer = {
+            getVtxos: async () => ({ vtxos: [{ ...EXITED, isSpent: true, spentBy: "" }] }),
+            getVirtualTxs: async () => ({ txs: [] }),
+        } as unknown as LockupSpendIndexer;
+
+        const result = await refundIfUnresolved(fakeTransport(["quoted"]), provider, indexer, {
+            ...baseInput(),
+            now: () => REFUND_LOCKTIME + 1,
+        });
+
         expect(result.outcome).toBe("nothing_to_refund");
-        expect(ark.submitted).toHaveLength(0);
+        expect(pushes()).toBe(0);
+        expect(operator.submitted).toEqual([]);
+    });
+
+    it("still refuses the push when the fate read learns nothing about an exited output", async () => {
+        // Defense in depth: the fate query comes back empty (indexer lag), so
+        // nothing says `exited` — and `findLockupVtxos`'s own drop is what keeps
+        // the doomed push from going out and burning the whole window.
+        const { operator, provider, pushes } = watchedOperator();
+        const indexer = {
+            getVtxos: async (opts?: { spendableOnly?: boolean }) => ({
+                vtxos: opts?.spendableOnly ? [EXITED] : [],
+            }),
+            getVirtualTxs: async () => ({ txs: [] }),
+        } as unknown as LockupSpendIndexer;
+
+        const result = await refundIfUnresolved(fakeTransport(["quoted"]), provider, indexer, {
+            ...baseInput(),
+            now: () => REFUND_LOCKTIME + 1,
+        });
+
+        expect(result.outcome).toBe("nothing_to_refund");
+        expect(pushes()).toBe(0);
+        expect(operator.submitted).toEqual([]);
+    });
+
+    it("reports an empty lockup instead of failing", async () => {
+        const operator = fakeOperator();
+        const result = await refundIfUnresolved(
+            fakeTransport(["stuck"]),
+            operator,
+            fakeIndexer([]),
+            {
+                ...baseInput(),
+                now: () => REFUND_LOCKTIME + 1,
+            },
+        );
+        expect(result.outcome).toBe("nothing_to_refund");
+        expect(operator.submitted).toHaveLength(0);
     });
 });
 
@@ -566,6 +697,8 @@ describe("readLockupFate", () => {
         vout: number;
         spentBy: string;
         isSpent?: boolean;
+        settledBy?: string;
+        isUnrolled?: boolean;
         arkTxId?: string;
     }
 
@@ -653,6 +786,52 @@ describe("readLockupFate", () => {
 
     it("claims no spend when the lockup is still open", async () => {
         expect(await read(fateIndexer([{ ...OUT_A, spentBy: "" }]))).toEqual({ fate: "open" });
+    });
+
+    it("reports an unrolled output as exited rather than open", async () => {
+        // Unspent, but sitting onchain under the VHTLC script: neither the
+        // claim nor any refund leaf can be spent offchain against it. Reading
+        // it as a swap that is merely still running would leave a caller
+        // waiting on a resolution nobody is able to produce.
+        const fate = await read(fateIndexer([{ ...OUT_A, spentBy: "", isUnrolled: true }]));
+        expect(fate).toEqual({ fate: "exited", outpoints: [OUT_A] });
+    });
+
+    it("finds the exit wherever the indexer happens to list it", async () => {
+        // Scanned over the whole set, not in outpoint order: an in-loop test
+        // would hit the plain unspent output first and answer `open`, making
+        // the fate depend on the order the indexer returned rows in.
+        const fate = await read(
+            fateIndexer([
+                { ...OUT_A, spentBy: "" },
+                { ...OUT_B, spentBy: "", isUnrolled: true },
+            ]),
+        );
+        expect(fate).toEqual({ fate: "exited", outpoints: [OUT_B] });
+    });
+
+    it("leaves an exited output that was then spent on the ordinary spent path", async () => {
+        // `completeUnroll` already moved it, so the exit is history and the
+        // witness is what says how the swap ended. Reporting `exited` here
+        // would throw away hash-verified proof of a claim.
+        const spend = spendOf(OUT_A, [PREIMAGE]);
+        const fate = await read(
+            fateIndexer([{ ...OUT_A, spentBy: spend.txid, isUnrolled: true }], [spend]),
+        );
+        expect(fate).toEqual({
+            fate: "claimed",
+            preimage: PREIMAGE,
+            spends: [{ checkpointTxid: spend.txid, arkTxid: undefined }],
+        });
+    });
+
+    it("reads a settled-only output as spent, not as money still sitting there", async () => {
+        // The third spend fact, carried by the SDK's `hasTerminalSpend` and by
+        // nothing else here: `settledBy` with no `spentBy` and no `isSpent`
+        // means the output was renewed away, and a `spentBy`-only test would
+        // call the empty lockup `open`.
+        const settled = { ...OUT_A, spentBy: "", settledBy: "e1".repeat(32) };
+        expect(await read(fateIndexer([settled]))).toEqual({ fate: "unknown" });
     });
 
     it("claims no spend when a spend was not named, or could not be produced", async () => {

@@ -38,7 +38,17 @@ export interface OffchainBalance {
     intentLocked: number;
     recoverable: number;
     pendingRecovery: number;
-    /** `settled + preconfirmed + recoverable + pendingRecovery` — the buckets are disjoint. */
+    /**
+     * Funds whose unilateral exit already happened: the output sits onchain
+     * behind its CSV, so only `completeUnroll` can move it. Never `available`
+     * and never `recoverable` — a batch cannot lift an onchain output — but
+     * still the user's money, so counted in `total`.
+     */
+    unrolled: number;
+    /**
+     * `settled + preconfirmed + recoverable + pendingRecovery + unrolled` — the
+     * buckets are disjoint.
+     */
     total: number;
     assets: Asset[];
     availableAssets: Asset[];
@@ -70,8 +80,10 @@ export interface BalanceCapabilities {
  * spending would actually pick, so nothing reported as available can be refused
  * by `send`.
  *
- * Terminally spent VTXOs are skipped outright: neither capability predicate
- * claims them, and they must not reach the asset rollup.
+ * Terminally spent VTXOs are skipped outright: no capability predicate claims
+ * them, and they must not reach the asset rollup. An unrolled one is not spent,
+ * so it does: the sats stay in `total` and the asset units stay in `assets`,
+ * both out of the `available` half.
  */
 export function computeOffchainBalance(
     vtxos: readonly NormalizedExtendedVirtualCoin[],
@@ -86,6 +98,7 @@ export function computeOffchainBalance(
     let intentLocked = 0;
     let recoverable = 0;
     let pendingRecovery = 0;
+    let unrolled = 0;
     const owned = new Map<string, bigint>();
     const spendable = new Map<string, bigint>();
 
@@ -96,8 +109,23 @@ export function computeOffchainBalance(
     };
 
     for (const vtxo of vtxos) {
+        // Load-bearing, not belt-and-braces: `Wallet.getBalance` passes
+        // `withUnrolled: true`, so the filter hands over unrolled coins WITHOUT
+        // testing terminal spend, and this guard is what drops the ones that
+        // are also spent.
         if (hasTerminalSpend(vtxo)) continue;
         addAssets(owned, vtxo);
+
+        // Exited onchain: still the user's money, but only `completeUnroll` can
+        // move it. Never `available`, never `recoverable` — a batch cannot lift
+        // an onchain output. Tested BEFORE `isPendingRecovery`, and that order
+        // is depended upon: `selectPendingRecoveryOutpoints` also excludes
+        // unrolled coins, so this is the second of two independent guards
+        // keeping an exited coin out of the pending-recovery bucket.
+        if (vtxo.isUnrolled) {
+            unrolled += vtxo.value;
+            continue;
+        }
 
         // Pending recovery is tested first, and before expiry: such funds cannot
         // be renewed until they recover, so once their batch expiry passes
@@ -144,7 +172,8 @@ export function computeOffchainBalance(
         intentLocked,
         recoverable,
         pendingRecovery,
-        total: settled + preconfirmed + recoverable + pendingRecovery,
+        unrolled,
+        total: settled + preconfirmed + recoverable + pendingRecovery + unrolled,
         assets: toAssets(owned),
         availableAssets: toAssets(spendable),
     };

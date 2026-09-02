@@ -39,6 +39,7 @@ import {
     WalletMessageHandler,
 } from "../src/wallet/serviceWorker/wallet-message-handler";
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
+import { ArkAddress } from "../src/script/address";
 import { MockEventSource } from "./mocks/eventSource";
 import {
     WalletCannotSignError,
@@ -345,17 +346,27 @@ describe("page-side and worker-side wallets answer identically", () => {
 });
 
 describe("contract secrets behind the service worker", () => {
-    it("allocates over the bus and hands back a descriptor that signs", async () => {
+    it("reuses the identity key — no bus allocation, descriptor and pubkey are identity's", async () => {
+        // provisionRefundKey no longer calls the allocator: it resolves via
+        // wallet.identity, so GET_NEXT_SIGNING_DESCRIPTOR never crosses the bus.
         const { sw, identity } = await hdPair();
 
-        const { descriptor, pubkey } = await provisionRefundKey(sw as unknown as IWallet);
+        const { descriptor, pubkey, pkScript, address } = await provisionRefundKey(
+            sw as unknown as IWallet,
+        );
 
-        // Allocation really crossed the bus rather than being answered locally.
-        expect((sw.serviceWorker as any).postMessage).toHaveBeenCalledWith(
+        // No allocation message over the bus.
+        expect((sw.serviceWorker as any).postMessage).not.toHaveBeenCalledWith(
             expect.objectContaining({ type: "GET_NEXT_SIGNING_DESCRIPTOR" }),
         );
-        expect(hex.encode(pubkey)).toBe(hex.encode(deriveDescriptorLeafPubKey(descriptor)));
-        expect(hex.encode(pubkey)).not.toBe(hex.encode(await identity.xOnlyPublicKey()));
+        // The descriptor is the wallet's bare identity descriptor.
+        expect(descriptor).toBe(`tr(${hex.encode(await identity.xOnlyPublicKey())})`);
+        expect(hex.encode(pubkey)).toBe(hex.encode(await identity.xOnlyPublicKey()));
+        // pkScript is returned (non-empty bytes from the wallet's address), and
+        // address is the string it was decoded from — one read, one pair.
+        expect(pkScript).toBeInstanceOf(Uint8Array);
+        expect(pkScript.length).toBeGreaterThan(0);
+        expect(ArkAddress.decode(address).pkScript).toEqual(pkScript);
 
         const signer = await contractSigner(sw as unknown as IWallet, descriptor);
         await expect(signsUnderDescriptorKey(signer, descriptor)).resolves.toBe(true);

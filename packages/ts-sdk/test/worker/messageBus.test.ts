@@ -65,13 +65,25 @@ class TestHandler implements MessageHandler {
     readonly messageTag: string;
     handleMessage = vi.fn<(message: RequestEnvelope) => Promise<ResponseEnvelope | null>>();
     tick = vi.fn<(now: number) => Promise<ResponseEnvelope[]>>().mockResolvedValue([]);
-    start = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+    start = vi.fn<MessageHandler["start"]>().mockResolvedValue(undefined);
     stop = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
 
     constructor(tag = "TEST_HANDLER") {
         this.messageTag = tag;
     }
+
+    /** The push channel the bus handed this handler on its last start(). */
+    get channel() {
+        const calls = this.start.mock.calls;
+        return calls[calls.length - 1]?.[2];
+    }
 }
+
+/**
+ * Broadcast delivery sits behind `matchAll`, one task deeper than the call that
+ * queued it — never rely on incidental microtask ordering to observe it.
+ */
+const flushDelivery = () => new Promise((resolve) => globalThis.setTimeout(resolve, 0));
 
 async function createAndInitBus(options: {
     handlers: MessageHandler[];
@@ -88,21 +100,24 @@ async function createAndInitBus(options: {
         buildServices: async () => ({}) as never,
     });
     await bus.start();
-    const initSource = { postMessage: vi.fn() };
+    await sendInit();
+    return bus;
+}
+
+async function sendInit(id = "init-1") {
     await messageHandler({
         data: {
             type: "INITIALIZE_MESSAGE_BUS",
-            id: "init-1",
+            id,
             tag: "INITIALIZE_MESSAGE_BUS",
             config: {
                 wallet: { publicKey: "00".repeat(33) },
                 arkServer: { url: "http://localhost" },
             },
         } as never,
-        source: initSource as never,
+        source: { postMessage: vi.fn() } as never,
         waitUntil: (p: Promise<unknown>) => p,
     });
-    return bus;
 }
 
 describe("MessageBus PING/PONG", () => {
@@ -1213,5 +1228,206 @@ describe("MessageBus default buildServices", () => {
 
     it("leaves it unset when none is configured", async () => {
         expect(await buildServices()).not.toHaveProperty("intentRepository");
+    });
+});
+
+describe("MessageBus broadcast fan-out", () => {
+    let selfMock: StubbedSelf;
+    let clientA: { postMessage: ReturnType<typeof vi.fn> };
+    let clientB: { postMessage: ReturnType<typeof vi.fn> };
+
+    const posted = (client: { postMessage: ReturnType<typeof vi.fn> }) =>
+        client.postMessage.mock.calls.map(([m]) => (m as ResponseEnvelope).id);
+
+    const event = (id: string): ResponseEnvelope => ({ tag: "wallet", id, broadcast: true });
+
+    beforeEach(() => {
+        selfMock = installSelfStub();
+        clientA = { postMessage: vi.fn() };
+        clientB = { postMessage: vi.fn() };
+        selfMock.clients.matchAll.mockResolvedValue([clientA, clientB]);
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("posts tick responses to every window client, in order, behind one matchAll", async () => {
+        // One handler only: once runTick posts through the drain loop, a second
+        // handler's batch joins the first pass or opens a new one depending on
+        // when its tick() resolved, so the call count is stable only here.
+        const handler = new TestHandler("wallet");
+        handler.tick.mockResolvedValue([event("e1"), event("e2"), event("e3")]);
+
+        const bus = await createAndInitBus({ handlers: [handler] });
+        selfMock.clients.matchAll.mockClear();
+
+        await (bus as any).runTick();
+        await flushDelivery();
+
+        // The count is the load-bearing assertion: a FIFO stub keeps an
+        // order-only check passing even with one matchAll per message.
+        expect(selfMock.clients.matchAll).toHaveBeenCalledExactlyOnceWith({
+            includeUncontrolled: true,
+            type: "window",
+        });
+        expect(posted(clientA)).toEqual(["e1", "e2", "e3"]);
+        expect(posted(clientB)).toEqual(["e1", "e2", "e3"]);
+
+        await bus.stop();
+    });
+
+    it("delivers pushed events without a tick, in emission order", async () => {
+        // The whole bug in one assertion.
+        const handler = new TestHandler("wallet");
+        const bus = await createAndInitBus({ handlers: [handler] });
+
+        const channel = handler.channel;
+        expect(channel).toBeDefined();
+        channel!.broadcast(event("e1"));
+        channel!.broadcast(event("e2"));
+        channel!.broadcast(event("e3"));
+        await flushDelivery();
+
+        expect(handler.tick).not.toHaveBeenCalled();
+        expect(posted(clientA)).toEqual(["e1", "e2", "e3"]);
+        expect(posted(clientB)).toEqual(["e1", "e2", "e3"]);
+
+        await bus.stop();
+    });
+
+    it("coalesces events queued while a batch is in flight", async () => {
+        const handler = new TestHandler("wallet");
+        const bus = await createAndInitBus({ handlers: [handler] });
+        selfMock.clients.matchAll.mockClear();
+
+        let release: ((clients: unknown[]) => void) | undefined;
+        selfMock.clients.matchAll.mockReturnValueOnce(
+            new Promise((resolve) => {
+                release = resolve as (clients: unknown[]) => void;
+            }),
+        );
+
+        handler.channel!.broadcast(event("first"));
+        await Promise.resolve(); // let drain() reach the matchAll await
+        // Two, not one: with a single straggler the expected count matches what
+        // one matchAll per message would also produce, and the test says nothing.
+        handler.channel!.broadcast(event("second"));
+        handler.channel!.broadcast(event("third"));
+        release!([clientA, clientB]);
+        await flushDelivery();
+
+        expect(posted(clientA)).toEqual(["first", "second", "third"]);
+        expect(selfMock.clients.matchAll).toHaveBeenCalledTimes(2);
+
+        await bus.stop();
+    });
+
+    it("restarts the drain when a failed pass leaves work queued", async () => {
+        // Events no longer ride the tick, so there is no periodic recovery: an
+        // early return or an unexpected throw must not strand the queue.
+        const handler = new TestHandler("wallet");
+        const bus = await createAndInitBus({ handlers: [handler] });
+
+        let release: ((clients: unknown) => void) | undefined;
+        selfMock.clients.matchAll.mockReturnValueOnce(
+            new Promise((resolve) => {
+                release = resolve as (clients: unknown) => void;
+            }),
+        );
+
+        handler.channel!.broadcast(event("first"));
+        await Promise.resolve();
+        handler.channel!.broadcast(event("second"));
+        // Non-iterable: throws inside the fan-out loop, past the per-client and
+        // per-matchAll catches, so only the `finally` restart can recover.
+        release!(null);
+        await flushDelivery();
+
+        expect(posted(clientA)).toEqual(["second"]);
+
+        await bus.stop();
+    });
+
+    it("posts nothing through the channel after stop()", async () => {
+        const handler = new TestHandler("wallet");
+        const bus = await createAndInitBus({ handlers: [handler] });
+        const channel = handler.channel!;
+
+        await bus.stop();
+        channel.broadcast(event("late"));
+        await flushDelivery();
+
+        expect(clientA.postMessage).not.toHaveBeenCalled();
+    });
+
+    it("makes a channel retained across a re-init inert", async () => {
+        // Written against a stub handler on purpose: the guarantee is the bus's,
+        // and must hold for an implementor that drops nothing in stop().
+        const handler = new TestHandler("wallet");
+        const bus = await createAndInitBus({ handlers: [handler] });
+        const stale = handler.channel!;
+
+        await sendInit("init-2");
+        expect(handler.channel).not.toBe(stale);
+
+        stale.broadcast(event("stale"));
+        await flushDelivery();
+        expect(clientA.postMessage).not.toHaveBeenCalled();
+
+        handler.channel!.broadcast(event("live"));
+        await flushDelivery();
+        expect(posted(clientA)).toEqual(["live"]);
+
+        await bus.stop();
+    });
+
+    it("drops a batch already in flight when a re-init lands", async () => {
+        // `running` never goes false in doInit, so only the epoch can catch this.
+        const handler = new TestHandler("wallet");
+        const bus = await createAndInitBus({ handlers: [handler] });
+
+        let release: ((clients: unknown[]) => void) | undefined;
+        selfMock.clients.matchAll.mockReturnValueOnce(
+            new Promise((resolve) => {
+                release = resolve as (clients: unknown[]) => void;
+            }),
+        );
+
+        handler.channel!.broadcast(event("doomed"));
+        await Promise.resolve();
+        await sendInit("init-2");
+        release!([clientA, clientB]);
+        await flushDelivery();
+
+        expect(clientA.postMessage).not.toHaveBeenCalled();
+
+        await bus.stop();
+    });
+
+    it("keeps draining under the new generation after an invalidation", async () => {
+        // An epoch mismatch drops the dead batch without stranding what the
+        // restarted generation queued behind it — no further broadcast needed
+        // to kick the loop.
+        const handler = new TestHandler("wallet");
+        const bus = await createAndInitBus({ handlers: [handler] });
+
+        let release: ((clients: unknown[]) => void) | undefined;
+        selfMock.clients.matchAll.mockReturnValueOnce(
+            new Promise((resolve) => {
+                release = resolve as (clients: unknown[]) => void;
+            }),
+        );
+
+        handler.channel!.broadcast(event("old"));
+        await Promise.resolve();
+        await sendInit("init-2");
+        handler.channel!.broadcast(event("new"));
+        release!([clientA, clientB]);
+        await flushDelivery();
+
+        expect(posted(clientA)).toEqual(["new"]);
+
+        await bus.stop();
     });
 });

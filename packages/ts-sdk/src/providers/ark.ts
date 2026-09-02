@@ -2,6 +2,7 @@ import { TxTreeNode } from "../tree/txTree";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
+import type { Outpoint } from "../wallet";
 import { eventSourceIterator, isEventSourceError } from "./utils";
 import {
     isEventSourceUnavailableError,
@@ -189,6 +190,23 @@ export interface ArkInfo {
      */
     vtxoTreeExpiry?: bigint;
     /**
+     * Weight budget an ark transaction must stay under; the server answers
+     * `TX_TOO_LARGE` past it.
+     *
+     * `undefined` when not advertised — a server that omits the field and one
+     * that sends `0` both mean "no limit stated". Never `0n`, which would read
+     * as a server that accepts no transaction at all.
+     */
+    maxTxWeight?: bigint;
+    /**
+     * Maximum OP_RETURN outputs the server accepts per transaction.
+     *
+     * `undefined` when not advertised — a server that omits the field and one
+     * that sends `0` both mean "no limit stated". Never `0n`, which would read
+     * as a server that forbids them outright.
+     */
+    maxOpReturnOutputs?: bigint;
+    /**
      * Maximum boarding input amount.
      *
      * @remarks
@@ -234,6 +252,30 @@ export interface TxNotification {
     checkpointTxs?: Record<string, { txid: string; tx: string }>;
 }
 
+/**
+ * A `sweepTx` notification. Only a sweep carries swept outpoints, so only this
+ * arm declares them: reading `sweptVtxos` off another arm is a type error, and
+ * a sweep handler never has to narrow the field it came for.
+ */
+export interface SweepTxNotification extends TxNotification {
+    /**
+     * Outpoints the transaction swept — outpoints rather than virtual outputs,
+     * because a swept output is gone: the server has nothing left to describe
+     * beyond where it was. Empty when the sweep touched none of them.
+     */
+    sweptVtxos: Outpoint[];
+}
+
+/**
+ * One frame of {@link ArkProvider.getTransactionsStream}. Exactly one arm is
+ * set; an unrecognized frame is dropped rather than yielded.
+ */
+export interface TxNotificationEvent {
+    commitmentTx?: TxNotification;
+    arkTx?: TxNotification;
+    sweepTx?: SweepTxNotification;
+}
+
 export interface ArkProvider {
     /** Fetch Arkade server configuration and fee settings. */
     getInfo(): Promise<ArkInfo>;
@@ -277,13 +319,28 @@ export interface ArkProvider {
     getEventStream(signal: AbortSignal, topics: string[]): AsyncIterableIterator<SettlementEvent>;
 
     /** Stream transaction notifications emitted by the Arkade server. */
-    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
-        commitmentTx?: TxNotification;
-        arkTx?: TxNotification;
-    }>;
+    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<TxNotificationEvent>;
 
     /** Fetch pending transactions for a signed get-pending-tx intent. */
     getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]>;
+}
+
+/**
+ * Reads a transaction limit the operator advertises on `GetInfo`.
+ *
+ * `max_tx_weight` and `max_op_return_outputs` are non-optional `int64` in
+ * `GetInfoResponse`, and the gateway marshals with EmitUnpopulated, so an arkd
+ * carrying the fields but not configuring them sends `"0"` instead of omitting
+ * them. Field absent (an arkd predating them) and field zero are the same
+ * statement — the operator did not advertise a limit — so both answer
+ * `undefined`. `0n` would read as a server that accepts no transaction at all
+ * and forbids OP_RETURN outright, which is the opposite of "did not say".
+ * NArk reads the same zero as unset (`SpendingService.GetMaxOpReturnOutputs`).
+ */
+function advertisedLimit(fromServer: unknown): bigint | undefined {
+    if (fromServer == null) return undefined;
+    const limit = BigInt(fromServer as string | number | bigint);
+    return limit > 0n ? limit : undefined;
 }
 
 /**
@@ -308,19 +365,19 @@ export class RestArkProvider implements ArkProvider {
     }
 
     /**
-     * Last server-info digest seen (from {@link getInfo}). Sent as `X-Digest`
-     * on outgoing requests so arkd can reject a client whose cached info is
-     * stale. Empty until the first {@link getInfo}.
+     * Last server-info digest seen from {@link getInfo}. Sent as `X-Digest`
+     * so arkd can reject stale client configuration.
      */
     private _digest = "";
+    private _hasServerInfo = false;
+    private _suppressNextGetInfoChangeEmit = false;
 
     private _serverInfoListeners = new Set<(info: ArkInfo) => void>();
 
     /**
-     * Subscribe to server-info changes. Fired when a request is rejected with
-     * `DIGEST_MISMATCH` and fresh info is re-fetched, so consumers (the wallet)
-     * can re-derive signer-dependent state mid-session without polling. Returns
-     * an unsubscribe function.
+     * Subscribe to server-info changes. Fired after a stale-info
+     * `DIGEST_MISMATCH` refresh or when {@link getInfo} observes a changed digest.
+     * Returns an unsubscribe function.
      */
     onServerInfoChanged(listener: (info: ArkInfo) => void): () => void {
         this._serverInfoListeners.add(listener);
@@ -408,7 +465,13 @@ export class RestArkProvider implements ArkProvider {
         // NOT silently retry — the in-flight request was built against the old config,
         // so the caller must rebuild and retry it under the refreshed server info.
         this._digest = "";
-        const info = await this.getInfo();
+        this._suppressNextGetInfoChangeEmit = true;
+        let info: ArkInfo;
+        try {
+            info = await this.getInfo();
+        } finally {
+            this._suppressNextGetInfoChangeEmit = false;
+        }
         this.emitServerInfoChanged(info);
         throw new DigestMismatchError(
             "Arkade server reported a configuration digest mismatch; server info was " +
@@ -474,13 +537,28 @@ export class RestArkProvider implements ArkProvider {
             unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
             vtxoTreeExpiry:
                 fromServer.vtxoTreeExpiry != null ? BigInt(fromServer.vtxoTreeExpiry) : undefined,
+            maxTxWeight: advertisedLimit(fromServer.maxTxWeight),
+            maxOpReturnOutputs: advertisedLimit(fromServer.maxOpReturnOutputs),
             utxoMaxAmount: BigInt(fromServer.utxoMaxAmount ?? -1),
             utxoMinAmount: BigInt(fromServer.utxoMinAmount ?? 0),
             version: fromServer.version ?? "",
             vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
         };
+        const previousDigest = this._digest;
+        const hadServerInfo = this._hasServerInfo;
         this._digest = info.digest;
+        this._hasServerInfo = true;
+        // A refresh can observe server-info changes before any digest-gated
+        // request fails. `_hasServerInfo` makes an empty previous digest count
+        // as a real value; `DIGEST_MISMATCH` emits separately after its refetch.
+        if (
+            hadServerInfo &&
+            previousDigest !== info.digest &&
+            !this._suppressNextGetInfoChangeEmit
+        ) {
+            this.emitServerInfoChanged(info);
+        }
         return info;
     }
 
@@ -754,10 +832,7 @@ export class RestArkProvider implements ArkProvider {
         return gen;
     }
 
-    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
-        commitmentTx?: TxNotification;
-        arkTx?: TxNotification;
-    }> {
+    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<TxNotificationEvent> {
         const url = `${this.serverUrl}/v1/txs`;
         let iterator: ReturnType<typeof eventSourceIterator> | null = null;
         const closeIterator = () => iterator?.close();
@@ -976,27 +1051,22 @@ export class RestArkProvider implements ArkProvider {
 
     protected parseTransactionNotification(
         data: ProtoTypes.GetTransactionsStreamResponse,
-    ): { commitmentTx?: TxNotification; arkTx?: TxNotification } | null {
+    ): TxNotificationEvent | null {
         if (data.commitmentTx) {
-            return {
-                commitmentTx: {
-                    txid: data.commitmentTx.txid,
-                    tx: data.commitmentTx.tx,
-                    spentVtxos: data.commitmentTx.spentVtxos.map(mapVtxo),
-                    spendableVtxos: data.commitmentTx.spendableVtxos.map(mapVtxo),
-                    checkpointTxs: data.commitmentTx.checkpointTxs,
-                },
-            };
+            return { commitmentTx: mapTxNotification(data.commitmentTx) };
         }
 
         if (data.arkTx) {
+            return { arkTx: mapTxNotification(data.arkTx) };
+        }
+
+        if (data.sweepTx) {
+            // proto3 omits an empty repeated field, so an absent `swept_vtxos`
+            // means the sweep took nothing — not that the frame is silent.
             return {
-                arkTx: {
-                    txid: data.arkTx.txid,
-                    tx: data.arkTx.tx,
-                    spentVtxos: data.arkTx.spentVtxos.map(mapVtxo),
-                    spendableVtxos: data.arkTx.spendableVtxos.map(mapVtxo),
-                    checkpointTxs: data.arkTx.checkpointTxs,
+                sweepTx: {
+                    ...mapTxNotification(data.sweepTx),
+                    sweptVtxos: data.sweepTx.sweptVtxos ?? [],
                 },
             };
         }
@@ -1137,21 +1207,19 @@ namespace ProtoTypes {
         heartbeat?: Heartbeat;
     }
 
+    export interface TxNotificationData {
+        txid: string;
+        tx: string;
+        spentVtxos: VtxoData[];
+        spendableVtxos: VtxoData[];
+        checkpointTxs?: Record<string, { txid: string; tx: string }>;
+        sweptVtxos?: { txid: string; vout: number }[];
+    }
+
     export interface GetTransactionsStreamResponse {
-        commitmentTx?: {
-            txid: string;
-            tx: string;
-            spentVtxos: VtxoData[];
-            spendableVtxos: VtxoData[];
-            checkpointTxs?: Record<string, { txid: string; tx: string }>;
-        };
-        arkTx?: {
-            txid: string;
-            tx: string;
-            spentVtxos: VtxoData[];
-            spendableVtxos: VtxoData[];
-            checkpointTxs?: Record<string, { txid: string; tx: string }>;
-        };
+        commitmentTx?: TxNotificationData;
+        arkTx?: TxNotificationData;
+        sweepTx?: TxNotificationData;
         heartbeat?: Heartbeat;
     }
 
@@ -1202,6 +1270,16 @@ export function isFetchTimeoutError(err: any): boolean {
     };
 
     return checkError(err) || checkError((err as any).cause);
+}
+
+function mapTxNotification(data: ProtoTypes.TxNotificationData): TxNotification {
+    return {
+        txid: data.txid,
+        tx: data.tx,
+        spentVtxos: data.spentVtxos.map(mapVtxo),
+        spendableVtxos: data.spendableVtxos.map(mapVtxo),
+        checkpointTxs: data.checkpointTxs,
+    };
 }
 
 function mapVtxo(vtxo: ProtoTypes.VtxoData): Vtxo {

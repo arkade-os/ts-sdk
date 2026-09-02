@@ -1,7 +1,6 @@
 import { hex } from "@scure/base";
-import { Wallet, type ProviderConnectionState } from "../wallet";
+import { Wallet, extractArkProviderUrl, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
-import { RestArkProvider } from "../../providers/ark";
 import type {
     IWallet,
     IAssetManager,
@@ -10,6 +9,8 @@ import type {
     SendBitcoinParams,
     SettleParams,
     GetVtxosFilter,
+    GetNewAddressesOptions,
+    NewAddress,
     ArkTransaction,
     ExtendedCoin,
     Recipient,
@@ -17,7 +18,11 @@ import type {
 } from "..";
 import type { SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
-import type { HDAllocationCapable, HDWalletCapable } from "../hdWalletCapable";
+import type {
+    AddressAllocationCapable,
+    HDAllocationCapable,
+    HDWalletCapable,
+} from "../hdWalletCapable";
 import type { IContractManager } from "../../contracts/contractManager";
 import type { IDelegateManager } from "../delegate";
 import type { TaskQueue, TaskItem } from "../../worker/expo/taskQueue";
@@ -115,7 +120,9 @@ export function warnOnRemovedBackgroundFields(bg: unknown): void {
  * const balance = await wallet.getBalance();
  * ```
  */
-export class ExpoWallet implements IWallet, HDWalletCapable, HDAllocationCapable {
+export class ExpoWallet
+    implements IWallet, HDWalletCapable, HDAllocationCapable, AddressAllocationCapable
+{
     readonly identity: Identity;
     readonly arkProvider: Wallet["arkProvider"];
     readonly indexerProvider: Wallet["indexerProvider"];
@@ -173,11 +180,7 @@ export class ExpoWallet implements IWallet, HDWalletCapable, HDAllocationCapable
         // Persist wallet params so the background handler can rehydrate
         // without a network call. Only works with AsyncStorageTaskQueue.
         if ("persistConfig" in taskQueue) {
-            const arkServerUrl =
-                config.arkServerUrl ||
-                (wallet.arkProvider instanceof RestArkProvider
-                    ? wallet.arkProvider.serverUrl
-                    : undefined);
+            const arkServerUrl = config.arkServerUrl || extractArkProviderUrl(wallet.arkProvider);
 
             if (arkServerUrl) {
                 const timelock = wallet.offchainTapscript.options.csvTimelock;
@@ -346,6 +349,11 @@ export class ExpoWallet implements IWallet, HDWalletCapable, HDAllocationCapable
 
     getNextSigningDescriptor(): Promise<string | undefined> {
         return this.wallet.getNextSigningDescriptor();
+    }
+
+    /** @see Wallet.getNewAddresses */
+    getNewAddresses(opts?: GetNewAddressesOptions): Promise<NewAddress[]> {
+        return this.wallet.getNewAddresses(opts);
     }
 
     getUsedSigningDescriptors(opts?: { lookAhead?: number }): Promise<string[]> {

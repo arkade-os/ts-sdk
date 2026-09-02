@@ -11,13 +11,12 @@ import {
     resolveBatchExpiryPolicy,
     Intent,
     networks,
-    PrevArkTxField,
     RestArkProvider,
     RestIndexerProvider,
     RestEmulatorProvider,
-    setArkPsbtField,
     SingleKey,
     VtxoScript,
+    withPrevTxs,
 } from "../../src";
 import { Transaction } from "../../src/utils/transaction";
 import { buildForfeitTx } from "../../src/forfeit";
@@ -43,7 +42,7 @@ const delegateProgram = {
             arkadeScript: {
                 asm: [
                     "INSPECTVERSION",
-                    new Uint8Array([0x02, 0x00, 0x00, 0x00]),
+                    2,
                     "EQUALVERIFY",
                     0,
                     "INSPECTOUTPUTSCRIPTPUBKEY",
@@ -102,12 +101,6 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
         faucetOffchain(contract.address, DELEGATE_AMOUNT);
         const [vtxo] = await waitForVtxo(indexerProvider, delegatePkScript);
 
-        // Retrieve the funding virtual tx so we can attach PrevArkTxField.
-        const { txs: virtualTxs } = await indexerProvider.getVirtualTxs([vtxo.txid]);
-        expect(virtualTxs).toHaveLength(1);
-        const fundingTx = Transaction.fromPSBT(base64.decode(virtualTxs[0]));
-        const fundingTxRaw = fundingTx.toBytes();
-
         // The arkade forfeit leaf (server + intro_tweaked) is leaf 0.
         const arkadeLeaf = contract.leafScript(0);
         const tapTree = contract.tapTree;
@@ -126,17 +119,24 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
         };
 
         // Construct the extended coin shape that Intent.create expects.
-        const coin = {
-            txid: vtxo.txid,
-            vout: vtxo.vout,
-            value: vtxo.value,
-            tapTree,
-            forfeitTapLeafScript: arkadeLeaf,
-            intentTapLeafScript: arkadeLeaf,
-            status: vtxo.status,
-            isSpent: vtxo.isSpent,
-            virtualStatus: vtxo.virtualStatus,
-        };
+        // OP_INSPECTINPUTSCRIPTPUBKEY needs to resolve the prevout pkScript of
+        // every real input, so each coin carries its creating tx as PrevArkTx.
+        const [coin] = await withPrevTxs(
+            [
+                {
+                    txid: vtxo.txid,
+                    vout: vtxo.vout,
+                    value: vtxo.value,
+                    tapTree,
+                    forfeitTapLeafScript: arkadeLeaf,
+                    intentTapLeafScript: arkadeLeaf,
+                    status: vtxo.status,
+                    isSpent: vtxo.isSpent,
+                    virtualStatus: vtxo.virtualStatus,
+                },
+            ],
+            indexerProvider,
+        );
 
         // Self-send to the same pkScript with the same amount.
         const validProof = Intent.create(
@@ -153,9 +153,6 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
                 witness: new Uint8Array(0),
             },
         ]);
-        // OP_INSPECTINPUTSCRIPTPUBKEY needs to resolve the prevout
-        // pkScript for input 1, provided via PrevArkTxField.
-        setArkPsbtField(validProof, 1, PrevArkTxField, fundingTxRaw);
 
         const signedProof = await emulator.submitIntent({
             proof: base64.encode(validProof.toPSBT()),

@@ -225,6 +225,16 @@ describe("ElectrumOnchainProvider", () => {
         });
     });
 
+    describe("getRawTransaction", () => {
+        it("returns the wire bytes of the fetched tx hex", async () => {
+            wsMock.request.mockResolvedValueOnce("0200000001ab");
+
+            const raw = await provider.getRawTransaction("deadbeef");
+
+            expect(Array.from(raw)).toEqual([0x02, 0x00, 0x00, 0x00, 0x01, 0xab]);
+        });
+    });
+
     describe("getFeeRate", () => {
         it("converts BTC/kB to sat/vB with Math.max(1, ceil) guard", async () => {
             wsMock.request.mockResolvedValueOnce(0.00002);

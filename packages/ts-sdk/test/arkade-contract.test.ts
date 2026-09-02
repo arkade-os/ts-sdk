@@ -12,13 +12,15 @@ import {
     VtxoScript,
     type EmulatorInfo,
     type EmulatorProvider,
+    type IContractManager,
 } from "../src";
+import { getVirtualTxs, mintCoin } from "./helpers/prevArkTx";
 
 function xOnly(): Uint8Array {
     return schnorr.getPublicKey(schnorr.utils.randomSecretKey());
 }
 
-const COIN = { txid: hex.encode(new Uint8Array(32).fill(1)), vout: 0, value: 10_000 };
+const COIN = mintCoin(10_000);
 const HASH = new Uint8Array(20).fill(7);
 const AMOUNT = 10_000n;
 
@@ -70,7 +72,7 @@ function _typecheckStrongInputs(ark: arkade.Arkade) {
     c.functions.nope();
 }
 
-function stubProviders(server: Uint8Array, emulatorKey: Uint8Array) {
+function stubProviders(server: Uint8Array, emulatorKey: Uint8Array, indexerVtxos?: unknown[]) {
     const checkpointTapscript = hex.encode(
         CSVMultisigTapscript.encode({
             timelock: { type: "blocks", value: 10n },
@@ -88,8 +90,9 @@ function stubProviders(server: Uint8Array, emulatorKey: Uint8Array) {
     };
     const indexer = {
         async getVtxos() {
-            return { vtxos: [{ ...COIN } as any] };
+            return { vtxos: (indexerVtxos ?? [{ ...COIN }]) as any[] };
         },
+        getVirtualTxs,
     };
     const captured: { arkTx?: string } = {};
     const emulator: EmulatorProvider = {
@@ -113,18 +116,39 @@ function stubProviders(server: Uint8Array, emulatorKey: Uint8Array) {
     return { arkProvider, indexer, emulator, captured };
 }
 
+/**
+ * Minimal `IContractManager` that reports every script it is asked about as
+ * registered, holding `vtxos`. The test builds exactly one contract, so echoing
+ * the queried script is enough to put `getUtxos` on the manager-backed branch.
+ */
+function stubManager(vtxos: unknown[]): IContractManager {
+    return {
+        async getContracts(filter?: { script?: string }) {
+            return [{ script: filter?.script }];
+        },
+        async getContractsWithVtxos(filter?: { script?: string }) {
+            return [{ contract: { script: filter?.script }, vtxos }];
+        },
+    } as unknown as IContractManager;
+}
+
 describe("arkade.Arkade / ArkadeContract", () => {
     const server = xOnly();
     const emulatorKey = xOnly();
     const receiver = xOnly(); // 32-byte witness program
     const args = { hash: HASH, receiver, amount: AMOUNT };
 
-    async function connect() {
-        const { arkProvider, indexer, emulator, captured } = stubProviders(server, emulatorKey);
+    async function connect(contractManager?: IContractManager, indexerVtxos?: unknown[]) {
+        const { arkProvider, indexer, emulator, captured } = stubProviders(
+            server,
+            emulatorKey,
+            indexerVtxos,
+        );
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
             indexer,
+            contractManager,
             network: networks.regtest,
             // connect() takes the co-signer key from the network, not from the
             // emulator's own getInfo, so this fixture key has to come in as the
@@ -158,6 +182,39 @@ describe("arkade.Arkade / ArkadeContract", () => {
         const { ark } = await connect();
         const contract = ark.contract(htlcProgram(), args);
         expect(await contract.getBalance()).toBe(BigInt(COIN.value));
+    });
+
+    it("getUtxos drops exited and spent coins, keeping the healthy sibling", async () => {
+        const { ark: probe } = await connect();
+        const script = hex.encode(probe.contract(htlcProgram(), args).pkScript);
+
+        const healthy = { ...mintCoin(7_000), script, isSpent: false };
+        const exited = { ...mintCoin(3_000), script, isSpent: false, isUnrolled: true };
+        const spent = { ...mintCoin(1_000), script, isSpent: true };
+
+        const { ark } = await connect(stubManager([healthy, exited, spent]));
+        const contract = ark.contract(htlcProgram(), args);
+
+        // The value also proves the manager branch ran: the fallback indexer
+        // would have answered with COIN (10_000) instead.
+        expect((await contract.getUtxos()).map((u) => u.txid)).toEqual([healthy.txid]);
+        expect(await contract.getBalance()).toBe(7_000n);
+    });
+
+    // Paired with the manager-branch test above: the two branches must answer
+    // the same about an exited coin, so neither may be narrowed alone.
+    it("drops them in the no-manager fallback too, whatever spendableOnly returns", async () => {
+        // A spent coin too: `spendableOnly` is the server's answer, and a stale
+        // or proxying indexer that returns one must not reach the caller either.
+        const healthy = { ...mintCoin(7_000), isSpent: false };
+        const exited = { ...mintCoin(3_000), isSpent: false, isUnrolled: true };
+        const spent = { ...mintCoin(1_000), isSpent: true };
+
+        const { ark } = await connect(undefined, [healthy, exited, spent]);
+        const contract = ark.contract(htlcProgram(), args);
+
+        expect((await contract.getUtxos()).map((u) => u.txid)).toEqual([healthy.txid]);
+        expect(await contract.getBalance()).toBe(7_000n);
     });
 
     it("send() resolves the covenant + encodes the witness ([0] → empty push)", async () => {

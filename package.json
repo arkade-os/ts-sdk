@@ -15,8 +15,8 @@
         "test:integration:boltz-swap": "bash scripts/regtest.sh boltz-swap cycle",
         "test:integration:swap": "bash scripts/regtest.sh swap cycle",
         "test:integration:swap-rfq": "bash scripts/regtest.sh swap-rfq cycle",
-        "lint": "prettier --check config && pnpm -r lint",
-        "format": "prettier --write config && pnpm -r format",
+        "lint": "biome format config && pnpm -r lint",
+        "format": "biome format --write config && pnpm -r format",
         "release": "bash scripts/release.sh",
         "release:dry-run": "bash scripts/release.sh --dry-run",
         "release:cleanup": "bash scripts/release.sh --cleanup",
@@ -43,11 +43,11 @@
         "prepare": "husky"
     },
     "devDependencies": {
+        "@biomejs/biome": "2.5.9",
         "@types/node": "24.3.1",
         "eventsource": "4.1.0",
         "fake-indexeddb": "6.2.5",
         "husky": "9.1.7",
-        "prettier": "3.6.2",
         "tsup": "^8.5.0",
         "typescript": "5.9.2",
         "vitest": "3.2.7"
