@@ -9,5 +9,6 @@
  */
 export * from "./assetId";
 export * from "./corridor";
+export * from "./errors";
 export * from "./primitives";
 export * from "./route";
