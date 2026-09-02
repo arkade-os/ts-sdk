@@ -23,7 +23,9 @@
 //   5. Public package-name resolution: build a consumer dir with
 //      node_modules/@arkade-os/sdk → symlink to repo root, spawn
 //      Node CJS and ESM probes for each Node-safe public subpath.
-//   6. wallet/expo/background is validated structurally only — it
+//   6. Compile a strict consumer of the boarding and service-worker
+//      declaration surface. This catches truncated declaration bundles.
+//   7. wallet/expo/background is validated structurally only — it
 //      eagerly imports optional Expo peers so it cannot be Node-imported
 //      without them installed.
 
@@ -40,6 +42,7 @@ import {
 import { dirname, join, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -53,6 +56,7 @@ const fail = (msg) => {
 };
 const ok = (msg) => console.log("ok  : " + msg);
 const section = (msg) => console.log("\n== " + msg + " ==");
+const require = createRequire(import.meta.url);
 
 if (!existsSync(distRoot)) {
     console.error("smoke-dist: dist/ not found. Run `pnpm build` before this script.");
@@ -253,7 +257,98 @@ if (failures.length) {
     }
 }
 
-// ── 6. wallet/expo/background: structural only ────────────────────────
+// ── 6. declaration consumer: Vault boarding + worker surface ─────────
+section("declaration surface: Vault boarding + worker consumer");
+
+const declarationProbe = `
+import {
+    ServiceWorkerWallet,
+    VtxoScript,
+    WalletMessageHandler,
+    createBoardingProgramScript,
+    type BoardingPreparationResult,
+    type BoardingSigningAdapter,
+    type IntentFeeConfig,
+    type PreparedBoardingRegistration,
+    type SettlementConfig,
+    type TapLeafScript,
+    type ValidatedBoardingBatch,
+} from "@arkade-os/sdk";
+
+class VaultBoardScript extends VtxoScript {
+    leaf(scriptHex: string): TapLeafScript {
+        return this.findLeaf(scriptHex);
+    }
+
+    exits() {
+        return this.exitPaths();
+    }
+}
+
+declare const adapter: BoardingSigningAdapter;
+declare const feeConfig: IntentFeeConfig;
+declare const ready: PreparedBoardingRegistration;
+declare const validated: ValidatedBoardingBatch;
+declare const worker: ServiceWorkerWallet;
+
+const preparation: Promise<BoardingPreparationResult> = adapter.prepareRegistration({
+    inputs: [],
+    recipients: [],
+});
+const createBoarding: typeof createBoardingProgramScript = createBoardingProgramScript;
+const createWorker: typeof ServiceWorkerWallet.create = ServiceWorkerWallet.create;
+const stopWorker: typeof ServiceWorkerWallet.stop = ServiceWorkerWallet.stop;
+const disposeWorker: Promise<void> = worker.dispose();
+const workerOwnedIdentity: Pick<
+    Parameters<typeof ServiceWorkerWallet.create>[0],
+    "workerOwnedIdentity"
+> = { workerOwnedIdentity: true };
+const settlementConfig: Pick<SettlementConfig, "autoRenewVtxos"> = { autoRenewVtxos: false };
+const Handler: typeof WalletMessageHandler = WalletMessageHandler;
+const Script: typeof VaultBoardScript = VaultBoardScript;
+
+void [
+    preparation,
+    feeConfig,
+    createBoarding,
+    createWorker,
+    stopWorker,
+    disposeWorker,
+    workerOwnedIdentity,
+    settlementConfig,
+    Handler,
+    Script,
+    ready,
+    validated,
+];
+`;
+const declarationProbePath = join(consumer, "declaration-probe.ts");
+writeFileSync(declarationProbePath, declarationProbe);
+{
+    const tscPath = require.resolve("typescript/bin/tsc");
+    const r = runNode(
+        [
+            tscPath,
+            "--noEmit",
+            "--strict",
+            "--skipLibCheck",
+            "--module",
+            "NodeNext",
+            "--moduleResolution",
+            "NodeNext",
+            "--target",
+            "ES2022",
+            "--lib",
+            "ES2022,DOM,WebWorker",
+            declarationProbePath,
+        ],
+        consumer,
+    );
+    if (r.status === 0) ok("strict TypeScript consumer compiles against public declarations");
+    else fail("declaration consumer: " + (r.stderr || r.stdout).trim());
+}
+
+// ── 7. wallet/expo/background: structural only ────────────────────────
 section("wallet/expo/background: structural files exist");
 
 const bg = pkg.exports["./wallet/expo/background"];

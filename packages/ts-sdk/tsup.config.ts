@@ -1,6 +1,6 @@
 import { defineConfig } from "tsup";
 
-const publicEntries = [
+export const publicEntries = [
     "src/index.ts",
     "src/adapters/expo.ts",
     "src/adapters/localStorage.ts",
@@ -24,7 +24,6 @@ const sideEffectEntries = [
 export default defineConfig({
     entry: [...publicEntries, ...sideEffectEntries],
     format: ["esm", "cjs"],
-    dts: { entry: publicEntries },
     clean: true,
     sourcemap: true,
     target: "es2022",

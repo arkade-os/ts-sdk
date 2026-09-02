@@ -142,7 +142,9 @@
         "node": ">=22.12.0 <27"
     },
     "scripts": {
-        "build": "tsup",
+        "build": "pnpm run build:runtime && pnpm run build:types",
+        "build:runtime": "tsup",
+        "build:types": "tsup --config tsup.types.config.ts",
         "smoke:dist": "node scripts/smoke-dist.mjs",
         "typecheck": "tsc --noEmit",
         "check:vtxo": "node scripts/check-virtual-status.mjs && node scripts/check-provider-boundary.mjs",
@@ -164,7 +166,7 @@
         "format": "prettier --write src test examples",
         "lint": "prettier --check src test examples && pnpm run check:vtxo",
         "audit": "pnpm audit",
-        "prepack": "pnpm run build",
+        "prepack": "pnpm run build && pnpm run smoke:dist",
         "prepublishOnly": "pnpm run build"
     },
     "dependencies": {
