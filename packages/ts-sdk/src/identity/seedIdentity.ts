@@ -18,7 +18,9 @@ import { DescriptorSigningRequest } from "./descriptorProvider";
 import { HDCapableIdentity, ReadonlyHDCapableIdentity } from "./hdCapableIdentity";
 import { descriptorIsOurs, isMainnetDescriptor } from "./descriptor";
 
-const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
+// SIGHASH_NONE / SIGHASH_SINGLE do not commit to the outputs we intend to
+// fund, so a PSBT we did not build must never talk us into one.
+const ALLOWED_SIGHASH = [SigHash.DEFAULT, SigHash.ALL, SigHash.ALL_ANYONECANPAY];
 
 /**
  * Secret-bearing state for seed-backed identities, held off the public
@@ -354,7 +356,7 @@ export class SeedIdentity implements HDCapableIdentity {
 
         if (!inputIndexes) {
             try {
-                if (!txCpy.sign(key, ALL_SIGHASH)) {
+                if (!txCpy.sign(key, ALLOWED_SIGHASH)) {
                     throw new Error("Failed to sign transaction");
                 }
             } catch (e) {
@@ -366,7 +368,7 @@ export class SeedIdentity implements HDCapableIdentity {
             }
         } else {
             for (const idx of inputIndexes) {
-                if (!txCpy.signIdx(key, idx, ALL_SIGHASH)) {
+                if (!txCpy.signIdx(key, idx, ALLOWED_SIGHASH)) {
                     throw new Error(`Failed to sign input #${idx}`);
                 }
             }

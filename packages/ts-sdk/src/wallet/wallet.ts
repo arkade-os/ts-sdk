@@ -84,6 +84,7 @@ import {
 } from "./checkpointExitDelay";
 import type { CheckpointExitDelayPolicy } from "./checkpointExitDelay";
 import {
+    assertAllowedSighashTypes,
     assertCheckpointsMatchInputs,
     buildOffchainTx,
     hasBoardingTxExpired,
@@ -4882,9 +4883,11 @@ export class Wallet
 
                     batchPending.push(pendingTx.arkTxid);
                     try {
-                        const checkpointTxs = pendingTx.signedCheckpointTxs.map((c) =>
-                            Transaction.fromPSBT(base64.decode(c)),
-                        );
+                        const checkpointTxs = pendingTx.signedCheckpointTxs.map((c) => {
+                            const tx = Transaction.fromPSBT(base64.decode(c));
+                            assertAllowedSighashTypes(tx);
+                            return tx;
+                        });
                         // The send that registered this tx ran in an earlier
                         // process, so its checkpoints are rebuilt here rather
                         // than recalled. A tx that does not reconcile is left

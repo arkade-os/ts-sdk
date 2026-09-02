@@ -215,6 +215,25 @@ function formatSighash(type: number): string {
 }
 
 /**
+ * Reject a counterparty-supplied PSBT that declares a sighash type outside
+ * `allowedSighashTypes` on any input, before it reaches a signer. An input
+ * carrying no explicit type is left alone: the signer treats a taproot input
+ * as {@link SigHash.DEFAULT}.
+ */
+export function assertAllowedSighashTypes(
+    tx: Transaction,
+    allowedSighashTypes: number[] = [SigHash.DEFAULT],
+): void {
+    for (let i = 0; i < tx.inputsLength; i++) {
+        const declared = tx.getInput(i).sighashType;
+        if (declared === undefined) continue;
+        if (!allowedSighashTypes.includes(declared)) {
+            throw new Error(`Unallowed sighash type ${formatSighash(declared)} for input ${i}.`);
+        }
+    }
+}
+
+/**
  * Verify tapscript signatures on a transaction input
  * @param tx Transaction to verify
  * @param inputIndex Index of the input to verify
@@ -691,6 +710,19 @@ export async function submitOffchainTx(
     // each must be one we built: nothing below signs a checkpoint that has not
     // been matched to a local one.
     const matched = matchServerCheckpoints(signedCheckpointTxs, offchainTx.checkpoints, "submitTx");
+
+    // Matching pins the checkpoint body, but the sighash type is declared
+    // outside it: a returned checkpoint is signed below, so what it asks to be
+    // signed under is checked here.
+    matched.forEach(({ server }, index) => {
+        try {
+            assertAllowedSighashTypes(server);
+        } catch (error) {
+            throw new ServerResponseMismatchError(
+                `submitTx checkpoint ${index}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
+    });
 
     const verify = options?.verifyServerSignatures;
     if (verify) {

@@ -6,7 +6,9 @@ import { Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, signAsync } from "@noble/secp256k1";
 
-const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
+// SIGHASH_NONE / SIGHASH_SINGLE do not commit to the outputs we intend to
+// fund, so a PSBT we did not build must never talk us into one.
+const ALLOWED_SIGHASH = [SigHash.DEFAULT, SigHash.ALL, SigHash.ALL_ANYONECANPAY];
 
 /**
  * In-memory single key implementation for Bitcoin transaction signing.
@@ -62,7 +64,7 @@ export class SingleKey implements Identity {
 
         if (!inputIndexes) {
             try {
-                if (!txCpy.sign(this.key, ALL_SIGHASH)) {
+                if (!txCpy.sign(this.key, ALLOWED_SIGHASH)) {
                     throw new Error("Failed to sign transaction");
                 }
             } catch (e) {
@@ -76,7 +78,7 @@ export class SingleKey implements Identity {
         }
 
         for (const inputIndex of inputIndexes) {
-            if (!txCpy.signIdx(this.key, inputIndex, ALL_SIGHASH)) {
+            if (!txCpy.signIdx(this.key, inputIndex, ALLOWED_SIGHASH)) {
                 throw new Error(`Failed to sign input #${inputIndex}`);
             }
         }
