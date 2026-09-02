@@ -25,6 +25,9 @@ const state = vi.hoisted(() => ({
     }[],
     // What the fulfill builder received, in call order.
     calls: [] as { fn: string; args: unknown[] }[],
+    // What `Arkade.connect` was configured with — the emulator lives here, and
+    // the builder refuses a covenant spend without one.
+    connects: [] as { emulator?: unknown }[],
     sends: 0,
 }));
 
@@ -35,7 +38,10 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
         arkade: {
             ...mod.arkade,
             Arkade: {
-                connect: async () => ({ serverKey: state.serverKey }),
+                connect: async (opts: { emulator?: unknown }) => {
+                    state.connects.push(opts);
+                    return { serverKey: state.serverKey };
+                },
             },
             ArkadeContract: class {
                 getUtxos = async () => state.utxos;
@@ -87,7 +93,8 @@ const btcScript = offerVtxoScript(wantBtc, fundedServerKey);
 const wantBtcHex = hex.encode(encodeOffer({ ...wantBtc, swapPkScript: btcScript.pkScript }));
 const fundedAddress = new ArkAddress(fundedServerKey, btcScript.tweakedPublicKey, "tark").encode();
 
-/** A want-ASSET offer — the case this helper refuses. */
+/** A want-ASSET offer: the fill must deliver the asset at output 0, through the
+ * packet, with only a sat carrier on the output itself. */
 const wantAsset: Omit<Offer, "swapPkScript"> = {
     ...wantBtc,
     offerAsset: undefined,
@@ -102,6 +109,10 @@ const WANTED_ASSET = "bb".repeat(32) + "0000";
 const DEPOSIT_ASSET = "aa".repeat(32) + "0000";
 const STRAY_ASSET = "cc".repeat(32) + "0000";
 
+/** `fulfill` is a covenant path, so the builder refuses to submit without a
+ * co-signer. Required, hence present on every call below. */
+const EMULATOR = "http://emulator.test";
+
 const TAKER_PAYOUT = hex.decode("5120" + "11".repeat(32));
 const wallet = {
     identity: {},
@@ -111,12 +122,19 @@ const wallet = {
 } as unknown as IWallet;
 
 const coin = { txid: "dd".repeat(32), vout: 0, value: 60_000 };
-const fund = [{ txid: "ee".repeat(32), vout: 1, value: 80_000 }] as never;
+/** One taker coin. `as never` because a real `ArkTxInput` also carries a
+ * tapLeafScript and an encoded vtxo script, neither of which the mocked builder
+ * looks at — the shape under test is what the fill ASKS for, not the coin. */
+const fundingCoin = (
+    over: { value?: number; assets?: { assetId: string; amount: number }[] } = {},
+) => [{ txid: "ee".repeat(32), vout: 1, value: 80_000, ...over }] as never;
+const fund = fundingCoin();
 
 const reset = () => {
     state.serverKey = fundedServerKey;
     state.utxos = [coin];
     state.calls = [];
+    state.connects = [];
     state.sends = 0;
 };
 
@@ -127,9 +145,9 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         // the caller knows what they carry. Building a spend that cannot deliver
         // leaves the emulator to refuse it, reporting nothing more than that the
         // covenant said no — so name the shortfall here instead.
-        await expect(fillOffer(wallet, "http://ark", wantAssetHex, { fund })).rejects.toThrow(
-            /needs 50000 of .*`fund` declares 0/,
-        );
+        await expect(
+            fillOffer(wallet, "http://ark", wantAssetHex, { fund, emulator: EMULATOR }),
+        ).rejects.toThrow(/needs 50000 of .*`fund` declares 0/);
         expect(state.sends).toBe(0);
     });
 
@@ -141,7 +159,8 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         state.utxos = [{ ...coin, value: 50_000, assets: [{ assetId: DEPOSIT_ASSET, amount: 7 }] }];
         await expect(
             fillOffer(wallet, "http://ark", wantBtcHex, {
-                fund: [{ ...fund[0], value: 0 }] as never,
+                fund: fundingCoin({ value: 0 }),
+                emulator: EMULATOR,
             }),
         ).rejects.toThrow(/no payout output/);
         expect(state.sends).toBe(0);
@@ -149,9 +168,9 @@ describe("fillOffer refuses what it cannot build correctly", () => {
 
     it("refuses an empty fund, since nothing would pay wantAmount", async () => {
         reset();
-        await expect(fillOffer(wallet, "http://ark", wantBtcHex, { fund: [] })).rejects.toThrow(
-            /`fund` is empty/,
-        );
+        await expect(
+            fillOffer(wallet, "http://ark", wantBtcHex, { fund: [], emulator: EMULATOR }),
+        ).rejects.toThrow(/`fund` is empty/);
         expect(state.sends).toBe(0);
     });
 
@@ -160,17 +179,17 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         state.serverKey = rotatedServerKey;
         // Same failure mode cancelOffer names: a mismatched rebuild makes
         // getUtxos return nothing, and "no deposit" is the wrong diagnosis.
-        await expect(fillOffer(wallet, "http://ark", wantBtcHex, { fund })).rejects.toThrow(
-            /signing key has likely rotated/,
-        );
+        await expect(
+            fillOffer(wallet, "http://ark", wantBtcHex, { fund, emulator: EMULATOR }),
+        ).rejects.toThrow(/signing key has likely rotated/);
     });
 
     it("refuses to guess which deposit to fill when the address holds several", async () => {
         reset();
         state.utxos = [coin, { ...coin, txid: "ab".repeat(32) }];
-        await expect(fillOffer(wallet, "http://ark", wantBtcHex, { fund })).rejects.toThrow(
-            /pass fundingTxid/,
-        );
+        await expect(
+            fillOffer(wallet, "http://ark", wantBtcHex, { fund, emulator: EMULATOR }),
+        ).rejects.toThrow(/pass fundingTxid/);
         expect(state.sends).toBe(0);
     });
 
@@ -180,9 +199,9 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         // A funder may cancel between the read and the broadcast. Cancel's own
         // JSDoc uses this wording for the mirror case; a caller should read it
         // as "the offer is gone", not as a fault.
-        await expect(fillOffer(wallet, "http://ark", wantBtcHex, { fund })).rejects.toThrow(
-            /no spendable VTXO at the swap address/,
-        );
+        await expect(
+            fillOffer(wallet, "http://ark", wantBtcHex, { fund, emulator: EMULATOR }),
+        ).rejects.toThrow(/no spendable VTXO at the swap address/);
     });
 });
 
@@ -193,6 +212,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         reset();
         const txid = await fillOffer(wallet, "http://ark", wantBtcHex, {
             fund,
+            emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
         });
         expect(txid).toBe("ff".repeat(32));
@@ -210,7 +230,8 @@ describe("fillOffer builds the spend the covenant inspects", () => {
     it("pays an ASSET want through the packet, with only a carrier at output 0", async () => {
         reset();
         const txid = await fillOffer(wallet, "http://ark", wantAssetHex, {
-            fund: [{ ...fund[0], assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }] as never,
+            fund: fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }),
+            emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
         });
         expect(txid).toBe("ff".repeat(32));
@@ -238,7 +259,8 @@ describe("fillOffer builds the spend the covenant inspects", () => {
     it("returns the taker's surplus of the wanted asset, in the same group", async () => {
         reset();
         await fillOffer(wallet, "http://ark", wantAssetHex, {
-            fund: [{ ...fund[0], assets: [{ assetId: WANTED_ASSET, amount: 80_000 }] }] as never,
+            fund: fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 80_000 }] }),
+            emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
         });
         // The maker gets what the offer asked for; the rest comes back at vout 1
@@ -261,7 +283,8 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         // takes the whole fill down.
         state.utxos = [{ ...coin, assets: [{ assetId: DEPOSIT_ASSET, amount: 900 }] }];
         await fillOffer(wallet, "http://ark", wantBtcHex, {
-            fund: [{ ...fund[0], assets: [{ assetId: STRAY_ASSET, amount: 7 }] }] as never,
+            fund: fundingCoin({ assets: [{ assetId: STRAY_ASSET, amount: 7 }] }),
+            emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
         });
         const groups = callsOf("withAsset").map((c) => c.args[0]);
@@ -286,7 +309,8 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         // inspect the wrong group and refuse.
         state.utxos = [{ ...coin, assets: [{ assetId: STRAY_ASSET, amount: 3 }] }];
         await fillOffer(wallet, "http://ark", wantAssetHex, {
-            fund: [{ ...fund[0], assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }] as never,
+            fund: fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }),
+            emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
         });
         const groups = callsOf("withAsset").map((c) => (c.args[0] as { assetId: string }).assetId);
@@ -297,16 +321,38 @@ describe("fillOffer builds the spend the covenant inspects", () => {
     it("lets the caller raise the carrier for a higher dust threshold", async () => {
         reset();
         await fillOffer(wallet, "http://ark", wantAssetHex, {
-            fund: [{ ...fund[0], assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }] as never,
+            fund: fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }),
+            emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
             assetCarrierSats: BigInt(1_000),
         });
         expect(callsOf("to")[0].args[1]).toBe(BigInt(1_000));
     });
 
+    it("connects WITH an emulator, without which the spend cannot be submitted", async () => {
+        reset();
+        // `fulfill` carries an arkadeScript, so ArkadeTransactionBuilder.send()
+        // takes the covenant branch and throws "covenant spends require an
+        // `emulator` on the Arkade client" when the client has none. There is no
+        // per-network default to fall back on, so it has to come from the caller
+        // — and every other test here mocks the builder, so nothing else would
+        // notice a client built without one.
+        await fillOffer(wallet, "http://ark", wantBtcHex, {
+            fund,
+            emulator: EMULATOR,
+            payoutScript: TAKER_PAYOUT,
+        });
+        expect(state.connects).toHaveLength(1);
+        expect(state.connects[0].emulator).toBeDefined();
+    });
+
     it("takes the deposit as input 0 and the taker's coins as inputs 1..n", async () => {
         reset();
-        await fillOffer(wallet, "http://ark", wantBtcHex, { fund, payoutScript: TAKER_PAYOUT });
+        await fillOffer(wallet, "http://ark", wantBtcHex, {
+            fund,
+            emulator: EMULATOR,
+            payoutScript: TAKER_PAYOUT,
+        });
         const from = callsOf("from");
         expect(from).toHaveLength(1);
         expect((from[0].args[0] as { txid: string }).txid).toBe(coin.txid);
@@ -317,7 +363,11 @@ describe("fillOffer builds the spend the covenant inspects", () => {
 
     it("sends the taker's proceeds to the payout script it was given", async () => {
         reset();
-        await fillOffer(wallet, "http://ark", wantBtcHex, { fund, payoutScript: TAKER_PAYOUT });
+        await fillOffer(wallet, "http://ark", wantBtcHex, {
+            fund,
+            emulator: EMULATOR,
+            payoutScript: TAKER_PAYOUT,
+        });
         expect(hex.encode(callsOf("change")[0].args[0] as Uint8Array)).toBe(
             hex.encode(TAKER_PAYOUT),
         );
@@ -325,7 +375,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
 
     it("defaults the payout to the wallet's own address when none is given", async () => {
         reset();
-        await fillOffer(wallet, "http://ark", wantBtcHex, { fund });
+        await fillOffer(wallet, "http://ark", wantBtcHex, { fund, emulator: EMULATOR });
         const expected = ArkAddress.decode(await wallet.getAddress()).pkScript;
         expect(hex.encode(callsOf("change")[0].args[0] as Uint8Array)).toBe(hex.encode(expected));
     });
@@ -334,7 +384,11 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         reset();
         const assetId = "aa".repeat(32) + "0000";
         state.utxos = [{ ...coin, assets: [{ assetId, amount: 2_000 }] }];
-        await fillOffer(wallet, "http://ark", wantBtcHex, { fund, payoutScript: TAKER_PAYOUT });
+        await fillOffer(wallet, "http://ark", wantBtcHex, {
+            fund,
+            emulator: EMULATOR,
+            payoutScript: TAKER_PAYOUT,
+        });
 
         const spec = callsOf("withAsset")[0].args[0] as {
             assetId: string;
@@ -354,6 +408,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         state.utxos = [coin, wanted];
         await fillOffer(wallet, "http://ark", wantBtcHex, {
             fund,
+            emulator: EMULATOR,
             fundingTxid: wanted.txid,
             payoutScript: TAKER_PAYOUT,
         });
@@ -365,6 +420,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         state.serverKey = rotatedServerKey;
         const txid = await fillOffer(wallet, "http://ark", wantBtcHex, {
             fund,
+            emulator: EMULATOR,
             swapAddress: fundedAddress,
             payoutScript: TAKER_PAYOUT,
         });

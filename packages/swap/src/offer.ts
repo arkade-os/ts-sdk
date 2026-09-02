@@ -27,6 +27,7 @@ import { concatBytes } from "@scure/btc-signer/utils.js";
 import {
     ArkAddress,
     RestArkProvider,
+    RestEmulatorProvider,
     RestIndexerProvider,
     arkade,
     asset,
@@ -36,6 +37,7 @@ import {
     type ArkTxInput,
     type IWallet,
     type NetworkName,
+    type EmulatorProvider,
     type RelativeTimelock,
 } from "@arkade-os/sdk";
 
@@ -887,6 +889,19 @@ export async function fillOffer(
         /** Sats at output 0 on an asset want. Defaults to {@link ASSET_CARRIER_SATS};
          * raise it for a server whose dust threshold is higher. */
         assetCarrierSats?: bigint;
+        /**
+         * The co-signing service — a base URL, or a provider of your own.
+         *
+         * Required, with no default: `fulfill` is a covenant path, so the
+         * emulator is what executes the arkade script and finalizes the spend
+         * with arkd. A client without one builds the transaction and then
+         * refuses to submit it.
+         */
+        emulator: EmulatorProvider | string;
+        /** Co-signer key override (33-byte compressed hex), as `createOffer`
+         * takes. Needed on a network the SDK pins no emulator key for, where
+         * connecting with an emulator otherwise throws. */
+        emulatorPubkey?: string;
     },
 ): Promise<string> {
     const {
@@ -895,6 +910,8 @@ export async function fillOffer(
         fundingTxid,
         swapAddress,
         assetCarrierSats = ASSET_CARRIER_SATS,
+        emulator,
+        emulatorPubkey,
     } = opts;
     const offer = decodeOffer(hex.decode(offerHex));
     const wantedAssetId = offer.wantAsset?.toString();
@@ -924,6 +941,14 @@ export async function fillOffer(
         indexer: new RestIndexerProvider(arkServerUrl),
         identity: wallet.identity,
         contractManager,
+        // `fulfill` is a covenant path, so the emulator executes the arkade
+        // script and finalizes with arkd. Without it the spend is built and then
+        // refused at submission — there is no default to fall back on.
+        emulator: typeof emulator === "string" ? new RestEmulatorProvider(emulator) : emulator,
+        // Only reached for the client's own emulatorKey, which this fill never
+        // derives against — the offer's own key is bound below. It still has to
+        // resolve, and on a network with no pinned key it throws without this.
+        ...(emulatorPubkey ? { emulatorPubkey } : {}),
     });
 
     // Rebuilt with the OFFER's keys, not the client's, for the same reason
