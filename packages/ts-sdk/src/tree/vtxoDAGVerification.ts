@@ -392,6 +392,14 @@ export async function reconstructAndValidateVtxoDAG(
     diagnostics.push(`[2/6] Commitment tx: ${actualCommitmentTxid}`);
     diagnostics.push(`  → ${virtualLinks.length} virtual transaction(s) to fetch`);
 
+    const MAX_CHAIN_LENGTH = 10000;
+    if (virtualLinks.length > MAX_CHAIN_LENGTH) {
+        throw new VtxoVerificationError(
+            `Chain has ${virtualLinks.length} virtual transactions, exceeding the maximum of ${MAX_CHAIN_LENGTH}`,
+            "DAG_TOO_LARGE",
+        );
+    }
+
     // ── Step 3: Fetch all virtual transaction PSBTs ──────────────────────────
     diagnostics.push(`[3/6] Fetching virtual transaction PSBTs from ASP`);
     const virtualTxids = virtualLinks.map((l) => l.txid);
@@ -1038,6 +1046,13 @@ async function verifyOnchainAnchoring(
         depth = chainInfo.height - status.blockHeight + 1;
     }
 
+    if (depth === undefined && status.confirmed && minConfirmations > 1) {
+        throw new VtxoVerificationError(
+            `Onchain provider returned confirmed without depth, but minConfirmations is ${minConfirmations}. Provider must implement confirmations or getBlockchainInfo.`,
+            "PROVIDER_LACKS_DEPTH",
+            { commitmentTxid, minConfirmations },
+        );
+    }
     const effectiveDepth = depth ?? (status.confirmed ? 1 : 0);
 
     if (effectiveDepth < minConfirmations) {
@@ -1175,6 +1190,13 @@ export async function verifyVtxoComplete(
             ) {
                 const chainInfo = await onchain.getBlockchainInfo();
                 depth = chainInfo.height - status.blockHeight + 1;
+            }
+            if (depth === undefined && status.confirmed && minConfirmations > 1) {
+                throw new VtxoVerificationError(
+                    `Onchain provider returned confirmed without depth, but minConfirmations is ${minConfirmations}. Provider must implement confirmations or getBlockchainInfo.`,
+                    "PROVIDER_LACKS_DEPTH",
+                    { commitmentTxid: dagResult.commitmentTxid, minConfirmations },
+                );
             }
             const effectiveDepth = depth ?? (status.confirmed ? 1 : 0);
             if (effectiveDepth < minConfirmations) {
