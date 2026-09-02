@@ -421,6 +421,18 @@ describe("swap offer", () => {
             );
         });
 
+        it("rejects a zero exit delay, which is an exit in name only", () => {
+            // it builds a third leaf, so the offer reads as having a unilateral
+            // route out, while the CSV imposes no wait — weaker than `noExit`
+            // and harder to notice, since the leaf count says otherwise
+            expect(() =>
+                encodeOffer(full({ exitDelay: { type: "blocks", value: BigInt(0) } })),
+            ).toThrow("exitDelay must be a positive relative locktime");
+            expect(() =>
+                encodeOffer(full({ exitDelay: { type: "seconds", value: BigInt(-512) } })),
+            ).toThrow("exitDelay must be a positive relative locktime");
+        });
+
         it("rejects an exit delay wider than the reference's u32 locktime", () => {
             // the reference decoder narrows the wire u64 to uint32, so a wider
             // value derives one swap address there and another here

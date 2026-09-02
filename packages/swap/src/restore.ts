@@ -350,8 +350,15 @@ export async function restoreAssetSwaps(
                 vout: vtxo.vout,
             });
             if (kind === "indeterminate") {
-                // the spender is not fetchable yet, or took neither covenant
-                // leaf: retry rather than persist a label that later scans skip
+                // the spender is not fetchable yet, or took neither the cancel
+                // nor the fulfill leaf: retry rather than persist a label that
+                // later scans skip.
+                //
+                // The second case is no longer only a foreign spend — an offer
+                // carrying an exit closure has a third leaf, and a maker who
+                // unrolled and took it lands here and re-queues on every scan.
+                // Reporting that outcome needs a SpendKind and a status this
+                // vocabulary does not have yet.
                 unresolved.add(fundingTx.redeemTxid);
                 continue;
             }

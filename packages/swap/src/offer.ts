@@ -295,6 +295,13 @@ export function encodeOffer(offer: Offer): Uint8Array {
 function encodeExitDelay(exit: RelativeTimelock): Uint8Array {
     const kind = EXIT_TYPES.indexOf(exit.type);
     if (kind < 0) throw new Error(`unknown exitDelay locktime type: ${exit.type}`);
+    // a zero delay is an exit in name only: the leaf exists, so the offer reads
+    // as having a unilateral route out, but the CSV imposes no wait at all.
+    // `serverExitDelay` refuses the same value on the default path — this is
+    // what closes it for a caller passing `exitDelay` explicitly.
+    if (exit.value <= BigInt(0)) {
+        throw new Error("exitDelay must be a positive relative locktime");
+    }
     // the reference narrows the wire u64 to a uint32 locktime, so a wider value
     // derives one swap address here and another there — refuse to emit it
     if (exit.value >> BigInt(32) > BigInt(0)) {
