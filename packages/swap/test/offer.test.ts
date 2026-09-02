@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
-import { ArkAddress, arkade, asset } from "@arkade-os/sdk";
-import { decodeOffer, encodeOffer, offerVtxoScript, swapProgramBinding, Offer } from "../src/offer";
+import { ArkAddress, arkade, asset, type RelativeTimelock } from "@arkade-os/sdk";
+import {
+    decodeOffer,
+    encodeOffer,
+    offerVtxoScript,
+    swapProgramBinding,
+    swapPrograms,
+    Offer,
+} from "../src/offer";
 
 // deterministic keys -> the derived swap addresses must never drift (any
 // change to the program JSONs or the arg binding changes them); goldens from
@@ -15,6 +22,7 @@ const keys = {
     emulatorPubkey: hex.decode("466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"),
 };
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
+const EXIT_BLOCKS: RelativeTimelock = { type: "blocks", value: BigInt(144) };
 
 // hand-built TLV records: encodeOffer now rejects malformed offers, so the
 // decode-side coverage below assembles its foreign payloads from raw records
@@ -69,6 +77,43 @@ describe("swap offer", () => {
             expect(back.wantAsset?.toString()).toBe(offer.wantAsset?.toString());
             expect(back.offerAsset?.toString()).toBe(offer.offerAsset?.toString());
         }
+    });
+
+    it("emits the whole exit-carrying contract as artifact JSON", () => {
+        // The two program files are the base; an offer with an exit delay
+        // compiles to a third closure that is in neither. Pinning the artifact
+        // the binding produces keeps the FULL contract readable as data — the
+        // property `swapPrograms` claims — so another implementation has
+        // something to compare against rather than having to read TypeScript.
+        // It also fails loudly if the exit function's shape or the appended
+        // `exitDelay` param ever drifts, both of which move the swap address.
+        const { program } = swapProgramBinding(
+            { wantAmount: BigInt(50_000), offerAsset: testAsset, ...keys, exitDelay: EXIT_BLOCKS },
+            server,
+        );
+        expect(arkade.stringifyArtifact(program)).toBe(
+            '{"version":0,"name":"banco-asset-to-btc","params":[{"name":"makerWP","type":"pubkey"},' +
+                '{"name":"wantAmount","type":"int"},{"name":"server","type":"pubkey"},' +
+                '{"name":"user","type":"pubkey"},{"name":"exitDelay","type":"int"}],' +
+                '"functions":{"fulfill":{"tapscript":{"signers":["$server"]},"arkadeScript":' +
+                '{"asm":[0,"INSPECTOUTPUTVALUE","$wantAmount","GREATERTHANOREQUAL","VERIFY",0,' +
+                '"INSPECTOUTPUTSCRIPTPUBKEY",1,"EQUALVERIFY","$makerWP","EQUAL"]}},' +
+                '"cancel":{"tapscript":{"signers":["$user","$server"]}},' +
+                '"exit":{"tapscript":{"signers":["$user"],"csv":{"type":"blocks","value":"$exitDelay"}}}}}',
+        );
+    });
+
+    it("leaves the base programs untouched when it appends the exit", () => {
+        // withExitClosure spreads rather than mutates; a mutating version would
+        // leave every later exit-less offer compiling three leaves, silently
+        // moving its address
+        const before = arkade.stringifyArtifact(swapPrograms.wantBtc);
+        swapProgramBinding(
+            { wantAmount: BigInt(50_000), offerAsset: testAsset, ...keys, exitDelay: EXIT_BLOCKS },
+            server,
+        );
+        expect(arkade.stringifyArtifact(swapPrograms.wantBtc)).toBe(before);
+        expect(Object.keys(swapPrograms.wantBtc.functions)).toEqual(["fulfill", "cancel"]);
     });
 
     it("binds the asset group index into the covenant", () => {
@@ -152,6 +197,136 @@ describe("swap offer", () => {
         it("the identity and the covenant push are reverses, never equal", () => {
             expect(hex.encode(hex.decode(V.txid_hex).reverse())).toBe(V.script_txid_hex);
             expect(V.txid_hex).not.toBe(V.script_txid_hex);
+        });
+    });
+
+    // Emitted by solverd's own encoder (`pkg/swap/contract`) against the keys
+    // above, so these pin the wire format and the taproot tree to the reference
+    // rather than to ourselves. The two exit-less vectors reproduce the goldens
+    // at the top of this file — which is what says they share the same inputs.
+    describe("solverd reference vectors", () => {
+        const vectors: {
+            label: string;
+            offerHex: string;
+            address: string;
+            exit?: RelativeTimelock;
+            ratio?: [bigint, bigint];
+        }[] = [
+            {
+                label: "wantBtc, no exit",
+                offerHex:
+                    "0100225120004739eb4ad3eab769b0c2278cd70cce628e20477e8b8c508bcf8519a5f451c9020008000000000000c3500b0022aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa05002251203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b10700203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1080020466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+                address:
+                    "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65qz8884545l2ka5mps383ntsennz3csywl5t33gghnu9rxjlg5wfv467cj",
+            },
+            {
+                label: "wantBtc, exit blocks 144",
+                offerHex:
+                    "0100225120a928b3f0209a939822b5a73a5d507c9bcc7f68b7875b28b50b5b8412cda16f4d020008000000000000c3500b0022aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa05002251203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b10700203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1080020466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f270c0009000000000000000090",
+                address:
+                    "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc642fgk0czpx5nnq3ttfe6t4g8ex7v0a5t0p6m9z6skkuyztx6zm6d9ccar9",
+                exit: { type: "blocks", value: BigInt(144) },
+            },
+            {
+                label: "wantAsset, no exit",
+                offerHex:
+                    "0100225120b2a1cd158c7a7e2e6346b6d2d0c323eae90d9d6b8c6e2245de4170d953e2bca6020008000000000000c350030022aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa05002251203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b10700203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1080020466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+                address:
+                    "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc64v4pe52cc7n79e35ddkj6rpj86hfpkwkhrrwyfzaustsm9f7909xukfu7j",
+            },
+            {
+                label: "wantAsset, exit seconds 51200",
+                offerHex:
+                    "0100225120a454544d8df3377853e1ac907f9e67c8284780232ecd9ca76fb04af7f87df6bd020008000000000000c350030022aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa05002251203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b10700203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1080020466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f270c000901000000000000c800",
+                address:
+                    "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc64fz523xcmueh0pf7rtys070x0jpgg7qzxtkdnjnklvz27lu8ma4a2sqp7d",
+                exit: { type: "seconds", value: BigInt(51_200) },
+            },
+            {
+                label: "wantAsset, exit seconds 604672",
+                offerHex:
+                    "0100225120350b08d2374dedf0346be509962c39899ea3b09e9b1b4df572ba3ecb5ae5f6e5020008000000000000c350030022aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa05002251203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b10700203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1080020466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f270c0009010000000000093a00",
+                address:
+                    "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65dgtprfrwn0d7q6xhegfjckrnzv75wcfaxcmfh6h9w37eddwtah9v56pnn",
+                exit: { type: "seconds", value: BigInt(604_672) },
+            },
+            {
+                label: "wantAsset, ratio 1/4",
+                offerHex:
+                    "0100225120b2a1cd158c7a7e2e6346b6d2d0c323eae90d9d6b8c6e2245de4170d953e2bca6020008000000000000c350030022aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa09000800000000000000010a0008000000000000000405002251203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b10700203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1080020466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+                address:
+                    "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc64v4pe52cc7n79e35ddkj6rpj86hfpkwkhrrwyfzaustsm9f7909xukfu7j",
+                ratio: [BigInt(1), BigInt(4)],
+            },
+            {
+                // every optional record at once: the only vector that pins the
+                // canonical order *between* the ratios and offerAsset
+                label: "wantBtc, ratio 3/8, exit blocks 4032",
+                offerHex:
+                    "01002251204a0bd091ba08d9724dcbe74ae91812e8cb3f1a82ff068b8be55c0538842a7fa8020008000000000000c35009000800000000000000030a000800000000000000080b0022aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa05002251203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b10700203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1080020466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f270c0009000000000000000fc0",
+                address:
+                    "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65jst6zgm5zxewfxuhe62ayvp96xt8udg9lcx3w972hq98zzz5lagzyxac8",
+                exit: { type: "blocks", value: BigInt(4_032) },
+                ratio: [BigInt(3), BigInt(8)],
+            },
+        ];
+
+        vectors.forEach((v) => {
+            it(`decodes and re-derives -- ${v.label}`, () => {
+                const offer = decodeOffer(hex.decode(v.offerHex));
+                expect(offer.exitDelay).toEqual(v.exit);
+                expect(offer.ratioNum).toBe(v.ratio?.[0]);
+                expect(offer.ratioDen).toBe(v.ratio?.[1]);
+
+                // the reconstructed tree must be the one the payload names, or
+                // the § 5.1 consistency check rejects every offer solverd emits
+                const script = offerVtxoScript(offer, server);
+                expect(hex.encode(script.pkScript)).toBe(hex.encode(offer.swapPkScript));
+                expect(new ArkAddress(server, script.tweakedPublicKey, "tark").encode()).toBe(
+                    v.address,
+                );
+                expect(script.scripts).toHaveLength(v.exit ? 3 : 2);
+
+                // and re-emitting must reproduce the reference bytes exactly --
+                // that is what pins our record order to § 2.1
+                expect(hex.encode(encodeOffer(offer))).toBe(v.offerHex);
+            });
+        });
+
+        it("re-derives an exit offer from its persisted contract params", () => {
+            // registerOfferContract stores the program as artifact JSON, and the
+            // exit's timelock is a `$param` reference rather than a literal -- a
+            // round trip that dropped it would leave a registered row whose
+            // script no longer matches the address the maker funded
+            const offer = decodeOffer(hex.decode(vectors[1].offerHex));
+            const { program, args, keys: bound } = swapProgramBinding(offer, server);
+            const stored = arkade.serializeArkadeContractParams({
+                program,
+                args,
+                serverKey: bound.serverKey,
+                userKey: bound.userKey,
+                emulatorKey: bound.emulatorKey,
+            });
+            const back = arkade.deserializeArkadeContractParams(stored);
+            const rebuilt = new arkade.ArkadeProgramScript(back.program, back.args, {
+                serverKey: back.serverKey,
+                userKey: back.userKey,
+                emulatorKey: back.emulatorKey,
+            });
+            expect(hex.encode(rebuilt.pkScript)).toBe(hex.encode(offer.swapPkScript));
+        });
+
+        it("appends the exit closure, leaving the other two leaves in place", () => {
+            // leaf order is part of the address (the tree is assembled from the
+            // list), so an exit inserted anywhere else derives a different swap
+            const withExit = decodeOffer(hex.decode(vectors[1].offerHex));
+            const { exitDelay: _unused, ...withoutExit } = withExit;
+            const before = offerVtxoScript(withoutExit, server);
+            const after = offerVtxoScript(withExit, server);
+            expect(after.scripts.slice(0, 2).map((s) => hex.encode(s))).toEqual(
+                before.scripts.map((s) => hex.encode(s)),
+            );
+            expect(after.scripts).toHaveLength(3);
         });
     });
 
@@ -257,6 +432,115 @@ describe("swap offer", () => {
         // must name the offending TLV field, not an AssetId internal
         const empty = cat(directionlessPayload(), rec(0x03, new Uint8Array(0)));
         expect(() => decodeOffer(empty)).toThrow("missing/invalid wantAsset");
+    });
+
+    describe("the optional records", () => {
+        const base = { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys };
+        const full = (over: Partial<Offer> = {}): Offer => ({
+            ...base,
+            swapPkScript: new Uint8Array(34),
+            ...over,
+        });
+        /** A valid payload plus one hand-built record — decode-side coverage
+         * for shapes encodeOffer refuses to emit. */
+        const spliced = (...extra: Uint8Array[]) => cat(encodeOffer(full()), ...extra);
+        const u64be = (n: number) => {
+            const out = new Uint8Array(8);
+            new DataView(out.buffer).setBigUint64(0, BigInt(n), false);
+            return out;
+        };
+
+        it("rejects an unassigned exit locktime type", () => {
+            // reading a third type as `blocks` would derive a swap address the
+            // emitter never meant, and the deposit would land somewhere else
+            const exotic = spliced(rec(0x0c, cat(Uint8Array.of(0x02), u64be(144))));
+            expect(() => decodeOffer(exotic)).toThrow("unknown exitDelay locktime type: 0x2");
+            expect(() =>
+                encodeOffer(full({ exitDelay: { type: "months" as never, value: BigInt(1) } })),
+            ).toThrow("unknown exitDelay locktime type");
+        });
+
+        it("rejects an exit record that is not the 9-byte wire width", () => {
+            expect(() => decodeOffer(spliced(rec(0x0c, u64be(144))))).toThrow(
+                "missing/invalid exitTimelock",
+            );
+        });
+
+        it("rejects a zero exit delay, which is an exit in name only", () => {
+            // it builds a third leaf, so the offer reads as having a unilateral
+            // route out, while the CSV imposes no wait — weaker than `noExit`
+            // and harder to notice, since the leaf count says otherwise
+            expect(() =>
+                encodeOffer(full({ exitDelay: { type: "blocks", value: BigInt(0) } })),
+            ).toThrow("exitDelay must be a positive relative locktime");
+            expect(() =>
+                encodeOffer(full({ exitDelay: { type: "seconds", value: BigInt(-512) } })),
+            ).toThrow("exitDelay must be a positive relative locktime");
+        });
+
+        it("DECODES a zero exit delay it would refuse to emit", () => {
+            // deliberately asymmetric. The reference emits any ExitDelay it is
+            // given, so refusing one on the way in would make us unable to read
+            // an offer solverd can publish — and a useless exit closure is the
+            // maker's own protection to waive, not ours to reject on their
+            // behalf. Encode stays strict so WE never publish one.
+            const zeroed = spliced(rec(0x0c, cat(Uint8Array.of(0x00), u64be(0))));
+            expect(decodeOffer(zeroed).exitDelay).toEqual({ type: "blocks", value: BigInt(0) });
+        });
+
+        it("rejects an exit delay wider than the reference's u32 locktime", () => {
+            // the reference decoder narrows the wire u64 to uint32, so a wider
+            // value derives one swap address there and another here
+            expect(() =>
+                encodeOffer(
+                    full({ exitDelay: { type: "blocks", value: BigInt(1) << BigInt(32) } }),
+                ),
+            ).toThrow("exitDelay does not fit");
+        });
+
+        it("rejects half a ratio on both sides of the codec", () => {
+            expect(() => decodeOffer(spliced(rec(0x09, u64be(3))))).toThrow(
+                "both ratioNum and ratioDen",
+            );
+            expect(() => encodeOffer(full({ ratioNum: BigInt(3) }))).toThrow(
+                "both ratioNum and ratioDen",
+            );
+        });
+
+        it("rejects a zero ratio record, which contradicts its own presence", () => {
+            // the reference spells "unset" as 0 and emits nothing for it
+            const zeroed = spliced(rec(0x09, u64be(0)), rec(0x0a, u64be(4)));
+            expect(() => decodeOffer(zeroed)).toThrow("missing/invalid ratioNum");
+        });
+
+        it("rejects a negative ratio rather than dropping it as unset", () => {
+            // 0 is the reference's "unset"; a negative is a value the u64 field
+            // cannot carry, and treating it as unset would publish an offer
+            // without the ratio the caller asked for
+            expect(() => encodeOffer(full({ ratioNum: BigInt(-1), ratioDen: BigInt(4) }))).toThrow(
+                "ratioNum does not fit",
+            );
+            expect(() => encodeOffer(full({ ratioNum: BigInt(3), ratioDen: BigInt(-4) }))).toThrow(
+                "ratioDen does not fit",
+            );
+        });
+
+        it("treats a zero ratio as unset when encoding, as the reference does", () => {
+            const encoded = encodeOffer(full({ ratioNum: BigInt(0), ratioDen: BigInt(0) }));
+            expect(hex.encode(encoded)).toBe(hex.encode(encodeOffer(full())));
+        });
+
+        it("roundtrips an offer carrying every optional record", () => {
+            const offer = full({
+                ratioNum: BigInt(3),
+                ratioDen: BigInt(8),
+                exitDelay: { type: "seconds", value: BigInt(51_200) },
+            });
+            const back = decodeOffer(encodeOffer(offer));
+            expect(back.ratioNum).toBe(BigInt(3));
+            expect(back.ratioDen).toBe(BigInt(8));
+            expect(back.exitDelay).toEqual({ type: "seconds", value: BigInt(51_200) });
+        });
     });
 
     it("rejects a wantAmount that is not exactly the u64 wire width", () => {

@@ -35,6 +35,7 @@ import {
     toXOnlySignerHex,
     type IWallet,
     type NetworkName,
+    type RelativeTimelock,
 } from "@arkade-os/sdk";
 
 import wantAssetProgram from "./swap-want-asset.program.json";
@@ -46,7 +47,18 @@ import { getAssetSwapsOrThrow, updateAssetSwap, updateAssetSwapBestEffort } from
 // json imports widen "type": "pubkey" to string; parseArtifact validates at runtime
 type Artifact = Parameters<typeof arkade.parseArtifact>[0];
 
-/** The contracts — pure data, shared verbatim with any other implementation. */
+/**
+ * The contracts, one per WANT side — pure data, shared verbatim with any other
+ * implementation.
+ *
+ * **These are the base: an offer carrying an exit delay compiles to a third
+ * closure that is not in either file.** The tree is not fixed-shape — the
+ * protocol defines the exit as `iff ExitDelay`, and solverd appends it the same
+ * way (`pkg/swap/contract/offer.go`, `VtxoScript`) — so it cannot be a function
+ * in a static artifact without splitting these into one file per exit variant.
+ * {@link withExitClosure} owns that step, and the golden in `offer.test.ts`
+ * pins the artifact it produces so the whole contract is still readable as data.
+ */
 export const swapPrograms: Record<
     "wantAsset" | "wantBtc",
     ReturnType<typeof arkade.parseArtifact>
@@ -76,6 +88,14 @@ export interface Offer {
     makerPublicKey: Uint8Array;
     /** Covenant co-signer (emulator) x-only key (32 bytes). */
     emulatorPubkey: Uint8Array;
+    /** Partial-fill numerator. Reserved wire space in V1: carried through the
+     * codec so an offer that sets it decodes, never interpreted here. */
+    ratioNum?: bigint;
+    /** Partial-fill denominator. Set with {@link Offer.ratioNum} or not at all. */
+    ratioDen?: bigint;
+    /** The maker's unilateral exit path. Present adds a third closure to the
+     * taproot tree, so it changes `swapPkScript` — see {@link offerVtxoScript}. */
+    exitDelay?: RelativeTimelock;
 }
 
 /** The program + argument/key binding of an offer's contract. Single source for
@@ -89,6 +109,47 @@ type SwapProgramBinding = {
     args: ConstructorParameters<typeof arkade.ArkadeProgramScript>[1];
     keys: ConstructorParameters<typeof arkade.ArkadeProgramScript>[2];
 };
+
+/**
+ * Append the maker's unilateral exit closure to a program.
+ *
+ * A CSV closure of the maker alone: the signer key is deliberately absent, so
+ * once the VTXO is unrolled onchain and the delay elapses the maker spends it
+ * without anyone's cooperation. `cancel` stays the cooperative route.
+ *
+ * Order is load-bearing. The tree is assembled from the leaf list by btcd's
+ * algorithm, so `exit` must remain the third path, after `fulfill` and
+ * `cancel` — moving it changes the swap address.
+ *
+ * **Why this is code and not a function in the program JSON.** Two reasons, and
+ * either alone would force it: the closure is conditional, so a static artifact
+ * carrying it would give every offer three leaves; and `csv.type` is a literal
+ * in the artifact format — only `csv.value` resolves a `$param` — so the
+ * blocks/seconds split cannot be bound per offer. Expressing this declaratively
+ * therefore means one file per (want side × none | blocks | seconds), six in
+ * all, with the `fulfill` asm duplicated three times per side and free to drift.
+ */
+function withExitClosure(
+    program: ReturnType<typeof arkade.parseArtifact>,
+    exit: RelativeTimelock | undefined,
+): ReturnType<typeof arkade.parseArtifact> {
+    if (!exit) return program;
+    // Spread, never mutate: `swapPrograms` is module state shared by every
+    // offer, so appending in place would leave later exit-less offers compiling
+    // a third leaf — and an `$exitDelay` they never bind.
+    return {
+        ...program,
+        // typed params are authoritative: an undeclared `$exitDelay` fails
+        // validateProgram instead of compiling against an unbound value
+        params: [...(program.params ?? []), { name: "exitDelay", type: "int" }],
+        functions: {
+            ...program.functions,
+            exit: {
+                tapscript: { signers: ["$user"], csv: { type: exit.type, value: "$exitDelay" } },
+            },
+        },
+    };
+}
 
 /** Exported for the asset-id vector tests: the covenant is committed behind an
  * emulator-derived key, so the pushed asset bytes never appear in a leaf script
@@ -104,7 +165,10 @@ export function swapProgramBinding(
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
     }
     return {
-        program: offer.wantAsset ? swapPrograms.wantAsset : swapPrograms.wantBtc,
+        program: withExitClosure(
+            offer.wantAsset ? swapPrograms.wantAsset : swapPrograms.wantBtc,
+            offer.exitDelay,
+        ),
         args: {
             makerWP: offer.makerPkScript.subarray(2),
             wantAmount: offer.wantAmount,
@@ -115,6 +179,7 @@ export function swapProgramBinding(
                 wantAssetTxid: offer.wantAsset.txid.slice().reverse(),
                 wantAssetGroupIndex: offer.wantAsset.groupIndex,
             }),
+            ...(offer.exitDelay && { exitDelay: offer.exitDelay.value }),
         },
         keys: {
             serverKey: serverPubkey,
@@ -155,8 +220,14 @@ const FIELDS = {
     makerPkScript: { tag: 0x05, width: 34 },
     makerPublicKey: { tag: 0x07, width: 32 },
     emulatorPubkey: { tag: 0x08, width: 32 },
+    ratioNum: { tag: 0x09, width: 8 },
+    ratioDen: { tag: 0x0a, width: 8 },
     offerAsset: { tag: 0x0b, width: undefined },
+    exitTimelock: { tag: 0x0c, width: 9 },
 } as const;
+
+/** The `ExitTimelock` locktime types, indexed by their wire byte. */
+const EXIT_TYPES = ["blocks", "seconds"] as const;
 
 type FieldName = keyof typeof FIELDS;
 
@@ -164,6 +235,33 @@ const NAMES = Object.fromEntries(Object.entries(FIELDS).map(([k, f]) => [f.tag, 
     number,
     FieldName
 >;
+
+/** A u64 BE wire field. Rejects an out-of-range value rather than letting
+ * setBigUint64 wrap it silently — reachable at ~18.45 tokens of an 18-decimal
+ * asset — while the covenant binds the full amount. */
+function u64(name: string, value: bigint): Uint8Array {
+    if (value < BigInt(0) || value >> BigInt(64) > BigInt(0)) {
+        throw new Error(`${name} does not fit the offer wire format (u64)`);
+    }
+    const out = new Uint8Array(FIELDS.wantAmount.width);
+    new DataView(out.buffer).setBigUint64(0, value, false);
+    return out;
+}
+
+/** Read a u64 BE wire field. The width was checked when the record was parsed. */
+const readU64 = (value: Uint8Array): bigint =>
+    new DataView(value.buffer, value.byteOffset).getBigUint64(0, false);
+
+/** `0` is how the reference spells an unset ratio — it emits the record only
+ * above zero — so a zero is omitted rather than written as a record no reader
+ * honours. A negative is not "unset" but a value the u64 field cannot carry,
+ * and normalizing it away here would slip it past {@link u64} and publish an
+ * offer without the ratio the caller asked for. */
+const setRatio = (name: string, value: bigint | undefined): bigint | undefined => {
+    if (value === undefined || value === BigInt(0)) return undefined;
+    if (value < BigInt(0)) throw new Error(`${name} does not fit the offer wire format (u64)`);
+    return value;
+};
 
 function tlv(type: number, value: Uint8Array): Uint8Array {
     // the length prefix is u16 — reject rather than emit a truncated length
@@ -190,26 +288,64 @@ export function encodeOffer(offer: Offer): Uint8Array {
             throw new Error(`${name} must be ${FIELDS[name].width} bytes`);
         }
     }
-    // the wire field is a fixed u64; setBigUint64 would wrap silently past 2^64
-    // (reachable at ~18.45 tokens of an 18-decimal asset) while the covenant
-    // binds the full amount — reject instead of advertising a wrapped amount
-    if (offer.wantAmount < BigInt(0) || offer.wantAmount >> BigInt(64) > BigInt(0)) {
-        throw new Error("wantAmount does not fit the offer wire format (u64)");
+    const ratioNum = setRatio("ratioNum", offer.ratioNum);
+    const ratioDen = setRatio("ratioDen", offer.ratioDen);
+    // a numerator without its denominator prices nothing
+    if ((ratioNum === undefined) !== (ratioDen === undefined)) {
+        throw new Error("offer must carry both ratioNum and ratioDen, or neither");
     }
-    const amount = new Uint8Array(FIELDS.wantAmount.width);
-    new DataView(amount.buffer).setBigUint64(0, offer.wantAmount, false);
+    // the records are emitted in the order § 2.1 of the swap protocol requires;
+    // parsers key off the type, but a canonical order keeps offer hashes stable
     const recs = [
         tlv(FIELDS.swapPkScript.tag, offer.swapPkScript),
-        tlv(FIELDS.wantAmount.tag, amount),
+        tlv(FIELDS.wantAmount.tag, u64("wantAmount", offer.wantAmount)),
     ];
     if (offer.wantAsset) recs.push(tlv(FIELDS.wantAsset.tag, offer.wantAsset.serialize()));
+    if (ratioNum !== undefined) recs.push(tlv(FIELDS.ratioNum.tag, u64("ratioNum", ratioNum)));
+    if (ratioDen !== undefined) recs.push(tlv(FIELDS.ratioDen.tag, u64("ratioDen", ratioDen)));
     if (offer.offerAsset) recs.push(tlv(FIELDS.offerAsset.tag, offer.offerAsset.serialize()));
     recs.push(
         tlv(FIELDS.makerPkScript.tag, offer.makerPkScript),
         tlv(FIELDS.makerPublicKey.tag, offer.makerPublicKey),
         tlv(FIELDS.emulatorPubkey.tag, offer.emulatorPubkey),
     );
+    if (offer.exitDelay) recs.push(tlv(FIELDS.exitTimelock.tag, encodeExitDelay(offer.exitDelay)));
     return concatBytes(...recs);
+}
+
+/** `[type: 1B][value: u64 BE]`, per § 2.2. */
+function encodeExitDelay(exit: RelativeTimelock): Uint8Array {
+    return concatBytes(
+        Uint8Array.of(EXIT_TYPES.indexOf(assertExitDelay(exit).type)),
+        u64("exitDelay", exit.value),
+    );
+}
+
+/**
+ * The exit delay checks, returning the value so callers can bind it inline.
+ *
+ * Shared with {@link createOffer} rather than left in the encoder, because
+ * `createOffer` derives the covenant and REGISTERS it before it encodes
+ * anything: a delay only the encoder refused would throw after the contract row
+ * exists, leaving a watched script for an offer that never formed — and
+ * `promoteOfferContract` has already marked its address outstanding, so
+ * {@link retireOfferContract} will not take it back.
+ */
+function assertExitDelay(exit: RelativeTimelock): RelativeTimelock {
+    if (EXIT_TYPES.indexOf(exit.type) < 0) {
+        throw new Error(`unknown exitDelay locktime type: ${exit.type}`);
+    }
+    // a zero delay is an exit in name only: the leaf exists, so the offer reads
+    // as having a unilateral route out, but the CSV imposes no wait at all
+    if (exit.value <= BigInt(0)) {
+        throw new Error("exitDelay must be a positive relative locktime");
+    }
+    // the reference narrows the wire u64 to a uint32 locktime, so a wider value
+    // derives one swap address here and another there — refuse to emit it
+    if (exit.value >> BigInt(32) > BigInt(0)) {
+        throw new Error("exitDelay does not fit the locktime field (u32)");
+    }
+    return exit;
 }
 
 /** Parse TLV bytes into an offer. Throws on malformed or unknown records. */
@@ -242,6 +378,14 @@ export function decodeOffer(data: Uint8Array): Offer {
     for (const name of ["wantAsset", "offerAsset"] as const) {
         if (fields[name]?.length === 0) throw new Error(`missing/invalid ${name}`);
     }
+    // width is checked wherever a fixed-width record appears, not only where
+    // `need` reads it back: the optional ones have no other gate
+    for (const [name, value] of Object.entries(fields) as [FieldName, Uint8Array][]) {
+        const width: number | undefined = FIELDS[name].width;
+        if (width !== undefined && value.length !== width) {
+            throw new Error(`missing/invalid ${name}`);
+        }
+    }
     const need = (name: FieldName) => {
         const v = fields[name];
         const len: number | undefined = FIELDS[name].width;
@@ -253,15 +397,43 @@ export function decodeOffer(data: Uint8Array): Offer {
     if (Boolean(fields.wantAsset) === Boolean(fields.offerAsset)) {
         throw new Error("offer must carry exactly one of wantAsset or offerAsset");
     }
+    // a present record valued `0` contradicts itself: that is the reference's
+    // own spelling of "unset", and it emits the record only above zero
+    const readRatio = (name: "ratioNum" | "ratioDen"): bigint | undefined => {
+        const raw = fields[name];
+        if (!raw) return undefined;
+        const value = readU64(raw);
+        if (value === BigInt(0)) throw new Error(`missing/invalid ${name}`);
+        return value;
+    };
+    const ratioNum = readRatio("ratioNum");
+    const ratioDen = readRatio("ratioDen");
+    // enforced on the way in as well as out: another implementation may emit
+    // half a ratio, and half a ratio prices nothing
+    if ((ratioNum === undefined) !== (ratioDen === undefined)) {
+        throw new Error("offer must carry both ratioNum and ratioDen, or neither");
+    }
     return {
         swapPkScript: need("swapPkScript"),
-        wantAmount: new DataView(amount.buffer, amount.byteOffset).getBigUint64(0, false),
+        wantAmount: readU64(amount),
         ...(fields.wantAsset && { wantAsset: asset.AssetId.fromBytes(fields.wantAsset) }),
         ...(fields.offerAsset && { offerAsset: asset.AssetId.fromBytes(fields.offerAsset) }),
         makerPkScript: need("makerPkScript"),
         makerPublicKey: need("makerPublicKey"),
         emulatorPubkey: need("emulatorPubkey"),
+        ...(ratioNum !== undefined && { ratioNum }),
+        ...(ratioDen !== undefined && { ratioDen }),
+        ...(fields.exitTimelock && { exitDelay: decodeExitDelay(fields.exitTimelock) }),
     };
+}
+
+/** The inverse of {@link encodeExitDelay}; the 9-byte width is already checked. */
+function decodeExitDelay(value: Uint8Array): RelativeTimelock {
+    const type = EXIT_TYPES[value[0]];
+    // an unassigned locktime type is a record we cannot interpret, and reading
+    // it as blocks would derive a swap address its emitter never meant
+    if (!type) throw new Error(`unknown exitDelay locktime type: 0x${value[0].toString(16)}`);
+    return { type, value: readU64(value.subarray(1)) };
 }
 
 // ── Contract registration ────────────────────────────────────────────────────
@@ -335,6 +507,31 @@ async function registerOfferContract(
 // ── User operations ─────────────────────────────────────────────────────────
 
 /**
+ * The exit closure's delay from the server's scalar `unilateralExitDelay`,
+ * under the same threshold arkd's own closures use (`wallet.ts`, and solverd's
+ * `fetchServerConfig`): below 512 the number is blocks, at or above it seconds.
+ *
+ * A missing value arrives here as `0` (`RestArkProvider` defaults it), which
+ * would compile to a CSV of zero — an exit in name only. That is refused rather
+ * than published, because an offer that says it has a unilateral exit and does
+ * not is worse than one that never claimed it.
+ */
+function serverExitDelay(delay: bigint): RelativeTimelock {
+    // `typeof` as well as the range: a provider predating the field returns an
+    // info object without it, and comparing that to a bigint throws a TypeError
+    // naming neither the field nor the way out
+    if (typeof delay !== "bigint" || delay <= BigInt(0)) {
+        throw new Error(
+            "the server reports no usable unilateralExitDelay; pass `exitDelay` to set the offer's " +
+                "exit closure explicitly, or `noExit: true` to publish without one",
+        );
+    }
+    // through the same validator as an explicit delay: a server advertising one
+    // the wire cannot carry must fail before the covenant is registered too
+    return assertExitDelay({ value: delay, type: delay < BigInt(512) ? "blocks" : "seconds" });
+}
+
+/**
  * Build a new offer for `wallet` (the user). Fund `address` with the side
  * you deposit, embedding the returned extension, and the solver does the rest:
  *
@@ -355,6 +552,14 @@ async function registerOfferContract(
  * funding rather than after: nothing is at stake yet, so a failure can throw
  * and be retried, where the same failure after `wallet.send` would leave a
  * funded deposit unwatched with no way to notice.
+ *
+ * **The maker's unilateral exit closure is built by default**, at the server's
+ * own `unilateralExitDelay` — the same thing solverd does. Without it `cancel`
+ * is the only way back out, and `cancel` needs the server's signature: a server
+ * that will not co-sign leaves the deposit stuck at the swap address until the
+ * VTXO expires and the operator sweeps it. An offer has no expiry of its own,
+ * so that exposure has no end. `noExit` opts out for a caller who wants the
+ * smaller tree and accepts the dependency.
  */
 export async function createOffer(
     wallet: IWallet,
@@ -366,6 +571,12 @@ export async function createOffer(
         /** Co-signer key override (33-byte compressed hex); see
          * {@link resolveEmulatorPubkey}. */
         emulatorPubkey?: string;
+        /** Override the exit closure's delay. Defaults to the server's own
+         * `unilateralExitDelay`, which is the delay solverd uses too. */
+        exitDelay?: RelativeTimelock;
+        /** Publish without the exit closure, leaving `cancel` — which needs the
+         * server — as the only way back out. See the note on this function. */
+        noExit?: boolean;
     },
 ): Promise<{
     /** The encoded offer, hex. **Persist this** — it is the only input
@@ -407,6 +618,14 @@ export async function createOffer(
         makerPkScript: ArkAddress.decode(makerAddress).pkScript,
         makerPublicKey,
         emulatorPubkey: emuKey,
+        // checked HERE, before the covenant is derived and registered below:
+        // deferring it to `encodeOffer` leaves a registered contract behind for
+        // an offer that then fails to encode. @see assertExitDelay
+        exitDelay: params.noExit
+            ? undefined
+            : params.exitDelay
+              ? assertExitDelay(params.exitDelay)
+              : serverExitDelay(info.unilateralExitDelay),
     };
     const script = offerVtxoScript(binding, serverPubKey);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
@@ -434,19 +653,23 @@ export async function createOffer(
 /**
  * Cancel an offer: spend the swap VTXO back to the user. Returns the ark txid.
  *
- * This is the refund path — how a user takes back a deposit no solver filled.
- * **Neither program carries a timelock**, so an unfilled deposit keeps its
- * place at the swap address rather than expiring: no deadline to miss and no
- * "expired" state to unwind, at the cost of the refund being something the
+ * This is the cooperative refund path — how a user takes back a deposit no
+ * solver filled. **No path here is on a deadline**, so an unfilled deposit
+ * keeps its place at the swap address rather than expiring: nothing to miss and
+ * no "expired" state to unwind, at the cost of the refund being something the
  * user asks for rather than something a clock delivers.
  *
- * Both paths out of the covenant are deliberately asymmetric:
+ * The routes out of the covenant are deliberately asymmetric:
  *   - `fulfill` is signed by the **server alone**, but the covenant constrains
  *     it to pay output 0 to `makerWP` for at least `wantAmount` — a solver
  *     cannot take the deposit without delivering.
  *   - `cancel` is a **2-of-2 of the user and the server**, so cancelling is
  *     cooperative: the server co-signs. No solver signature is involved, so the
  *     refund never depends on the counterparty being reachable.
+ *   - `exit` is the user **alone** after a relative timelock, present unless the
+ *     offer was created with `noExit`. It is the route that survives a server
+ *     that will not co-sign this one, and it is reached by unrolling the VTXO
+ *     onchain rather than through this function.
  *
  * Cancel therefore races a fill rather than pre-empting it. An offer the solver
  * is filling in the same moment may be spent by `fulfill` first, in which case
