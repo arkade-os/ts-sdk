@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { ArkAddress, asset, type IWallet } from "@arkade-os/sdk";
-import { fillOffer, encodeOffer, offerVtxoScript, type Offer } from "../src/offer";
+import {
+    ASSET_CARRIER_SATS,
+    fillOffer,
+    encodeOffer,
+    offerVtxoScript,
+    type Offer,
+} from "../src/offer";
 
 /**
  * `fillOffer` composes a spend the covenant will accept or reject; the tests
@@ -90,6 +96,12 @@ const wantAsset: Omit<Offer, "swapPkScript"> = {
 const assetScript = offerVtxoScript(wantAsset, fundedServerKey);
 const wantAssetHex = hex.encode(encodeOffer({ ...wantAsset, swapPkScript: assetScript.pkScript }));
 
+/** The asset each offer names, plus one nothing asked for — the case that turns
+ * an undeclared coin into an ASSET_NOT_FOUND from arkd. */
+const WANTED_ASSET = "bb".repeat(32) + "0000";
+const DEPOSIT_ASSET = "aa".repeat(32) + "0000";
+const STRAY_ASSET = "cc".repeat(32) + "0000";
+
 const TAKER_PAYOUT = hex.decode("5120" + "11".repeat(32));
 const wallet = {
     identity: {},
@@ -109,15 +121,29 @@ const reset = () => {
 };
 
 describe("fillOffer refuses what it cannot build correctly", () => {
-    it("refuses an asset want rather than guessing the input->output binding", async () => {
+    it("refuses an asset want its funding cannot pay for", async () => {
         reset();
-        // The covenant checks the asset at output 0 (INSPECTOUTASSETLOOKUP), and
-        // only the caller knows which of its coins carry that asset and how
-        // much. A guess produces a spend the covenant rejects for reasons the
-        // error does not explain, so refuse in the open.
+        // The taker's coins are the only source of the wanted asset, and only
+        // the caller knows what they carry. Building a spend that cannot deliver
+        // leaves the emulator to refuse it, reporting nothing more than that the
+        // covenant said no — so name the shortfall here instead.
         await expect(fillOffer(wallet, "http://ark", wantAssetHex, { fund })).rejects.toThrow(
-            /does not yet support an asset want/,
+            /needs 50000 of .*`fund` declares 0/,
         );
+        expect(state.sends).toBe(0);
+    });
+
+    it("refuses to strand an asset it has nowhere to return", async () => {
+        reset();
+        // Assets land on the payout output, which the builder only creates when
+        // there is a sats surplus. With none, the asset would have no output to
+        // go to and arkd would refuse the spend without explaining why.
+        state.utxos = [{ ...coin, value: 50_000, assets: [{ assetId: DEPOSIT_ASSET, amount: 7 }] }];
+        await expect(
+            fillOffer(wallet, "http://ark", wantBtcHex, {
+                fund: [{ ...fund[0], value: 0 }] as never,
+            }),
+        ).rejects.toThrow(/no payout output/);
         expect(state.sends).toBe(0);
     });
 
@@ -179,6 +205,103 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         expect(to).toHaveLength(1);
         expect(hex.encode(to[0].args[0] as Uint8Array)).toBe(MAKER_PK_SCRIPT);
         expect(to[0].args[1]).toBe(BigInt(50_000));
+    });
+
+    it("pays an ASSET want through the packet, with only a carrier at output 0", async () => {
+        reset();
+        const txid = await fillOffer(wallet, "http://ark", wantAssetHex, {
+            fund: [{ ...fund[0], assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }] as never,
+            payoutScript: TAKER_PAYOUT,
+        });
+        expect(txid).toBe("ff".repeat(32));
+
+        // Output 0 carries the dust the output needs to exist, NOT wantAmount
+        // sats: on an asset want the maker is paid through the asset packet, and
+        // paying 50_000 sats there would hand over the taker's own money.
+        const to = callsOf("to");
+        expect(to).toHaveLength(1);
+        expect(hex.encode(to[0].args[0] as Uint8Array)).toBe(MAKER_PK_SCRIPT);
+        expect(to[0].args[1]).toBe(ASSET_CARRIER_SATS);
+
+        // THE WANTED ASSET IS GROUP 0 — the lookup index the fulfill script
+        // uses. It is supplied by the taker's coin (input 1) and delivered to
+        // output 0, which is what the covenant inspects.
+        const assets = callsOf("withAsset");
+        expect(assets).toHaveLength(1);
+        expect(assets[0].args[0]).toEqual({
+            assetId: WANTED_ASSET,
+            inputs: [{ vin: 1, amount: BigInt(50_000) }],
+            outputs: [{ vout: 0, amount: BigInt(50_000) }],
+        });
+    });
+
+    it("returns the taker's surplus of the wanted asset, in the same group", async () => {
+        reset();
+        await fillOffer(wallet, "http://ark", wantAssetHex, {
+            fund: [{ ...fund[0], assets: [{ assetId: WANTED_ASSET, amount: 80_000 }] }] as never,
+            payoutScript: TAKER_PAYOUT,
+        });
+        // The maker gets what the offer asked for; the rest comes back at vout 1
+        // rather than being handed over with it.
+        expect(callsOf("withAsset")[0].args[0]).toEqual({
+            assetId: WANTED_ASSET,
+            inputs: [{ vin: 1, amount: BigInt(80_000) }],
+            outputs: [
+                { vout: 0, amount: BigInt(50_000) },
+                { vout: 1, amount: BigInt(30_000) },
+            ],
+        });
+    });
+
+    it("declares an asset a FUNDING coin merely happens to carry", async () => {
+        reset();
+        // arkd answers ASSET_NOT_FOUND when an input owns an asset the packet
+        // does not mention. Coin selection picks for sats or for the wanted
+        // asset; whatever else those coins hold comes along, and undeclared it
+        // takes the whole fill down.
+        state.utxos = [{ ...coin, assets: [{ assetId: DEPOSIT_ASSET, amount: 900 }] }];
+        await fillOffer(wallet, "http://ark", wantBtcHex, {
+            fund: [{ ...fund[0], assets: [{ assetId: STRAY_ASSET, amount: 7 }] }] as never,
+            payoutScript: TAKER_PAYOUT,
+        });
+        const groups = callsOf("withAsset").map((c) => c.args[0]);
+        expect(groups).toEqual([
+            {
+                assetId: DEPOSIT_ASSET,
+                inputs: [{ vin: 0, amount: BigInt(900) }],
+                outputs: [{ vout: 1, amount: BigInt(900) }],
+            },
+            {
+                assetId: STRAY_ASSET,
+                inputs: [{ vin: 1, amount: BigInt(7) }],
+                outputs: [{ vout: 1, amount: BigInt(7) }],
+            },
+        ]);
+    });
+
+    it("puts the wanted asset first even when other assets are in the spend", async () => {
+        reset();
+        // Group order is packet order, and the fulfill script reads group 0. An
+        // unrelated asset added ahead of the wanted one makes the covenant
+        // inspect the wrong group and refuse.
+        state.utxos = [{ ...coin, assets: [{ assetId: STRAY_ASSET, amount: 3 }] }];
+        await fillOffer(wallet, "http://ark", wantAssetHex, {
+            fund: [{ ...fund[0], assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }] as never,
+            payoutScript: TAKER_PAYOUT,
+        });
+        const groups = callsOf("withAsset").map((c) => (c.args[0] as { assetId: string }).assetId);
+        expect(groups[0]).toBe(WANTED_ASSET);
+        expect(groups).toEqual([WANTED_ASSET, STRAY_ASSET]);
+    });
+
+    it("lets the caller raise the carrier for a higher dust threshold", async () => {
+        reset();
+        await fillOffer(wallet, "http://ark", wantAssetHex, {
+            fund: [{ ...fund[0], assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }] as never,
+            payoutScript: TAKER_PAYOUT,
+            assetCarrierSats: BigInt(1_000),
+        });
+        expect(callsOf("to")[0].args[1]).toBe(BigInt(1_000));
     });
 
     it("takes the deposit as input 0 and the taker's coins as inputs 1..n", async () => {
