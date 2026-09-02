@@ -446,6 +446,18 @@ describe("swap offer", () => {
             expect(() => decodeOffer(zeroed)).toThrow("missing/invalid ratioNum");
         });
 
+        it("rejects a negative ratio rather than dropping it as unset", () => {
+            // 0 is the reference's "unset"; a negative is a value the u64 field
+            // cannot carry, and treating it as unset would publish an offer
+            // without the ratio the caller asked for
+            expect(() => encodeOffer(full({ ratioNum: BigInt(-1), ratioDen: BigInt(4) }))).toThrow(
+                "ratioNum does not fit",
+            );
+            expect(() => encodeOffer(full({ ratioNum: BigInt(3), ratioDen: BigInt(-4) }))).toThrow(
+                "ratioDen does not fit",
+            );
+        });
+
         it("treats a zero ratio as unset when encoding, as the reference does", () => {
             const encoded = encodeOffer(full({ ratioNum: BigInt(0), ratioDen: BigInt(0) }));
             expect(hex.encode(encoded)).toBe(hex.encode(encodeOffer(full())));

@@ -232,9 +232,14 @@ const readU64 = (value: Uint8Array): bigint =>
 
 /** `0` is how the reference spells an unset ratio — it emits the record only
  * above zero — so a zero is omitted rather than written as a record no reader
- * honours. */
-const setRatio = (value: bigint | undefined): bigint | undefined =>
-    value !== undefined && value > BigInt(0) ? value : undefined;
+ * honours. A negative is not "unset" but a value the u64 field cannot carry,
+ * and normalizing it away here would slip it past {@link u64} and publish an
+ * offer without the ratio the caller asked for. */
+const setRatio = (name: string, value: bigint | undefined): bigint | undefined => {
+    if (value === undefined || value === BigInt(0)) return undefined;
+    if (value < BigInt(0)) throw new Error(`${name} does not fit the offer wire format (u64)`);
+    return value;
+};
 
 function tlv(type: number, value: Uint8Array): Uint8Array {
     // the length prefix is u16 — reject rather than emit a truncated length
@@ -261,8 +266,8 @@ export function encodeOffer(offer: Offer): Uint8Array {
             throw new Error(`${name} must be ${FIELDS[name].width} bytes`);
         }
     }
-    const ratioNum = setRatio(offer.ratioNum);
-    const ratioDen = setRatio(offer.ratioDen);
+    const ratioNum = setRatio("ratioNum", offer.ratioNum);
+    const ratioDen = setRatio("ratioDen", offer.ratioDen);
     // a numerator without its denominator prices nothing
     if ((ratioNum === undefined) !== (ratioDen === undefined)) {
         throw new Error("offer must carry both ratioNum and ratioDen, or neither");
@@ -457,6 +462,29 @@ async function registerOfferContract(
 // ── User operations ─────────────────────────────────────────────────────────
 
 /**
+ * The exit closure's delay from the server's scalar `unilateralExitDelay`,
+ * under the same threshold arkd's own closures use (`wallet.ts`, and solverd's
+ * `fetchServerConfig`): below 512 the number is blocks, at or above it seconds.
+ *
+ * A missing value arrives here as `0` (`RestArkProvider` defaults it), which
+ * would compile to a CSV of zero — an exit in name only. That is refused rather
+ * than published, because an offer that says it has a unilateral exit and does
+ * not is worse than one that never claimed it.
+ */
+function serverExitDelay(delay: bigint): RelativeTimelock {
+    // `typeof` as well as the range: a provider predating the field returns an
+    // info object without it, and comparing that to a bigint throws a TypeError
+    // naming neither the field nor the way out
+    if (typeof delay !== "bigint" || delay <= BigInt(0)) {
+        throw new Error(
+            "the server reports no usable unilateralExitDelay; pass `exitDelay` to set the offer's " +
+                "exit closure explicitly, or `noExit: true` to publish without one",
+        );
+    }
+    return { value: delay, type: delay < BigInt(512) ? "blocks" : "seconds" };
+}
+
+/**
  * Build a new offer for `wallet` (the user). Fund `address` with the side
  * you deposit, embedding the returned extension, and the solver does the rest:
  *
@@ -477,6 +505,14 @@ async function registerOfferContract(
  * funding rather than after: nothing is at stake yet, so a failure can throw
  * and be retried, where the same failure after `wallet.send` would leave a
  * funded deposit unwatched with no way to notice.
+ *
+ * **The maker's unilateral exit closure is built by default**, at the server's
+ * own `unilateralExitDelay` — the same thing solverd does. Without it `cancel`
+ * is the only way back out, and `cancel` needs the server's signature: a server
+ * that will not co-sign leaves the deposit stuck at the swap address until the
+ * VTXO expires and the operator sweeps it. An offer has no expiry of its own,
+ * so that exposure has no end. `noExit` opts out for a caller who wants the
+ * smaller tree and accepts the dependency.
  */
 export async function createOffer(
     wallet: IWallet,
@@ -488,10 +524,12 @@ export async function createOffer(
         /** Co-signer key override (33-byte compressed hex); see
          * {@link resolveEmulatorPubkey}. */
         emulatorPubkey?: string;
-        /** Add the maker's unilateral exit closure, spendable by this wallet
-         * alone once the VTXO is unrolled and the delay elapses. Opt-in: it is
-         * part of the covenant, so it changes the swap address. */
+        /** Override the exit closure's delay. Defaults to the server's own
+         * `unilateralExitDelay`, which is the delay solverd uses too. */
         exitDelay?: RelativeTimelock;
+        /** Publish without the exit closure, leaving `cancel` — which needs the
+         * server — as the only way back out. See the note on this function. */
+        noExit?: boolean;
     },
 ): Promise<{
     /** The encoded offer, hex. **Persist this** — it is the only input
@@ -533,7 +571,9 @@ export async function createOffer(
         makerPkScript: ArkAddress.decode(makerAddress).pkScript,
         makerPublicKey,
         emulatorPubkey: emuKey,
-        exitDelay: params.exitDelay,
+        exitDelay: params.noExit
+            ? undefined
+            : (params.exitDelay ?? serverExitDelay(info.unilateralExitDelay)),
     };
     const script = offerVtxoScript(binding, serverPubKey);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
@@ -561,19 +601,23 @@ export async function createOffer(
 /**
  * Cancel an offer: spend the swap VTXO back to the user. Returns the ark txid.
  *
- * This is the refund path — how a user takes back a deposit no solver filled.
- * **Neither program carries a timelock**, so an unfilled deposit keeps its
- * place at the swap address rather than expiring: no deadline to miss and no
- * "expired" state to unwind, at the cost of the refund being something the
+ * This is the cooperative refund path — how a user takes back a deposit no
+ * solver filled. **No path here is on a deadline**, so an unfilled deposit
+ * keeps its place at the swap address rather than expiring: nothing to miss and
+ * no "expired" state to unwind, at the cost of the refund being something the
  * user asks for rather than something a clock delivers.
  *
- * Both paths out of the covenant are deliberately asymmetric:
+ * The routes out of the covenant are deliberately asymmetric:
  *   - `fulfill` is signed by the **server alone**, but the covenant constrains
  *     it to pay output 0 to `makerWP` for at least `wantAmount` — a solver
  *     cannot take the deposit without delivering.
  *   - `cancel` is a **2-of-2 of the user and the server**, so cancelling is
  *     cooperative: the server co-signs. No solver signature is involved, so the
  *     refund never depends on the counterparty being reachable.
+ *   - `exit` is the user **alone** after a relative timelock, present unless the
+ *     offer was created with `noExit`. It is the route that survives a server
+ *     that will not co-sign this one, and it is reached by unrolling the VTXO
+ *     onchain rather than through this function.
  *
  * Cancel therefore races a fill rather than pre-empting it. An offer the solver
  * is filling in the same moment may be spent by `fulfill` first, in which case
