@@ -293,6 +293,7 @@ const Errors = {
 
 // ─── Batch output index convention (from SDK tree/validation.ts) ─────────────
 export const BATCH_OUTPUT_VTXO_INDEX = 0;
+export const MAX_VTXO_CHAIN_NODES = 10_000;
 
 // ─── Main Public Function ────────────────────────────────────────────────────
 
@@ -392,10 +393,9 @@ export async function reconstructAndValidateVtxoDAG(
     diagnostics.push(`[2/6] Commitment tx: ${actualCommitmentTxid}`);
     diagnostics.push(`  → ${virtualLinks.length} virtual transaction(s) to fetch`);
 
-    const MAX_CHAIN_LENGTH = 10000;
-    if (virtualLinks.length > MAX_CHAIN_LENGTH) {
+    if (virtualLinks.length > MAX_VTXO_CHAIN_NODES) {
         throw new VtxoVerificationError(
-            `Chain has ${virtualLinks.length} virtual transactions, exceeding the maximum of ${MAX_CHAIN_LENGTH}`,
+            `Chain has ${virtualLinks.length} virtual transactions, exceeding the maximum of ${MAX_VTXO_CHAIN_NODES}`,
             "DAG_TOO_LARGE",
         );
     }
@@ -456,10 +456,10 @@ export async function reconstructAndValidateVtxoDAG(
     }
 
     // 4b. Wire relationships with Cycle Detection
-    const MAX_DAG_NODES = 10000;
-    if (allNodes.size > MAX_DAG_NODES) {
+    diagnostics.push(`[4/6] Reconstructing functional DAG (max ${MAX_VTXO_CHAIN_NODES} nodes)`);
+    if (allNodes.size > MAX_VTXO_CHAIN_NODES) {
         throw new VtxoVerificationError(
-            `DAG size ${allNodes.size} exceeds maximum allowed nodes (${MAX_DAG_NODES})`,
+            `Chain length ${allNodes.size} exceeds max allowed (${MAX_VTXO_CHAIN_NODES})`,
             "DAG_TOO_LARGE",
         );
     }
@@ -659,15 +659,26 @@ async function fetchAllVirtualTxs(
         }
 
         // Zero-trust: map raw PSBTs by their computed txid rather than assuming positional 1-to-1 array alignment
-        for (const rawPsbt of txs) {
+        for (let j = 0; j < txs.length; j++) {
+            const rawPsbt = txs[j];
             if (!rawPsbt) continue;
             try {
                 const txBytes = typeof rawPsbt === "string" ? base64.decode(rawPsbt) : rawPsbt;
                 const tx = Transaction.fromPSBT(txBytes, { allowUnknownOutputs: true });
                 const computedId = computeTxid(tx);
+
+                // Assert positional order to catch misbehaving indexers
+                if (computedId !== batch[j]) {
+                    throw new VtxoVerificationError(
+                        `Indexer returned txid ${computedId} at index ${j}, but requested txid was ${batch[j]}`,
+                        "TXID_MISMATCH",
+                    );
+                }
+
                 result.set(computedId, rawPsbt);
-            } catch {
+            } catch (e: any) {
                 // If decoding fails here, it will be caught when validating requested batch txids below
+                if (e instanceof VtxoVerificationError) throw e;
             }
         }
 
@@ -1032,36 +1043,7 @@ async function verifyOnchainAnchoring(
     // 1. Check confirmation status
     const status = await onchain.getTxStatus(commitmentTxid, commitmentBlockHash);
 
-    if (!status.confirmed) {
-        throw new VtxoVerificationError(
-            `Commitment transaction ${commitmentTxid} is not confirmed on-chain (min: ${minConfirmations})`,
-            "COMMITMENT_NOT_CONFIRMED",
-            { commitmentTxid, minConfirmations },
-        );
-    }
-
-    let depth = status.confirmations;
-    if (depth === undefined && status.blockHeight !== undefined && onchain.getBlockchainInfo) {
-        const chainInfo = await onchain.getBlockchainInfo();
-        depth = chainInfo.height - status.blockHeight + 1;
-    }
-
-    if (depth === undefined && status.confirmed && minConfirmations > 1) {
-        throw new VtxoVerificationError(
-            `Onchain provider returned confirmed without depth, but minConfirmations is ${minConfirmations}. Provider must implement confirmations or getBlockchainInfo.`,
-            "PROVIDER_LACKS_DEPTH",
-            { commitmentTxid, minConfirmations },
-        );
-    }
-    const effectiveDepth = depth ?? (status.confirmed ? 1 : 0);
-
-    if (effectiveDepth < minConfirmations) {
-        throw new VtxoVerificationError(
-            `Commitment transaction ${commitmentTxid} is confirmed at depth ${effectiveDepth}, which is less than requested minConfirmations ${minConfirmations}`,
-            "COMMITMENT_NOT_CONFIRMED",
-            { commitmentTxid, minConfirmations, depth: effectiveDepth },
-        );
-    }
+    await checkCommitmentDepth(commitmentTxid, minConfirmations, status, onchain);
 
     // 2. Fetch raw transaction to verify output script and amount
     const rawTxHex = await onchain.getRawTransaction(
@@ -1175,41 +1157,7 @@ export async function verifyVtxoComplete(
                 dagResult.commitmentTxid,
                 dagResult.commitmentBlockHash,
             );
-            if (!status.confirmed) {
-                throw new VtxoVerificationError(
-                    `Commitment transaction ${dagResult.commitmentTxid} is not confirmed on-chain (min: ${minConfirmations})`,
-                    "COMMITMENT_NOT_CONFIRMED",
-                    { commitmentTxid: dagResult.commitmentTxid, minConfirmations },
-                );
-            }
-            let depth = status.confirmations;
-            if (
-                depth === undefined &&
-                status.blockHeight !== undefined &&
-                onchain.getBlockchainInfo
-            ) {
-                const chainInfo = await onchain.getBlockchainInfo();
-                depth = chainInfo.height - status.blockHeight + 1;
-            }
-            if (depth === undefined && status.confirmed && minConfirmations > 1) {
-                throw new VtxoVerificationError(
-                    `Onchain provider returned confirmed without depth, but minConfirmations is ${minConfirmations}. Provider must implement confirmations or getBlockchainInfo.`,
-                    "PROVIDER_LACKS_DEPTH",
-                    { commitmentTxid: dagResult.commitmentTxid, minConfirmations },
-                );
-            }
-            const effectiveDepth = depth ?? (status.confirmed ? 1 : 0);
-            if (effectiveDepth < minConfirmations) {
-                throw new VtxoVerificationError(
-                    `Commitment transaction ${dagResult.commitmentTxid} is confirmed at depth ${effectiveDepth}, which is less than requested minConfirmations ${minConfirmations}`,
-                    "COMMITMENT_NOT_CONFIRMED",
-                    {
-                        commitmentTxid: dagResult.commitmentTxid,
-                        minConfirmations,
-                        depth: effectiveDepth,
-                    },
-                );
-            }
+            await checkCommitmentDepth(dagResult.commitmentTxid, minConfirmations, status, onchain);
             return status;
         }
 
@@ -1233,4 +1181,44 @@ export async function verifyVtxoComplete(
         broadcastable: dagResult.broadcastable && onchainStatus.confirmed,
         onchainStatus,
     };
+}
+
+// ─── Shared helper: verify depth logic ────────
+
+async function checkCommitmentDepth(
+    commitmentTxid: string,
+    minConfirmations: number,
+    status: { confirmed: boolean; blockHeight?: number; confirmations?: number },
+    onchain: VerificationOnchainProvider,
+): Promise<void> {
+    if (!status.confirmed) {
+        throw new VtxoVerificationError(
+            `Commitment transaction ${commitmentTxid} is not confirmed on-chain (min: ${minConfirmations})`,
+            "COMMITMENT_NOT_CONFIRMED",
+            { commitmentTxid, minConfirmations },
+        );
+    }
+
+    let depth = status.confirmations;
+    if (depth === undefined && status.blockHeight !== undefined && onchain.getBlockchainInfo) {
+        const chainInfo = await onchain.getBlockchainInfo();
+        depth = chainInfo.height - status.blockHeight + 1;
+    }
+
+    if (depth === undefined && status.confirmed && minConfirmations > 1) {
+        throw new VtxoVerificationError(
+            `Onchain provider returned confirmed without depth, but minConfirmations is ${minConfirmations}. Provider must implement confirmations or getBlockchainInfo.`,
+            "PROVIDER_LACKS_DEPTH",
+            { commitmentTxid, minConfirmations },
+        );
+    }
+    const effectiveDepth = depth ?? (status.confirmed ? 1 : 0);
+
+    if (effectiveDepth < minConfirmations) {
+        throw new VtxoVerificationError(
+            `Commitment transaction ${commitmentTxid} is confirmed at depth ${effectiveDepth}, which is less than requested minConfirmations ${minConfirmations}`,
+            "COMMITMENT_NOT_CONFIRMED",
+            { commitmentTxid, minConfirmations, depth: effectiveDepth },
+        );
+    }
 }
