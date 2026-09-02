@@ -433,6 +433,16 @@ describe("swap offer", () => {
             ).toThrow("exitDelay must be a positive relative locktime");
         });
 
+        it("DECODES a zero exit delay it would refuse to emit", () => {
+            // deliberately asymmetric. The reference emits any ExitDelay it is
+            // given, so refusing one on the way in would make us unable to read
+            // an offer solverd can publish — and a useless exit closure is the
+            // maker's own protection to waive, not ours to reject on their
+            // behalf. Encode stays strict so WE never publish one.
+            const zeroed = spliced(rec(0x0c, cat(Uint8Array.of(0x00), u64be(0))));
+            expect(decodeOffer(zeroed).exitDelay).toEqual({ type: "blocks", value: BigInt(0) });
+        });
+
         it("rejects an exit delay wider than the reference's u32 locktime", () => {
             // the reference decoder narrows the wire u64 to uint32, so a wider
             // value derives one swap address there and another here

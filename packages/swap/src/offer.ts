@@ -293,12 +293,28 @@ export function encodeOffer(offer: Offer): Uint8Array {
 
 /** `[type: 1B][value: u64 BE]`, per § 2.2. */
 function encodeExitDelay(exit: RelativeTimelock): Uint8Array {
-    const kind = EXIT_TYPES.indexOf(exit.type);
-    if (kind < 0) throw new Error(`unknown exitDelay locktime type: ${exit.type}`);
+    return concatBytes(
+        Uint8Array.of(EXIT_TYPES.indexOf(assertExitDelay(exit).type)),
+        u64("exitDelay", exit.value),
+    );
+}
+
+/**
+ * The exit delay checks, returning the value so callers can bind it inline.
+ *
+ * Shared with {@link createOffer} rather than left in the encoder, because
+ * `createOffer` derives the covenant and REGISTERS it before it encodes
+ * anything: a delay only the encoder refused would throw after the contract row
+ * exists, leaving a watched script for an offer that never formed — and
+ * `promoteOfferContract` has already marked its address outstanding, so
+ * {@link retireOfferContract} will not take it back.
+ */
+function assertExitDelay(exit: RelativeTimelock): RelativeTimelock {
+    if (EXIT_TYPES.indexOf(exit.type) < 0) {
+        throw new Error(`unknown exitDelay locktime type: ${exit.type}`);
+    }
     // a zero delay is an exit in name only: the leaf exists, so the offer reads
-    // as having a unilateral route out, but the CSV imposes no wait at all.
-    // `serverExitDelay` refuses the same value on the default path — this is
-    // what closes it for a caller passing `exitDelay` explicitly.
+    // as having a unilateral route out, but the CSV imposes no wait at all
     if (exit.value <= BigInt(0)) {
         throw new Error("exitDelay must be a positive relative locktime");
     }
@@ -307,7 +323,7 @@ function encodeExitDelay(exit: RelativeTimelock): Uint8Array {
     if (exit.value >> BigInt(32) > BigInt(0)) {
         throw new Error("exitDelay does not fit the locktime field (u32)");
     }
-    return concatBytes(Uint8Array.of(kind), u64("exitDelay", exit.value));
+    return exit;
 }
 
 /** Parse TLV bytes into an offer. Throws on malformed or unknown records. */
@@ -488,7 +504,9 @@ function serverExitDelay(delay: bigint): RelativeTimelock {
                 "exit closure explicitly, or `noExit: true` to publish without one",
         );
     }
-    return { value: delay, type: delay < BigInt(512) ? "blocks" : "seconds" };
+    // through the same validator as an explicit delay: a server advertising one
+    // the wire cannot carry must fail before the covenant is registered too
+    return assertExitDelay({ value: delay, type: delay < BigInt(512) ? "blocks" : "seconds" });
 }
 
 /**
@@ -578,9 +596,14 @@ export async function createOffer(
         makerPkScript: ArkAddress.decode(makerAddress).pkScript,
         makerPublicKey,
         emulatorPubkey: emuKey,
+        // checked HERE, before the covenant is derived and registered below:
+        // deferring it to `encodeOffer` leaves a registered contract behind for
+        // an offer that then fails to encode. @see assertExitDelay
         exitDelay: params.noExit
             ? undefined
-            : (params.exitDelay ?? serverExitDelay(info.unilateralExitDelay)),
+            : params.exitDelay
+              ? assertExitDelay(params.exitDelay)
+              : serverExitDelay(info.unilateralExitDelay),
     };
     const script = offerVtxoScript(binding, serverPubKey);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };

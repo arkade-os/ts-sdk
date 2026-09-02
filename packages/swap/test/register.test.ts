@@ -11,6 +11,7 @@ import {
     type ArkProvider,
     type IndexerProvider,
     type IWallet,
+    type RelativeTimelock,
     type OnchainProvider,
 } from "@arkade-os/sdk";
 import { createOffer, decodeOffer, OFFER_CONTRACT_KIND, OFFER_CONTRACT_LABEL } from "../src/offer";
@@ -214,6 +215,39 @@ describe("a new offer's unilateral exit", () => {
         expect(decodeOffer(hex.decode(without.offerHex)).exitDelay).toBeUndefined();
         // the closure is part of the covenant, so the two are different contracts
         expect(without.swapPkScript).not.toEqual(withExit.swapPkScript);
+    });
+
+    const withExitDelay = (exitDelay: RelativeTimelock) =>
+        createOffer(wallet, "http://ark", {
+            wantAmount: BigInt(50_000),
+            wantAsset: testAsset,
+            emulatorPubkey,
+            exitDelay,
+        });
+
+    it("registers nothing for an explicit delay it will refuse to encode", async () => {
+        // A CSV of zero compiles happily, so the covenant is derived and
+        // REGISTERED before the encoder ever sees the delay. Refusing only at
+        // encode time leaves a watched contract behind for an offer that never
+        // formed — and promoteOfferContract has already marked its address
+        // outstanding, so retireOfferContract will not take that row back.
+        await expect(withExitDelay({ type: "blocks", value: BigInt(0) })).rejects.toThrow(
+            "exitDelay must be a positive relative locktime",
+        );
+        expect(state.created, "nothing may be registered for an offer that never formed").toEqual(
+            [],
+        );
+        expect(state.watched).toEqual([]);
+    });
+
+    it("names an oversized delay itself, rather than letting bip68 do it", async () => {
+        // deriving first reports `Expected Number seconds <= 33553920` from
+        // inside the timelock encoder, which names neither the field nor the way
+        // out; the check has to run before the covenant is built
+        await expect(
+            withExitDelay({ type: "seconds", value: BigInt(1) << BigInt(32) }),
+        ).rejects.toThrow("exitDelay does not fit the locktime field (u32)");
+        expect(state.created).toEqual([]);
     });
 
     it("refuses to publish an exit in name only when the server reports none", async () => {
