@@ -130,6 +130,30 @@ export {
     type RfqStatus,
     type RfqTransport,
 } from "./rfq";
+// The EVM corridors' wire layer. Negotiation only — pairs, amounts, the two
+// request shapes and the two quote shapes; see `evmRfq.ts` for what is
+// deliberately not here yet.
+export {
+    EVM_CHAIN,
+    evmAmountFromWire,
+    evmAmountToWire,
+    evmDirectionOf,
+    evmQuoteSats,
+    evmQuoteTokenAmount,
+    evmReceivePair,
+    evmReceiveRequest,
+    evmSendPair,
+    evmSendRequest,
+    evmTokenLeg,
+    evmTokenOf,
+    readEvmReceiveQuote,
+    readEvmSendQuote,
+    type EvmReceiveQuote,
+    type EvmReceiveQuoteProfile,
+    type EvmRfqQuote,
+    type EvmSendQuote,
+    type EvmSendQuoteProfile,
+} from "./evmRfq";
 export {
     LOCKTIME_THRESHOLD,
     ONCHAIN_DUST_SATS,

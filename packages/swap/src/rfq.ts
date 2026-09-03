@@ -85,6 +85,9 @@ import {
 } from "@arkade-os/sdk";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
+// Type-only, and it has to stay that way: `evmRfq.ts` imports the pair
+// helpers from here, so a value import would close the cycle at run time.
+import type { EvmRfqQuote } from "./evmRfq";
 
 /** Decode a solver-supplied hex field, turning a malformed value (odd length,
  * non-hex chars) into a solver-blaming diagnostic instead of a bare
@@ -428,9 +431,22 @@ const matchQuotedLockup = (
  * lightning leg has a second clock that can actually run out (the hold
  * invoice's), which is what the split buys. The onchain-receive leg stays here
  * until its own deadline gets the same treatment; the headroom check is merely
- * over-strict there, never unsafe. */
+ * over-strict there, never unsafe.
+ *
+ * An {@link EvmRfqQuote} is accepted too. The gates it reaches — `valid_until`
+ * and the refund headroom — are the right ones for both EVM corridors, and
+ * both read a plain `number`. What it does NOT yet get is the EVM deadline
+ * ordering: that compares `evm_timeout_block` against `refund_locktime`, which
+ * are a block height and unix seconds, and bridging them needs a per-chain
+ * cadence (see `evmRfq.ts`). It lands with the covenant derivation.
+ *
+ * The widened parameter is also what stops the amounts being read as sats. An
+ * EVM quote's token leg is a canonical decimal string, so `from_amount` and
+ * `to_amount` are `number | string` across the union and no arithmetic
+ * compiles against them unsplit — read them through `evmQuoteSats` and
+ * `evmQuoteTokenAmount`, which pick the side off the pair. */
 export const assertFundable = (input: {
-    quote: RfqQuote;
+    quote: RfqQuote | EvmRfqQuote;
     invoiceExpiresAt?: number;
     now: number;
     onchain?: {
