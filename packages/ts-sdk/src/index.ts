@@ -280,7 +280,8 @@ import {
     combineTapscriptSigs,
     isValidArkAddress,
 } from "./utils/arkTransaction";
-import { getRandomId } from "./wallet/utils";
+import { getRandomId, assertRecipientArkAddress } from "./wallet/utils";
+import type { RecipientAddressContext } from "./wallet/utils";
 import {
     VtxoTaprootTree,
     ConditionWitness,
@@ -716,6 +717,12 @@ export {
     combineTapscriptSigs,
     isVtxoExpiringSoon,
     isValidArkAddress,
+    // The rotation-aware recipient check: hrp plus `classifyAgainstSignerSet`,
+    // refusing an unknown or past-cutoff operator signer. Root-exported because
+    // its ingredients already are and a plugin deriving against another
+    // operator's address would otherwise hand-roll a `serverPubKey ===` that
+    // rejects valid addresses mid-rotation.
+    assertRecipientArkAddress,
     getRandomId,
     buildVersion,
     sdkVersion,
@@ -866,6 +873,7 @@ export {
 
 export type {
     // Types and Interfaces
+    RecipientAddressContext,
     Identity,
     ReadonlyIdentity,
     BatchSignableIdentity,
