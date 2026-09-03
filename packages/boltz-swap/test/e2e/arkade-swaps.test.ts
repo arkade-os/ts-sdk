@@ -1561,7 +1561,7 @@ describe("ArkadeSwaps", () => {
         // cooperative claim/refund with A's key) is blocked on a rotation-capable
         // regtest fixture and arkd#822 — regtest arkd never actually rotates. So
         // the cooperative spend across rotation is out of scope here; unilateral
-        // spendability of the reconstructed script is already covered by ts-sdk's
+        // spendability of the reconstructed script is already covered by sdk's
         // vhtlc e2e (same VHTLC.Script class).
 
         const waitForVhtlcVtxo = async (script: string, timeout = 15_000) => {

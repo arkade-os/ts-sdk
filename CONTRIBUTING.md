@@ -9,7 +9,7 @@ Integration tests live in `test/e2e/` within each package and require the Docker
 
 ```bash
 pnpm run test:integration              # Every package, end-to-end
-pnpm run test:integration:ts-sdk       # ts-sdk only
+pnpm run test:integration:sdk          # sdk only
 pnpm run test:integration:boltz-swap   # boltz-swap only
 pnpm run test:integration:swap         # swap only
 pnpm run test:integration:swap-rfq     # swap's RFQ corridor only
@@ -24,18 +24,18 @@ matrix jobs.
 
 ### Per-package stack control
 
-Replace `:ts-sdk` with `:boltz-swap`, `:swap`, or `:swap-rfq` for the other packages.
+Replace `:sdk` with `:boltz-swap`, `:swap`, or `:swap-rfq` for the other packages.
 
 ```bash
-pnpm run regtest:up:ts-sdk
-pnpm run regtest:setup:ts-sdk
-pnpm run regtest:test:ts-sdk                          # whole e2e suite
-pnpm run regtest:test:ts-sdk test/e2e/asset.test.ts   # or selected files only
-pnpm run regtest:down:ts-sdk
-pnpm run regtest:reset:ts-sdk
+pnpm run regtest:up:sdk
+pnpm run regtest:setup:sdk
+pnpm run regtest:test:sdk                          # whole e2e suite
+pnpm run regtest:test:sdk test/e2e/asset.test.ts   # or selected files only
+pnpm run regtest:down:sdk
+pnpm run regtest:reset:sdk
 ```
 
-CI fans the ts-sdk e2e suite out across parallel groups by passing each group's file list to
+CI fans the sdk e2e suite out across parallel groups by passing each group's file list to
 `regtest:test` (see the `integration` matrix in `.github/workflows/ci.yml`).
 
 ### The stack itself

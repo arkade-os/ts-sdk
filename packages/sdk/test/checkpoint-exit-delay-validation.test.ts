@@ -64,10 +64,10 @@ describe("assertValidServerUnrollScript", () => {
         [1n, "regtest", "reject", "1-block sweep on regtest"],
         // ARKD_CHECKPOINT_EXIT_DELAY defaults used across this repo's regtest
         // envs: 5 (packages/boltz-swap/.env.regtest) and 20
-        // (packages/ts-sdk/.env.regtest, packages/swap/.env.regtest) — both
+        // (packages/sdk/.env.regtest, packages/swap/.env.regtest) — both
         // must clear the regtest floor.
         [5n, "regtest", "accept", "boltz-swap regtest env value"],
-        [20n, "regtest", "accept", "ts-sdk/swap regtest env value"],
+        [20n, "regtest", "accept", "sdk/swap regtest env value"],
     ];
 
     for (const [value, network, expected, label] of cases) {

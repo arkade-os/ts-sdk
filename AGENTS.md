@@ -23,22 +23,22 @@ and naming when they conflict with the inherited Go-shaped patterns here.
 extension of that core, and as an example of the many integrations/plugins expected to exist over
 time. `@arkade-os/boltz-swap` is **deprecated and unmaintained** — it still builds and ships, but
 runs no integration suite; do not extend it or treat its patterns as precedent. Prefer reusing
-existing SDK utilities, types, primitives, and helper functions from `packages/ts-sdk` instead of
+existing SDK utilities, types, primitives, and helper functions from `packages/sdk` instead of
 duplicating equivalent logic in a plugin. When shared behavior is generally useful beyond one
-plugin and belongs to the wallet/protocol core, promote it into `ts-sdk` rather than copying it
+plugin and belongs to the wallet/protocol core, promote it into `sdk` rather than copying it
 outward.
 
-Keep the dependency and ownership direction clear: plugins may depend on and consume `ts-sdk`, but
-`ts-sdk` must remain independent of plugin packages and must not import from or special-case any of
-them. Core capabilities flow from `ts-sdk` outward to plugins.
+Keep the dependency and ownership direction clear: plugins may depend on and consume `sdk`, but
+`sdk` must remain independent of plugin packages and must not import from or special-case any of
+them. Core capabilities flow from `sdk` outward to plugins.
 
 ## Commands
 
 ```bash
-pnpm run build       # Build all packages — ts-sdk must build before boltz-swap
+pnpm run build       # Build all packages — sdk must build before boltz-swap
 pnpm run test:unit   # All unit tests
 pnpm run lint        # Check formatting (biome)
-pnpm -C packages/ts-sdk vitest run test/wallet.test.ts   # Single test file
+pnpm -C packages/sdk vitest run test/wallet.test.ts   # Single test file
 ```
 
 Release and regtest/integration workflows are documented in `CONTRIBUTING.md`.
@@ -77,7 +77,7 @@ keys and never branch on wallet *type* — they ask the wallet and use what come
   `tr(pubkey)` repeats across artifacts, so that derivation would collide and the uniqueness comes
   from a public per-artifact **salt** stored with the artifact instead. Only a signer that cannot
   sign deterministically at all falls back to a stored secret. See
-  `packages/ts-sdk/src/wallet/contractSecrets.ts`.
+  `packages/sdk/src/wallet/contractSecrets.ts`.
 - The ban is on **key material and on anything that signs** — not on public per-artifact values. A
   package may mint and store public material such as a derivation salt: it is an input the wallet
   needs back, not a capability, and knowing it grants nothing without the seed. Apply the same test
