@@ -380,6 +380,34 @@ describe("EsploraProvider.watchAddresses", () => {
             expect(mockFetch).toHaveBeenCalledTimes(1);
         });
 
+        it("falls back to polling and retries when the WebSocket constructor throws", async () => {
+            // A sandboxed context can make `new WebSocket(...)` throw outright
+            // (SecurityError), which is a different entry point to the fallback
+            // than an `error` event on a constructed socket.
+            mockFetch.mockResolvedValue(okJson([]));
+            let throwOnConstruct = true;
+            (globalThis as any).WebSocket = class extends FakeWebSocket {
+                constructor(url: string) {
+                    super(url);
+                    if (throwOnConstruct) throw new Error("SecurityError");
+                }
+            };
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1"], () => {});
+
+            // Covered by HTTP polling despite never getting a socket. Asserted
+            // on a *cycle*, not on any fetch: the creation-time baseline would
+            // satisfy a bare "was called" even with no polling at all.
+            mockFetch.mockClear();
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+
+            // And still reaching for the socket rather than settling for polling.
+            expect(FakeWebSocket.instances.length).toBeGreaterThan(1);
+            throwOnConstruct = false;
+        });
+
         it("delivers messages received on a reconnected socket", async () => {
             mockFetch.mockResolvedValue(okJson([]));
             const callback = vi.fn();

@@ -6461,7 +6461,9 @@ export async function waitForIncomingFunds(
 
         if (signal) {
             onAbort = () => cancel(abortReason(signal));
-            signal.addEventListener("abort", onAbort, { once: true });
+            // `settle` removes this on every exit path, so no `{ once: true }`:
+            // one removal mechanism, not two doing the same job.
+            signal.addEventListener("abort", onAbort);
         }
 
         if (timeoutMs !== undefined) {

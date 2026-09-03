@@ -386,6 +386,12 @@ export class EsploraProvider implements OnchainProvider {
          * session. That is what lets a deposit which landed while the socket was
          * down still be reported: it is absent from this set, so the first poll
          * pass after the failure sees it as new.
+         *
+         * Grows with the watched addresses' transaction count and is never
+         * compacted. Bounded in practice by how many transactions touch one
+         * address set, but a watch left open on a high-volume address will
+         * accumulate: retaining only recent blocks would cap it, deferred until
+         * something actually needs it.
          */
         const seen = new Set<string>();
         let baselined = false;
@@ -557,6 +563,11 @@ export class EsploraProvider implements OnchainProvider {
             try {
                 socket = new WebSocket(wsUrl);
             } catch {
+                // A synchronous throw (e.g. SecurityError in a sandboxed
+                // context) counts as a socket failure: fall back to polling and
+                // schedule a retry. That retry increments `reconnectFailures`,
+                // which a later successful `open` resets — so a transient throw
+                // can't leave the backoff permanently inflated.
                 return handleSocketFailure();
             }
             ws = socket;
@@ -805,10 +816,16 @@ const isExplorerTransaction = (tx: any): tx is ExplorerTransaction => {
 
 /**
  * Ceiling on the HTTP-poll backoff exponent, so a persistently failing or
- * rate-limiting explorer is retried at `pollingInterval * 2^5` (8 minutes at
+ * rate-limiting explorer is retried at `pollingInterval * 2^4` (4 minutes at
  * the 15s default) rather than escalating without bound.
+ *
+ * The cap is a latency/relief trade, not just a relief knob: this is a payments
+ * SDK, and the backoff bounds how late an incoming deposit can be noticed while
+ * the socket is down. 2^4 still cuts a failing explorer's load by 16x, which is
+ * ample once watchers are shared per address set, without pushing worst-case
+ * notification delay into the tens of minutes.
  */
-const MAX_POLL_BACKOFF_EXPONENT = 5;
+const MAX_POLL_BACKOFF_EXPONENT = 4;
 
 /**
  * First delay before retrying a failed address-watch WebSocket. Short on
