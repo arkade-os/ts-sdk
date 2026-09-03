@@ -54,6 +54,7 @@ import {
     getArkPsbtFields,
     hasTerminalSpend,
     matchServerCheckpoints,
+    type IWallet,
 } from "@arkade-os/sdk";
 
 import { RFQ_TERMINAL_STATES, type RfqStatus, type RfqTransport } from "./rfq";
@@ -133,6 +134,25 @@ export async function awaitRfqResolution(
  * connection of its own (#734). A full `ArkProvider` still fits, structurally.
  */
 export type SwapOperator = Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+
+/**
+ * A wallet's own connection, as a {@link SwapOperator}.
+ *
+ * The broadcaster is resolved on first use and then held, so building one costs
+ * nothing and a client that never pushes never opens a connection. `getInfo` is
+ * deliberately NOT held: it backs the `checkpointTapscript` read on every push,
+ * and a stale one derives a checkpoint the operator will not co-sign. It is also
+ * the live read every covenant derivation needs, which is the same reason.
+ */
+export const walletOperator = (wallet: IWallet): SwapOperator => {
+    let broadcaster: Promise<Awaited<ReturnType<IWallet["getArkadeBroadcaster"]>>> | undefined;
+    const broadcasting = () => (broadcaster ??= wallet.getArkadeBroadcaster());
+    return {
+        getInfo: () => wallet.getArkadeInfo({ requireLive: true }),
+        submitTx: async (...args) => (await broadcasting()).submitTx(...args),
+        finalizeTx: async (...args) => (await broadcasting()).finalizeTx(...args),
+    };
+};
 
 export type RefundIndexer = Pick<RestIndexerProvider, "getVtxos">;
 

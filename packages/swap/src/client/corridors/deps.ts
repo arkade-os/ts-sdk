@@ -27,6 +27,7 @@ import {
     getNetwork,
     resolveEmulatorPubkey,
     signerSetFromInfo,
+    type ArkadeInfo,
     type IWallet,
     type Network,
     type NetworkName,
@@ -251,16 +252,43 @@ export function resolveCorridorDeps(
 }
 
 /**
- * The one live operator read, made once for all three corridors.
+ * The operator info read, wrapped so every way it can fail arrives as one
+ * typed error.
  *
- * `requireLive: true` because a snapshot binds a covenant to a signer key the
- * operator may no longer co-sign for. The whole read is wrapped rather than a
- * matched subset of its failures: `requireLive` re-throws the provider's raw
- * error unwrapped, which is a `FetchError`, a `ProviderUnavailableError`, an
- * `ArkError`, a bare `Error` or a `TimeoutError` depending on how the read
- * failed — and across a service-worker boundary it is a fresh `Error` whose only
- * branchable identity is `cause.name`. A `catch` on a matched set would let
- * exactly those through untyped.
+ * The whole read is wrapped rather than a matched subset of its failures:
+ * `requireLive` re-throws the provider's raw error unwrapped, which is a
+ * `FetchError`, a `ProviderUnavailableError`, an `ArkError`, a bare `Error` or a
+ * `TimeoutError` depending on how the read failed — and across a service-worker
+ * boundary it is a fresh `Error` whose only branchable identity is `cause.name`.
+ * A `catch` on a matched set would let exactly those through untyped.
+ *
+ * `requireLive` is the caller's, and the two callers want opposite things.
+ * Every covenant derivation reads live (§6), because a snapshot binds a covenant
+ * to a signer key the operator may no longer co-sign for. A destination *parse*
+ * does not derive anything, and the client's `resolve()` promises to answer
+ * without new disclosure and offline — so it takes the wallet's own fallback
+ * read, which is live when the operator is reachable and the persisted snapshot
+ * when it is not.
+ */
+export const liveArkadeInfo = async (
+    wallet: IWallet,
+    opts: { requireLive?: boolean } = {},
+): Promise<ArkadeInfo> => {
+    const requireLive = opts.requireLive ?? true;
+    try {
+        return await wallet.getArkadeInfo({ requireLive });
+    } catch (cause) {
+        throw new OperatorUnreachable(
+            `the Arkade server info could not be read${requireLive ? " live" : ""}: ${
+                cause instanceof Error ? cause.message : String(cause)
+            }`,
+            { cause },
+        );
+    }
+};
+
+/**
+ * The one operator read, made once for all three corridors.
  *
  * The network narrowing after it is core's own fail-closed one and stays that
  * way: an operator that answers with a network name this SDK does not know is
@@ -272,18 +300,10 @@ export const resolveCorridorBase = async (input: {
     operator: SwapOperator;
     emulatorPubkey?: string;
     fetchImpl?: typeof fetch;
+    /** Defaults to `true` — see {@link liveArkadeInfo}. */
+    requireLive?: boolean;
 }): Promise<CorridorBase> => {
-    let info;
-    try {
-        info = await input.wallet.getArkadeInfo({ requireLive: true });
-    } catch (cause) {
-        throw new OperatorUnreachable(
-            `the Arkade server info could not be read live: ${
-                cause instanceof Error ? cause.message : String(cause)
-            }`,
-            { cause },
-        );
-    }
+    const info = await liveArkadeInfo(input.wallet, { requireLive: input.requireLive });
     const networkName = info.network as NetworkName;
     return {
         wallet: input.wallet,

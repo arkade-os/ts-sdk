@@ -788,6 +788,76 @@ export interface InvoiceFacts {
 }
 
 /**
+ * The pure core of {@link requestLightningSend}: derive the Arkade lockup from
+ * the quote's binding fields plus the trader's own data, and refuse on a
+ * mismatch. Binding: `solver_pubkey`, `refund_locktime`,
+ * `profile.receiver_pk_script`; `profile.lockup_address` is compare-only.
+ *
+ * Extracted so the send leg has the same shape its three siblings already have
+ * — {@link deriveOnchainSend}, {@link deriveLightningReceive} and
+ * {@link deriveOnchainReceive} are all pure cores their entrypoints call. A
+ * quote path that derives without registering a contract row (the v2 client's
+ * does: it quotes, and only `accept()` persists) would otherwise have to write
+ * this derivation a second time, and a covenant derived twice from two copies
+ * of the same code is the failure this package spends most of its comments
+ * guarding against.
+ */
+export function deriveLightningSend(input: {
+    quote: RfqQuote;
+    /** BOLT11 payment hash, hex — from the trader's OWN invoice decode. */
+    paymentHash: string;
+    /** The trader's own key for the VHTLC's sender-side leaves. */
+    senderPubkey: Uint8Array;
+    /** Where a refund must pay: the trader's P2TR pkScript. */
+    refundPkScript: Uint8Array;
+    operatorPubkey: Uint8Array;
+    emulatorPubkey: Uint8Array;
+    claimDelay: number;
+    hrp: string;
+}): {
+    /** The trader's OWN derivation — the only address to fund. */
+    address: string;
+    swapPkScript: Uint8Array;
+    script: InstanceType<typeof VHTLC.ScriptV2>;
+    contractParams: LightningSendContractParams;
+    /** The deadline the covenant was built with, non-optional here where the
+     * wire field is optional. */
+    refundLocktime: number;
+} {
+    const { quote } = input;
+    if (quote.refund_locktime === undefined) {
+        throw new Error("lightning-send quote is missing refund_locktime");
+    }
+    const receiverPkScriptHex = quote.profile?.receiver_pk_script as string | undefined;
+    if (receiverPkScriptHex === undefined) {
+        throw new Error("lightning-send quote is missing profile.receiver_pk_script");
+    }
+    // Named rather than inlined so the exact inputs the covenant was built from
+    // can be handed back — see `contractParams` on the return type.
+    const contractParams = {
+        solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
+        refundLocktime: quote.refund_locktime,
+        operatorPubkey: input.operatorPubkey,
+        paymentHash: input.paymentHash,
+        claimDelay: input.claimDelay,
+        emulatorPubkey: input.emulatorPubkey,
+        senderPubkey: input.senderPubkey,
+        receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
+        refundPkScript: input.refundPkScript,
+    };
+    const script = lightningSendContract(contractParams);
+    const address = script.address(input.hrp, input.operatorPubkey).encode();
+    verifyLockupAddress(quote, address);
+    return {
+        address,
+        swapPkScript: script.pkScript,
+        script,
+        contractParams,
+        refundLocktime: quote.refund_locktime,
+    };
+}
+
+/**
  * The lightning-send user flow, mirroring `createOffer`'s shape: quote →
  * derive locally → verify → gate. Pure of funding on purpose — it returns the
  * address and amount, and the caller funds with its own wallet
@@ -882,13 +952,6 @@ export async function requestLightningSend(
     const quote = await transport.requestQuote(
         lightningSendRequest({ rfqId, invoice: params.invoice.raw, refundAddress, senderPubkey }),
     );
-    if (quote.refund_locktime === undefined) {
-        throw new Error("lightning-send quote is missing refund_locktime");
-    }
-    const receiverPkScriptHex = quote.profile?.receiver_pk_script as string | undefined;
-    if (receiverPkScriptHex === undefined) {
-        throw new Error("lightning-send quote is missing profile.receiver_pk_script");
-    }
     // The BOLT11 profile is exact-out: `to_amount` is the invoice, verbatim,
     // and `from_amount` adds the corridor's fee on top. Funding anything but
     // `from_amount` underfunds by exactly the fee and is refused — and a quote
@@ -906,25 +969,20 @@ export async function requestLightningSend(
 
     const operatorPubkey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
     const network = networkFromArkadeInfo(info);
-    // Named rather than inlined so the exact inputs the covenant was built from
-    // can be returned to the caller — see `contractParams` on the return type.
-    const contractParams = {
-        solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
-        refundLocktime: quote.refund_locktime,
-        operatorPubkey,
+    const derived = deriveLightningSend({
+        quote,
         paymentHash: params.invoice.paymentHash,
-        claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
+        senderPubkey,
+        refundPkScript: secrets.pkScript,
+        operatorPubkey,
         emulatorPubkey: toXOnly(
             hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
             "emulator signer key",
         ),
-        senderPubkey,
-        receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
-        refundPkScript: secrets.pkScript,
-    };
-    const script = lightningSendContract(contractParams);
-    const address = script.address(network.hrp, operatorPubkey).encode();
-    verifyLockupAddress(quote, address);
+        claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
+        hrp: network.hrp,
+    });
+    const { address, script, contractParams } = derived;
     assertFundable({
         quote,
         invoiceExpiresAt: params.invoice.expiresAt,
@@ -943,7 +1001,7 @@ export async function requestLightningSend(
         // What the lockup must carry: the quote's `from_amount` — the invoice
         // PLUS the corridor's fee, never the bare invoice amount.
         fundAmount: quote.from_amount,
-        swapPkScript: script.pkScript,
+        swapPkScript: derived.swapPkScript,
         script,
         refundAddress,
         senderPubkey,

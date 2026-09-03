@@ -37,7 +37,7 @@ import {
     type RfqSwapManagerDeps,
 } from "./swapManager";
 import { createRfqSwapRecord, type RfqSwapOrigin } from "./rfqRecord";
-import type { LockupSpendIndexer, SwapOperator } from "./refund";
+import { walletOperator, type LockupSpendIndexer, type SwapOperator } from "./refund";
 import { rfqClaimSecretOf, rfqSecretsProfile } from "./rfqProfileParts";
 import { onchainSendProfile } from "./rfqCorridors";
 import { arkadeRefunder } from "./arkadeRefunder";
@@ -184,16 +184,8 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
 
     // Resolved on first use, not here: `createSwapClient` stays synchronous,
     // and a client that is only ever asked for `markets()` never opens a
-    // connection at all. `getInfo` is not memoized — it backs the
-    // `checkpointTapscript` read on every push, and a stale one derives a
-    // checkpoint the operator will not co-sign.
-    let broadcaster: Promise<Awaited<ReturnType<IWallet["getArkadeBroadcaster"]>>> | undefined;
-    const broadcasting = () => (broadcaster ??= wallet.getArkadeBroadcaster());
-    const ark: SwapOperator = deps.ark ?? {
-        getInfo: () => wallet.getArkadeInfo({ requireLive: true }),
-        submitTx: async (...args) => (await broadcasting()).submitTx(...args),
-        finalizeTx: async (...args) => (await broadcasting()).finalizeTx(...args),
-    };
+    // connection at all.
+    const ark: SwapOperator = deps.ark ?? walletOperator(wallet);
 
     let reader: Promise<Awaited<ReturnType<IWallet["getArkadeReader"]>>> | undefined;
     const reading = () => (reader ??= wallet.getArkadeReader());

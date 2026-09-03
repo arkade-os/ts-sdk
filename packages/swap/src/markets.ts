@@ -102,7 +102,11 @@ export const makeCachedFeedFetch = (
     };
 };
 
-const MARKETS_CACHE_TTL_MS = 60 * 60 * 1000;
+/** How long a discovered market set is reused before the registry is asked
+ * again. Exported so the v2 discovery module reuses one number rather than
+ * restating it — registry content changes rarely, and two TTLs that drifted
+ * apart would serve two different answers to the same question. */
+export const MARKETS_CACHE_TTL_MS = 60 * 60 * 1000;
 
 const isMarketShaped = (m: unknown): m is DiscoveredMarket => {
     const market = m as Partial<DiscoveredMarket> | null;
