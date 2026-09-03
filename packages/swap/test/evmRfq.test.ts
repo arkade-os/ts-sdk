@@ -794,9 +794,19 @@ describe("quote readers", () => {
             ).toThrow(new RegExp(key));
         }
         // …and a profile that is missing outright, not merely short a key.
+        // Asserted on BOTH readers even though they share
+        // `readEvmQuoteEnvelope`: which checks are shared is an implementation
+        // fact today, and a test that only covers one direction stops covering
+        // the other the moment they stop sharing it.
         expect(() =>
             readEvmSendQuote(
                 dropEnvelope(sendQuote() as unknown as Record<string, unknown>, "profile"),
+                { tokenAddress: USDC, rfqId: RFQ_ID },
+            ),
+        ).toThrow(/carries no profile/);
+        expect(() =>
+            readEvmReceiveQuote(
+                dropEnvelope(receiveQuote() as unknown as Record<string, unknown>, "profile"),
                 { tokenAddress: USDC, rfqId: RFQ_ID },
             ),
         ).toThrow(/carries no profile/);
