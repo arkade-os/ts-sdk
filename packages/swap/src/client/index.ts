@@ -9,11 +9,23 @@
  * this one are still deciding.
  */
 export * from "./aliases";
+export * from "./aliasTable";
 export * from "./amount";
 export * from "./assetId";
+export * from "./client";
 export * from "./corridor";
 export * from "./corridors";
+export * from "./discovery";
 export * from "./errors";
+export * from "./market";
+export * from "./policy";
 export * from "./primitives";
+export * from "./quote";
+export * from "./quoteOffer";
+export * from "./quoteRfq";
+export * from "./resolve";
 export * from "./rfqAmount";
+export * from "./rfqWire";
 export * from "./route";
+export * from "./transport";
+export * from "./verify";
