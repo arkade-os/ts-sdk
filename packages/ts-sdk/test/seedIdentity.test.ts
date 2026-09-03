@@ -8,6 +8,7 @@ import { mnemonicToSeedSync } from "@scure/bip39";
 import { schnorr, verifyAsync } from "@noble/secp256k1";
 import { pubSchnorr } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
+import { p2tr, SigHash } from "@scure/btc-signer";
 import { HDKey, expand, networks } from "@bitcoinerlab/descriptors-scure";
 import { Transaction } from "../src/utils/transaction";
 
@@ -748,5 +749,48 @@ describe("MnemonicIdentity DescriptorProvider", () => {
         expect(identity.descriptor).toBe(seedIdentity.descriptor);
         expect(descriptorAtIndex(identity, 42)).toBe(descriptorAtIndex(seedIdentity, 42));
         expect(identity.isOurs(descriptorAtIndex(identity, 99))).toBe(true);
+    });
+});
+
+describe("SeedIdentity sighash policy", () => {
+    const P2TR_OUT = new Uint8Array([0x51, 0x20, ...new Uint8Array(32).fill(0xab)]);
+
+    async function spendOwnKeyPath(sighashType?: number, inputIndexes?: number[]) {
+        const identity = SeedIdentity.fromSeed(mnemonicToSeedSync(TEST_MNEMONIC), {
+            isMainnet: false,
+        });
+        const pay = p2tr(await identity.xOnlyPublicKey());
+        const tx = new Transaction({ allowUnknownOutputs: true });
+        tx.addInput({
+            ...pay,
+            txid: new Uint8Array(32).fill(1),
+            index: 0,
+            witnessUtxo: { script: pay.script, amount: 1000n },
+            sighashType,
+        });
+        tx.addOutput({ script: P2TR_OUT, amount: 900n });
+        return identity.sign(tx, inputIndexes);
+    }
+
+    it.each([
+        ["SIGHASH_NONE", SigHash.NONE],
+        ["SIGHASH_SINGLE", SigHash.SINGLE],
+        ["SIGHASH_NONE|ANYONECANPAY", SigHash.NONE_ANYONECANPAY],
+    ])("refuses to bulk sign an input declaring %s", async (_name, sighashType) => {
+        await expect(spendOwnKeyPath(sighashType)).rejects.toThrow(
+            /Unallowed sighash type|not allowed sigHash/,
+        );
+    });
+
+    it("refuses the same on the indexed path", async () => {
+        await expect(spendOwnKeyPath(SigHash.NONE, [0])).rejects.toThrow(/not allowed sigHash/);
+    });
+
+    it.each([
+        ["SIGHASH_DEFAULT", SigHash.DEFAULT],
+        ["SIGHASH_ALL", SigHash.ALL],
+        ["nothing", undefined],
+    ])("still signs an input declaring %s", async (_name, sighashType) => {
+        await expect(spendOwnKeyPath(sighashType)).resolves.toBeDefined();
     });
 });

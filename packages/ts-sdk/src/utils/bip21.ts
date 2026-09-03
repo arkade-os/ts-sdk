@@ -34,7 +34,7 @@ export enum BIP21Error {
  * One destination classifying differently bare than as an `ark=` param is the
  * defect; this is the only place the two forms are told apart.
  */
-const ARK_HRP = /^t?ark/i;
+const ARK_HRP = /^(?:t?ark|T?ARK)/;
 
 export class BIP21 {
     /**

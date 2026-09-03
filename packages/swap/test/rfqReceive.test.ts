@@ -95,6 +95,11 @@ describe("lightningReceiveContract", () => {
     // and validated by first reproducing the pre-change pin `5120f683cdac…`.
     // See the longer note in `rfq.test.ts` before regenerating — recomputing
     // this from the package itself would make the assertion circular.
+    //
+    // `legacy: "preTimelockedRefund"` because that solver predates the
+    // timelocked non-interactive refund leaf — the pin is its eight-leaf
+    // output, and this marker reproduces that shape byte for byte. The
+    // default full suite is one leaf longer.
     const script = () =>
         lightningReceiveContract({
             solverPubkey: SOLVER,
@@ -106,6 +111,7 @@ describe("lightningReceiveContract", () => {
             solverRefundPkScript: SOLVER_REFUND_PK_SCRIPT,
             payoutPubkey: TRADER_PAYOUT_PUBKEY,
             payoutPkScript: p2tr(key(5)),
+            legacy: "preTimelockedRefund",
         });
 
     it("is byte-identical to the reference solver's role-inverted script — golden scriptPubKey", () => {
@@ -302,6 +308,98 @@ describe("deriveLightningReceive", () => {
                 hrp: "tark",
             }),
         ).toThrow(/missing a binding field/);
+    });
+});
+
+describe("deriveLightningReceive — the two lockup shapes", () => {
+    // Nothing on the wire says whether a quote's covenant carries the
+    // timelocked non-interactive refund leaf, so the derivation builds BOTH
+    // shapes and keeps the one the quote's own `lockup_address` matches.
+    // These pin WHICH candidate each shape of quoting solver gets.
+    const request = () =>
+        lightningReceiveRequest({
+            rfqId: RFQ_ID,
+            paymentHash: PAYMENT_HASH,
+            payoutAddress: PAYOUT_ADDRESS,
+            payoutPubkey: TRADER_PAYOUT_PUBKEY,
+            claimPacket: "abc=",
+            amount: 5_000,
+            amountSide: "to",
+        });
+
+    const derive = (quote: RfqQuote) =>
+        deriveLightningReceive({
+            quote,
+            paymentHash: PAYMENT_HASH,
+            payoutPubkey: TRADER_PAYOUT_PUBKEY,
+            payoutAddress: PAYOUT_ADDRESS,
+            operatorPubkey: OPERATOR_PUBKEY,
+            emulatorPubkey: EMULATOR_PUBKEY,
+            claimDelay: 4096,
+            hrp: "tark",
+        });
+
+    const contractParams = {
+        solverPubkey: SOLVER,
+        refundLocktime: REFUND_LOCKTIME,
+        operatorPubkey: OPERATOR_PUBKEY,
+        paymentHash: PAYMENT_HASH,
+        claimDelay: 4096,
+        emulatorPubkey: EMULATOR_PUBKEY,
+        solverRefundPkScript: SOLVER_REFUND_PK_SCRIPT,
+        payoutPubkey: TRADER_PAYOUT_PUBKEY,
+        payoutPkScript: ArkAddress.decode(PAYOUT_ADDRESS).pkScript,
+    };
+    const fullSuite = lightningReceiveContract(contractParams);
+    const legacySuite = lightningReceiveContract({
+        ...contractParams,
+        legacy: "preTimelockedRefund",
+    });
+    const fullAddress = fullSuite.address("tark", OPERATOR_PUBKEY).encode();
+    const legacyAddress = legacySuite.address("tark", OPERATOR_PUBKEY).encode();
+
+    it("a nine-leaf-quoting solver matches the FULL-suite candidate, not the legacy one", () => {
+        // The two shapes must actually differ, or the assertions below prove nothing.
+        expect(fullAddress).not.toBe(legacyAddress);
+        expect(fullSuite.scripts).toHaveLength(9);
+
+        const quote = receiveQuote(request(), { profile: { lockup_address: fullAddress } });
+        const derived = derive(quote);
+
+        expect(derived.address).toBe(fullAddress);
+        expect(derived.contractParams.legacy).toBeUndefined();
+        // The kept script IS the full-suite build — the timelocked refund
+        // leaf present, every byte matching the independent derivation.
+        expect(derived.script.nonInteractiveRefundWithoutReceiverScript).toBeDefined();
+        expect(hex.encode(derived.script.pkScript)).toBe(hex.encode(fullSuite.pkScript));
+    });
+
+    it("an eight-leaf-quoting solver matches the LEGACY candidate", () => {
+        const quote = receiveQuote(request(), { profile: { lockup_address: legacyAddress } });
+        const derived = derive(quote);
+
+        expect(derived.address).toBe(legacyAddress);
+        // ...and the matched shape travels in contractParams, so a record
+        // persisted from it rebuilds the lockup the solver actually funded.
+        expect(derived.contractParams.legacy).toBe("preTimelockedRefund");
+        expect(derived.script.nonInteractiveRefundWithoutReceiverScript).toBeUndefined();
+        expect(derived.script.scripts).toHaveLength(8);
+        expect(hex.encode(derived.script.pkScript)).toBe(hex.encode(legacySuite.pkScript));
+    });
+
+    it("a quote matching NEITHER shape throws AddressMismatch carrying both candidates", () => {
+        const quote = receiveQuote(request(), { profile: { lockup_address: "tark1qwrong" } });
+        const mismatch = ((): unknown => {
+            try {
+                derive(quote);
+                return undefined;
+            } catch (error) {
+                return error;
+            }
+        })();
+        expect(mismatch).toBeInstanceOf(AddressMismatch);
+        // Newest first — the full suite, then the legacy rebuild.
+        expect((mismatch as AddressMismatch).derived).toEqual([fullAddress, legacyAddress]);
     });
 });
 

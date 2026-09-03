@@ -3,7 +3,7 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { pubECDSA, pubSchnorr } from "@scure/btc-signer/utils.js";
 import { SigHash } from "@scure/btc-signer";
 import { hex } from "@scure/base";
-import { Transaction } from "../utils/transaction";
+import { assertAllowedSighashTypes, Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, signAsync } from "@noble/secp256k1";
 import {
@@ -18,7 +18,9 @@ import { DescriptorSigningRequest } from "./descriptorProvider";
 import { HDCapableIdentity, ReadonlyHDCapableIdentity } from "./hdCapableIdentity";
 import { descriptorIsOurs, isMainnetDescriptor } from "./descriptor";
 
-const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
+// SIGHASH_NONE / SIGHASH_SINGLE do not commit to the outputs we intend to
+// fund, so a PSBT we did not build must never talk us into one.
+const ALLOWED_SIGHASH = [SigHash.DEFAULT, SigHash.ALL, SigHash.ALL_ANYONECANPAY];
 
 /**
  * Secret-bearing state for seed-backed identities, held off the public
@@ -353,8 +355,12 @@ export class SeedIdentity implements HDCapableIdentity {
         const txCpy = tx.clone();
 
         if (!inputIndexes) {
+            // scure skips an input whose declared sighash is outside the policy,
+            // which the "No inputs signed" catch below would report as nothing to do
+            assertAllowedSighashTypes(txCpy, ALLOWED_SIGHASH);
+
             try {
-                if (!txCpy.sign(key, ALL_SIGHASH)) {
+                if (!txCpy.sign(key, ALLOWED_SIGHASH)) {
                     throw new Error("Failed to sign transaction");
                 }
             } catch (e) {
@@ -365,8 +371,10 @@ export class SeedIdentity implements HDCapableIdentity {
                 }
             }
         } else {
+            // no preflight here: signIdx rejects a disallowed sighash itself,
+            // rather than skipping the input the way the bulk path does
             for (const idx of inputIndexes) {
-                if (!txCpy.signIdx(key, idx, ALL_SIGHASH)) {
+                if (!txCpy.signIdx(key, idx, ALLOWED_SIGHASH)) {
                     throw new Error(`Failed to sign input #${idx}`);
                 }
             }

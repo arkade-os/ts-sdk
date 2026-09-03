@@ -825,6 +825,25 @@ describe("VtxoManager - Renewal utilities", () => {
             const thresholdMs = 10_000; // 10 seconds threshold
             expect(isVtxoExpiringSoon(vtxo, thresholdMs)).toBe(false);
         });
+
+        it("should return false for an unrolled VTXO expiring within threshold", () => {
+            // The arm the past-expiry test below cannot reach: there the early
+            // "already expired" return answers first, so the exclusion under
+            // test never runs.
+            const now = Date.now();
+            const expiring = (isUnrolled: boolean) =>
+                ({
+                    txid: isUnrolled ? "exited" : "healthy",
+                    vout: 0,
+                    value: 1000,
+                    createdAt: new Date(now - 90_000),
+                    virtualStatus: { state: "settled", batchExpiry: now + 10_000 },
+                    isUnrolled,
+                }) as ExtendedVirtualCoin;
+
+            expect(isVtxoExpiringSoon(expiring(false), 20_000)).toBe(true);
+            expect(isVtxoExpiringSoon(expiring(true), 20_000)).toBe(false);
+        });
     });
 
     describe("getExpiringVtxos", () => {
@@ -940,6 +959,35 @@ describe("VtxoManager - Renewal utilities", () => {
 
             const expiring = getExpiringAndRecoverableVtxos(
                 [expired("healthy", 3000, false), expired("exited", 4000, true)],
+                10_000,
+                330n,
+                { timestamp: new Date() },
+            );
+
+            expect(expiring.map((v) => v.txid)).toEqual(["healthy"]);
+        });
+
+        it("should not offer an unrolled subdust VTXO for renewal", () => {
+            // Subdust is a value property, orthogonal to expiry, so this coin
+            // never reaches `isVtxoExpiringSoon`'s guard — only the filter's own
+            // leading exclusion keeps it out.
+            const subdust = (txid: string, isUnrolled: boolean) =>
+                ({
+                    txid,
+                    vout: 0,
+                    value: 100, // below the 330 dust threshold
+                    createdAt: new Date(Date.now() - 100_000),
+                    virtualStatus: { state: "settled" }, // no expiry
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    isUnrolled,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                }) as ExtendedVirtualCoin;
+
+            const expiring = getExpiringAndRecoverableVtxos(
+                [subdust("healthy", false), subdust("exited", true)],
                 10_000,
                 330n,
                 { timestamp: new Date() },

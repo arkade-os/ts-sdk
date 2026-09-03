@@ -550,6 +550,10 @@ export class ArkadeContract<P extends Program = Program> {
      * When a `contractManager` is configured and this contract is registered,
      * reads the repository-backed state (offline-first, kept fresh by the
      * contract watcher). Otherwise falls back to a direct indexer query.
+     *
+     * Both branches refuse a spent or unilaterally exited output. They are not
+     * otherwise interchangeable: the fallback asks `spendableOnly`, which also
+     * drops swept coins — the manager branch keeps those.
      */
     async getUtxos(): Promise<VirtualCoin[]> {
         const manager = this.client.contractManager;
@@ -573,7 +577,10 @@ export class ArkadeContract<P extends Program = Program> {
             scripts: [scriptHex],
             spendableOnly: true,
         });
-        return vtxos;
+        // Same guard as the manager branch above, kept alongside the server-side
+        // ask rather than instead of it: what the server calls spendable is its
+        // answer, not a fact this accessor may lean on.
+        return vtxos.filter((v) => !hasTerminalSpend(v) && !v.isUnrolled);
     }
 
     /** Total spendable balance (requires an indexer). */

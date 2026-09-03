@@ -48,7 +48,7 @@ style and have not been backfilled.
 
 ### Features
 
-- **`assertRecipientArkAddress` and `RecipientAddressContext` are
+- **`assertRecipientArkadeAddress` and `RecipientArkadeAddressContext` are
   root-exported.** The rotation-aware recipient check — hrp, then
   `classifyAgainstSignerSet`, refusing `UNKNOWN_SIGNER` and `EXPIRED`
   distinctly — was reachable only from inside core, while every

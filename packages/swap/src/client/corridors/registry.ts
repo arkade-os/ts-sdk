@@ -62,6 +62,8 @@ export interface CorridorSet {
      * @throws {AmbiguousDestination} when more than one corridor claims it,
      *   when the corridor that owns its class refuses it, or when nothing
      *   classifies it at all.
+     * @throws {MissingCorridorDep} when the corridor that owns this destination
+     *   has a dep disabled via overrides.
      * @returns `undefined` when core classifies the string but no corridor
      *   serves it — an LNURL today — which becomes `UnsupportedRoute` at route
      *   resolution rather than a parse failure here.

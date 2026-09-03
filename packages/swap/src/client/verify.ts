@@ -158,7 +158,11 @@ export const verifyingDerivation = <T>(derive: () => T): T => {
         return derive();
     } catch (error) {
         if (error instanceof AddressMismatch) {
-            throw new QuoteVerificationFailed("lockup_address", error.derived, error.quoted, {
+            // `derived` is plural whenever the derivation itself is ambiguous —
+            // every candidate shape tried. All of them are what disagreed, so
+            // all of them go in `expected`; the array stays on the `cause`.
+            const derived = Array.isArray(error.derived) ? error.derived.join(", ") : error.derived;
+            throw new QuoteVerificationFailed("lockup_address", derived, error.quoted, {
                 cause: error,
             });
         }

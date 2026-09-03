@@ -2,11 +2,13 @@ import { pubECDSA, pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/u
 import { SigHash } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { Identity, ReadonlyIdentity } from ".";
-import { Transaction } from "../utils/transaction";
+import { assertAllowedSighashTypes, Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, signAsync } from "@noble/secp256k1";
 
-const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
+// SIGHASH_NONE / SIGHASH_SINGLE do not commit to the outputs we intend to
+// fund, so a PSBT we did not build must never talk us into one.
+const ALLOWED_SIGHASH = [SigHash.DEFAULT, SigHash.ALL, SigHash.ALL_ANYONECANPAY];
 
 /**
  * In-memory single key implementation for Bitcoin transaction signing.
@@ -61,8 +63,12 @@ export class SingleKey implements Identity {
         const txCpy = tx.clone();
 
         if (!inputIndexes) {
+            // scure skips an input whose declared sighash is outside the policy,
+            // which the "No inputs signed" catch below would report as nothing to do
+            assertAllowedSighashTypes(txCpy, ALLOWED_SIGHASH);
+
             try {
-                if (!txCpy.sign(this.key, ALL_SIGHASH)) {
+                if (!txCpy.sign(this.key, ALLOWED_SIGHASH)) {
                     throw new Error("Failed to sign transaction");
                 }
             } catch (e) {
@@ -75,8 +81,10 @@ export class SingleKey implements Identity {
             return txCpy;
         }
 
+        // no preflight here: signIdx rejects a disallowed sighash itself,
+        // rather than skipping the input the way the bulk path does
         for (const inputIndex of inputIndexes) {
-            if (!txCpy.signIdx(this.key, inputIndex, ALL_SIGHASH)) {
+            if (!txCpy.signIdx(this.key, inputIndex, ALLOWED_SIGHASH)) {
                 throw new Error(`Failed to sign input #${inputIndex}`);
             }
         }

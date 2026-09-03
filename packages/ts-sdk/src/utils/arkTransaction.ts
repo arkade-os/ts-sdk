@@ -14,11 +14,13 @@ import {
 import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { ConditionWitness, setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
-import { Transaction } from "./transaction";
+import { assertAllowedSighashTypes, formatSighash, Transaction } from "./transaction";
 import { ArkAddress } from "../script/address";
 import { Extension } from "../extension";
 import { ServerResponseMismatchError } from "../providers/errors";
 import { toXOnly } from "./keys";
+
+export { assertAllowedSighashTypes };
 
 export type ArkTxInput = {
     // the script used to spend the virtual output
@@ -205,13 +207,6 @@ export function hasBoardingTxExpired(
     const now = BigInt(Math.floor(Date.now() / 1000));
     const blockTime = BigInt(Math.floor(coin.status.block_time));
     return blockTime + boardingTimelock.value <= now;
-}
-
-/**
- * Formats a sighash type as a hex string (e.g., 0x01)
- */
-function formatSighash(type: number): string {
-    return `0x${type.toString(16).padStart(2, "0")}`;
 }
 
 /**
@@ -691,6 +686,19 @@ export async function submitOffchainTx(
     // each must be one we built: nothing below signs a checkpoint that has not
     // been matched to a local one.
     const matched = matchServerCheckpoints(signedCheckpointTxs, offchainTx.checkpoints, "submitTx");
+
+    // Matching pins the checkpoint body, but the sighash type is declared
+    // outside it: a returned checkpoint is signed below, so what it asks to be
+    // signed under is checked here.
+    matched.forEach(({ server }, index) => {
+        try {
+            assertAllowedSighashTypes(server);
+        } catch (error) {
+            throw new ServerResponseMismatchError(
+                `submitTx checkpoint ${index}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
+    });
 
     const verify = options?.verifyServerSignatures;
     if (verify) {

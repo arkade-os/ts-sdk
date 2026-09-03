@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer";
+import { SigHash, Transaction } from "@scure/btc-signer";
 import { Wallet, ArkadeCashCreateError } from "../src/wallet/wallet";
 import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
@@ -166,6 +166,34 @@ const makeCash = () =>
     );
 
 describe("claimCash drain-pending accounting", () => {
+    // A server-returned checkpoint is signed here in place, so it must declare
+    // SIGHASH_DEFAULT like the ones we build.
+    it("refuses to sign a pending checkpoint declaring another sighash type", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const finalizeTx = vi.fn(async () => {});
+        const getPendingTxs = vi.fn();
+
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [spentCashVtxo(cashPkScript)]), {
+            getPendingTxs,
+            finalizeTx,
+        });
+
+        const myPkScript = ArkAddress.decode(await wallet.getAddress()).pkScript;
+        const sweep = pendingSweep(cash, myPkScript);
+        sweep.signedCheckpointTxs = sweep.signedCheckpointTxs.map((c) => {
+            const tx = Transaction.fromPSBT(base64.decode(c));
+            tx.updateInput(0, { sighashType: SigHash.ALL });
+            return base64.encode(tx.toPSBT());
+        });
+        getPendingTxs.mockResolvedValue([sweep]);
+
+        const result = await wallet.claimCash(cash.toString());
+
+        expect(finalizeTx).not.toHaveBeenCalled();
+        expect(result.swept).toBe(0);
+    });
+
     it("reports a drained sweep as swept, not unclaimed", async () => {
         const cash = makeCash();
         const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
@@ -362,6 +390,33 @@ describe("claimCash drain-pending accounting", () => {
         expect(result.unclaimed.vtxos).toEqual([
             { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "already-spent" },
         ]);
+    });
+
+    // Excluded by state, not by value: the drain finalizes pending sweeps, and
+    // no sweep naming an output that already lives onchain can ever close.
+    it("keeps an exited VTXO out of the drain proof", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const finalizeTx = vi.fn(async () => {});
+        const getPendingTxs = vi.fn(async () => []);
+
+        const healthy = spentCashVtxoAt(cashPkScript, 1);
+        const exited = { ...spentCashVtxoAt(cashPkScript, 2), isSpent: false, isUnrolled: true };
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [healthy, exited]), {
+            getPendingTxs,
+            finalizeTx,
+        });
+
+        await wallet.claimCash(cash.toString());
+
+        expect(getPendingTxs).toHaveBeenCalledOnce();
+        const { proof } = (getPendingTxs.mock.calls as unknown as [{ proof: string }][])[0][0];
+        const tx = Transaction.fromPSBT(base64.decode(proof), { allowUnknown: true });
+        const inputs = Array.from({ length: tx.inputsLength }, (_, i) =>
+            hex.encode(tx.getInput(i).txid!),
+        );
+        expect(inputs).toContain(healthy.txid);
+        expect(inputs).not.toContain(exited.txid);
     });
 
     it("surfaces the recoverable token when the funding send fails", async () => {
