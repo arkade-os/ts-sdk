@@ -427,6 +427,15 @@ export type EvmRfqQuote = EvmSendQuote | EvmReceiveQuote;
  *
  * Pass the token you asked for: a quote naming a different one is a different
  * market, and comparing the pair is the only way to notice.
+ *
+ * **Takes `unknown`, and pass a transport's result straight in.**
+ * `RfqTransport.requestQuote` is typed `Promise<RfqQuote>`, which is not
+ * accurate for an EVM quote — `RfqQuote` declares both amounts `number`, and
+ * on this corridor one of them is a decimal string. The transport does not
+ * inspect them, so the value is right and only the type is wrong; running it
+ * through here is what makes the two agree again. Do not read `to_amount` off
+ * the transport's return value directly: it types as a `number`, it is a
+ * string, and `+` on it concatenates.
  */
 export const readEvmSendQuote = (
     payload: unknown,
