@@ -283,6 +283,25 @@ export class EsploraProvider implements OnchainProvider {
         };
     }
 
+    /**
+     * Watch a set of addresses over the explorer's WebSocket, degrading to HTTP
+     * polling whenever the socket is unavailable and returning to the socket as
+     * soon as it can be re-established.
+     *
+     * Concurrent calls covering the same address set share one transport. The
+     * returned function releases **this** subscription only; the transport is
+     * torn down when the last subscriber releases it. Calling it more than once
+     * is a no-op.
+     *
+     * @param addresses - Addresses to monitor; order is not significant
+     * @param callback - Invoked with transactions seen after the watch started
+     * @returns A function releasing this subscription
+     * @remarks
+     * The HTTP fallback fetches full address history per address per cycle,
+     * which is dramatically more expensive than the socket — so callers should
+     * release watches they no longer need rather than relying on sharing.
+     * @see {@link waitForIncomingFunds} for the cancellation-aware wallet-level helper
+     */
     async watchAddresses(
         addresses: string[],
         callback: (txs: ExplorerTransaction[]) => void,
@@ -334,6 +353,8 @@ export class EsploraProvider implements OnchainProvider {
         let timer: ReturnType<typeof setTimeout> | null = null;
         let pollStarted = false;
         let ws: WebSocket | null = null;
+        let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+        let reconnectFailures = 0;
 
         const emit = (txs: ExplorerTransaction[]) => {
             if (stopped || txs.length === 0) return;
@@ -367,7 +388,7 @@ export class EsploraProvider implements OnchainProvider {
             // expensive than the socket it replaces, and a silent fallback is
             // what turns an explorer blip into sustained polling traffic.
             console.warn(
-                `Esplora websocket unavailable (${wsUrl}); falling back to HTTP polling every ${this.pollingInterval}ms for ${addresses.length} address(es)`,
+                `Esplora websocket unavailable (${wsUrl}); falling back to HTTP polling every ${this.pollingInterval}ms for ${addresses.length} address(es) while retrying the socket`,
             );
 
             // Undefined until the first successful pass, which only establishes
@@ -422,16 +443,136 @@ export class EsploraProvider implements OnchainProvider {
             await tick();
         };
 
+        // Retire the HTTP safety net once the socket carries events again, and
+        // allow a later failure to bring it back.
+        const stopPolling = () => {
+            if (timer) {
+                clearTimeout(timer);
+                timer = null;
+            }
+            pollStarted = false;
+        };
+
+        /**
+         * React to a dead socket: cover the gap with HTTP polling straight
+         * away, then try to win the cheap transport back.
+         */
+        const handleSocketFailure = (): Promise<void> => {
+            if (stopped) return Promise.resolve();
+            scheduleReconnect();
+            return startPolling();
+        };
+
+        const scheduleReconnect = () => {
+            // One pending attempt at a time: `error` and `close` both fire for
+            // the same dead socket, and each used to be a separate trigger.
+            if (stopped || reconnectTimer !== null) return;
+
+            const delay =
+                RECONNECT_BASE_DELAY_MS *
+                2 ** Math.min(reconnectFailures, MAX_RECONNECT_BACKOFF_EXPONENT);
+            reconnectFailures++;
+
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                connect();
+            }, delay);
+        };
+
+        const connect = (): Promise<void> => {
+            if (stopped) return Promise.resolve();
+
+            // Drop the outgoing socket before wiring the new one. Clearing `ws`
+            // first means the retired socket's own `close`/`error` events fail
+            // the `isCurrent` check below, so its teardown can't drive a second
+            // reconnect on top of the live one.
+            const previous = ws;
+            ws = null;
+            if (previous) {
+                try {
+                    previous.close();
+                } catch {
+                    // already closing; nothing to release
+                }
+            }
+
+            let socket: WebSocket;
+            try {
+                socket = new WebSocket(wsUrl);
+            } catch {
+                return handleSocketFailure();
+            }
+            ws = socket;
+
+            // Guards every listener: only the socket this provider currently
+            // considers live may act on its events.
+            const isCurrent = () => !stopped && ws === socket;
+
+            socket.addEventListener("open", () => {
+                if (!isCurrent()) return;
+                reconnectFailures = 0;
+
+                const subscribeMsg: SubscribeMessage = {
+                    "track-addresses": addresses,
+                };
+                socket.send(JSON.stringify(subscribeMsg));
+
+                // Events are flowing over the socket again; retire the
+                // expensive full-history loop that was standing in for it.
+                stopPolling();
+            });
+
+            socket.addEventListener("message", (event: MessageEvent) => {
+                if (!isCurrent()) return;
+                try {
+                    const newTxs: ExplorerTransaction[] = [];
+                    const message: WebSocketMessage = JSON.parse(event.data.toString());
+                    if (!message["multi-address-transactions"]) return;
+                    const aux = message["multi-address-transactions"];
+
+                    for (const address in aux) {
+                        for (const type of ["mempool", "confirmed", "removed"] as const) {
+                            if (!aux[address][type]) continue;
+                            newTxs.push(...aux[address][type].filter(isExplorerTransaction));
+                        }
+                    }
+                    emit(newTxs);
+                } catch (error) {
+                    console.error("Failed to process WebSocket message:", error);
+                }
+            });
+
+            // Not `async`: the handler's own rejection would surface as an
+            // unhandled one; `handleSocketFailure` absorbs its failures.
+            socket.addEventListener("error", () => {
+                if (isCurrent()) void handleSocketFailure();
+            });
+
+            // A clean close fires `close` and never `error` — a server restart,
+            // an idle timeout, a load balancer cycling the connection. Handling
+            // only `error` left the watch silently dead: no fallback, no retry,
+            // and no log to say so.
+            socket.addEventListener("close", () => {
+                if (isCurrent()) void handleSocketFailure();
+            });
+
+            return Promise.resolve();
+        };
+
         const teardown = () => {
             if (stopped) return;
-            // Flag first: closing the socket can itself surface an `error`
-            // event, and that must not start the HTTP fallback we just retired.
+            // Flag first: closing the socket can itself surface `error`/`close`,
+            // and neither may revive the fallback we are retiring here.
             stopped = true;
             onTeardown();
 
             if (timer) {
                 clearTimeout(timer);
                 timer = null;
+            }
+            if (reconnectTimer !== null) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
             }
             if (ws) {
                 try {
@@ -444,48 +585,7 @@ export class EsploraProvider implements OnchainProvider {
             subscribers.clear();
         };
 
-        let started: Promise<void> = Promise.resolve();
-
-        if (this.forcePolling) {
-            started = startPolling();
-        } else {
-            try {
-                ws = new WebSocket(wsUrl);
-                ws.addEventListener("open", () => {
-                    const subscribeMsg: SubscribeMessage = {
-                        "track-addresses": addresses,
-                    };
-                    ws?.send(JSON.stringify(subscribeMsg));
-                });
-
-                ws.addEventListener("message", (event: MessageEvent) => {
-                    try {
-                        const newTxs: ExplorerTransaction[] = [];
-                        const message: WebSocketMessage = JSON.parse(event.data.toString());
-                        if (!message["multi-address-transactions"]) return;
-                        const aux = message["multi-address-transactions"];
-
-                        for (const address in aux) {
-                            for (const type of ["mempool", "confirmed", "removed"] as const) {
-                                if (!aux[address][type]) continue;
-                                newTxs.push(...aux[address][type].filter(isExplorerTransaction));
-                            }
-                        }
-                        emit(newTxs);
-                    } catch (error) {
-                        console.error("Failed to process WebSocket message:", error);
-                    }
-                });
-
-                // Not `async`: `startPolling` handles its own failures, and an
-                // async listener's rejection would surface as an unhandled one.
-                ws.addEventListener("error", () => {
-                    void startPolling();
-                });
-            } catch {
-                started = startPolling();
-            }
-        }
+        const started: Promise<void> = this.forcePolling ? startPolling() : connect();
 
         return { subscribers, teardown, started };
     }
@@ -647,6 +747,17 @@ const isExplorerTransaction = (tx: any): tx is ExplorerTransaction => {
  * the 15s default) rather than escalating without bound.
  */
 const MAX_POLL_BACKOFF_EXPONENT = 5;
+
+/**
+ * First delay before retrying a failed address-watch WebSocket. Short on
+ * purpose: the socket is far cheaper than the HTTP polling that stands in for
+ * it, so it is worth reaching for again quickly. Doubles per consecutive
+ * failure, capped by {@link MAX_RECONNECT_BACKOFF_EXPONENT}.
+ */
+const RECONNECT_BASE_DELAY_MS = 1_000;
+
+/** Ceiling on the reconnect backoff exponent (32s at the 1s base). */
+const MAX_RECONNECT_BACKOFF_EXPONENT = 5;
 
 /** One caller's registration against a {@link SharedAddressWatch}. */
 interface AddressWatchSubscriber {

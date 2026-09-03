@@ -78,6 +78,11 @@ const flush = async () => {
     for (let i = 0; i < 5; i++) await Promise.resolve();
 };
 
+/** `EsploraProvider`'s default HTTP poll interval. */
+const POLL_INTERVAL_MS = 15_000;
+/** First websocket reconnect delay; doubles per consecutive failure. */
+const RECONNECT_DELAY_MS = 1_000;
+
 describe("EsploraProvider.watchAddresses", () => {
     let originalWebSocket: unknown;
     let warn: ReturnType<typeof vi.spyOn>;
@@ -131,7 +136,7 @@ describe("EsploraProvider.watchAddresses", () => {
             expect(vi.getTimerCount()).toBe(0);
         });
 
-        it("starts at most one poll interval when the websocket errors repeatedly", async () => {
+        it("starts at most one poll loop when the websocket errors repeatedly", async () => {
             mockFetch.mockResolvedValue(okJson([]));
 
             const provider = new EsploraProvider("http://localhost:3000");
@@ -142,7 +147,14 @@ describe("EsploraProvider.watchAddresses", () => {
             await ws.dispatch("error");
             await flush();
 
-            expect(vi.getTimerCount()).toBe(1);
+            // One baseline fetch, not one per error event.
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+
+            // And one loop: a single interval yields a single fetch round, not
+            // one per stacked timer.
+            mockFetch.mockClear();
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+            expect(mockFetch).toHaveBeenCalledTimes(1);
 
             stop();
             expect(vi.getTimerCount()).toBe(0);
@@ -175,6 +187,130 @@ describe("EsploraProvider.watchAddresses", () => {
             await ws.dispatch("message", wsMessage("addr1", [confirmedTx("aa")]));
 
             expect(callback).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("websocket reconnect", () => {
+        const watch = async () => {
+            mockFetch.mockResolvedValue(okJson([]));
+            const provider = new EsploraProvider("http://localhost:3000");
+            const stop = await provider.watchAddresses(["addr1"], () => {});
+            return { stop, socket: () => FakeWebSocket.instances.at(-1)! };
+        };
+
+        it("keeps the watch alive when the socket closes without an error", async () => {
+            // A clean close — server restart, idle timeout, load balancer
+            // cycling — fires `close` and never `error`. Handling only `error`
+            // leaves the watch silently dead: no fallback, no retry, no log.
+            const { socket } = await watch();
+
+            await socket().dispatch("close");
+            await flush();
+
+            expect(mockFetch).toHaveBeenCalledTimes(1); // fell back to polling
+
+            await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
+            expect(FakeWebSocket.instances).toHaveLength(2); // and retried
+        });
+
+        it("reconnects and resubscribes its addresses on the new socket", async () => {
+            const { socket } = await watch();
+
+            await socket().dispatch("error");
+            await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
+
+            expect(FakeWebSocket.instances).toHaveLength(2);
+
+            await socket().dispatch("open");
+            expect(socket().sent).toHaveLength(1);
+            expect(JSON.parse(socket().sent[0])).toEqual({ "track-addresses": ["addr1"] });
+        });
+
+        it("retires the HTTP fallback once the socket is back", async () => {
+            const { socket } = await watch();
+
+            await socket().dispatch("error");
+            await flush();
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
+            await socket().dispatch("open");
+
+            // Back on the cheap transport: the expensive full-history loop must
+            // not keep running alongside it.
+            mockFetch.mockClear();
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 4);
+            expect(mockFetch).not.toHaveBeenCalled();
+        });
+
+        it("delivers messages received on a reconnected socket", async () => {
+            mockFetch.mockResolvedValue(okJson([]));
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1"], callback);
+
+            await FakeWebSocket.instances[0].dispatch("error");
+            await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
+            const reconnected = FakeWebSocket.instances[1];
+            await reconnected.dispatch("open");
+
+            await reconnected.dispatch("message", wsMessage("addr1", [confirmedTx("aa")]));
+
+            expect(callback).toHaveBeenCalledTimes(1);
+        });
+
+        it("opens only one replacement socket when error and close both fire", async () => {
+            const { socket } = await watch();
+            const failed = socket();
+
+            await failed.dispatch("error");
+            await failed.dispatch("close");
+            await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
+
+            expect(FakeWebSocket.instances).toHaveLength(2);
+        });
+
+        it("backs off between consecutive reconnect attempts", async () => {
+            const { socket } = await watch();
+
+            await socket().dispatch("error");
+            await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
+            expect(FakeWebSocket.instances).toHaveLength(2);
+
+            await socket().dispatch("error");
+            await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
+            expect(FakeWebSocket.instances).toHaveLength(2); // second wait is doubled
+
+            await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
+            expect(FakeWebSocket.instances).toHaveLength(3);
+        });
+
+        it("cancels a pending reconnect on stop()", async () => {
+            const { stop, socket } = await watch();
+
+            await socket().dispatch("error");
+            stop();
+
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 10);
+
+            expect(FakeWebSocket.instances).toHaveLength(1);
+            expect(vi.getTimerCount()).toBe(0);
+        });
+
+        it("ignores failure events from a socket it has already replaced", async () => {
+            const { socket } = await watch();
+            const stale = socket();
+
+            await stale.dispatch("error");
+            await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
+            expect(FakeWebSocket.instances).toHaveLength(2);
+
+            // The retired socket finishing its teardown must not drive another
+            // reconnect on top of the live one.
+            await stale.dispatch("close");
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 10);
+
+            expect(FakeWebSocket.instances).toHaveLength(2);
         });
     });
 
