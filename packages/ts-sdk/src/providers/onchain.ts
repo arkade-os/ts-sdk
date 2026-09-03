@@ -420,11 +420,26 @@ export class EsploraProvider implements OnchainProvider {
             }
         })();
 
-        /** Deliver only what hasn't been reported yet, from either transport. */
+        /**
+         * Deliver only what hasn't been reported yet, from either transport.
+         *
+         * Marks each key as it goes rather than filtering and then marking: a
+         * batch can contain the same transaction twice — history is fetched per
+         * address and flattened, and a socket message lists a transaction under
+         * every address it pays — so one payment to two watched addresses would
+         * otherwise be delivered twice and counted twice downstream. Boarding
+         * makes that ordinary rather than exotic: the watch covers the current
+         * and historical rotated addresses together.
+         */
         const report = (txs: ExplorerTransaction[]) => {
-            const fresh = txs.filter((tx) => !seen.has(txKey(tx)));
+            const fresh: ExplorerTransaction[] = [];
+            for (const tx of txs) {
+                const key = txKey(tx);
+                if (seen.has(key)) continue;
+                seen.add(key);
+                fresh.push(tx);
+            }
             if (fresh.length === 0) return;
-            for (const tx of fresh) seen.add(txKey(tx));
             emit(fresh);
         };
 

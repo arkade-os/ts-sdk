@@ -247,6 +247,45 @@ describe("EsploraProvider.watchAddresses", () => {
             expect(callback).toHaveBeenCalledTimes(1);
         });
 
+        it("reports a transaction touching two watched addresses only once", async () => {
+            // `getAllTxs` fetches per address and flattens, so one transaction
+            // paying two watched addresses comes back twice in a single batch.
+            // Boarding makes that ordinary: the watch covers the current and
+            // historical rotated addresses at once.
+            mockFetch.mockResolvedValue(okJson([]));
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+            });
+            await provider.watchAddresses(["addr1", "addr2"], callback);
+
+            mockFetch.mockResolvedValue(okJson([confirmedTx("pays-both")]));
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback.mock.calls[0][0]).toHaveLength(1);
+        });
+
+        it("reports a socket transaction listed under two addresses only once", async () => {
+            mockFetch.mockResolvedValue(okJson([]));
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1", "addr2"], callback);
+
+            const tx = confirmedTx("pays-both");
+            await FakeWebSocket.instances[0].dispatch("message", {
+                data: JSON.stringify({
+                    "multi-address-transactions": {
+                        addr1: { confirmed: [tx] },
+                        addr2: { confirmed: [tx] },
+                    },
+                }),
+            });
+
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback.mock.calls[0][0]).toHaveLength(1);
+        });
+
         it("keeps watching when the creation-time baseline fetch fails", async () => {
             mockFetch.mockRejectedValueOnce(new Error("explorer down"));
             mockFetch.mockResolvedValue(okJson([]));
