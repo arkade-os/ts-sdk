@@ -717,7 +717,11 @@ describe("quote readers", () => {
             ...quote,
             profile: { ...(quote.profile as Record<string, unknown>), ...over },
         });
-        for (const bad of ["", "zz", "5120AB", 5120]) {
+        // "abc" is the one that matters: it is lowercase hex, so a check that
+        // only looked at the character class would pass it — and `hex.decode`
+        // then throws on the odd length, at covenant derivation, where it reads
+        // as a broken covenant rather than a malformed quote field.
+        for (const bad of ["", "zz", "5120AB", 5120, "abc", "5120" + "aa".repeat(31) + "a"]) {
             expect(() =>
                 readEvmSendQuote(
                     withProfile(sendQuote() as unknown as Record<string, unknown>, {
@@ -725,7 +729,7 @@ describe("quote readers", () => {
                     }),
                     { tokenAddress: USDC, rfqId: RFQ_ID },
                 ),
-            ).toThrow(/profile\.receiver_pk_script must be lowercase hex/);
+            ).toThrow(/profile\.receiver_pk_script must be lowercase hex of whole bytes/);
             expect(() =>
                 readEvmReceiveQuote(
                     withProfile(receiveQuote() as unknown as Record<string, unknown>, {
@@ -733,7 +737,7 @@ describe("quote readers", () => {
                     }),
                     { tokenAddress: USDC, rfqId: RFQ_ID },
                 ),
-            ).toThrow(/profile\.solver_refund_pk_script must be lowercase hex/);
+            ).toThrow(/profile\.solver_refund_pk_script must be lowercase hex of whole bytes/);
         }
     });
 
