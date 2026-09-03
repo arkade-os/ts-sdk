@@ -534,9 +534,24 @@ const assertNonNegativeInteger = (value: unknown, field: string): void => {
     }
 };
 
+/**
+ * Lowercase hex of a whole number of bytes.
+ *
+ * The EVEN-LENGTH half is the part that is easy to leave out, and leaving it
+ * out makes this validator promise something it does not keep. Both fields
+ * checked with it are pkScripts a later step decodes to bytes, and
+ * `hex.decode` refuses an odd-length string — so without this, `"abc"` passes
+ * here and throws during covenant derivation instead, reporting a broken
+ * covenant for what is really a malformed quote field.
+ */
 const assertHex = (value: unknown, field: string): void => {
-    if (typeof value !== "string" || value.length === 0 || !/^[0-9a-f]+$/.test(value)) {
-        throw new Error(`${field} must be lowercase hex, got ${String(value)}`);
+    if (
+        typeof value !== "string" ||
+        value.length === 0 ||
+        value.length % 2 !== 0 ||
+        !/^[0-9a-f]+$/.test(value)
+    ) {
+        throw new Error(`${field} must be lowercase hex of whole bytes, got ${String(value)}`);
     }
 };
 
