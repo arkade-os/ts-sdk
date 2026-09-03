@@ -439,6 +439,26 @@ export const assertFundable = (input: {
         /** "send" = arkade->onchain (the L1 timelock-order gate applies). */
         direction: "send" | "receive";
     };
+    /**
+     * The most this client will pay, as the GREATER of a proportion of
+     * `from_amount` and an absolute number of sats. Absent means no ceiling —
+     * which is what every caller written before this got, and keeps.
+     *
+     * BOTH bounds, because a solver's fee is partly flat. With dynamic pricing
+     * that flat component tracks the chain fee market, and a flat charge is a
+     * large proportion of a small swap: 420 sats is 8.4% of 5_000 and 0.084% of
+     * 500_000. A bare percentage therefore refuses every small swap the moment
+     * fees rise, while an absolute alone stops protecting a large one. `max()`
+     * lets the absolute cover the flat component without loosening the
+     * proportional bound where that is the one doing the work.
+     *
+     * This is the ONLY ceiling a client has. The quote carries no fee field,
+     * and the registry card cannot stand in for one: it publishes the
+     * corridor's CONFIGURED flat fee, not the cap live pricing may reach, so a
+     * solver with a low fallback and a high cap advertises cheaper than it can
+     * charge. `from_amount - to_amount` off the quote is the real number.
+     */
+    maxFee?: { bps?: number; sats?: number };
 }): void => {
     const fail = (reason: string, message: string): never => {
         throw gateError(reason, message);
@@ -453,6 +473,45 @@ export const assertFundable = (input: {
         input.quote.refund_locktime - input.now < MIN_HEADROOM_SECONDS
     ) {
         fail("insufficient_headroom", "refund deadline headroom below 90 minutes");
+    }
+    if (input.maxFee) {
+        const { bps, sats } = input.maxFee;
+        if (bps === undefined && sats === undefined) {
+            // Read literally `{}` is "tolerate no fee at all", which no caller
+            // means and every caller would then be refused by. A ceiling that
+            // names nothing is a mistake at the call site, not a bad quote.
+            fail("max_fee_unbounded", "maxFee names neither bps nor sats");
+        }
+        if (bps !== undefined && (!Number.isInteger(bps) || bps < 0 || bps > 10_000)) {
+            fail("max_fee_out_of_range", `maxFee.bps must be an integer in 0..10000, got ${bps}`);
+        }
+        if (sats !== undefined && (!Number.isInteger(sats) || sats < 0)) {
+            fail("max_fee_out_of_range", `maxFee.sats must be a non-negative integer, got ${sats}`);
+        }
+        // LOUD on a cross-asset pair, never silent. `from_amount - to_amount` is
+        // a fee only while both legs name the same asset; on
+        // `arkade:BTC->ethereum:<token>` it subtracts tokens from sats and means
+        // nothing. Skipping quietly would leave a caller believing a ceiling
+        // applied when none did, which is worse than having no gate at all —
+        // the fee there is inside the rate, and judging it needs a price this
+        // function is not given.
+        const legs = input.quote.pair.split("->");
+        const assetOf = (leg: string): string => leg.slice(leg.indexOf(":") + 1);
+        if (legs.length !== 2 || assetOf(legs[0]!) !== assetOf(legs[1]!)) {
+            fail(
+                "fee_gate_unavailable",
+                `maxFee cannot gate ${input.quote.pair}: its legs name different assets, so ` +
+                    `from_amount - to_amount is not a fee`,
+            );
+        }
+        const fee = input.quote.from_amount - input.quote.to_amount;
+        const allowed = Math.max(
+            sats ?? 0,
+            Math.floor((input.quote.from_amount * (bps ?? 0)) / 10_000),
+        );
+        if (fee > allowed) {
+            fail("fee_too_high", `fee ${fee} exceeds the ${allowed} this client allows`);
+        }
     }
     if (input.onchain) {
         const { htlcLocktime, minConfirmations, direction } = input.onchain;

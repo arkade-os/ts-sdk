@@ -654,3 +654,86 @@ describe("offerTermsFromQuote", () => {
         expect(() => offerTermsFromQuote(quoteFixture(), {})).toThrow(/exactly one/);
     });
 });
+
+/**
+ * The max-fee gate: the client's own ceiling on what a quote may charge.
+ *
+ * A solver's fee is `from_amount - to_amount` and nothing in the quote breaks it
+ * down. With dynamic pricing the flat component tracks the chain fee market, so
+ * the registry card cannot bound it either — the card publishes the configured
+ * fallback, not the live ceiling. This is the only place a client can hold a
+ * line, and it needs nothing from the solver.
+ */
+describe("assertFundable — the max-fee gate", () => {
+    const now = 1_800_000_000;
+    const fundable = (over: Partial<RfqQuote>, maxFee?: { bps?: number; sats?: number }) =>
+        assertFundable({
+            quote: quoteFixture({ valid_until: now + 900, refund_locktime: now + 7200, ...over }),
+            invoiceExpiresAt: now + 3600,
+            now,
+            maxFee,
+        });
+
+    it("does not gate at all when no ceiling is given", () => {
+        // Backward compatibility is the point: every existing caller passes no
+        // `maxFee` and must keep funding exactly what it funded before.
+        expect(() => fundable({ from_amount: 10_000, to_amount: 1 })).not.toThrow();
+    });
+
+    it("refuses a fee above the proportional ceiling", () => {
+        expect(() =>
+            fundable({ from_amount: 100_000, to_amount: 99_000 }, { bps: 100 }),
+        ).not.toThrow();
+        expect(() => fundable({ from_amount: 100_000, to_amount: 98_999 }, { bps: 100 })).toThrow(
+            /fee/i,
+        );
+    });
+
+    /**
+     * THE CASE THIS EXISTS FOR. A flat network component is a large percentage
+     * of a small swap: 420 sats on 5_000 is 8.4%, and on 500_000 it is 0.084%.
+     * A bare percentage therefore refuses every small swap the moment fees rise.
+     * The ceiling is the GREATER of the two allowances, so an absolute floor
+     * covers the flat component without weakening the proportional bound.
+     */
+    it("allows a flat network fee on a small swap that a bare percentage would refuse", () => {
+        expect(() => fundable({ from_amount: 5_420, to_amount: 5_000 }, { bps: 100 })).toThrow(
+            /fee/i,
+        );
+        expect(() =>
+            fundable({ from_amount: 5_420, to_amount: 5_000 }, { bps: 100, sats: 1_000 }),
+        ).not.toThrow();
+    });
+
+    it("keeps the proportional bound on a large swap, where the absolute one is slack", () => {
+        // allowed = max(1_000, 1% of 500_000) = 5_000.
+        expect(() =>
+            fundable({ from_amount: 500_000, to_amount: 495_000 }, { bps: 100, sats: 1_000 }),
+        ).not.toThrow();
+        expect(() =>
+            fundable({ from_amount: 500_000, to_amount: 494_999 }, { bps: 100, sats: 1_000 }),
+        ).toThrow(/fee/i);
+    });
+
+    /**
+     * LOUD, not silent. `from_amount - to_amount` is a fee only when both sides
+     * name the same asset; on `arkade:BTC->ethereum:<token>` it subtracts tokens
+     * from sats and means nothing. Skipping quietly would leave a wallet
+     * believing a ceiling applied when it did not, which is worse than no gate.
+     */
+    it("refuses to pretend it can gate a cross-asset pair", () => {
+        expect(() =>
+            fundable(
+                { pair: "arkade:BTC->ethereum:0xa0b86991", from_amount: 100_000, to_amount: 42 },
+                { bps: 100 },
+            ),
+        ).toThrow(/cross-asset|different assets/i);
+    });
+
+    it("refuses a ceiling that names neither bound, rather than tolerating no fee", () => {
+        // `{}` reads as "no fee at all" if taken literally, which no caller means.
+        expect(() => fundable({ from_amount: 100_000, to_amount: 99_999 }, {})).toThrow(
+            /bps|sats/i,
+        );
+    });
+});
