@@ -159,11 +159,15 @@ export interface SwapRecordCommon {
      * `AcceptConflict` — §3.2 says so by name.
      */
     readonly fundingTxid?: string;
-    /** M5's ask: the durable claim-error strings its outcome table reads, so a
-     * restarted client ends a broken claim `failed` with a reason instead of
-     * `lapsed` with none. v1 persists both; dropping them in the rewrite is the
-     * regression §B's "floor, not ceiling" wording exists to catch. */
+    /**
+     * Last local receive-claim error while the swap is still retryable. If the
+     * claim window later closes without a submitted claim, this becomes the
+     * terminal failure reason after restore.
+     */
+    readonly claimFailure?: string;
+    /** Terminal failure reason. */
     readonly failure?: string;
+    /** Refusal reason while `state` is `needs_counterparty`. */
     readonly blockedReason?: string;
     /** Unix **seconds**, both — the unit `RfqSwapRecord` carries and
      * `shouldRetainRfqSwap` compares against, not `AssetSwap`'s milliseconds. */

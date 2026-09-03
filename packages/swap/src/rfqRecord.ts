@@ -149,6 +149,8 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
      * `RfqSwapCommon.lockupSpendTxids`. */
     lockupSpendTxids?: string[];
     failure?: string;
+    /** Last local receive-claim error while the swap is still retryable. */
+    claimFailure?: string;
     blockedReason?: string;
 }
 
@@ -232,6 +234,7 @@ const managerState = (swap: PersistableRfqSwap) => ({
     ...(swap.refundTxid ? { refundTxid: swap.refundTxid } : {}),
     ...(swap.lockupSpendTxids?.length ? { lockupSpendTxids: [...swap.lockupSpendTxids] } : {}),
     ...(swap.failure ? { failure: swap.failure } : {}),
+    ...(swap.claimFailure ? { claimFailure: swap.claimFailure } : {}),
     ...(swap.blockedReason ? { blockedReason: swap.blockedReason } : {}),
 });
 
@@ -293,8 +296,9 @@ export function createRfqSwapRecord(
  * The mutable half is REPLACED, not merged. `managerState` omits a key the live
  * swap no longer carries, so spreading it over the old record could only ever
  * set these fields, never clear them. The manager clears them on purpose: it
- * deletes `blockedReason` when a swap leaves `needs_counterparty`, precisely
- * because a stale `blockedReason` reads as a live refusal.
+ * deletes `blockedReason` when a swap leaves `needs_counterparty` and
+ * `claimFailure` when a swap becomes terminal, precisely because stale mutable
+ * reasons read as live refusal or retry state.
  */
 export function updateRfqSwapRecord(
     record: RfqSwapRecord,
@@ -310,6 +314,7 @@ export function updateRfqSwapRecord(
         refundTxid: _refundTxid,
         lockupSpendTxids: _lockupSpendTxids,
         failure: _failure,
+        claimFailure: _claimFailure,
         blockedReason: _blockedReason,
         ...origin
     } = stored;
@@ -330,9 +335,9 @@ export function updateRfqSwapRecord(
  * A record IS an origin plus manager state, so `record` where an
  * {@link RfqSwapOrigin} is wanted type-checks — and is a bug. Spread into
  * {@link createRfqSwapRecord} it carries the OLD state's `failure`,
- * `blockedReason` and `refundTxid` past `managerState`, which omits a field
- * the live swap no longer has and therefore cannot clear one. That is the same
- * trap {@link updateRfqSwapRecord} strips those three fields to avoid; this is
+ * `blockedReason`, `claimFailure` and `refundTxid` past `managerState`, which omits
+ * fields the live swap no longer has and therefore cannot clear them. That is the same
+ * trap {@link updateRfqSwapRecord} strips those mutable fields to avoid; this is
  * how a caller holding only a record gets an origin that is safe to keep.
  *
  * What `RfqSwapManager.restoreFromRepository` remembers for each record it
@@ -403,6 +408,7 @@ export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): Per
             ? { lockupSpendTxids: [...stored.lockupSpendTxids] }
             : {}),
         ...(stored.failure ? { failure: stored.failure } : {}),
+        ...(stored.claimFailure ? { claimFailure: stored.claimFailure } : {}),
         ...(stored.blockedReason ? { blockedReason: stored.blockedReason } : {}),
     };
 
