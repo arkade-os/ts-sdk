@@ -13,7 +13,10 @@
  * ties an endpoint's corridor to its asset's rail in the type system so the two
  * cannot disagree in a value.
  */
-import type { Corridor as DiscoveryCorridor } from "@arkade-os/solver-discovery";
+import {
+    CORRIDORS as DISCOVERY_CORRIDORS,
+    type Corridor as DiscoveryCorridor,
+} from "@arkade-os/solver-discovery";
 import type { BitcoinRail, Rail } from "./assetId";
 
 /**
@@ -25,8 +28,8 @@ import type { BitcoinRail, Rail } from "./assetId";
  */
 export type Corridor = DiscoveryCorridor;
 
-/** Every corridor, in the order the route union uses them. */
-export const CORRIDORS = ["arkade", "lightning", "onchain"] as const satisfies readonly Corridor[];
+/** Discovery's corridor list, re-exported so this package does not redeclare it. */
+export const CORRIDORS = DISCOVERY_CORRIDORS;
 
 /**
  * A corridor id: the three implemented corridors plus §9's EVM chains.

@@ -4,18 +4,18 @@ import { BITCOIN_RAILS, railOf } from "../../src/client/assetId";
 import { CORRIDORS, corridorOfRail, railOfCorridor } from "../../src/client/corridor";
 
 describe("the corridor axis and its rails", () => {
-    it("keeps discovery's corridor set verbatim", () => {
-        // Aliased rather than re-declared: a re-declaration would drift
-        // silently the day discovery adds a corridor.
-        expect([...CORRIDORS].sort()).toEqual([...DISCOVERY_CORRIDORS].sort());
+    it("re-exports discovery's corridor list by identity", () => {
+        expect(CORRIDORS).toBe(DISCOVERY_CORRIDORS);
     });
 
     it("is a bijection with the bitcoin-family rails", () => {
-        for (const corridor of CORRIDORS) {
+        for (const corridor of DISCOVERY_CORRIDORS) {
             expect(corridorOfRail(railOfCorridor(corridor))).toBe(corridor);
         }
         for (const rail of BITCOIN_RAILS) {
-            expect(railOfCorridor(corridorOfRail(rail) ?? "arkade")).toBe(rail);
+            const corridor = corridorOfRail(rail);
+            expect(corridor).toBeDefined();
+            expect(railOfCorridor(corridor!)).toBe(rail);
         }
     });
 
