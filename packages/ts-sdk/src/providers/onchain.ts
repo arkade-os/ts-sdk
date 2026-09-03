@@ -155,6 +155,17 @@ export class EsploraProvider implements OnchainProvider {
     readonly pollingInterval: number;
     readonly forcePolling: boolean;
 
+    /**
+     * Live {@link watchAddresses} subscriptions, keyed by their address set.
+     *
+     * Concurrent watchers over the same addresses share one transport, so a
+     * caller that opens watchers in a loop — or leaks them by abandoning
+     * {@link waitForIncomingFunds} — costs one entry in a `Set` rather than
+     * another WebSocket plus another full-history polling loop. Entries are
+     * dropped once their last subscriber stops.
+     */
+    private readonly addressWatches = new Map<string, SharedAddressWatch>();
+
     constructor(
         private baseUrl: string = ESPLORA_URL[DEFAULT_NETWORK_NAME],
         opts?: {
@@ -276,100 +287,207 @@ export class EsploraProvider implements OnchainProvider {
         addresses: string[],
         callback: (txs: ExplorerTransaction[]) => void,
     ): Promise<() => void> {
-        let intervalId: ReturnType<typeof setInterval> | null = null;
+        // Address order is not significant to the subscription, so normalise it
+        // before keying — otherwise ["a","b"] and ["b","a"] open two watchers
+        // over identical data. NUL-joined so an address can't forge a boundary.
+        const key = [...addresses].sort().join("\u0000");
+
+        let watch = this.addressWatches.get(key);
+        if (!watch) {
+            watch = this.createAddressWatch(addresses, () => this.addressWatches.delete(key));
+            this.addressWatches.set(key, watch);
+        }
+
+        // Register before awaiting startup: the refcount must never read zero
+        // while the transport is still coming up, or a concurrent stop would
+        // tear down a watch this caller is about to depend on.
+        const subscriber: AddressWatchSubscriber = { callback };
+        watch.subscribers.add(subscriber);
+
+        const shared = watch;
+        await shared.started;
+
+        let released = false;
+        return () => {
+            // Idempotent per subscriber: a caller that stops twice must not
+            // decrement the refcount twice and strand the other subscribers.
+            if (released) return;
+            released = true;
+
+            shared.subscribers.delete(subscriber);
+            if (shared.subscribers.size === 0) shared.teardown();
+        };
+    }
+
+    /**
+     * Bring up one shared address watch: a WebSocket subscription where the
+     * explorer supports it, degrading to HTTP polling when it doesn't.
+     *
+     * @param addresses - Addresses this watch covers
+     * @param onTeardown - Invoked when the watch retires, to drop the registry entry
+     */
+    private createAddressWatch(addresses: string[], onTeardown: () => void): SharedAddressWatch {
+        const subscribers = new Set<AddressWatchSubscriber>();
         const wsUrl = this.baseUrl.replace(/^http(s)?:/, "ws$1:") + "/v1/ws";
 
-        const poll = async () => {
-            const getAllTxs = async () => {
-                const txArrays = await Promise.all(
-                    addresses.map((address) => this.getTransactions(address)),
-                );
-                return txArrays.flat();
-            };
-
-            // initial fetch to get existing transactions
-            const initialTxs = await getAllTxs();
-
-            // we use block_time in key to also notify when a transaction is confirmed
-            const txKey = (tx: ExplorerTransaction) => `${tx.txid}_${tx.status.block_time}`;
-
-            // create a set of existing transactions to avoid duplicates
-            const existingTxs = new Set(initialTxs.map(txKey));
-
-            // polling for new transactions
-            intervalId = setInterval(async () => {
-                try {
-                    // get current transactions
-                    // we will compare with initialTxs to find new ones
-                    const currentTxs = await getAllTxs();
-
-                    // filter out transactions that are already in initialTxs
-                    const newTxs = currentTxs.filter((tx) => !existingTxs.has(txKey(tx)));
-
-                    if (newTxs.length > 0) {
-                        // Update the tracking set instead of growing the array
-                        newTxs.forEach((tx) => existingTxs.add(txKey(tx)));
-                        callback(newTxs);
-                    }
-                } catch (error) {
-                    console.error("Error in polling mechanism:", error);
-                }
-            }, this.pollingInterval);
-        };
-
+        let stopped = false;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        let pollStarted = false;
         let ws: WebSocket | null = null;
 
-        const stopFunc = () => {
-            if (ws) ws.close();
-            if (intervalId) clearInterval(intervalId);
+        const emit = (txs: ExplorerTransaction[]) => {
+            if (stopped || txs.length === 0) return;
+            // Snapshot: a subscriber may stop (mutating the set) from its callback.
+            for (const subscriber of [...subscribers]) {
+                try {
+                    subscriber.callback(txs);
+                } catch (error) {
+                    console.error("Address watch subscriber threw:", error);
+                }
+            }
         };
 
-        if (this.forcePolling) {
-            await poll();
-            return stopFunc;
-        }
+        // block_time is part of the key so a tx is re-reported when it confirms.
+        const txKey = (tx: ExplorerTransaction) => `${tx.txid}_${tx.status.block_time}`;
+        const getAllTxs = async () => {
+            const txArrays = await Promise.all(
+                addresses.map((address) => this.getTransactions(address)),
+            );
+            return txArrays.flat();
+        };
 
-        try {
-            ws = new WebSocket(wsUrl);
-            ws.addEventListener("open", () => {
-                // subscribe to address updates
-                const subscribeMsg: SubscribeMessage = {
-                    "track-addresses": addresses,
-                };
-                ws!.send(JSON.stringify(subscribeMsg));
-            });
+        const startPolling = async () => {
+            // `pollStarted` makes this idempotent: a WebSocket can emit `error`
+            // more than once, and each call used to install another interval
+            // over the top of the previous handle, orphaning it.
+            if (stopped || pollStarted) return;
+            pollStarted = true;
 
-            ws.addEventListener("message", (event: MessageEvent) => {
+            // Worth surfacing: address history (`/address/{a}/txs`) is far more
+            // expensive than the socket it replaces, and a silent fallback is
+            // what turns an explorer blip into sustained polling traffic.
+            console.warn(
+                `Esplora websocket unavailable (${wsUrl}); falling back to HTTP polling every ${this.pollingInterval}ms for ${addresses.length} address(es)`,
+            );
+
+            // Undefined until the first successful pass, which only establishes
+            // the baseline — transactions that predate the watch aren't
+            // "incoming" and must not be reported.
+            let seen: Set<string> | undefined;
+            let failures = 0;
+
+            const schedule = () => {
+                if (stopped) return;
+                // Self-rescheduling rather than setInterval: a fixed interval
+                // stacks overlapping full-history fetches when the explorer is
+                // slower than pollingInterval, and offers nowhere to back off
+                // when it starts failing or rate-limiting.
+                timer = setTimeout(tick, this.pollingInterval * 2 ** failures);
+            };
+
+            const tick = async () => {
                 try {
-                    const newTxs: ExplorerTransaction[] = [];
-                    const message: WebSocketMessage = JSON.parse(event.data.toString());
-                    if (!message["multi-address-transactions"]) return;
-                    const aux = message["multi-address-transactions"];
+                    const currentTxs = await getAllTxs();
 
-                    for (const address in aux) {
-                        for (const type of ["mempool", "confirmed", "removed"] as const) {
-                            if (!aux[address][type]) continue;
-                            newTxs.push(...aux[address][type].filter(isExplorerTransaction));
+                    // teardown may have run while that fetch was in flight.
+                    // Returning before `schedule()` is what keeps stop() honest:
+                    // otherwise the timer is installed *after* teardown, with no
+                    // handle left to clear it, and the loop hammers the explorer
+                    // until the process exits.
+                    if (stopped) return;
+
+                    if (seen === undefined) {
+                        seen = new Set(currentTxs.map(txKey));
+                    } else {
+                        const newTxs = currentTxs.filter((tx) => !seen!.has(txKey(tx)));
+                        if (newTxs.length > 0) {
+                            newTxs.forEach((tx) => seen!.add(txKey(tx)));
+                            emit(newTxs);
                         }
                     }
-                    // callback with new transactions
-                    if (newTxs.length > 0) callback(newTxs);
+                    failures = 0;
                 } catch (error) {
-                    console.error("Failed to process WebSocket message:", error);
+                    // Includes the baseline pass: a transient explorer failure
+                    // backs off and retries rather than leaving a watch that is
+                    // registered but permanently blind.
+                    failures = Math.min(failures + 1, MAX_POLL_BACKOFF_EXPONENT);
+                    console.error("Error polling watched addresses:", error);
                 }
-            });
 
-            ws.addEventListener("error", async () => {
-                // if websocket is not available, fallback to polling
-                await poll();
-            });
-        } catch {
-            if (intervalId) clearInterval(intervalId);
-            // if websocket is not available, fallback to polling
-            await poll();
+                schedule();
+            };
+
+            // Seed straight away so the baseline is in place without waiting a
+            // full interval, then fall into the scheduled loop.
+            await tick();
+        };
+
+        const teardown = () => {
+            if (stopped) return;
+            // Flag first: closing the socket can itself surface an `error`
+            // event, and that must not start the HTTP fallback we just retired.
+            stopped = true;
+            onTeardown();
+
+            if (timer) {
+                clearTimeout(timer);
+                timer = null;
+            }
+            if (ws) {
+                try {
+                    ws.close();
+                } catch {
+                    // already closing or never opened; nothing to release
+                }
+                ws = null;
+            }
+            subscribers.clear();
+        };
+
+        let started: Promise<void> = Promise.resolve();
+
+        if (this.forcePolling) {
+            started = startPolling();
+        } else {
+            try {
+                ws = new WebSocket(wsUrl);
+                ws.addEventListener("open", () => {
+                    const subscribeMsg: SubscribeMessage = {
+                        "track-addresses": addresses,
+                    };
+                    ws?.send(JSON.stringify(subscribeMsg));
+                });
+
+                ws.addEventListener("message", (event: MessageEvent) => {
+                    try {
+                        const newTxs: ExplorerTransaction[] = [];
+                        const message: WebSocketMessage = JSON.parse(event.data.toString());
+                        if (!message["multi-address-transactions"]) return;
+                        const aux = message["multi-address-transactions"];
+
+                        for (const address in aux) {
+                            for (const type of ["mempool", "confirmed", "removed"] as const) {
+                                if (!aux[address][type]) continue;
+                                newTxs.push(...aux[address][type].filter(isExplorerTransaction));
+                            }
+                        }
+                        emit(newTxs);
+                    } catch (error) {
+                        console.error("Failed to process WebSocket message:", error);
+                    }
+                });
+
+                // Not `async`: `startPolling` handles its own failures, and an
+                // async listener's rejection would surface as an unhandled one.
+                ws.addEventListener("error", () => {
+                    void startPolling();
+                });
+            } catch {
+                started = startPolling();
+            }
         }
 
-        return stopFunc;
+        return { subscribers, teardown, started };
     }
 
     async getChainTip(): Promise<{
@@ -522,6 +640,31 @@ const isExplorerTransaction = (tx: any): tx is ExplorerTransaction => {
         typeof tx.status.confirmed === "boolean"
     );
 };
+
+/**
+ * Ceiling on the HTTP-poll backoff exponent, so a persistently failing or
+ * rate-limiting explorer is retried at `pollingInterval * 2^5` (8 minutes at
+ * the 15s default) rather than escalating without bound.
+ */
+const MAX_POLL_BACKOFF_EXPONENT = 5;
+
+/** One caller's registration against a {@link SharedAddressWatch}. */
+interface AddressWatchSubscriber {
+    callback: (txs: ExplorerTransaction[]) => void;
+}
+
+/**
+ * One transport (WebSocket, or its HTTP-polling fallback) serving every
+ * concurrent watcher of the same address set.
+ */
+interface SharedAddressWatch {
+    /** Live registrations; the watch retires when this empties. */
+    subscribers: Set<AddressWatchSubscriber>;
+    /** Resolves once the transport is up (or has fallen back to polling). */
+    started: Promise<void>;
+    /** Releases the transport. Idempotent. */
+    teardown: () => void;
+}
 
 interface SubscribeMessage {
     "track-addresses": string[];

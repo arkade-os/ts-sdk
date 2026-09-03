@@ -1,0 +1,332 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { EsploraProvider } from "../src";
+import type { ExplorerTransaction } from "../src/providers/onchain";
+
+const { mockFetch } = vi.hoisted(() => ({
+    mockFetch: vi.fn(),
+}));
+
+vi.mock("../src/utils/fetch", () => ({
+    fetch: mockFetch,
+    baseFetch: mockFetch,
+}));
+
+type Listener = (ev?: any) => unknown;
+
+/**
+ * Minimal stand-in for the global `WebSocket` that `watchAddresses` news up.
+ * `dispatch` returns the handlers' promise so a test can either await the
+ * handler to completion, or hold a reference and interleave other work while
+ * an async handler is suspended mid-await.
+ */
+class FakeWebSocket {
+    static instances: FakeWebSocket[] = [];
+
+    readonly sent: string[] = [];
+    closed = false;
+    private readonly listeners = new Map<string, Listener[]>();
+
+    constructor(readonly url: string) {
+        FakeWebSocket.instances.push(this);
+    }
+
+    addEventListener(type: string, handler: Listener): void {
+        const existing = this.listeners.get(type) ?? [];
+        existing.push(handler);
+        this.listeners.set(type, existing);
+    }
+
+    send(data: string): void {
+        this.sent.push(data);
+    }
+
+    close(): void {
+        this.closed = true;
+    }
+
+    dispatch(type: string, ev?: any): Promise<unknown[]> {
+        const handlers = this.listeners.get(type) ?? [];
+        return Promise.all(handlers.map((h) => h(ev)));
+    }
+}
+
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+        resolve = res;
+    });
+    return { promise, resolve };
+}
+
+const okJson = (data: unknown) => ({ ok: true, json: () => Promise.resolve(data) });
+
+const confirmedTx = (txid: string): ExplorerTransaction =>
+    ({
+        txid,
+        vout: [],
+        status: { confirmed: true, block_height: 1, block_hash: "h", block_time: 1 },
+    }) as unknown as ExplorerTransaction;
+
+const wsMessage = (address: string, txs: ExplorerTransaction[]) => ({
+    data: JSON.stringify({
+        "multi-address-transactions": { [address]: { confirmed: txs } },
+    }),
+});
+
+/** Let queued microtasks (and any awaited fetch continuations) drain. */
+const flush = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+};
+
+describe("EsploraProvider.watchAddresses", () => {
+    let originalWebSocket: unknown;
+    let warn: ReturnType<typeof vi.spyOn>;
+    let error: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+        mockFetch.mockReset();
+        FakeWebSocket.instances = [];
+        // These tests deliberately drive the transport's failure paths, which
+        // are expected to log. Capture rather than print, so a real unexpected
+        // diagnostic still stands out in the suite output.
+        warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        error = vi.spyOn(console, "error").mockImplementation(() => {});
+        originalWebSocket = (globalThis as any).WebSocket;
+        (globalThis as any).WebSocket = FakeWebSocket;
+        // Only fake the timer functions under test: faking microtask queues
+        // would deadlock the `await`s these tests rely on.
+        vi.useFakeTimers({
+            toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"],
+        });
+    });
+
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+        warn.mockRestore();
+        error.mockRestore();
+        (globalThis as any).WebSocket = originalWebSocket;
+    });
+
+    describe("teardown safety", () => {
+        it("does not leave a poll interval when stop() races the websocket-error fallback", async () => {
+            // The fallback poll awaits a full address-history fetch *before* it
+            // assigns its interval handle. A caller that stops inside that
+            // window must not end up with an interval nothing can clear.
+            const pending = deferred<ReturnType<typeof okJson>>();
+            mockFetch.mockReturnValue(pending.promise);
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const stop = await provider.watchAddresses(["addr1"], () => {});
+
+            const errorHandled = FakeWebSocket.instances[0].dispatch("error");
+            await flush(); // poll() is now suspended on the initial fetch
+
+            stop();
+
+            pending.resolve(okJson([]));
+            await errorHandled;
+            await flush();
+
+            expect(vi.getTimerCount()).toBe(0);
+        });
+
+        it("starts at most one poll interval when the websocket errors repeatedly", async () => {
+            mockFetch.mockResolvedValue(okJson([]));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const stop = await provider.watchAddresses(["addr1"], () => {});
+            const ws = FakeWebSocket.instances[0];
+
+            await ws.dispatch("error");
+            await ws.dispatch("error");
+            await flush();
+
+            expect(vi.getTimerCount()).toBe(1);
+
+            stop();
+            expect(vi.getTimerCount()).toBe(0);
+        });
+
+        it("does not start polling when the websocket errors after stop()", async () => {
+            mockFetch.mockResolvedValue(okJson([]));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const stop = await provider.watchAddresses(["addr1"], () => {});
+
+            stop();
+
+            await FakeWebSocket.instances[0].dispatch("error");
+            await flush();
+
+            expect(mockFetch).not.toHaveBeenCalled();
+            expect(vi.getTimerCount()).toBe(0);
+        });
+
+        it("stops delivering callbacks after stop()", async () => {
+            mockFetch.mockResolvedValue(okJson([]));
+            const callback = vi.fn();
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const stop = await provider.watchAddresses(["addr1"], callback);
+            const ws = FakeWebSocket.instances[0];
+
+            stop();
+            await ws.dispatch("message", wsMessage("addr1", [confirmedTx("aa")]));
+
+            expect(callback).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("http fallback", () => {
+        const polling = () => new EsploraProvider("http://localhost:3000", { forcePolling: true });
+
+        it("does not report transactions that already existed when polling began", async () => {
+            mockFetch.mockResolvedValue(okJson([confirmedTx("old")]));
+            const callback = vi.fn();
+
+            await polling().watchAddresses(["addr1"], callback);
+            await vi.advanceTimersByTimeAsync(15_000);
+
+            expect(callback).not.toHaveBeenCalled();
+        });
+
+        it("reports a transaction that appears after the baseline pass", async () => {
+            mockFetch.mockResolvedValue(okJson([confirmedTx("old")]));
+            const callback = vi.fn();
+
+            await polling().watchAddresses(["addr1"], callback);
+
+            mockFetch.mockResolvedValue(okJson([confirmedTx("old"), confirmedTx("new")]));
+            await vi.advanceTimersByTimeAsync(15_000);
+
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback.mock.calls[0][0]).toEqual([expect.objectContaining({ txid: "new" })]);
+        });
+
+        it("backs off and retries when the baseline fetch fails, rather than going blind", async () => {
+            mockFetch.mockRejectedValueOnce(new Error("explorer down"));
+            mockFetch.mockResolvedValue(okJson([]));
+
+            await polling().watchAddresses(["addr1"], () => {});
+
+            // A failed baseline must still leave a retry armed.
+            expect(vi.getTimerCount()).toBe(1);
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+
+            // One failure doubles the delay, so the plain interval is too early.
+            await vi.advanceTimersByTimeAsync(15_000);
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(15_000);
+            expect(mockFetch).toHaveBeenCalledTimes(2);
+        });
+
+        it("warns when it degrades from websocket to HTTP polling", async () => {
+            mockFetch.mockResolvedValue(okJson([]));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1"], () => {});
+            await FakeWebSocket.instances[0].dispatch("error");
+
+            // Silent degradation is what let an explorer blip become sustained
+            // full-history polling without anyone noticing.
+            expect(warn).toHaveBeenCalledTimes(1);
+            expect(warn.mock.calls[0][0]).toMatch(/websocket unavailable.*HTTP polling/i);
+        });
+    });
+
+    describe("coalescing", () => {
+        it("shares a single websocket between concurrent watchers on the same address set", async () => {
+            mockFetch.mockResolvedValue(okJson([]));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1", "addr2"], () => {});
+            await provider.watchAddresses(["addr1", "addr2"], () => {});
+
+            expect(FakeWebSocket.instances).toHaveLength(1);
+        });
+
+        it("fans websocket messages out to every subscriber", async () => {
+            mockFetch.mockResolvedValue(okJson([]));
+            const first = vi.fn();
+            const second = vi.fn();
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1"], first);
+            await provider.watchAddresses(["addr1"], second);
+
+            await FakeWebSocket.instances[0].dispatch(
+                "message",
+                wsMessage("addr1", [confirmedTx("aa")]),
+            );
+
+            expect(first).toHaveBeenCalledTimes(1);
+            expect(second).toHaveBeenCalledTimes(1);
+            expect(first.mock.calls[0][0]).toEqual([expect.objectContaining({ txid: "aa" })]);
+        });
+
+        it("keeps the shared watcher alive until the last subscriber stops", async () => {
+            mockFetch.mockResolvedValue(okJson([]));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const stopFirst = await provider.watchAddresses(["addr1"], () => {});
+            const stopSecond = await provider.watchAddresses(["addr1"], () => {});
+            const ws = FakeWebSocket.instances[0];
+
+            stopFirst();
+            expect(ws.closed).toBe(false);
+
+            stopSecond();
+            expect(ws.closed).toBe(true);
+        });
+
+        it("ignores a repeated stop() from the same subscriber", async () => {
+            mockFetch.mockResolvedValue(okJson([]));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const stopFirst = await provider.watchAddresses(["addr1"], () => {});
+            await provider.watchAddresses(["addr1"], () => {});
+            const ws = FakeWebSocket.instances[0];
+
+            stopFirst();
+            stopFirst();
+
+            // The second subscriber is still live, so a double-stop from the
+            // first must not drop the refcount to zero underneath it.
+            expect(ws.closed).toBe(false);
+        });
+
+        it("opens a fresh watcher after the previous one was fully released", async () => {
+            mockFetch.mockResolvedValue(okJson([]));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const stop = await provider.watchAddresses(["addr1"], () => {});
+            stop();
+
+            // A retired watch must not linger in the registry: handing a new
+            // caller the closed transport would leave it silently unwatched.
+            const callback = vi.fn();
+            await provider.watchAddresses(["addr1"], callback);
+
+            expect(FakeWebSocket.instances).toHaveLength(2);
+            expect(FakeWebSocket.instances[1].closed).toBe(false);
+
+            await FakeWebSocket.instances[1].dispatch(
+                "message",
+                wsMessage("addr1", [confirmedTx("aa")]),
+            );
+            expect(callback).toHaveBeenCalledTimes(1);
+        });
+
+        it("does not share between different address sets", async () => {
+            mockFetch.mockResolvedValue(okJson([]));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1"], () => {});
+            await provider.watchAddresses(["addr2"], () => {});
+
+            expect(FakeWebSocket.instances).toHaveLength(2);
+        });
+    });
+});
