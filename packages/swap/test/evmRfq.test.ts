@@ -164,6 +164,51 @@ const EvmReceiveRfqRequest = strictObject({
 const SOLVER_SEND_PAIR = /^arkade:BTC->ethereum:0x[0-9a-f]{40}$/;
 const SOLVER_RECEIVE_PAIR = /^ethereum:0x[0-9a-f]{40}->arkade:BTC$/;
 
+/**
+ * Exactly what `evmSendRfqQuotePayload` and `evmReceiveRfqQuotePayload` emit.
+ *
+ * The quote direction needs its own pin, and for a different reason than the
+ * request direction. A request is validated by the solver, so getting it wrong
+ * produces a refusal; a QUOTE is validated by nobody but us, so a reader that
+ * looks for `receiver_pkscript` simply never finds it and reports a broken
+ * quote against a solver that sent a correct one. Without this, the only thing
+ * checking those names is the fixture below — which this file also wrote, so
+ * it would agree with any typo.
+ */
+const SOLVER_SEND_QUOTE_KEYS = [
+    "v",
+    "type",
+    "rfq_id",
+    "pair",
+    "from_amount",
+    "to_amount",
+    "solver_pubkey",
+    "valid_until",
+    "refund_locktime",
+    "profile",
+];
+const SOLVER_SEND_QUOTE_PROFILE_KEYS = [
+    "payment_hash",
+    "lockup_address",
+    "receiver_pk_script",
+    "evm_timeout_block",
+    "evm_contract_address",
+    "evm_chain_id",
+    "min_confirmations",
+    "min_age_seconds",
+];
+const SOLVER_RECEIVE_QUOTE_KEYS = SOLVER_SEND_QUOTE_KEYS;
+const SOLVER_RECEIVE_QUOTE_PROFILE_KEYS = [
+    "payment_hash",
+    "lockup_address",
+    "solver_refund_pk_script",
+    "evm_contract_address",
+    "evm_chain_id",
+    "evm_claim_address",
+    "min_confirmations",
+    "min_age_seconds",
+];
+
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
 const sendRequest = (): Record<string, unknown> =>
@@ -271,6 +316,55 @@ describe("solver parity", () => {
         expect(evmSendPair(USDC_CHECKSUMMED)).toMatch(SOLVER_SEND_PAIR);
         expect(evmReceivePair(USDC_CHECKSUMMED)).toMatch(SOLVER_RECEIVE_PAIR);
         expect(USDC_CHECKSUMMED).not.toMatch(/^0x[0-9a-f]{40}$/);
+    });
+
+    it("the quote fixtures carry exactly what the solver's builders emit", () => {
+        // Both directions, and BOTH WAYS round: a key the solver sends and we
+        // do not is a field the reader will never check, and a key we invented
+        // is a field no solver will ever send — the second reads as a broken
+        // solver, which is the harder one to diagnose.
+        const send = sendQuote() as unknown as Record<string, unknown>;
+        expect(Object.keys(send).sort()).toEqual([...SOLVER_SEND_QUOTE_KEYS].sort());
+        expect(Object.keys(send.profile as object).sort()).toEqual(
+            [...SOLVER_SEND_QUOTE_PROFILE_KEYS].sort(),
+        );
+        const receive = receiveQuote() as unknown as Record<string, unknown>;
+        expect(Object.keys(receive).sort()).toEqual([...SOLVER_RECEIVE_QUOTE_KEYS].sort());
+        expect(Object.keys(receive.profile as object).sort()).toEqual(
+            [...SOLVER_RECEIVE_QUOTE_PROFILE_KEYS].sort(),
+        );
+    });
+
+    it("the readers require every profile key the solver actually sends", () => {
+        // The fixture above is what the solver emits; dropping any one of its
+        // profile keys must be noticed. Anything the reader tolerates missing
+        // is a field the funding path would later read as `undefined`.
+        const withoutKey = (
+            quote: Record<string, unknown>,
+            key: string,
+        ): Record<string, unknown> => {
+            const profile = { ...(quote.profile as Record<string, unknown>) };
+            delete profile[key];
+            return { ...quote, profile };
+        };
+        for (const key of SOLVER_SEND_QUOTE_PROFILE_KEYS) {
+            expect(() =>
+                readEvmSendQuote(
+                    withoutKey(sendQuote() as unknown as Record<string, unknown>, key),
+                    {
+                        tokenAddress: USDC,
+                    },
+                ),
+            ).toThrow(new RegExp(`profile\\.${key}`));
+        }
+        for (const key of SOLVER_RECEIVE_QUOTE_PROFILE_KEYS) {
+            expect(() =>
+                readEvmReceiveQuote(
+                    withoutKey(receiveQuote() as unknown as Record<string, unknown>, key),
+                    { tokenAddress: USDC },
+                ),
+            ).toThrow(new RegExp(`profile\\.${key}`));
+        }
     });
 
     it("the strict validator itself refuses what the solver would", () => {
@@ -552,6 +646,66 @@ describe("quote readers", () => {
         ).toThrow(/from_amount must be a decimal string/);
     });
 
+    it("refuses an address field that is PRESENT but not an address", () => {
+        // Distinct from the missing-field case below, and it has to be tested
+        // separately: a check that only fires on absence would pass that one
+        // and let `evm_contract_address: "0x0"` straight through. These are the
+        // two values a client later has to talk to a chain with.
+        const withProfile = (
+            quote: Record<string, unknown>,
+            over: Record<string, unknown>,
+        ): Record<string, unknown> => ({
+            ...quote,
+            profile: { ...(quote.profile as Record<string, unknown>), ...over },
+        });
+        for (const bad of ["0x0", "", "not-an-address", `${ERC20_SWAP}00`, ERC20_SWAP.slice(2)]) {
+            expect(() =>
+                readEvmSendQuote(
+                    withProfile(sendQuote() as unknown as Record<string, unknown>, {
+                        evm_contract_address: bad,
+                    }),
+                    { tokenAddress: USDC },
+                ),
+            ).toThrow(/profile\.evm_contract_address must be 0x then 40 hex/);
+            expect(() =>
+                readEvmReceiveQuote(
+                    withProfile(receiveQuote() as unknown as Record<string, unknown>, {
+                        evm_claim_address: bad,
+                    }),
+                    { tokenAddress: USDC },
+                ),
+            ).toThrow(/profile\.evm_claim_address must be 0x then 40 hex/);
+        }
+    });
+
+    it("refuses a pkScript that is present but not hex", () => {
+        const withProfile = (
+            quote: Record<string, unknown>,
+            over: Record<string, unknown>,
+        ): Record<string, unknown> => ({
+            ...quote,
+            profile: { ...(quote.profile as Record<string, unknown>), ...over },
+        });
+        for (const bad of ["", "zz", "5120AB", 5120]) {
+            expect(() =>
+                readEvmSendQuote(
+                    withProfile(sendQuote() as unknown as Record<string, unknown>, {
+                        receiver_pk_script: bad,
+                    }),
+                    { tokenAddress: USDC },
+                ),
+            ).toThrow(/profile\.receiver_pk_script must be lowercase hex/);
+            expect(() =>
+                readEvmReceiveQuote(
+                    withProfile(receiveQuote() as unknown as Record<string, unknown>, {
+                        solver_refund_pk_script: bad,
+                    }),
+                    { tokenAddress: USDC },
+                ),
+            ).toThrow(/profile\.solver_refund_pk_script must be lowercase hex/);
+        }
+    });
+
     it("refuses a quote missing a field the funding path will read", () => {
         const drop = (key: string): Record<string, unknown> => {
             const quote = sendQuote() as unknown as Record<string, unknown>;
@@ -573,15 +727,44 @@ describe("quote readers", () => {
                 new RegExp(`profile\\.${key}`),
             );
         }
+    });
+
+    it("refuses a quote missing an ENVELOPE field, including the two deadlines", () => {
+        // `valid_until` and `refund_locktime` matter more than the rest, and
+        // they fail in a way that reads as success. `assertFundable` compares
+        // `now >= quote.valid_until` and `refund_locktime - now`; against
+        // `undefined` both are false and NaN, so a missing deadline does not
+        // fail its gate — it deletes it, and the swap funds with no window
+        // check at all.
+        const dropEnvelope = (
+            quote: Record<string, unknown>,
+            key: string,
+        ): Record<string, unknown> => {
+            const copy = { ...quote };
+            delete copy[key];
+            return copy;
+        };
+        for (const key of ["solver_pubkey", "valid_until", "refund_locktime"]) {
+            expect(() =>
+                readEvmSendQuote(
+                    dropEnvelope(sendQuote() as unknown as Record<string, unknown>, key),
+                    { tokenAddress: USDC },
+                ),
+            ).toThrow(new RegExp(key));
+            expect(() =>
+                readEvmReceiveQuote(
+                    dropEnvelope(receiveQuote() as unknown as Record<string, unknown>, key),
+                    { tokenAddress: USDC },
+                ),
+            ).toThrow(new RegExp(key));
+        }
+        // …and a profile that is missing outright, not merely short a key.
         expect(() =>
-            readEvmReceiveQuote(
-                {
-                    ...(receiveQuote() as unknown as Record<string, unknown>),
-                    refund_locktime: undefined,
-                },
+            readEvmSendQuote(
+                dropEnvelope(sendQuote() as unknown as Record<string, unknown>, "profile"),
                 { tokenAddress: USDC },
             ),
-        ).toThrow(/refund_locktime/);
+        ).toThrow(/carries no profile/);
     });
 
     it("accepts min_age_seconds of zero — depth-only is a solver's choice", () => {
