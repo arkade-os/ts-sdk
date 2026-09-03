@@ -286,6 +286,28 @@ describe("EsploraProvider.watchAddresses", () => {
             expect(callback.mock.calls[0][0]).toHaveLength(1);
         });
 
+        it("warns that deposits may be unreported when it adopts a late baseline", async () => {
+            // With no creation-time baseline there is no reference point, so the
+            // first successful history fetch has to be adopted as one — and
+            // anything that arrived in between is indistinguishable from
+            // pre-existing history. That case can't be fixed here, but it must
+            // not be silent: a deposit going unreported is exactly the thing an
+            // operator needs told.
+            mockFetch.mockRejectedValueOnce(new Error("explorer down"));
+            mockFetch.mockResolvedValue(okJson([confirmedTx("arrived-in-the-gap")]));
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1"], callback);
+
+            await FakeWebSocket.instances[0].dispatch("error");
+            await flush();
+
+            expect(callback).not.toHaveBeenCalled();
+            expect(
+                warn.mock.calls.some((c) => /may not have been reported/i.test(String(c[0]))),
+            ).toBe(true);
+        });
+
         it("keeps watching when the creation-time baseline fetch fails", async () => {
             mockFetch.mockRejectedValueOnce(new Error("explorer down"));
             mockFetch.mockResolvedValue(okJson([]));

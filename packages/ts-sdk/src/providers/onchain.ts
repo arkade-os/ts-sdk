@@ -489,9 +489,20 @@ export class EsploraProvider implements OnchainProvider {
                     if (baselined) {
                         report(currentTxs);
                     } else {
-                        // The creation-time baseline failed. Adopt current
-                        // history now, so we compare from here rather than
-                        // reporting the entire address history as incoming.
+                        // The creation-time baseline failed, so this fetch is
+                        // the first reference point we have. Anything that
+                        // arrived between the watch starting and now is
+                        // indistinguishable from history that predates it, and
+                        // is adopted as known rather than reported — the
+                        // alternative is announcing an entire address history as
+                        // incoming, which is the worse of the two.
+                        //
+                        // Say so. A deposit going unreported is precisely what
+                        // an operator needs told, and staying quiet about it is
+                        // how a missing payment becomes unexplainable.
+                        console.warn(
+                            `Esplora address watch established its baseline late for ${addresses.length} address(es); deposits arriving before now may not have been reported`,
+                        );
                         for (const tx of currentTxs) seen.add(txKey(tx));
                         baselined = true;
                     }
