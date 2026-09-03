@@ -22,6 +22,7 @@ import {
     arkadeSwapRequest,
     assertFundable,
     assertPairLength,
+    deriveLightningSend,
     expectQuote,
     httpTransport,
     lightningSendRequest,
@@ -246,6 +247,84 @@ describe("lightningSendContract", () => {
     });
 });
 
+// The send-leg twin of rfqReceive's shape pins. They arrived on the receive
+// leg only because the send derivation was reachable then just through
+// `requestLightningSend`, which needs a wallet; as a pure core it takes the
+// same three, and the shape it picks is what gets funded.
+describe("deriveLightningSend", () => {
+    const PAYMENT_HASH = hex.encode(sha256(new Uint8Array(32).fill(7)));
+    const contractParams = {
+        solverPubkey: key(1),
+        operatorPubkey: key(3),
+        paymentHash: PAYMENT_HASH,
+        refundLocktime: 1_800_000_000,
+        claimDelay: 4096,
+        emulatorPubkey: key(9),
+        refundPkScript: p2tr(key(5)),
+        senderPubkey: key(13),
+        receiverPkScript: p2tr(key(1)),
+    };
+    const fullSuite = lightningSendContract(contractParams);
+    const legacySuite = lightningSendContract({ ...contractParams, legacy: "preTimelockedRefund" });
+    const fullAddress = fullSuite.address("tark", key(3)).encode();
+    const legacyAddress = legacySuite.address("tark", key(3)).encode();
+
+    const derive = (lockupAddress: string) =>
+        deriveLightningSend({
+            quote: quoteFixture({
+                refund_locktime: 1_800_000_000,
+                profile: {
+                    lockup_address: lockupAddress,
+                    receiver_pk_script: hex.encode(p2tr(key(1))),
+                },
+            }),
+            paymentHash: PAYMENT_HASH,
+            senderPubkey: key(13),
+            refundPkScript: p2tr(key(5)),
+            operatorPubkey: key(3),
+            emulatorPubkey: key(9),
+            claimDelay: 4096,
+            hrp: "tark",
+        });
+
+    it("a nine-leaf-quoting solver matches the FULL-suite candidate, not the legacy one", () => {
+        // The two shapes must actually differ, or the assertions below prove nothing.
+        expect(fullAddress).not.toBe(legacyAddress);
+
+        const derived = derive(fullAddress);
+
+        expect(derived.address).toBe(fullAddress);
+        expect(derived.contractParams.legacy).toBeUndefined();
+        expect(hex.encode(derived.script.pkScript)).toBe(hex.encode(fullSuite.pkScript));
+        expect(hex.encode(derived.swapPkScript)).toBe(hex.encode(fullSuite.pkScript));
+    });
+
+    it("an eight-leaf-quoting solver matches the LEGACY candidate", () => {
+        const derived = derive(legacyAddress);
+
+        expect(derived.address).toBe(legacyAddress);
+        // ...and the matched shape travels in contractParams, so a record
+        // persisted from it rebuilds the lockup the solver actually funded.
+        expect(derived.contractParams.legacy).toBe("preTimelockedRefund");
+        expect(hex.encode(derived.script.pkScript)).toBe(hex.encode(legacySuite.pkScript));
+        expect(hex.encode(derived.swapPkScript)).toBe(hex.encode(legacySuite.pkScript));
+    });
+
+    it("a quote matching NEITHER shape throws AddressMismatch carrying both candidates", () => {
+        const mismatch = ((): unknown => {
+            try {
+                derive("tark1qwrong");
+                return undefined;
+            } catch (error) {
+                return error;
+            }
+        })();
+        expect(mismatch).toBeInstanceOf(AddressMismatch);
+        // Newest first — the full suite, then the legacy rebuild.
+        expect((mismatch as AddressMismatch).derived).toEqual([fullAddress, legacyAddress]);
+    });
+});
+
 describe("unilateralClaimDelay", () => {
     it("rounds the operator's exit delay UP to BIP68 granularity, as the solver does", () => {
         expect(unilateralClaimDelay(4096)).toBe(4096);
@@ -467,6 +546,25 @@ describe("guardrails", () => {
         expect(() => assertFundable({ quote: short, invoiceExpiresAt: now + 7200, now })).toThrow(
             /headroom/,
         );
+    });
+
+    it("assertFundable refuses a valid_until it cannot compare against", () => {
+        const now = 1_800_000_000;
+        // The wire is JSON: `valid_until` is typed number here but nothing
+        // typechecks the solver's payload, and `now >= NaN` is false — the
+        // expiry gate would pass rather than fail.
+        for (const valid_until of [Number.NaN, Number.POSITIVE_INFINITY, "soon", undefined]) {
+            const quote = quoteFixture({ valid_until: valid_until as unknown as number });
+            const refusal = ((): unknown => {
+                try {
+                    assertFundable({ quote, invoiceExpiresAt: now + 3600, now });
+                    return undefined;
+                } catch (error) {
+                    return error;
+                }
+            })();
+            expect((refusal as { reason?: string }).reason).toBe("quote_malformed");
+        }
     });
 });
 

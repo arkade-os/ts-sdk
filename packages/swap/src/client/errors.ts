@@ -35,8 +35,19 @@ import type { CorridorId } from "./corridor";
  */
 export { SwapRefusal };
 
-/** The four checks §3.1 runs on every quote. Closed, so M3 fits into it. */
-export type QuoteCheck = "pair" | "lockup_address" | "invoice" | "refund_window";
+/**
+ * The checks §3.1 runs on every quote, before it is returned.
+ *
+ * Four of them are the spec's, and the fifth is M3's answer to G2. §3.1 states
+ * that "who answered is a transport property, not one of those four checks",
+ * and the two dev transports authenticate nobody — so leaving attestation at
+ * the transport makes verification skippable by configuration, which is the one
+ * thing verification may not be. `responder` is therefore *delivered* as a
+ * transport property and *run* as a check, and §3.1's sentence narrows to
+ * addressed mode with it: published RFQ (§10) attributes each bid by its own
+ * signature and inherits no transport attestation at all.
+ */
+export type QuoteCheck = "pair" | "lockup_address" | "invoice" | "refund_window" | "responder";
 
 /**
  * `to` is underdetermined — it parses as nothing, as more than one thing, or as
@@ -70,7 +81,11 @@ export class AmbiguousDestination extends Error {
  * included, until the manager owns the trader's L1 refund path end to end.
  *
  * Boundary: route resolution, before RFQ disclosure, artifact creation,
- * persistence or funding. Also the alias layer, for a rail no corridor serves.
+ * persistence or funding. Also the alias layer, for a rail no corridor serves,
+ * and `quote()` for a pair no discovered market serves on the active snapshot —
+ * a resolved route with an empty eligible set, which is an absence of a
+ * market-shaped thing rather than a wrong pairing, and so this member rather
+ * than a seventeenth.
  */
 export class UnsupportedRoute extends Error {
     override readonly name = "UnsupportedRoute";
@@ -89,7 +104,11 @@ export class UnsupportedRoute extends Error {
  * excludes one, and a caller that needs offline resolution warms or injects a
  * snapshot.
  *
- * Boundary: `resolve()` only — `quote()` may fetch discovery itself.
+ * Boundary: `resolve()`, and `quote()` when the fetch it is allowed to make
+ * leaves it with nothing either — no registry configured, an unindexed network,
+ * or an unreachable registry with no cache behind it. Fetching is what `quote()`
+ * may do that `resolve()` may not; having no market data at all is the same
+ * condition on both.
  */
 export class DiscoverySnapshotUnavailable extends Error {
     override readonly name = "DiscoverySnapshotUnavailable";
@@ -148,18 +167,27 @@ export class QuoteVerificationFailed extends Error {
         readonly check: QuoteCheck,
         expected?: string,
         actual?: string,
+        /** The gate or derivation this folds in, kept as the `cause` chain:
+         * `expected`/`actual` say what disagreed, and the cause says which
+         * check said so. */
+        options?: ErrorOptions,
     ) {
-        super(`quote failed the ${check} check — refusing to fund`);
+        super(`quote failed the ${check} check — refusing to fund`, options);
         this.expected = expected;
         this.actual = actual;
     }
 }
 
 /**
- * `accept()` past the quote's TTL. The client never silently re-quotes: the
- * price the caller saw is not the price they would get.
+ * A quote past its TTL, or so close to it that acting on it is the same thing.
  *
- * Boundary: `accept()`, before persistence.
+ * Two boundaries, one condition. At `accept()` it is the spec's: the client
+ * never silently re-quotes, because the price the caller saw is not the price
+ * they would get. At `quote()` it is `policy.quoteTtlFloorSeconds` — a quote arriving
+ * with less validity left than the caller can use is expired on arrival, and
+ * saying so beats handing back terms that die between the return and the accept.
+ *
+ * Boundary: `quote()`, against the policy floor; `accept()`, before persistence.
  */
 export class QuoteExpired extends Error {
     override readonly name = "QuoteExpired";
