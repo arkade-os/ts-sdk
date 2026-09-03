@@ -472,6 +472,36 @@ export class EsploraProvider implements OnchainProvider {
 
             let failures = 0;
 
+            /**
+             * Cheap stand-in for "has anything changed at these addresses".
+             * `undefined` means "cannot answer" — never something mistakable for
+             * "unchanged", which would hold a deposit back until it recovered.
+             */
+            const utxoFingerprint = async (): Promise<string | undefined> => {
+                try {
+                    const perAddress = await Promise.all(
+                        addresses.map((address) => this.getCoins(address)),
+                    );
+                    const coins = perAddress.flat();
+
+                    // An unrecognised shape can't be summarised; treat it as
+                    // "cannot answer" rather than guess.
+                    const usable = coins.every(
+                        (coin) => typeof coin?.txid === "string" && typeof coin?.vout === "number",
+                    );
+                    if (!usable) return undefined;
+
+                    return coins
+                        .map((coin) => `${coin.txid}:${coin.vout}:${coin.status?.block_time ?? ""}`)
+                        .sort()
+                        .join(",");
+                } catch {
+                    return undefined;
+                }
+            };
+
+            let lastFingerprint: string | undefined;
+
             // This loop's identity. `stopped` alone is not enough: the watch can
             // stay alive while *this* loop is retired, which is what happens when
             // the socket comes back.
@@ -489,6 +519,19 @@ export class EsploraProvider implements OnchainProvider {
 
             const tick = async () => {
                 try {
+                    // History is the expensive request and returns the same thing
+                    // every cycle in the steady state, so only pay for it once
+                    // the UTXO set says something moved.
+                    const fingerprint = await utxoFingerprint();
+                    if (!isCurrentLoop()) return;
+
+                    if (fingerprint !== undefined && fingerprint === lastFingerprint) {
+                        failures = 0;
+                        schedule();
+                        return;
+                    }
+                    lastFingerprint = fingerprint;
+
                     const currentTxs = await getAllTxs();
 
                     // teardown may have run while that fetch was in flight, or

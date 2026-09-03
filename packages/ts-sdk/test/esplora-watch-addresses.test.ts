@@ -73,9 +73,16 @@ const wsMessage = (address: string, txs: ExplorerTransaction[]) => ({
     }),
 });
 
-/** Let queued microtasks (and any awaited fetch continuations) drain. */
+/**
+ * Let queued microtasks (and any awaited fetch continuations) drain.
+ *
+ * Generous on purpose: a poll cycle now awaits the cheap UTXO probe, then the
+ * history fetch, each of which awaits a mocked response and its `.json()`. Too
+ * few turns here reads as "the callback never fired" when the chain simply
+ * hadn't finished.
+ */
 const flush = async () => {
-    for (let i = 0; i < 5; i++) await Promise.resolve();
+    for (let i = 0; i < 40; i++) await Promise.resolve();
 };
 
 const confirmedTxAt = (txid: string, blockHeight: number): ExplorerTransaction =>
@@ -183,11 +190,13 @@ describe("EsploraProvider.watchAddresses", () => {
             await ws.dispatch("error");
             await flush();
 
-            // One fallback fetch, not one per error event.
-            expect(mockFetch).toHaveBeenCalledTimes(1);
+            // One fallback cycle — the cheap probe plus the history it opened —
+            // not one cycle per error event.
+            expect(mockFetch).toHaveBeenCalledTimes(2);
 
-            // And one loop: a single interval yields a single fetch round, not
-            // one per stacked timer.
+            // And one loop: a single interval yields a single cycle, not one per
+            // stacked timer. Here the UTXO set is unchanged, so the cycle costs
+            // only the probe.
             mockFetch.mockClear();
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
             expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -362,6 +371,85 @@ describe("EsploraProvider.watchAddresses", () => {
         });
     });
 
+    describe("cheap change gate", () => {
+        // The incident this whole branch came from was steady-state polling with
+        // nothing arriving: thousands of watchers each refetching full address
+        // history every 15s. `/utxo` is a fraction of the size, so probing it
+        // first and only paying for history when something actually changed is
+        // where the bandwidth goes.
+        const utxo = (txid: string, vout: number) => ({
+            txid,
+            vout,
+            value: 1000,
+            status: { confirmed: true, block_height: 1, block_time: 1 },
+        });
+
+        const urlsOf = () => mockFetch.mock.calls.map((c) => String(c[0]));
+
+        it("skips the history fetch when the utxo set is unchanged", async () => {
+            let coins: unknown[] = [utxo("existing", 0)];
+            mockFetch.mockImplementation((url: string) =>
+                Promise.resolve(url.includes("/utxo") ? okJson(coins) : okJson([])),
+            );
+
+            const provider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+            });
+            await provider.watchAddresses(["addr1"], () => {});
+
+            mockFetch.mockClear();
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+
+            expect(urlsOf().some((u) => u.includes("/utxo"))).toBe(true);
+            expect(urlsOf().some((u) => u.includes("/txs"))).toBe(false);
+        });
+
+        it("falls through to history when the utxo set changes", async () => {
+            let coins: unknown[] = [utxo("existing", 0)];
+            let history: unknown[] = [confirmedTx("existing")];
+            mockFetch.mockImplementation((url: string) =>
+                Promise.resolve(url.includes("/utxo") ? okJson(coins) : okJson(history)),
+            );
+
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+            });
+            await provider.watchAddresses(["addr1"], callback);
+
+            coins = [utxo("existing", 0), utxo("arrived", 0)];
+            history = [confirmedTx("existing"), confirmedTx("arrived")];
+            mockFetch.mockClear();
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+
+            expect(urlsOf().some((u) => u.includes("/txs"))).toBe(true);
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback.mock.calls[0][0]).toEqual([
+                expect.objectContaining({ txid: "arrived" }),
+            ]);
+        });
+
+        it("falls through to history when the utxo probe fails", async () => {
+            // Fail open: a probe that cannot answer must never be read as
+            // "nothing changed", or a deposit waits for the probe to recover.
+            mockFetch.mockImplementation((url: string) =>
+                url.includes("/utxo")
+                    ? Promise.reject(new Error("utxo unavailable"))
+                    : Promise.resolve(okJson([])),
+            );
+
+            const provider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+            });
+            await provider.watchAddresses(["addr1"], () => {});
+
+            mockFetch.mockClear();
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+
+            expect(urlsOf().some((u) => u.includes("/txs"))).toBe(true);
+        });
+    });
+
     describe("late baseline anchor", () => {
         // When the creation-time history fetch fails, the chain tip is a second
         // chance at a reference point: it is a far smaller request, so it often
@@ -458,7 +546,8 @@ describe("EsploraProvider.watchAddresses", () => {
             await socket().dispatch("close");
             await flush();
 
-            expect(mockFetch).toHaveBeenCalledTimes(1); // fell back to polling
+            // Fell back to polling: the cheap probe plus the history it opened.
+            expect(mockFetch).toHaveBeenCalledTimes(2);
 
             await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
             expect(FakeWebSocket.instances).toHaveLength(2); // and retried
@@ -482,7 +571,7 @@ describe("EsploraProvider.watchAddresses", () => {
 
             await socket().dispatch("error");
             await flush();
-            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(mockFetch).toHaveBeenCalledTimes(2); // probe + history
 
             await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
             await socket().dispatch("open");
@@ -680,22 +769,32 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("backs off and retries after a failed poll cycle, rather than going blind", async () => {
-            mockFetch.mockResolvedValueOnce(okJson([])); // creation-time baseline
-            mockFetch.mockRejectedValueOnce(new Error("explorer down")); // first cycle
-            mockFetch.mockResolvedValue(okJson([]));
+            // Target the history endpoint specifically: the cheap probe fails
+            // open, so failing it would not exercise the backoff at all.
+            const historyCalls = () =>
+                mockFetch.mock.calls.filter((c) => String(c[0]).includes("/txs")).length;
+
+            mockFetch.mockImplementation((url: string) => {
+                if (url.includes("/utxo")) return Promise.reject(new Error("probe unavailable"));
+                // 1st history call is the creation-time baseline; fail the 2nd,
+                // which is the first poll cycle.
+                return historyCalls() === 2
+                    ? Promise.reject(new Error("explorer down"))
+                    : Promise.resolve(okJson([]));
+            });
 
             await polling().watchAddresses(["addr1"], () => {});
 
             // A failed cycle must still leave a retry armed.
             expect(vi.getTimerCount()).toBe(1);
-            expect(mockFetch).toHaveBeenCalledTimes(2);
+            expect(historyCalls()).toBe(2);
 
             // One failure doubles the delay, so the plain interval is too early.
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
-            expect(mockFetch).toHaveBeenCalledTimes(2);
+            expect(historyCalls()).toBe(2);
 
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
-            expect(mockFetch).toHaveBeenCalledTimes(3);
+            expect(historyCalls()).toBe(3);
         });
 
         it("warns when it degrades from websocket to HTTP polling", async () => {
