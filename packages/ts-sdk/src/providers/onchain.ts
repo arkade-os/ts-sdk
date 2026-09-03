@@ -377,6 +377,48 @@ export class EsploraProvider implements OnchainProvider {
             return txArrays.flat();
         };
 
+        /**
+         * Everything already reported (or predating the watch), shared by both
+         * transports and held for the watch's whole life — not rebuilt per poll
+         * session. That is what lets a deposit which landed while the socket was
+         * down still be reported: it is absent from this set, so the first poll
+         * pass after the failure sees it as new.
+         */
+        const seen = new Set<string>();
+        let baselined = false;
+
+        /**
+         * Establish what predates the watch, so the first poll pass has
+         * something to compare against other than "everything is new".
+         *
+         * Seeded additively rather than by replacing the set: the socket may
+         * report a transaction while this fetch is still in flight, and that
+         * report must not be undone (nor duplicated) when the fetch lands.
+         */
+        const baseline = (async () => {
+            try {
+                for (const tx of await getAllTxs()) seen.add(txKey(tx));
+                baselined = true;
+            } catch (error) {
+                // Degrade rather than fail the watch. The first poll pass adopts
+                // current history as the baseline instead, which can still
+                // swallow a deposit that lands before it — but never invents one
+                // by reporting the whole address history as incoming.
+                console.warn(
+                    "Could not baseline watched addresses; the first poll pass will establish it instead:",
+                    error,
+                );
+            }
+        })();
+
+        /** Deliver only what hasn't been reported yet, from either transport. */
+        const report = (txs: ExplorerTransaction[]) => {
+            const fresh = txs.filter((tx) => !seen.has(txKey(tx)));
+            if (fresh.length === 0) return;
+            for (const tx of fresh) seen.add(txKey(tx));
+            emit(fresh);
+        };
+
         const startPolling = async () => {
             // `pollStarted` makes this idempotent: a WebSocket can emit `error`
             // more than once, and each call used to install another interval
@@ -391,10 +433,6 @@ export class EsploraProvider implements OnchainProvider {
                 `Esplora websocket unavailable (${wsUrl}); falling back to HTTP polling every ${this.pollingInterval}ms for ${addresses.length} address(es) while retrying the socket`,
             );
 
-            // Undefined until the first successful pass, which only establishes
-            // the baseline — transactions that predate the watch aren't
-            // "incoming" and must not be reported.
-            let seen: Set<string> | undefined;
             let failures = 0;
 
             const schedule = () => {
@@ -417,20 +455,19 @@ export class EsploraProvider implements OnchainProvider {
                     // until the process exits.
                     if (stopped) return;
 
-                    if (seen === undefined) {
-                        seen = new Set(currentTxs.map(txKey));
+                    if (baselined) {
+                        report(currentTxs);
                     } else {
-                        const newTxs = currentTxs.filter((tx) => !seen!.has(txKey(tx)));
-                        if (newTxs.length > 0) {
-                            newTxs.forEach((tx) => seen!.add(txKey(tx)));
-                            emit(newTxs);
-                        }
+                        // The creation-time baseline failed. Adopt current
+                        // history now, so we compare from here rather than
+                        // reporting the entire address history as incoming.
+                        for (const tx of currentTxs) seen.add(txKey(tx));
+                        baselined = true;
                     }
                     failures = 0;
                 } catch (error) {
-                    // Includes the baseline pass: a transient explorer failure
-                    // backs off and retries rather than leaving a watch that is
-                    // registered but permanently blind.
+                    // A transient explorer failure backs off and retries rather
+                    // than leaving a watch that is registered but blind.
                     failures = Math.min(failures + 1, MAX_POLL_BACKOFF_EXPONENT);
                     console.error("Error polling watched addresses:", error);
                 }
@@ -438,8 +475,14 @@ export class EsploraProvider implements OnchainProvider {
                 schedule();
             };
 
-            // Seed straight away so the baseline is in place without waiting a
-            // full interval, then fall into the scheduled loop.
+            // Don't compare against a half-built `seen`: if the creation-time
+            // baseline is still in flight, everything predating the watch would
+            // look new.
+            await baseline;
+            if (stopped) return;
+
+            // Poll straight away rather than waiting a full interval — this is
+            // standing in for a dead socket, so the gap matters.
             await tick();
         };
 
@@ -536,7 +579,7 @@ export class EsploraProvider implements OnchainProvider {
                             newTxs.push(...aux[address][type].filter(isExplorerTransaction));
                         }
                     }
-                    emit(newTxs);
+                    report(newTxs);
                 } catch (error) {
                     console.error("Failed to process WebSocket message:", error);
                 }
@@ -585,7 +628,12 @@ export class EsploraProvider implements OnchainProvider {
             subscribers.clear();
         };
 
-        const started: Promise<void> = this.forcePolling ? startPolling() : connect();
+        // `startPolling` already waits for the baseline; on the socket path,
+        // connect first (so the subscription is in place immediately) and then
+        // let callers await the baseline, so the watch is armed on return.
+        const started: Promise<void> = this.forcePolling
+            ? startPolling()
+            : connect().then(() => baseline);
 
         return { subscribers, teardown, started };
     }

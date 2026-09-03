@@ -118,11 +118,13 @@ describe("EsploraProvider.watchAddresses", () => {
             // The fallback poll awaits a full address-history fetch *before* it
             // assigns its interval handle. A caller that stops inside that
             // window must not end up with an interval nothing can clear.
-            const pending = deferred<ReturnType<typeof okJson>>();
-            mockFetch.mockReturnValue(pending.promise);
-
+            mockFetch.mockResolvedValueOnce(okJson([])); // creation-time baseline
             const provider = new EsploraProvider("http://localhost:3000");
             const stop = await provider.watchAddresses(["addr1"], () => {});
+
+            // Now hold the fallback's own fetch open.
+            const pending = deferred<ReturnType<typeof okJson>>();
+            mockFetch.mockReturnValue(pending.promise);
 
             const errorHandled = FakeWebSocket.instances[0].dispatch("error");
             await flush(); // poll() is now suspended on the initial fetch
@@ -142,12 +144,13 @@ describe("EsploraProvider.watchAddresses", () => {
             const provider = new EsploraProvider("http://localhost:3000");
             const stop = await provider.watchAddresses(["addr1"], () => {});
             const ws = FakeWebSocket.instances[0];
+            mockFetch.mockClear(); // discount the creation-time baseline
 
             await ws.dispatch("error");
             await ws.dispatch("error");
             await flush();
 
-            // One baseline fetch, not one per error event.
+            // One fallback fetch, not one per error event.
             expect(mockFetch).toHaveBeenCalledTimes(1);
 
             // And one loop: a single interval yields a single fetch round, not
@@ -165,6 +168,7 @@ describe("EsploraProvider.watchAddresses", () => {
 
             const provider = new EsploraProvider("http://localhost:3000");
             const stop = await provider.watchAddresses(["addr1"], () => {});
+            mockFetch.mockClear(); // discount the creation-time baseline
 
             stop();
 
@@ -190,11 +194,84 @@ describe("EsploraProvider.watchAddresses", () => {
         });
     });
 
+    describe("baseline", () => {
+        it("reports a deposit that landed while the socket was down", async () => {
+            // The gap this closes: the fallback used to treat whatever history
+            // it found on startup as "already known", so a deposit arriving
+            // during the outage — after the socket died, before polling began —
+            // was seeded as old and never reported at all.
+            mockFetch.mockResolvedValue(okJson([]));
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1"], callback);
+
+            mockFetch.mockResolvedValue(okJson([confirmedTx("during-outage")]));
+            await FakeWebSocket.instances[0].dispatch("error");
+            await flush();
+
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback.mock.calls[0][0]).toEqual([
+                expect.objectContaining({ txid: "during-outage" }),
+            ]);
+        });
+
+        it("does not report transactions that predate the watch", async () => {
+            mockFetch.mockResolvedValue(okJson([confirmedTx("old")]));
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1"], callback);
+
+            await FakeWebSocket.instances[0].dispatch("error");
+            await flush();
+
+            expect(callback).not.toHaveBeenCalled();
+        });
+
+        it("does not re-report a transaction the socket already delivered", async () => {
+            mockFetch.mockResolvedValue(okJson([]));
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1"], callback);
+
+            await FakeWebSocket.instances[0].dispatch(
+                "message",
+                wsMessage("addr1", [confirmedTx("aa")]),
+            );
+            expect(callback).toHaveBeenCalledTimes(1);
+
+            // The socket dies and the fallback sees the same tx in history.
+            mockFetch.mockResolvedValue(okJson([confirmedTx("aa")]));
+            await FakeWebSocket.instances[0].dispatch("error");
+            await flush();
+
+            expect(callback).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps watching when the creation-time baseline fetch fails", async () => {
+            mockFetch.mockRejectedValueOnce(new Error("explorer down"));
+            mockFetch.mockResolvedValue(okJson([]));
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000");
+
+            await provider.watchAddresses(["addr1"], callback);
+
+            expect(mockFetch).toHaveBeenCalledTimes(1); // it was attempted
+
+            // A failed baseline must degrade, not throw and not go deaf.
+            await FakeWebSocket.instances[0].dispatch(
+                "message",
+                wsMessage("addr1", [confirmedTx("aa")]),
+            );
+            expect(callback).toHaveBeenCalledTimes(1);
+        });
+    });
+
     describe("websocket reconnect", () => {
         const watch = async () => {
             mockFetch.mockResolvedValue(okJson([]));
             const provider = new EsploraProvider("http://localhost:3000");
             const stop = await provider.watchAddresses(["addr1"], () => {});
+            mockFetch.mockClear(); // discount the creation-time baseline
             return { stop, socket: () => FakeWebSocket.instances.at(-1)! };
         };
 
@@ -340,22 +417,23 @@ describe("EsploraProvider.watchAddresses", () => {
             expect(callback.mock.calls[0][0]).toEqual([expect.objectContaining({ txid: "new" })]);
         });
 
-        it("backs off and retries when the baseline fetch fails, rather than going blind", async () => {
-            mockFetch.mockRejectedValueOnce(new Error("explorer down"));
+        it("backs off and retries after a failed poll cycle, rather than going blind", async () => {
+            mockFetch.mockResolvedValueOnce(okJson([])); // creation-time baseline
+            mockFetch.mockRejectedValueOnce(new Error("explorer down")); // first cycle
             mockFetch.mockResolvedValue(okJson([]));
 
             await polling().watchAddresses(["addr1"], () => {});
 
-            // A failed baseline must still leave a retry armed.
+            // A failed cycle must still leave a retry armed.
             expect(vi.getTimerCount()).toBe(1);
-            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(mockFetch).toHaveBeenCalledTimes(2);
 
             // One failure doubles the delay, so the plain interval is too early.
-            await vi.advanceTimersByTimeAsync(15_000);
-            expect(mockFetch).toHaveBeenCalledTimes(1);
-
-            await vi.advanceTimersByTimeAsync(15_000);
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
             expect(mockFetch).toHaveBeenCalledTimes(2);
+
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+            expect(mockFetch).toHaveBeenCalledTimes(3);
         });
 
         it("warns when it degrades from websocket to HTTP polling", async () => {
