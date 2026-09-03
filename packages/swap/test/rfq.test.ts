@@ -737,3 +737,82 @@ describe("assertFundable — the max-fee gate", () => {
         );
     });
 });
+
+/**
+ * The cross-asset half of the same ceiling.
+ *
+ * `from_amount - to_amount` is not a fee when the legs name different assets,
+ * but the fee is not unknowable — it is the spread against a reference rate,
+ * and the caller is the only party that can supply one honestly. Given `R` in
+ * to-units per from-unit, the fee in FROM units is
+ * `(from_amount * R - to_amount) / R`, and the same max(proportional, absolute)
+ * rule applies unchanged.
+ */
+describe("assertFundable — the max-fee gate, cross-asset", () => {
+    const now = 1_800_000_000;
+    const CROSS = "arkade:BTC->ethereum:0xa0b86991";
+    const gate = (
+        over: Partial<RfqQuote>,
+        maxFee?: { bps?: number; sats?: number; referenceRate?: number },
+    ) =>
+        assertFundable({
+            quote: quoteFixture({
+                pair: CROSS,
+                from_amount: 100_000,
+                valid_until: now + 900,
+                refund_locktime: now + 7200,
+                ...over,
+            }),
+            invoiceExpiresAt: now + 3600,
+            now,
+            maxFee,
+        });
+
+    // R = 0.5 token-units per sat, so 100_000 sats is fairly worth 50_000.
+    it("gates on the spread against the caller's own rate", () => {
+        // 49_500 received = 500 short = 1_000 sats of fee = exactly 1% of 100_000.
+        expect(() => gate({ to_amount: 49_500 }, { bps: 100, referenceRate: 0.5 })).not.toThrow();
+        expect(() => gate({ to_amount: 49_499 }, { bps: 100, referenceRate: 0.5 })).toThrow(/fee/i);
+    });
+
+    it("still refuses when no rate is supplied — unchanged from before", () => {
+        expect(() => gate({ to_amount: 42 }, { bps: 100 })).toThrow(/different assets|rate/i);
+    });
+
+    it("refuses a rate that cannot price anything", () => {
+        for (const referenceRate of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+            expect(() => gate({ to_amount: 49_500 }, { bps: 100, referenceRate })).toThrow(
+                /referenceRate/i,
+            );
+        }
+    });
+
+    /**
+     * Rounds the fee UP, and this is the only case that can tell. R = 3 with
+     * 2_999 to-units short is 999.67 sats of fee: ceil refuses it against a
+     * 999-sat ceiling, floor funds it. Erring toward refusing is the client's
+     * side to err on, and without this the choice was untested — a floor
+     * mutation passed every other case here.
+     */
+    it("rounds a fractional cross-asset fee up, not down", () => {
+        expect(() => gate({ to_amount: 297_001 }, { sats: 999, referenceRate: 3 })).toThrow(/fee/i);
+    });
+
+    it("ignores a rate on a same-asset pair, where the exact fee is already known", () => {
+        // A wallet setting one ceiling for every pair must not be punished for
+        // carrying a rate the same-asset branch has no use for.
+        expect(() =>
+            assertFundable({
+                quote: quoteFixture({
+                    from_amount: 100_000,
+                    to_amount: 99_500,
+                    valid_until: now + 900,
+                    refund_locktime: now + 7200,
+                }),
+                invoiceExpiresAt: now + 3600,
+                now,
+                maxFee: { bps: 100, referenceRate: 0.5 },
+            }),
+        ).not.toThrow();
+    });
+});

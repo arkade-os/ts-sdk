@@ -458,7 +458,29 @@ export const assertFundable = (input: {
      * solver with a low fallback and a high cap advertises cheaper than it can
      * charge. `from_amount - to_amount` off the quote is the real number.
      */
-    maxFee?: { bps?: number; sats?: number };
+    maxFee?: {
+        bps?: number;
+        sats?: number;
+        /**
+         * To-units per from-unit, for a CROSS-ASSET pair. Without it such a pair
+         * is refused rather than waved through — the fee there is the spread
+         * against a rate, and this function is given no rate of its own.
+         *
+         * Must come from a source of YOUR OWN. Reading it off the solver's
+         * published market feed checks the solver against its own number and
+         * passes anything; the feed URL being right there on the card is what
+         * makes that the easy mistake.
+         *
+         * Ignored on a same-asset pair, where the exact fee is already known —
+         * so one ceiling can be set for every pair a wallet handles.
+         *
+         * Expect to need a LOOSER tolerance than same-asset: the spread you
+         * measure necessarily includes rate movement between your feed read and
+         * the solver's quote, so a tight bound refuses honest quotes on
+         * volatility alone.
+         */
+        referenceRate?: number;
+    };
 }): void => {
     const fail = (reason: string, message: string): never => {
         throw gateError(reason, message);
@@ -475,7 +497,7 @@ export const assertFundable = (input: {
         fail("insufficient_headroom", "refund deadline headroom below 90 minutes");
     }
     if (input.maxFee) {
-        const { bps, sats } = input.maxFee;
+        const { bps, sats, referenceRate } = input.maxFee;
         if (bps === undefined && sats === undefined) {
             // Read literally `{}` is "tolerate no fee at all", which no caller
             // means and every caller would then be refused by. A ceiling that
@@ -488,23 +510,40 @@ export const assertFundable = (input: {
         if (sats !== undefined && (!Number.isInteger(sats) || sats < 0)) {
             fail("max_fee_out_of_range", `maxFee.sats must be a non-negative integer, got ${sats}`);
         }
-        // LOUD on a cross-asset pair, never silent. `from_amount - to_amount` is
-        // a fee only while both legs name the same asset; on
-        // `arkade:BTC->ethereum:<token>` it subtracts tokens from sats and means
-        // nothing. Skipping quietly would leave a caller believing a ceiling
-        // applied when none did, which is worse than having no gate at all —
-        // the fee there is inside the rate, and judging it needs a price this
-        // function is not given.
+        // `from_amount - to_amount` is a fee only while both legs name the same
+        // asset. Across assets it subtracts tokens from sats — but the fee is
+        // not unknowable there, it is the spread against a reference rate, and
+        // the caller is the only party who can supply one honestly.
         const legs = input.quote.pair.split("->");
         const assetOf = (leg: string): string => leg.slice(leg.indexOf(":") + 1);
-        if (legs.length !== 2 || assetOf(legs[0]!) !== assetOf(legs[1]!)) {
+        const sameAsset = legs.length === 2 && assetOf(legs[0]!) === assetOf(legs[1]!);
+        if (!sameAsset && referenceRate === undefined) {
+            // LOUD, never silent: a caller who set a ceiling and got no gate
+            // would believe one applied. Better to refuse the swap than to fund
+            // it under a protection that was never there.
             fail(
                 "fee_gate_unavailable",
                 `maxFee cannot gate ${input.quote.pair}: its legs name different assets, so ` +
-                    `from_amount - to_amount is not a fee`,
+                    `from_amount - to_amount is not a fee. Supply maxFee.referenceRate ` +
+                    `(to-units per from-unit) from a source of your OWN — reading it off the ` +
+                    `solver's published feed would check the solver against its own number`,
             );
         }
-        const fee = input.quote.from_amount - input.quote.to_amount;
+        if (!sameAsset && (!Number.isFinite(referenceRate) || (referenceRate as number) <= 0)) {
+            fail(
+                "max_fee_out_of_range",
+                `maxFee.referenceRate must be a positive finite number, got ${referenceRate}`,
+            );
+        }
+        // Both branches yield a fee in FROM units, so one ceiling covers both.
+        // Cross-asset rounds the fee UP: a borderline quote should be refused
+        // rather than funded on a rounding artefact.
+        const fee = sameAsset
+            ? input.quote.from_amount - input.quote.to_amount
+            : Math.ceil(
+                  (input.quote.from_amount * (referenceRate as number) - input.quote.to_amount) /
+                      (referenceRate as number),
+              );
         const allowed = Math.max(
             sats ?? 0,
             Math.floor((input.quote.from_amount * (bps ?? 0)) / 10_000),
