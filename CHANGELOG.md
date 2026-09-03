@@ -48,6 +48,14 @@ style and have not been backfilled.
 
 ### Features
 
+- **`assertRecipientArkAddress` and `RecipientAddressContext` are
+  root-exported.** The rotation-aware recipient check — hrp, then
+  `classifyAgainstSignerSet`, refusing `UNKNOWN_SIGNER` and `EXPIRED`
+  distinctly — was reachable only from inside core, while every
+  ingredient it needs already was. A plugin classifying a destination
+  address had to hand-roll a `serverPubKey ===` comparison, which
+  rejects valid addresses mid-rotation. Nothing about the function
+  changed.
 - **`IReadonlyWallet.getArkadeInfo()`.** The wallet is the single place
   that knows which Arkade server it speaks to, so a plugin needs only
   the wallet, never a server URL of its own. It answers with the live
@@ -136,6 +144,23 @@ style and have not been backfilled.
   listed under Breaking Changes above. The shape is exported as
   `ArkadeServerProvider`, so a caller building a derivation-only client
   has a name to import. (#734)
+
+### Bug Fixes
+
+- **`BIP21.parse` no longer lowercases the address in a URI, and
+  `BIP21.create` no longer lowercases the one it writes.** Base58 is
+  case-sensitive, so `bitcoin:mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn` parsed
+  as a *different* address — and silently, because `isBtcAddress` admits
+  a lowercase base58 string, so the corrupted address passed
+  classification and whatever it decoded to is what a rail would have
+  funded. Bech32 is unaffected either way: BIP173 forbids a case *mix*,
+  not upper case, and every decoder here takes an all-upper address.
+- **The `ark=` BIP21 parameter is matched case-insensitively.** Bech32m
+  permits an all-upper address and `ArkAddress.decode` accepts one, so a
+  case-sensitive prefix test dropped — with a `console.warn` — an
+  address that `arkTarget` claims happily when it arrives bare. Same fix
+  in `BIP21.create`. One destination classifying differently bare than
+  as a parameter was the defect; both forms now agree.
 
 ## [0.4.23] - 2026-05-04
 

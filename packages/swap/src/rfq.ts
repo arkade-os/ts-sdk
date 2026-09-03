@@ -979,7 +979,16 @@ export const offerTermsFromQuote = (
  * payment hash differs (user-generated P instead of a BOLT11). One function,
  * one golden test. */
 
-const l1NetworkFromArk = (network: string): OnchainNetwork =>
+/**
+ * The L1 network an Arkade network settles on.
+ *
+ * Three-valued where {@link NetworkName} is five: `signet` and `mutinynet` both
+ * carry testnet address parameters, so they fold into `testnet` and nothing
+ * downstream can tell them apart from an address alone. Exported for the
+ * onchain corridor module, which would otherwise write this mapping a third
+ * time.
+ */
+export const l1NetworkFromArk = (network: string): OnchainNetwork =>
     network === "bitcoin" ? "bitcoin" : network === "regtest" ? "regtest" : "testnet";
 
 /** The rfq_request for `arkade:BTC->onchain:BTC`. Exact-out means "this much
