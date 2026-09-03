@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
+import { SigHash } from "@scure/btc-signer";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { Transaction } from "../src/utils/transaction";
 import {
@@ -259,5 +260,61 @@ describe("submitOffchainTx checkpoint txid matching", () => {
             new RegExp(`submitTx checkpoint 0 txid ${unsubmitted.id} does not match`),
         );
         expect(p.finalizeTx).not.toHaveBeenCalled();
+    });
+});
+
+describe("submitOffchainTx sighash guard", () => {
+    // The sighash type lives outside the txid preimage, so a hostile one
+    // survives the checkpoint matching that pins everything else.
+    function withSighash(tx: Transaction, sighashType: number): Transaction {
+        const copy = Transaction.fromPSBT(tx.toPSBT());
+        copy.updateInput(0, { sighashType });
+        return copy;
+    }
+
+    it("keeps a checkpoint declaring SIGHASH_NONE|ANYONECANPAY away from the signer", async () => {
+        const local = checkpoint(1);
+        const hostile = withSighash(local, SigHash.NONE_ANYONECANPAY);
+        expect(hostile.id).toBe(local.id);
+
+        const p = provider(encode([hostile]));
+        const s = signer();
+
+        await expect(submitOffchainTx(p, offchainTx([local]), s)).rejects.toThrow(
+            /submitTx checkpoint 0: Unallowed sighash type 0x82 for input 0/,
+        );
+        expect(s.signCheckpoint).not.toHaveBeenCalled();
+        expect(p.finalizeTx).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["SIGHASH_NONE", SigHash.NONE],
+        ["SIGHASH_SINGLE", SigHash.SINGLE],
+        ["SIGHASH_ALL", SigHash.ALL],
+        ["SIGHASH_ALL|ANYONECANPAY", SigHash.ALL_ANYONECANPAY],
+    ])("rejects a checkpoint declaring %s", async (_name, sighashType) => {
+        const local = checkpoint(1);
+        const p = provider(encode([withSighash(local, sighashType)]));
+
+        await expect(submitOffchainTx(p, offchainTx([local]), signer())).rejects.toThrow(
+            /Unallowed sighash type/,
+        );
+        expect(p.finalizeTx).not.toHaveBeenCalled();
+    });
+
+    it("accepts a checkpoint declaring SIGHASH_DEFAULT", async () => {
+        const local = checkpoint(1);
+        const p = provider(encode([withSighash(local, SigHash.DEFAULT)]));
+
+        await expect(submitOffchainTx(p, offchainTx([local]), signer())).resolves.toBeDefined();
+        expect(p.finalizeTx).toHaveBeenCalled();
+    });
+
+    it("accepts a checkpoint declaring no sighash type at all", async () => {
+        const local = checkpoint(1);
+        const p = provider(encode([local]));
+
+        await expect(submitOffchainTx(p, offchainTx([local]), signer())).resolves.toBeDefined();
+        expect(p.finalizeTx).toHaveBeenCalled();
     });
 });

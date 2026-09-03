@@ -87,13 +87,20 @@ describe("lightningSendContract", () => {
     // The reference solver's fixture, and its exact output bytes: sender =
     // key(13) (the trader's own VHTLC-sender key), receiver = key(1)
     // (solver), server = key(3), emulator = key(9), refund destination =
-    // p2tr(key(5)) (also nonInteractiveRefund's covenant target), receiver
+    // p2tr(key(5)) (also the refund covenants' target), receiver
     // payout = p2tr(key(1)) (nonInteractiveClaim's covenant target, same key
     // as solverPubkey — the solver's own claim identity), preimage hash =
     // ripemd160(sha256(0x07 * 32)), locktime 1_800_000_000, CSV 4096s /
     // 4096s / 8192s (claimDelay, unilateralRefundDelay LEVEL with it, and
     // SOLO_REFUND_HEADROOM_SECONDS above it for
     // unilateralRefundWithoutReceiverDelay).
+    //
+    // `legacy: "preTimelockedRefund"` because the solver that produced the
+    // pinned bytes predates the timelocked non-interactive refund leaf: its
+    // `CovenantSwapScript` builds the covenant suite WITHOUT that leaf, the
+    // shape this marker now reproduces byte for byte. The default full suite
+    // is one leaf longer and derives a different address — which is exactly
+    // why `matchQuotedLockup` tries both shapes against a quote.
     const PREIMAGE = new Uint8Array(32).fill(7);
     const PAYMENT_HASH = hex.encode(sha256(PREIMAGE));
     const REFUND_PK_SCRIPT = p2tr(key(5));
@@ -111,6 +118,7 @@ describe("lightningSendContract", () => {
             refundPkScript: REFUND_PK_SCRIPT,
             senderPubkey: SENDER_PUBKEY,
             receiverPkScript: RECEIVER_PK_SCRIPT,
+            legacy: "preTimelockedRefund",
         });
 
     it("is byte-identical to the reference solver's script — golden scriptPubKey", () => {
@@ -424,6 +432,27 @@ describe("guardrails", () => {
         const quote = quoteFixture();
         expect(verifyLockupAddress(quote, "ark1qexample")).toBe("ark1qexample");
         expect(() => verifyLockupAddress(quote, "ark1qmine")).toThrow(AddressMismatch);
+    });
+
+    it("verifyLockupAddress accepts the matching candidate of an array, and reports every candidate tried", () => {
+        const quote = quoteFixture();
+        // The derivation itself is ambiguous while solvers roll out the
+        // timelocked non-interactive refund leaf, so callers derive BOTH
+        // shapes and the quote's own lockup_address picks one. Newest first:
+        // a full-suite match, not the legacy one, is what gets returned.
+        expect(verifyLockupAddress(quote, ["ark1qother", "ark1qexample"])).toBe("ark1qexample");
+        const mismatch = ((): unknown => {
+            try {
+                verifyLockupAddress(quote, ["ark1qmine", "ark1qother"]);
+                return undefined;
+            } catch (error) {
+                return error;
+            }
+        })();
+        expect(mismatch).toBeInstanceOf(AddressMismatch);
+        // Never fund past this — the error must carry EVERY candidate tried,
+        // so a caller can see both shapes were refused.
+        expect((mismatch as AddressMismatch).derived).toEqual(["ark1qmine", "ark1qother"]);
     });
 
     it("assertFundable gates on invoice expiry, valid_until, and refund headroom", () => {

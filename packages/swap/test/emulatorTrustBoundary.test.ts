@@ -68,7 +68,7 @@ const REFUND_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode()
  * below are built with, so the two cannot drift. */
 const ARK_INFO = {
     signerPubkey: hex.encode(OPERATOR_PUBKEY),
-    unilateralExitDelay: 4096,
+    unilateralExitDelay: 4096n,
     network: "regtest",
     checkpointTapscript: hex.encode(
         CSVMultisigTapscript.encode({

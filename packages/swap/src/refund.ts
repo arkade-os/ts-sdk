@@ -256,9 +256,11 @@ export class LockupNeedsRecoveryError extends Error {
  * defensively rather than assumed. It costs the two waiting callers nothing
  * they wanted: `awaitLockupFunding` keeps waiting for a claimable lockup
  * instead of publishing `P` into a spend that cannot land, and
- * `refundIfUnresolved` reports `nothing_to_refund` instead of grinding a doomed
- * push to its deadline. The manager reads the exit through
- * {@link readLockupFate}, which queries unfiltered and reports it as `exited`.
+ * `refundIfUnresolved` reports rather than grinding a doomed push to its
+ * deadline. Both that function and `RfqSwapManager` name the exit through
+ * {@link readLockupFate}, which queries unfiltered and reports it as `exited`;
+ * this drop is the second line, and what still refuses the push on a pass where
+ * the fate read learned nothing.
  *
  * This read — not the RFQ's reported state — is the authority on whether
  * there is anything left at the lockup.
@@ -576,10 +578,10 @@ export async function pushRefundWithoutReceiver(
     }
 
     const refundPkScript =
-        input.refundPkScript ?? input.contract.options.nonInteractiveRefund?.senderPkScript;
+        input.refundPkScript ?? input.contract.options.nonInteractiveParameters?.senderPkScript;
     if (!refundPkScript) {
         throw new Error(
-            "no refund destination: the contract carries no nonInteractiveRefund leaf, so pass refundPkScript explicitly",
+            "no refund destination: the contract carries no emulator covenant suite, so pass refundPkScript explicitly",
         );
     }
 
@@ -668,7 +670,18 @@ export type RefundOutcome =
           outpoints: string[];
           vtxos: LockupVtxo[];
           status: RfqStatus | null;
-      };
+      }
+    /**
+     * The lockup was unilaterally exited: its outputs sit onchain under the VHTLC
+     * script, where no offchain refund can reach them. Returned rather than
+     * retried: no amount of waiting changes where the money lives. Complete the
+     * unroll and spend the outputs onchain — then there is nothing left to refund.
+     *
+     * Distinct from {@link RefundOutcome} `needs_recovery` on purpose: that
+     * variant's remedy is recovery into a fresh batch, which is a spend no batch
+     * can make for an output that is already onchain.
+     */
+    | { outcome: "exited"; outpoints: string[]; status: RfqStatus | null };
 
 /**
  * Ask first, then fall back: watch the swap for the solver to resolve it, and
@@ -697,6 +710,20 @@ export type RefundOutcome =
  *   is gone the CLTV refund is not "not yet" but "not this way", so it returns
  *   `needs_recovery` naming the outpoints rather than retrying until the
  *   deadline. Recover them and call again.
+ * - **An exited lockup ends it the same way, and is checked first.** Each pass
+ *   past the deadline asks {@link readLockupFate} before reading what is
+ *   refundable, so an output that has been unilaterally exited returns `exited`
+ *   instead of feeding a push that cannot land. It costs one extra `getVtxos`
+ *   per such pass (three where there were two), plus a `getVirtualTxs` on a
+ *   fully-spent lockup; only the pass that returns `exited` saves the other two.
+ *   Paid to prevent a push that would otherwise be retried to the deadline and
+ *   then rethrown. A failing fate read is swallowed, not raised: it is a
+ *   shortcut, and losing it must not end a wait the ordinary path could answer.
+ *
+ *   A lockup funded in two sends of which only one exited reports `exited` for
+ *   the whole thing and leaves the live half unrefunded. That is deliberate:
+ *   `RfqSwapManager` reports the same lockup `exited` on the same any-output
+ *   rule, and the two must not disagree.
  *
  * Safe to call late, and safe to call again: a caller recovering from a crash
  * well past the deadline skips straight to the push, and a lockup that is
@@ -705,12 +732,18 @@ export type RefundOutcome =
 export async function refundIfUnresolved(
     transport: RfqTransport,
     operator: SwapOperator,
-    indexer: RefundIndexer,
+    indexer: LockupSpendIndexer,
     input: {
         rfqId: string;
         contract: InstanceType<typeof VHTLC.ScriptV2>;
         /** @see pushRefundWithoutReceiver */
         sender: Identity;
+        /**
+         * `sha256(P)`, hex — the quote's `payment_hash`, as {@link readLockupFate}
+         * takes it. Not derivable from `script`, whose `preimageHash` is a
+         * `hash160` of the same secret.
+         */
+        paymentHash: string;
         /** `refund_locktime` from the quote, unix seconds. */
         refundLocktime: number;
         /** Defaults to the contract's own committed refund destination. */
@@ -732,6 +765,31 @@ export async function refundIfUnresolved(
         if (status && isResolved(status.state)) return { outcome: "resolved", status };
 
         if (now() >= input.refundLocktime) {
+            // Before the refundable read, not after it: the point is to prevent
+            // the doomed push, not to interpret its refusal a pass too late.
+            //
+            // Guarded because it is an addition to this path, not a replacement:
+            // the fate read reaches `getVirtualTxs`, which nothing here called
+            // before, and a transient failure there must not end a refund wait
+            // the ordinary path below would have answered. `RfqSwapManager`
+            // guards the same call for the same reason.
+            let fate: LockupFate = { fate: "unknown" };
+            try {
+                fate = await readLockupFate(indexer, {
+                    swapPkScript: input.contract.pkScript,
+                    paymentHash: input.paymentHash,
+                });
+            } catch {
+                // `findLockupVtxos`'s own drop still refuses the doomed push.
+            }
+            if (fate.fate === "exited") {
+                return {
+                    outcome: "exited",
+                    outpoints: fate.outpoints.map((o) => `${o.txid}:${o.vout}`),
+                    status,
+                };
+            }
+
             const vtxos = await findLockupVtxos(indexer, input.contract.pkScript);
             if (vtxos.length === 0) return { outcome: "nothing_to_refund", status };
             try {

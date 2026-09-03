@@ -25,96 +25,79 @@ export namespace VHTLC {
         unilateralRefundDelay: RelativeTimelock;
         unilateralRefundWithoutReceiverDelay: RelativeTimelock;
         /**
-         * Optional non-interactive claim leaf: `server` plus a covenant-tweaked
-         * emulator co-signer, pinned to `receiverPkScript`. Lets the receiver's
-         * claim be pushed by the emulator without the receiver being online.
+         * The emulator covenant leaves, ALL OR NOTHING. Present, this adds the
+         * three non-interactive leaves the emulator co-signs under a covenant
+         * pinning the payout to a pre-committed destination:
+         *
+         *  - `nonInteractiveClaim`: `server` + a covenant-tweaked emulator
+         *    co-signer, paying `receiverPkScript` — the receiver's claim can
+         *    be pushed without the receiver being online.
+         *  - `nonInteractiveRefund`: `server` + `receiver` + a covenant-tweaked
+         *    emulator co-signer, paying `senderPkScript`, no timelock — lets
+         *    server and receiver release the refund the moment they agree the
+         *    swap has failed, and recoverable even if the sender's own key is
+         *    lost, since no OTHER refund-side leaf survives that.
+         *  - `nonInteractiveRefundWithoutReceiver`: `server` + the SAME
+         *    covenant-tweaked co-signer as `nonInteractiveRefund`, paying
+         *    `senderPkScript` after `refundLocktime` — the only refund tier
+         *    needing no participant signature at all, so a sender who funded
+         *    a lockup and vanished is refundable through it alone.
+         *
+         * WHY ONE FLAG AND NOT A SWITCH PER LEAF. The three are one mechanism
+         * — the same emulator key, the same `enforcePayTo` covenant pointed
+         * at a per-role destination — and they protect opposite directions of
+         * the same swap, so no real configuration wants a subset. A subset
+         * would cost, not buy: every optional leaf multiplies the tree shapes
+         * a counterparty must derive to verify an address (nothing on the
+         * wire says which leaves a quote carries), so per-leaf toggling turns
+         * one address comparison into a combinatorial guess. All-or-nothing
+         * keeps the shape count at two: suite, or no suite.
+         *
+         * Leaf order fixes the taproot merkle root, so the suite is appended
+         * after the six signature leaves in a fixed order (claim, refund,
+         * timelocked refund) and a script built with this option NEVER
+         * collides with one built without it — which is what makes "did this
+         * quote opt in" a question an address comparison answers.
+         *
+         * STABLE PER RELEASE: what this option builds does not change within
+         * a published SDK version. A future covenant leaf joins the suite
+         * only behind a NEW option, so re-deriving a lockup with the SDK
+         * that quoted it reproduces its address byte-for-byte.
          */
-        nonInteractiveClaim?: {
+        nonInteractiveParameters?: {
+            /**
+             * The emulator service's public key, 32-byte x-only or 33-byte
+             * compressed. ONE key, tweaked per covenant destination, becomes
+             * the co-signer of every leaf in the suite — the leaves share it
+             * structurally, and BIP-341 tapscript sighashes committing to the
+             * tapleaf hash are what keep a signature for one leaf from
+             * replaying against another.
+             */
+            emulatorPubkey: Bytes;
+            /**
+             * Where the claim covenant pays: the receiver's own P2TR
+             * pkScript, 34 bytes.
+             */
             receiverPkScript: Bytes;
-            emulatorPubkey: Bytes;
             /**
-             * OPT-IN: also require the claim to pay at least these amounts.
-             *
-             * The covenant's default bound is conservation (`out >= in`) — see
-             * {@link enforcePayTo} for why a quote is normally not the
-             * covenant's business. This is the escape hatch for a consumer that
-             * wants the quote enforced in script rather than at its own
-             * admission layer.
-             *
-             * ADDITIVE, NEVER A REPLACEMENT. The conservation bound stays. On
-             * its own, `out >= quoted` leaves everything ABOVE the quote
-             * unconstrained, so an overfunded lockup's surplus could be routed
-             * anywhere by whoever assembles the spend — trading an underfunding
-             * hole for a skimming one. Both bounds together admit neither.
-             *
-             * WHAT IT COSTS, and it is not only opcodes:
-             *
-             *  - THE ADDRESS BECOMES A FUNCTION OF THE QUOTE. These amounts
-             *    compile into the leaf, hence the emulator key, hence the
-             *    pkScript. A re-quote is a different address, and cannot be
-             *    applied to a lockup already funded.
-             *  - AN UNDERFUNDED LOCKUP BECOMES UNCLAIMABLE. Its only exit is the
-             *    refund path, which waits out the CLTV. That is the intended
-             *    incentive and it lands on whoever misfunded — but it converts
-             *    "claim the short amount now and settle up" into "wait for the
-             *    timelock".
-             *
-             * Omit for the default. Omitting leaves every script byte unchanged,
-             * so contracts already funded keep their addresses.
+             * Where BOTH refund covenants pay: the sender's own P2TR
+             * pkScript, 34 bytes. One destination shared by both refund
+             * leaves, so they cannot diverge on where a refund goes.
              */
-            strict?: {
-                /** Sats the claim must pay. Positive. */
-                amount: bigint;
-                /**
-                 * Asset base units the claim must pay.
-                 *
-                 * Required iff {@link VHTLC.Options.asset} is set, and refused
-                 * otherwise. Strict-on-sats-only against an asset-denominated
-                 * contract would pin the sat CARRIER and say nothing about the
-                 * asset that is the actual amount — half-enforcement that reads
-                 * like enforcement, which is the failure this option exists to
-                 * avoid rather than introduce.
-                 */
-                assetAmount?: bigint;
-            };
-        };
-        /**
-         * Optional non-interactive refund leaf: `server` + `receiver` + a
-         * covenant-tweaked emulator co-signer, pinned to `senderPkScript`, no
-         * timelock. Every OTHER refund-side leaf in this contract requires
-         * the sender's own signature — if the sender permanently loses that
-         * key, none of them are reachable. This leaf is the one exception:
-         * it needs neither the sender's presence nor their key, so funds
-         * remain recoverable to the sender's pre-committed address even
-         * then. It still needs the receiver (unlike `nonInteractiveClaim`,
-         * which needs only server + emulator) — deliberately: this is what
-         * lets server + receiver release the refund immediately, the moment
-         * they agree the swap has failed, rather than making the sender wait
-         * out `refundLocktime` the way {@link Script.refundWithoutReceiver}
-         * does.
-         */
-        nonInteractiveRefund?: {
             senderPkScript: Bytes;
-            emulatorPubkey: Bytes;
             /**
-             * Also emit the timelocked twin: `server` plus the SAME
-             * covenant-tweaked co-signer, spendable after `refundLocktime`
-             * with no receiver signature and no sender signature.
+             * LEGACY REBUILD ONLY — never for a new lockup.
              *
-             * This is the only refund tier that needs nobody: `refund` and
-             * `refundWithoutReceiver` need the sender's key,
-             * `nonInteractiveRefund` needs the receiver's. A sender who
-             * funded a lockup and vanished is refundable through this leaf
-             * alone, by anyone, to their pre-committed address.
-             *
-             * Off by default: it is an additional leaf, appended last, so
-             * enabling it changes the taproot merkle root and therefore the
-             * address. `nonInteractiveClaim` and `nonInteractiveRefund` are
-             * independently optional, so this is the NINTH leaf only in the
-             * full swap-corridor configuration where both are set — on its
-             * own, it is the eighth.
+             * `"preTimelockedRefund"` builds the suite WITHOUT its timelocked
+             * refund leaf: the shape every emulator-covenant lockup funded
+             * before that leaf shipped carries. Lockups already funded in that
+             * shape keep it permanently — a leaf cannot be retrofitted onto an
+             * address already committed — so re-deriving such a lockup (to
+             * spend it, or to verify an old quote's address) needs this. A new
+             * lockup that omits the leaf gives up the one refund tier needing
+             * nobody, for nothing.
              */
-            withoutReceiver?: boolean;
+            legacy?: "preTimelockedRefund";
         };
         /**
          * Optional: denominate this contract in an Arkade ASSET rather than in
@@ -251,39 +234,28 @@ export namespace VHTLC {
 
             let arkadeScriptNic: Bytes | undefined;
             let nonInteractiveClaimScript: Bytes | undefined;
-            if (options.nonInteractiveClaim) {
-                arkadeScriptNic = enforcePayToMaybeAsset(
-                    options.nonInteractiveClaim.receiverPkScript,
-                    options.asset,
-                    options.nonInteractiveClaim.strict,
-                );
+            let arkadeScriptNir: Bytes | undefined;
+            let nonInteractiveRefundScript: Bytes | undefined;
+            let nonInteractiveRefundWithoutReceiverScript: Bytes | undefined;
+            const covenants = options.nonInteractiveParameters;
+            if (covenants) {
+                arkadeScriptNic = enforcePayToMaybeAsset(covenants.receiverPkScript, options.asset);
                 nonInteractiveClaimScript = ConditionMultisigTapscript.encode({
                     conditionScript,
                     pubkeys: [
                         server,
-                        computeArkadeScriptPublicKey(
-                            options.nonInteractiveClaim.emulatorPubkey,
-                            arkadeScriptNic,
-                        ),
+                        computeArkadeScriptPublicKey(covenants.emulatorPubkey, arkadeScriptNic),
                     ],
                 }).script;
                 scripts.push(nonInteractiveClaimScript);
-            }
 
-            let arkadeScriptNir: Bytes | undefined;
-            let nonInteractiveRefundScript: Bytes | undefined;
-            let nonInteractiveRefundWithoutReceiverScript: Bytes | undefined;
-            if (options.nonInteractiveRefund) {
-                arkadeScriptNir = enforcePayToMaybeAsset(
-                    options.nonInteractiveRefund.senderPkScript,
-                    options.asset,
-                );
+                arkadeScriptNir = enforcePayToMaybeAsset(covenants.senderPkScript, options.asset);
                 // Derived ONCE and shared by both refund covenant leaves. They
                 // pin the same destination, so they must commit to the same
                 // key; computing it twice would make that a coincidence rather
                 // than a guarantee.
                 const nirCosigner = computeArkadeScriptPublicKey(
-                    options.nonInteractiveRefund.emulatorPubkey,
+                    covenants.emulatorPubkey,
                     arkadeScriptNir,
                 );
                 // No timelock: server + receiver together can release this
@@ -295,7 +267,7 @@ export namespace VHTLC {
                 }).script;
                 scripts.push(nonInteractiveRefundScript);
 
-                if (options.nonInteractiveRefund.withoutReceiver) {
+                if (covenants.legacy !== "preTimelockedRefund") {
                     // The same tier `refundWithoutReceiver` reaches, reached
                     // without the sender: their signature is replaced by the
                     // covenant, exactly as `nonInteractiveRefund` replaces it
@@ -467,35 +439,33 @@ export namespace VHTLC {
      * - **unilateralClaim**: Receiver can claim unilaterally after delay
      * - **unilateralRefund**: Sender and receiver can refund unilaterally after delay
      * - **unilateralRefundWithoutReceiver**: Sender can refund unilaterally after delay
-     * - **nonInteractiveClaim** (optional): server + emulator can push the
-     *   receiver's claim, pinned to a pre-committed destination
-     * - **nonInteractiveRefund** (optional): server + receiver + emulator
-     *   can push the sender's refund immediately, no timelock, pinned to a
-     *   pre-committed destination — recoverable even if the sender's own key
-     *   is lost
-     * - **nonInteractiveRefundWithoutReceiver** (optional): server + emulator
-     *   can push the sender's refund after `refundLocktime`, pinned to a
-     *   pre-committed destination — the only refund tier needing no
-     *   participant signature at all
+     * - **nonInteractiveClaim** (with `nonInteractiveParameters`): server + emulator
+     *   can push the receiver's claim, pinned to a pre-committed destination
+     * - **nonInteractiveRefund** (with `nonInteractiveParameters`): server + receiver
+     *   + emulator can push the sender's refund immediately, no timelock,
+     *   pinned to a pre-committed destination — recoverable even if the
+     *   sender's own key is lost
+     * - **nonInteractiveRefundWithoutReceiver** (with `nonInteractiveParameters`):
+     *   server + emulator can push the sender's refund after `refundLocktime`,
+     *   pinned to a pre-committed destination — the only refund tier needing
+     *   no participant signature at all
      *
      * See {@link ScriptV2} for the current recommended construction — same
      * leaf ladder, same options shape, an added length check on the claim
      * preimage. This class is unchanged and stays available as-is.
      *
-     * **Pre-existing limitation, widened rather than introduced by
-     * `nonInteractiveRefundWithoutReceiver`.** `nonInteractiveClaim` and
-     * `nonInteractiveRefund` (and now its `withoutReceiver` leaf) build on
-     * this class exactly as they do on {@link ScriptV2} — both extend the
-     * same `BaseScript` where these leaves are constructed. But the `vhtlc`
+     * **Pre-existing limitation: the `vhtlc` contract handler registers none
+     * of the covenant leaves.** `nonInteractiveParameters` builds on this class
+     * exactly as it does on {@link ScriptV2} — both extend the same
+     * `BaseScript` where those leaves are constructed. But the `vhtlc`
      * contract handler (`src/contracts/handlers/vhtlc.ts`) round-trips none
      * of them: its params type carries no covenant fields, and
      * `createScript` only ever builds the six signature-only leaves. A V1
-     * script built with either covenant option therefore compiles and can
+     * script built with the covenant suite therefore compiles and can
      * be funded, but cannot be registered as a `vhtlc` contract — the
      * handler would derive a different (six-leaf) script for the same
-     * params and `ContractManager` refuses the mismatch. This was already
-     * true before `withoutReceiver` existed; it now applies to one more
-     * option than before, not to a newly-exposed one.
+     * params and `ContractManager` refuses the mismatch. Register through
+     * the `vhtlc-v2` handler instead, which round-trips the suite.
      *
      * @example
      * ```typescript
@@ -549,67 +519,38 @@ export namespace VHTLC {
         if (!preimageHash || preimageHash.length !== 20) {
             throw new Error("preimage hash must be 20 bytes");
         }
-        // The two non-interactive leaves are the ONLY ones carrying a covenant
+        // The non-interactive leaves are the ONLY ones carrying a covenant
         // — the signature leaves assert nothing about value — so they are the
-        // only place an asset can be bound. Accepting `asset` without either of
-        // them would emit a sat-only contract and say nothing about it: the
-        // caller funds it believing the asset is protected, and any spend that
-        // satisfies the sat covenant walks off with the asset. The one outward
-        // difference is a pkScript matching a non-asset address, which is not
-        // something a caller thinks to check. Refuse instead of dropping it.
-        if (
-            options.asset !== undefined &&
-            !options.nonInteractiveClaim &&
-            !options.nonInteractiveRefund
-        ) {
-            throw new Error(
-                "asset has no effect without nonInteractiveClaim or nonInteractiveRefund",
-            );
+        // only place an asset can be bound. Accepting `asset` without the
+        // covenant suite would emit a sat-only contract and say nothing about
+        // it: the caller funds it believing the asset is protected, and any
+        // spend that satisfies the sat covenant walks off with the asset. The
+        // one outward difference is a pkScript matching a non-asset address,
+        // which is not something a caller thinks to check. Refuse instead of
+        // dropping it.
+        if (options.asset !== undefined && !options.nonInteractiveParameters) {
+            throw new Error("asset has no effect without nonInteractiveParameters");
         }
 
-        // The opt-in quoted bound, and every way of asking for half of it.
-        const strict = options.nonInteractiveClaim?.strict;
-        if (strict !== undefined) {
-            // `out >= 0` is satisfied by every output, so a zero would compile a
-            // bound that reads like enforcement and enforces nothing.
-            if (strict.amount <= 0n) {
-                throw new Error(`strict claim amount must be positive, got ${strict.amount}`);
-            }
-            // Strict on the sat carrier while the ASSET — the actual amount —
-            // goes unbounded. The most dangerous shape here, because the caller
-            // has explicitly asked for enforcement and would get it on the wrong
-            // quantity.
-            if (options.asset !== undefined && strict.assetAmount === undefined) {
-                throw new Error(
-                    "strict claim needs assetAmount when the contract is denominated in an asset: " +
-                        "bounding only the sats would leave the asset amount unenforced",
-                );
-            }
-            if (options.asset === undefined && strict.assetAmount !== undefined) {
-                throw new Error("strict claim assetAmount has no effect without asset");
-            }
-            if (strict.assetAmount !== undefined && strict.assetAmount <= 0n) {
-                throw new Error(
-                    `strict claim assetAmount must be positive, got ${strict.assetAmount}`,
-                );
-            }
-        }
-        if (options.nonInteractiveClaim) {
-            const { emulatorPubkey, receiverPkScript } = options.nonInteractiveClaim;
+        if (options.nonInteractiveParameters) {
+            const { emulatorPubkey, receiverPkScript, senderPkScript, legacy } =
+                options.nonInteractiveParameters;
             if (!emulatorPubkey || (emulatorPubkey.length !== 32 && emulatorPubkey.length !== 33)) {
                 throw new Error("Invalid public key length (emulator)");
             }
             if (!receiverPkScript || !isP2trPkScript(receiverPkScript)) {
                 throw new Error("Invalid P2TR script");
             }
-        }
-        if (options.nonInteractiveRefund) {
-            const { emulatorPubkey, senderPkScript } = options.nonInteractiveRefund;
-            if (!emulatorPubkey || (emulatorPubkey.length !== 32 && emulatorPubkey.length !== 33)) {
-                throw new Error("Invalid public key length (emulator)");
-            }
             if (!senderPkScript || !isP2trPkScript(senderPkScript)) {
                 throw new Error("Invalid P2TR script");
+            }
+            // One literal is the whole point of the field (see its doc
+            // comment); anything else is a caller inventing a shape that does
+            // not exist, and TS types are no check at all from JS.
+            if (legacy !== undefined && legacy !== "preTimelockedRefund") {
+                throw new Error(
+                    `nonInteractiveParameters.legacy must be "preTimelockedRefund" when set, got ${JSON.stringify(legacy)}`,
+                );
             }
         }
         if (!receiver || receiver.length !== 32) {
@@ -703,9 +644,8 @@ function isP2trPkScript(pkScript: Bytes): boolean {
 
 /**
  * The covenant: "this input's output pays the given P2TR script, value >=
- * input". Shared by {@link VHTLC.Options.nonInteractiveClaim} and {@link
- * VHTLC.Options.nonInteractiveRefund} — only the destination and the tier it
- * gates differ.
+ * input". Shared by every leaf {@link VHTLC.Options.nonInteractiveParameters}
+ * builds — only the destination and the tier it gates differ.
  *
  * `PUSHCURRENTINPUTINDEX` as the output index is not an assumption about how
  * the Ark round pairs inputs with outputs — the covenant imposes the pairing
@@ -750,14 +690,8 @@ function isP2trPkScript(pkScript: Bytes): boolean {
  * asset covenant used to restate these tokens inline under a comment promising
  * they matched "byte-for-byte" — a promise nothing enforced, and one that an
  * option added to one and forgotten on the other would have broken silently.
- *
- * `quotedSats` is the opt-in bound from
- * {@link VHTLC.Options.nonInteractiveClaim.strict}. It is ADDED to the
- * conservation comparison, never substituted for it: alone, `out >= quoted`
- * leaves everything above the quote unconstrained, so an overfunded lockup's
- * surplus could be routed anywhere by whoever assembles the spend.
  */
-function satClause(destinationPkScript: Bytes, quotedSats?: bigint): ArkadeScriptType {
+function satClause(destinationPkScript: Bytes): ArkadeScriptType {
     return [
         "PUSHCURRENTINPUTINDEX",
         "DUP",
@@ -767,18 +701,13 @@ function satClause(destinationPkScript: Bytes, quotedSats?: bigint): ArkadeScrip
         destinationPkScript.subarray(2),
         "EQUALVERIFY",
         "INSPECTOUTPUTVALUE",
-        // `DUP` because the output value is needed twice: once against the
-        // quote, once against the input.
-        ...(quotedSats === undefined
-            ? []
-            : (["DUP", quotedSats, "GREATERTHANOREQUAL", "VERIFY"] as ArkadeScriptType)),
         "PUSHCURRENTINPUTINDEX",
         "INSPECTINPUTVALUE",
         "GREATERTHANOREQUAL",
     ];
 }
 
-function enforcePayTo(destinationPkScript: Bytes, quotedSats?: bigint): Bytes {
+function enforcePayTo(destinationPkScript: Bytes): Bytes {
     // validateOptions already checked this for both current call sites — kept
     // here too, since this covenant is the one place a wrong destination
     // becomes irreversible (a mis-typed leaf, unlike a rejected constructor
@@ -786,7 +715,7 @@ function enforcePayTo(destinationPkScript: Bytes, quotedSats?: bigint): Bytes {
     if (!isP2trPkScript(destinationPkScript)) {
         throw new Error("invalid P2TR script");
     }
-    return ArkadeScript.encode(satClause(destinationPkScript, quotedSats));
+    return ArkadeScript.encode(satClause(destinationPkScript));
 }
 
 /**
@@ -822,8 +751,6 @@ function enforcePayTo(destinationPkScript: Bytes, quotedSats?: bigint): Bytes {
 function enforcePayToAsset(
     destinationPkScript: Bytes,
     asset: { txid: Bytes; groupIndex: number },
-    /** @see VHTLC.Options.nonInteractiveClaim.strict */
-    strict?: { amount: bigint; assetAmount?: bigint },
 ): Bytes {
     if (!isP2trPkScript(destinationPkScript)) {
         throw new Error("invalid P2TR script");
@@ -858,12 +785,6 @@ function enforcePayToAsset(
         asset.groupIndex,
         "INSPECTOUTASSETLOOKUP",
         "VERIFY", // PRESENT on the output, not merely "zero of it"
-        // The quoted bound, when the caller opted in — added to the input
-        // comparison below, not substituted for it. `DUP` because the output's
-        // asset amount is needed twice.
-        ...(strict?.assetAmount === undefined
-            ? []
-            : (["DUP", strict.assetAmount, "GREATERTHANOREQUAL", "VERIFY"] as ArkadeScriptType)),
         "PUSHCURRENTINPUTINDEX",
         inspectionTxid,
         asset.groupIndex,
@@ -877,7 +798,7 @@ function enforcePayToAsset(
         1,
         "EQUALVERIFY",
         // ...then the sat covenant, the same tokens `enforcePayTo` emits.
-        ...satClause(destinationPkScript, strict?.amount),
+        ...satClause(destinationPkScript),
     ]);
 }
 
@@ -885,14 +806,8 @@ function enforcePayToAsset(
 function enforcePayToMaybeAsset(
     destinationPkScript: Bytes,
     asset: { txid: Bytes; groupIndex: number } | undefined,
-    /**
-     * Present only for the CLAIM leaf, and only when the caller opted in. The
-     * refund leaf never receives one: a refund returns what arrived, so a quote
-     * has no place in it — see {@link enforcePayTo}.
-     */
-    strict?: { amount: bigint; assetAmount?: bigint },
 ): Bytes {
     return asset === undefined
-        ? enforcePayTo(destinationPkScript, strict?.amount)
-        : enforcePayToAsset(destinationPkScript, asset, strict);
+        ? enforcePayTo(destinationPkScript)
+        : enforcePayToAsset(destinationPkScript, asset);
 }

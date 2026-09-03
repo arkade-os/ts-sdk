@@ -655,6 +655,9 @@ function getRecoverableWithSubdust(
 /**
  * Check if a virtual output is expiring soon based on threshold
  *
+ * Always `false` for an unilaterally exited output: "expiring soon" is a renewal
+ * signal, and no batch can renew an output that already lives onchain.
+ *
  * @param vtxo - The virtual output to check
  * @param thresholdMs - Threshold in milliseconds from now
  * @returns true if virtual output expires within threshold, false otherwise
@@ -663,6 +666,9 @@ export function isVtxoExpiringSoon(
     vtxo: ExtendedVirtualCoin,
     thresholdMs: number, // in milliseconds
 ): boolean {
+    // Bare, not off the normalized coin: `normalizeVtxo` never defaults this flag.
+    if (vtxo.isUnrolled) return false;
+
     const realThresholdMs = thresholdMs <= 100 ? DEFAULT_THRESHOLD_MS : thresholdMs;
 
     // Being synchronous, this has no chain tip to compare a height-encoded expiry against, so
@@ -679,7 +685,9 @@ export function isVtxoExpiringSoon(
 }
 
 /**
- * Filter virtual outputs that are expiring soon or are recoverable/subdust
+ * Filter virtual outputs that are expiring soon or are recoverable/subdust.
+ * Unilaterally exited outputs are never included — none of the three arms
+ * describes a coin a batch can take.
  *
  * @param vtxos - Array of virtual outputs to check
  * @param thresholdMs - Threshold in milliseconds from now
@@ -693,10 +701,13 @@ export function getExpiringAndRecoverableVtxos(
     now: TimeHeight,
 ): NormalizedExtendedVirtualCoin[] {
     return vtxos.filter(
+        // The leading exclusion covers the `isSubdust` arm too, which is a value
+        // property and would otherwise re-admit an exited coin on its own.
         (vtxo) =>
-            isVtxoExpiringSoon(vtxo, thresholdMs) ||
-            canRecoverOnchain(vtxo, now) ||
-            isSubdust(vtxo, dustAmount),
+            !vtxo.isUnrolled &&
+            (isVtxoExpiringSoon(vtxo, thresholdMs) ||
+                canRecoverOnchain(vtxo, now) ||
+                isSubdust(vtxo, dustAmount)),
     );
 }
 
