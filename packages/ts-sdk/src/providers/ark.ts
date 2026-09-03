@@ -749,6 +749,7 @@ export class RestArkProvider implements ArkProvider {
                 while (!signal?.aborted) {
                     const currentIterator = eventSourceIterator(
                         resolveEventSource(self.eventSource)(url + queryParams),
+                        { preserveNativeReconnect: true },
                     );
                     iterator = currentIterator;
 

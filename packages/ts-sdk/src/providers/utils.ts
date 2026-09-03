@@ -17,7 +17,10 @@ function createAbortError(): Error {
  * close() closes the EventSource, removes listeners, and wakes any pending
  * next() even when the browser does not emit an error from EventSource.close().
  */
-export function eventSourceIterator(eventSource: EventSourceLike): ManagedEventSourceIterator {
+export function eventSourceIterator(
+    eventSource: EventSourceLike,
+    options: { preserveNativeReconnect?: boolean } = {},
+): ManagedEventSourceIterator {
     const messageQueue: MessageEvent[] = [];
     const errorQueue: Error[] = [];
     let messageResolve: ((value: MessageEvent) => void) | null = null;
@@ -65,7 +68,7 @@ export function eventSourceIterator(eventSource: EventSourceLike): ManagedEventS
         // Native EventSource reports transient transport loss with CONNECTING
         // and performs its own retry on this same instance. Keep it alive so
         // its retry state (including Last-Event-ID where available) is not lost.
-        if (eventSource.readyState === 0) return;
+        if (options.preserveNativeReconnect && eventSource.readyState === 0) return;
         const error = new Error("EventSource error");
         error.name = "EventSourceError";
         if (errorResolve) {
