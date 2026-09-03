@@ -90,7 +90,7 @@ beforeAll(async () => {
     });
 
     // fund the maker offchain: mint a note to the arkd CLI wallet, redeem it,
-    // and send from there (the same faucet path the ts-sdk e2e suites use)
+    // and send from there (the same faucet path the sdk e2e suites use)
     const note = execCommand(`${arkdExec} arkd note --amount 200000`);
     execCommand(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
     const address = await wallet.getAddress();

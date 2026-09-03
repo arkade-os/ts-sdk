@@ -11,7 +11,7 @@
 # types — see that file's header. The profiles share ports, so only one stack
 # can be up at a time.
 #
-# Usage: scripts/regtest.sh <ts-sdk|boltz-swap|swap|swap-rfq> <up|down|reset|setup|test|cycle> [test file...]
+# Usage: scripts/regtest.sh <sdk|boltz-swap|swap|swap-rfq> <up|down|reset|setup|test|cycle> [test file...]
 #   up     – clean + start with the package's .env.regtest
 #   down   – stop the stack (preserves data)
 #   reset  – clean (remove containers, volumes)
@@ -25,7 +25,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REGTEST_DIR="$ROOT_DIR/regtest"
 
 usage() {
-  echo "Usage: $0 <ts-sdk|boltz-swap|swap|swap-rfq> <up|down|reset|setup|test|cycle> [test file...]" >&2
+  echo "Usage: $0 <sdk|boltz-swap|swap|swap-rfq> <up|down|reset|setup|test|cycle> [test file...]" >&2
   exit 1
 }
 
@@ -44,7 +44,7 @@ TEST_FILES=("$@")
 # A profile resolves to a package directory plus an env-file suffix; a plain
 # package name is the profile with no suffix.
 case "$PKG" in
-  ts-sdk|boltz-swap|swap) PKG_DIR="$PKG"; ENV_SUFFIX="" ;;
+  sdk|boltz-swap|swap) PKG_DIR="$PKG"; ENV_SUFFIX="" ;;
   swap-rfq)               PKG_DIR="swap"; ENV_SUFFIX=".rfq" ;;
   *) usage ;;
 esac
@@ -76,8 +76,8 @@ cmd_reset() {
 
 cmd_setup() {
   case "$PKG_DIR" in
-    ts-sdk)
-      pnpm -C "$ROOT_DIR/packages/ts-sdk" exec node test/setup.mjs
+    sdk)
+      pnpm -C "$ROOT_DIR/packages/sdk" exec node test/setup.mjs
       ;;
     boltz-swap)
       pnpm -C "$ROOT_DIR/packages/boltz-swap" exec node test/e2e/setup.mjs
@@ -90,11 +90,11 @@ cmd_setup() {
 
 cmd_test() {
   case "$PKG" in
-    ts-sdk)
+    sdk)
       if [ "${#TEST_FILES[@]}" -gt 0 ]; then
-        ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" exec vitest run "${TEST_FILES[@]}"
+        ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" exec vitest run "${TEST_FILES[@]}"
       else
-        ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" run test:integration
+        ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" run test:integration
       fi
       ;;
     boltz-swap)

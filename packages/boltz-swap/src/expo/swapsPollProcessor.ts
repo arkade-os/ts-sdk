@@ -22,7 +22,7 @@ export const SWAP_POLL_TASK_TYPE = "swap-poll";
  * attempts best-effort claim/refund for actionable swaps.
  *
  * Designed for Expo background tasks (~30s window) and follows the
- * same `TaskProcessor` pattern as `contractPollProcessor` in ts-sdk.
+ * same `TaskProcessor` pattern as `contractPollProcessor` in sdk.
  *
  * Steps:
  * 1. Read all non-final swaps from SwapRepository

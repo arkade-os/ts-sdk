@@ -1481,15 +1481,15 @@ This package is developed inside the [arkade-os/ts-sdk](../..) monorepo. See the
 Common package-local commands (run from the repo root):
 
 ```bash
-pnpm -C packages/ts-sdk run typecheck    # Type-check the SDK
-pnpm -C packages/ts-sdk test:unit        # Unit tests, excluding e2e
-pnpm -C packages/ts-sdk test:watch       # Vitest watch mode
-pnpm -C packages/ts-sdk test:coverage    # Coverage report
-pnpm -C packages/ts-sdk docs:build       # Build TypeDoc API docs
-pnpm -C packages/ts-sdk docs:open        # Open API docs in the browser
+pnpm -C packages/sdk run typecheck    # Type-check the SDK
+pnpm -C packages/sdk test:unit        # Unit tests, excluding e2e
+pnpm -C packages/sdk test:watch       # Vitest watch mode
+pnpm -C packages/sdk test:coverage    # Coverage report
+pnpm -C packages/sdk docs:build       # Build TypeDoc API docs
+pnpm -C packages/sdk docs:open        # Open API docs in the browser
 ```
 
-For integration tests, use the root commands (`pnpm run test:integration:ts-sdk` and the `regtest:*:ts-sdk` family) — see the root README.
+For integration tests, use the root commands (`pnpm run test:integration:sdk` and the `regtest:*:sdk` family) — see the root README.
 
 ### Releasing
 

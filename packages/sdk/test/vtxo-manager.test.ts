@@ -937,7 +937,7 @@ describe("VtxoManager - Renewal utilities", () => {
         });
 
         it("should not offer an unrolled VTXO for renewal once it is past expiry", () => {
-            // NArk renews `Unrolled` eagerly; ts-sdk cannot re-batch an exit
+            // NArk renews `Unrolled` eagerly; sdk cannot re-batch an exit
             // output at all, so here the same fact excludes instead.
             const now = Date.now();
             const createdAt = new Date(now - 100_000);

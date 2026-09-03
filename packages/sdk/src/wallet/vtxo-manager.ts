@@ -176,7 +176,7 @@ async function runWithCrossInstanceLock(name: string, fn: () => Promise<void>): 
  * (added uncapped) plus transaction-size overhead. When more VTXOs are
  * eligible, the overflow is left for the next settlement cycle.
  *
- * This cap is a ts-sdk-specific safeguard: neither go-sdk nor NArk caps the
+ * This cap is an SDK-specific safeguard: neither go-sdk nor NArk caps the
  * settlement batch — go-sdk submits every spendable VTXO in a single intent.
  * Because the reference SDKs impose no selection order (go-sdk's query has no
  * `ORDER BY`), we are free to order the candidates before capping so the most

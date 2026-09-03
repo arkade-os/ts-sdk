@@ -389,7 +389,7 @@ export function canRecoverOnchain(vtxo: VirtualCoin, now: TimeHeight): boolean {
  * other two refuse them.
  *
  * @remarks
- * The ts-sdk analogue of NArk's `OnchainSweepService` filter, minus the expiry clause: the relevant
+ * The SDK's analogue of NArk's `OnchainSweepService` filter, minus the expiry clause: the relevant
  * maturity here is the exit tx's CSV timelock, which `prepareUnrollTransaction` checks against the
  * chain tip, not the batch expiry.
  */
