@@ -444,6 +444,13 @@ export const assertFundable = (input: {
     const fail = (reason: string, message: string): never => {
         throw gateError(reason, message);
     };
+    // Ahead of the comparisons, as in assertReceivable: `valid_until` is the
+    // operand of the expiry gate below AND of the TTL floor the v2 client runs
+    // after it, so absent or non-numeric it fails neither — it deletes both.
+    if (input.quote.valid_until === undefined) {
+        fail("quote_malformed", "quote carries no valid_until");
+    }
+    assertFinite(input.quote.valid_until, "quote_malformed", "quote valid_until");
     if (input.invoiceExpiresAt !== undefined && input.now >= input.invoiceExpiresAt) {
         fail("invoice_expired", "invoice expired");
     }

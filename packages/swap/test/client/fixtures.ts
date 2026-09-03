@@ -19,7 +19,7 @@ import {
     getNetwork,
     type IWallet,
 } from "@arkade-os/sdk";
-import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
+import type { DiscoveredMarket, NetworkIndex } from "@arkade-os/solver-discovery";
 import {
     LIGHTNING_RECEIVE_PAIR,
     LIGHTNING_SEND_PAIR,
@@ -63,7 +63,12 @@ export const WALLET_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), NETWORK.h
 
 /** A wallet backed by the real allocator and the real deterministic signer. */
 export const hdWallet = async (
-    over: { getContractManager?: () => Promise<unknown>; info?: unknown } = {},
+    over: {
+        getContractManager?: () => Promise<unknown>;
+        info?: unknown;
+        /** For the reads that must fail: `info` answers, this one decides. */
+        getArkadeInfo?: () => Promise<unknown>;
+    } = {},
 ): Promise<IWallet> => {
     const identity = MnemonicIdentity.fromMnemonic(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
@@ -73,7 +78,7 @@ export const hdWallet = async (
     return {
         identity,
         getAddress: async () => WALLET_ADDRESS,
-        getArkadeInfo: async () => over.info ?? ARK_INFO,
+        getArkadeInfo: over.getArkadeInfo ?? (async () => over.info ?? ARK_INFO),
         getContractManager:
             over.getContractManager ??
             (async () => {
@@ -146,6 +151,15 @@ export const spotCard: DiscoveredMarket = {
     source: "https://registry.example/regtest.json",
     sourceType: "registry",
 };
+
+/** What the registry publishes: the cards without discovery's own provenance. */
+export const indexOf = (markets: DiscoveredMarket[]): NetworkIndex => ({
+    version: 0,
+    network: "regtest",
+    generated_at: Math.floor(Date.now() / 1000),
+    commit: "0".repeat(40),
+    markets: markets.map(({ source, sourceType, ...market }) => market),
+});
 
 /** A feed answering a fixed price, and a count of how often it was asked. */
 export const feedServing = (price = 100_000): { fetch: typeof fetch; calls: () => number } => {

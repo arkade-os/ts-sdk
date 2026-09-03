@@ -5,7 +5,9 @@
  * The discovery half is the other axis: the same route resolves against an
  * injected snapshot, a stale cache and a registry that serves nothing, and the
  * three are told apart on the resolution rather than collapsed into one empty
- * array.
+ * array. The last block follows a cache-served card one step past that line,
+ * into the re-pin `quote()` owes it — both halves of one rule, so they are read
+ * together rather than split across two files by which one reaches a solver.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSwapClient } from "../../src/client/client";
@@ -13,17 +15,20 @@ import {
     AmbiguousDestination,
     AmountMismatch,
     DiscoverySnapshotUnavailable,
+    OperatorUnreachable,
     UnsupportedRoute,
 } from "../../src/client/errors";
 import { InMemoryAssetSwapRepository } from "../../src/repository";
 import type { QuoteInput } from "../../src/client/quote";
 import {
+    ARK_INFO,
     EMULATOR_PUBKEY_HEX,
     PAYMENT_HASH,
     USD_ASSET_ID,
     clockAt,
     feedServing,
     hdWallet,
+    indexOf,
     invoiceFor,
     lightningCard,
     onchainCard,
@@ -52,9 +57,10 @@ const clientWith = async (
         fetchImpl?: typeof fetch;
         repository?: InMemoryAssetSwapRepository;
         policy?: Parameters<typeof createSwapClient>[0]["policy"];
+        wallet?: Awaited<ReturnType<typeof hdWallet>>;
     } = {},
 ) => {
-    const wallet = await hdWallet();
+    const wallet = over.wallet ?? (await hdWallet());
     const transport = solverTransport(solverFor(CLOCK));
     const feed = feedServing();
     return {
@@ -308,6 +314,32 @@ describe("what the snapshot serves", () => {
     });
 });
 
+describe("the deferred init", () => {
+    it("retries the operator read rather than serving its rejection forever", async () => {
+        let reads = 0;
+        let offline = true;
+        const wallet = await hdWallet({
+            getArkadeInfo: async () => {
+                reads += 1;
+                if (offline) throw new Error("operator unreachable");
+                return ARK_INFO;
+            },
+        });
+        const { client } = await clientWith({ wallet, snapshot: [lightningCard] });
+        const invoice = invoiceFor(PAYMENT_HASH, CLOCK);
+
+        const error = await client.resolve({ to: invoice }).catch((e) => e);
+        expect(error).toBeInstanceOf(OperatorUnreachable);
+
+        offline = false;
+        expect((await client.resolve({ to: invoice })).take.corridor).toBe("lightning");
+        // ...and the retry is the ONLY extra read: the resolved context is
+        // still memoized once it succeeds.
+        await client.resolve({ to: invoice });
+        expect(reads).toBe(2);
+    });
+});
+
 describe("a quote against a cache-served card", () => {
     it("re-pins the card from the registry, and refuses when it cannot", async () => {
         const repository = new InMemoryAssetSwapRepository();
@@ -328,5 +360,59 @@ describe("a quote against a cache-served card", () => {
         expect(error.name).toBe("QuoteVerificationFailed");
         expect(error.check).toBe("responder");
         expect(transport.sent).toHaveLength(0);
+    });
+
+    it("quotes against the re-pinned card when the retry reaches the registry", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const registryUrl = "https://registry.example/regtest.json";
+        await repository.saveCachedMarkets("regtest", registryUrl, {
+            markets: [lightningCard],
+            fetchedAt: Date.now(),
+        });
+        // Unreachable for the load that resolves the route, reachable for the
+        // re-pin: the one sequence that tells the refresh apart from it.
+        let reached = false;
+        const fetchImpl = vi.fn(async () => {
+            if (!reached) {
+                reached = true;
+                throw new Error("registry unreachable");
+            }
+            return new Response(JSON.stringify(indexOf([lightningCard])));
+        }) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
+        const { client, transport } = await clientWith({ registryUrl, repository, fetchImpl });
+
+        const quote = await client.quote({ to: invoiceFor(PAYMENT_HASH, CLOCK) });
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+        expect(quote.market.kind === "card" && quote.market.snapshot).toMatchObject({
+            live: true,
+            source: "live",
+        });
+        // A live card names the key the responder check pins against, so this
+        // is the one path on which the invoice reaches a solver at all.
+        expect(transport.sent).toHaveLength(1);
+    });
+
+    it("leaves a feed-priced market on the stale snapshot, having nothing to pin", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const registryUrl = "https://registry.example/regtest.json";
+        await repository.saveCachedMarkets("regtest", registryUrl, {
+            markets: [spotCard],
+            fetchedAt: Date.now(),
+        });
+        const fetchImpl = vi.fn(async () => {
+            throw new Error("registry unreachable");
+        }) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
+        const { client } = await clientWith({ registryUrl, repository, fetchImpl });
+
+        const quote = await client.quote({
+            give: "BTC",
+            take: "USD",
+            amount: 10_000n,
+            amountOn: "give",
+        });
+        // No re-pin attempted: the refresh is the addressed backend's, and a
+        // feed quote discloses nothing to a responder.
+        expect(quote.market.backend).toBe("feed");
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 });

@@ -547,6 +547,25 @@ describe("guardrails", () => {
             /headroom/,
         );
     });
+
+    it("assertFundable refuses a valid_until it cannot compare against", () => {
+        const now = 1_800_000_000;
+        // The wire is JSON: `valid_until` is typed number here but nothing
+        // typechecks the solver's payload, and `now >= NaN` is false — the
+        // expiry gate would pass rather than fail.
+        for (const valid_until of [Number.NaN, Number.POSITIVE_INFINITY, "soon", undefined]) {
+            const quote = quoteFixture({ valid_until: valid_until as unknown as number });
+            const refusal = ((): unknown => {
+                try {
+                    assertFundable({ quote, invoiceExpiresAt: now + 3600, now });
+                    return undefined;
+                } catch (error) {
+                    return error;
+                }
+            })();
+            expect((refusal as { reason?: string }).reason).toBe("quote_malformed");
+        }
+    });
 });
 
 describe("expectQuote", () => {

@@ -391,6 +391,18 @@ describe("verification, one failure per check", () => {
         expect(error.check).toBe("refund_window");
     });
 
+    it("refuses a valid_until that would delete the expiry gate rather than fail it", async () => {
+        const { client } = await setup({
+            answer: (payload) => ({
+                ...lightningSendAnswer(payload, CLOCK),
+                valid_until: Number.NaN,
+            }),
+        });
+        const error = await client.quote(sendInput()).catch((e) => e);
+        expect(error).toBeInstanceOf(QuoteVerificationFailed);
+        expect(error.check).toBe("refund_window");
+    });
+
     it("refuses a transport that attests nobody, before disclosing anything", async () => {
         const { client, transport } = await setup({ attestedResponder: undefined });
         const error = await client.quote(sendInput()).catch((e) => e);
