@@ -355,6 +355,9 @@ export class EsploraProvider implements OnchainProvider {
         let ws: WebSocket | null = null;
         let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
         let reconnectFailures = 0;
+        // Bumped whenever a poll loop is retired, so a cycle suspended across
+        // its fetch can tell that the loop it belongs to is no longer wanted.
+        let pollSession = 0;
 
         const emit = (txs: ExplorerTransaction[]) => {
             if (stopped || txs.length === 0) return;
@@ -435,8 +438,14 @@ export class EsploraProvider implements OnchainProvider {
 
             let failures = 0;
 
+            // This loop's identity. `stopped` alone is not enough: the watch can
+            // stay alive while *this* loop is retired, which is what happens when
+            // the socket comes back.
+            const session = pollSession;
+            const isCurrentLoop = () => !stopped && session === pollSession;
+
             const schedule = () => {
-                if (stopped) return;
+                if (!isCurrentLoop()) return;
                 // Self-rescheduling rather than setInterval: a fixed interval
                 // stacks overlapping full-history fetches when the explorer is
                 // slower than pollingInterval, and offers nowhere to back off
@@ -448,12 +457,13 @@ export class EsploraProvider implements OnchainProvider {
                 try {
                     const currentTxs = await getAllTxs();
 
-                    // teardown may have run while that fetch was in flight.
-                    // Returning before `schedule()` is what keeps stop() honest:
-                    // otherwise the timer is installed *after* teardown, with no
-                    // handle left to clear it, and the loop hammers the explorer
-                    // until the process exits.
-                    if (stopped) return;
+                    // teardown may have run while that fetch was in flight, or
+                    // the socket may have come back and retired this loop.
+                    // Returning before `schedule()` is what keeps both honest:
+                    // otherwise a timer is installed after the loop was retired,
+                    // and the explorer keeps getting hit — either with no handle
+                    // left to clear it, or alongside a perfectly healthy socket.
+                    if (!isCurrentLoop()) return;
 
                     if (baselined) {
                         report(currentTxs);
@@ -479,7 +489,7 @@ export class EsploraProvider implements OnchainProvider {
             // baseline is still in flight, everything predating the watch would
             // look new.
             await baseline;
-            if (stopped) return;
+            if (!isCurrentLoop()) return;
 
             // Poll straight away rather than waiting a full interval — this is
             // standing in for a dead socket, so the gap matters.
@@ -489,6 +499,10 @@ export class EsploraProvider implements OnchainProvider {
         // Retire the HTTP safety net once the socket carries events again, and
         // allow a later failure to bring it back.
         const stopPolling = () => {
+            // Retire the current loop first. Clearing `timer` is not enough: a
+            // cycle suspended on its fetch has no timer yet, and would re-arm
+            // itself the moment that fetch resolved.
+            pollSession++;
             if (timer) {
                 clearTimeout(timer);
                 timer = null;

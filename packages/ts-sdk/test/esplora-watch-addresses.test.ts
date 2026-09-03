@@ -320,6 +320,66 @@ describe("EsploraProvider.watchAddresses", () => {
             expect(mockFetch).not.toHaveBeenCalled();
         });
 
+        it("does not resurrect a poll loop when the socket returns mid-fetch", async () => {
+            // The test above lets the poll cycle settle before reconnecting.
+            // Here the socket comes back while a cycle is still suspended on its
+            // fetch, so `stopPolling()` clears a timer that does not exist yet
+            // and the resuming cycle re-arms itself behind the healthy socket.
+            mockFetch.mockResolvedValueOnce(okJson([])); // creation-time baseline
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1"], () => {});
+
+            const pending = deferred<ReturnType<typeof okJson>>();
+            mockFetch.mockReturnValue(pending.promise);
+
+            const errorHandled = FakeWebSocket.instances[0].dispatch("error");
+            await flush(); // the poll cycle is now suspended on its fetch
+
+            await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
+            await FakeWebSocket.instances[1].dispatch("open");
+
+            pending.resolve(okJson([]));
+            await errorHandled;
+            await flush();
+
+            expect(vi.getTimerCount()).toBe(0);
+
+            mockFetch.mockClear();
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 4);
+            expect(mockFetch).not.toHaveBeenCalled();
+        });
+
+        it("does not run two poll loops when the socket fails again after returning", async () => {
+            // `stopPolling()` clears `pollStarted`, so a failure arriving while an
+            // earlier cycle is still suspended must not start a second loop.
+            mockFetch.mockResolvedValueOnce(okJson([])); // creation-time baseline
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1"], () => {});
+
+            const pending = deferred<ReturnType<typeof okJson>>();
+            mockFetch.mockReturnValue(pending.promise);
+
+            const errorHandled = FakeWebSocket.instances[0].dispatch("error");
+            await flush();
+
+            await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
+            const reconnected = FakeWebSocket.instances[1];
+            await reconnected.dispatch("open");
+            await reconnected.dispatch("error"); // fails again straight away
+
+            pending.resolve(okJson([]));
+            await errorHandled;
+            await flush();
+
+            // One poll loop, so one fetch round per interval — not one per loop.
+            // (Counting fetches rather than timers: a pending reconnect is a
+            // legitimate timer too, so a raw count would conflate the two.)
+            mockFetch.mockClear();
+            mockFetch.mockResolvedValue(okJson([]));
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+        });
+
         it("delivers messages received on a reconnected socket", async () => {
             mockFetch.mockResolvedValue(okJson([]));
             const callback = vi.fn();
