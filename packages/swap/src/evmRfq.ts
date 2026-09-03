@@ -425,8 +425,14 @@ export type EvmRfqQuote = EvmSendQuote | EvmReceiveQuote;
  * solver may extend a quote without a version bump, and a client that refused
  * the extension would be the one that broke.
  *
- * Pass the token you asked for: a quote naming a different one is a different
- * market, and comparing the pair is the only way to notice.
+ * Pass the token AND the negotiation you asked for. A quote naming a different
+ * token is a different market, and comparing the pair is the only way to
+ * notice. `rfqId` is required rather than optional for the reason `expectQuote`
+ * checks it: on a shared relay every one of a solver's events arrives on the
+ * same subscription, so nothing but this id distinguishes the answer to THIS
+ * negotiation from the answer to another one — and an optional check is one a
+ * caller forgets exactly when several are in flight, which is the only time it
+ * matters.
  *
  * **Takes `unknown`, and pass a transport's result straight in.**
  * `RfqTransport.requestQuote` is typed `Promise<RfqQuote>`, which is not
@@ -439,9 +445,13 @@ export type EvmRfqQuote = EvmSendQuote | EvmReceiveQuote;
  */
 export const readEvmSendQuote = (
     payload: unknown,
-    expected: { tokenAddress: string },
+    expected: { tokenAddress: string; rfqId: string },
 ): EvmSendQuote => {
-    const { quote, profile } = readEvmQuoteEnvelope(payload, evmSendPair(expected.tokenAddress));
+    const { quote, profile } = readEvmQuoteEnvelope(
+        payload,
+        evmSendPair(expected.tokenAddress),
+        expected.rfqId,
+    );
     readCommonProfile(profile);
     assertHex(profile.receiver_pk_script, "profile.receiver_pk_script");
     assertPositiveInteger(profile.evm_timeout_block, "profile.evm_timeout_block");
@@ -457,9 +467,13 @@ export const readEvmSendQuote = (
  * readEvmSendQuote} for what this does and does not promise. */
 export const readEvmReceiveQuote = (
     payload: unknown,
-    expected: { tokenAddress: string },
+    expected: { tokenAddress: string; rfqId: string },
 ): EvmReceiveQuote => {
-    const { quote, profile } = readEvmQuoteEnvelope(payload, evmReceivePair(expected.tokenAddress));
+    const { quote, profile } = readEvmQuoteEnvelope(
+        payload,
+        evmReceivePair(expected.tokenAddress),
+        expected.rfqId,
+    );
     readCommonProfile(profile);
     assertHex(profile.solver_refund_pk_script, "profile.solver_refund_pk_script");
     assertEvmAddress(
@@ -536,11 +550,21 @@ const asString = (value: unknown, field: string): string => {
 const readEvmQuoteEnvelope = (
     payload: unknown,
     expectedPair: string,
+    expectedRfqId: string,
 ): { quote: Record<string, unknown>; profile: Record<string, unknown> } => {
     if (!payload || typeof payload !== "object") throw new Error("EVM quote is not an object");
     const quote = payload as Record<string, unknown>;
     if (quote.type !== "rfq_quote") {
         throw new Error(`expected an rfq_quote, got ${String(quote.type)}`);
+    }
+    // Before the pair, deliberately: a reply to another negotiation may well be
+    // for the same market, so the pair check would pass it and the diagnostic
+    // would be about a field that was never wrong.
+    if (quote.rfq_id !== expectedRfqId) {
+        throw new Error(
+            `quote is for rfq_id ${JSON.stringify(quote.rfq_id)}, not this negotiation's ` +
+                `${expectedRfqId}`,
+        );
     }
     if (quote.pair !== expectedPair) {
         throw new Error(`solver quoted ${JSON.stringify(quote.pair)}, not ${expectedPair}`);

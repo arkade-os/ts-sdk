@@ -351,9 +351,7 @@ describe("solver parity", () => {
             expect(() =>
                 readEvmSendQuote(
                     withoutKey(sendQuote() as unknown as Record<string, unknown>, key),
-                    {
-                        tokenAddress: USDC,
-                    },
+                    { tokenAddress: USDC, rfqId: RFQ_ID },
                 ),
             ).toThrow(new RegExp(`profile\\.${key}`));
         }
@@ -361,7 +359,7 @@ describe("solver parity", () => {
             expect(() =>
                 readEvmReceiveQuote(
                     withoutKey(receiveQuote() as unknown as Record<string, unknown>, key),
-                    { tokenAddress: USDC },
+                    { tokenAddress: USDC, rfqId: RFQ_ID },
                 ),
             ).toThrow(new RegExp(`profile\\.${key}`));
         }
@@ -600,14 +598,14 @@ describe("request builders", () => {
 
 describe("quote readers", () => {
     it("narrows a well-formed send quote", () => {
-        const quote = readEvmSendQuote(sendQuote(), { tokenAddress: USDC });
+        const quote = readEvmSendQuote(sendQuote(), { tokenAddress: USDC, rfqId: RFQ_ID });
         expect(quote.profile.evm_timeout_block).toBe(21_000_000);
         expect(evmQuoteTokenAmount(quote)).toBe(249_750_000_000_000_000_000n);
         expect(evmQuoteSats(quote)).toBe(250_000);
     });
 
     it("narrows a well-formed receive quote", () => {
-        const quote = readEvmReceiveQuote(receiveQuote(), { tokenAddress: USDC });
+        const quote = readEvmReceiveQuote(receiveQuote(), { tokenAddress: USDC, rfqId: RFQ_ID });
         expect(quote.profile.evm_claim_address).toBe(SOLVER_CLAIM_ADDRESS);
         expect(evmQuoteTokenAmount(quote)).toBe(249_750_000_000_000_000_000n);
         expect(evmQuoteSats(quote)).toBe(250_000);
@@ -616,33 +614,66 @@ describe("quote readers", () => {
     it("takes the token and sats legs off OPPOSITE sides per direction", () => {
         // The one thing that silently swaps: both quotes carry the same two
         // numbers, and reading the wrong side yields a plausible value.
-        const send = readEvmSendQuote(sendQuote(), { tokenAddress: USDC });
-        const receive = readEvmReceiveQuote(receiveQuote(), { tokenAddress: USDC });
+        const send = readEvmSendQuote(sendQuote(), { tokenAddress: USDC, rfqId: RFQ_ID });
+        const receive = readEvmReceiveQuote(receiveQuote(), { tokenAddress: USDC, rfqId: RFQ_ID });
         expect(BigInt(send.to_amount)).toBe(evmQuoteTokenAmount(send));
         expect(send.from_amount).toBe(evmQuoteSats(send));
         expect(BigInt(receive.from_amount)).toBe(evmQuoteTokenAmount(receive));
         expect(receive.to_amount).toBe(evmQuoteSats(receive));
     });
 
+    it("refuses a quote for another negotiation, even on the same market", () => {
+        // The case the pair check cannot catch: a second swap for the same
+        // token, whose quote arrives on the same relay subscription and whose
+        // pair is byte-identical. Only `rfq_id` tells them apart, and taking
+        // the wrong one funds the other swap's terms.
+        const other = "c3".repeat(32);
+        expect(() =>
+            readEvmSendQuote(sendQuote({ rfq_id: other }), {
+                tokenAddress: USDC,
+                rfqId: RFQ_ID,
+            }),
+        ).toThrow(/quote is for rfq_id "c3c3.*not this negotiation's a1a1/);
+        expect(() =>
+            readEvmReceiveQuote(receiveQuote({ rfq_id: other }), {
+                tokenAddress: USDC,
+                rfqId: RFQ_ID,
+            }),
+        ).toThrow(/not this negotiation's/);
+        // …and a quote carrying no id at all, which would otherwise compare
+        // `undefined !== undefined` as false if the caller's were missing too.
+        const anonymous = sendQuote() as unknown as Record<string, unknown>;
+        delete anonymous.rfq_id;
+        expect(() => readEvmSendQuote(anonymous, { tokenAddress: USDC, rfqId: RFQ_ID })).toThrow(
+            /quote is for rfq_id/,
+        );
+    });
+
     it("refuses a quote for another token, or another pair entirely", () => {
-        expect(() => readEvmSendQuote(sendQuote(), { tokenAddress: ERC20_SWAP })).toThrow(
-            /solver quoted .* not arkade:BTC->ethereum/,
-        );
+        expect(() =>
+            readEvmSendQuote(sendQuote(), { tokenAddress: ERC20_SWAP, rfqId: RFQ_ID }),
+        ).toThrow(/solver quoted .* not arkade:BTC->ethereum/);
         // The receive quote's own pair, handed to the send reader.
-        expect(() => readEvmSendQuote(receiveQuote(), { tokenAddress: USDC })).toThrow(
-            /solver quoted/,
-        );
-        expect(() => readEvmReceiveQuote(sendQuote(), { tokenAddress: USDC })).toThrow(
-            /solver quoted/,
-        );
+        expect(() =>
+            readEvmSendQuote(receiveQuote(), { tokenAddress: USDC, rfqId: RFQ_ID }),
+        ).toThrow(/solver quoted/);
+        expect(() =>
+            readEvmReceiveQuote(sendQuote(), { tokenAddress: USDC, rfqId: RFQ_ID }),
+        ).toThrow(/solver quoted/);
     });
 
     it("refuses a token amount that arrived as a JSON number", () => {
         expect(() =>
-            readEvmSendQuote(sendQuote({ to_amount: 249.75e18 }), { tokenAddress: USDC }),
+            readEvmSendQuote(sendQuote({ to_amount: 249.75e18 }), {
+                tokenAddress: USDC,
+                rfqId: RFQ_ID,
+            }),
         ).toThrow(/to_amount must be a decimal string/);
         expect(() =>
-            readEvmReceiveQuote(receiveQuote({ from_amount: 249.75e18 }), { tokenAddress: USDC }),
+            readEvmReceiveQuote(receiveQuote({ from_amount: 249.75e18 }), {
+                tokenAddress: USDC,
+                rfqId: RFQ_ID,
+            }),
         ).toThrow(/from_amount must be a decimal string/);
     });
 
@@ -664,7 +695,7 @@ describe("quote readers", () => {
                     withProfile(sendQuote() as unknown as Record<string, unknown>, {
                         evm_contract_address: bad,
                     }),
-                    { tokenAddress: USDC },
+                    { tokenAddress: USDC, rfqId: RFQ_ID },
                 ),
             ).toThrow(/profile\.evm_contract_address must be 0x then 40 hex/);
             expect(() =>
@@ -672,7 +703,7 @@ describe("quote readers", () => {
                     withProfile(receiveQuote() as unknown as Record<string, unknown>, {
                         evm_claim_address: bad,
                     }),
-                    { tokenAddress: USDC },
+                    { tokenAddress: USDC, rfqId: RFQ_ID },
                 ),
             ).toThrow(/profile\.evm_claim_address must be 0x then 40 hex/);
         }
@@ -692,7 +723,7 @@ describe("quote readers", () => {
                     withProfile(sendQuote() as unknown as Record<string, unknown>, {
                         receiver_pk_script: bad,
                     }),
-                    { tokenAddress: USDC },
+                    { tokenAddress: USDC, rfqId: RFQ_ID },
                 ),
             ).toThrow(/profile\.receiver_pk_script must be lowercase hex/);
             expect(() =>
@@ -700,7 +731,7 @@ describe("quote readers", () => {
                     withProfile(receiveQuote() as unknown as Record<string, unknown>, {
                         solver_refund_pk_script: bad,
                     }),
-                    { tokenAddress: USDC },
+                    { tokenAddress: USDC, rfqId: RFQ_ID },
                 ),
             ).toThrow(/profile\.solver_refund_pk_script must be lowercase hex/);
         }
@@ -723,9 +754,9 @@ describe("quote readers", () => {
             "min_confirmations",
             "min_age_seconds",
         ]) {
-            expect(() => readEvmSendQuote(drop(key), { tokenAddress: USDC })).toThrow(
-                new RegExp(`profile\\.${key}`),
-            );
+            expect(() =>
+                readEvmSendQuote(drop(key), { tokenAddress: USDC, rfqId: RFQ_ID }),
+            ).toThrow(new RegExp(`profile\\.${key}`));
         }
     });
 
@@ -748,13 +779,13 @@ describe("quote readers", () => {
             expect(() =>
                 readEvmSendQuote(
                     dropEnvelope(sendQuote() as unknown as Record<string, unknown>, key),
-                    { tokenAddress: USDC },
+                    { tokenAddress: USDC, rfqId: RFQ_ID },
                 ),
             ).toThrow(new RegExp(key));
             expect(() =>
                 readEvmReceiveQuote(
                     dropEnvelope(receiveQuote() as unknown as Record<string, unknown>, key),
-                    { tokenAddress: USDC },
+                    { tokenAddress: USDC, rfqId: RFQ_ID },
                 ),
             ).toThrow(new RegExp(key));
         }
@@ -762,7 +793,7 @@ describe("quote readers", () => {
         expect(() =>
             readEvmSendQuote(
                 dropEnvelope(sendQuote() as unknown as Record<string, unknown>, "profile"),
-                { tokenAddress: USDC },
+                { tokenAddress: USDC, rfqId: RFQ_ID },
             ),
         ).toThrow(/carries no profile/);
     });
@@ -770,14 +801,19 @@ describe("quote readers", () => {
     it("accepts min_age_seconds of zero — depth-only is a solver's choice", () => {
         const quote = sendQuote() as unknown as Record<string, unknown>;
         const profile = { ...(quote.profile as Record<string, unknown>), min_age_seconds: 0 };
-        expect(() => readEvmSendQuote({ ...quote, profile }, { tokenAddress: USDC })).not.toThrow();
+        expect(() =>
+            readEvmSendQuote({ ...quote, profile }, { tokenAddress: USDC, rfqId: RFQ_ID }),
+        ).not.toThrow();
     });
 
     it("ignores unknown fields — responses are tolerant, requests are not", () => {
         const quote = sendQuote() as unknown as Record<string, unknown>;
         const profile = { ...(quote.profile as Record<string, unknown>), future_field: "x" };
         expect(() =>
-            readEvmSendQuote({ ...quote, profile, another: 1 }, { tokenAddress: USDC }),
+            readEvmSendQuote(
+                { ...quote, profile, another: 1 },
+                { tokenAddress: USDC, rfqId: RFQ_ID },
+            ),
         ).not.toThrow();
     });
 
@@ -785,13 +821,15 @@ describe("quote readers", () => {
         expect(() =>
             readEvmSendQuote(
                 { v: 1, type: "rfq_refusal", reason: "unsupported_pair" },
-                {
-                    tokenAddress: USDC,
-                },
+                { tokenAddress: USDC, rfqId: RFQ_ID },
             ),
         ).toThrow(/expected an rfq_quote, got rfq_refusal/);
-        expect(() => readEvmSendQuote(null, { tokenAddress: USDC })).toThrow(/not an object/);
-        expect(() => readEvmSendQuote("{}", { tokenAddress: USDC })).toThrow(/not an object/);
+        expect(() => readEvmSendQuote(null, { tokenAddress: USDC, rfqId: RFQ_ID })).toThrow(
+            /not an object/,
+        );
+        expect(() => readEvmSendQuote("{}", { tokenAddress: USDC, rfqId: RFQ_ID })).toThrow(
+            /not an object/,
+        );
     });
 });
 
