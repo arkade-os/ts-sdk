@@ -39,7 +39,19 @@ export { SwapRefusal };
 export type QuoteCheck = "pair" | "lockup_address" | "invoice" | "refund_window";
 
 /**
- * `to` is underdetermined — it parses as nothing, or as more than one thing.
+ * `to` is underdetermined — it parses as nothing, as more than one thing, or as
+ * one thing the corridor that owns it refuses.
+ *
+ * The third arm is the one a name reading only "ambiguous" would hide. A
+ * corridor module answers *mine, and wrong* for a `tb1…` on a mainnet wallet,
+ * another operator's Arkade address, or a bolt11 the shape-only classifier
+ * admits and the decoder then rejects; collapsing that into *not mine* would
+ * hand a well-formed destination to {@link UnsupportedRoute}, which names the
+ * wrong fault. The refusal rides on `detail`, so the taxonomy stays at sixteen.
+ *
+ * A destination core classifies but no module claims — an LNURL today — is NOT
+ * this: it is left unclaimed at the parse and becomes {@link UnsupportedRoute}
+ * at route resolution.
  *
  * Boundary: `resolve()`/`quote()`, the single place `to` is parsed.
  */
@@ -284,10 +296,18 @@ export class OperatorUnreachable extends Error {
 }
 
 /**
- * A corridor's dependency was explicitly overridden to nothing — the onchain
- * chain source, the lightning decoder, the arkade repository.
+ * A corridor's dependency was explicitly overridden to nothing, or is required
+ * on this network and absent.
  *
- * Boundary: `quote()`, when a route first touches that corridor. Never
+ * Four overridable deps, not three: the arkade repository, the lightning
+ * decoder, the lightning covclaimd deployment key, and the onchain chain
+ * source. `undefined` takes the default; `null` is the refusal this names. The
+ * arkade module's co-signer key reaches it by the second door — it is not a
+ * `CorridorOverrides` key, but `EMULATOR_PUBKEYS` pins three of the five
+ * networks, so on `testnet` and `signet` the override is required and its
+ * absence is this rather than a bare `Error`.
+ *
+ * Boundary: dep resolution, when a route first touches that corridor. Never
  * construction: a missing dep for a corridor nobody uses is not an error.
  */
 export class MissingCorridorDep extends Error {

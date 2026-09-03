@@ -84,7 +84,18 @@ const h160FromPaymentHash = (paymentHash: string): Uint8Array => ripemd160(hex.d
 
 export type OnchainNetwork = "bitcoin" | "testnet" | "regtest";
 
-const L1_NETWORKS: Record<OnchainNetwork, typeof btc.NETWORK> = {
+/**
+ * The `@scure/btc-signer` parameters each L1 network is addressed under.
+ *
+ * Exported because it is the only table in the workspace that maps an
+ * {@link OnchainNetwork} to address parameters, and the onchain corridor's
+ * network check needs exactly it — the alternative was a third hand-written
+ * copy. Three members, not five: `signet` and `mutinynet` are indistinguishable
+ * from `testnet` at the address level, which is why {@link l1NetworkFromArk}
+ * folds them together and why no caller can claim a signet-versus-testnet
+ * rejection.
+ */
+export const L1_NETWORKS: Record<OnchainNetwork, typeof btc.NETWORK> = {
     bitcoin: btc.NETWORK,
     testnet: btc.TEST_NETWORK,
     regtest: { ...btc.TEST_NETWORK, bech32: "bcrt" },

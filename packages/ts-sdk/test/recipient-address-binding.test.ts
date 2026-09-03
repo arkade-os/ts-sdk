@@ -5,9 +5,9 @@ import { Wallet, SingleKey, type Recipient } from "../src";
 import { VtxoScript } from "../src/script/base";
 import { ArkAddress } from "../src/script/address";
 import {
-    assertRecipientArkAddress,
+    assertRecipientArkadeAddress,
     validateRecipients,
-    type RecipientAddressContext,
+    type RecipientArkadeAddressContext,
 } from "../src/wallet/utils";
 
 // Mock fetch
@@ -31,7 +31,7 @@ const encodeAddr = (serverPubKey: Uint8Array, hrp: string) =>
 
 const NOW_SECONDS = Math.floor(Date.now() / 1000);
 
-function makeContext(deprecated?: Map<string, bigint>): RecipientAddressContext {
+function makeContext(deprecated?: Map<string, bigint>): RecipientArkadeAddressContext {
     return {
         hrp: "tark",
         signerSet: {
@@ -41,25 +41,25 @@ function makeContext(deprecated?: Map<string, bigint>): RecipientAddressContext 
     };
 }
 
-describe("assertRecipientArkAddress", () => {
+describe("assertRecipientArkadeAddress", () => {
     it("rejects an address with another network's prefix", () => {
         const encoded = encodeAddr(SERVER_XONLY, "ark");
         expect(() =>
-            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), makeContext()),
+            assertRecipientArkadeAddress(encoded, ArkAddress.decode(encoded), makeContext()),
         ).toThrow(/expected prefix "tark", got "ark"/);
     });
 
     it("rejects an address embedding an unknown operator signer key", () => {
         const encoded = encodeAddr(FOREIGN_XONLY, "tark");
         expect(() =>
-            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), makeContext()),
+            assertRecipientArkadeAddress(encoded, ArkAddress.decode(encoded), makeContext()),
         ).toThrow(/unknown operator signer key/);
     });
 
     it("accepts an address embedding the current signer key", () => {
         const encoded = encodeAddr(SERVER_XONLY, "tark");
         expect(() =>
-            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), makeContext()),
+            assertRecipientArkadeAddress(encoded, ArkAddress.decode(encoded), makeContext()),
         ).not.toThrow();
     });
 
@@ -67,7 +67,11 @@ describe("assertRecipientArkAddress", () => {
         const encoded = encodeAddr(DEPRECATED_XONLY, "tark");
         const deprecated = new Map([[hex.encode(DEPRECATED_XONLY), BigInt(NOW_SECONDS + 100_000)]]);
         expect(() =>
-            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), makeContext(deprecated)),
+            assertRecipientArkadeAddress(
+                encoded,
+                ArkAddress.decode(encoded),
+                makeContext(deprecated),
+            ),
         ).not.toThrow();
     });
 
@@ -75,7 +79,11 @@ describe("assertRecipientArkAddress", () => {
         const encoded = encodeAddr(DEPRECATED_XONLY, "tark");
         const deprecated = new Map([[hex.encode(DEPRECATED_XONLY), 0n]]);
         expect(() =>
-            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), makeContext(deprecated)),
+            assertRecipientArkadeAddress(
+                encoded,
+                ArkAddress.decode(encoded),
+                makeContext(deprecated),
+            ),
         ).not.toThrow();
     });
 
@@ -83,7 +91,11 @@ describe("assertRecipientArkAddress", () => {
         const encoded = encodeAddr(DEPRECATED_XONLY, "tark");
         const deprecated = new Map([[hex.encode(DEPRECATED_XONLY), 1n]]);
         expect(() =>
-            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), makeContext(deprecated)),
+            assertRecipientArkadeAddress(
+                encoded,
+                ArkAddress.decode(encoded),
+                makeContext(deprecated),
+            ),
         ).toThrow(/past its rotation cutoff/);
     });
 });
@@ -278,13 +290,13 @@ describe("Wallet recipient address binding", () => {
         });
 
         const context = (
-            wallet as unknown as { recipientAddressContext(): RecipientAddressContext }
+            wallet as unknown as { recipientAddressContext(): RecipientArkadeAddressContext }
         ).recipientAddressContext();
         expect(context.signerSet.deprecated.get(hex.encode(DEPRECATED_XONLY))).toBe(cutoff);
 
         const encoded = encodeAddr(DEPRECATED_XONLY, "tark");
         expect(() =>
-            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), context),
+            assertRecipientArkadeAddress(encoded, ArkAddress.decode(encoded), context),
         ).not.toThrow();
     });
 
