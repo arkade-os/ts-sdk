@@ -39,6 +39,24 @@ describe("the default database path", () => {
         expect(regtest.endsWith(join("arkade", "swaps", "swaps-regtest.sqlite"))).toBe(true);
     });
 
+    it("rejects network names that are not single safe path segments", () => {
+        for (const network of [
+            "",
+            "1regtest",
+            "reg/test",
+            "reg\\test",
+            "x/../../../outside",
+            "regtest.sqlite",
+            "reg_test",
+            "Regtest",
+        ]) {
+            expect(() => swapDatabasePath(network)).toThrow(/invalid network name/i);
+        }
+
+        expect(() => swapDatabasePath("regtest")).not.toThrow();
+        expect(() => swapDatabasePath("mutiny-net")).not.toThrow();
+    });
+
     it("follows XDG when it names an absolute path", () => {
         if (process.platform !== "linux") return;
         expect(configDir({ XDG_CONFIG_HOME: "/custom/config" })).toBe("/custom/config");

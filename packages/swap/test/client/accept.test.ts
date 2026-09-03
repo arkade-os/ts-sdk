@@ -23,6 +23,7 @@ import {
 } from "../../src/client/errors";
 import { OFFER_PACKET_TYPE, decodeOffer } from "../../src/offer";
 import { SWAP_LOCKUP_CONTRACT_TYPE } from "../../src/lockupContract";
+import { conflictingFields } from "../../src/client/accept";
 import type { Quote, QuoteInput } from "../../src/client/quote";
 import type { CorridorSwapRecord, OfferSwapRecord } from "../../src/client/record";
 import {
@@ -85,6 +86,13 @@ const FUNDING_ROUTES: RouteName[] = ["spot", "lightningSend", "onchainSend"];
 const ALL_ROUTES: RouteName[] = [...FUNDING_ROUTES, "lightningReceive"];
 
 const quoteFor = (h: Harness, route: RouteName): Promise<Quote> => h.client.quote(ROUTES[route]());
+
+const evictPreparationFor = async (h: Harness, id: string): Promise<void> => {
+    for (let i = 0; i < 64; i++) {
+        await quoteFor(h, "spot");
+    }
+    expect(h.client.preparationOf(id)).toBeUndefined();
+};
 
 beforeEach(() => {
     vi.useFakeTimers();
@@ -293,6 +301,16 @@ describe("accept() — idempotency by quote id", () => {
         expect(await h.repository.getAllSwapRecords()).toHaveLength(1);
     });
 
+    it("still refuses a quote whose preparation was evicted before it was persisted", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "lightningSend");
+
+        await evictPreparationFor(h, quote.id);
+
+        await expect(h.client.accept(quote)).rejects.toThrow(/re-quote before accepting/);
+        expect(await h.repository.getSwapRecord(quote.id)).toBeUndefined();
+    });
+
     it("treats a funding txid appearing where there was none as a benign resume", async () => {
         const h = await setup();
         const quote = await quoteFor(h, "lightningSend");
@@ -302,6 +320,7 @@ describe("accept() — idempotency by quote id", () => {
         // The record now carries a txid the quote knows nothing about. §3.2
         // names this a resume rather than a conflict, by name.
         expect(stored?.fundingTxid).toBeDefined();
+        vi.setSystemTime((quote.expiresAt + 1) * 1000);
         await expect(h.client.accept(quote)).resolves.toMatchObject({ id: quote.id });
     });
 });
@@ -425,6 +444,41 @@ describe("accept() — AcceptConflict, one case per compared field", () => {
         await expect(h.client.accept({ ...onchain, id: send.id })).rejects.toThrow(AcceptConflict);
     });
 
+    it("does not conflict on a reordered but equal stored instrument", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "lightningSend");
+        await h.client.accept(quote);
+
+        const stored = (await h.repository.getSwapRecord(quote.id)) as CorridorSwapRecord;
+        const instrument = stored.route.take.instrument;
+        if (instrument.kind !== "invoice") throw new Error("expected invoice instrument");
+
+        const reordered: CorridorSwapRecord = {
+            ...stored,
+            route: {
+                ...stored.route,
+                take: {
+                    ...stored.route.take,
+                    instrument: {
+                        expiresAt: instrument.expiresAt,
+                        ...(instrument.amount === undefined ? {} : { amount: instrument.amount }),
+                        paymentHash: instrument.paymentHash,
+                        bolt11: instrument.bolt11,
+                        kind: "invoice",
+                    },
+                },
+            },
+        };
+
+        expect(JSON.stringify(reordered.route.take.instrument)).not.toBe(
+            JSON.stringify(stored.route.take.instrument),
+        );
+        expect(conflictingFields(reordered, quote)).not.toContain("take.instrument");
+
+        await h.repository.saveSwapRecord(reordered);
+        await expect(h.client.accept(quote)).resolves.toMatchObject({ id: quote.id });
+    });
+
     it("does not conflict on a field absent from both sides", async () => {
         // A feed-priced quote carries no solver and no lock hash by
         // construction, so "absent" must read as agreement rather than as a
@@ -507,6 +561,63 @@ describe("accept() — reconcile from evidence before a second funding", () => {
         const swap = await h.client.accept(quote);
 
         expect(swap.fundingTxid).toBe("a".repeat(64));
+        expect(h.wallet.sent).toHaveLength(0);
+    });
+
+    it("does not fund a persisted record after expiry when no deposit is found", async () => {
+        let fail = true;
+        const h = await setup({
+            failSend: () => (fail ? new Error("send exploded") : undefined!),
+        });
+        const quote = await quoteFor(h, "lightningSend");
+        await expect(h.client.accept(quote)).rejects.toThrow(/send exploded/);
+
+        await evictPreparationFor(h, quote.id);
+        fail = false;
+        vi.setSystemTime((quote.expiresAt + 1) * 1000);
+
+        await expect(h.client.accept(quote)).rejects.toThrow(QuoteExpired);
+        expect((await h.repository.getSwapRecord(quote.id))?.fundingTxid).toBeUndefined();
+        expect(h.wallet.sent).toHaveLength(0);
+    });
+
+    it("funds a persisted record after preparation eviction when no deposit is found", async () => {
+        let fail = true;
+        const h = await setup({
+            failSend: () => (fail ? new Error("send exploded") : undefined!),
+        });
+        const quote = await quoteFor(h, "lightningSend");
+        await expect(h.client.accept(quote)).rejects.toThrow(/send exploded/);
+
+        await evictPreparationFor(h, quote.id);
+
+        fail = false;
+        const swap = await h.client.accept(quote);
+
+        expect(swap.fundingTxid).toBe(FUNDING_TXID);
+        expect(h.wallet.sent).toHaveLength(1);
+    });
+
+    it("reconciles a persisted funding record after preparation eviction", async () => {
+        let fail = true;
+        const h = await setup({
+            failSend: () => (fail ? new Error("crashed mid-send") : undefined!),
+        });
+        const quote = await quoteFor(h, "lightningSend");
+        await expect(h.client.accept(quote)).rejects.toThrow(/crashed mid-send/);
+
+        const stored = (await h.repository.getSwapRecord(quote.id)) as CorridorSwapRecord;
+        h.wallet.deposits.set(stored.lockupPkScript, [
+            { txid: "e".repeat(64), value: Number(quote.give.amount) },
+        ]);
+        await evictPreparationFor(h, quote.id);
+        vi.setSystemTime((quote.expiresAt + 1) * 1000);
+
+        fail = false;
+        const swap = await h.client.accept(quote);
+
+        expect(swap.fundingTxid).toBe("e".repeat(64));
+        expect((await h.repository.getSwapRecord(quote.id))?.fundingTxid).toBe("e".repeat(64));
         expect(h.wallet.sent).toHaveLength(0);
     });
 

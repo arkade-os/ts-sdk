@@ -296,22 +296,9 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         accept: async (quote) => {
             const { corridors } = await resolved();
             const preparation = preparations.get(quote.id);
-            if (preparation === undefined) {
-                // The derivation this quote was verified against is gone, and
-                // re-deriving it would be a second derivation of the same tree
-                // — two sources for one covenant, which is the failure the
-                // preparation hand-off exists to prevent. The cache is bounded
-                // and process-local, so this is what a caller sees after a
-                // restart or after 64 intervening quotes: re-quote and accept
-                // that. A record already persisted under this id is still
-                // resumable, and `accept()` finds it either way.
-                throw new Error(
-                    `quote ${quote.id} was not derived by this client instance; re-quote before accepting`,
-                );
-            }
             return acceptQuote({
                 quote,
-                preparation,
+                ...(preparation === undefined ? {} : { preparation }),
                 wallet,
                 repository: config.repository,
                 corridors,

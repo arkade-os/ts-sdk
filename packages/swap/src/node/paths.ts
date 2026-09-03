@@ -13,6 +13,16 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+const NETWORK_PATH_SEGMENT = /^[a-z][a-z0-9-]{0,32}$/;
+
+const assertSafeNetworkPathSegment = (network: string): void => {
+    if (NETWORK_PATH_SEGMENT.test(network)) return;
+    throw new Error(
+        `Invalid network name for swap database path: ${JSON.stringify(network)}. ` +
+            "Use lowercase letters, digits, and hyphens, starting with a letter.",
+    );
+};
+
 /**
  * The platform's per-user configuration directory.
  *
@@ -46,5 +56,7 @@ export const configDir = (env: NodeJS.ProcessEnv = process.env): string => {
  * caller that only wants to know where the file would be — to report it, to
  * back it up, to delete it — should not have to make one as a side effect.
  */
-export const swapDatabasePath = (network: string, env: NodeJS.ProcessEnv = process.env): string =>
-    join(configDir(env), "arkade", "swaps", `swaps-${network}.sqlite`);
+export const swapDatabasePath = (network: string, env: NodeJS.ProcessEnv = process.env): string => {
+    assertSafeNetworkPathSegment(network);
+    return join(configDir(env), "arkade", "swaps", `swaps-${network}.sqlite`);
+};

@@ -50,6 +50,7 @@ import { rfqSecretsProfile } from "../rfqProfileParts";
 import { BTC_ASSET_ID } from "../store";
 import type { AssetSwapRepository } from "../repository";
 import { assetPartOf, BTC_ASSET_PART } from "./assetId";
+import { toDiscoveryLeg } from "./aliases";
 import type { CorridorSet } from "./corridors/registry";
 import { AcceptConflict, InsufficientFunds, MissingCorridorDep, QuoteExpired } from "./errors";
 import { fromAtomicDecimal } from "./amount";
@@ -65,6 +66,7 @@ import {
     swapOf,
     type CorridorSwapRecord,
     type OfferSwapRecord,
+    type RecordedInstrument,
     type Swap,
     type SwapRecord,
 } from "./record";
@@ -74,7 +76,7 @@ export type QuotePreparation = RfqPreparation | OfferPreparation;
 
 export interface AcceptInput {
     readonly quote: Quote;
-    readonly preparation: QuotePreparation;
+    readonly preparation?: QuotePreparation;
     readonly wallet: IWallet;
     readonly repository: AssetSwapRepository | undefined;
     readonly corridors: CorridorSet;
@@ -117,24 +119,59 @@ const storageOf = (repository: AssetSwapRepository | undefined): AssetSwapReposi
  * both sides encode to. That is one comparison of one representation, instead
  * of a `bigint` round trip that could differ only by how it was parsed.
  */
+type RecordedFacts = {
+    readonly "route.pair": string;
+    readonly "give.asset": string;
+    readonly "take.asset": string;
+    readonly "give.amount": string;
+    readonly "take.amount": string;
+    readonly "give.instrument": RecordedInstrument;
+    readonly "take.instrument": RecordedInstrument;
+    readonly "lock.hash": string | undefined;
+    readonly refundLocktime: string | undefined;
+    readonly solver: string | undefined;
+    readonly "market.source": string | undefined;
+};
+
+const sameRecordedInstrument = (a: RecordedInstrument, b: RecordedInstrument): boolean => {
+    switch (a.kind) {
+        case "wallet":
+            return b.kind === "wallet";
+        case "address":
+            return b.kind === "address" && a.address === b.address;
+        case "invoice":
+            return (
+                b.kind === "invoice" &&
+                a.bolt11 === b.bolt11 &&
+                a.paymentHash === b.paymentHash &&
+                a.amount === b.amount &&
+                a.expiresAt === b.expiresAt
+            );
+    }
+};
+
 export const conflictingFields = (record: SwapRecord, quote: Quote): string[] => {
     const incoming = recordedFacts(quote);
-    const stored = {
+    const stored: RecordedFacts = {
         "route.pair": `${record.route.give.corridor}->${record.route.take.corridor}`,
         "give.asset": record.route.give.asset,
         "take.asset": record.route.take.asset,
         "give.amount": record.give.amount,
         "take.amount": record.take.amount,
-        "give.instrument": JSON.stringify(record.route.give.instrument),
-        "take.instrument": JSON.stringify(record.route.take.instrument),
+        "give.instrument": record.route.give.instrument,
+        "take.instrument": record.route.take.instrument,
         "lock.hash": record.family === "rfq" ? record.lock.hash : undefined,
         refundLocktime: record.family === "rfq" ? String(record.refundLocktime) : undefined,
         solver: record.solver,
         "market.source": marketSourceOf(record.market),
     };
-    return Object.keys(incoming).filter((field) => {
-        const a = stored[field as keyof typeof stored];
-        const b = incoming[field as keyof typeof incoming];
+    return (Object.keys(incoming) as (keyof RecordedFacts)[]).filter((field) => {
+        if (field === "give.instrument" || field === "take.instrument") {
+            return !sameRecordedInstrument(stored[field], incoming[field]);
+        }
+
+        const a = stored[field];
+        const b = incoming[field];
         // Absent on both sides is agreement, not a difference: it is how a
         // feed-priced quote's missing solver and lock hash read.
         if (a === undefined && b === undefined) return false;
@@ -143,14 +180,14 @@ export const conflictingFields = (record: SwapRecord, quote: Quote): string[] =>
 };
 
 /** The same facts off a `Quote`, in the record's own encoding. */
-const recordedFacts = (quote: Quote) => ({
+const recordedFacts = (quote: Quote): RecordedFacts => ({
     "route.pair": `${quote.route.give.corridor}->${quote.route.take.corridor}`,
     "give.asset": quote.route.give.asset as string,
     "take.asset": quote.route.take.asset as string,
     "give.amount": recordLeg(quote.give).amount as string,
     "take.amount": recordLeg(quote.take).amount as string,
-    "give.instrument": JSON.stringify(recordEndpoint(quote.route.give).instrument),
-    "take.instrument": JSON.stringify(recordEndpoint(quote.route.take).instrument),
+    "give.instrument": recordEndpoint(quote.route.give).instrument,
+    "take.instrument": recordEndpoint(quote.route.take).instrument,
     "lock.hash": quote.lock?.hash,
     refundLocktime: quote.refundLocktime === undefined ? undefined : String(quote.refundLocktime),
     solver: quote.solver,
@@ -304,16 +341,10 @@ const profileOf = (preparation: RfqPreparation, paymentHash: string): Record<str
  * durable evidence contradicts the quote on a material field.
  */
 export const acceptQuote = async (input: AcceptInput): Promise<Swap> => {
-    const { quote, preparation, wallet, now } = input;
+    const { quote, wallet, now } = input;
     const repository = storageOf(input.repository);
 
-    // Strictly past its own deadline, and not against `policy.quoteTtlFloor`:
-    // the floor is the quote path's question — "is there enough life left in
-    // these terms to be worth showing" — and inheriting it here would refuse a
-    // quote §3.2 still considers acceptable.
-    if (now > quote.expiresAt) {
-        throw new QuoteExpired(quote.id, quote.expiresAt, now);
-    }
+    const expired = now > quote.expiresAt;
 
     const stored = await repository.getSwapRecord(quote.id);
     if (stored !== undefined) {
@@ -329,12 +360,34 @@ export const acceptQuote = async (input: AcceptInput): Promise<Swap> => {
         if (stored.fundingTxid !== undefined) return swapOf(stored);
         if (!fundsFromWallet(stored.route)) return swapOf(stored);
         // Persisted but unfunded. Before a second `wallet.send`, look for the
-        // deposit a crashed first attempt may already have made.
-        const found = await reconcileFunding(input, stored);
+        // deposit a crashed first attempt may already have made. This path uses
+        // the stored record only, so it survives a restart or preparation-cache
+        // eviction.
+        const found = await reconcileFunding({ wallet }, stored);
         if (found !== undefined) {
             return swapOf(await stampFunding(repository, stored, found, now));
         }
-        return swapOf(await fundAndStamp(input, stored, repository));
+        // No funding evidence exists yet, so retrying would move new value and
+        // still has to respect the quote's deadline.
+        if (expired) throw new QuoteExpired(quote.id, quote.expiresAt, now);
+        return swapOf(await fundAndStamp({ wallet, now }, stored, repository));
+    }
+
+    // Strictly past its own deadline, and not against `policy.quoteTtlFloor`:
+    // the floor is the quote path's question — "is there enough life left in
+    // these terms to be worth showing" — and inheriting it here would refuse a
+    // quote §3.2 still considers acceptable.
+    if (expired) throw new QuoteExpired(quote.id, quote.expiresAt, now);
+
+    const preparation = input.preparation;
+    if (preparation === undefined) {
+        // The derivation this quote was verified against is gone, and no record
+        // exists yet to resume from. Re-deriving would be a second derivation of
+        // the same tree — two sources for one covenant, which is the failure the
+        // preparation hand-off exists to prevent.
+        throw new Error(
+            `quote ${quote.id} was not derived by this client instance; re-quote before accepting`,
+        );
     }
 
     const funds = fundsFromWallet(quote.route);
@@ -352,7 +405,7 @@ export const acceptQuote = async (input: AcceptInput): Promise<Swap> => {
     await repository.saveSwapRecord(record);
 
     if (!funds) return swapOf(record);
-    return swapOf(await fundAndStamp(input, record, repository));
+    return swapOf(await fundAndStamp({ wallet, now }, record, repository));
 };
 
 /**
@@ -406,8 +459,10 @@ const registeredCorridorRecord = async (
  * What recovers a lost stamp is the reconcile above, which finds the deposit
  * from chain evidence on the next accept.
  */
+type FundingInput = Pick<AcceptInput, "wallet" | "now">;
+
 const fundAndStamp = async (
-    input: AcceptInput,
+    input: FundingInput,
     record: SwapRecord,
     repository: AssetSwapRepository,
 ): Promise<SwapRecord> => {
@@ -440,45 +495,33 @@ const stampFunding = async (
  * nowhere and merely lands the deposit at a covenant no solver can see. That
  * silent loss is the failure this route's packet handling exists to delete.
  */
-const fund = async (input: AcceptInput, record: SwapRecord): Promise<string> => {
-    const { wallet, preparation } = input;
+const fund = async (input: FundingInput, record: SwapRecord): Promise<string> => {
+    const { wallet } = input;
     if (record.family === "offer") {
-        if (preparation.backend !== "feed") {
-            throw new Error(
-                `offer record ${record.id} accepted with an ${preparation.backend} quote`,
-            );
-        }
-        const { plan } = preparation;
-        const depositIsBtc = plan.deposit.asset.id === BTC_ASSET_ID;
-        // The amount comes off the RECORD, not the plan: v1 made a caller read
-        // a `fundAmount` field beside the amount they quoted, and v2 has no
-        // such field because the quote's own give amount is what accept funds.
-        // The plan is still what spells the asset id, which only it carries.
         const amount = fromAtomicDecimal(record.give.amount);
+        const depositIsBtc = assetPartOf(record.route.give.asset) === BTC_ASSET_PART;
         return wallet.send({
             address: record.swapAddress,
             // An asset deposit rides the SDK's dust-sat carrier, so the sats
             // amount is left to the default rather than set here.
             ...(depositIsBtc
                 ? { amount: toSafeNumber(amount, "give.amount") }
-                : { assets: [{ assetId: plan.deposit.asset.id, amount }] }),
+                : {
+                      assets: [
+                          { assetId: toDiscoveryLeg(record.route.give.asset).assetId, amount },
+                      ],
+                  }),
             extensions: [offerExtensionOf(record)],
         });
     }
-    if (preparation.backend !== "rfq") {
-        throw new Error(
-            `corridor record ${record.id} accepted with an ${preparation.backend} quote`,
-        );
-    }
-    if (preparation.route === "lightning->arkade") {
+    if (record.kind === "lightning_receive") {
         // Unreachable: the caller gates on `fundsFromWallet`, and a receive's
         // give instrument is the invoice. Stated so the union is exhaustive
         // rather than narrowed by an assumption.
         throw new Error(`receive swap ${record.id} funds nothing from this wallet`);
     }
-    // Again the record's own give amount, which `verifyQuotedAmount` already
-    // proved equal to the preparation's `fundAmount` at quote time. One source
-    // means the resume path funds the same number the first attempt would have.
+    // The record's own give amount is the only source on resume: quote-time
+    // verification already proved it equal to the negotiated funding amount.
     return wallet.send({
         address: record.lockupAddress,
         amount: toSafeNumber(fromAtomicDecimal(record.give.amount), "give.amount"),
@@ -516,7 +559,7 @@ const offerExtensionOf = (record: OfferSwapRecord): { type: number; payload: Uin
  * swap, and the swap it really belongs to would then be funded twice.
  */
 const reconcileFunding = async (
-    input: AcceptInput,
+    input: Pick<AcceptInput, "wallet">,
     record: SwapRecord,
 ): Promise<string | undefined> => {
     const script = record.family === "offer" ? record.swapPkScript : record.lockupPkScript;
