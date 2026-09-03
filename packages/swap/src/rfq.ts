@@ -457,6 +457,13 @@ export const assertFundable = (input: {
      * corridor's CONFIGURED flat fee, not the cap live pricing may reach, so a
      * solver with a low fallback and a high cap advertises cheaper than it can
      * charge. `from_amount - to_amount` off the quote is the real number.
+     *
+     * OMIT a bound rather than zeroing it. `{ bps: 0, sats: 500 }` is the right
+     * way to write an absolute-only ceiling and behaves as intended — but a lone
+     * `{ bps: 0 }` is a ceiling of ZERO, which refuses every quote carrying any
+     * fee at all. That cannot be rejected as a mistake, because it is also how a
+     * caller says "free or nothing"; the two are told apart only by what else is
+     * set. `{}`, which names no bound whatsoever, IS refused.
      */
     maxFee?: {
         bps?: number;

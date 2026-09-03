@@ -680,6 +680,52 @@ describe("assertFundable — the max-fee gate", () => {
         expect(() => fundable({ from_amount: 10_000, to_amount: 1 })).not.toThrow();
     });
 
+    /**
+     * The guards on the CEILING itself, as opposed to on the quote.
+     *
+     * A ceiling only protects while it is a bound the comparison can hold, and
+     * each of these is a way to write one that is not: `bps: 10_001` is looser
+     * than any real quote and therefore no bound at all, a fractional `bps`
+     * silently truncates through `Math.floor` into a different ceiling than the
+     * caller wrote, and a negative bound refuses everything. All are mistakes at
+     * the CALL SITE, so they fail there by name rather than being clamped into
+     * something plausible — a clamped ceiling is a wallet believing it is
+     * protected at a level it never asked for.
+     *
+     * Asserted on `reason` rather than on the message: the reason code is the
+     * closed contract a caller branches on, and the sentence beside it is not.
+     */
+    const reasonOf = (run: () => unknown): string => {
+        try {
+            run();
+        } catch (error) {
+            return (error as { reason?: string }).reason ?? "<threw without a reason>";
+        }
+        return "<did not throw>";
+    };
+
+    it.each([
+        ["bps past 100%", { bps: 10_001 }],
+        ["negative bps", { bps: -1 }],
+        ["fractional bps", { bps: 12.5 }],
+        ["negative sats", { sats: -1 }],
+        ["fractional sats", { sats: 0.5 }],
+    ])("refuses a ceiling that is not a usable bound: %s", (_label, maxFee) => {
+        expect(reasonOf(() => fundable({ from_amount: 100_000, to_amount: 99_999 }, maxFee))).toBe(
+            "max_fee_out_of_range",
+        );
+    });
+
+    it("allows the boundary values, so the guard does not become the bug", () => {
+        // 10_000 bps is exactly 100% and 0 is a real choice — an absolute-only
+        // ceiling is written `{ bps: 0, sats: n }`. Refusing either would make
+        // this guard reject ceilings a caller is entitled to set.
+        const quote = { from_amount: 100_000, to_amount: 99_999 };
+        expect(() => fundable(quote, { bps: 10_000 })).not.toThrow();
+        expect(() => fundable(quote, { bps: 0, sats: 1 })).not.toThrow();
+        expect(() => fundable(quote, { sats: 0, bps: 1 })).not.toThrow();
+    });
+
     it("refuses a fee above the proportional ceiling", () => {
         expect(() =>
             fundable({ from_amount: 100_000, to_amount: 99_000 }, { bps: 100 }),
