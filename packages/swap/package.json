@@ -82,7 +82,8 @@
         "@noble/curves": "2.0.1",
         "@noble/hashes": "2.0.1",
         "@scure/base": "2.0.0",
-        "@scure/btc-signer": "2.0.1"
+        "@scure/btc-signer": "2.0.1",
+        "light-bolt11-decoder": "3.2.0"
     },
     "peerDependencies": {
         "nostr-tools": "^2.12.0"
