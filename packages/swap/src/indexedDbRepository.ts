@@ -7,15 +7,17 @@ import {
 import { marketsCacheKey, type AssetSwapRepository, type MarketsCacheEntry } from "./repository";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
+import type { SwapRecord } from "./client/record";
 
 const DEFAULT_DB_NAME = "arkade-intents";
 /** Bump when adding an object store or index. `initDatabase` only runs inside
  * `onupgradeneeded`, which fires on a version *increase* — its contains-guard
  * cannot backfill a store into a database already open at this version, so a
  * new store added without a bump is simply missing for existing users. */
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_SWAPS = "swaps";
 const STORE_RFQ_SWAPS = "rfqSwaps";
+const STORE_SWAP_RECORDS = "swapRecords";
 const STORE_SCANNED = "scannedTxids";
 const STORE_MARKETS = "markets";
 
@@ -28,6 +30,11 @@ const STORES: readonly [name: string, options?: IDBObjectStoreParameters][] = [
     // v2. Separate from `swaps` rather than sharing it: the two record types
     // have different keys and no consumer wants them interleaved.
     [STORE_RFQ_SWAPS, { keyPath: "rfqId" }],
+    // v3. The v2 client's accept records, keyed by quote id. Its own store for
+    // the same reason, plus one more: the v1 read path drops a row carrying
+    // neither `offerHex` nor `paymentHash`, so sharing `swaps` would pin the
+    // v2 shape to a v1 predicate.
+    [STORE_SWAP_RECORDS, { keyPath: "id" }],
     [STORE_SCANNED],
     [STORE_MARKETS],
 ];
@@ -38,9 +45,12 @@ const STORES: readonly [name: string, options?: IDBObjectStoreParameters][] = [
  * existing rows during a migration.
  *
  * Both unused today: every version so far has only added an object store, and
- * `createObjectStore` needs neither. Named rather than dropped because the next
- * migration will not be additive, and a signature that takes them is what makes
- * "cursor over v2 rows and rewrite them" a local change here.
+ * `createObjectStore` needs neither — version 3's v2-record store included,
+ * which is why the v1 and v2 histories being disjoint matters. It is what keeps
+ * this migration from being the one that rewrites rows. Named rather than
+ * dropped because the next migration may not be additive, and a signature that
+ * takes them is what makes "cursor over the rows and rewrite them" a local
+ * change here.
  */
 function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTransaction | null) {
     void oldVersion;
@@ -52,7 +62,7 @@ function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTrans
 
 /** Browser backend over the SDK's shared IndexedDB manager. */
 export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 4 as const;
+    readonly version = 5 as const;
     private readonly connection: ManagedConnection;
 
     constructor(dbName: string = DEFAULT_DB_NAME) {
@@ -104,6 +114,26 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     async removeRfqSwap(rfqId: string): Promise<void> {
         await this.write(STORE_RFQ_SWAPS, (store) => {
             store.delete(rfqId);
+        });
+    }
+
+    async saveSwapRecord(record: SwapRecord): Promise<void> {
+        await this.write(STORE_SWAP_RECORDS, (store) => {
+            store.put(record);
+        });
+    }
+
+    async getSwapRecord(id: string): Promise<SwapRecord | undefined> {
+        return promisifyRequest((await this.readStore(STORE_SWAP_RECORDS)).get(id));
+    }
+
+    async getAllSwapRecords(): Promise<SwapRecord[]> {
+        return promisifyRequest((await this.readStore(STORE_SWAP_RECORDS)).getAll());
+    }
+
+    async removeSwapRecord(id: string): Promise<void> {
+        await this.write(STORE_SWAP_RECORDS, (store) => {
+            store.delete(id);
         });
     }
 

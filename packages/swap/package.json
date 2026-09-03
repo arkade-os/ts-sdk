@@ -31,6 +31,16 @@
                 "default": "./dist/nostr.cjs"
             }
         },
+        "./node": {
+            "import": {
+                "types": "./dist/node/index.d.ts",
+                "default": "./dist/node/index.js"
+            },
+            "require": {
+                "types": "./dist/node/index.d.ts",
+                "default": "./dist/node/index.cjs"
+            }
+        },
         "./repositories/sqlite": {
             "import": {
                 "types": "./dist/repositories/sqlite/index.d.ts",
@@ -56,7 +66,9 @@
         "dist"
     ],
     "scripts": {
-        "build": "tsup src/index.ts src/nostr.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
+        "build": "pnpm run build:web && pnpm run build:node",
+        "build:web": "tsup src/index.ts src/nostr.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
+        "build:node": "tsup --config tsup.node.config.ts",
         "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
         "format": "biome format --write src test",
         "lint": "biome format src test",
@@ -66,6 +78,9 @@
         "test:integration": "vitest run test/e2e/** --exclude test/e2e/rfq*.test.ts",
         "test:integration:rfq": "vitest run test/e2e/rfq*.test.ts",
         "smoke:dist": "node scripts/smoke-dist.mjs"
+    },
+    "engines": {
+        "node": ">=22.12.0"
     },
     "keywords": [
         "arkade",

@@ -69,8 +69,25 @@ for (const specifier of specifiers) {
 const stubExecutor = { run: async () => {}, get: async () => undefined, all: async () => [] };
 new SQLiteAssetSwapRepository(stubExecutor);
 new RealmAssetSwapRepository({});
-if (AssetSwapRealmSchemas.length !== 4) {
-    throw new Error(`expected 4 Realm schemas, got ${AssetSwapRealmSchemas.length}`);
+// Name-based, not a magic count: the count is what makes adding a schema a
+// build failure in a file that has no other reason to change, and what it
+// actually needs to catch is a schema that never made it into the exported
+// list — the one mistake that fails at a consumer's first `realm.objects(…)`
+// rather than at open.
+const schemaNames = AssetSwapRealmSchemas.map((s) => s.name);
+for (const required of [
+    "ArkadeAssetSwap",
+    "ArkadeRfqSwap",
+    "ArkadeSwapRecord",
+    "ArkadeAssetSwapScannedTxid",
+    "ArkadeAssetSwapMarketsCache",
+]) {
+    if (!schemaNames.includes(required)) {
+        throw new Error(`AssetSwapRealmSchemas is missing ${required}: [${schemaNames}]`);
+    }
+}
+if (new Set(schemaNames).size !== schemaNames.length) {
+    throw new Error(`AssetSwapRealmSchemas has duplicate names: [${schemaNames}]`);
 }
 
 const operatorPubkey = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");

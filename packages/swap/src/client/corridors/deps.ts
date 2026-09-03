@@ -72,6 +72,16 @@ export interface CorridorBase {
     readonly emulatorPubkey?: string;
     /** For hosts without a global `fetch`, and for tests. */
     readonly fetchImpl?: typeof fetch;
+    /**
+     * The client's storage, if it was given one.
+     *
+     * Here rather than only in the override matrix so the two seams cannot be
+     * two different objects: a client that takes a repository and an arkade
+     * override that names one would otherwise write records to one and read the
+     * markets cache from the other. The override still wins where it is set,
+     * and a deliberate `null` there still refuses.
+     */
+    readonly repository?: AssetSwapRepository;
 }
 
 /**
@@ -86,8 +96,8 @@ export interface CorridorBase {
  */
 export interface CorridorOverrides {
     arkade?: {
-        /** Where persist-first lands. No default until the accept path owns
-         * one, so `undefined` leaves it absent rather than building one. */
+        /** Where persist-first lands. Defaults to the client's own
+         * `repository`, so the two seams are one object; `null` refuses. */
         repository?: AssetSwapRepository | null;
     };
     lightning?: {
@@ -210,10 +220,16 @@ export function resolveCorridorDeps(
 ): CorridorDeps {
     switch (corridor) {
         case "arkade": {
-            // The one dep with no default to fall back to: the repository
-            // default belongs to the milestone that owns persistence, so an
-            // absent one stays absent and only a deliberate `null` is refused.
-            const repository = refusedIfNull(overrides?.arkade?.repository, "arkade", "repository");
+            // The accept path owns the default now, and it is the client's own
+            // repository — so the override and `SwapClientConfig.repository`
+            // resolve to one object rather than two. Still `undefined` when
+            // neither is set: the arkade module is a leg of every route, so
+            // demanding one here would mean a client with no storage could not
+            // `quote()`, and quoting persists nothing. `accept()` is what
+            // refuses, with this same `MissingCorridorDep`.
+            const repository =
+                refusedIfNull(overrides?.arkade?.repository, "arkade", "repository") ??
+                base.repository;
             return {
                 wallet: base.wallet,
                 operator: base.operator,
@@ -300,6 +316,8 @@ export const resolveCorridorBase = async (input: {
     operator: SwapOperator;
     emulatorPubkey?: string;
     fetchImpl?: typeof fetch;
+    /** The client's storage, threaded so the arkade dep can default to it. */
+    repository?: AssetSwapRepository;
     /** Defaults to `true` — see {@link liveArkadeInfo}. */
     requireLive?: boolean;
 }): Promise<CorridorBase> => {
@@ -313,5 +331,6 @@ export const resolveCorridorBase = async (input: {
         signerSet: signerSetFromInfo(info),
         emulatorPubkey: input.emulatorPubkey,
         fetchImpl: input.fetchImpl,
+        repository: input.repository,
     };
 };
