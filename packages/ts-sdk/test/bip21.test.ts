@@ -64,5 +64,11 @@ describe("BIP21", () => {
         it("still drops a param that is no Arkade address at all", () => {
             expect(BIP21.parse("bitcoin:?ark=nope").params.ark).toBeUndefined();
         });
+
+        it("drops a mixed-case `ark=` param, which Bech32m forbids", () => {
+            // Bech32m (BIP350) forbids a case mix.
+            expect(BIP21.parse("bitcoin:?ark=ArK1QZ4EXAMPLE").params.ark).toBeUndefined();
+            expect(BIP21.create({ ark: "ArK1QZ4EXAMPLE" })).toBe("bitcoin:");
+        });
     });
 });

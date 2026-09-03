@@ -123,10 +123,10 @@ import { isTerminalIntentState } from "../repositories/intentRepository";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import {
-    assertRecipientArkAddress,
+    assertRecipientArkadeAddress,
     extendCoinWithTapscript,
     validateRecipients,
-    type RecipientAddressContext,
+    type RecipientArkadeAddressContext,
 } from "./utils";
 import {
     captureExitBranch,
@@ -884,7 +884,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     protected recipientAddressContext(
         serverPubKey: Bytes = this._arkServerPublicKey,
-    ): RecipientAddressContext {
+    ): RecipientArkadeAddressContext {
         return {
             hrp: this.network.hrp,
             signerSet: {
@@ -3915,7 +3915,7 @@ export class Wallet
                 };
 
                 const outputAddress = ArkAddress.decode(params.address);
-                assertRecipientArkAddress(
+                assertRecipientArkadeAddress(
                     params.address,
                     outputAddress,
                     this.recipientAddressContext(serverPubKey),
@@ -4130,7 +4130,7 @@ export class Wallet
         const outputs: TransactionOutput[] = [];
         let hasOffchainOutputs = false;
 
-        let recipientContext: RecipientAddressContext | undefined;
+        let recipientContext: RecipientArkadeAddressContext | undefined;
         for (const [index, output] of params.outputs.entries()) {
             let script: Bytes | undefined;
 
@@ -4145,7 +4145,7 @@ export class Wallet
 
             if (arkAddress) {
                 recipientContext ??= this.recipientAddressContext();
-                assertRecipientArkAddress(output.address, arkAddress, recipientContext);
+                assertRecipientArkadeAddress(output.address, arkAddress, recipientContext);
                 script = arkAddress.pkScript;
                 hasOffchainOutputs = true;
             } else {

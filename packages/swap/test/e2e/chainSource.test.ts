@@ -60,16 +60,20 @@ const keyPair = () => {
 describe("the default chain source (regtest)", () => {
     let chain: ChainSource;
     let funded: ReturnType<typeof keyPair>;
+    let idle: ReturnType<typeof keyPair>;
     let payout: ReturnType<typeof keyPair>;
     let fill: ChainUtxo;
+    let unspent: ChainUtxo;
 
     beforeAll(async () => {
         // Built exactly the way `resolveCorridorDeps` builds it with no
         // override: `ESPLORA_URL[network]` off the wallet's network.
         chain = esploraChainSource({ esploraUrl: ESPLORA_URL.regtest, network: NETWORK });
         funded = keyPair();
+        idle = keyPair();
         payout = keyPair();
         regtest(`faucet ${funded.address} ${(Number(FUND_SATS) / 1e8).toFixed(8)} --confirm`);
+        regtest(`faucet ${idle.address} ${(Number(FUND_SATS) / 1e8).toFixed(8)} --confirm`);
         // The indexer trails Core by up to a block, so every read below waits
         // for it rather than assuming the faucet's own confirmation is visible.
         await waitFor(async () => {
@@ -77,6 +81,13 @@ describe("the default chain source (regtest)", () => {
                 (candidate) => candidate.amount === FUND_SATS && candidate.confirmations > 0,
             );
             if (utxo) fill = utxo;
+            return utxo !== undefined;
+        });
+        await waitFor(async () => {
+            const utxo = (await chain.getScriptUtxos(idle.script)).find(
+                (candidate) => candidate.amount === FUND_SATS && candidate.confirmations > 0,
+            );
+            if (utxo) unspent = utxo;
             return utxo !== undefined;
         });
     }, 180_000);
@@ -117,7 +128,7 @@ describe("the default chain source (regtest)", () => {
     }, 120_000);
 
     it("answers null for an outpoint nothing has spent", async () => {
-        const spend = await chain.getSpendingTx("00".repeat(32), 0).catch(() => null);
+        const spend = await chain.getSpendingTx(unspent.txid, unspent.vout);
         expect(spend).toBe(null);
     });
 });

@@ -5,7 +5,7 @@
  * so `arkTarget`, which is built on it — proves bech32m and a 65-byte payload
  * and nothing about *whose* server key is embedded, so a well-formed address
  * belonging to another operator classifies as ours. Core already ships the
- * check, rotation-aware: {@link assertRecipientArkAddress} compares the hrp and
+ * check, rotation-aware: {@link assertRecipientArkadeAddress} compares the hrp and
  * runs `classifyAgainstSignerSet`, refusing an unknown signer and a past-cutoff
  * one distinctly. It is promoted to core's root export rather than hand-rolled
  * as a `serverPubKey ===` comparison, which would reject valid addresses
@@ -15,7 +15,7 @@
  * into the `refused` arm — which is what makes the difference between *not
  * mine* and *mine, and wrong* legible one layer up.
  */
-import { ArkAddress, arkTarget, assertRecipientArkAddress } from "@arkade-os/sdk";
+import { ArkAddress, arkTarget, assertRecipientArkadeAddress } from "@arkade-os/sdk";
 import type { CorridorDrive, CorridorFactory, CorridorModule } from "./contract";
 import type { ArkadeCorridorDeps } from "./deps";
 
@@ -49,7 +49,7 @@ export const arkadeCorridor: CorridorFactory<ArkadeCorridorDeps> = Object.assign
                 // decode cannot fail here — but `matches` must not throw, and
                 // the second decode is what hands the signer key over.
                 const address = ArkAddress.decode(target);
-                assertRecipientArkAddress(target, address, {
+                assertRecipientArkadeAddress(target, address, {
                     hrp: deps.network.hrp,
                     signerSet: deps.signerSet,
                 });

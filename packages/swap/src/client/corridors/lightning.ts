@@ -114,7 +114,7 @@ export const lightningCorridor: CorridorFactory<LightningCorridorDeps> = Object.
                 };
             }
 
-            if (!Number.isFinite(facts.expiresAt)) {
+            if (!Number.isSafeInteger(facts.expiresAt)) {
                 return { refused: "the decoded invoice carries no usable expiry" };
             }
             const now = Math.floor(Date.now() / 1000);

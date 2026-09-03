@@ -12,6 +12,11 @@ React Native does not, so install `react-native-get-random-values` (or `expo-cry
 it before this package. `crypto.subtle` is not used. `EventSource` and `WebSocket` are needed only
 by the watch and relay transports, both of which take an injected implementation.
 
+The v2 swap client API is tracked in [V2_API.md](./V2_API.md). That document is
+the package-level developer UX note for the new client surface as it lands; the
+current README still documents the existing package exports and protocol
+building blocks.
+
 **The covenant-deriving entry points need a wallet and nothing else.** `createOffer`,
 `requestLightningSend`, `requestLightningReceive`, `requestOnchainSend` and
 `requestOnchainReceive` take their server facts from `wallet.getArkadeInfo()`: the network and
