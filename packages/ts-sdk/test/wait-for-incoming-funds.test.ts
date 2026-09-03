@@ -110,11 +110,15 @@ describe("waitForIncomingFunds", () => {
         const { wallet } = fakeWallet();
 
         const pending = waitForIncomingFunds(wallet, { timeoutMs: 30_000 });
+        // Attach the handler before advancing time. The rejection lands *during*
+        // advanceTimersByTimeAsync, and asserting afterwards would leave it
+        // momentarily unhandled — which vitest reports as a run-level error.
+        const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError" });
         await flush();
 
         await vi.advanceTimersByTimeAsync(30_000);
 
-        await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+        await rejected;
         expect(stopSpy).toHaveBeenCalledTimes(1);
     });
 
