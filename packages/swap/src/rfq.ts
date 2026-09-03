@@ -149,11 +149,14 @@ export const RFQ_TERMINAL_STATES = ["settled", "refused", "expired", "refunded",
 
 /** A refusal from the solver, carrying its closed-set reason. */
 export class SwapRefusal extends Error {
+    /** Literal-typed so the v2 error taxonomy's union discriminates on `name`
+     * — a `string` here collapses the discriminant for every member. Same value
+     * the constructor has always set, moved to a field initializer. */
+    override readonly name = "SwapRefusal";
     readonly reason: string;
     readonly rfqId: string | undefined;
     constructor(reason: string, rfqId?: string) {
         super(`solver refused: ${reason}`);
-        this.name = "SwapRefusal";
         this.reason = reason;
         this.rfqId = rfqId;
     }
