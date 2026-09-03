@@ -40,6 +40,8 @@ export type ExplorerTransaction = {
     status: {
         confirmed: boolean;
         block_time: number;
+        /** Set by Esplora; the electrum provider omits it. */
+        block_height?: number;
     };
 };
 
@@ -396,6 +398,9 @@ export class EsploraProvider implements OnchainProvider {
         const seen = new Set<string>();
         let baselined = false;
 
+        /** Chain height at watch start, captured only if the history baseline failed. */
+        let anchorHeight: number | undefined;
+
         /**
          * Establish what predates the watch, so the first poll pass has
          * something to compare against other than "everything is new".
@@ -417,6 +422,14 @@ export class EsploraProvider implements OnchainProvider {
                     "Could not baseline watched addresses; the first poll pass will establish it instead:",
                     error,
                 );
+
+                // `/blocks` is small enough to survive a timeout that killed the
+                // history fetch, and a height is reference enough.
+                try {
+                    anchorHeight = (await this.getChainTip()).height;
+                } catch {
+                    // No reference of any kind; the late baseline adopts wholesale.
+                }
             }
         })();
 
@@ -488,18 +501,24 @@ export class EsploraProvider implements OnchainProvider {
 
                     if (baselined) {
                         report(currentTxs);
+                    } else if (anchorHeight !== undefined) {
+                        // Anything confirmed above the anchor arrived after we
+                        // started. Unconfirmed counts as new too: a duplicate
+                        // notification is cheaper than a missed deposit.
+                        const arrivedAfterStart = (tx: ExplorerTransaction) =>
+                            !tx.status.confirmed ||
+                            tx.status.block_height === undefined ||
+                            tx.status.block_height > anchorHeight!;
+
+                        for (const tx of currentTxs) {
+                            if (!arrivedAfterStart(tx)) seen.add(txKey(tx));
+                        }
+                        baselined = true;
+                        report(currentTxs);
                     } else {
-                        // The creation-time baseline failed, so this fetch is
-                        // the first reference point we have. Anything that
-                        // arrived between the watch starting and now is
-                        // indistinguishable from history that predates it, and
-                        // is adopted as known rather than reported — the
-                        // alternative is announcing an entire address history as
-                        // incoming, which is the worse of the two.
-                        //
-                        // Say so. A deposit going unreported is precisely what
-                        // an operator needs told, and staying quiet about it is
-                        // how a missing payment becomes unexplainable.
+                        // No reference at all: anything arriving before now is
+                        // indistinguishable from history, so adopt rather than
+                        // announce one. Warn — a silent miss is unexplainable later.
                         console.warn(
                             `Esplora address watch established its baseline late for ${addresses.length} address(es); deposits arriving before now may not have been reported`,
                         );
