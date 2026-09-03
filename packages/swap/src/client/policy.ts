@@ -1,0 +1,84 @@
+/**
+ * Application policy: the vetoes and floors a client applies before it
+ * discloses anything, plus the two names §10 reserved.
+ *
+ * Five members touch the quote path — three active here, two inert — and the
+ * remaining two belong to milestones that own the behaviour they configure:
+ * `drive` is the lifecycle's and `maxFee` the verbs' ceiling, and each is added
+ * by the milestone that can enforce it rather than declared early and ignored.
+ *
+ * Every active member has the same shape of purpose: it runs BEFORE the RFQ
+ * round trip that discloses an invoice or an amount. A policy that could only
+ * reject a quote after it arrived would be a preference, not a policy.
+ */
+import type { MarketCandidate } from "./market";
+import type { RankedBid } from "./quote";
+
+/**
+ * A published-RFQ auction's parameters (§10, Q9).
+ *
+ * Reserved and inert: nothing reads it, and its shape is sized against ts-sdk
+ * #777's draft so the name cannot be occupied by something narrower in the
+ * meantime — a bid window, the relay set unioned across the pair's cards, and
+ * the fresh per-open transport key rfq-protocol.md §4.6 recommends for
+ * unlinkability.
+ */
+export interface RfqAuctionPolicy {
+    /** How long to hold the bid window open, in ms. */
+    readonly windowMs: number;
+    /** Relays to publish the open request on. Unioned across the pair's cards. */
+    readonly relays?: readonly string[];
+    /** §4.6's SHOULD: a fresh transport key per open, so bids are unlinkable. */
+    readonly freshTransportKey?: boolean;
+}
+
+export interface SwapPolicy {
+    /**
+     * The last word on which market prices a swap.
+     *
+     * Called with every eligible candidate, best-ranked first, and answering
+     * `undefined` vetoes them all — which lands where an empty candidate set
+     * lands, as `UnsupportedRoute`, and not as a seventeenth error member. The
+     * answer must be one of the candidates: a card from somewhere else has not
+     * been through the pair, corridor and addressability checks that produced
+     * this list.
+     */
+    readonly selectMarket?: (candidates: readonly MarketCandidate[]) => MarketCandidate | undefined;
+
+    /**
+     * The registries whose cards may price a swap, matched exactly against
+     * `DiscoveredMarket.source`.
+     *
+     * On `source` and never on `discovery_pubkey`, which is the field the cache
+     * does not revalidate on read: filtering an allowlist on unvalidated cache
+     * content would reintroduce the hole the allowlist exists to close. Exact
+     * URLs, not hostnames or origins — and a locally pinned card follows
+     * whatever label discovery recorded for it, which is a path, not a URL.
+     *
+     * Absent means every source. An allowlist that empties the candidate set is
+     * the empty-eligible-set case, not a refusal of its own.
+     */
+    readonly allowedRegistries?: readonly string[];
+
+    /**
+     * The least validity a quote may arrive with, in seconds.
+     *
+     * One layer above the wire's own refusal of a quote already past
+     * `valid_until`: a quote with four seconds left is not expired and is not
+     * usable either, and the caller is the only one who knows how long their
+     * flow takes between seeing terms and accepting them. Under the floor is
+     * `QuoteExpired`, thrown from `quote()` rather than handed back to fail at
+     * `accept()`.
+     */
+    readonly quoteTtlFloorSeconds?: number;
+
+    /**
+     * §10, reserved and inert: the published-RFQ auction's parameters.
+     */
+    readonly rfq?: RfqAuctionPolicy;
+
+    /**
+     * §10, reserved and inert: which bid to close a published auction with.
+     */
+    readonly selectBid?: (bids: readonly RankedBid[]) => RankedBid | undefined;
+}
