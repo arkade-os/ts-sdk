@@ -3,21 +3,22 @@ import { eventSourceIterator, isEventSourceError } from "../src/providers/utils"
 import { MockEventSource } from "./mocks/eventSource";
 
 describe("eventSourceIterator", () => {
-    it("surfaces reconnecting EventSource errors as EventSourceError", async () => {
+    it("keeps a reconnecting EventSource alive until it delivers the next message", async () => {
         const eventSource = new MockEventSource();
         const iterator = eventSourceIterator(eventSource as unknown as EventSource);
         const next = iterator.next();
 
         eventSource.emitError(0);
+        await Promise.resolve();
+        expect(eventSource.closed).toBe(false);
 
-        await expect(next).rejects.toMatchObject({
-            name: "EventSourceError",
-            message: "EventSource error",
+        eventSource.emitMessage("reconnected");
+        await expect(next).resolves.toMatchObject({
+            done: false,
+            value: { data: "reconnected" },
         });
 
-        await next.catch((error) => {
-            expect(isEventSourceError(error)).toBe(true);
-        });
+        await iterator.return();
     });
 
     it("surfaces closed EventSource errors as EventSourceError", async () => {

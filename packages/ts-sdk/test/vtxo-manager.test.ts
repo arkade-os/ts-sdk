@@ -2758,7 +2758,10 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
                         vtxoMaxAmount: -1n,
                     }),
                     getEventStream: vi.fn().mockImplementation(() => ({
-                        next: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+                        next: vi.fn().mockResolvedValue({
+                            done: false,
+                            value: { type: "stream_started", id: "stream-1" },
+                        }),
                         return: vi.fn().mockResolvedValue({ done: true, value: undefined }),
                         [Symbol.asyncIterator]() {
                             return this;

@@ -62,6 +62,10 @@ export function eventSourceIterator(eventSource: EventSourceLike): ManagedEventS
 
     const errorHandler = () => {
         if (closed) return;
+        // Native EventSource reports transient transport loss with CONNECTING
+        // and performs its own retry on this same instance. Keep it alive so
+        // its retry state (including Last-Event-ID where available) is not lost.
+        if (eventSource.readyState === 0) return;
         const error = new Error("EventSource error");
         error.name = "EventSourceError";
         if (errorResolve) {

@@ -3640,7 +3640,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * gate. Pass {@link getSpendableVtxos} instead when the intent is "settle
      * whatever is spendable".
      *
-     * @param params - Optional settlement inputs and outputs. When omitted, the wallet settles all eligible funds.
+     * @param params - Optional settlement inputs and outputs. When omitted, the wallet settles eligible funds. If eligible boarding inputs exist, configured boarding destination, input-cap, and automatic-renewal policy are applied.
      * @param eventCallback - Optional callback invoked for settlement stream events.
      * @returns The finalized Arkade transaction id
      */
@@ -3676,9 +3676,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // `findDestinationOutputIndex` against the other, which fails with a
         // spurious "no output matches". A single read pins the no-params output
         // below and the asset-routing destination script later to one address.
-        const offchainAddress = await this.getAddress();
-        const offchainPkScript = ArkAddress.decode(offchainAddress).pkScript;
-        const offchainOutputScript = hex.encode(offchainPkScript);
+        let offchainAddress = await this.getAddress();
+        let offchainPkScript = ArkAddress.decode(offchainAddress).pkScript;
+        let offchainOutputScript = hex.encode(offchainPkScript);
 
         // if no params are provided, use all non-expired boarding inputs and offchain virtual outputs as inputs
         // and send all to the offchain address
@@ -3701,11 +3701,25 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 chainTipHeight = tip.height;
             }
 
-            const boardingUtxos = (await this.getBoardingUtxos()).filter(
+            let boardingUtxos = (await this.getBoardingUtxos()).filter(
                 (utxo) =>
                     utxo.status.confirmed &&
                     !hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight),
             );
+
+            if (this.settlementConfig) {
+                const maxBoardingInputs = this.settlementConfig.maxBoardingInputsPerSettle;
+                if (maxBoardingInputs !== undefined) {
+                    boardingUtxos = boardingUtxos
+                        .sort((a, b) => a.txid.localeCompare(b.txid) || a.vout - b.vout)
+                        .slice(0, maxBoardingInputs);
+                }
+                if (boardingUtxos.length > 0 && this.settlementConfig.boardingSettleAddress) {
+                    offchainAddress = this.settlementConfig.boardingSettleAddress;
+                    offchainPkScript = ArkAddress.decode(offchainAddress).pkScript;
+                    offchainOutputScript = hex.encode(offchainPkScript);
+                }
+            }
 
             const filteredBoardingUtxos = [];
             for (const utxo of boardingUtxos) {
@@ -3721,7 +3735,12 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 amount += utxo.value - inputFee.satoshis;
             }
 
-            const vtxos = await this.getSpendableVtxos({ withRecoverable: true });
+            const vtxos =
+                boardingUtxos.length > 0 &&
+                this.settlementConfig &&
+                this.settlementConfig.autoRenewVtxos === false
+                    ? []
+                    : await this.getSpendableVtxos({ withRecoverable: true });
 
             // Cap the VTXOs per settlement to stay under the server's
             // intent-size limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its
@@ -3980,17 +3999,16 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         try {
             stream = this.arkProvider.getEventStream(abortController.signal, topics);
 
-            // Prime the iterator so the provider opens the SSE subscription
-            // before safeRegisterIntent can trigger server-side batch events.
-            const firstNext = stream.next();
-            // If settle exits before Batch.join consumes the primed result,
-            // keep the orphaned promise from surfacing as an unhandled rejection.
-            void firstNext.catch(() => {});
+            // Wait for the first stream event before registering. Merely calling
+            // next() starts the EventSource but does not prove that the Operator
+            // has installed the subscription; registration could otherwise race
+            // a BatchStarted event and leave an accepted intent unacknowledged.
+            const first = await stream.next();
+            if (first.done) {
+                throw new Error("event stream closed before intent registration");
+            }
             const primedStream = (async function* () {
-                const first = await firstNext;
-                if (!first.done) {
-                    yield first.value;
-                }
+                yield first.value;
                 yield* stream;
             })();
 

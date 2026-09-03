@@ -73,6 +73,32 @@ describe("RestArkProvider.getEventStream", () => {
         await stream.return?.();
         await pending.catch(() => {});
     });
+
+    it("leaves native EventSource reconnecting on the same settlement stream", async () => {
+        const provider = new RestArkProvider("http://localhost:7070");
+        const ac = new AbortController();
+        const stream = provider.getEventStream(ac.signal, ["topic-1"]);
+
+        const pending = stream.next();
+        await vi.waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+        MockEventSource.instances[0].emitError(0);
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(MockEventSource.instances).toHaveLength(1);
+        expect(MockEventSource.instances[0].closed).toBe(false);
+        MockEventSource.instances[0].emitMessage(
+            JSON.stringify({ streamStarted: { id: "stream-2" } }),
+        );
+
+        await expect(pending).resolves.toEqual({
+            done: false,
+            value: { type: "stream_started", id: "stream-2" },
+        });
+
+        ac.abort();
+        await stream.return?.();
+        expect(MockEventSource.instances[0].closed).toBe(true);
+    });
 });
 
 describe("RestArkProvider.getTransactionsStream", () => {

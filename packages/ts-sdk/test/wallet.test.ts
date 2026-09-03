@@ -1801,12 +1801,17 @@ describe("Wallet._settleImpl", () => {
         const stream = {
             next: vi
                 .fn()
+                .mockImplementationOnce(
+                    () =>
+                        new Promise((resolve) => {
+                            queueMicrotask(() => {
+                                callOrder.push("stream.ready");
+                                resolve({ done: false, value: primedEvent });
+                            });
+                        }),
+                )
                 .mockImplementationOnce(async () => {
                     callOrder.push("stream.next#1");
-                    return { done: false, value: primedEvent };
-                })
-                .mockImplementationOnce(async () => {
-                    callOrder.push("stream.next#2");
                     return { done: false, value: secondEvent };
                 }),
             return: vi.fn(async () => {
@@ -1873,10 +1878,10 @@ describe("Wallet._settleImpl", () => {
 
         expect(result).toBe("commitment-txid");
         expect(callOrder).toEqual([
-            "stream.next#1",
+            "stream.ready",
             "safeRegisterIntent",
             "Batch.join",
-            "stream.next#2",
+            "stream.next#1",
             "stream.return",
         ]);
         expect(stream.next).toHaveBeenCalledTimes(2);
@@ -1891,18 +1896,13 @@ describe("Wallet._settleImpl", () => {
 
     it("closes the primed stream when safeRegisterIntent fails before Batch.join starts", async () => {
         const callOrder: string[] = [];
-        let resolveFirstNext: ((value: IteratorResult<any>) => void) | undefined = undefined;
-        const firstNext = new Promise<IteratorResult<any>>((resolve) => {
-            resolveFirstNext = resolve;
-        });
         const stream = {
-            next: vi.fn(() => {
+            next: vi.fn(async () => {
                 callOrder.push("stream.next");
-                return firstNext;
+                return { done: false, value: { type: "stream_started", id: "stream-1" } };
             }),
             return: vi.fn(async () => {
                 callOrder.push("stream.return");
-                resolveFirstNext?.({ done: true, value: undefined });
                 return { done: true, value: undefined };
             }),
             [Symbol.asyncIterator]() {
@@ -2067,6 +2067,7 @@ describe("Wallet._settleImpl", () => {
             boardingUtxos: ExtendedCoin[] = [],
         ) => {
             let capturedInputs: ExtendedCoin[] | undefined;
+            let capturedOutputs: Array<{ amount: bigint; script: Uint8Array }> | undefined;
             const sentinel = new Error("stop-after-selection");
             const thisArg: any = {
                 network: "mutinynet",
@@ -2097,17 +2098,28 @@ describe("Wallet._settleImpl", () => {
                         getPublicKey: async () => new Uint8Array(32),
                     }),
                 },
-                makeRegisterIntentSignature: vi.fn(async (coins: ExtendedCoin[]) => {
-                    capturedInputs = coins;
-                    throw sentinel;
-                }),
+                makeRegisterIntentSignature: vi.fn(
+                    async (
+                        coins: ExtendedCoin[],
+                        outputs: Array<{ amount: bigint; script: Uint8Array }>,
+                    ) => {
+                        capturedInputs = coins;
+                        capturedOutputs = outputs;
+                        throw sentinel;
+                    },
+                ),
                 makeDeleteIntentSignature: vi.fn().mockResolvedValue({
                     proof: "delete-proof",
                     message: { type: "delete", expire_at: 0 },
                 }),
                 _addPendingSpends: vi.fn(),
             };
-            return { thisArg, sentinel, getCaptured: () => capturedInputs };
+            return {
+                thisArg,
+                sentinel,
+                getCaptured: () => capturedInputs,
+                getCapturedOutputs: () => capturedOutputs,
+            };
         };
 
         it("auto-selects from the gated read", async () => {
@@ -2152,6 +2164,37 @@ describe("Wallet._settleImpl", () => {
             expect(captured).toHaveLength(boarding.length + MAX_VTXOS_PER_SETTLEMENT);
             expect(captured.slice(0, boarding.length)).toEqual(boarding);
             expect(captured.slice(boarding.length)).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+        });
+
+        it("applies the configured named-boarding destination and selection policy", async () => {
+            const boarding = [makeBoardingUtxo(12_000, 1), makeBoardingUtxo(10_000, 0)];
+            const vtxos = [makeVtxo(5_000, 0)];
+            const { thisArg, sentinel, getCaptured, getCapturedOutputs } = buildThisArg(
+                vtxos,
+                {},
+                boarding,
+            );
+            const decodedDefault = ArkAddress.decode(walletAddress);
+            const pinnedAddress = new ArkAddress(
+                decodedDefault.serverPubKey,
+                new Uint8Array(32).fill(2),
+                decodedDefault.hrp,
+            ).encode();
+            thisArg.settlementConfig = {
+                boardingSettleAddress: pinnedAddress,
+                maxBoardingInputsPerSettle: 1,
+                autoRenewVtxos: false,
+            };
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(getCaptured()).toEqual([boarding[1]]);
+            expect(thisArg.getSpendableVtxos).not.toHaveBeenCalled();
+            expect(getCapturedOutputs()).toEqual([
+                expect.objectContaining({ script: ArkAddress.decode(pinnedAddress).pkScript }),
+            ]);
         });
 
         it("settles the highest-value VTXOs first when capping", async () => {

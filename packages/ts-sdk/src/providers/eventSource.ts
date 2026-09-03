@@ -28,6 +28,8 @@
  * it waves through this one.
  */
 export interface EventSourceLike {
+    /** Native EventSource state when exposed (0 connecting, 1 open, 2 closed). */
+    readonly readyState?: number;
     addEventListener(type: "message" | "error", listener: (event: MessageEvent) => void): void;
     removeEventListener(type: "message" | "error", listener: (event: MessageEvent) => void): void;
     close(): void;

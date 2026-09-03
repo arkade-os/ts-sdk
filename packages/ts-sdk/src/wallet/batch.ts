@@ -141,6 +141,7 @@ export namespace Batch {
         const { abortController, skipVtxoTreeSigning = false, eventCallback } = options;
 
         let step = Step.Start;
+        let selectedBatchId: string | undefined;
 
         // keep track of tree transactions as they arrive
         const flatVtxoTree: TxTreeNode[] = [];
@@ -161,10 +162,12 @@ export namespace Batch {
 
             switch (event.type) {
                 case SettlementEventType.BatchStarted: {
+                    if (selectedBatchId !== undefined) continue;
                     const e = event as BatchStartedEvent;
                     const { skip } = await handler.onBatchStarted(e);
 
                     if (!skip) {
+                        selectedBatchId = e.id;
                         step = Step.BatchStarted;
 
                         if (skipVtxoTreeSigning) {
@@ -176,7 +179,7 @@ export namespace Batch {
                 }
 
                 case SettlementEventType.BatchFinalized: {
-                    if (step !== Step.BatchFinalization) {
+                    if (event.id !== selectedBatchId || step !== Step.BatchFinalization) {
                         continue;
                     }
 
@@ -187,6 +190,7 @@ export namespace Batch {
                 }
 
                 case SettlementEventType.BatchFailed: {
+                    if (event.id !== selectedBatchId) continue;
                     if (handler.onBatchFailed) {
                         await handler.onBatchFailed(event);
                         continue;
@@ -196,6 +200,7 @@ export namespace Batch {
                 }
 
                 case SettlementEventType.TreeTx: {
+                    if (event.id !== selectedBatchId) continue;
                     if (step !== Step.BatchStarted && step !== Step.TreeNoncesAggregated) {
                         continue;
                     }
@@ -214,6 +219,7 @@ export namespace Batch {
                 }
 
                 case SettlementEventType.TreeSignature: {
+                    if (event.id !== selectedBatchId) continue;
                     if (step !== Step.TreeNoncesAggregated) {
                         continue;
                     }
@@ -237,9 +243,16 @@ export namespace Batch {
                 }
 
                 case SettlementEventType.TreeSigningStarted: {
+                    if (event.id !== selectedBatchId) continue;
                     if (step !== Step.BatchStarted) {
                         continue;
                     }
+
+                    // A reconnect can observe the broadcast signing marker
+                    // after missing the topic-filtered tree chunks. Never
+                    // construct or sign an empty tree; wait for usable state or
+                    // the selected batch's terminal failure instead.
+                    if (flatVtxoTree.length === 0) continue;
 
                     // create virtual output tree from collected chunks
                     vtxoTree = TxTree.create(flatVtxoTree);
@@ -253,6 +266,7 @@ export namespace Batch {
                 }
 
                 case SettlementEventType.TreeNonces: {
+                    if (event.id !== selectedBatchId) continue;
                     if (step !== Step.TreeSigningStarted) {
                         continue;
                     }
@@ -265,6 +279,7 @@ export namespace Batch {
                 }
 
                 case SettlementEventType.BatchFinalization: {
+                    if (event.id !== selectedBatchId) continue;
                     if (step !== Step.TreeNoncesAggregated) {
                         continue;
                     }
