@@ -121,10 +121,7 @@ const networkOfRow = (row: RegisteredAsset): string => parseAssetId(row.id).refe
  * sends the money to the wrong one.
  */
 export const canonicalAssetId = (input: string, table: AssetAliasTable): AssetId => {
-    if (isAssetId(input)) {
-        parseAssetId(input);
-        return input;
-    }
+    if (isAssetId(input)) return input;
     const wanted = input.trim().toLowerCase();
     const matches = table.assets.filter(
         (row) => row.ticker.toLowerCase() === wanted && networkOfRow(row) === table.network,
