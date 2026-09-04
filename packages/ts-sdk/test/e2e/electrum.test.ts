@@ -15,6 +15,10 @@ import { waitFor } from "./utils";
 // WebSocket on this port.
 const ELECTRUM_WS_URL = "ws://localhost:50003";
 
+/** Blocks consensus takes the median of; the provider fetches `n - 1` headers
+ *  below the tip, so a chain at least this deep exercises the whole batch. */
+const MTP_WINDOW = 11;
+
 function faucet(address: string, btc = 0.001): number {
     execSync(`node regtest/regtest.mjs faucet ${address} ${btc} --confirm`);
     // Mine a block immediately so electrs has a stable confirmed state to
@@ -24,6 +28,11 @@ function faucet(address: string, btc = 0.001): number {
     // change for the same reason (settlement.test.ts etc.).
     execSync(`node regtest/regtest.mjs mine 1`);
     return Math.round(btc * 100_000_000);
+}
+
+/** Mine `n` blocks. */
+function mine(n: number): void {
+    if (n > 0) execSync(`node regtest/regtest.mjs mine ${n}`);
 }
 
 describe("ElectrumOnchainProvider integration tests", () => {
@@ -76,6 +85,17 @@ describe("ElectrumOnchainProvider integration tests", () => {
         // warning did NOT fire is what distinguishes "the median was computed"
         // from "the fallback was taken" — the two are otherwise identical from
         // outside.
+        //
+        // A chain shallower than the window would ALSO pass silently: below
+        // height 10 the short-window branch fetches fewer than ten headers (and
+        // none at all at height 0), warns about nothing, and proves nothing
+        // about the batch this test exists to exercise. The stack does not
+        // guarantee a depth, so mine up to one — with two blocks of headroom,
+        // so a headers subscription that observes the mine a block late still
+        // sees a full window rather than failing the assertion below.
+        const start = await provider.getChainTip();
+        mine(Math.max(0, MTP_WINDOW + 1 - start.height));
+
         const warnings: unknown[][] = [];
         const original = console.warn;
         console.warn = (...args: unknown[]) => {
