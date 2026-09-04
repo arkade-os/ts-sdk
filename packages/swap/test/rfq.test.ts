@@ -655,15 +655,7 @@ describe("offerTermsFromQuote", () => {
     });
 });
 
-/**
- * The max-fee gate: the client's own ceiling on what a quote may charge.
- *
- * A solver's fee is `from_amount - to_amount` and nothing in the quote breaks it
- * down. With dynamic pricing the flat component tracks the chain fee market, so
- * the registry card cannot bound it either — the card publishes the configured
- * fallback, not the live ceiling. This is the only place a client can hold a
- * line, and it needs nothing from the solver.
- */
+/** The max-fee gate: the client's own ceiling on what a quote may charge. */
 describe("assertFundable — the max-fee gate", () => {
     const now = 1_800_000_000;
     const fundable = (over: Partial<RfqQuote>, maxFee?: { bps?: number; sats?: number }) =>
@@ -675,26 +667,9 @@ describe("assertFundable — the max-fee gate", () => {
         });
 
     it("does not gate at all when no ceiling is given", () => {
-        // Backward compatibility is the point: every existing caller passes no
-        // `maxFee` and must keep funding exactly what it funded before.
         expect(() => fundable({ from_amount: 10_000, to_amount: 1 })).not.toThrow();
     });
 
-    /**
-     * The guards on the CEILING itself, as opposed to on the quote.
-     *
-     * A ceiling only protects while it is a bound the comparison can hold, and
-     * each of these is a way to write one that is not: `bps: 10_001` is looser
-     * than any real quote and therefore no bound at all, a fractional `bps`
-     * silently truncates through `Math.floor` into a different ceiling than the
-     * caller wrote, and a negative bound refuses everything. All are mistakes at
-     * the CALL SITE, so they fail there by name rather than being clamped into
-     * something plausible — a clamped ceiling is a wallet believing it is
-     * protected at a level it never asked for.
-     *
-     * Asserted on `reason` rather than on the message: the reason code is the
-     * closed contract a caller branches on, and the sentence beside it is not.
-     */
     const reasonOf = (run: () => unknown): string => {
         try {
             run();
@@ -717,9 +692,6 @@ describe("assertFundable — the max-fee gate", () => {
     });
 
     it("allows the boundary values, so the guard does not become the bug", () => {
-        // 10_000 bps is exactly 100% and 0 is a real choice — an absolute-only
-        // ceiling is written `{ bps: 0, sats: n }`. Refusing either would make
-        // this guard reject ceilings a caller is entitled to set.
         const quote = { from_amount: 100_000, to_amount: 99_999 };
         expect(() => fundable(quote, { bps: 10_000 })).not.toThrow();
         expect(() => fundable(quote, { bps: 0, sats: 1 })).not.toThrow();
@@ -735,13 +707,6 @@ describe("assertFundable — the max-fee gate", () => {
         );
     });
 
-    /**
-     * THE CASE THIS EXISTS FOR. A flat network component is a large percentage
-     * of a small swap: 420 sats on 5_000 is 8.4%, and on 500_000 it is 0.084%.
-     * A bare percentage therefore refuses every small swap the moment fees rise.
-     * The ceiling is the GREATER of the two allowances, so an absolute floor
-     * covers the flat component without weakening the proportional bound.
-     */
     it("allows a flat network fee on a small swap that a bare percentage would refuse", () => {
         expect(() => fundable({ from_amount: 5_420, to_amount: 5_000 }, { bps: 100 })).toThrow(
             /fee/i,
@@ -761,12 +726,6 @@ describe("assertFundable — the max-fee gate", () => {
         ).toThrow(/fee/i);
     });
 
-    /**
-     * LOUD, not silent. `from_amount - to_amount` is a fee only when both sides
-     * name the same asset; on `arkade:BTC->ethereum:<token>` it subtracts tokens
-     * from sats and means nothing. Skipping quietly would leave a wallet
-     * believing a ceiling applied when it did not, which is worse than no gate.
-     */
     it("refuses to pretend it can gate a cross-asset pair", () => {
         expect(() =>
             fundable(
@@ -777,7 +736,6 @@ describe("assertFundable — the max-fee gate", () => {
     });
 
     it("refuses a ceiling that names neither bound, rather than tolerating no fee", () => {
-        // `{}` reads as "no fee at all" if taken literally, which no caller means.
         expect(() => fundable({ from_amount: 100_000, to_amount: 99_999 }, {})).toThrow(
             /bps|sats/i,
         );
@@ -785,14 +743,8 @@ describe("assertFundable — the max-fee gate", () => {
 });
 
 /**
- * The cross-asset half of the same ceiling.
- *
- * `from_amount - to_amount` is not a fee when the legs name different assets,
- * but the fee is not unknowable — it is the spread against a reference rate,
- * and the caller is the only party that can supply one honestly. Given `R` in
- * to-units per from-unit, the fee in FROM units is
- * `(from_amount * R - to_amount) / R`, and the same max(proportional, absolute)
- * rule applies unchanged.
+ * Cross-asset: with `R` in to-units per from-unit the fee in FROM units is
+ * `(from_amount * R - to_amount) / R`, and the same max() rule applies.
  */
 describe("assertFundable — the max-fee gate, cross-asset", () => {
     const now = 1_800_000_000;
@@ -814,9 +766,8 @@ describe("assertFundable — the max-fee gate, cross-asset", () => {
             maxFee,
         });
 
-    // R = 0.5 token-units per sat, so 100_000 sats is fairly worth 50_000.
     it("gates on the spread against the caller's own rate", () => {
-        // 49_500 received = 500 short = 1_000 sats of fee = exactly 1% of 100_000.
+        // R = 0.5: 100_000 sats is worth 50_000; 49_500 received = 1_000 sats fee = 1%.
         expect(() => gate({ to_amount: 49_500 }, { bps: 100, referenceRate: 0.5 })).not.toThrow();
         expect(() => gate({ to_amount: 49_499 }, { bps: 100, referenceRate: 0.5 })).toThrow(/fee/i);
     });
@@ -833,20 +784,13 @@ describe("assertFundable — the max-fee gate, cross-asset", () => {
         }
     });
 
-    /**
-     * Rounds the fee UP, and this is the only case that can tell. R = 3 with
-     * 2_999 to-units short is 999.67 sats of fee: ceil refuses it against a
-     * 999-sat ceiling, floor funds it. Erring toward refusing is the client's
-     * side to err on, and without this the choice was untested — a floor
-     * mutation passed every other case here.
-     */
+    // The only case that distinguishes ceil from floor: R = 3, 2_999 short =
+    // 999.67 sats, which ceil refuses against a 999-sat ceiling and floor funds.
     it("rounds a fractional cross-asset fee up, not down", () => {
         expect(() => gate({ to_amount: 297_001 }, { sats: 999, referenceRate: 3 })).toThrow(/fee/i);
     });
 
     it("ignores a rate on a same-asset pair, where the exact fee is already known", () => {
-        // A wallet setting one ceiling for every pair must not be punished for
-        // carrying a rate the same-asset branch has no use for.
         expect(() =>
             assertFundable({
                 quote: quoteFixture({

@@ -440,51 +440,21 @@ export const assertFundable = (input: {
         direction: "send" | "receive";
     };
     /**
-     * The most this client will pay, as the GREATER of a proportion of
-     * `from_amount` and an absolute number of sats. Absent means no ceiling —
-     * which is what every caller written before this got, and keeps.
-     *
-     * BOTH bounds, because a solver's fee is partly flat. With dynamic pricing
-     * that flat component tracks the chain fee market, and a flat charge is a
-     * large proportion of a small swap: 420 sats is 8.4% of 5_000 and 0.084% of
-     * 500_000. A bare percentage therefore refuses every small swap the moment
-     * fees rise, while an absolute alone stops protecting a large one. `max()`
-     * lets the absolute cover the flat component without loosening the
-     * proportional bound where that is the one doing the work.
-     *
-     * This is the ONLY ceiling a client has. The quote carries no fee field,
-     * and the registry card cannot stand in for one: it publishes the
-     * corridor's CONFIGURED flat fee, not the cap live pricing may reach, so a
-     * solver with a low fallback and a high cap advertises cheaper than it can
-     * charge. `from_amount - to_amount` off the quote is the real number.
-     *
-     * OMIT a bound rather than zeroing it. `{ bps: 0, sats: 500 }` is the right
-     * way to write an absolute-only ceiling and behaves as intended — but a lone
-     * `{ bps: 0 }` is a ceiling of ZERO, which refuses every quote carrying any
-     * fee at all. That cannot be rejected as a mistake, because it is also how a
-     * caller says "free or nothing"; the two are told apart only by what else is
-     * set. `{}`, which names no bound whatsoever, IS refused.
+     * The most this client will pay: the GREATER of the two bounds, because a
+     * flat fee is a large proportion of a small swap (420 sats is 8.4% of
+     * 5_000, 0.084% of 500_000). Absent means no ceiling. OMIT a bound rather
+     * than zeroing it: `{ bps: 0 }` alone is a ceiling of zero, indistinguishable
+     * from "free or nothing". `{}` IS refused.
      */
     maxFee?: {
+        /** Integer, 0..10_000 (10_000 = 100%). Out of range throws `max_fee_out_of_range`. */
         bps?: number;
+        /** Non-negative integer. Out of range throws `max_fee_out_of_range`. */
         sats?: number;
         /**
-         * To-units per from-unit, for a CROSS-ASSET pair. Without it such a pair
-         * is refused rather than waved through — the fee there is the spread
-         * against a rate, and this function is given no rate of its own.
-         *
-         * Must come from a source of YOUR OWN. Reading it off the solver's
-         * published market feed checks the solver against its own number and
-         * passes anything; the feed URL being right there on the card is what
-         * makes that the easy mistake.
-         *
-         * Ignored on a same-asset pair, where the exact fee is already known —
-         * so one ceiling can be set for every pair a wallet handles.
-         *
-         * Expect to need a LOOSER tolerance than same-asset: the spread you
-         * measure necessarily includes rate movement between your feed read and
-         * the solver's quote, so a tight bound refuses honest quotes on
-         * volatility alone.
+         * To-units per from-unit, required for a CROSS-ASSET pair. Must come
+         * from a source of YOUR OWN — the solver's own feed would check it
+         * against its own number. Needs a looser tolerance than same-asset.
          */
         referenceRate?: number;
     };
@@ -506,9 +476,7 @@ export const assertFundable = (input: {
     if (input.maxFee) {
         const { bps, sats, referenceRate } = input.maxFee;
         if (bps === undefined && sats === undefined) {
-            // Read literally `{}` is "tolerate no fee at all", which no caller
-            // means and every caller would then be refused by. A ceiling that
-            // names nothing is a mistake at the call site, not a bad quote.
+            // A ceiling naming nothing is a call-site mistake, not a bad quote.
             fail("max_fee_unbounded", "maxFee names neither bps nor sats");
         }
         if (bps !== undefined && (!Number.isInteger(bps) || bps < 0 || bps > 10_000)) {
@@ -517,17 +485,10 @@ export const assertFundable = (input: {
         if (sats !== undefined && (!Number.isInteger(sats) || sats < 0)) {
             fail("max_fee_out_of_range", `maxFee.sats must be a non-negative integer, got ${sats}`);
         }
-        // `from_amount - to_amount` is a fee only while both legs name the same
-        // asset. Across assets it subtracts tokens from sats — but the fee is
-        // not unknowable there, it is the spread against a reference rate, and
-        // the caller is the only party who can supply one honestly.
         const legs = input.quote.pair.split("->");
         const assetOf = (leg: string): string => leg.slice(leg.indexOf(":") + 1);
         const sameAsset = legs.length === 2 && assetOf(legs[0]!) === assetOf(legs[1]!);
         if (!sameAsset && referenceRate === undefined) {
-            // LOUD, never silent: a caller who set a ceiling and got no gate
-            // would believe one applied. Better to refuse the swap than to fund
-            // it under a protection that was never there.
             fail(
                 "fee_gate_unavailable",
                 `maxFee cannot gate ${input.quote.pair}: its legs name different assets, so ` +
@@ -542,9 +503,7 @@ export const assertFundable = (input: {
                 `maxFee.referenceRate must be a positive finite number, got ${referenceRate}`,
             );
         }
-        // Both branches yield a fee in FROM units, so one ceiling covers both.
-        // Cross-asset rounds the fee UP: a borderline quote should be refused
-        // rather than funded on a rounding artefact.
+        // Rounds UP: refuse a borderline quote, do not fund a rounding artefact.
         const fee = sameAsset
             ? input.quote.from_amount - input.quote.to_amount
             : Math.ceil(
