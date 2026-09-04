@@ -48,6 +48,12 @@ const reasonOf = (error: unknown): string | undefined =>
  * `invalid_gate_input`: that fires when the CLIENT hands a gate a `NaN` clock or
  * ceiling, which is a defect here rather than anything the solver did, and
  * mapping it to a check would blame the counterparty for our own bug.
+ *
+ * And so is `price_too_high`, on a third ground: a ceiling the caller opted
+ * into is a veto on the price, not a fault in the quote. §3.1's checks have no
+ * member for one — v2's price ceiling is the verbs' `maxFee`, raised as
+ * `MaxFeeExceeded` — so an entry here could only file it under a timing
+ * failure, which is the wrong axis and the wrong remedy.
  */
 const CHECK_BY_REASON: Record<string, QuoteCheck> = {
     invoice_expired: "invoice",
@@ -60,7 +66,6 @@ const CHECK_BY_REASON: Record<string, QuoteCheck> = {
     confirmations_out_of_range: "refund_window",
     timelock_order: "refund_window",
     quote_malformed: "refund_window",
-    price_too_high: "refund_window",
 };
 
 /** Run a gate, and turn whatever it refuses with into this taxonomy. */
@@ -158,7 +163,11 @@ export const verifyingDerivation = <T>(derive: () => T): T => {
         return derive();
     } catch (error) {
         if (error instanceof AddressMismatch) {
-            throw new QuoteVerificationFailed("lockup_address", error.derived, error.quoted, {
+            // `derived` is plural whenever the derivation itself is ambiguous —
+            // every candidate shape tried. All of them are what disagreed, so
+            // all of them go in `expected`; the array stays on the `cause`.
+            const derived = Array.isArray(error.derived) ? error.derived.join(", ") : error.derived;
+            throw new QuoteVerificationFailed("lockup_address", derived, error.quoted, {
                 cause: error,
             });
         }

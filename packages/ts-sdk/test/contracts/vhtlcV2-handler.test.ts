@@ -98,13 +98,13 @@ describe("VHTLCV2ContractHandler", () => {
             unilateralClaimDelay: { type: "blocks", value: 10n },
             unilateralRefundDelay: { type: "blocks", value: 12n },
             unilateralRefundWithoutReceiverDelay: { type: "blocks", value: 14n },
-            nonInteractiveClaim: {
+            nonInteractiveParameters: {
                 receiverPkScript: hex.decode(RECEIVER_PK_SCRIPT),
-                emulatorPubkey: hex.decode(EMULATOR),
-            },
-            nonInteractiveRefund: {
                 senderPkScript: hex.decode(SENDER_PK_SCRIPT),
                 emulatorPubkey: hex.decode(EMULATOR),
+                // fullParams carries no nonInteractiveRefundWithoutReceiver
+                // flag, and the flag's absence IS the legacy marker.
+                legacy: "preTimelockedRefund",
             },
         });
 
@@ -119,8 +119,7 @@ describe("VHTLCV2ContractHandler", () => {
     it("round-trips the covenant leaves through serialize/deserialize", () => {
         const params = fullParams();
         const typed = VHTLCV2ContractHandler.deserializeParams(params);
-        expect(typed.nonInteractiveClaim).toBeDefined();
-        expect(typed.nonInteractiveRefund).toBeDefined();
+        expect(typed.nonInteractiveParameters).toBeDefined();
 
         const reserialized = VHTLCV2ContractHandler.serializeParams(typed);
         expect(reserialized).toEqual(params);
@@ -129,10 +128,11 @@ describe("VHTLCV2ContractHandler", () => {
         );
     });
 
-    it("round-trips withoutReceiver, and a dropped flag would change the script", () => {
+    it("round-trips the timelocked-refund flag, and a dropped flag would change the script", () => {
         const params = fullParams({ nonInteractiveRefundWithoutReceiver: "1" });
         const typed = VHTLCV2ContractHandler.deserializeParams(params);
-        expect(typed.nonInteractiveRefund?.withoutReceiver).toBe(true);
+        // Flag present → the full suite → no legacy marker.
+        expect(typed.nonInteractiveParameters?.legacy).toBeUndefined();
 
         const reserialized = VHTLCV2ContractHandler.serializeParams(typed);
         expect(reserialized).toEqual(params);
@@ -148,14 +148,29 @@ describe("VHTLCV2ContractHandler", () => {
         );
     });
 
-    it("omits the key entirely when not opted in", () => {
-        const typed = VHTLCV2ContractHandler.deserializeParams(fullParams());
-        expect(typed.nonInteractiveRefund?.withoutReceiver).toBeUndefined();
+    it("deserializes a flag-less row as legacy: 'preTimelockedRefund', and round-trips to the same eight-leaf script", () => {
+        // The flag's ABSENCE is the legacy marker — the same encoding older
+        // SDKs wrote for eight-leaf rows, so those rows read back unchanged.
+        const params = fullParams();
+        const typed = VHTLCV2ContractHandler.deserializeParams(params);
+        expect(typed.nonInteractiveParameters?.legacy).toBe("preTimelockedRefund");
+
         const serialized = VHTLCV2ContractHandler.serializeParams(typed);
+        // Omitted entirely — never a "false"/"undefined" string in a row.
         expect("nonInteractiveRefundWithoutReceiver" in serialized).toBe(false);
+        expect(serialized).toEqual(params);
+
+        // ...and the round-trip re-derives the SAME eight-leaf script: the
+        // timelocked refund leaf withheld, everything else intact.
+        const script = VHTLCV2ContractHandler.createScript(params);
+        expect(script.scripts).toHaveLength(8);
+        expect(script.nonInteractiveRefundWithoutReceiverScript).toBeUndefined();
+        expect(hex.encode(VHTLCV2ContractHandler.createScript(serialized).pkScript)).toBe(
+            hex.encode(script.pkScript),
+        );
     });
 
-    it("refuses withoutReceiver without the nonInteractiveRefund keys it extends", () => {
+    it("refuses the timelocked-refund flag without the emulator covenant keys it extends", () => {
         const params = {
             sender: SENDER,
             receiver: RECEIVER,
@@ -168,11 +183,11 @@ describe("VHTLCV2ContractHandler", () => {
             nonInteractiveRefundWithoutReceiver: "1",
         };
         expect(() => VHTLCV2ContractHandler.deserializeParams(params)).toThrow(
-            /without the nonInteractiveRefund keys it extends/,
+            /without the emulator covenant keys it extends/,
         );
     });
 
-    it('refuses a withoutReceiver value other than "1"', () => {
+    it('refuses a timelocked-refund flag value other than "1"', () => {
         expect(() =>
             VHTLCV2ContractHandler.deserializeParams(
                 fullParams({ nonInteractiveRefundWithoutReceiver: "true" }),
@@ -201,33 +216,22 @@ describe("VHTLCV2ContractHandler", () => {
         );
     });
 
-    it("round-trips the STRICT claim bound, which is opt-in and therefore droppable", () => {
-        // Dropping it re-derives the DEFAULT claim covenant — weaker than the row
-        // asked for — and dies at `upsertContractRow` with an opaque `Script
-        // mismatch`. The failure is identical to the asset drop above and just as
-        // silent, which is why an opt-in field needs the round-trip most: nothing
-        // else signals its absence.
-        const params = fullParams({
-            assetTxid: ASSET_TXID,
-            assetGroupIndex: "7",
-            strictClaimAmount: "50000",
-            strictClaimAssetAmount: "1234",
-        });
-        const typed = VHTLCV2ContractHandler.deserializeParams(params);
-        expect(typed.nonInteractiveClaim?.strict).toEqual({ amount: 50_000n, assetAmount: 1234n });
-        expect(VHTLCV2ContractHandler.serializeParams(typed)).toEqual(params);
-
-        // ...and it derives a DIFFERENT script from the same contract without it.
-        const loose = fullParams({ assetTxid: ASSET_TXID, assetGroupIndex: "7" });
-        expect(hex.encode(VHTLCV2ContractHandler.createScript(params).pkScript)).not.toBe(
-            hex.encode(VHTLCV2ContractHandler.createScript(loose).pkScript),
-        );
-    });
-
-    it("refuses a strict ASSET bound with no strict sat bound", () => {
-        // Reading it as "not strict" would re-derive the default covenant. The
-        // mirror case (sats without asset, on an asset contract) is refused by
-        // the script layer's own validation, which this defers to.
+    it("refuses a row carrying the REMOVED strict claim keys, instead of re-deriving loosely", () => {
+        // The strict bound shipped in 0.4.67 and earlier and is gone now. A row
+        // written in that window carries a claim covenant this build cannot
+        // re-derive; reading the keys as absent would rebuild the DEFAULT
+        // covenant — a different pkScript — and die at `upsertContractRow` with
+        // an opaque `Script mismatch`. Either key alone names the row.
+        expect(() =>
+            VHTLCV2ContractHandler.deserializeParams(
+                fullParams({
+                    assetTxid: ASSET_TXID,
+                    assetGroupIndex: "7",
+                    strictClaimAmount: "50000",
+                    strictClaimAssetAmount: "1234",
+                }),
+            ),
+        ).toThrow(/strict claim params/);
         expect(() =>
             VHTLCV2ContractHandler.deserializeParams(
                 fullParams({
@@ -236,7 +240,7 @@ describe("VHTLCV2ContractHandler", () => {
                     strictClaimAssetAmount: "1234",
                 }),
             ),
-        ).toThrow(/without strictClaimAmount/);
+        ).toThrow(/strict claim params/);
     });
 
     it("refuses half an asset rather than deriving a sat-only script from it", () => {
@@ -307,8 +311,7 @@ describe("VHTLCV2ContractHandler", () => {
             refundNoReceiverDelay: "14",
         };
         const typed = VHTLCV2ContractHandler.deserializeParams(params);
-        expect(typed.nonInteractiveClaim).toBeUndefined();
-        expect(typed.nonInteractiveRefund).toBeUndefined();
+        expect(typed.nonInteractiveParameters).toBeUndefined();
         // No `"undefined"` string keys leaking into a persisted row.
         expect(VHTLCV2ContractHandler.serializeParams(typed)).toEqual(params);
         expect(
@@ -327,6 +330,35 @@ describe("VHTLCV2ContractHandler", () => {
         delete missingDestination.nonInteractiveRefundSenderPkScript;
         expect(() => VHTLCV2ContractHandler.createScript(missingDestination)).toThrow(
             /nonInteractiveRefund needs both/,
+        );
+    });
+
+    it("refuses a row carrying only one side of the suite — the group is all-or-nothing", () => {
+        // A row written by an older SDK could name one leaf's pair without the
+        // other's. It has no group representation — building one would mean
+        // inventing the missing half — so the handler refuses it by name.
+        const claimOnly = fullParams();
+        delete claimOnly.nonInteractiveRefundSenderPkScript;
+        delete claimOnly.nonInteractiveRefundEmulatorPubkey;
+        expect(() => VHTLCV2ContractHandler.deserializeParams(claimOnly)).toThrow(
+            /emulator covenant params are all-or-nothing/,
+        );
+
+        const refundOnly = fullParams();
+        delete refundOnly.nonInteractiveClaimReceiverPkScript;
+        delete refundOnly.nonInteractiveClaimEmulatorPubkey;
+        expect(() => VHTLCV2ContractHandler.deserializeParams(refundOnly)).toThrow(
+            /emulator covenant params are all-or-nothing/,
+        );
+    });
+
+    it("refuses a row naming two different emulator pubkeys", () => {
+        // One key serves both covenant destinations in the group. A row naming
+        // two was legal for an older SDK and is unrepresentable now — rebuilding
+        // with either one would move the pkScript, so the handler names it.
+        const divergent = fullParams({ nonInteractiveRefundEmulatorPubkey: SENDER });
+        expect(() => VHTLCV2ContractHandler.deserializeParams(divergent)).toThrow(
+            /two different emulator pubkeys/,
         );
     });
 

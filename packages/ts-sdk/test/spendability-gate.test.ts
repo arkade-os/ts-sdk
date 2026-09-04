@@ -170,6 +170,17 @@ async function seededWallet(opts?: {
 const scriptsOf = (vtxos: { script: string }[]) => vtxos.map((v) => v.script).sort();
 const txidsOf = (vtxos: { txid: string }[]) => vtxos.map((v) => v.txid).sort();
 
+/** Every `[spendability]` debug line the call emitted, in order. */
+const captureDebug = async (run: () => Promise<void>): Promise<string[]> => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "debug").mockImplementation((...args: unknown[]) => {
+        lines.push(args.join(" "));
+    });
+    await run();
+    spy.mockRestore();
+    return lines.filter((l) => l.startsWith("[spendability]"));
+};
+
 describe("ContractHandler.isGenericallySpendable", () => {
     it("answers true for every built-in wallet-owned type", () => {
         const row = contract("s", "default");
@@ -686,17 +697,6 @@ describe("logUngatedInputs", () => {
     const DEPRECATED_KEY = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
     const EXPIRED_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000004";
 
-    /** Every debug line the call emitted, in order. */
-    const captureDebug = async (run: () => Promise<void>): Promise<string[]> => {
-        const lines: string[] = [];
-        const spy = vi.spyOn(console, "debug").mockImplementation((...args: unknown[]) => {
-            lines.push(args.join(" "));
-        });
-        await run();
-        spy.mockRestore();
-        return lines.filter((l) => l.startsWith("[spendability]"));
-    };
-
     it("reports all three exclusions, not just the contract gate", async () => {
         const intents = new InMemoryIntentRepository();
         const { wallet, contractRepository, defaultScript } = await seededWallet({ intents });
@@ -750,6 +750,99 @@ describe("logUngatedInputs", () => {
             wallet.logUngatedInputs("buildAndSubmitOffchainTx", [vtxo(defaultScript, 10_000)]),
         );
         expect(lines).toEqual([]);
+    });
+});
+
+describe("getSpendableVtxos reports the exited coins it dropped", () => {
+    const UNROLLED_TXID = "e7".repeat(32);
+
+    /** The seeded wallet plus one exited coin of its own. */
+    const withExitedCoin = async (over?: { isSpent?: boolean }) => {
+        const seeded = await seededWallet();
+        await seeded.walletRepository.saveVtxos(await seeded.wallet.getAddress(), [
+            createMockExtendedVtxo({
+                txid: UNROLLED_TXID,
+                vout: 0,
+                value: 12_000,
+                script: seeded.defaultScript,
+                virtualStatus: { state: "settled" },
+                isSpent: over?.isSpent ?? false,
+                isUnrolled: true,
+            }),
+        ]);
+        return seeded;
+    };
+
+    const linesFor = async (filter?: GetVtxosFilter) => {
+        const { wallet } = await withExitedCoin();
+        return captureDebug(async () => {
+            await wallet.getSpendableVtxos(filter);
+        });
+    };
+
+    it("names the outpoint and the remedy that reaches it", async () => {
+        const lines = await linesFor();
+        const line = lines.find((l) => l.includes(UNROLLED_TXID));
+        expect(line).toContain(`${UNROLLED_TXID}:0`);
+        expect(line).toContain("unilaterally exited");
+        expect(line).toContain("Unroll.completeUnroll");
+    });
+
+    it("stays quiet when the caller asked for unrolled coins", async () => {
+        // Nothing was excluded, so describing it as excluded would be wrong.
+        const lines = await linesFor({ withRecoverable: true, withUnrolled: true });
+        expect(lines.join("\n")).not.toContain(UNROLLED_TXID);
+    });
+
+    it("stays quiet about a completed unroll", async () => {
+        // The exit output is already spent: `completeUnroll` does not reach it
+        // either, so the line would name a remedy that throws.
+        const { wallet } = await withExitedCoin({ isSpent: true });
+        const lines = await captureDebug(async () => {
+            await wallet.getSpendableVtxos();
+        });
+        expect(lines.join("\n")).not.toContain(UNROLLED_TXID);
+    });
+
+    it("says nothing on the reads that are not spending", async () => {
+        // The other placement the design rejects: logging inside
+        // `filterSnapshotVtxos` would make `getVtxos` — a raw reporting read
+        // where an exited coin is out of scope, not excluded — and `getBalance`,
+        // which asks for them on purpose, both report one as excluded.
+        const { wallet } = await withExitedCoin();
+        const lines = await captureDebug(async () => {
+            await wallet.getVtxos();
+            await wallet.getVtxos({ withUnrolled: true });
+            await wallet.getBalance();
+        });
+        expect(lines.join("\n")).not.toContain(UNROLLED_TXID);
+    });
+
+    it("does not report a terminally-spent coin under a gated contract as gated", async () => {
+        // The regression the separate call exists to prevent: reporting the raw
+        // snapshot through the gate exclusion would emit a `gated` line for every
+        // spent coin under an escrow contract, none of which was ever a candidate.
+        const spentEscrowTxid = "e8".repeat(32);
+        const { wallet, walletRepository } = await seededWallet();
+        await walletRepository.saveVtxos(contract(ESCROW_SCRIPT, "arkade").address, [
+            createMockExtendedVtxo({
+                txid: spentEscrowTxid,
+                vout: 0,
+                value: 9_000,
+                script: ESCROW_SCRIPT,
+                virtualStatus: { state: "settled" },
+                isSpent: true,
+            }),
+        ]);
+
+        const lines = await captureDebug(async () => {
+            await wallet.getSpendableVtxos();
+        });
+
+        // The live escrow coin is still reported — the gate line is not gone,
+        // just not extended to coins that are already spent.
+        expect(lines.join("\n")).toContain("is not generically spendable");
+        expect(lines.join("\n")).not.toContain(spentEscrowTxid);
     });
 });
 
@@ -825,6 +918,21 @@ describe("main-thread / worker balance parity", () => {
      * unrolled coins explicitly. Comparing the two is the only assertion that
      * catches `Wallet.getBalance` going back to the default filter, which
      * silently drops them and reports `unrolled: 0` forever.
+     *
+     * Scoped to `unrolled` and `total` on purpose. `_pendingSpendOutpoints` is
+     * main-thread-only state — the VTXO inputs of an in-flight `send`,
+     * `sendBitcoin` or `settle`, written by the instance driving it — so
+     * mid-send the two sides legitimately disagree, and an all-buckets assertion
+     * would trip on it. Not a bug to
+     * repair by widening the worker's balance read: the fix for a consumer that
+     * ever needs agreement mid-send is a `SPEND_STARTED`/`SPEND_SETTLED` event on
+     * the existing bus, not a balance-read change.
+     *
+     * `unrolled` is not exempt from that wedge either, only out of its reach in
+     * practice: generic selection refuses exited coins, but the explicit-input
+     * paths are ungated, so a caller *naming* one puts it in the set. Accepted
+     * because it is bounded and self-inflicted — such a spend is doomed at the
+     * server, and the wedge lasts until it rejects.
      */
     const workerBalance = async (seeded: Awaited<ReturnType<typeof seededWallet>>) => {
         // Same wallet, same repository as the main-thread read — two stubs

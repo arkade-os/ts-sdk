@@ -7,22 +7,13 @@
  * all, and a caller cannot tell which of the four it got.
  */
 import { describe, expect, it, vi } from "vitest";
-import type { DiscoveredMarket, NetworkIndex } from "@arkade-os/solver-discovery";
+import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { discoveryIndex, isUsableCard } from "../../src/client/discovery";
 import { DiscoverySnapshotUnavailable } from "../../src/client/errors";
 import { InMemoryAssetSwapRepository } from "../../src/repository";
-import { lightningCard, spotCard } from "./fixtures";
+import { indexOf, lightningCard, spotCard } from "./fixtures";
 
 const REGISTRY = "https://registry.example/regtest.json";
-
-/** What the registry publishes: the cards without discovery's own provenance. */
-const indexOf = (markets: DiscoveredMarket[]): NetworkIndex => ({
-    version: 0,
-    network: "regtest",
-    generated_at: Math.floor(Date.now() / 1000),
-    commit: "0".repeat(40),
-    markets: markets.map(({ source, sourceType, ...market }) => market),
-});
 
 const serving = (markets: DiscoveredMarket[]) =>
     vi.fn(async () => new Response(JSON.stringify(indexOf(markets)))) as unknown as typeof fetch &

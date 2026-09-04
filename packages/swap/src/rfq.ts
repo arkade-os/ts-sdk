@@ -162,11 +162,15 @@ export class SwapRefusal extends Error {
     }
 }
 
-/** The solver's address does not match the local derivation. NEVER fund past this. */
+/**
+ * The solver's address does not match the local derivation. NEVER fund past
+ * this. `derived` is every candidate address tried — more than one when the
+ * derivation itself is ambiguous, see {@link verifyLockupAddress}.
+ */
 export class AddressMismatch extends Error {
-    readonly derived: string;
+    readonly derived: string | string[];
     readonly quoted: string | undefined;
-    constructor(derived: string, quoted?: string) {
+    constructor(derived: string | string[], quoted?: string) {
         super("solver lockup address does not match local derivation — refusing to fund");
         this.name = "AddressMismatch";
         this.derived = derived;
@@ -349,12 +353,69 @@ export const assertPairLength = (pair: string): void => {
     }
 };
 
-/** Compare-only check of the solver's address against YOUR derivation.
- * Throws {@link AddressMismatch}; returns the address so calls chain. */
-export const verifyLockupAddress = (quote: RfqQuote, derivedAddress: string): string => {
+/**
+ * Compare-only check of the solver's address against YOUR OWN derivation(s)
+ * — never extends trust, only narrows it.
+ *
+ * `derivedAddress` may be a single address or an array of candidates. Pass an
+ * array when your own derivation is ambiguous — as it is for the covenant
+ * lockups while solvers roll out the timelocked non-interactive refund leaf:
+ * nothing on the wire says whether a given quote's covenant carries it (the
+ * shape is fixed by the solver's own build, not negotiated per quote), so the
+ * only safe move is to derive BOTH shapes and accept whichever one the quote's
+ * own `lockup_address` matches. This loses no security: every candidate shape
+ * pins the refund to the trader's own refund destination, so a solver gains
+ * nothing by choosing which one to quote.
+ *
+ * Throws {@link AddressMismatch} only when NONE of the candidates match.
+ * Returns the address that matched, so calls chain exactly as before.
+ */
+export const verifyLockupAddress = (quote: RfqQuote, derivedAddress: string | string[]): string => {
     const quoted = quote.profile?.lockup_address;
-    if (derivedAddress !== quoted) throw new AddressMismatch(derivedAddress, quoted);
-    return derivedAddress;
+    const candidates = Array.isArray(derivedAddress) ? derivedAddress : [derivedAddress];
+    const matched = candidates.find((address) => address === quoted);
+    if (matched === undefined) throw new AddressMismatch(candidates, quoted);
+    return matched;
+};
+
+/**
+ * The two shapes a covenant lockup can carry while the timelocked
+ * non-interactive refund leaf rolls out: the full emulator-covenant suite
+ * (`undefined` — no legacy marker) and the pre-leaf shape
+ * (`"preTimelockedRefund"`). See {@link verifyLockupAddress} for why callers
+ * derive both. Newest first, so a matched full-suite build is the one kept.
+ */
+const LOCKUP_SHAPE_VARIANTS = [undefined, "preTimelockedRefund"] as const;
+
+/**
+ * Build a lockup covenant in both {@link LOCKUP_SHAPE_VARIANTS} shapes and
+ * keep the one the quote's own `lockup_address` matches — throwing, via
+ * {@link verifyLockupAddress}, when NEITHER does. What the matched candidate
+ * carries that a bare address does not: the SCRIPT, for contract registration
+ * — registering the wrong candidate would watch a tree the funded lockup is
+ * not in.
+ */
+const matchQuotedLockup = (
+    quote: RfqQuote,
+    hrp: string,
+    serverPubkey: Uint8Array,
+    build: (legacy?: "preTimelockedRefund") => InstanceType<typeof VHTLC.ScriptV2>,
+): {
+    script: InstanceType<typeof VHTLC.ScriptV2>;
+    address: string;
+    legacy?: "preTimelockedRefund";
+} => {
+    const candidates = LOCKUP_SHAPE_VARIANTS.map((legacy) => {
+        const script = build(legacy);
+        return { script, address: script.address(hrp, serverPubkey).encode(), legacy };
+    });
+    const matchedAddress = verifyLockupAddress(
+        quote,
+        candidates.map((candidate) => candidate.address),
+    );
+    // `find` cannot miss: verifyLockupAddress only ever returns a candidate
+    // it was given, or throws.
+    return candidates.find((candidate) => candidate.address === matchedAddress)!;
 };
 
 /** The user's gates, checked immediately before funding — never at quote
@@ -383,6 +444,13 @@ export const assertFundable = (input: {
     const fail = (reason: string, message: string): never => {
         throw gateError(reason, message);
     };
+    // Ahead of the comparisons, as in assertReceivable: `valid_until` is the
+    // operand of the expiry gate below AND of the TTL floor the v2 client runs
+    // after it, so absent or non-numeric it fails neither — it deletes both.
+    if (input.quote.valid_until === undefined) {
+        fail("quote_malformed", "quote carries no valid_until");
+    }
+    assertFinite(input.quote.valid_until, "quote_malformed", "quote valid_until");
     if (input.invoiceExpiresAt !== undefined && input.now >= input.invoiceExpiresAt) {
         fail("invoice_expired", "invoice expired");
     }
@@ -706,15 +774,17 @@ export const unilateralRefundWithoutReceiverDelay = (claimDelay: number): number
  * hex); the script's HASH160 commitment is derived from it here, which is why
  * the trader never needs to see `P`.
  *
- * Every quote gets the full eight-leaf contract: VHTLC's own six
+ * Every quote gets the full emulator-covenant suite on top of VHTLC's own six
  * (`claim`/`refund`/`refundWithoutReceiver`/`unilateralClaim`/
- * `unilateralRefund`/`unilateralRefundWithoutReceiver`), plus two more the
- * emulator co-signs under a covenant pinning the payout to a pre-committed
- * destination — `nonInteractiveClaim` (server + emulator, pays the solver's
- * own `receiverPkScript`, no solver signature needed) and
- * `nonInteractiveRefund` (server + solver + emulator, pays the trader's own
- * `refundPkScript`, no timelock and no trader signature needed — see {@link
- * VHTLC.Options.nonInteractiveRefund}'s doc comment for why that matters).
+ * `unilateralRefund`/`unilateralRefundWithoutReceiver`): `nonInteractiveClaim`
+ * (server + emulator, pays the solver's own `receiverPkScript`, no solver
+ * signature needed), `nonInteractiveRefund` (server + solver + emulator, pays
+ * the trader's own `refundPkScript`, no timelock and no trader signature
+ * needed — see {@link VHTLC.Options.nonInteractiveParameters}'s doc comment for why
+ * that matters), and its timelocked twin `nonInteractiveRefundWithoutReceiver`
+ * (server + emulator alone, after `refundLocktime` — the only refund tier
+ * needing no participant at all). Nine leaves in all, unless `legacy` says
+ * otherwise.
  */
 export function lightningSendContract(params: {
     /** Binding field #1: the solver's x-only key, from the quote. */
@@ -732,7 +802,7 @@ export function lightningSendContract(params: {
     /** Emulator x-only key (32 bytes). */
     emulatorPubkey: Uint8Array;
     /** Where a refund must pay: the trader's P2TR pkScript (34 bytes). Also
-     * `nonInteractiveRefund`'s covenant destination. */
+     * the refund covenants' destination. */
     refundPkScript: Uint8Array;
     /** The trader's own key — VHTLC's `sender` role. Required on every
      * interactive refund-side leaf; the trader generates and persists it
@@ -743,6 +813,11 @@ export function lightningSendContract(params: {
      * covenant key can be derived; the trader does not otherwise use or trust
      * this value. P2TR pkScript, 34 bytes. */
     receiverPkScript: Uint8Array;
+    /** LEGACY REBUILD ONLY — see {@link VHTLC.Options.nonInteractiveParameters}'s
+     * `legacy` field. Set only to re-derive a lockup funded before the
+     * timelocked refund leaf shipped; {@link matchQuotedLockup} passes it when
+     * the quote's own address says the solver quoted that shape. */
+    legacy?: "preTimelockedRefund";
 }): InstanceType<typeof VHTLC.ScriptV2> {
     const seconds = (value: number): { type: "seconds"; value: bigint } => ({
         type: "seconds",
@@ -759,13 +834,11 @@ export function lightningSendContract(params: {
         unilateralRefundWithoutReceiverDelay: seconds(
             unilateralRefundWithoutReceiverDelay(params.claimDelay),
         ),
-        nonInteractiveClaim: {
+        nonInteractiveParameters: {
             receiverPkScript: params.receiverPkScript,
-            emulatorPubkey: params.emulatorPubkey,
-        },
-        nonInteractiveRefund: {
             senderPkScript: params.refundPkScript,
             emulatorPubkey: params.emulatorPubkey,
+            ...(params.legacy !== undefined && { legacy: params.legacy }),
         },
     });
 }
@@ -845,14 +918,20 @@ export function deriveLightningSend(input: {
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
         refundPkScript: input.refundPkScript,
     };
-    const script = lightningSendContract(contractParams);
-    const address = script.address(input.hrp, input.operatorPubkey).encode();
-    verifyLockupAddress(quote, address);
+    // Two candidates, one match — see matchQuotedLockup. `contractParams`
+    // echoes the MATCHED build: anything downstream re-derives from it, so it
+    // must describe the lockup actually funded, not a shape we guessed.
+    const matched = matchQuotedLockup(quote, input.hrp, input.operatorPubkey, (legacy) =>
+        lightningSendContract({ ...contractParams, ...(legacy !== undefined && { legacy }) }),
+    );
     return {
-        address,
-        swapPkScript: script.pkScript,
-        script,
-        contractParams,
+        address: matched.address,
+        swapPkScript: matched.script.pkScript,
+        script: matched.script,
+        contractParams: {
+            ...contractParams,
+            ...(matched.legacy !== undefined && { legacy: matched.legacy }),
+        },
         refundLocktime: quote.refund_locktime,
     };
 }
@@ -1204,7 +1283,7 @@ export function deriveOnchainSend(input: {
         throw new Error("onchain-send quote is missing a binding field");
     }
 
-    const script = lightningSendContract({
+    const contractParams = {
         solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime,
         operatorPubkey: input.operatorPubkey,
@@ -1214,9 +1293,15 @@ export function deriveOnchainSend(input: {
         senderPubkey: input.senderPubkey,
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
         refundPkScript: ArkAddress.decode(input.refundAddress).pkScript,
-    });
-    const address = script.address(input.hrp, input.operatorPubkey).encode();
-    verifyLockupAddress(quote, address);
+    };
+    // Two candidates, one match — see matchQuotedLockup.
+    const { script, address } = matchQuotedLockup(
+        quote,
+        input.hrp,
+        input.operatorPubkey,
+        (legacy) =>
+            lightningSendContract({ ...contractParams, ...(legacy !== undefined && { legacy }) }),
+    );
 
     // Named so the inputs can be handed back: `OnchainHtlc` carries only
     // derived values, and unlike the Arkade lockup this HTLC has no contract
@@ -1554,7 +1639,7 @@ export const assertReceivable = (input: {
     }
 };
 
-/** Compile the RECEIVE-direction VHTLC: the same eight-leaf tree as {@link
+/** Compile the RECEIVE-direction VHTLC: the same suite-carrying tree as {@link
  * lightningSendContract} with the roles inverted — the trader is the
  * `receiver` (it generated `P` and claims the lockup with it), the solver is
  * the `sender` (it funds the lockup and holds the refund recourse). One
@@ -1585,6 +1670,8 @@ export function lightningReceiveContract(params: {
     /** The trader's own Arkade payout pkScript (decoded from its payout
      * address) — `nonInteractiveClaim`'s pinned destination. */
     payoutPkScript: Uint8Array;
+    /** LEGACY REBUILD ONLY — see {@link lightningSendVtxoScript}'s `legacy`. */
+    legacy?: "preTimelockedRefund";
 }): InstanceType<typeof VHTLC.ScriptV2> {
     const seconds = (value: number): { type: "seconds"; value: bigint } => ({
         type: "seconds",
@@ -1601,13 +1688,11 @@ export function lightningReceiveContract(params: {
         unilateralRefundWithoutReceiverDelay: seconds(
             unilateralRefundWithoutReceiverDelay(params.claimDelay),
         ),
-        nonInteractiveClaim: {
+        nonInteractiveParameters: {
             receiverPkScript: params.payoutPkScript,
-            emulatorPubkey: params.emulatorPubkey,
-        },
-        nonInteractiveRefund: {
             senderPkScript: params.solverRefundPkScript,
             emulatorPubkey: params.emulatorPubkey,
+            ...(params.legacy !== undefined && { legacy: params.legacy }),
         },
     });
 }
@@ -1670,16 +1755,22 @@ export function deriveLightningReceive(input: {
         payoutPubkey: input.payoutPubkey,
         payoutPkScript: ArkAddress.decode(input.payoutAddress).pkScript,
     };
-    const script = lightningReceiveContract(contractParams);
-    const address = script.address(input.hrp, input.operatorPubkey).encode();
-    verifyLockupAddress(quote, address);
+    // Two candidates, one match — see matchQuotedLockup. `treeParams` echoes
+    // the MATCHED build, so a record persisted from it rebuilds the lockup
+    // the solver actually funded.
+    const matched = matchQuotedLockup(quote, input.hrp, input.operatorPubkey, (legacy) =>
+        lightningReceiveContract({ ...contractParams, ...(legacy !== undefined && { legacy }) }),
+    );
     return {
-        address,
-        swapPkScript: script.pkScript,
-        script,
+        address: matched.address,
+        swapPkScript: matched.script.pkScript,
+        script: matched.script,
         invoice,
         refundLocktime,
-        contractParams,
+        contractParams: {
+            ...contractParams,
+            ...(matched.legacy !== undefined && { legacy: matched.legacy }),
+        },
     };
 }
 
@@ -1892,7 +1983,7 @@ export function deriveOnchainReceive(input: {
         throw new Error("onchain-receive quote is missing a binding field");
     }
 
-    const script = lightningReceiveContract({
+    const contractParams = {
         solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime,
         operatorPubkey: input.operatorPubkey,
@@ -1902,9 +1993,18 @@ export function deriveOnchainReceive(input: {
         solverRefundPkScript: solverHex(solverRefundPkScriptHex, "profile.solver_refund_pk_script"),
         payoutPubkey: input.payoutPubkey,
         payoutPkScript: ArkAddress.decode(input.payoutAddress).pkScript,
-    });
-    const address = script.address(input.hrp, input.operatorPubkey).encode();
-    verifyLockupAddress(quote, address);
+    };
+    // Two candidates, one match — see matchQuotedLockup.
+    const { script, address } = matchQuotedLockup(
+        quote,
+        input.hrp,
+        input.operatorPubkey,
+        (legacy) =>
+            lightningReceiveContract({
+                ...contractParams,
+                ...(legacy !== undefined && { legacy }),
+            }),
+    );
 
     const htlc = onchainHtlcScript(
         {

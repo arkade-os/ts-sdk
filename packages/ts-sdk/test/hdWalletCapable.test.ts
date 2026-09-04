@@ -44,8 +44,8 @@ vi.mock("../src/utils/fetch", () => ({
 
 const MockEventSource = vi.fn().mockImplementation((url: string) => ({
     url,
-    onmessage: null,
-    onerror: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
     close: vi.fn(),
 }));
 
@@ -257,15 +257,22 @@ describe("HDWalletCapable", () => {
     it("caps excessive finite look-ahead before materializing descriptors", async () => {
         const wallet = await makeWallet({ hd: true });
         const provider: HDDescriptorProvider = (wallet as any)._descriptorProvider;
+        // This case verifies bounds, not descriptor parsing; real expansion is
+        // covered by the surrounding tests and is expensive at the full cap.
+        const descriptorTemplate = (wallet.identity as MnemonicIdentity).descriptor;
+        const descriptorAt = (index: number) => descriptorTemplate.replace("/*)", `/${index})`);
+        const materialize = vi
+            .spyOn(provider, "materializeDescriptorAt")
+            .mockImplementation(descriptorAt);
 
         const probed = await wallet.getUsedSigningDescriptors({
             lookAhead: MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD + 500,
         });
 
         expect(probed).toHaveLength(MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD + 1);
-        expect(probed.at(-1)).toBe(
-            provider.materializeDescriptorAt(MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD),
-        );
+        expect(probed.at(-1)).toBe(descriptorAt(MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD));
+        expect(materialize).toHaveBeenCalledTimes(MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD + 1);
+        expect(materialize).toHaveBeenLastCalledWith(MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD);
         expect(await provider.getLastIndexUsed()).toBe(0);
         await wallet.dispose();
     });

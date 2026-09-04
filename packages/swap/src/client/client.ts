@@ -143,6 +143,11 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
     let context:
         | Promise<{ base: CorridorBase; corridors: CorridorSet; discovery: DiscoveryIndex }>
         | undefined;
+    /** A rejected init is not cached. The read behind it is the reachable-or-not
+     * kind — an operator that cannot be reached and no persisted snapshot to
+     * fall back on — and caching that rejection would strand the client for its
+     * whole lifetime over one unreachable moment. Same rule as the sqlite
+     * repository's `ensureInit`. */
     const resolved = () =>
         (context ??= (async () => {
             // Not `requireLive`: a parse derives no covenant, and `resolve()`
@@ -166,7 +171,10 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                     ...(config.repository === undefined ? {} : { repository: config.repository }),
                 }),
             };
-        })());
+        })().catch((error) => {
+            context = undefined;
+            throw error;
+        }));
 
     const route = async (input: QuoteInput, mode: "resolve" | "quote"): Promise<ResolvedRoute> => {
         const { base, corridors, discovery } = await resolved();

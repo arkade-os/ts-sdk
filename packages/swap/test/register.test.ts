@@ -12,9 +12,10 @@ import {
     type ArkProvider,
     type IndexerProvider,
     type IWallet,
+    type RelativeTimelock,
     type OnchainProvider,
 } from "@arkade-os/sdk";
-import { createOffer, OFFER_CONTRACT_KIND, OFFER_CONTRACT_LABEL } from "../src/offer";
+import { createOffer, decodeOffer, OFFER_CONTRACT_KIND, OFFER_CONTRACT_LABEL } from "../src/offer";
 
 // the covenant derivation, Arkade.connect, ArkadeContract and register() are
 // all real here — only the wallet's view of the server and the contract manager
@@ -67,6 +68,9 @@ const state = {
     created: [] as Record<string, unknown>[],
     watched: [] as [string, string][],
     createContract: undefined as ((params: Record<string, unknown>) => unknown) | undefined,
+    // what the server advertises as its unilateral exit delay; createOffer
+    // builds the offer's exit closure from it unless the caller opts out
+    unilateralExitDelay: BigInt(4096),
 };
 
 const contractManager = {
@@ -83,7 +87,7 @@ const contractManager = {
 const wallet = {
     identity: { xOnlyPublicKey: async () => makerKey },
     getAddress: async () => makerAddress,
-    getArkadeInfo: async () => arkInfo(),
+    getArkadeInfo: async () => ({ ...arkInfo(), unilateralExitDelay: state.unilateralExitDelay }),
     getContractManager: async () => contractManager,
 } as unknown as IWallet;
 
@@ -97,13 +101,16 @@ const create = (maker: IWallet = wallet) =>
         emulatorPubkey,
     });
 
-describe("offer contract registration", () => {
-    beforeEach(() => {
-        state.created = [];
-        state.watched = [];
-        state.createContract = undefined;
-    });
+// file-level, not per-describe: the mocked provider is module state, so a
+// describe that forgot to reset it would inherit the previous one's server
+beforeEach(() => {
+    state.created = [];
+    state.watched = [];
+    state.createContract = undefined;
+    state.unilateralExitDelay = BigInt(4096);
+});
 
+describe("offer contract registration", () => {
     it("registers the funded covenant as an escrowed arkade contract", async () => {
         const offer = await create();
 
@@ -149,6 +156,108 @@ describe("offer contract registration", () => {
     it("states that the address it hands back is watched", async () => {
         const offer = await create();
         expect(state.watched).toEqual([[hex.encode(offer.swapPkScript), "watched"]]);
+    });
+});
+
+// ── The exit closure createOffer builds by default ───────────────────────────
+
+describe("a new offer's unilateral exit", () => {
+    it("is built by default, at the server's own delay", async () => {
+        // without it `cancel` is the only route out, and cancel needs the
+        // server: a server that will not co-sign strands the deposit until the
+        // VTXO expires and the operator sweeps it
+        const offer = decodeOffer(hex.decode((await create()).offerHex));
+        expect(offer.exitDelay).toEqual({ type: "seconds", value: BigInt(4096) });
+    });
+
+    it("reads a sub-512 delay as blocks, the threshold arkd's own closures use", async () => {
+        state.unilateralExitDelay = BigInt(144);
+        const offer = decodeOffer(hex.decode((await create()).offerHex));
+        expect(offer.exitDelay).toEqual({ type: "blocks", value: BigInt(144) });
+    });
+
+    it("puts the 512 boundary on the seconds side, as arkd and solverd do", async () => {
+        // 511 is blocks, 512 is seconds; reading the boundary the other way
+        // derives a different swap address from the same server
+        state.unilateralExitDelay = BigInt(512);
+        expect(decodeOffer(hex.decode((await create()).offerHex)).exitDelay).toEqual({
+            type: "seconds",
+            value: BigInt(512),
+        });
+        state.unilateralExitDelay = BigInt(511);
+        expect(decodeOffer(hex.decode((await create()).offerHex)).exitDelay).toEqual({
+            type: "blocks",
+            value: BigInt(511),
+        });
+    });
+
+    it("takes an explicit delay over the server's", async () => {
+        const created = await createOffer(wallet, {
+            wantAmount: BigInt(50_000),
+            wantAsset: testAsset,
+            emulatorPubkey,
+            exitDelay: { type: "blocks", value: BigInt(10) },
+        });
+        expect(decodeOffer(hex.decode(created.offerHex)).exitDelay).toEqual({
+            type: "blocks",
+            value: BigInt(10),
+        });
+    });
+
+    it("is omitted on noExit, which also moves the swap address", async () => {
+        const withExit = await create();
+        const without = await createOffer(wallet, {
+            wantAmount: BigInt(50_000),
+            wantAsset: testAsset,
+            emulatorPubkey,
+            noExit: true,
+        });
+        expect(decodeOffer(hex.decode(without.offerHex)).exitDelay).toBeUndefined();
+        // the closure is part of the covenant, so the two are different contracts
+        expect(without.swapPkScript).not.toEqual(withExit.swapPkScript);
+    });
+
+    const withExitDelay = (exitDelay: RelativeTimelock) =>
+        createOffer(wallet, {
+            wantAmount: BigInt(50_000),
+            wantAsset: testAsset,
+            emulatorPubkey,
+            exitDelay,
+        });
+
+    it("registers nothing for an explicit delay it will refuse to encode", async () => {
+        // A CSV of zero compiles happily, so the covenant is derived and
+        // REGISTERED before the encoder ever sees the delay. Refusing only at
+        // encode time leaves a watched contract behind for an offer that never
+        // formed — and promoteOfferContract has already marked its address
+        // outstanding, so retireOfferContract will not take that row back.
+        await expect(withExitDelay({ type: "blocks", value: BigInt(0) })).rejects.toThrow(
+            "exitDelay must be a positive relative locktime",
+        );
+        expect(state.created, "nothing may be registered for an offer that never formed").toEqual(
+            [],
+        );
+        expect(state.watched).toEqual([]);
+    });
+
+    it("names an oversized delay itself, rather than letting bip68 do it", async () => {
+        // deriving first reports `Expected Number seconds <= 33553920` from
+        // inside the timelock encoder, which names neither the field nor the way
+        // out; the check has to run before the covenant is built
+        await expect(
+            withExitDelay({ type: "seconds", value: BigInt(1) << BigInt(32) }),
+        ).rejects.toThrow("exitDelay does not fit the locktime field (u32)");
+        expect(state.created).toEqual([]);
+    });
+
+    it("refuses to publish an exit in name only when the server reports none", async () => {
+        // RestArkProvider defaults a missing field to 0, which would compile to
+        // a CSV of zero — an offer that claims an exit it does not have
+        state.unilateralExitDelay = BigInt(0);
+        await expect(create()).rejects.toThrow("no usable unilateralExitDelay");
+        expect(state.created, "nothing may be registered for an offer that never formed").toEqual(
+            [],
+        );
     });
 });
 

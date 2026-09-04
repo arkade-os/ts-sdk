@@ -92,6 +92,7 @@ import {
 } from "./checkpointExitDelay";
 import type { CheckpointExitDelayPolicy } from "./checkpointExitDelay";
 import {
+    assertAllowedSighashTypes,
     assertCheckpointsMatchInputs,
     buildOffchainTx,
     hasBoardingTxExpired,
@@ -123,10 +124,10 @@ import { isTerminalIntentState } from "../repositories/intentRepository";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import {
-    assertRecipientArkAddress,
+    assertRecipientArkadeAddress,
     extendCoinWithTapscript,
     validateRecipients,
-    type RecipientAddressContext,
+    type RecipientArkadeAddressContext,
 } from "./utils";
 import {
     captureExitBranch,
@@ -447,6 +448,15 @@ export function filterSnapshotVtxos(
  */
 const PENDING_RECOVERY_REASON =
     "is past its operator signer's rotation cutoff — the operator will not co-sign it until it recovers";
+
+/**
+ * The fourth reason generic selection drops a coin. Reported from the raw
+ * snapshot rather than through the other exclusions: {@link filterSnapshotVtxos}
+ * removes unrolled coins before they reach that call, so an exclusion there
+ * could never match.
+ */
+const UNROLLED_REASON =
+    "was unilaterally exited and lives onchain — `Unroll.completeUnroll` is the only spend that reaches it";
 
 /**
  * What signer classification needs of a snapshot: contract params and the coins
@@ -884,7 +894,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     protected recipientAddressContext(
         serverPubKey: Bytes = this._arkServerPublicKey,
-    ): RecipientAddressContext {
+    ): RecipientArkadeAddressContext {
         return {
             hrp: this.network.hrp,
             signerSet: {
@@ -1374,6 +1384,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 "is locked by an in-flight settlement intent",
             ),
         ]);
+        // Its own call over its own array: the set above cannot contain these,
+        // and widening it to the raw snapshot would report every terminally-spent
+        // coin under a gated contract as gated. Skipped when the caller asked for
+        // unrolled coins — those were not excluded. A completed unroll stays out:
+        // `completeUnroll` no longer reaches it either.
+        if (!filter?.withUnrolled) {
+            logExcludedVtxos(
+                "getSpendableVtxos",
+                snapshot
+                    .flatMap((contract) => contract.vtxos)
+                    .filter((vtxo) => vtxo.isUnrolled && !hasTerminalSpend(vtxo)),
+                [() => UNROLLED_REASON],
+            );
+        }
         return unlocked;
     }
 
@@ -3915,7 +3939,7 @@ export class Wallet
                 };
 
                 const outputAddress = ArkAddress.decode(params.address);
-                assertRecipientArkAddress(
+                assertRecipientArkadeAddress(
                     params.address,
                     outputAddress,
                     this.recipientAddressContext(serverPubKey),
@@ -4130,7 +4154,7 @@ export class Wallet
         const outputs: TransactionOutput[] = [];
         let hasOffchainOutputs = false;
 
-        let recipientContext: RecipientAddressContext | undefined;
+        let recipientContext: RecipientArkadeAddressContext | undefined;
         for (const [index, output] of params.outputs.entries()) {
             let script: Bytes | undefined;
 
@@ -4145,7 +4169,7 @@ export class Wallet
 
             if (arkAddress) {
                 recipientContext ??= this.recipientAddressContext();
-                assertRecipientArkAddress(output.address, arkAddress, recipientContext);
+                assertRecipientArkadeAddress(output.address, arkAddress, recipientContext);
                 script = arkAddress.pkScript;
                 hasOffchainOutputs = true;
             } else {
@@ -4997,9 +5021,11 @@ export class Wallet
 
                     batchPending.push(pendingTx.arkTxid);
                     try {
-                        const checkpointTxs = pendingTx.signedCheckpointTxs.map((c) =>
-                            Transaction.fromPSBT(base64.decode(c)),
-                        );
+                        const checkpointTxs = pendingTx.signedCheckpointTxs.map((c) => {
+                            const tx = Transaction.fromPSBT(base64.decode(c));
+                            assertAllowedSighashTypes(tx);
+                            return tx;
+                        });
                         // The send that registered this tx ran in an earlier
                         // process, so its checkpoints are rebuilt here rather
                         // than recalled. A tx that does not reconcile is left
@@ -5230,8 +5256,12 @@ export class Wallet
         // regardless: the proof describes every input by the contract's P2TR
         // pkScript, which is a lie for an OP_RETURN outpoint and would have the
         // server reject the whole proof. It is excluded by value, since the
-        // indexer reports subdust under that same P2TR script.
-        const drainable = vtxos.filter((vtxo) => !isSubdust(vtxo, this.dustAmount));
+        // indexer reports subdust under that same P2TR script. An exited output
+        // is excluded by state instead: it lives onchain, so no pending sweep
+        // naming it can ever be finalized.
+        const drainable = vtxos.filter(
+            (vtxo) => !isSubdust(vtxo, this.dustAmount) && !vtxo.isUnrolled,
+        );
         if (drainable.length > 0) {
             let drained = { count: 0, swept: 0, claimed: new Set<string>() };
             try {
@@ -5458,9 +5488,11 @@ export class Wallet
             try {
                 // These checkpoints already carry the server's signature; the
                 // arkadeCash key adds its own share in place.
-                const checkpointTxs = pendingTx.signedCheckpointTxs.map((checkpoint) =>
-                    Transaction.fromPSBT(base64.decode(checkpoint)),
-                );
+                const checkpointTxs = pendingTx.signedCheckpointTxs.map((checkpoint) => {
+                    const tx = Transaction.fromPSBT(base64.decode(checkpoint));
+                    assertAllowedSighashTypes(tx);
+                    return tx;
+                });
                 assertCheckpointsMatchInputs(
                     checkpointTxs,
                     inputs.map((input) => ({

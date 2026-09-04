@@ -5,8 +5,9 @@ import fixture from "../fixtures/vhtlc-v2-nine-leaf.json";
 
 /**
  * Cross-SDK conformance vectors for {@link VHTLC.ScriptV2}'s nine-leaf tree
- * (both non-interactive leaves present, `nonInteractiveRefund.withoutReceiver`
- * on). C#, Go and Rust implementations are checked against the same fixture —
+ * (the full `nonInteractiveParameters` suite — claim, refund and timelocked refund
+ * covenant leaves, no `legacy` marker). C#, Go and Rust implementations are
+ * checked against the same fixture —
  * see `test/fixtures/vhtlc-v2-nine-leaf.json`'s own `comment` field for how to
  * regenerate it. A byte anywhere in these leaves diverging across
  * implementations means a silently different taproot address and unspendable
@@ -39,14 +40,17 @@ function optionsFromFixture(o: typeof fixture.options): VHTLC.Options {
         unilateralRefundWithoutReceiverDelay: timelockFromFixture(
             o.unilateralRefundWithoutReceiverDelay,
         ),
-        nonInteractiveClaim: {
+        // The fixture predates the all-or-nothing group and so stores the
+        // suite per leaf; both leaves carry the SAME emulator key by design,
+        // which is exactly what the group's single `emulatorPubkey` encodes.
+        // `withoutReceiver: true` is the full suite — no `legacy` marker.
+        nonInteractiveParameters: {
             receiverPkScript: hex.decode(o.nonInteractiveClaim.receiverPkScript),
             emulatorPubkey: hex.decode(o.nonInteractiveClaim.emulatorPubkey),
-        },
-        nonInteractiveRefund: {
             senderPkScript: hex.decode(o.nonInteractiveRefund.senderPkScript),
-            emulatorPubkey: hex.decode(o.nonInteractiveRefund.emulatorPubkey),
-            withoutReceiver: o.nonInteractiveRefund.withoutReceiver,
+            ...(o.nonInteractiveRefund.withoutReceiver
+                ? {}
+                : { legacy: "preTimelockedRefund" as const }),
         },
     };
 }
