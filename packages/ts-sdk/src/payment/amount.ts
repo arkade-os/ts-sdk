@@ -1,4 +1,6 @@
 import { BIP21 } from "../utils/bip21";
+import type { Asset } from "../index";
+import type { PaymentRequest } from "./types";
 
 /** Throw unless `amt` is a positive integer number of satoshis. */
 export function assertSendableAmount(railId: string, amt: number): void {
@@ -34,4 +36,43 @@ export function resolveSendAmount(railId: string, raw: string, amount?: number):
 export function tryResolveSendAmount(raw: string, amount?: number): number | undefined {
     const amt = amount ?? BIP21.amountSats(raw);
     return amt !== undefined && Number.isInteger(amt) && amt > 0 ? amt : undefined;
+}
+
+/** The assets a request asks for — `[]` when it names none. */
+export function assetsOf(req: PaymentRequest): Asset[] {
+    return req.assets ?? [];
+}
+
+/** For a BTC-only rail: refusing is what leaves the router free to rank an
+ *  asset-capable one, instead of paying the carrier and dropping the asset. */
+export function assertNoAssets(railId: string, req: PaymentRequest): void {
+    const assets = assetsOf(req);
+    if (assets.length > 0) {
+        throw new Error(
+            `${railId}: cannot deliver ${assets.map((a) => a.assetId).join(", ")} ` +
+                `— this rail moves BTC only`,
+        );
+    }
+}
+
+/** Exactly one: `Wallet.send` takes a list because one output can carry
+ *  several, but a routed PAYMENT is one thing being paid. */
+export function resolveAssetAmount(railId: string, req: PaymentRequest): Asset {
+    const assets = assetsOf(req);
+    if (assets.length !== 1) {
+        throw new Error(`${railId}: expected exactly one asset to pay, got ${assets.length}`);
+    }
+    const [asset] = assets;
+    // Separate from `assertSendableAmount`: the SDK types asset amounts as
+    // bigint precisely because Number would truncate them.
+    if (typeof asset.amount !== "bigint" || asset.amount <= 0n) {
+        throw new Error(
+            `${railId}: invalid amount ${String(asset.amount)} of ${asset.assetId} ` +
+                `(expected a positive bigint of atomic units)`,
+        );
+    }
+    if (typeof asset.assetId !== "string" || asset.assetId.length === 0) {
+        throw new Error(`${railId}: an asset amount must name an asset`);
+    }
+    return asset;
 }

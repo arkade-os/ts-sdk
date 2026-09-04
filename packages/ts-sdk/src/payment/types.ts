@@ -1,4 +1,4 @@
-import type { Wallet } from "../index";
+import type { Asset, Recipient, Wallet } from "../index";
 
 export type PaymentStatus = "pending" | "sent" | "settled" | "failed";
 
@@ -53,6 +53,25 @@ export interface RouteQuote {
     fee: number;
     /** `amount + fee` — what leaves the wallet. */
     total: number;
+    /**
+     * @experimental The asset shape is provisional. The v2 swap client models
+     * assets as `give`/`take`/`amountOn` over `AssetRef`, and the two
+     * vocabularies are expected to converge on v0.5; do not treat this field as
+     * stable 0.4.x API.
+     *
+     * The asset view; absent means BTC only. The sats fields keep their
+     * meaning — an asset rides a sats-carrying output, so `amount` is the
+     * carrier, not zero.
+     *
+     * A pair, not a triple: on a cross-asset route these name DIFFERENT
+     * assets, so `total = amount + fee` cannot hold across the two units —
+     * which forces the purchase price into `fee`. Prefer `assets.spent` for a
+     * cost display.
+     */
+    assets?: {
+        delivered: Asset;
+        spent: Asset;
+    };
     /** Execute. Returns an observable handle, never a bare result. */
     send(): Promise<PaymentHandle>;
     meta?: Record<string, unknown>;
@@ -74,14 +93,18 @@ export interface RouterContext {
     prefs: RouterPreferences;
 }
 
-/** A payment request: the raw target plus an optional explicit amount. Rails
- *  self-extract their target from `raw` (bare address/invoice or a BIP21 URI);
- *  `amount` supplements or overrides any amount encoded in `raw`. */
+/** Mirrors {@link Recipient}: an Arkade address is the same string for BTC and
+ *  for an asset, so the AMOUNT names the asset, never the target. */
 export interface PaymentRequest {
     /** Raw target: bare address/invoice, or a BIP21 URI. */
     raw: string;
     /** Explicit sats; supplements/overrides any amount encoded in `raw`. */
     amount?: number;
+    /** @experimental — provisional, see {@link RouteQuote.assets}.
+     *
+     *  Additive: an asset transfer also moves sats, so a 500 USDX request
+     *  legitimately has both. A rail that cannot deliver assets must REFUSE. */
+    assets?: Asset[];
 }
 
 /** A payment rail — registered by id, mirrors the ActivityRegistry resolver shape. */

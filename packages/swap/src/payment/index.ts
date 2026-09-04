@@ -16,3 +16,10 @@ export {
     type SolverLightningRailDeps,
     type SolverLightningSend,
 } from "./solverLightning";
+export {
+    CROSS_ASSET_RAIL,
+    crossAssetRail,
+    type CrossAssetPhase,
+    type CrossAssetRailDeps,
+    type CrossAssetSwap,
+} from "./crossAsset";
