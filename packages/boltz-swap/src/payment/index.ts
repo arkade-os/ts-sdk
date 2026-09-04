@@ -1,4 +1,4 @@
-import { PaymentRouter, arkRail, onchainRail } from "@arkade-os/sdk";
+import { PaymentRouter, arkAssetRail, arkRail, onchainRail } from "@arkade-os/sdk";
 import type { Wallet } from "@arkade-os/sdk";
 import type { ArkadeSwaps } from "../arkade-swaps";
 import { lightningRail } from "./lightning";
@@ -9,9 +9,16 @@ export { onchainSwapRail } from "./onchain-swap";
 
 /**
  * Full payment router composing the Wallet-only rails from `@arkade-os/sdk`
- * (`ark`, `onchain`) with the swap rails (`lightning`, `onchain-swap`). This is
- * the boltz-swap overload of the core `createDefaultPaymentRouter(wallet)`; an
- * Ark-only app uses the core one, a Lightning-capable app uses this.
+ * (`ark`, `ark-asset`, `onchain`) with the swap rails (`lightning`,
+ * `onchain-swap`). This is the boltz-swap overload of the core
+ * `createDefaultPaymentRouter(wallet)`; an Ark-only app uses the core one, a
+ * Lightning-capable app uses this.
+ *
+ * `ark-asset` is registered here as well as in core so a Lightning-capable app
+ * does not silently lose asset payments by choosing this factory. It never
+ * competes with `ark` — one is available only for a request naming an asset
+ * and the other only for a request naming none — so none of the BTC rankings
+ * below change.
  *
  * Default priority `["ark", "lightning", "onchain-swap", "onchain"]` — Ark first,
  * then Lightning, then on-chain. For a plain BTC address the chain swap
@@ -35,9 +42,10 @@ export function createDefaultPaymentRouter(wallet: Wallet, swaps: ArkadeSwaps): 
     return new PaymentRouter({
         wallet,
         swaps,
-        prefs: { priority: ["ark", "lightning", "onchain-swap", "onchain"] },
+        prefs: { priority: ["ark", "ark-asset", "lightning", "onchain-swap", "onchain"] },
     })
         .use(arkRail())
+        .use(arkAssetRail())
         .use(onchainRail())
         .use(lightningRail())
         .use(onchainSwapRail());
