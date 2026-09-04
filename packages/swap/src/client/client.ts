@@ -28,15 +28,14 @@ import {
 } from "./corridors/deps";
 import { discoveryIndex, type DiscoveryConfig, type DiscoveryIndex } from "./discovery";
 import { UnsupportedRoute } from "./errors";
+import { acceptQuote, type QuotePreparation } from "./accept";
+import type { Swap } from "./record";
 import type { SwapPolicy } from "./policy";
-import { feedFetch, quoteFromFeed, type FeedFetch, type OfferPreparation } from "./quoteOffer";
-import { quoteViaRfq, type RfqPreparation } from "./quoteRfq";
+import { feedFetch, quoteFromFeed, type FeedFetch } from "./quoteOffer";
+import { quoteViaRfq } from "./quoteRfq";
 import type { Quote, QuoteId, QuoteInput, RouteResolution } from "./quote";
 import { resolveRoute, type ResolvedRoute } from "./resolve";
 import { nostrTransportFactory, type RfqTransportFactory } from "./transport";
-
-/** What a quote derived, kept in memory for the accept that may follow. */
-export type QuotePreparation = RfqPreparation | OfferPreparation;
 
 export interface SwapClientConfig {
     /**
@@ -45,8 +44,20 @@ export interface SwapClientConfig {
      */
     readonly wallet: IWallet;
     /**
-     * Storage. At this milestone it backs the markets cache and nothing else —
-     * the persist-first record is M4's, and so is the platform default.
+     * Storage: the accept records, the markets cache, the restore-scan cursor.
+     *
+     * One seam for all three — the arkade corridor's `repository` override
+     * defaults to this object, so a client cannot write records to one store
+     * and read its cache from another.
+     *
+     * No implicit default, and never an in-memory fallback: silently losing
+     * active swaps is the thing a storage default exists to prevent. A browser
+     * consumer passes `IndexedDbAssetSwapRepository`, a Node consumer imports
+     * `@arkade-os/swap/node` for the file-backed SQLite default, and a test
+     * passes `InMemoryAssetSwapRepository` — explicitly, which is the only way
+     * ephemeral storage is available. `accept()` without one is
+     * `MissingCorridorDep("arkade", "repository")`; `quote()` and `resolve()`
+     * work without one, since neither persists anything.
      */
     readonly repository?: AssetSwapRepository;
     readonly discovery?: DiscoveryConfig;
@@ -79,6 +90,27 @@ export interface SwapClient {
     resolve(input: QuoteInput): Promise<RouteResolution>;
     /** Verified, binding terms. Nothing is persisted, funded or watched. */
     quote(input: QuoteInput): Promise<Quote>;
+    /**
+     * Make the quote durable, then move the value.
+     *
+     * One ordering, on every route: the record and its secrets are at rest
+     * before anything irreversible, and the funding txid is a later best-effort
+     * write. Idempotent by quote id and only by quote id — a second call with
+     * the same quote returns or resumes the stored swap and never mints a
+     * second invoice or funds a second time.
+     *
+     * Does not arm a drive loop or a watcher: this returns once the record is
+     * durable. On `lightning -> arkade` that means a durable invoice the payer
+     * can be shown — which is the point of the ordering, since showing one
+     * whose claim secret is still in memory is what buys a lockup nobody can
+     * claim.
+     *
+     * @throws {QuoteExpired} past `quote.expiresAt`; the client never re-quotes.
+     * @throws {InsufficientFunds} before the persist, on funding routes only.
+     * @throws {AcceptConflict} when a record for this quote id contradicts it.
+     * @throws {MissingCorridorDep} when the client was given no repository.
+     */
+    accept(quote: Quote): Promise<Swap>;
     /**
      * What the quote with this id derived — the covenant, the keys, the wire
      * reply.
@@ -267,6 +299,19 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 // resource this call owns and nothing else will close.
                 await transport.close().catch(() => {});
             }
+        },
+
+        accept: async (quote) => {
+            const { corridors } = await resolved();
+            const preparation = preparations.get(quote.id);
+            return acceptQuote({
+                quote,
+                ...(preparation === undefined ? {} : { preparation }),
+                wallet,
+                repository: config.repository,
+                corridors,
+                now: Math.floor(Date.now() / 1000),
+            });
         },
 
         preparationOf: (id) => preparations.get(id),

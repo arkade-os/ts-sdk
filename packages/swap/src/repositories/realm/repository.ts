@@ -6,9 +6,11 @@ import {
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
+import type { SwapRecord } from "../../client/record";
 
 const SWAPS = "ArkadeAssetSwap";
 const RFQ_SWAPS = "ArkadeRfqSwap";
+const SWAP_RECORDS = "ArkadeSwapRecord";
 const SCANNED = "ArkadeAssetSwapScannedTxid";
 const MARKETS = "ArkadeAssetSwapMarketsCache";
 
@@ -33,7 +35,7 @@ const MARKETS = "ArkadeAssetSwapMarketsCache";
  * consumer owns the Realm lifecycle — `[Symbol.asyncDispose]` is a no-op.
  */
 export class RealmAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 4 as const;
+    readonly version = 5 as const;
 
     constructor(private readonly realm: RealmLike) {}
 
@@ -94,6 +96,42 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
         });
     }
 
+    async saveSwapRecord(record: SwapRecord): Promise<void> {
+        this.realm.write(() => {
+            this.realm.create(
+                SWAP_RECORDS,
+                {
+                    id: record.id,
+                    family: record.family,
+                    updatedAt: record.updatedAt,
+                    data: JSON.stringify(record),
+                },
+                "modified",
+            );
+        });
+    }
+
+    async getSwapRecord(id: string): Promise<SwapRecord | undefined> {
+        const [found] = [
+            ...this.realm.objects<{ data: string }>(SWAP_RECORDS).filtered("id == $0", id),
+        ];
+        return found ? (JSON.parse(found.data) as SwapRecord) : undefined;
+    }
+
+    async getAllSwapRecords(): Promise<SwapRecord[]> {
+        return [...this.realm.objects<{ data: string }>(SWAP_RECORDS)].map(
+            (o) => JSON.parse(o.data) as SwapRecord,
+        );
+    }
+
+    async removeSwapRecord(id: string): Promise<void> {
+        this.realm.write(() => {
+            this.realm.delete(
+                this.realm.objects<{ id: string }>(SWAP_RECORDS).filtered("id == $0", id),
+            );
+        });
+    }
+
     async getScannedTxids(): Promise<Set<string>> {
         return new Set([...this.realm.objects<{ txid: string }>(SCANNED)].map((o) => o.txid));
     }
@@ -135,7 +173,7 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
      * partial clear must not be observable. */
     async clear(): Promise<void> {
         this.realm.write(() => {
-            for (const name of [SWAPS, RFQ_SWAPS, SCANNED, MARKETS]) {
+            for (const name of [SWAPS, RFQ_SWAPS, SWAP_RECORDS, SCANNED, MARKETS]) {
                 this.realm.delete(this.realm.objects(name));
             }
         });

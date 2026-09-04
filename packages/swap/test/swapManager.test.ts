@@ -3068,6 +3068,61 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(store.records.get(RFQ_ID)?.state).toBe("settled");
         });
 
+        it("restores the last receive-claim failure before closing the window", async () => {
+            let now = REFUND_LOCKTIME - 3600;
+            const store = fakeStore();
+            const failures: string[] = [];
+            const firstSpies = spies({
+                claimLockup: async () => {
+                    throw new Error("ark server unreachable");
+                },
+            });
+            const first = manager({
+                indexer: fakeIndexer({
+                    vtxos: unspent(),
+                    funded: [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }],
+                }),
+                repository: store,
+                now: () => now,
+                spies: firstSpies,
+            });
+            first.onSwapFailed((_swap, error) => failures.push(error.message));
+
+            await first.addSwap(receiveSwap(), receiveOrigin());
+            await first.poll();
+
+            expect(store.records.get(RFQ_ID)?.state).toBe("claimable");
+            expect(store.records.get(RFQ_ID)?.claimFailure).toBe("ark server unreachable");
+            expect(store.records.get(RFQ_ID)?.failure).toBeUndefined();
+            expect(failures).toEqual(["ark server unreachable"]);
+
+            now = REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS;
+            const resumedSpies = spies();
+            const resumed = manager({
+                indexer: fakeIndexer({ vtxos: [] }),
+                contracts: contractsFor(rowFor(RECEIVE_LOCKUP, RECEIVE_ADDRESS)),
+                repository: store,
+                now: () => now,
+                spies: resumedSpies,
+            });
+
+            const result = await resumed.restoreFromRepository();
+            expect(result.failed).toHaveLength(0);
+            expect(result.restored).toHaveLength(1);
+            const [swap] = result.restored;
+            expect(swap?.claimFailure).toBe("ark server unreachable");
+
+            await resumed.poll();
+
+            expect(swap?.state).toBe("failed");
+            expect(swap?.failure).toBe("ark server unreachable");
+            expect(store.records.get(RFQ_ID)?.failure).toBe("ark server unreachable");
+            expect(store.records.get(RFQ_ID)?.claimFailure).toBeUndefined();
+            await expect(resumed.waitForSwapCompletion(RFQ_ID)).rejects.toThrow(
+                /ark server unreachable/,
+            );
+        });
+
         it("carries a restored swap's origin, so its record can be rewritten", async () => {
             // The store losing a record mid-life is the case the in-memory
             // origin map exists for: without it the next write would have

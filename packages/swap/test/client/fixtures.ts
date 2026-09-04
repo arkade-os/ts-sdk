@@ -12,6 +12,7 @@ import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
     ArkAddress,
+    CSVMultisigTapscript,
     DescriptorIdentity,
     HDDescriptorProvider,
     InMemoryWalletRepository,
@@ -51,12 +52,28 @@ export const HTLC_REFUND_PUBKEY = key(7);
 export const NETWORK = getNetwork("regtest");
 export const CLAIM_DELAY = unilateralClaimDelay(4096);
 
+/**
+ * The checkpoint closure, derived from the signer key rather than pinned — the
+ * way arkd advertises it, so a checkpoint committing to another key would
+ * describe a different server.
+ *
+ * Needed by the offer route's registration, which builds an `Arkade` client to
+ * derive the contract row; the quote path never reads it.
+ */
+export const CHECKPOINT_TAPSCRIPT = hex.encode(
+    CSVMultisigTapscript.encode({
+        timelock: { type: "blocks", value: 10n },
+        pubkeys: [OPERATOR_PUBKEY],
+    }).script,
+);
+
 /** What the wallet answers `getArkadeInfo()` with. */
 export const ARK_INFO = {
     signerPubkey: hex.encode(OPERATOR_PUBKEY),
-    unilateralExitDelay: 4096,
+    unilateralExitDelay: 4096n,
     network: "regtest",
     deprecatedSigners: [],
+    checkpointTapscript: CHECKPOINT_TAPSCRIPT,
 };
 
 export const WALLET_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), NETWORK.hrp).encode();
@@ -382,3 +399,122 @@ export const solverFor = (clock: SolverClock): SolverAnswer => {
 
 export const compressed = (fill: number): string =>
     hex.encode(secp256k1.getPublicKey(new Uint8Array(32).fill(fill), true));
+
+// ── What `accept()` needs behind it, and nothing the quote path had ─────────
+
+/** One `wallet.send` call, exactly as the accept path issued it. */
+export interface SentPayment {
+    address: string;
+    amount?: number;
+    assets?: { assetId: string; amount: bigint }[];
+    extensions?: { type: number; payload: Uint8Array }[];
+}
+
+/** A contract row, as `createContract` was asked to write it. */
+export interface WrittenContract {
+    type: string;
+    script: string;
+    address: string;
+    params: Record<string, string>;
+}
+
+/** One `setContractWatchState` call: the script, and the state asked for. */
+export type WatchStateCall = [script: string, state: string];
+
+export interface AcceptWallet {
+    readonly wallet: IWallet;
+    /** Every funding call, in order. */
+    readonly sent: SentPayment[];
+    /** Every contract row written, in order — first-writer-wins is modelled. */
+    readonly contracts: WrittenContract[];
+    /** Every watch-state change, in order. The offer route promotes its row. */
+    readonly watched: WatchStateCall[];
+    /** VTXOs the reader will answer with, keyed by script hex. */
+    readonly deposits: Map<
+        string,
+        { txid: string; value: number; assets?: { assetId: string; amount: bigint }[] }[]
+    >;
+}
+
+/**
+ * The quote path's wallet, plus the four seams `accept()` reaches.
+ *
+ * `getContractManager` no longer throws — it records instead — because
+ * registration is part of the accept ordering. The quote path's assertion that
+ * *it* never reaches the manager is unaffected: that test builds its wallet
+ * with {@link hdWallet}, whose thrower is untouched.
+ *
+ * `send` records and returns a txid rather than deriving one, and `failSend`
+ * makes it throw, which is how the after-persist-before-funding window is
+ * reached without killing a process.
+ */
+export const acceptWallet = async (
+    over: {
+        balance?: { available?: number; availableAssets?: { assetId: string; amount: bigint }[] };
+        txid?: string;
+        failSend?: () => Error;
+        failRegistration?: () => Error;
+    } = {},
+): Promise<AcceptWallet> => {
+    const base = await hdWallet();
+    const sent: SentPayment[] = [];
+    const contracts: WrittenContract[] = [];
+    const watched: WatchStateCall[] = [];
+    const deposits = new Map<
+        string,
+        { txid: string; value: number; assets?: { assetId: string; amount: bigint }[] }[]
+    >();
+    const wallet = {
+        ...base,
+        getBalance: async () => ({
+            available: over.balance?.available ?? 100_000_000,
+            availableAssets: over.balance?.availableAssets ?? [
+                { assetId: USD_ASSET_ID, amount: 1_000_000n },
+            ],
+            assets: [],
+        }),
+        // The whole seam the accept path reaches, not just `createContract`:
+        // the offer route registers through `Arkade.connect` and then promotes
+        // the row, so `setContractWatchState` and `getContracts` are part of
+        // registration rather than extras.
+        getContractManager: async () => ({
+            createContract: async (row: WrittenContract) => {
+                const failure = over.failRegistration?.();
+                if (failure) throw failure;
+                // First-writer-wins, as the real one is: identical offers derive
+                // one address, so a second write for a script already present is
+                // a no-op rather than a conflict.
+                if (!contracts.some((c) => c.script === row.script)) contracts.push(row);
+                return { ...row, state: "active", createdAt: 0 };
+            },
+            getContracts: async (filter?: { script?: string }) =>
+                contracts.filter((c) => filter?.script === undefined || c.script === filter.script),
+            setContractWatchState: async (script: string, state: string) => {
+                watched.push([script, state]);
+            },
+            onContractEvent: () => () => {},
+        }),
+        getArkadeReader: async () => ({
+            getVtxos: async ({ scripts }: { scripts?: string[] }) => ({
+                vtxos: (scripts ?? []).flatMap((s) =>
+                    (deposits.get(s) ?? []).map((d) => ({
+                        txid: d.txid,
+                        vout: 0,
+                        value: d.value,
+                        ...(d.assets ? { assets: d.assets } : {}),
+                    })),
+                ),
+            }),
+        }),
+        send: async (recipient: SentPayment) => {
+            const failure = over.failSend?.();
+            if (failure) throw failure;
+            sent.push(recipient);
+            return over.txid ?? FUNDING_TXID;
+        },
+    } as unknown as IWallet;
+    return { wallet, sent, contracts, watched, deposits };
+};
+
+/** The txid `acceptWallet`'s `send` returns unless told otherwise. */
+export const FUNDING_TXID = "b".repeat(64);

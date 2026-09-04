@@ -11,6 +11,22 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **`@arkade-os/swap`: `AssetSwapRepository.version` is `5`, adding a v2
+  swap-record store.** Four methods land beside the existing ones —
+  `saveSwapRecord`, `getSwapRecord`, `getAllSwapRecords`,
+  `removeSwapRecord` — keyed by the client-minted quote id rather than a
+  funding txid, which is what lets a swap record exist *before* its
+  money does. An out-of-tree implementor of the interface fails to
+  compile until it adds them, which is what the version literal is for.
+  The four in-tree backends are updated; the IndexedDB one bumps
+  `DB_VERSION` to 3 and the migration is additive, so existing rows come
+  through untouched. Realm consumers gain a fifth schema,
+  `ArkadeSwapRecord` — spread `AssetSwapRealmSchemas` into your config
+  and bump your `schemaVersion`. The v1 readers are unchanged and keep
+  reading v1 rows; the two record families are deliberately invisible to
+  each other, while the restore-scan cursor and the markets cache stay
+  shared.
+
 - **`@arkade-os/swap`: the `arkServerUrl` positional is gone from the
   five covenant-deriving entrypoints.** `createOffer(wallet, params)`,
   and `requestLightningSend` / `requestLightningReceive` /
@@ -47,6 +63,17 @@ style and have not been backfilled.
   untouched, so there is no runtime or on-disk effect. (#734)
 
 ### Features
+
+- **`@arkade-os/swap/node`: the Node storage default.**
+  `nodeSwapRepository({ network })` opens a file-backed SQLite database
+  under the platform config directory (XDG /
+  `~/Library/Application Support` / `%APPDATA%`) at
+  `arkade/swaps/swaps-<network>.sqlite`, and is the one backend whose
+  `[Symbol.asyncDispose]` closes the connection — because it is the one
+  that opened it. `createNodeSqlExecutor(path)` and
+  `swapDatabasePath(network)` are exported beside it. A separate subpath
+  rather than a conditional import, so the browser bundle never sees
+  `node:sqlite`.
 
 - **`assertRecipientArkadeAddress` and `RecipientArkadeAddressContext` are
   root-exported.** The rotation-aware recipient check — hrp, then

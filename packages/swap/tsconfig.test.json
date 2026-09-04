@@ -1,5 +1,11 @@
 {
     "extends": "./tsconfig.json",
-    "include": ["src/**/*.ts", "src/**/*.json", "test/client/**/*.ts"],
+    "//": "The v2 layer's tests. `test/repository.test.ts` is deliberately still out: it imports the repo-root `config/test-helpers/*`, which do not typecheck under this project today, so pulling it in would absorb a shared, pre-existing failure. The v2 record shape it fixtures is pinned instead by `test/client/record.types.ts`, which proves it structurally, and exercised by `test/client/accept.test.ts`.",
+    "include": [
+        "src/**/*.ts",
+        "src/**/*.json",
+        "test/client/**/*.ts",
+        "test/node/**/*.ts"
+    ],
     "exclude": ["node_modules", "dist"]
 }

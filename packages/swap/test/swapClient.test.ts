@@ -207,7 +207,7 @@ describe("createSwapClient — cancel", () => {
     it("reports a dead backend as one, not as a swap it could not find", async () => {
         const broken: AssetSwapRepository = {
             ...new InMemoryAssetSwapRepository(),
-            version: 4,
+            version: 5,
             getAllSwaps: async () => {
                 throw new Error("backend gone");
             },

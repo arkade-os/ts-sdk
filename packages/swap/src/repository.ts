@@ -1,6 +1,7 @@
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
+import type { SwapRecord } from "./client/record";
 
 /** A registry discovery result held for reuse. Refetchable — unlike a swap
  * record, losing it costs one network round trip — but it must survive a cold
@@ -29,11 +30,12 @@ export const marketsCacheKey = (network: string, registry: string) =>
  * in memory; add a filter type when a consumer needs subset queries.
  */
 export interface AssetSwapRepository extends AsyncDisposable {
-    /** 4 adds `getRfqSwap`. 3 added the other RFQ methods below; 2 was the
-     * released shape — swaps, scan cursor, markets, with `preimageSaltHex` on
-     * the swap record — so an implementor built against either cannot satisfy
-     * this one silently. */
-    readonly version: 4;
+    /** 5 adds the v2 swap-record store — one row per accepted swap, keyed by
+     * the client-minted quote id. 4 added `getRfqSwap`; 3 added the other RFQ
+     * methods below; 2 was the released shape — swaps, scan cursor, markets,
+     * with `preimageSaltHex` on the swap record — so an implementor built
+     * against any of them cannot satisfy this one silently. */
+    readonly version: 5;
 
     /** Insert or replace a swap by id. Store the record whole: `preimageHex`
      * and `preimageSaltHex` both leave the swap unclaimable if a field-mapped
@@ -68,11 +70,49 @@ export interface AssetSwapRepository extends AsyncDisposable {
     /** Drop one, once it is past retention — see `shouldRetainRfqSwap`. */
     removeRfqSwap(rfqId: string): Promise<void>;
 
-    /** Sent txids already checked for offer packets (see restore.ts). */
+    /**
+     * Insert or replace a v2 swap record by its quote id.
+     *
+     * The store the v2 client's `accept()` writes, and the reason this
+     * interface is at 5. Separate from `swaps` rather than sharing it: the v1
+     * read path drops any row carrying neither `offerHex` nor `paymentHash`
+     * (`getAssetSwapsOrThrow`), silently and as corrupt, so a v2 record in that
+     * store would be pinned by a v1 predicate — and the two histories are meant
+     * to be disjoint for the deprecation window anyway. A v1 reader not seeing
+     * v2 rows is the design, asserted in the conformance suite rather than
+     * tolerated.
+     *
+     * Store the record WHOLE, and note that it is **JSON-safe by declaration**:
+     * every amount on it is a canonical decimal string, precisely so the SQLite
+     * and Realm backends' `JSON.stringify` and IndexedDB's structured clone
+     * agree. A `bigint` reaching here would throw on two backends and
+     * round-trip on the third.
+     */
+    saveSwapRecord(record: SwapRecord): Promise<void>;
+    /** One record by quote id. `undefined` on a miss — which is the ordinary
+     * answer for a first `accept()`, and what makes it idempotent. */
+    getSwapRecord(id: string): Promise<SwapRecord | undefined>;
+    /** Every stored v2 record, in no particular order. */
+    getAllSwapRecords(): Promise<SwapRecord[]>;
+    /** Drop one, once it is past retention. */
+    removeSwapRecord(id: string): Promise<void>;
+
+    /**
+     * Sent txids already checked for offer packets (see restore.ts).
+     *
+     * **Shared across both record families, deliberately.** This is not
+     * record-family data — it marks txids of transactions a scan has answered,
+     * whatever family a later record belongs to — and both families walk the
+     * same sent-txid set during the deprecation window. Two cursors would have
+     * each side re-walking deposits the other already answered.
+     */
     getScannedTxids(): Promise<Set<string>>;
     markTxidsScanned(txids: Iterable<string>): Promise<void>;
 
-    /** Cached registry markets, or undefined on a miss. */
+    /** Cached registry markets, or undefined on a miss. Shared across both
+     * record families for the reason the cursor is: the key is network-and-
+     * registry, not a store, and two caches would serve two staleness clocks
+     * for one registry. */
     getCachedMarkets(network: string, registry: string): Promise<MarketsCacheEntry | undefined>;
     saveCachedMarkets(network: string, registry: string, entry: MarketsCacheEntry): Promise<void>;
 
@@ -80,8 +120,9 @@ export interface AssetSwapRepository extends AsyncDisposable {
 }
 
 export class InMemoryAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 4 as const;
+    readonly version = 5 as const;
     private readonly swaps = new Map<string, AssetSwap>();
+    private readonly records = new Map<string, SwapRecord>();
     private readonly rfqSwaps = new Map<string, RfqSwapRecord>();
     private readonly scanned = new Set<string>();
     private readonly markets = new Map<string, MarketsCacheEntry>();
@@ -110,6 +151,22 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
         this.rfqSwaps.delete(rfqId);
     }
 
+    async saveSwapRecord(record: SwapRecord): Promise<void> {
+        this.records.set(record.id, record);
+    }
+
+    async getSwapRecord(id: string): Promise<SwapRecord | undefined> {
+        return this.records.get(id);
+    }
+
+    async getAllSwapRecords(): Promise<SwapRecord[]> {
+        return [...this.records.values()];
+    }
+
+    async removeSwapRecord(id: string): Promise<void> {
+        this.records.delete(id);
+    }
+
     async getScannedTxids(): Promise<Set<string>> {
         return new Set(this.scanned);
     }
@@ -136,6 +193,7 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
     async clear(): Promise<void> {
         this.swaps.clear();
         this.rfqSwaps.clear();
+        this.records.clear();
         this.scanned.clear();
         this.markets.clear();
     }

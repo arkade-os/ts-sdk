@@ -144,9 +144,25 @@ uncached discovery.
 | `IndexedDbAssetSwapRepository` | `@arkade-os/swap`                     | the browser (or a polyfilled IndexedDB)         |
 | `SQLiteAssetSwapRepository`    | `@arkade-os/swap/repositories/sqlite` | React Native, over your SQLite driver           |
 | `RealmAssetSwapRepository`     | `@arkade-os/swap/repositories/realm`  | React Native, over your Realm instance          |
+| `nodeSwapRepository()`         | `@arkade-os/swap/node`                | Node — file-backed SQLite, opened for you       |
 
-Neither subpath adds a dependency: they take the SDK's structural `SQLExecutor` / `RealmLike`
-handles, so you pass the database you already opened.
+Neither React Native subpath adds a dependency: they take the SDK's structural `SQLExecutor` /
+`RealmLike` handles, so you pass the database you already opened.
+
+`@arkade-os/swap/node` is the exception, and the only entry point that imports `node:` builtins —
+which is why it is a separate subpath rather than something the main entry falls back to. It opens
+the database itself, under the platform config directory (XDG / `~/Library/Application Support` /
+`%APPDATA%`) at `arkade/swaps/swaps-<network>.sqlite`, and it is the one backend whose disposal
+closes a connection:
+
+```ts
+import { nodeSwapRepository } from "@arkade-os/swap/node";
+
+await using swaps = nodeSwapRepository({ network: "mainnet" }); // or { path } to choose the file
+```
+
+Every other backend's `[Symbol.asyncDispose]` is a no-op, because you opened the handle and it is
+yours to close. This one opened it, so it closes it.
 
 All four carry both record types: asset swaps and the monitored RFQ swaps
 (`saveRfqSwap` / `getRfqSwap` / `getAllRfqSwaps` / `removeRfqSwap`). Each keeps them in a store of their own — a
@@ -210,15 +226,17 @@ const realm = await Realm.open({
 const swaps = new RealmAssetSwapRepository(realm);
 ```
 
-Four classes land in your Realm namespace: `ArkadeAssetSwap`, `ArkadeRfqSwap`,
+Five classes land in your Realm namespace: `ArkadeAssetSwap`, `ArkadeRfqSwap`, `ArkadeSwapRecord`,
 `ArkadeAssetSwapScannedTxid`, `ArkadeAssetSwapMarketsCache`. Unlike SQLite there is no prefix option
 — a Realm schema name is baked into the schema objects you register — so reconcile against your own
 models by name.
 
-`ArkadeRfqSwap` arrived after the other three. **If you already shipped them, add it and bump
-`schemaVersion` again**: Realm creates schemas at open, so a config still listing three fails on the
-first RFQ read rather than at open. SQLite needs nothing — its DDL runs `CREATE TABLE IF NOT EXISTS`
-on every init, so the table appears on the next operation.
+`ArkadeRfqSwap` and `ArkadeSwapRecord` arrived after the first three. **If you already shipped an
+earlier set, add the new ones and bump `schemaVersion` again**: Realm creates schemas at open, so a
+config listing fewer fails on the first read of the missing one rather than at open. Spreading
+`AssetSwapRealmSchemas` rather than listing names by hand is what keeps that from happening again.
+SQLite needs nothing — its DDL runs `CREATE TABLE IF NOT EXISTS` on every init, so a new table
+appears on the next operation.
 
 ## Creating an offer
 

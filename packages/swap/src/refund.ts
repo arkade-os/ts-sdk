@@ -695,7 +695,18 @@ export type RefundOutcome =
      * The lockup was unilaterally exited: its outputs sit onchain under the VHTLC
      * script, where no offchain refund can reach them. Returned rather than
      * retried: no amount of waiting changes where the money lives. Complete the
-     * unroll and spend the outputs onchain — then there is nothing left to refund.
+     * unroll and spend the named outputs onchain.
+     *
+     * **`outpoints` is not necessarily the whole lockup, and `exited` does not
+     * mean "nothing left to refund".** A lockup funded by more than one UTXO
+     * reports `exited` as soon as ANY of them has been exited, and `outpoints`
+     * names only those; a still-live sibling is left unrefunded, and this call
+     * will not come back for it — the outcome is terminal, so the caller's retry
+     * loop ends here. That is deliberate rather than an oversight: `RfqSwapManager`
+     * reports the same lockup `exited` on the same any-output rule, and the two
+     * must not disagree. It does make the surviving outputs the caller's to
+     * pursue, through an independent onchain or offchain recovery path that this
+     * function will not reach.
      *
      * Distinct from {@link RefundOutcome} `needs_recovery` on purpose: that
      * variant's remedy is recovery into a fresh batch, which is a spend no batch

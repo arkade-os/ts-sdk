@@ -2,6 +2,8 @@ import "fake-indexeddb/auto";
 import { describe, expect, it } from "vitest";
 import type { AssetSwap } from "../src/store";
 import type { RfqSwapRecord } from "../src/rfqRecord";
+import type { AtomicDecimal } from "../src/client/amount";
+import type { CorridorSwapRecord } from "../src/client/record";
 import { AssetSwapRepository, InMemoryAssetSwapRepository } from "../src/repository";
 import { IndexedDbAssetSwapRepository } from "../src/indexedDbRepository";
 import { runInTransaction, type SQLExecutor } from "@arkade-os/sdk/repositories/sqlite";
@@ -18,6 +20,67 @@ const rfqRecord = (rfqId: string): RfqSwapRecord => ({
     lockupAddress: "tark1qlockup",
     // The corridor's own keys, nested — which is what a field-mapped backend is
     // likeliest to flatten or drop.
+    profile: {
+        signer: { signingDescriptor: `tr(${"a7".repeat(32)})` },
+        hashlock: { paymentHash: "d4".repeat(32) },
+    },
+    createdAt: 1,
+    updatedAt: 1,
+});
+
+/**
+ * A v2 accept record, in the shape `accept()` writes.
+ *
+ * JSON-safe on purpose, like the `AssetSwap` fixture below: every amount is a
+ * decimal string and the nested `profile` and `market` are plain objects, so
+ * the two backends that `JSON.stringify` the record and the one that
+ * structured-clones it must agree field for field. A `bigint` here would throw
+ * on two of the four and round-trip on the third.
+ */
+const swapRecord = (id: string): CorridorSwapRecord => ({
+    id,
+    family: "rfq",
+    route: {
+        give: {
+            corridor: "arkade",
+            asset: "arkade:regtest/slip44:0",
+            instrument: { kind: "wallet" },
+        },
+        take: {
+            corridor: "lightning",
+            asset: "bolt11:regtest/slip44:0",
+            instrument: {
+                kind: "invoice",
+                bolt11: "lnbcrt50u1p",
+                paymentHash: "d4".repeat(32),
+                amount: "5000" as AtomicDecimal,
+                expiresAt: 1_700_003_600,
+            },
+        },
+    },
+    give: { asset: "arkade:regtest/slip44:0", amount: "5050" as AtomicDecimal },
+    take: { asset: "bolt11:regtest/slip44:0", amount: "5000" as AtomicDecimal },
+    fee: { asset: "arkade:regtest/slip44:0", amount: "50" as AtomicDecimal },
+    market: {
+        kind: "card",
+        key: "arkade:BTC/lightning:BTC",
+        backend: "rfq",
+        source: REGISTRY,
+        sourceType: "registry",
+        solver: "frenchman",
+        pair: "BTC/lightning:BTC",
+        snapshot: { fetchedAt: 1_000, live: true, source: "live", registry: REGISTRY },
+    },
+    solver: "aa".repeat(32),
+    expiresAt: 1_700_003_600,
+    state: "pending",
+    kind: "lightning_send",
+    rfqId: `rfq-${id}`,
+    lockupAddress: "tark1qlockup",
+    lockupPkScript: "5120" + "cd".repeat(32),
+    lock: { hash: "d4".repeat(32) },
+    refundLocktime: 1_900_000_000,
+    // Nested, which is what a field-mapped backend is likeliest to flatten.
     profile: {
         signer: { signingDescriptor: `tr(${"a7".repeat(32)})` },
         hashlock: { paymentHash: "d4".repeat(32) },
@@ -57,6 +120,7 @@ const backends: [string, () => AssetSwapRepository][] = [
                     ArkadeRfqSwap: "rfqId",
                     ArkadeAssetSwapScannedTxid: "txid",
                     ArkadeAssetSwapMarketsCache: "key",
+                    ArkadeSwapRecord: "id",
                 }),
             ),
     ],
@@ -357,14 +421,134 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
 });
 
 /**
+ * The v2 accept record store, on every backend.
+ *
+ * The store `accept()` writes, keyed by the client-minted quote id rather than
+ * a funding txid — which is what lets a record exist before the money does. Its
+ * own store, so the v1 read path's `offerHex || paymentHash` predicate never
+ * sees it: v2 rows being invisible to v1 readers is the design, and the last
+ * case here asserts that rather than tolerating it.
+ */
+describe.each(backends)("v2 swap records (%s)", (_, create) => {
+    it("upserts by quote id and reads one back", async () => {
+        await using repository = create();
+        await repository.saveSwapRecord(swapRecord("q1"));
+        await repository.saveSwapRecord(swapRecord("q2"));
+
+        expect(await repository.getSwapRecord("q1")).toEqual(swapRecord("q1"));
+        expect((await repository.getAllSwapRecords()).map((r) => r.id).sort()).toEqual([
+            "q1",
+            "q2",
+        ]);
+    });
+
+    it("round-trips the record whole, nested profile and market included", async () => {
+        await using repository = create();
+        await repository.saveSwapRecord(swapRecord("q1"));
+
+        const read = await repository.getSwapRecord("q1");
+        // Field for field: a backend that dropped `profile.hashlock` would
+        // round-trip a swap whose preimage cannot be re-derived, which surfaces
+        // as an unclaimable lockup long after the write.
+        expect(read).toEqual(swapRecord("q1"));
+        expect((read as CorridorSwapRecord).profile.hashlock).toEqual({
+            paymentHash: "d4".repeat(32),
+        });
+        expect(read?.market).toEqual(swapRecord("q1").market);
+    });
+
+    it("answers a miss with undefined rather than throwing", async () => {
+        await using repository = create();
+        // The ordinary answer for a first `accept()`, and what makes it
+        // idempotent without a separate existence check.
+        expect(await repository.getSwapRecord("never-stored")).toBeUndefined();
+    });
+
+    it("replaces a record on a second save rather than duplicating it", async () => {
+        await using repository = create();
+        await repository.saveSwapRecord(swapRecord("q1"));
+        await repository.saveSwapRecord({ ...swapRecord("q1"), fundingTxid: "ab".repeat(32) });
+
+        const all = await repository.getAllSwapRecords();
+        expect(all).toHaveLength(1);
+        expect(all[0]?.fundingTxid).toBe("ab".repeat(32));
+    });
+
+    it("removes one", async () => {
+        await using repository = create();
+        await repository.saveSwapRecord(swapRecord("q1"));
+        await repository.removeSwapRecord("q1");
+        expect(await repository.getAllSwapRecords()).toEqual([]);
+    });
+
+    it("keeps the two families in separate key spaces", async () => {
+        await using repository = create();
+        // The same string as an id in both families: v1 keyed an offer record
+        // on a funding txid and a corridor record on an rfqId, so one `string`
+        // space held both by accident. Keying v2 on the quote id closes that,
+        // and this is the assertion that they cannot collide.
+        await repository.saveSwapRecord(swapRecord("shared-id"));
+        await repository.saveSwap(swap("shared-id"));
+        await repository.saveRfqSwap(rfqRecord("shared-id"));
+
+        expect(await repository.getSwapRecord("shared-id")).toMatchObject({ family: "rfq" });
+        expect((await repository.getAllSwaps()).map((s) => s.id)).toEqual(["shared-id"]);
+        expect(await repository.getAllSwapRecords()).toHaveLength(1);
+    });
+
+    it("hides v2 rows from the v1 readers, and v1 rows from the v2 reader", async () => {
+        await using repository = create();
+        await repository.saveSwapRecord(swapRecord("q1"));
+        await repository.saveSwap(swap("v1-swap"));
+
+        // Asserted, not tolerated: the two histories are disjoint for the
+        // deprecation window, which is what keeps the v2 shape from being
+        // pinned by v1's drop-anything-without-offerHex predicate.
+        expect((await repository.getAllSwaps()).map((s) => s.id)).toEqual(["v1-swap"]);
+        expect((await repository.getAllSwapRecords()).map((r) => r.id)).toEqual(["q1"]);
+    });
+
+    it("shares one scan cursor and one markets cache across both families", async () => {
+        await using repository = create();
+        // Neither is record-family data — the cursor marks txids of
+        // transactions, the cache is keyed network-and-registry — and both have
+        // a second consumer while v1 and v2 coexist. Two cursors would have
+        // each side re-walking deposits the other already answered.
+        await repository.markTxidsScanned(["t1"]);
+        await repository.saveSwapRecord(swapRecord("q1"));
+        await repository.saveSwap(swap("v1-swap"));
+
+        expect(await repository.getScannedTxids()).toEqual(new Set(["t1"]));
+        const entry = { markets: [], fetchedAt: 7 };
+        await repository.saveCachedMarkets("regtest", REGISTRY, entry);
+        expect(await repository.getCachedMarkets("regtest", REGISTRY)).toEqual(entry);
+    });
+
+    it("wipes the v2 store with everything else, never partially", async () => {
+        await using repository = create();
+        await repository.saveSwapRecord(swapRecord("q1"));
+        await repository.saveSwap(swap("v1-swap"));
+        await repository.markTxidsScanned(["t1"]);
+
+        await repository.clear();
+
+        // A partial wipe must not be observable: leaving the cursor behind
+        // would have the restore scan permanently skip those funding txs.
+        expect(await repository.getAllSwapRecords()).toEqual([]);
+        expect(await repository.getAllSwaps()).toEqual([]);
+        expect(await repository.getScannedTxids()).toEqual(new Set());
+    });
+});
+
+/**
  * The riskiest claim in this change: the version bump runs against databases
  * that already hold real swaps. `initDatabase`'s contains-guard makes adding a
  * store idempotent, but only `onupgradeneeded` runs it, and that fires on a
  * version *increase* — so the bump is what makes the new store exist at all for
  * an existing user, and the existing stores must come through untouched.
  */
-describe("IndexedDB v1 -> v2 migration", () => {
-    it("adds the rfqSwaps store while keeping swaps, scan state and markets", async () => {
+describe("IndexedDB migrations", () => {
+    it("adds every later store to a v1 database, keeping swaps, scan state and markets", async () => {
         const dbName = `migrate-${Math.random()}`;
         const markets = { markets: [], fetchedAt: 42 };
 
@@ -403,6 +587,58 @@ describe("IndexedDB v1 -> v2 migration", () => {
         // and the new store is usable immediately, not only after a reopen
         await repository.saveRfqSwap(rfqRecord("r1"));
         expect(await repository.getAllRfqSwaps()).toHaveLength(1);
+    });
+
+    it("adds the v2 record store to a v2 database and rewrites no row", async () => {
+        const dbName = `migrate-v2-${Math.random()}`;
+        const markets = { markets: [], fetchedAt: 42 };
+
+        // Seed the shape a shipped consumer actually has: DB_VERSION 2, all
+        // four stores, with rows in each. The case above starts at 1 and so
+        // never exercises the step this bump adds.
+        await new Promise<void>((resolve, reject) => {
+            const open = indexedDB.open(dbName, 2);
+            open.onupgradeneeded = () => {
+                const db = open.result;
+                db.createObjectStore("swaps", { keyPath: "id" });
+                db.createObjectStore("rfqSwaps", { keyPath: "rfqId" });
+                db.createObjectStore("scannedTxids");
+                db.createObjectStore("markets");
+            };
+            open.onsuccess = () => {
+                const db = open.result;
+                const tx = db.transaction(
+                    ["swaps", "rfqSwaps", "scannedTxids", "markets"],
+                    "readwrite",
+                );
+                tx.objectStore("swaps").put(swap("legacy"));
+                tx.objectStore("rfqSwaps").put(rfqRecord("legacy-rfq"));
+                tx.objectStore("scannedTxids").put("t1", "t1");
+                tx.objectStore("markets").put(markets, "arkade-intents-markets-regtest-http://r");
+                tx.oncomplete = () => {
+                    db.close();
+                    resolve();
+                };
+                tx.onerror = () => reject(tx.error);
+            };
+            open.onerror = () => reject(open.error);
+        });
+
+        await using repository = new IndexedDbAssetSwapRepository(dbName);
+
+        // Additive: every existing row comes through byte for byte, which is
+        // what keeps `initDatabase`'s `oldVersion`/`transaction` parameters
+        // unused. Disjoint v1 and v2 histories are exactly the choice that
+        // stops this being the migration that rewrites rows.
+        expect(await repository.getAllSwaps()).toEqual([swap("legacy")]);
+        expect(await repository.getAllRfqSwaps()).toEqual([rfqRecord("legacy-rfq")]);
+        expect(await repository.getScannedTxids()).toEqual(new Set(["t1"]));
+        expect(await repository.getCachedMarkets("regtest", "http://r")).toEqual(markets);
+
+        // and the new store exists, which is the whole reason for the bump
+        expect(await repository.getAllSwapRecords()).toEqual([]);
+        await repository.saveSwapRecord(swapRecord("q1"));
+        expect(await repository.getAllSwapRecords()).toHaveLength(1);
     });
 });
 

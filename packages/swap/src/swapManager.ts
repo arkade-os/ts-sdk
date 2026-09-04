@@ -210,6 +210,14 @@ interface RfqSwapCommon {
     lockupSpendTxids?: string[];
     /** Why `state` is `failed`. */
     failure?: string;
+    /**
+     * Last local claim error while the receive swap is still retryable.
+     *
+     * Distinct from terminal `failure`: this records a claim attempt that failed
+     * before the window closed. If the window later closes without a submitted
+     * claim, it becomes the terminal failure reason.
+     */
+    claimFailure?: string;
     /** Why `state` is `needs_counterparty`. Distinct from {@link failure},
      * which means an action was attempted and did not work. */
     blockedReason?: string;
@@ -770,20 +778,6 @@ export class RfqSwapManager {
      */
     private readonly refundRefused = new Set<string>();
     /**
-     * The last error a receive swap's claim callback threw, by rfqId.
-     *
-     * Kept only to tell two terminal outcomes apart once the claim window
-     * shuts: a swap whose claim was attempted and kept failing ends `failed`
-     * with that reason, while one that simply never became claimable ends
-     * `refunded`. Without it a broken claim callback would resolve a caller's
-     * {@link waitForSwapCompletion} as an ordinary unwind.
-     *
-     * Process-local, like {@link refundRefused}: after a restart the same swap
-     * ends `refunded` instead, which costs the caller a reason and nothing else
-     * — every throw was already reported through `onSwapFailed` as it happened.
-     */
-    private readonly lastClaimError = new Map<string, string>();
-    /**
      * The lockup outpoints a receive swap's claim callback has already been
      * handed, by rfqId.
      *
@@ -1265,7 +1259,6 @@ export class RfqSwapManager {
         if (swap) this.byLockupScript.delete(hex.encode(swap.lockupPkScript));
         this.monitored.delete(rfqId);
         this.refundRefused.delete(rfqId);
-        this.lastClaimError.delete(rfqId);
         this.claimedOutpoints.delete(rfqId);
     }
 
@@ -1590,7 +1583,7 @@ export class RfqSwapManager {
         // long since reclaimed, one it never funded will never be, and either
         // way there is nothing further to observe and no move left to make.
         // Ending the wait at all costs the distinction between them.
-        const failure = this.lastClaimError.get(swap.rfqId);
+        const failure = swap.claimFailure;
         if (failure && !swap.claimTxid) {
             // The one shape that is not an ordinary unwind: this wallet had a
             // claimable lockup and could not take it. `failed` rather than
@@ -1678,7 +1671,7 @@ export class RfqSwapManager {
 
         try {
             const { txid } = await this.callbacks.claimLockup(swap, vtxos, { partiallyClaimed });
-            this.lastClaimError.delete(swap.rfqId);
+            delete swap.claimFailure;
             // Recorded only on success: a claim that threw must be retried, and
             // these outputs are still there to retry with.
             this.rememberClaimed(swap.rfqId, vtxos);
@@ -1698,7 +1691,8 @@ export class RfqSwapManager {
             // while it is — so the next pass retries. Recorded so that, if the
             // window shuts having never succeeded, the swap can end `failed`
             // with a reason rather than looking like a quiet expiry.
-            this.lastClaimError.set(swap.rfqId, errorMessage(error));
+            swap.claimFailure = errorMessage(error);
+            this.touch(swap);
             this.emitFailed(swap, error);
         }
     }
@@ -1993,6 +1987,7 @@ export class RfqSwapManager {
         // a swap the counterparty finally claimed leaves through `settled`, and
         // a stale `blockedReason` there reads as a live refusal.
         if (previous === "needs_counterparty") delete swap.blockedReason;
+        if (isRfqSwapTerminal(state)) delete swap.claimFailure;
         swap.state = state;
         this.touch(swap);
         notify(this.swapUpdateListeners, (listener) => listener(swap, previous));
