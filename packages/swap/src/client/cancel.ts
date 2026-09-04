@@ -170,9 +170,13 @@ const reconcileDepositSpend = async (
 ): Promise<{ kind: "cancelled" | "fulfilled"; spentTxid: string } | undefined> => {
     const offer = decodeOffer(hex.decode(record.offerHex));
     const { vtxos } = await indexer.getVtxos({ scripts: [record.swapPkScript] });
-    const deposit = (vtxos ?? []).find(
-        (vtxo) => record.fundingTxid === undefined || vtxo.txid === record.fundingTxid,
-    );
+    const all = vtxos ?? [];
+    const deposit =
+        record.fundingTxid === undefined
+            ? all.length === 1
+                ? all[0]
+                : undefined
+            : all.find((vtxo) => vtxo.txid === record.fundingTxid);
     if (deposit === undefined) return undefined;
     const candidates = spendTxidsOf(deposit);
     if (candidates.length === 0) return undefined;
