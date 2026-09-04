@@ -1,11 +1,14 @@
 export {
     createOffer,
     cancelOffer,
+    fillOffer,
     encodeOffer,
     decodeOffer,
     offerVtxoScript,
     swapPrograms,
+    ASSET_CARRIER_SATS,
     OFFER_PACKET_TYPE,
+    type FillFunding,
     type Offer,
 } from "./offer";
 export {

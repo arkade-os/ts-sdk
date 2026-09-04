@@ -27,14 +27,17 @@ import { concatBytes } from "@scure/btc-signer/utils.js";
 import {
     ArkAddress,
     RestArkProvider,
+    RestEmulatorProvider,
     RestIndexerProvider,
     arkade,
     asset,
     getNetwork,
     resolveEmulatorPubkey,
     toXOnlySignerHex,
+    type ArkTxInput,
     type IWallet,
     type NetworkName,
+    type EmulatorProvider,
     type RelativeTimelock,
 } from "@arkade-os/sdk";
 
@@ -811,3 +814,251 @@ export async function cancelOffer(
     }
     return txid;
 }
+
+/** Sats output 0 carries when the maker is paid in an ASSET rather than sats:
+ * the covenant checks the asset there, and the output still needs a carrier of
+ * its own. Overridable per fill via `assetCarrierSats`. */
+export const ASSET_CARRIER_SATS = BigInt(330);
+
+/**
+ * A coin the taker supplies, plus whatever assets it carries.
+ *
+ * `ArkTxInput` describes sats only, so the assets have to be declared — this is
+ * the one thing a fill cannot discover for itself, and omitting it is not
+ * cosmetic. **arkd refuses a spend whose asset packet omits an asset one of its
+ * inputs owns** (`ASSET_NOT_FOUND`), so a coin picked for its sats that happens
+ * to carry an asset takes the whole fill down unless it is named here. A
+ * wallet's own coins already carry `assets` in this shape.
+ */
+export type FillFunding = ArkTxInput & {
+    assets?: readonly { assetId: string; amount: bigint | number }[];
+};
+
+/**
+ * Fill an offer — the TAKER's side, and the counterpart to {@link createOffer}.
+ *
+ * The covenant's `fulfill` leaf is signed by the server alone and constrains the
+ * spend to pay output 0 at least `wantAmount` to the maker's witness program, so
+ * a taker cannot take the deposit without delivering. This composes that spend;
+ * it does not weaken or reinterpret the covenant.
+ *
+ * **Both want sides.** For a BTC want output 0 pays `wantAmount` sats. For an
+ * ASSET want the covenant reads output 0 through `OP_INSPECTOUTASSETLOOKUP` with
+ * `lookup_index = 0`, so the wanted asset must be the FIRST group in the packet
+ * and output 0 carries only a dust sat carrier ({@link ASSET_CARRIER_SATS}).
+ * Group order follows the order the groups are added, which is why the wanted
+ * asset is added first — reordering it silently breaks the covenant.
+ *
+ * Every other asset in the spend — the deposit's own, and any the taker's
+ * funding coins carry — is routed to the taker's payout. Declaring those is not
+ * optional; see {@link FillFunding}.
+ *
+ * Unlike {@link cancelOffer} this writes NO local swap record. A taker filling
+ * someone else's offer has no row to update — the repository dance there belongs
+ * to the funder, whose swap it is. The maker learns the outcome from the chain
+ * (`classifySpend`), which is the design § 7.2 of the RFQ protocol describes.
+ *
+ * `fund` is required and explicit rather than selected here. Coin selection is
+ * the caller's: only they know which coins are reserved for other flows, and a
+ * helper that picked for them would spend a corridor's float out from under it.
+ * The coins become inputs 1..n and are signed with the wallet's identity.
+ *
+ * `payoutScript` is where the taker's proceeds land — the deposit it just took,
+ * plus any surplus over `wantAmount`. Defaults to the wallet's own address.
+ *
+ * Racing a cancel is a NORMAL outcome, not a failure: cancel is a 2-of-2 of the
+ * funder and the server and does not involve the taker, so a funder may cancel
+ * between this reading the deposit and broadcasting. That surfaces the same way
+ * cancel's own race does — "no spendable VTXO at the swap address" — and a
+ * caller should treat it as "the offer is gone", not as an error to retry.
+ */
+export async function fillOffer(
+    wallet: IWallet,
+    arkServerUrl: string,
+    offerHex: string,
+    opts: {
+        /** Coins the taker supplies to pay `wantAmount`, with any assets they
+         * carry. Become inputs 1..n. @see FillFunding */
+        fund: FillFunding[];
+        /** Where the taker's proceeds land. Defaults to the wallet's own address. */
+        payoutScript?: Uint8Array;
+        /** Selects the deposit when the swap address holds more than one. */
+        fundingTxid?: string;
+        /** The funded address, to pin the server key the covenant was built with. */
+        swapAddress?: string;
+        /** Sats at output 0 on an asset want. Defaults to {@link ASSET_CARRIER_SATS};
+         * raise it for a server whose dust threshold is higher. */
+        assetCarrierSats?: bigint;
+        /**
+         * The co-signing service — a base URL, or a provider of your own.
+         *
+         * Required, with no default: `fulfill` is a covenant path, so the
+         * emulator is what executes the arkade script and finalizes the spend
+         * with arkd. A client without one builds the transaction and then
+         * refuses to submit it.
+         */
+        emulator: EmulatorProvider | string;
+        /** Co-signer key override (33-byte compressed hex), as `createOffer`
+         * takes. Needed on a network the SDK pins no emulator key for, where
+         * connecting with an emulator otherwise throws. */
+        emulatorPubkey?: string;
+    },
+): Promise<string> {
+    const {
+        fund,
+        payoutScript,
+        fundingTxid,
+        swapAddress,
+        assetCarrierSats = ASSET_CARRIER_SATS,
+        emulator,
+        emulatorPubkey,
+    } = opts;
+    const offer = decodeOffer(hex.decode(offerHex));
+    const wantedAssetId = offer.wantAsset?.toString();
+
+    if (fund.length === 0) {
+        throw new Error("fillOffer needs coins to pay wantAmount with — `fund` is empty");
+    }
+    // Checked before anything is read or spent: a fill that cannot deliver is
+    // refused here rather than by the emulator, which reports only that the
+    // covenant said no.
+    if (wantedAssetId !== undefined) {
+        const supplied = fund.reduce(
+            (sum, coin) => sum + amountOfAsset(coin.assets, wantedAssetId),
+            BigInt(0),
+        );
+        if (supplied < offer.wantAmount) {
+            throw new Error(
+                `fillOffer needs ${offer.wantAmount} of ${wantedAssetId} to pay the maker, but ` +
+                    `\`fund\` declares ${supplied} — pass coins carrying it, and declare their assets`,
+            );
+        }
+    }
+
+    const contractManager = await wallet.getContractManager();
+    const client = await arkade.Arkade.connect({
+        arkade: new RestArkProvider(arkServerUrl),
+        indexer: new RestIndexerProvider(arkServerUrl),
+        identity: wallet.identity,
+        contractManager,
+        // `fulfill` is a covenant path, so the emulator executes the arkade
+        // script and finalizes with arkd. Without it the spend is built and then
+        // refused at submission — there is no default to fall back on.
+        emulator: typeof emulator === "string" ? new RestEmulatorProvider(emulator) : emulator,
+        // Only reached for the client's own emulatorKey, which this fill never
+        // derives against — the offer's own key is bound below. It still has to
+        // resolve, and on a network with no pinned key it throws without this.
+        ...(emulatorPubkey ? { emulatorPubkey } : {}),
+    });
+
+    // Rebuilt with the OFFER's keys, not the client's, for the same reason
+    // cancelOffer does it: the derived script must match the funded address
+    // exactly or `getUtxos` silently returns nothing and the failure reads as
+    // "no deposit" rather than "wrong key".
+    const serverKey = swapAddress ? ArkAddress.decode(swapAddress).serverPubKey : client.serverKey;
+    const { program, args, keys } = swapProgramBinding(offer, serverKey);
+    const rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
+    if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {
+        throw new Error(
+            "rebuilt covenant does not match the offer's swapPkScript — the server " +
+                "signing key has likely rotated since funding; pass swapAddress (the " +
+                "funded address) to pin the original key",
+        );
+    }
+    const contract = new arkade.ArkadeContract(client, program, args, keys);
+
+    const [vtxos, takerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
+    if (!fundingTxid && vtxos.length > 1) {
+        // Identical offers share one address, so guessing would fill an
+        // arbitrary deposit while the caller believes it filled a specific one.
+        throw new Error(
+            "multiple spendable deposits at the swap address — pass fundingTxid to select one",
+        );
+    }
+    const vtxo = fundingTxid ? vtxos.find((v) => v.txid === fundingTxid) : vtxos[0];
+    if (!vtxo) throw new Error("no spendable VTXO at the swap address");
+
+    const payout = payoutScript ?? ArkAddress.decode(takerAddress).pkScript;
+    // A BTC want is paid in sats at output 0; an asset want is paid through the
+    // packet, so its sats leg is only the carrier the output needs to exist.
+    const makerSats = wantedAssetId === undefined ? offer.wantAmount : assetCarrierSats;
+    const fill = contract.functions
+        .fulfill()
+        .from({ txid: vtxo.txid, vout: vtxo.vout, value: vtxo.value })
+        .fund(fund)
+        // Output 0, and the order is not cosmetic: the covenant inspects output
+        // 0 specifically, so this must be the first `to`.
+        .to(offer.makerPkScript, makerSats)
+        // The taker's proceeds — the deposit it just took, plus any surplus of
+        // its own funding. Appended after the outputs above, so it is vout 1.
+        .change(payout);
+
+    // Every asset in the spend, by the input holding it. The deposit is input 0
+    // and the funding coins are 1..n, matching the order the builder assembles.
+    const held = new Map<string, { vin: number; amount: bigint }[]>();
+    const hold = (vin: number, assets: FillFunding["assets"]) => {
+        for (const a of assets ?? []) {
+            const amount = BigInt(a.amount);
+            if (amount <= BigInt(0)) continue;
+            held.set(a.assetId, [...(held.get(a.assetId) ?? []), { vin, amount }]);
+        }
+    };
+    hold(0, vtxo.assets);
+    fund.forEach((coin, i) => hold(i + 1, coin.assets));
+
+    // The taker's asset proceeds land at vout 1 — but `change` only exists when
+    // there is a surplus, and an asset with nowhere to go is a spend arkd will
+    // refuse for a reason the error will not explain.
+    const outputsSum = makerSats;
+    const inputsSum = fund.reduce((s, c) => s + BigInt(c.value), BigInt(vtxo.value));
+    const hasPayoutOutput = inputsSum > outputsSum;
+
+    // THE WANTED ASSET FIRST — group index 0, which is the lookup index the
+    // fulfill script uses. Any other order makes the covenant read the wrong
+    // group and refuse.
+    const emitWanted = () => {
+        if (wantedAssetId === undefined) return;
+        const supplying = held.get(wantedAssetId) ?? [];
+        const supplied = supplying.reduce((s, i) => s + i.amount, BigInt(0));
+        const outputs = [{ vout: 0, amount: offer.wantAmount }];
+        const surplus = supplied - offer.wantAmount;
+        if (surplus > BigInt(0)) {
+            if (!hasPayoutOutput) {
+                throw new Error(
+                    `fillOffer has ${surplus} of ${wantedAssetId} to return but no payout output — ` +
+                        "fund with more sats than the maker's output takes",
+                );
+            }
+            outputs.push({ vout: 1, amount: surplus });
+        }
+        fill.withAsset({ assetId: wantedAssetId, inputs: supplying, outputs });
+        held.delete(wantedAssetId);
+    };
+    emitWanted();
+
+    // Everything else goes to the taker: the deposit's own asset when the maker
+    // wanted sats, and anything a funding coin happened to carry. Declaring the
+    // latter is what keeps arkd from answering ASSET_NOT_FOUND.
+    for (const [assetId, inputs] of held) {
+        const amount = inputs.reduce((s, i) => s + i.amount, BigInt(0));
+        if (!hasPayoutOutput) {
+            throw new Error(
+                `fillOffer has ${amount} of ${assetId} to return but no payout output — ` +
+                    "fund with more sats than the maker's output takes",
+            );
+        }
+        fill.withAsset({ assetId, inputs, outputs: [{ vout: 1, amount }] });
+    }
+
+    const { txid } = await fill.send();
+    return txid;
+}
+
+/** How much of `assetId` a coin's declared assets add up to. */
+const amountOfAsset = (assets: FillFunding["assets"], assetId: string): bigint => {
+    let total = BigInt(0);
+    for (const a of assets ?? []) {
+        if (a.assetId === assetId) total += BigInt(a.amount);
+    }
+    return total;
+};
