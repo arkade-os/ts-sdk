@@ -444,6 +444,52 @@ describe("ElectrumOnchainProvider", () => {
             expect(headerCalls().length).toBe(10);
         });
 
+        it("collapses concurrent readers on a fresh tip onto one window fetch", async () => {
+            tipAt100();
+            const tips = await Promise.all([
+                provider.getChainTip(),
+                provider.getChainTip(),
+                provider.getChainTip(),
+                provider.getChainTip(),
+                provider.getChainTip(),
+            ]);
+
+            expect(tips.map((t) => t.time)).toEqual([MEDIAN, MEDIAN, MEDIAN, MEDIAN, MEDIAN]);
+            expect(headerCalls().length).toBe(10);
+        });
+
+        it("never serves one tip's pending window to another tip", async () => {
+            // Adopting any pending read would answer B with A's median.
+            let releaseA = () => {};
+            const blockA = new Promise<void>((resolve) => {
+                releaseA = resolve;
+            });
+            let pushHeader: ((h: { height: number; hex: string }) => void) | undefined;
+            wsMock.subscribe.mockImplementationOnce(
+                async (_method: string, cb: (h: { height: number; hex: string }) => void) => {
+                    pushHeader = cb;
+                    cb({ height: 100, hex: headerAt(TIP_TIME) });
+                },
+            );
+            for (const time of WINDOW_TIMES) {
+                wsMock.request.mockImplementationOnce(async () => {
+                    await blockA;
+                    return headerAt(time);
+                });
+            }
+
+            const a = provider.getChainTip();
+            await vi.waitFor(() => expect(headerCalls().length).toBe(10));
+
+            pushHeader!({ height: 200, hex: headerAt(9000) });
+            mockBatch(wsMock.request, new Array(10).fill(headerAt(8000)));
+            const b = await provider.getChainTip();
+            releaseA();
+
+            expect(b.time).toBe(8000);
+            expect((await a).time).toBe(MEDIAN);
+        });
+
         it("takes the median of what exists on a chain shorter than the window", async () => {
             // Height 2 => three timestamps; consensus does the same near genesis.
             deliverHeadersTip(wsMock.subscribe, { height: 2, hex: headerAt(500) });

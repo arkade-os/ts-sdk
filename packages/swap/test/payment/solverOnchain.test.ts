@@ -25,8 +25,8 @@ const PAYOUT_PUBKEY = new Uint8Array(32).fill(15);
 const card = (min: string, max: string, overrides: Record<string, unknown> = {}) =>
     ({
         pair: "BTC/onchain:BTC",
-        base_asset: { id: "BTC", decimals: 8 },
-        quote_asset: { id: "BTC", decimals: 8 },
+        base_asset: { id: "btc", decimals: 8 },
+        quote_asset: { id: "btc", decimals: 8 },
         base_corridor: "arkade",
         quote_corridor: "onchain",
         discovery_pubkey: SOLVER_PUBKEY,
@@ -56,6 +56,7 @@ const negotiated = (fundAmount: number, toAmount: number) =>
         },
         htlc: { address: "bcrt1phtlc" },
         htlcParams: { refundLocktime: NOW() + 100 * 3600 },
+        l1Network: "regtest",
         minConfirmations: 2,
         secrets: {},
         script: {},
@@ -140,13 +141,36 @@ describe("solverOnchainRendezvous", () => {
         expect(solverOnchainRendezvous([card("0", "0")], 100_000)).toBeUndefined();
     });
 
+    it("skips a card whose corridors match but whose assets are not BTC", () => {
+        const usdtBase = card("1000", "1000000", { base_asset: { id: "usdt", decimals: 6 } });
+        const usdtQuote = card("1000", "1000000", { quote_asset: { id: "usdt", decimals: 6 } });
+        expect(solverOnchainRendezvous([usdtBase], 100_000)).toBeUndefined();
+        expect(solverOnchainRendezvous([usdtQuote], 100_000)).toBeUndefined();
+    });
+
+    it("takes a later BTC card over an earlier one on another asset", () => {
+        const usdt = card("1000", "1000000", {
+            base_asset: { id: "usdt", decimals: 6 },
+            discovery_pubkey: "dd".repeat(32),
+        });
+        expect(
+            solverOnchainRendezvous([usdt, card("1000", "1000000")], 100_000)?.solverPubkey,
+        ).toBe(SOLVER_PUBKEY);
+    });
+
     describe("the emulator key the covenant needs", () => {
         const pinned = new Uint8Array(32).fill(0xbb); // === EMULATOR_PUBKEY
 
+        it("filters on the advertised key without carrying it", () => {
+            expect(
+                solverOnchainRendezvous([card("1000", "1000000")], 100_000, pinned),
+            ).not.toHaveProperty("emulatorPubkey");
+        });
+
         it("falls back to the pin when the card advertises none", () => {
             const bare = card("1000", "1000000", { emulator_pubkey: undefined });
-            expect(solverOnchainRendezvous([bare], 100_000, pinned)?.emulatorPubkey).toBe(
-                EMULATOR_PUBKEY,
+            expect(solverOnchainRendezvous([bare], 100_000, pinned)?.solverPubkey).toBe(
+                SOLVER_PUBKEY,
             );
             expect(solverOnchainRendezvous([bare], 100_000)).toBeUndefined();
         });
@@ -418,6 +442,44 @@ describe("solverOnchainRail.send", () => {
             txid: "claim-txid",
         });
         expect(handle.status).toBe("settled");
+    });
+
+    it("stays at 'sent' when the watcher fails — the lockup is funded either way", async () => {
+        rfqStub = mockRequest().spy;
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const quote = await solverOnchainRail(
+            depsWith({
+                awaitSettlement: vi.fn(async () => {
+                    throw new Error("esplora timed out");
+                }),
+            }),
+        ).quote({ raw: BTC_ADDR, amount: 100_000 }, ctxWith());
+        const handle = await quote.send();
+        const seen: string[] = [];
+        handle.subscribe((u) => seen.push(u.status));
+
+        expect(await handle.settled()).toEqual({
+            railId: SOLVER_ONCHAIN_RAIL,
+            swapId: "rfq-1",
+        });
+        expect(handle.status).toBe("sent");
+        expect(seen).not.toContain("failed");
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
+    });
+
+    it("refuses a quote negotiated on an L1 network the rail was not built for", async () => {
+        rfqStub = vi.fn(async () => ({
+            ...negotiated(101_000, 100_000),
+            l1Network: "bitcoin",
+        }));
+
+        await expect(
+            solverOnchainRail(depsWith({ l1Network: "regtest" })).quote(
+                { raw: BTC_ADDR, amount: 100_000 },
+                ctxWith(),
+            ),
+        ).rejects.toThrow(/regtest.*bitcoin|bitcoin.*regtest/);
     });
 
     it("hands the settlement watcher the record it persisted", async () => {

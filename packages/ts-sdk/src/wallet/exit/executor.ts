@@ -342,6 +342,10 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
                 if (!dep?.confirmed) continue; // leaf not confirmed yet
 
                 const tip = await this.provider.getChainTip();
+                // Mixed bases, deliberately: `tip.time` is MTP (what consensus
+                // checks a spend against), `dep.blockTime` the header's `nTime`
+                // where BIP-68 takes the MTP of the block before it. A header's
+                // `nTime` exceeds that MTP, so this waits late, never fires early.
                 const mature =
                     step.delay.type === "blocks"
                         ? tip.height >= (dep.blockHeight ?? 0) + step.delay.value

@@ -132,6 +132,9 @@ export interface OnchainSendProfile extends Record<string, unknown> {
     htlcAddress: string;
     /** `profile.min_confirmations`; gates when the fill is claimable. */
     minConfirmations: number;
+    /** Where the claim PAYS, hex. The spender's own choice, so nothing else
+     * gives it back — and `buildHtlcClaim` needs it. */
+    payoutPkScript: string;
     /** The fill's outpoint, learned on first sighting. Without it a SPENT htlc
      * reads as never funded — see `classifyOnchainHtlc`. */
     funding?: { txid: string; vout: number };
@@ -169,6 +172,7 @@ export function onchainSendProfile(result: {
     htlcParams: OnchainHtlcParams;
     l1Network: OnchainNetwork;
     minConfirmations: number;
+    payoutPkScript: Uint8Array;
 }): Omit<OnchainSendProfile, "signer" | "hashlock"> {
     return {
         claimKey: hex.encode(result.htlcParams.claimKey),
@@ -177,6 +181,7 @@ export function onchainSendProfile(result: {
         network: result.l1Network,
         htlcAddress: result.htlc.address,
         minConfirmations: result.minConfirmations,
+        payoutPkScript: hex.encode(result.payoutPkScript),
     };
 }
 
@@ -251,6 +256,11 @@ export const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
             paymentHash,
             htlc,
             minConfirmations: profile.minConfirmations,
+            // Optional here, required at the write: throwing on an older
+            // record would strand the refund it is still owed.
+            ...(profile.payoutPkScript
+                ? { payoutPkScript: hex.decode(profile.payoutPkScript) }
+                : {}),
             ...(profile.funding ? { funding: profile.funding } : {}),
             ...(profile.claimTxid ? { claimTxid: profile.claimTxid } : {}),
         };

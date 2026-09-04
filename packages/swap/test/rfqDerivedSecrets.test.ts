@@ -644,7 +644,7 @@ describe("what an RFQ record stores about its corridor's keys", () => {
                         // one P unlocks both legs, so the L1 inputs carry the
                         // same sha256(P) the arkade lockup commits to
                         ...rfqSecretsProfile(result.secrets, result.htlcParams.paymentHash),
-                        ...onchainSendProfile(result),
+                        ...onchainSendProfile({ ...result, payoutPkScript: p2tr(key(21)) }),
                     },
                 },
                 {

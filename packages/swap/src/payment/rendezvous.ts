@@ -2,16 +2,19 @@
  * Choosing which solver to negotiate with. Both send corridors pick a card the
  * same way and differ only in the payout-side corridor they look for.
  */
-import { marketCorridor, sideLimits, type DiscoveredMarket } from "@arkade-os/solver-discovery";
+import { selectMarkets, sideLimits, type DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { hex } from "@scure/base";
+import { BTC_ASSET_ID } from "../store";
 
 const XONLY_HEX = /^[0-9a-f]{64}$/;
 
-/** Where to reach a solver. Bounds are indicative — the quote binds. */
+/** Where to reach a solver. Bounds are indicative — the quote binds.
+ *
+ *  No `emulatorPubkey`: the card's key only FILTERS here — the covenant is
+ *  built from `deps.emulatorPubkey` or the pinned default, never from it. */
 export interface SolverRendezvous {
     solverPubkey: string;
     transports: { nostr: { relays: string[] } };
-    emulatorPubkey: string;
     minSats: number;
     maxSats: number;
 }
@@ -41,7 +44,6 @@ const rendezvousOf = (market: DiscoveredMarket, pinned?: string): SolverRendezvo
     return {
         solverPubkey: market.discovery_pubkey,
         transports,
-        emulatorPubkey,
         minSats: Number(bounds.min),
         maxSats: Number(bounds.max),
     };
@@ -64,10 +66,17 @@ export const solverRendezvous = (
     if (encoded !== undefined && !XONLY_HEX.test(encoded)) return undefined;
     const pinned = encoded;
 
-    for (const market of markets) {
-        if (marketCorridor(market, "base") !== "arkade") continue;
-        if (marketCorridor(market, "quote") !== payoutCorridor) continue;
+    // Corridor AND asset: both rails negotiate the hard-coded `arkade:BTC`
+    // pair, so a corridor-only match bounds sats against another asset's
+    // limits and burns — and leaks — a negotiation the solver refuses.
+    const candidates = selectMarkets(markets, {
+        baseId: BTC_ASSET_ID,
+        quoteId: BTC_ASSET_ID,
+        baseCorridor: "arkade",
+        quoteCorridor: payoutCorridor,
+    });
 
+    for (const market of candidates) {
         const rendezvous = rendezvousOf(market, pinned);
         if (!rendezvous) continue;
         if (amountSats >= rendezvous.minSats && amountSats <= rendezvous.maxSats) {

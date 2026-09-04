@@ -359,8 +359,13 @@ export interface ChainUtxo extends HtlcUtxo {
 export interface ChainSource {
     /** Confirmed+mempool outputs paying a script; used to detect the fill. */
     getScriptUtxos(pkScript: Uint8Array): Promise<ChainUtxo[]>;
-    /** The spend of an outpoint, if any — where P is extracted from. */
-    getSpendingTx(txid: string, vout: number): Promise<{ txHex: string } | null>;
+    /** The spend of an outpoint, if any — where P is extracted from. A
+     * provider omitting the spender txid still lists it in `pkScript`'s history. */
+    getSpendingTx(
+        txid: string,
+        vout: number,
+        pkScript: Uint8Array,
+    ): Promise<{ txHex: string } | null>;
     broadcast(txHex: string): Promise<string>;
     /** Current median-time-past, unix seconds — gates refund broadcasting. */
     getMtp(): Promise<number>;
@@ -488,7 +493,11 @@ export async function classifyOnchainHtlc(
     const best = utxos.sort((a, b) => (b.amount > a.amount ? 1 : -1))[0];
     if (!best) {
         if (!input.funding) return { phase: "unfunded" };
-        const spend = await chain.getSpendingTx(input.funding.txid, input.funding.vout);
+        const spend = await chain.getSpendingTx(
+            input.funding.txid,
+            input.funding.vout,
+            input.htlc.pkScript,
+        );
         if (!spend) return { phase: "unfunded" };
         const preimage = extractPreimage(spend.txHex, input.htlc.paymentHash);
         const txid = btc.Transaction.fromRaw(hex.decode(spend.txHex), {

@@ -23,8 +23,8 @@ const NOW = () => Math.floor(Date.now() / 1000);
 const card = (min: string, max: string, overrides: Record<string, unknown> = {}) =>
     ({
         pair: "BTC/lightning:BTC",
-        base_asset: { id: "BTC", decimals: 8 },
-        quote_asset: { id: "BTC", decimals: 8 },
+        base_asset: { id: "btc", decimals: 8 },
+        quote_asset: { id: "btc", decimals: 8 },
         base_corridor: "arkade",
         quote_corridor: "lightning",
         discovery_pubkey: SOLVER_PUBKEY,
@@ -50,7 +50,7 @@ const negotiated = (fundAmount: number) =>
         rfqId: "rfq-ln-1",
         address: "tark1lockup",
         fundAmount,
-        quote: { from_amount: fundAmount, to_amount: 100_000, valid_until: 1_800_000_000 },
+        quote: { from_amount: fundAmount, to_amount: 100_000, valid_until: NOW() + 3600 },
         secrets: {},
         script: {},
     }) as unknown as Awaited<SolverLightningSend>;
@@ -87,6 +87,11 @@ describe("solverLightningRendezvous", () => {
 
     it("skips a card that serves the corridor but not the size", () => {
         expect(solverLightningRendezvous([card("1000", "50000")], 100_000)).toBeUndefined();
+    });
+
+    it("skips a card whose corridors match but whose assets are not BTC", () => {
+        const usdt = card("1000", "1000000", { base_asset: { id: "usdt", decimals: 6 } });
+        expect(solverLightningRendezvous([usdt], 100_000)).toBeUndefined();
     });
 });
 
@@ -315,6 +320,31 @@ describe("solverLightningRail.send", () => {
             preimage: "dd".repeat(32),
         });
         expect(handle.status).toBe("settled");
+    });
+
+    it("stays at 'sent' when the watcher fails — the lockup is funded either way", async () => {
+        rfqStub = vi.fn(async () => negotiated(101_500));
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const handle = await (
+            await solverLightningRail(
+                depsWith({
+                    awaitSettlement: vi.fn(async () => {
+                        throw new Error("relay went away");
+                    }),
+                }),
+            ).quote({ raw: INVOICE }, ctxWith())
+        ).send();
+        const seen: string[] = [];
+        handle.subscribe((u) => seen.push(u.status));
+
+        expect(await handle.settled()).toEqual({
+            railId: SOLVER_LIGHTNING_RAIL,
+            swapId: "rfq-ln-1",
+        });
+        expect(handle.status).toBe("sent");
+        expect(seen).not.toContain("failed");
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
     });
 });
 

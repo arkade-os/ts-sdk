@@ -14,12 +14,13 @@ import { solverRendezvous, type SolverRendezvous } from "./rendezvous";
 
 export const SOLVER_ONCHAIN_RAIL = "solver-onchain";
 
-/** What a record needs; `onchainSendProfile()` maps it to an `RfqSwapOrigin`. */
+/** What a record needs. Pass the whole object to `onchainSendProfile()`: only
+ *  this carries `payoutPkScript`. */
 export type SolverOnchainSend = Awaited<ReturnType<typeof requestOnchainSend>> & {
     rendezvous: SolverRendezvous;
     /** Where the claim pays. Named nowhere else — the claim's output is the
-     *  spender's choice. NOT JSON-safe: a JSON store must `hex.encode` it, or
-     *  it returns as an object with no `.length` and the claim cannot be built. */
+     *  spender's choice. `onchainSendProfile()` hex-encodes it; a store fed
+     *  these bytes raw returns an object with no `.length`. */
     payoutPkScript: Uint8Array;
 };
 
@@ -109,6 +110,14 @@ export function solverOnchainRail(deps: SolverOnchainRailDeps): PaymentRail {
                     ...(deps.emulatorPubkey ? { emulatorPubkey: deps.emulatorPubkey } : {}),
                 }),
             );
+            // `payoutPkScript` above used `deps.l1Network`. Where HRPs coincide
+            // this does not fail, it persists a payout for another network.
+            if (negotiated.l1Network !== deps.l1Network) {
+                throw new Error(
+                    `${SOLVER_ONCHAIN_RAIL}: rail built for ${deps.l1Network} but the swap was ` +
+                        `negotiated on ${negotiated.l1Network}`,
+                );
+            }
             const swap: SolverOnchainSend = { ...negotiated, rendezvous, payoutPkScript };
 
             return {
@@ -151,7 +160,18 @@ export function solverOnchainRail(deps: SolverOnchainRailDeps): PaymentRail {
                         emit({ status: "sent" });
                         const result = { railId: SOLVER_ONCHAIN_RAIL, swapId: swap.rfqId };
                         if (!deps.awaitSettlement) return result;
-                        const { txid } = await deps.awaitSettlement(swap);
+                        // The lockup is funded; `handle.ts` reads a rejection
+                        // as `failed`, inviting a retry that funds a SECOND.
+                        let txid: string;
+                        try {
+                            ({ txid } = await deps.awaitSettlement(swap));
+                        } catch (e) {
+                            console.warn(
+                                `${SOLVER_ONCHAIN_RAIL}: settlement watch failed; the payment is sent`,
+                                e,
+                            );
+                            return result;
+                        }
                         const settled = { ...result, txid };
                         emit({ status: "settled", result: settled });
                         return settled;

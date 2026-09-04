@@ -144,7 +144,17 @@ export function solverLightningRail(deps: SolverLightningRailDeps): PaymentRail 
                         emit({ status: "sent" });
                         const result = { railId: SOLVER_LIGHTNING_RAIL, swapId: swap.rfqId };
                         if (!deps.awaitSettlement) return result;
-                        const { preimage } = await deps.awaitSettlement(swap);
+                        // Not a payment failure — see `solverOnchain`.
+                        let preimage: string | undefined;
+                        try {
+                            ({ preimage } = await deps.awaitSettlement(swap));
+                        } catch (e) {
+                            console.warn(
+                                `${SOLVER_LIGHTNING_RAIL}: settlement watch failed; the payment is sent`,
+                                e,
+                            );
+                            return result;
+                        }
                         const settled = { ...result, ...(preimage !== undefined && { preimage }) };
                         emit({ status: "settled", result: settled });
                         return settled;

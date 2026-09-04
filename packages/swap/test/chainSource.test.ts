@@ -6,16 +6,24 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import * as btc from "@scure/btc-signer";
-import type { OnchainProvider } from "@arkade-os/sdk";
+import type { ExplorerTransaction, OnchainProvider } from "@arkade-os/sdk";
 import { chainSourceFrom } from "../src/chainSource";
-import { onchainHtlcScript, paymentHashOf } from "../src/onchainHtlc";
+import {
+    buildHtlcClaim,
+    classifyOnchainHtlc,
+    onchainHtlcScript,
+    paymentHashOf,
+} from "../src/onchainHtlc";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
-const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
+const priv = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
+const key = (fill: number): Uint8Array => schnorr.getPublicKey(priv(fill));
+
+const PREIMAGE = new Uint8Array(32).fill(7);
 
 const HTLC = onchainHtlcScript(
     {
-        paymentHash: paymentHashOf(new Uint8Array(32).fill(7)),
+        paymentHash: paymentHashOf(PREIMAGE),
         claimKey: key(15),
         refundKey: key(11),
         refundLocktime: 1_800_000_000,
@@ -23,12 +31,21 @@ const HTLC = onchainHtlcScript(
     "regtest",
 );
 
+const historyTx = (txid: string, spends: { txid: string; vout: number }[]) =>
+    ({
+        txid,
+        vin: spends,
+        vout: [],
+        status: { confirmed: true, block_time: 1 },
+    }) as unknown as ExplorerTransaction;
+
 /** A provider stub: only the methods the adapter reaches for are defined. */
 const providerWith = (overrides: Partial<OnchainProvider>): OnchainProvider =>
     ({
         getCoins: vi.fn(async () => []),
         getChainTip: vi.fn(async () => ({ height: 100, time: 1_000, hash: "tip" })),
         getTxOutspends: vi.fn(async () => []),
+        getTransactions: vi.fn(async () => []),
         getRawTransaction: vi.fn(async () => new Uint8Array()),
         broadcastTransaction: vi.fn(async () => "txid"),
         ...overrides,
@@ -157,7 +174,9 @@ describe("chainSourceFrom.getSpendingTx", () => {
             "regtest",
         );
 
-        expect(await chain.getSpendingTx("funding", 1)).toEqual({ txHex: "deadbeef" });
+        expect(await chain.getSpendingTx("funding", 1, HTLC.pkScript)).toEqual({
+            txHex: "deadbeef",
+        });
         expect(getRawTransaction).toHaveBeenCalledWith("spender");
     });
 
@@ -172,18 +191,60 @@ describe("chainSourceFrom.getSpendingTx", () => {
             "regtest",
         );
 
-        expect(await chain.getSpendingTx("funding", 1)).toBeNull();
+        expect(await chain.getSpendingTx("funding", 1, HTLC.pkScript)).toBeNull();
     });
 
-    it("reports no spend when the deployment omits the spender txid", async () => {
+    it("indexes the address history's vin when the deployment omits the spender txid", async () => {
+        const getRawTransaction = vi.fn(async () => Uint8Array.from([0xde, 0xad, 0xbe, 0xef]));
+        const getTransactions = vi.fn(async () => [
+            historyTx("funding", [{ txid: "earlier", vout: 0 }]),
+            historyTx("spender", [{ txid: "funding", vout: 1 }]),
+        ]);
         const chain = chainSourceFrom(
             providerWith({
-                getTxOutspends: vi.fn(async () => [{ spent: true }]),
+                getTxOutspends: vi.fn(async () => [{ spent: true }, { spent: true }]),
+                getTransactions,
+                getRawTransaction,
             }) as OnchainProvider,
             "regtest",
         );
 
-        expect(await chain.getSpendingTx("funding", 0)).toBeNull();
+        expect(await chain.getSpendingTx("funding", 1, HTLC.pkScript)).toEqual({
+            txHex: "deadbeef",
+        });
+        expect(getTransactions).toHaveBeenCalledWith(HTLC.address);
+        expect(getRawTransaction).toHaveBeenCalledWith("spender");
+    });
+
+    it("treats the electrum empty-string txid as absent, not as the spender", async () => {
+        const getRawTransaction = vi.fn(async () => Uint8Array.from([0xbe, 0xef]));
+        const chain = chainSourceFrom(
+            providerWith({
+                getTxOutspends: vi.fn(async () => [{ spent: true, txid: "" }]),
+                getTransactions: vi.fn(async () => [
+                    historyTx("spender", [{ txid: "funding", vout: 0 }]),
+                ]),
+                getRawTransaction,
+            }) as OnchainProvider,
+            "regtest",
+        );
+
+        expect(await chain.getSpendingTx("funding", 0, HTLC.pkScript)).toEqual({ txHex: "beef" });
+        expect(getRawTransaction).toHaveBeenCalledWith("spender");
+    });
+
+    it("reports no spend when neither the outspend nor the history names one", async () => {
+        const chain = chainSourceFrom(
+            providerWith({
+                getTxOutspends: vi.fn(async () => [{ spent: true }]),
+                getTransactions: vi.fn(async () => [
+                    historyTx("unrelated", [{ txid: "somethingelse", vout: 0 }]),
+                ]),
+            }) as OnchainProvider,
+            "regtest",
+        );
+
+        expect(await chain.getSpendingTx("funding", 0, HTLC.pkScript)).toBeNull();
     });
 
     it("reports no spend for a vout the provider does not describe", async () => {
@@ -192,7 +253,39 @@ describe("chainSourceFrom.getSpendingTx", () => {
             "regtest",
         );
 
-        expect(await chain.getSpendingTx("funding", 3)).toBeNull();
+        expect(await chain.getSpendingTx("funding", 3, HTLC.pkScript)).toBeNull();
+    });
+});
+
+describe("a claimed HTLC on a deployment that omits the spender txid", () => {
+    it("classifies as claimed with the preimage, not as unfunded", async () => {
+        const claim = await buildHtlcClaim({
+            htlc: HTLC,
+            utxo: { txid: "aa".repeat(32), vout: 0, amount: 100_000n },
+            preimage: PREIMAGE,
+            payoutPkScript: Uint8Array.from([0x51, 0x20, ...key(5)]),
+            feeRateSatVb: 1,
+            sign: async (sighash) => schnorr.sign(sighash, priv(15)),
+        });
+        const chain = chainSourceFrom(
+            providerWith({
+                getCoins: vi.fn(async () => []),
+                getTxOutspends: vi.fn(async () => [{ spent: true }]),
+                getTransactions: vi.fn(async () => [
+                    historyTx(claim.txid, [{ txid: "aa".repeat(32), vout: 0 }]),
+                ]),
+                getRawTransaction: vi.fn(async () => hex.decode(claim.txHex)),
+            }) as OnchainProvider,
+            "regtest",
+        );
+
+        expect(
+            await classifyOnchainHtlc(chain, {
+                htlc: HTLC,
+                minConfirmations: 1,
+                funding: { txid: "aa".repeat(32), vout: 0 },
+            }),
+        ).toEqual({ phase: "claimed", txid: claim.txid, preimage: PREIMAGE });
     });
 });
 
