@@ -62,6 +62,13 @@ function deferred<T>() {
 
 const okJson = (data: unknown) => ({ ok: true, json: () => Promise.resolve(data) });
 
+/** The cheap change probe (`/address/{a}`), as opposed to the history below it. */
+const isProbeUrl = (url: string) => /\/address\/[^/]+$/.test(url);
+
+/** One probe per poll cycle, whether or not it went on to fetch history — so
+ *  this counts CYCLES, which is what the loop-identity tests are about. */
+const probeCount = () => mockFetch.mock.calls.filter((c) => isProbeUrl(String(c[0]))).length;
+
 const confirmedTx = (txid: string): ExplorerTransaction =>
     ({
         txid,
@@ -75,9 +82,16 @@ const wsMessage = (address: string, txs: ExplorerTransaction[]) => ({
     }),
 });
 
-/** Let queued microtasks (and any awaited fetch continuations) drain. */
+/**
+ * Let queued microtasks (and any awaited fetch continuations) drain.
+ *
+ * Generous on purpose: a poll cycle now awaits the cheap UTXO probe, then the
+ * history fetch, each of which awaits a mocked response and its `.json()`. Too
+ * few turns here reads as "the callback never fired" when the chain simply
+ * hadn't finished.
+ */
 const flush = async () => {
-    for (let i = 0; i < 5; i++) await Promise.resolve();
+    for (let i = 0; i < 40; i++) await Promise.resolve();
 };
 
 const confirmedTxAt = (txid: string, blockHeight: number): ExplorerTransaction =>
@@ -185,14 +199,15 @@ describe("EsploraProvider.watchAddresses", () => {
             await ws.dispatch("error");
             await flush();
 
-            // One fallback fetch, not one per error event.
-            expect(mockFetch).toHaveBeenCalledTimes(1);
+            // One fallback cycle — the cheap probe plus the history it opened —
+            // not one cycle per error event.
+            expect(mockFetch).toHaveBeenCalledTimes(2);
 
-            // And one loop: a single interval yields a single fetch round, not
-            // one per stacked timer.
+            // And one loop: a single interval yields a single cycle, not one per
+            // stacked timer.
             mockFetch.mockClear();
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
-            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(probeCount()).toBe(1);
 
             stop();
             expect(vi.getTimerCount()).toBe(0);
@@ -364,6 +379,204 @@ describe("EsploraProvider.watchAddresses", () => {
         });
     });
 
+    describe("cheap change gate", () => {
+        // The incident this whole branch came from was steady-state polling with
+        // nothing arriving: thousands of watchers each refetching full address
+        // history every 15s. `/address/{a}` is a fraction of the size, so probing
+        // it first and only paying for history when something actually moved is
+        // where the bandwidth goes.
+        const stats = (confirmed: number, pending = 0) => ({
+            address: "addr1",
+            chain_stats: {
+                tx_count: confirmed,
+                funded_txo_count: confirmed,
+                spent_txo_count: 0,
+            },
+            mempool_stats: {
+                tx_count: pending,
+                funded_txo_count: pending,
+                spent_txo_count: 0,
+            },
+        });
+
+        const urlsOf = () => mockFetch.mock.calls.map((c) => String(c[0]));
+
+        it("skips the history fetch when the activity counts are unchanged", async () => {
+            mockFetch.mockImplementation((url: string) =>
+                Promise.resolve(isProbeUrl(url) ? okJson(stats(1)) : okJson([])),
+            );
+
+            const provider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+            });
+            await provider.watchAddresses(["addr1"], () => {});
+
+            mockFetch.mockClear();
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+
+            expect(urlsOf().some(isProbeUrl)).toBe(true);
+            expect(urlsOf().some((u) => u.includes("/txs"))).toBe(false);
+        });
+
+        it("falls through to history when the activity counts change", async () => {
+            let summary = stats(1);
+            let history: unknown[] = [confirmedTx("existing")];
+            mockFetch.mockImplementation((url: string) =>
+                Promise.resolve(isProbeUrl(url) ? okJson(summary) : okJson(history)),
+            );
+
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+            });
+            await provider.watchAddresses(["addr1"], callback);
+
+            summary = stats(2);
+            history = [confirmedTx("existing"), confirmedTx("arrived")];
+            mockFetch.mockClear();
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+
+            expect(urlsOf().some((u) => u.includes("/txs"))).toBe(true);
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback.mock.calls[0][0]).toEqual([
+                expect.objectContaining({ txid: "arrived" }),
+            ]);
+        });
+
+        it("falls through to history when the probe fails", async () => {
+            // Fail open: a probe that cannot answer must never be read as
+            // "nothing changed", or a deposit waits for the probe to recover.
+            mockFetch.mockImplementation((url: string) =>
+                isProbeUrl(url)
+                    ? Promise.reject(new Error("address summary unavailable"))
+                    : Promise.resolve(okJson([])),
+            );
+
+            const provider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+            });
+            await provider.watchAddresses(["addr1"], () => {});
+
+            mockFetch.mockClear();
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+
+            expect(urlsOf().some((u) => u.includes("/txs"))).toBe(true);
+        });
+
+        it("does not trust the counts while anything is still in the mempool", async () => {
+            // A replacement can leave every count identical while the txid — and
+            // so the key the watch reports on — changes. Pending activity means
+            // "cannot answer", not "unchanged".
+            mockFetch.mockImplementation((url: string) =>
+                Promise.resolve(
+                    isProbeUrl(url) ? okJson(stats(1, 1)) : okJson([unconfirmedTx("pending")]),
+                ),
+            );
+
+            const provider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+            });
+            await provider.watchAddresses(["addr1"], () => {});
+
+            mockFetch.mockClear();
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+
+            expect(urlsOf().some((u) => u.includes("/txs"))).toBe(true);
+        });
+
+        it("reports a confirmation even though the address kept no unspent output", async () => {
+            // Regression: the probe used to summarise the UTXO SET, which
+            // describes only what is still unspent. Here a deposit is swept
+            // while it is still unconfirmed, so the address holds nothing
+            // unspent before OR after the pair confirms — yet `txKey` carries
+            // `block_time`, which makes that confirmation a genuine report. The
+            // UTXO set is identical across it, so the old probe swallowed it.
+            let summary = {
+                address: "addr1",
+                chain_stats: { tx_count: 0, funded_txo_count: 0, spent_txo_count: 0 },
+                // The deposit funds one output; the sweep spends it. Both pending.
+                mempool_stats: { tx_count: 2, funded_txo_count: 1, spent_txo_count: 1 },
+            };
+            let history: unknown[] = [unconfirmedTx("deposit"), unconfirmedTx("sweep")];
+            mockFetch.mockImplementation((url: string) =>
+                Promise.resolve(isProbeUrl(url) ? okJson(summary) : okJson(history)),
+            );
+
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+            });
+            await provider.watchAddresses(["addr1"], callback);
+            expect(callback).not.toHaveBeenCalled();
+
+            // Both confirm. Nothing becomes spendable: the funded output was
+            // already spent, so an unspent-output probe sees no change at all.
+            summary = {
+                address: "addr1",
+                chain_stats: { tx_count: 2, funded_txo_count: 1, spent_txo_count: 1 },
+                mempool_stats: { tx_count: 0, funded_txo_count: 0, spent_txo_count: 0 },
+            };
+            history = [confirmedTx("deposit"), confirmedTx("sweep")];
+
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback.mock.calls[0][0]).toEqual([
+                expect.objectContaining({
+                    txid: "deposit",
+                    status: expect.objectContaining({ confirmed: true }),
+                }),
+                expect.objectContaining({
+                    txid: "sweep",
+                    status: expect.objectContaining({ confirmed: true }),
+                }),
+            ]);
+        });
+
+        it("retries history on the next cycle if the first fetch fails after a probe success", async () => {
+            // The bug this protects against: if history fails, the fingerprint
+            // must not be committed, or the next cycle (with the same counts)
+            // will believe it has nothing to do and skip history forever.
+            let summary = stats(1);
+            let history: unknown[] = [confirmedTx("existing")];
+            let historyFailures = 0;
+
+            mockFetch.mockImplementation((url: string) => {
+                if (isProbeUrl(url)) return Promise.resolve(okJson(summary));
+                if (url.includes("/txs")) {
+                    if (historyFailures++ === 1) {
+                        // Fail the first poll cycle's history fetch (index 1;
+                        // index 0 was the creation-time baseline).
+                        return Promise.reject(new Error("history unavailable"));
+                    }
+                    return Promise.resolve(okJson(history));
+                }
+                return Promise.reject(new Error("unexpected fetch"));
+            });
+
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+            });
+            await provider.watchAddresses(["addr1"], callback);
+
+            // Move the counts so we fall through to history.
+            summary = stats(2);
+            history = [confirmedTx("existing"), confirmedTx("arrived")];
+
+            // 1st cycle: probe succeeds, history fails.
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+            expect(callback).not.toHaveBeenCalled();
+
+            // 2nd cycle: probe still sees the same change, history succeeds this time.
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 2); // includes backoff
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback.mock.calls[0][0]).toEqual([
+                expect.objectContaining({ txid: "arrived" }),
+            ]);
+        });
+    });
+
     describe("late baseline anchor", () => {
         // When the creation-time history fetch fails, the chain tip is a second
         // chance at a reference point: it is a far smaller request, so it often
@@ -500,7 +713,8 @@ describe("EsploraProvider.watchAddresses", () => {
             await socket().dispatch("close");
             await flush();
 
-            expect(mockFetch).toHaveBeenCalledTimes(1); // fell back to polling
+            // Fell back to polling: the cheap probe plus the history it opened.
+            expect(mockFetch).toHaveBeenCalledTimes(2);
 
             await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
             expect(FakeWebSocket.instances).toHaveLength(2); // and retried
@@ -524,7 +738,7 @@ describe("EsploraProvider.watchAddresses", () => {
 
             await socket().dispatch("error");
             await flush();
-            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(mockFetch).toHaveBeenCalledTimes(2); // probe + history
 
             await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
             await socket().dispatch("open");
@@ -587,13 +801,13 @@ describe("EsploraProvider.watchAddresses", () => {
             await errorHandled;
             await flush();
 
-            // One poll loop, so one fetch round per interval — not one per loop.
-            // (Counting fetches rather than timers: a pending reconnect is a
+            // One poll loop, so one cycle per interval — not one per loop.
+            // (Counting probes rather than timers: a pending reconnect is a
             // legitimate timer too, so a raw count would conflate the two.)
             mockFetch.mockClear();
             mockFetch.mockResolvedValue(okJson([]));
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
-            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(probeCount()).toBe(1);
         });
 
         it("falls back to polling and retries when the WebSocket constructor throws", async () => {
@@ -617,7 +831,7 @@ describe("EsploraProvider.watchAddresses", () => {
             // satisfy a bare "was called" even with no polling at all.
             mockFetch.mockClear();
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
-            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(probeCount()).toBe(1);
 
             // And still reaching for the socket rather than settling for polling.
             expect(FakeWebSocket.instances.length).toBeGreaterThan(1);
@@ -722,23 +936,35 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("backs off and retries after a failed poll cycle, rather than going blind", async () => {
-            mockFetch.mockResolvedValueOnce(okJson([])); // baseline history
-            mockFetch.mockImplementationOnce(() => Promise.resolve(blocksTip(1))); // baseline tip
-            mockFetch.mockRejectedValueOnce(new Error("explorer down")); // first poll cycle
-            mockFetch.mockResolvedValue(okJson([]));
+            // Target the history endpoint specifically: the cheap probe fails
+            // open, so failing it would not exercise the backoff at all.
+            const historyCalls = () =>
+                mockFetch.mock.calls.filter((c) => String(c[0]).includes("/txs")).length;
+
+            mockFetch.mockImplementation((url: string) => {
+                if (url.includes("/blocks")) return Promise.resolve(blocksTip(1));
+                if (url.includes("/txs")) {
+                    // 1st history call is the creation-time baseline; fail the
+                    // 2nd, which is the first poll cycle.
+                    return historyCalls() === 2
+                        ? Promise.reject(new Error("explorer down"))
+                        : Promise.resolve(okJson([]));
+                }
+                return Promise.reject(new Error("probe unavailable"));
+            });
 
             await polling().watchAddresses(["addr1"], () => {});
 
             // A failed cycle must still leave a retry armed.
             expect(vi.getTimerCount()).toBe(1);
-            expect(mockFetch).toHaveBeenCalledTimes(3);
+            expect(historyCalls()).toBe(2);
 
             // One failure doubles the delay, so the plain interval is too early.
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
-            expect(mockFetch).toHaveBeenCalledTimes(3);
+            expect(historyCalls()).toBe(2);
 
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
-            expect(mockFetch).toHaveBeenCalledTimes(4);
+            expect(historyCalls()).toBe(3);
         });
 
         it("warns when it degrades from websocket to HTTP polling", async () => {
