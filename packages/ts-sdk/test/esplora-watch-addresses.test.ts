@@ -52,10 +52,12 @@ class FakeWebSocket {
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
-    const promise = new Promise<T>((res) => {
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
         resolve = res;
+        reject = rej;
     });
-    return { promise, resolve };
+    return { promise, resolve, reject };
 }
 
 const okJson = (data: unknown) => ({ ok: true, json: () => Promise.resolve(data) });
@@ -364,8 +366,8 @@ describe("EsploraProvider.watchAddresses", () => {
 
             await provider.watchAddresses(["addr1"], callback);
 
-            // The history baseline was attempted, and its failure was followed
-            // by the chain-tip fallback that anchors a late baseline.
+            // The baseline history request was attempted, and the chain-tip
+            // request that can anchor a late baseline went out alongside it.
             expect(mockFetch).toHaveBeenCalledTimes(2);
 
             // A failed baseline must degrade, not throw and not go deaf.
@@ -651,6 +653,46 @@ describe("EsploraProvider.watchAddresses", () => {
                 warn.mock.calls.some((c) => /may not have been reported/i.test(String(c[0]))),
             ).toBe(true);
         });
+
+        it("takes the chain-tip snapshot at watch start, not when history fails", async () => {
+            // A deposit that confirms while the baseline history fetch is still
+            // failing must read as new. That only holds if the anchor is the tip
+            // at watch start, so the tip request goes out alongside the history
+            // fetch rather than waiting for it to give up.
+            const baselineTxs = deferred<ReturnType<typeof okJson>>();
+            let history: unknown[] = [];
+            let txsCalls = 0;
+            mockFetch.mockImplementation((url: string) => {
+                if (url.includes("/blocks")) return Promise.resolve(blocksTip(100));
+                if (url.includes("/txs")) {
+                    txsCalls++;
+                    return txsCalls === 1 ? baselineTxs.promise : Promise.resolve(okJson(history));
+                }
+                return Promise.reject(new Error(`unexpected fetch: ${url}`));
+            });
+
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000", { forcePolling: true });
+            const watching = provider.watchAddresses(["addr1"], callback);
+
+            // The tip was already requested while the history baseline is still
+            // in flight — the anchor is a watch-start reference.
+            expect(mockFetch.mock.calls.some(([url]) => String(url).includes("/blocks"))).toBe(
+                true,
+            );
+
+            // The deposit confirmed at 101 during the outage: above a watch-start
+            // tip of 100, below the tip the failure path would capture later.
+            history = [confirmedTxAt("gap", 101), confirmedTxAt("old", 90)];
+            baselineTxs.reject(new Error("history unavailable"));
+            const stop = await watching;
+            await flush();
+
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback.mock.calls[0][0]).toEqual([expect.objectContaining({ txid: "gap" })]);
+
+            stop();
+        });
     });
 
     describe("websocket reconnect", () => {
@@ -900,12 +942,15 @@ describe("EsploraProvider.watchAddresses", () => {
                 mockFetch.mock.calls.filter((c) => String(c[0]).includes("/txs")).length;
 
             mockFetch.mockImplementation((url: string) => {
-                if (url.includes("/utxo")) return Promise.reject(new Error("probe unavailable"));
-                // 1st history call is the creation-time baseline; fail the 2nd,
-                // which is the first poll cycle.
-                return historyCalls() === 2
-                    ? Promise.reject(new Error("explorer down"))
-                    : Promise.resolve(okJson([]));
+                if (url.includes("/blocks")) return Promise.resolve(blocksTip(1));
+                if (url.includes("/txs")) {
+                    // 1st history call is the creation-time baseline; fail the
+                    // 2nd, which is the first poll cycle.
+                    return historyCalls() === 2
+                        ? Promise.reject(new Error("explorer down"))
+                        : Promise.resolve(okJson([]));
+                }
+                return Promise.reject(new Error("probe unavailable"));
             });
 
             await polling().watchAddresses(["addr1"], () => {});

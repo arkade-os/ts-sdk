@@ -428,7 +428,7 @@ export class EsploraProvider implements OnchainProvider {
         const seen = new Set<string>();
         let baselined = false;
 
-        /** Chain height at watch start, captured only if the history baseline failed. */
+        /** Chain height at watch start, used if the history baseline fails. */
         let anchorHeight: number | undefined;
 
         /**
@@ -438,29 +438,25 @@ export class EsploraProvider implements OnchainProvider {
          * Seeded additively rather than by replacing the set: the socket may
          * report a transaction while this fetch is still in flight, and that
          * report must not be undone (nor duplicated) when the fetch lands.
+         *
+         * The tip is fetched alongside the history so an anchor — if needed —
+         * is the height at watch start, not at the moment the history fetch
+         * later gives up. A deposit confirmed while that fetch is still
+         * failing must still read as new.
          */
         const baseline = (async () => {
-            try {
-                for (const tx of await getAllTxs()) seen.add(txKey(tx));
+            const [history, tip] = await Promise.allSettled([getAllTxs(), this.getChainTip()]);
+            if (history.status === "fulfilled") {
+                for (const tx of history.value) seen.add(txKey(tx));
                 baselined = true;
-            } catch (error) {
-                // Degrade rather than fail the watch. The first poll pass adopts
-                // current history as the baseline instead, which can still
-                // swallow a deposit that lands before it — but never invents one
-                // by reporting the whole address history as incoming.
-                console.warn(
-                    "Could not baseline watched addresses; the first poll pass will establish it instead:",
-                    error,
-                );
-
-                // `/blocks` is small enough to survive a timeout that killed the
-                // history fetch, and a height is reference enough.
-                try {
-                    anchorHeight = (await this.getChainTip()).height;
-                } catch {
-                    // No reference of any kind; the late baseline adopts wholesale.
-                }
+                return;
             }
+
+            console.warn(
+                "Could not baseline watched addresses; the first poll pass will establish it instead:",
+                history.reason,
+            );
+            if (tip.status === "fulfilled") anchorHeight = tip.value.height;
         })();
 
         /**

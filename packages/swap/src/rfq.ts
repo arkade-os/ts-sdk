@@ -439,6 +439,25 @@ export const assertFundable = (input: {
         /** "send" = arkade->onchain (the L1 timelock-order gate applies). */
         direction: "send" | "receive";
     };
+    /**
+     * The most this client will pay: the GREATER of the two bounds, because a
+     * flat fee is a large proportion of a small swap (420 sats is 8.4% of
+     * 5_000, 0.084% of 500_000). Absent means no ceiling. OMIT a bound rather
+     * than zeroing it: `{ bps: 0 }` alone is a ceiling of zero, indistinguishable
+     * from "free or nothing". `{}` IS refused.
+     */
+    maxFee?: {
+        /** Integer, 0..10_000 (10_000 = 100%). Out of range throws `max_fee_out_of_range`. */
+        bps?: number;
+        /** Non-negative integer. Out of range throws `max_fee_out_of_range`. */
+        sats?: number;
+        /**
+         * To-units per from-unit, required for a CROSS-ASSET pair. Must come
+         * from a source of YOUR OWN — the solver's own feed would check it
+         * against its own number. Needs a looser tolerance than same-asset.
+         */
+        referenceRate?: number;
+    };
 }): void => {
     const fail = (reason: string, message: string): never => {
         throw gateError(reason, message);
@@ -453,6 +472,51 @@ export const assertFundable = (input: {
         input.quote.refund_locktime - input.now < MIN_HEADROOM_SECONDS
     ) {
         fail("insufficient_headroom", "refund deadline headroom below 90 minutes");
+    }
+    if (input.maxFee) {
+        const { bps, sats, referenceRate } = input.maxFee;
+        if (bps === undefined && sats === undefined) {
+            // A ceiling naming nothing is a call-site mistake, not a bad quote.
+            fail("max_fee_unbounded", "maxFee names neither bps nor sats");
+        }
+        if (bps !== undefined && (!Number.isInteger(bps) || bps < 0 || bps > 10_000)) {
+            fail("max_fee_out_of_range", `maxFee.bps must be an integer in 0..10000, got ${bps}`);
+        }
+        if (sats !== undefined && (!Number.isInteger(sats) || sats < 0)) {
+            fail("max_fee_out_of_range", `maxFee.sats must be a non-negative integer, got ${sats}`);
+        }
+        const legs = input.quote.pair.split("->");
+        const assetOf = (leg: string): string => leg.slice(leg.indexOf(":") + 1);
+        const sameAsset = legs.length === 2 && assetOf(legs[0]!) === assetOf(legs[1]!);
+        if (!sameAsset && referenceRate === undefined) {
+            fail(
+                "fee_gate_unavailable",
+                `maxFee cannot gate ${input.quote.pair}: its legs name different assets, so ` +
+                    `from_amount - to_amount is not a fee. Supply maxFee.referenceRate ` +
+                    `(to-units per from-unit) from a source of your OWN — reading it off the ` +
+                    `solver's published feed would check the solver against its own number`,
+            );
+        }
+        if (!sameAsset && (!Number.isFinite(referenceRate) || (referenceRate as number) <= 0)) {
+            fail(
+                "max_fee_out_of_range",
+                `maxFee.referenceRate must be a positive finite number, got ${referenceRate}`,
+            );
+        }
+        // Rounds UP: refuse a borderline quote, do not fund a rounding artefact.
+        const fee = sameAsset
+            ? input.quote.from_amount - input.quote.to_amount
+            : Math.ceil(
+                  (input.quote.from_amount * (referenceRate as number) - input.quote.to_amount) /
+                      (referenceRate as number),
+              );
+        const allowed = Math.max(
+            sats ?? 0,
+            Math.floor((input.quote.from_amount * (bps ?? 0)) / 10_000),
+        );
+        if (fee > allowed) {
+            fail("fee_too_high", `fee ${fee} exceeds the ${allowed} this client allows`);
+        }
     }
     if (input.onchain) {
         const { htlcLocktime, minConfirmations, direction } = input.onchain;
