@@ -121,14 +121,16 @@ describe("the default chain source (regtest)", () => {
         const txid = await chain.broadcast(hex.encode(tx.extract()));
         expect(txid).toBe(tx.id);
 
-        await waitFor(async () => (await chain.getSpendingTx(fill.txid, fill.vout)) !== null);
-        const spend = await chain.getSpendingTx(fill.txid, fill.vout);
+        await waitFor(
+            async () => (await chain.getSpendingTx(fill.txid, fill.vout, funded.script)) !== null,
+        );
+        const spend = await chain.getSpendingTx(fill.txid, fill.vout, funded.script);
         expect(spend).not.toBe(null);
         expect(btc.Transaction.fromRaw(hex.decode(spend!.txHex)).id).toBe(txid);
     }, 120_000);
 
     it("answers null for an outpoint nothing has spent", async () => {
-        const spend = await chain.getSpendingTx(unspent.txid, unspent.vout);
+        const spend = await chain.getSpendingTx(unspent.txid, unspent.vout, idle.script);
         expect(spend).toBe(null);
     });
 });
