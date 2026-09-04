@@ -591,7 +591,6 @@ Access the `VtxoManager` from the wallet after configuring `settlementConfig`:
 const manager = await wallet.getVtxoManager()
 ```
 
-> **Migration from `renewalConfig`:** Directly initializing a `VtxoManager` with `renewalConfig` is still supported but deprecated. Prefer `settlementConfig` where `vtxoThreshold` is expressed in **seconds** instead of milliseconds.
 
 #### Renewal: Prevent Expiration
 
@@ -1109,179 +1108,8 @@ examples.
 
 ### Repositories (Storage)
 
-The `StorageAdapter` API is deprecated. Use repositories instead. If you omit `storage`, the SDK uses IndexedDB repositories with the default database name.
-
-#### Migration from v1 StorageAdapter
-
-> [!WARNING]
-> If you previously used the v1 `StorageAdapter`-based repositories, migrate
-> data into the new IndexedDB repositories before use:
->
-> ```typescript
-> import {
->   IndexedDBWalletRepository,
->   IndexedDBContractRepository,
->   getMigrationStatus,
->   migrateWalletRepository,
->   rollbackMigration,
-> } from '@arkade-os/sdk'
-> import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'
->
-> const oldStorage = new IndexedDBStorageAdapter('legacy-wallet', 1)
-> const newDbName = 'my-app-db'
-> const walletRepository = new IndexedDBWalletRepository(newDbName)
->
-> // Check migration status before running
-> const status = await getMigrationStatus('wallet', oldStorage)
-> // status: "not-needed" | "pending" | "in-progress" | "done"
->
-> if (status === 'pending' || status === 'in-progress') {
->   try {
->     await migrateWalletRepository(oldStorage, walletRepository, {
->       onchain: [ 'address-1', 'address-2' ],
->       offchain: [ 'onboarding-address-1' ],
->     })
->   } catch (err) {
->     // Reset migration flag so the next attempt starts clean
->     await rollbackMigration('wallet', oldStorage)
->     throw err
->   }
-> }
-> ```
->
-> **Migration status helpers:**
->
-> | Helper | Description |
-> |--------|-------------|
-> | `getMigrationStatus(repoType, adapter)` | Returns `"not-needed"` (no legacy DB), `"pending"`, `"in-progress"` (interrupted), or `"done"` |
-> | `requiresMigration(repoType, adapter)` | Returns `true` if status is `"pending"` or `"in-progress"` |
-> | `rollbackMigration(repoType, adapter)` | Removes the migration flag so migration can re-run from scratch |
-> | `MIGRATION_KEY(repoType)` | Returns the storage key used for the migration flag |
->
-> `migrateWalletRepository` sets an `"in-progress"` flag before copying data.
-> If the process crashes mid-way, the flag remains as `"in-progress"` so the
-> next call to `getMigrationStatus` can detect the partial migration. Old data
-> is never deleted — re-running migration after a rollback is safe.
->
-> Anything related to contract repository migration must be handled by the
-> package that created the contracts. The SDK doesn't manage external contracts
-> in V1; data persisted by other packages remains untouched in its original
-> location.
-
-#### Repository Versioning
-
-`WalletRepository`, `ContractRepository`, and `SwapRepository` (in
-`@arkade-os/swap`) each declare a `readonly version` field with a literal
-type. All built-in implementations set this to the current version. If you
-maintain a custom repository implementation, TypeScript will produce a compile
-error when the version is bumped, signaling that a semantic update is required:
-
-```typescript
-import { WalletRepository } from '@arkade-os/sdk'
-
-class MyWalletRepository implements WalletRepository {
-  readonly version = 1 // must match the interface's literal type
-  // ...
-}
-```
-
-#### SQLite Repository (Node.js / React Native)
-
-For Node.js or React Native environments, use the SQLite repository with any
-SQLite driver. The SDK accepts a `SQLExecutor` interface — you provide the
-driver, the SDK handles the schema.
-
-See [examples/node/multiple-wallets.ts](examples/node/multiple-wallets.ts) for
-a full working example using `better-sqlite3`.
-
-```typescript
-import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
-import { SQLiteWalletRepository, SQLiteContractRepository, SQLExecutor } from '@arkade-os/sdk/repositories/sqlite'
-import Database from 'better-sqlite3'
-
-const db = new Database('my-wallet.sqlite')
-db.pragma('journal_mode = WAL')
-
-const executor: SQLExecutor = {
-  run: async (sql, params) => { db.prepare(sql).run(...(params ?? [])) },
-  get: async (sql, params) => db.prepare(sql).get(...(params ?? [])) as any,
-  all: async (sql, params) => db.prepare(sql).all(...(params ?? [])) as any,
-}
-
-const wallet = await Wallet.create({
-  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  storage: {
-    walletRepository: new SQLiteWalletRepository(executor),
-    contractRepository: new SQLiteContractRepository(executor),
-  },
-})
-```
-
-#### Realm Repository (React Native)
-
-For React Native apps using Realm, pass your Realm instance directly:
-
-```typescript
-import {
-  RealmWalletRepository,
-  RealmContractRepository,
-  ArkRealmSchemas,
-  ARK_REALM_SCHEMA_VERSION,
-  runArkRealmMigrations,
-} from '@arkade-os/sdk/repositories/realm'
-
-const realm = await Realm.open({
-  schema: [...ArkRealmSchemas, ...yourSchemas],
-  schemaVersion: Math.max(ARK_REALM_SCHEMA_VERSION, yourSchemaVersion),
-  onMigration: (oldRealm, newRealm) => {
-    runArkRealmMigrations(oldRealm, newRealm)
-    // your own migrations
-  },
-})
-const wallet = await Wallet.create({
-  identity,
-  storage: {
-    walletRepository: new RealmWalletRepository(realm),
-    contractRepository: new RealmContractRepository(realm),
-  },
-})
-```
-
-#### IndexedDB Repository (Browser)
-
-In the browser, the SDK defaults to IndexedDB repositories when no `storage`
-is provided:
-
-```typescript
-import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
-
-const wallet = await Wallet.create({
-  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  // Uses IndexedDB by default in the browser
-})
-```
-
-If you want a custom database name or a different repository implementation,
-pass `storage` explicitly.
-
-For ephemeral storage (no persistence), pass the in-memory repositories:
-
-```typescript
-import {
-  MnemonicIdentity,
-  Wallet,
-  InMemoryWalletRepository,
-  InMemoryContractRepository
-} from '@arkade-os/sdk'
-
-const wallet = await Wallet.create({
-  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  storage: {
-    walletRepository: new InMemoryWalletRepository(),
-    contractRepository: new InMemoryContractRepository()
-  }
-})
-```
+Use repository implementations via `StorageConfig`. If you omit `storage`, the
+SDK uses IndexedDB repositories with the default database name.
 
 ### Using with Node.js
 
@@ -1406,7 +1234,7 @@ When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it
 
 HD wallets (`walletMode: 'hd'`, or an explicit HD `DescriptorProvider`) also watch a band of *unused* offchain receive scripts around their allocation watermark, so a payment to an address that some other party issued from the same seed — a merchant backend such as BTCPay Server, or the .NET SDK driving the same wallet — arrives without the user calling `restore()`. `lookAheadWindow` (default `20`) is the per-side width of that band: the wallet watches `[watermark - N, watermark + N]`. Speculative entries are subscription-only; they become contract rows, and enter balances, only once funded.
 
-The issuer, not the wallet, picks the contract shape, so each index is watched at *every* variant the wallet could own there: `default` and `delegate`, crossed with the unilateral-exit timelock matrix and the operator's current plus deprecated signers. That is the candidate set `restore()` probes too, so watching and restoring cover identical scripts.
+The issuer, not the wallet, picks the contract shape, so each index is watched at *every* variant the wallet could own there: `default` and `delegate`, crossed with the unilateral-exit timelock matrix and the operator's active plus retired signers. That is the candidate set `restore()` probes too, so watching and restoring cover identical scripts.
 
 ```typescript
 const wallet = await Wallet.create({
@@ -1471,7 +1299,7 @@ const paths = manager.getSpendablePaths({
   contractScript: contract.script,
   vtxo,
   collaborative: true,
-  walletPubKey: myPubKey,
+  walletDescriptor: myDescriptor,
 })
 if (paths.length > 0) {
   console.log('Contract is spendable via:', paths[0].leaf)
@@ -1481,7 +1309,7 @@ if (paths.length > 0) {
 const allPaths = await manager.getAllSpendingPaths({
   contractScript: contract.script,
   collaborative: true,
-  walletPubKey: myPubKey,
+  walletDescriptor: myDescriptor,
 })
 
 // Fetch contracts together with their current virtual outputs

@@ -309,7 +309,7 @@ export async function restoreAssetSwaps(
         const vtxo = vtxoByScriptAndTxid.get(
             `${hex.encode(offer.swapPkScript)}:${fundingTx.redeemTxid}`,
         );
-        if (vtxo?.virtualStatus.state !== "spent") continue;
+        if (!vtxo?.isSpent) continue;
         for (const txid of spendTxidsOf(vtxo)) spendTxids.add(txid);
     }
     const spendTxByTxid = await fetchParsedTxs(indexer, [...spendTxids]);
@@ -350,11 +350,10 @@ export async function restoreAssetSwaps(
         }
         const fromAmount = depositAmount.toString();
 
-        const state = vtxo.virtualStatus.state;
-        const spentTxid = state === "spent" ? vtxo.arkTxId || vtxo.spentBy : undefined;
+        const spentTxid = vtxo.isSpent ? vtxo.arkTxId || vtxo.spentBy : undefined;
         let status: AssetSwapStatus = "pending";
-        if (state === "swept") status = "recoverable";
-        else if (state === "spent") {
+        if (vtxo.isSwept) status = "recoverable";
+        else if (vtxo.isSpent) {
             const spendTxs = spendTxidsOf(vtxo)
                 .map((id) => spendTxByTxid.get(id))
                 .filter((tx): tx is Transaction => tx !== undefined);

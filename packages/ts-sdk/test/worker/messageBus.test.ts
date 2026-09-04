@@ -1244,7 +1244,7 @@ describe("MessageBus init serialization (Iteration 1)", () => {
 
 describe("MessageBus default buildServices", () => {
     const config = {
-        wallet: { privateKey: "15".repeat(32) },
+        wallet: { type: "single-key", privateKey: "15".repeat(32) },
         arkServer: { url: "https://ark.example.test" },
     } as never;
 

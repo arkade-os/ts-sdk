@@ -640,7 +640,7 @@ describe("the offer half", () => {
             corridors: fakeCorridors(),
             indexer: fakeIndexer({
                 txs: [funding],
-                vtxos: [offerDeposit(funding.txid, "swept")],
+                vtxos: [offerDeposit(funding.txid, { isSwept: true })],
             }),
             contracts,
             now: () => BEFORE,
@@ -682,7 +682,7 @@ describe("the offer half", () => {
             corridors: fakeCorridors(),
             indexer: fakeIndexer({
                 txs: [funding],
-                vtxos: [offerDeposit(funding.txid, "settled")],
+                vtxos: [offerDeposit(funding.txid)],
             }),
             contracts,
             now: () => BEFORE,

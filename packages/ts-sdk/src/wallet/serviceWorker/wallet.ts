@@ -1,7 +1,6 @@
 import {
     IWallet,
     WalletBalance,
-    SendBitcoinParams,
     SettleParams,
     ArkTransaction,
     ExtendedCoin,
@@ -27,7 +26,6 @@ import {
     Identity,
     ReadonlyIdentity,
     type SerializedIdentity,
-    type LegacySerializedIdentity,
     serializeReadonlyIdentity,
     serializeSigningIdentity,
     isSigningIdentity,
@@ -69,7 +67,6 @@ import {
     RequestRefreshVtxos,
     RequestRefreshOutpoints,
     RequestReloadWallet,
-    RequestSendBitcoin,
     RequestSettle,
     ResponseSettle,
     ResponseSettleEvent,
@@ -93,7 +90,6 @@ import {
     ResponseGetSpendableVtxos,
     ResponseIsContractManagerWatching,
     ResponseReloadWallet,
-    ResponseSendBitcoin,
     ResponseUpdateContract,
     ResponseCreateContract,
     ResponseContractEvent,
@@ -185,7 +181,7 @@ import {
     isMessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
 } from "../../worker/errors";
-import { getArkadeServerUrl, type ProviderConnectionState } from "../wallet";
+import type { ProviderConnectionState } from "../wallet";
 import { normalizeVtxo, type NormalizedExtendedVirtualCoin } from "../vtxo";
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -266,7 +262,6 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // SETTLE / RECOVER_VTXOS / RENEW_VTXOS go through the streaming path and
     // are treated as long-running on both sides of the bus: the values below
     // are retained only for type completeness and are never enforced.
-    SEND_BITCOIN: 50_000,
     SEND: 50_000,
     SETTLE: 50_000,
     // Broadcast: the server round-trip a spend ends in, so it belongs
@@ -399,7 +394,7 @@ class ServiceWorkerAssetManager extends ServiceWorkerReadonlyAssetManager implem
  * // SIMPLE: Recommended approach
  * const wallet = await ServiceWorkerWallet.setup({
  *   serviceWorkerPath: '/service-worker.js',
- *   arkServerUrl: 'https://arkade.computer',
+ *   arkServer: { url: 'https://arkade.computer' },
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
  * });
  *
@@ -407,7 +402,7 @@ class ServiceWorkerAssetManager extends ServiceWorkerReadonlyAssetManager implem
  * const serviceWorker = await setupServiceWorker("/service-worker.js");
  * const wallet = await ServiceWorkerWallet.create({
  *   serviceWorker,
- *   arkServerUrl: 'https://arkade.computer',
+ *   arkServer: { url: 'https://arkade.computer' },
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
  * });
  *
@@ -417,27 +412,11 @@ class ServiceWorkerAssetManager extends ServiceWorkerReadonlyAssetManager implem
  * ```
  */
 interface ServiceWorkerWalletOptions {
-    /** Optional Arkade server public key used to construct and validate Arkade addresses. */
-    arkServerPublicKey?: string;
-    /**
-     * Base URL of the Arkade server.
-     *
-     * @deprecated Provide an explicit provider via the worker config instead.
-     * URL-based configuration will be removed in a future major version.
-     */
-    arkServerUrl?: string;
-    /**
-     * Optional override for the indexer URL.
-     *
-     * @deprecated Provide an explicit provider via the worker config instead.
-     */
-    indexerUrl?: string;
-    /**
-     * Optional override for the Esplora API URL.
-     *
-     * @deprecated Provide an explicit provider via the worker config instead.
-     */
-    esploraUrl?: string;
+    /** Arkade server endpoint and optional public key. */
+    arkServer?: {
+        url: string;
+        publicKey?: string;
+    };
     /**
      * Repository-backed storage configuration overrides.
      * Defaults to IndexedDB if unset.
@@ -447,8 +426,6 @@ interface ServiceWorkerWalletOptions {
     identity: ReadonlyIdentity | Identity;
     /** Optional delegation service URL. */
     delegateUrl?: string;
-    /** @deprecated alias for @see ServiceWorkerWalletOptions.delegateUrl */
-    delegatorUrl?: string;
     /**
      * Override the default tag used for messages sent to and received from the service worker.
      * @see DEFAULT_MESSAGE_TAG
@@ -519,16 +496,12 @@ export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
 };
 
 type MessageBusInitConfig = {
-    wallet: SerializedIdentity | LegacySerializedIdentity;
+    wallet: SerializedIdentity;
     arkServer: {
         url: string;
         publicKey?: string;
     };
     delegateUrl?: string;
-    /** @deprecated alias for @see MessageBusInitConfig.delegateUrl */
-    delegatorUrl?: string;
-    indexerUrl?: string;
-    esploraUrl?: string;
     timeoutMs?: number;
     settlementConfig?: SettlementConfig | false;
     walletMode?: ServiceWorkerWalletMode;
@@ -593,13 +566,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     // Denormalized from options so buildInitConfig() can rebuild the init
     // envelope on demand for SDK-factory-created wallets. `create()` sets
     // these immediately after construction.
-    protected arkServerUrl?: string;
-    protected arkServerPublicKey?: string;
+    protected arkServer?: { url: string; publicKey?: string };
     protected delegateUrl?: string;
-    /** @deprecated alias for @see ServiceWorkerReadonlyWallet.delegateUrl */
-    protected delegatorUrl?: string;
-    protected indexerUrl?: string;
-    protected esploraUrl?: string;
     protected watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
     protected settlementConfig?: SettlementConfig | false;
     private reinitPromise: Promise<void> | null = null;
@@ -659,18 +627,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         const serializedWallet = await serializeReadonlyIdentity(options.identity);
 
-        // INIT_WALLET retains the legacy `key` payload for wire compatibility
-        // with older workers; the current handler does not read it.
-        const publicKey = await options.identity.compressedPublicKey().then(hex.encode);
+        const arkServer = options.arkServer ?? { url: "https://arkade.computer" };
         const initWalletPayload = {
-            key: { publicKey },
-            arkServerUrl: getArkadeServerUrl(options),
-            arkServerPublicKey: options.arkServerPublicKey,
-            delegateUrl: options.delegateUrl || options.delegatorUrl,
-            // Keep the deprecated field populated so pre-#519 service workers
-            // (which only read delegatorUrl) keep delegating until they activate
-            // a newer version.
-            delegatorUrl: options.delegateUrl || options.delegatorUrl,
+            arkServerUrl: arkServer.url,
+            arkServerPublicKey: arkServer.publicKey,
         };
 
         // Precompute the merged timeout map so page-side waiting and
@@ -684,17 +644,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         const busInitConfig: MessageBusInitConfig = {
             wallet: serializedWallet,
-            arkServer: {
-                url: getArkadeServerUrl(options),
-                publicKey: options.arkServerPublicKey,
-            },
-            delegateUrl: options.delegateUrl || options.delegatorUrl,
-            // Keep the deprecated field populated so pre-#519 service workers
-            // (which only read delegatorUrl) keep delegating until they activate
-            // a newer version.
-            delegatorUrl: options.delegateUrl || options.delegatorUrl,
-            indexerUrl: options.indexerUrl,
-            esploraUrl: options.esploraUrl,
+            arkServer,
+            delegateUrl: options.delegateUrl,
             watcherConfig: options.watcherConfig,
             messageTimeouts,
         };
@@ -740,7 +691,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      * ```typescript
      * const wallet = await ServiceWorkerReadonlyWallet.setup({
      *   serviceWorkerPath: '/service-worker.js',
-     *   arkServerUrl: 'https://arkade.computer',
+     *   arkServer: { url: 'https://arkade.computer' },
      *   identity: ReadonlySingleKey.fromPublicKey('your_public_key_hex')
      * });
      * ```
@@ -953,23 +904,14 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      */
     protected async buildInitConfig(): Promise<MessageBusInitConfig> {
         if (this.initConfig) return this.initConfig;
-        if (!this.arkServerUrl) {
+        if (!this.arkServer) {
             throw new Error("Cannot re-initialize: wallet was not initialized via the SDK factory");
         }
         const wallet = await this.serializeIdentity();
         this.initConfig = {
             wallet,
-            arkServer: {
-                url: this.arkServerUrl,
-                publicKey: this.arkServerPublicKey,
-            },
-            delegateUrl: this.delegateUrl || this.delegatorUrl,
-            // Keep the deprecated field populated so pre-#519 service workers
-            // (which only read delegatorUrl) keep delegating until they activate
-            // a newer version.
-            delegatorUrl: this.delegateUrl || this.delegatorUrl,
-            indexerUrl: this.indexerUrl,
-            esploraUrl: this.esploraUrl,
+            arkServer: this.arkServer,
+            delegateUrl: this.delegateUrl,
             watcherConfig: this.watcherConfig,
             settlementConfig: this.settlementConfig,
         };
@@ -979,14 +921,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     /** Minimal INIT_WALLET payload used on reinitialize when the cache is gone. */
     protected buildInitWalletPayload(): RequestInitWallet["payload"] {
         if (this.initWalletPayload) return this.initWalletPayload;
-        if (!this.arkServerUrl) {
+        if (!this.arkServer) {
             throw new Error("Cannot re-initialize: wallet was not initialized via the SDK factory");
         }
         this.initWalletPayload = {
-            // `key` is deprecated and ignored by the current handler.
-            key: {},
-            arkServerUrl: this.arkServerUrl,
-            arkServerPublicKey: this.arkServerPublicKey,
+            arkServerUrl: this.arkServer.url,
+            arkServerPublicKey: this.arkServer.publicKey,
         };
         return this.initWalletPayload;
     }
@@ -1762,24 +1702,13 @@ export class ServiceWorkerWallet
             walletRepository,
             contractRepository,
             messageTag,
-            !!(options.delegateUrl || options.delegatorUrl),
+            !!options.delegateUrl,
         );
 
-        // INIT_WALLET retains the legacy `key` payload for wire compatibility
-        // with older workers; the current handler does not read it, and only
-        // SingleKey-style identities can populate it. Kept optional so seed /
-        // mnemonic identities simply omit it.
-        const legacyPrivateKey =
-            serializedWallet.type === "single-key" ? serializedWallet.privateKey : null;
+        const arkServer = options.arkServer ?? { url: "https://arkade.computer" };
         const initWalletPayload = {
-            key: legacyPrivateKey ? { privateKey: legacyPrivateKey } : {},
-            arkServerUrl: getArkadeServerUrl(options),
-            arkServerPublicKey: options.arkServerPublicKey,
-            delegateUrl: options.delegateUrl || options.delegatorUrl,
-            // Keep the deprecated field populated so pre-#519 service workers
-            // (which only read delegatorUrl) keep delegating until they activate
-            // a newer version.
-            delegatorUrl: options.delegateUrl || options.delegatorUrl,
+            arkServerUrl: arkServer.url,
+            arkServerPublicKey: arkServer.publicKey,
         };
 
         // Precompute the merged timeout map so page-side waiting and
@@ -1793,17 +1722,8 @@ export class ServiceWorkerWallet
 
         const busInitConfig: MessageBusInitConfig = {
             wallet: serializedWallet,
-            arkServer: {
-                url: getArkadeServerUrl(options),
-                publicKey: options.arkServerPublicKey,
-            },
-            delegateUrl: options.delegateUrl || options.delegatorUrl,
-            // Keep the deprecated field populated so pre-#519 service workers
-            // (which only read delegatorUrl) keep delegating until they activate
-            // a newer version.
-            delegatorUrl: options.delegateUrl || options.delegatorUrl,
-            indexerUrl: options.indexerUrl,
-            esploraUrl: options.esploraUrl,
+            arkServer,
+            delegateUrl: options.delegateUrl,
             settlementConfig: options.settlementConfig,
             walletMode: options.walletMode,
             watcherConfig: options.watcherConfig,
@@ -1851,7 +1771,7 @@ export class ServiceWorkerWallet
      * ```typescript
      * const wallet = await ServiceWorkerWallet.setup({
      *   serviceWorkerPath: '/service-worker.js',
-     *   arkServerUrl: 'https://arkade.computer',
+     *   arkServer: { url: 'https://arkade.computer' },
      *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
      * });
      * ```
@@ -2026,22 +1946,6 @@ export class ServiceWorkerWallet
         };
     }
 
-    async sendBitcoin(params: SendBitcoinParams): Promise<string> {
-        const message: RequestSendBitcoin = {
-            id: getRandomId(),
-            tag: this.messageTag,
-            type: "SEND_BITCOIN",
-            payload: params,
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            return (response as ResponseSendBitcoin).payload.txid;
-        } catch (error) {
-            throw new Error(`Failed to send bitcoin: ${error}`);
-        }
-    }
-
     async settle(
         params?: SettleParams,
         callback?: (event: SettlementEvent) => void,
@@ -2174,11 +2078,6 @@ export class ServiceWorkerWallet
         };
 
         return manager;
-    }
-
-    /** @deprecated alias for @see ServiceWorkerWallet.getDelegateManager */
-    async getDelegatorManager() {
-        return await this.getDelegateManager();
     }
 
     async getVtxoManager(): Promise<IVtxoManager> {

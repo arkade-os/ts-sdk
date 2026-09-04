@@ -159,7 +159,7 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
      * simple `tr(pubkey)` descriptors.
      */
     isOurs(descriptor: string): boolean {
-        return this.identity.isOurs(descriptor);
+        return this.identity.ownsDescriptor(descriptor);
     }
 
     /**
@@ -168,7 +168,7 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
      * holds the seed.
      */
     async signWithDescriptor(requests: DescriptorSigningRequest[]): Promise<Transaction[]> {
-        return this.identity.signWithDescriptor(requests);
+        return this.identity.signDescriptorTransactions(requests);
     }
 
     /** Signs a message using the key derived from `descriptor`. */
@@ -177,7 +177,7 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
         message: Uint8Array,
         signatureType: "schnorr" | "ecdsa" = "schnorr",
     ): Promise<Uint8Array> {
-        return this.identity.signMessageWithDescriptor(descriptor, message, signatureType);
+        return this.identity.signDescriptorMessage(descriptor, message, signatureType);
     }
 
     /**

@@ -255,16 +255,15 @@ describe("Wallet recipient address binding", () => {
         expect(mockFetch.mock.calls.length).toBe(fetchCallsAfterCreate);
     });
 
-    it("sendBitcoin with selected vtxos rejects a foreign-operator address", async () => {
+    it("send with selected vtxos rejects a foreign-operator address", async () => {
         const wallet = await Wallet.create({
             identity: mockIdentity,
             arkServerUrl: "http://localhost:7070",
         });
 
         await expect(
-            wallet.sendBitcoin({
-                address: encodeAddr(FOREIGN_XONLY, "tark"),
-                amount: 2000,
+            wallet.send({
+                recipients: [{ address: encodeAddr(FOREIGN_XONLY, "tark"), amount: 2000 }],
                 selectedVtxos: [{ value: 100_000 } as never],
             }),
         ).rejects.toThrow(/unknown operator signer key/);

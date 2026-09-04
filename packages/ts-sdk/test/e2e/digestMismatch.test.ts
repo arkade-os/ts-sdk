@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import {
-    ArkInfo,
+    ArkadeInfo,
     DigestMismatchError,
     EsploraProvider,
     InMemoryContractRepository,
@@ -113,7 +113,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
      */
     type DigestProbe = {
         _digest: string;
-        onServerInfoChanged(listener: (info: ArkInfo) => void): () => void;
+        onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void;
     };
 
     // Order matters: restore baseline signer A BEFORE the faucet redeems notes.
@@ -142,7 +142,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
             expect(digestA).not.toBe("");
 
             // Record every refreshed info the provider emits on a mismatch.
-            const emitted: ArkInfo[] = [];
+            const emitted: ArkadeInfo[] = [];
             probe.onServerInfoChanged((info) => emitted.push(info));
 
             // Fund a real VTXO under A (the ark CLI faucet only funds while

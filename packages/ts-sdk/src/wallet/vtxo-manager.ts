@@ -14,7 +14,6 @@ import {
     isPastExpiry,
     normalizeVtxo,
     resolveTimeHeight,
-    toBatchExpiry,
     toOffchainInputFeeParams,
     type NormalizedExtendedVirtualCoin,
     type TimeHeight,
@@ -416,32 +415,6 @@ export const DEFAULT_THRESHOLD_SECONDS = 259_200;
 export const DEFAULT_THRESHOLD_MS = DEFAULT_THRESHOLD_SECONDS * 1000;
 
 /**
- * Configuration options for automatic virtual output renewal
- *
- * @see DEFAULT_RENEWAL_CONFIG
- * @deprecated Leave `renewalConfig` undefined and use `settlementConfig` instead.
- * @see SettlementConfig
- */
-export interface RenewalConfig {
-    /**
-     * Enable automatic renewal monitoring
-     *
-     * @defaultValue `false`
-     * @deprecated Explicitly set `settlementConfig` to `false` to disable VTXO renewal.
-     */
-    enabled?: boolean;
-
-    /**
-     * Threshold in milliseconds to use as threshold for renewal
-     * E.g., 86_400_000 means renew when 24 hours until expiry remains
-     *
-     * @defaultValue `259_200_000` (3 days).
-     * @deprecated Use `SettlementConfig.vtxoThreshold` (in seconds) instead.
-     */
-    thresholdMs?: number;
-}
-
-/**
  * Configuration for automatic settlement and renewal.
  *
  * Controls two behaviors:
@@ -533,17 +506,6 @@ export interface SettlementConfig {
      */
     deprecatedSignerMigration?: boolean;
 }
-
-/**
- * Default renewal configuration values.
- *
- * @see RenewalConfig
- * @deprecated Leave `renewalConfig` undefined and use `settlementConfig` instead.
- * @see SettlementConfig
- */
-export const DEFAULT_RENEWAL_CONFIG: Required<Omit<RenewalConfig, "enabled">> = {
-    thresholdMs: DEFAULT_THRESHOLD_MS, // 3 days
-};
 
 /**
  * Default settlement configuration values.
@@ -1163,26 +1125,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     constructor(
         readonly wallet: IWallet,
-        /** @deprecated Use settlementConfig instead */
-        readonly renewalConfig?: RenewalConfig,
         settlementConfig?: SettlementConfig | false,
     ) {
-        // Normalize: prefer settlementConfig, fall back to renewalConfig, default to enabled
-        if (settlementConfig !== undefined) {
-            this.settlementConfig = settlementConfig;
-        } else if (renewalConfig && renewalConfig.enabled) {
-            this.settlementConfig = {
-                vtxoThreshold: renewalConfig.thresholdMs
-                    ? renewalConfig.thresholdMs / 1000
-                    : undefined,
-            };
-        } else if (renewalConfig) {
-            // renewalConfig provided but not enabled → disabled
-            this.settlementConfig = false;
-        } else {
-            // No config at all → enabled by default
-            this.settlementConfig = { ...DEFAULT_SETTLEMENT_CONFIG };
-        }
+        this.settlementConfig =
+            settlementConfig !== undefined ? settlementConfig : { ...DEFAULT_SETTLEMENT_CONFIG };
 
         this.contractEventsSubscriptionReady = this.initializeSubscription();
     }
@@ -1582,7 +1528,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const vtxos = await this.wallet.getSpendableVtxos({ withRecoverable: true });
 
-        // Resolve threshold: method param > settlementConfig (seconds→ms) > renewalConfig > default
+        // Resolve threshold: method param > settlementConfig (seconds→ms) > default
         let threshold: number;
         if (thresholdMs !== undefined) {
             threshold = thresholdMs;
@@ -1593,7 +1539,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         ) {
             threshold = this.settlementConfig.vtxoThreshold * 1000;
         } else {
-            threshold = this.renewalConfig?.thresholdMs ?? DEFAULT_RENEWAL_CONFIG.thresholdMs;
+            threshold = DEFAULT_THRESHOLD_MS;
         }
 
         return getExpiringAndRecoverableVtxos(
@@ -1675,7 +1621,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             ) {
                 threshold = this.settlementConfig.vtxoThreshold * 1000;
             } else {
-                threshold = DEFAULT_RENEWAL_CONFIG.thresholdMs;
+                threshold = DEFAULT_THRESHOLD_MS;
             }
             // One chain tip for the whole pass — see `selectExpiringVtxos`.
             const now = await fetchTimeHeight(this.wallet);
@@ -2371,7 +2317,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 awaitingSweepCount = spendable.length;
                 awaitingSweepValue = value;
                 for (const v of spendable) {
-                    const exp = toBatchExpiry(v);
+                    const exp = v.expiresAt?.getTime();
                     if (exp !== undefined && (nextSweepEta === undefined || exp < nextSweepEta)) {
                         nextSweepEta = exp;
                     }
@@ -2915,7 +2861,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }
         // Re-select from the now-fresh local cache. Anything previously
         // selected but spent gets filtered out by the standard
-        // `isSpendable`/`isSpent` checks inside getVtxos / getExpiringVtxos.
+        // spendability checks inside getVtxos / getExpiringVtxos.
         try {
             const refreshed = await this.selectExpiringVtxos(thresholdMs, now);
             const candidateKeys = new Set(candidates.map((v) => `${v.txid}:${v.vout}`));

@@ -210,7 +210,7 @@ describe("maker-side swap loop (regtest)", () => {
 
         // and the deposit is still there to be cancelled below
         const { vtxos } = await indexer.getVtxos({ scripts: [hex.encode(offer.swapPkScript)] });
-        expect(vtxos.find((v) => v.txid === fundingTxid)?.virtualStatus.state).not.toBe("spent");
+        expect(vtxos.find((v) => v.txid === fundingTxid)?.isSpent).not.toBe(true);
     }, 120_000);
 
     it("cancels the deposit cooperatively and restores it as cancelled", async () => {
@@ -231,7 +231,7 @@ describe("maker-side swap loop (regtest)", () => {
         await waitFor(async () => {
             const { vtxos } = await indexer.getVtxos({ scripts: [script] });
             const vtxo = vtxos.find((v) => v.txid === fundingTxid);
-            return vtxo?.virtualStatus.state === "spent";
+            return vtxo?.isSpent === true;
         });
 
         // a fresh restore (empty store, as after a wallet wipe) must classify

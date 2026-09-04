@@ -246,25 +246,21 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
-    it("handles SEND_BITCOIN messages", async () => {
+    it("handles SEND messages", async () => {
         (updater as any).readonlyWallet = {};
-        (updater as any).wallet = {};
-        const sendSpy = vi.fn().mockResolvedValue({
-            type: "SEND_BITCOIN_SUCCESS",
-            payload: { txid: "tx" },
-        });
-        (updater as any).handleSendBitcoin = sendSpy;
+        const sendSpy = vi.fn().mockResolvedValue("tx");
+        (updater as any).wallet = { send: sendSpy };
 
         const response = await updater.handleMessage({
             ...baseMessage(),
-            type: "SEND_BITCOIN",
-            payload: { address: "addr", amount: 1 },
+            type: "SEND",
+            payload: { recipients: [{ address: "addr", amount: 1 }] },
         } as any);
 
-        expect(sendSpy).toHaveBeenCalled();
+        expect(sendSpy).toHaveBeenCalledWith({ address: "addr", amount: 1 });
         expect(response).toMatchObject({
             tag: updater.messageTag,
-            type: "SEND_BITCOIN_SUCCESS",
+            type: "SEND_SUCCESS",
             payload: { txid: "tx" },
         });
     });
@@ -1611,8 +1607,8 @@ describe("WalletMessageHandler handleMessage", () => {
 
         const sendRes = await updater.handleMessage({
             ...baseMessage(),
-            type: "SEND_BITCOIN",
-            payload: { address: "addr", amount: 1 },
+            type: "SEND",
+            payload: { recipients: [{ address: "addr", amount: 1 }] },
         } as any);
         expect(sendRes.error).toBeInstanceOf(Error);
         expect(sendRes.error?.message).toBe("Read-only wallet: operation requires signing");
@@ -1748,7 +1744,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const recoverable = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 50000,
-            virtualStatus: { state: "swept" },
+            isSwept: true,
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, recoverable]);
 
@@ -1855,7 +1851,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const preconfirmed = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 50000,
-            virtualStatus: { state: "preconfirmed" },
+            isPreconfirmed: true,
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, preconfirmed]);
 
@@ -2294,7 +2290,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const preconfirmed = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 50000,
-            virtualStatus: { state: "preconfirmed" },
+            isPreconfirmed: true,
         });
         const settled = createMockExtendedVtxo({
             txid: "bb".repeat(32),
@@ -2304,7 +2300,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const swept = createMockExtendedVtxo({
             txid: "cc".repeat(32),
             value: 20000,
-            virtualStatus: { state: "swept" },
+            isSwept: true,
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [preconfirmed, settled, swept]);
 

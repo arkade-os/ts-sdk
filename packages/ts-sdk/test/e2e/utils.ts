@@ -13,7 +13,7 @@ import {
     IntentFeeConfig,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    ArkInfo,
+    ArkadeInfo,
     ArkProvider,
     RestArkProvider,
     WalletRepository,
@@ -390,7 +390,7 @@ export async function waitFor(
  */
 export function createOverrideInfoArkProvider(
     real: ArkProvider,
-    overrides: Partial<ArkInfo>,
+    overrides: Partial<ArkadeInfo>,
 ): ArkProvider {
     return new Proxy(real, {
         get(target, prop, receiver) {
