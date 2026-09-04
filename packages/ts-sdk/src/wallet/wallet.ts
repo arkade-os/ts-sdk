@@ -6361,15 +6361,118 @@ export function selectVirtualCoins(
 }
 
 /**
- * Wait for incoming funds to the wallet
- * @param wallet - The wallet to wait for incoming funds
- * @returns A promise that resolves the next new coins received by the wallet's address
+ * Raised when a wait is cancelled through its `AbortSignal` or `timeoutMs`.
+ *
+ * `name` is `"AbortError"`, matching both the platform convention and the
+ * `error.name === "AbortError"` checks the provider layer already makes, so a
+ * caller can treat DOM and SDK aborts identically.
  */
-export async function waitForIncomingFunds(wallet: Wallet): Promise<IncomingFunds> {
+export class AbortError extends Error {
+    constructor(message = "Operation aborted") {
+        super(message);
+        this.name = "AbortError";
+    }
+}
+
+/** Options for {@link waitForIncomingFunds}. */
+export interface WaitForIncomingFundsOptions {
+    /**
+     * Cancels the wait. On abort the underlying subscription is stopped and
+     * the returned promise rejects — with the signal's `reason` when the
+     * caller supplied an `Error`, otherwise an {@link AbortError}.
+     */
+    signal?: AbortSignal;
+
+    /**
+     * Cancels the wait after this many milliseconds, rejecting with an
+     * {@link AbortError}. Equivalent to passing an `AbortSignal.timeout`
+     * signal, without requiring that API on the target platform.
+     */
+    timeoutMs?: number;
+}
+
+/**
+ * Surface an aborted signal's reason the way `fetch` does: pass a caller's
+ * `Error` through untouched, and synthesise an {@link AbortError} otherwise
+ * (a bare `abort()` sets a platform `DOMException`, which not every runtime
+ * the SDK targets exposes as an `Error`).
+ */
+function abortReason(signal: AbortSignal): unknown {
+    const { reason } = signal as AbortSignal & { reason?: unknown };
+    if (reason instanceof Error) return reason;
+    return new AbortError(typeof reason === "string" ? reason : undefined);
+}
+
+/**
+ * Wait for incoming funds to the wallet.
+ *
+ * This opens live network watchers (an onchain address subscription plus the
+ * wallet's indexer stream) and keeps them open until it settles. **Cancel it
+ * if you are not going to await it to completion** — pass a `signal` or a
+ * `timeoutMs`. Racing an uncancelled call against a timer (`Promise.race`)
+ * abandons the loser without stopping its watchers, and repeating that in a
+ * loop stacks subscriptions until the process exits.
+ *
+ * @param wallet - The wallet to wait for incoming funds
+ * @param options - Cancellation options; see {@link WaitForIncomingFundsOptions}
+ * @returns A promise that resolves the next new coins received by the wallet's address
+ * @throws {AbortError} If cancelled via `signal` or `timeoutMs`
+ * @example
+ * ```typescript
+ * // Wake early on a deposit, but give up after 30s and release the watchers.
+ * try {
+ *   const funds = await waitForIncomingFunds(wallet, { timeoutMs: 30_000 })
+ * } catch (e) {
+ *   if ((e as Error).name !== "AbortError") throw e
+ * }
+ * ```
+ */
+export async function waitForIncomingFunds(
+    wallet: Wallet,
+    options?: WaitForIncomingFundsOptions,
+): Promise<IncomingFunds> {
+    const { signal, timeoutMs } = options ?? {};
+
+    // Reject before opening any watcher at all — an already-aborted signal
+    // shouldn't cost a subscription that we immediately tear down.
+    if (signal?.aborted) throw abortReason(signal);
+
     let stopFunc: (() => void) | undefined;
     let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
 
-    return new Promise<IncomingFunds>((resolve) => {
+    return new Promise<IncomingFunds>((resolve, reject) => {
+        // One teardown path for all three exits (funds arrived, cancelled,
+        // subscription failed), so the watcher, the timeout timer and the
+        // abort listener can never outlive the promise.
+        const settle = (deliver: () => void) => {
+            if (settled) return;
+            settled = true;
+
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
+            if (onAbort) signal?.removeEventListener("abort", onAbort);
+            stopFunc?.();
+
+            deliver();
+        };
+
+        const cancel = (reason: unknown) => settle(() => reject(reason));
+
+        if (signal) {
+            onAbort = () => cancel(abortReason(signal));
+            // `settle` removes this on every exit path, so no `{ once: true }`:
+            // one removal mechanism, not two doing the same job.
+            signal.addEventListener("abort", onAbort);
+        }
+
+        if (timeoutMs !== undefined) {
+            timeoutId = setTimeout(
+                () => cancel(new AbortError(`waitForIncomingFunds timed out after ${timeoutMs}ms`)),
+                timeoutMs,
+            );
+        }
+
         wallet
             .notifyIncomingFunds((funds: IncomingFunds) => {
                 // `notifyIncomingFunds` also fires for purely outgoing activity:
@@ -6383,15 +6486,20 @@ export async function waitForIncomingFunds(wallet: Wallet): Promise<IncomingFund
                     funds.type === "utxo" ? funds.coins.length > 0 : funds.newVtxos.length > 0;
                 if (settled || !hasFunds) return;
 
-                settled = true;
-                resolve(funds);
-                stopFunc?.();
+                settle(() => resolve(funds));
             })
             .then((stop) => {
                 stopFunc = stop;
-                // The callback may have already resolved before the subscription
-                // handle was available; tear it down now so we don't leak it.
+                // The callback (or a cancellation) may have already settled
+                // before the subscription handle was available; tear it down
+                // now so we don't leak it.
                 if (settled) stop();
+            })
+            .catch((error) => {
+                // Without this the promise never settles *and* the rejection is
+                // unhandled: a caller awaiting a wallet whose providers are down
+                // would hang for the lifetime of the process. No-op once settled.
+                cancel(error);
             });
     });
 }
