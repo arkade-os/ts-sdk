@@ -45,6 +45,22 @@ export type ExplorerTransaction = {
     };
 };
 
+/** One half of {@link AddressStats}: confirmed or mempool activity. */
+type AddressActivity = {
+    tx_count: number;
+    funded_txo_count: number;
+    spent_txo_count: number;
+};
+
+/**
+ * Esplora's per-address summary (`GET /address/{addr}`) — how much activity an
+ * address has seen, without any of the transactions themselves.
+ */
+type AddressStats = {
+    chain_stats: AddressActivity;
+    mempool_stats: AddressActivity;
+};
+
 export interface OnchainProvider {
     /**
      * Fetch spendable onchain outputs for an address.
@@ -233,6 +249,20 @@ export class EsploraProvider implements OnchainProvider {
         if (!response.ok) {
             const error = await response.text();
             throw new Error(`Failed to get transactions: ${error}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Activity counts for an address, without its transactions — orders of
+     * magnitude smaller than `/address/{addr}/txs`, which is what makes it
+     * usable as a change probe for the polling fallback.
+     */
+    private async getAddressStats(address: string): Promise<AddressStats> {
+        const response = await baseFetch(`${this.baseUrl}/address/${address}`);
+        if (!response.ok) {
+            throw new Error(`Failed to get address stats: ${response.statusText}`);
         }
 
         return response.json();
@@ -476,24 +506,46 @@ export class EsploraProvider implements OnchainProvider {
              * Cheap stand-in for "has anything changed at these addresses".
              * `undefined` means "cannot answer" — never something mistakable for
              * "unchanged", which would hold a deposit back until it recovered.
+             *
+             * Counts, not the UTXO set: `/utxo` shows only what is still
+             * unspent, so a transaction confirming after its output was spent
+             * moves nothing there — while `txKey` changes with `block_time`,
+             * making that confirmation a report the probe would swallow.
+             *
+             * Pending activity answers "cannot answer" outright: a replacement
+             * can leave every count identical while the txid — and so the
+             * reportable key — changes. The idle watchers this exists for are
+             * the ones with an empty mempool.
+             *
+             * Residual: a reorg re-mining a transaction at a new `block_time`
+             * moves no count, so that re-report waits for the next real change.
              */
-            const utxoFingerprint = async (): Promise<string | undefined> => {
+            const activityFingerprint = async (): Promise<string | undefined> => {
                 try {
-                    const perAddress = await Promise.all(
-                        addresses.map((address) => this.getCoins(address)),
+                    const stats = await Promise.all(
+                        addresses.map((address) => this.getAddressStats(address)),
                     );
-                    const coins = perAddress.flat();
 
                     // An unrecognised shape can't be summarised; treat it as
                     // "cannot answer" rather than guess.
-                    const usable = coins.every(
-                        (coin) => typeof coin?.txid === "string" && typeof coin?.vout === "number",
+                    const counted = (activity?: AddressActivity) =>
+                        typeof activity?.tx_count === "number" &&
+                        typeof activity.funded_txo_count === "number" &&
+                        typeof activity.spent_txo_count === "number";
+                    const usable = stats.every(
+                        (s) => counted(s?.chain_stats) && counted(s?.mempool_stats),
                     );
                     if (!usable) return undefined;
 
-                    return coins
-                        .map((coin) => `${coin.txid}:${coin.vout}:${coin.status?.block_time ?? ""}`)
-                        .sort()
+                    if (stats.some((s) => s.mempool_stats.tx_count > 0)) return undefined;
+
+                    // Address order is fixed for this loop's life, so the
+                    // per-address counts need no sorting to line up.
+                    return stats
+                        .map(
+                            ({ chain_stats: chain }) =>
+                                `${chain.tx_count}:${chain.funded_txo_count}:${chain.spent_txo_count}`,
+                        )
                         .join(",");
                 } catch {
                     return undefined;
@@ -521,8 +573,8 @@ export class EsploraProvider implements OnchainProvider {
                 try {
                     // History is the expensive request and returns the same thing
                     // every cycle in the steady state, so only pay for it once
-                    // the UTXO set says something moved.
-                    const fingerprint = await utxoFingerprint();
+                    // the activity counts say something moved.
+                    const fingerprint = await activityFingerprint();
                     if (!isCurrentLoop()) return;
 
                     if (fingerprint !== undefined && fingerprint === lastFingerprint) {
@@ -543,7 +595,7 @@ export class EsploraProvider implements OnchainProvider {
 
                     // Only commit the fingerprint once the history fetch has
                     // succeeded: otherwise a transient failure in history
-                    // would mask the deposit until a *second* UTXO change.
+                    // would mask the deposit until a *second* change.
                     lastFingerprint = fingerprint;
 
                     if (baselined) {

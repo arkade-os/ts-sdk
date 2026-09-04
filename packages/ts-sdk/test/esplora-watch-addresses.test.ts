@@ -60,6 +60,13 @@ function deferred<T>() {
 
 const okJson = (data: unknown) => ({ ok: true, json: () => Promise.resolve(data) });
 
+/** The cheap change probe (`/address/{a}`), as opposed to the history below it. */
+const isProbeUrl = (url: string) => /\/address\/[^/]+$/.test(url);
+
+/** One probe per poll cycle, whether or not it went on to fetch history — so
+ *  this counts CYCLES, which is what the loop-identity tests are about. */
+const probeCount = () => mockFetch.mock.calls.filter((c) => isProbeUrl(String(c[0]))).length;
+
 const confirmedTx = (txid: string): ExplorerTransaction =>
     ({
         txid,
@@ -195,11 +202,10 @@ describe("EsploraProvider.watchAddresses", () => {
             expect(mockFetch).toHaveBeenCalledTimes(2);
 
             // And one loop: a single interval yields a single cycle, not one per
-            // stacked timer. Here the UTXO set is unchanged, so the cycle costs
-            // only the probe.
+            // stacked timer.
             mockFetch.mockClear();
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
-            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(probeCount()).toBe(1);
 
             stop();
             expect(vi.getTimerCount()).toBe(0);
@@ -374,22 +380,28 @@ describe("EsploraProvider.watchAddresses", () => {
     describe("cheap change gate", () => {
         // The incident this whole branch came from was steady-state polling with
         // nothing arriving: thousands of watchers each refetching full address
-        // history every 15s. `/utxo` is a fraction of the size, so probing it
-        // first and only paying for history when something actually changed is
+        // history every 15s. `/address/{a}` is a fraction of the size, so probing
+        // it first and only paying for history when something actually moved is
         // where the bandwidth goes.
-        const utxo = (txid: string, vout: number) => ({
-            txid,
-            vout,
-            value: 1000,
-            status: { confirmed: true, block_height: 1, block_time: 1 },
+        const stats = (confirmed: number, pending = 0) => ({
+            address: "addr1",
+            chain_stats: {
+                tx_count: confirmed,
+                funded_txo_count: confirmed,
+                spent_txo_count: 0,
+            },
+            mempool_stats: {
+                tx_count: pending,
+                funded_txo_count: pending,
+                spent_txo_count: 0,
+            },
         });
 
         const urlsOf = () => mockFetch.mock.calls.map((c) => String(c[0]));
 
-        it("skips the history fetch when the utxo set is unchanged", async () => {
-            let coins: unknown[] = [utxo("existing", 0)];
+        it("skips the history fetch when the activity counts are unchanged", async () => {
             mockFetch.mockImplementation((url: string) =>
-                Promise.resolve(url.includes("/utxo") ? okJson(coins) : okJson([])),
+                Promise.resolve(isProbeUrl(url) ? okJson(stats(1)) : okJson([])),
             );
 
             const provider = new EsploraProvider("http://localhost:3000", {
@@ -400,15 +412,15 @@ describe("EsploraProvider.watchAddresses", () => {
             mockFetch.mockClear();
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
 
-            expect(urlsOf().some((u) => u.includes("/utxo"))).toBe(true);
+            expect(urlsOf().some(isProbeUrl)).toBe(true);
             expect(urlsOf().some((u) => u.includes("/txs"))).toBe(false);
         });
 
-        it("falls through to history when the utxo set changes", async () => {
-            let coins: unknown[] = [utxo("existing", 0)];
+        it("falls through to history when the activity counts change", async () => {
+            let summary = stats(1);
             let history: unknown[] = [confirmedTx("existing")];
             mockFetch.mockImplementation((url: string) =>
-                Promise.resolve(url.includes("/utxo") ? okJson(coins) : okJson(history)),
+                Promise.resolve(isProbeUrl(url) ? okJson(summary) : okJson(history)),
             );
 
             const callback = vi.fn();
@@ -417,7 +429,7 @@ describe("EsploraProvider.watchAddresses", () => {
             });
             await provider.watchAddresses(["addr1"], callback);
 
-            coins = [utxo("existing", 0), utxo("arrived", 0)];
+            summary = stats(2);
             history = [confirmedTx("existing"), confirmedTx("arrived")];
             mockFetch.mockClear();
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
@@ -429,12 +441,12 @@ describe("EsploraProvider.watchAddresses", () => {
             ]);
         });
 
-        it("falls through to history when the utxo probe fails", async () => {
+        it("falls through to history when the probe fails", async () => {
             // Fail open: a probe that cannot answer must never be read as
             // "nothing changed", or a deposit waits for the probe to recover.
             mockFetch.mockImplementation((url: string) =>
-                url.includes("/utxo")
-                    ? Promise.reject(new Error("utxo unavailable"))
+                isProbeUrl(url)
+                    ? Promise.reject(new Error("address summary unavailable"))
                     : Promise.resolve(okJson([])),
             );
 
@@ -449,16 +461,86 @@ describe("EsploraProvider.watchAddresses", () => {
             expect(urlsOf().some((u) => u.includes("/txs"))).toBe(true);
         });
 
+        it("does not trust the counts while anything is still in the mempool", async () => {
+            // A replacement can leave every count identical while the txid — and
+            // so the key the watch reports on — changes. Pending activity means
+            // "cannot answer", not "unchanged".
+            mockFetch.mockImplementation((url: string) =>
+                Promise.resolve(
+                    isProbeUrl(url) ? okJson(stats(1, 1)) : okJson([unconfirmedTx("pending")]),
+                ),
+            );
+
+            const provider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+            });
+            await provider.watchAddresses(["addr1"], () => {});
+
+            mockFetch.mockClear();
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+
+            expect(urlsOf().some((u) => u.includes("/txs"))).toBe(true);
+        });
+
+        it("reports a confirmation even though the address kept no unspent output", async () => {
+            // Regression: the probe used to summarise the UTXO SET, which
+            // describes only what is still unspent. Here a deposit is swept
+            // while it is still unconfirmed, so the address holds nothing
+            // unspent before OR after the pair confirms — yet `txKey` carries
+            // `block_time`, which makes that confirmation a genuine report. The
+            // UTXO set is identical across it, so the old probe swallowed it.
+            let summary = {
+                address: "addr1",
+                chain_stats: { tx_count: 0, funded_txo_count: 0, spent_txo_count: 0 },
+                // The deposit funds one output; the sweep spends it. Both pending.
+                mempool_stats: { tx_count: 2, funded_txo_count: 1, spent_txo_count: 1 },
+            };
+            let history: unknown[] = [unconfirmedTx("deposit"), unconfirmedTx("sweep")];
+            mockFetch.mockImplementation((url: string) =>
+                Promise.resolve(isProbeUrl(url) ? okJson(summary) : okJson(history)),
+            );
+
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+            });
+            await provider.watchAddresses(["addr1"], callback);
+            expect(callback).not.toHaveBeenCalled();
+
+            // Both confirm. Nothing becomes spendable: the funded output was
+            // already spent, so an unspent-output probe sees no change at all.
+            summary = {
+                address: "addr1",
+                chain_stats: { tx_count: 2, funded_txo_count: 1, spent_txo_count: 1 },
+                mempool_stats: { tx_count: 0, funded_txo_count: 0, spent_txo_count: 0 },
+            };
+            history = [confirmedTx("deposit"), confirmedTx("sweep")];
+
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback.mock.calls[0][0]).toEqual([
+                expect.objectContaining({
+                    txid: "deposit",
+                    status: expect.objectContaining({ confirmed: true }),
+                }),
+                expect.objectContaining({
+                    txid: "sweep",
+                    status: expect.objectContaining({ confirmed: true }),
+                }),
+            ]);
+        });
+
         it("retries history on the next cycle if the first fetch fails after a probe success", async () => {
             // The bug this protects against: if history fails, the fingerprint
-            // must not be committed, or the next cycle (with the same UTXO set)
+            // must not be committed, or the next cycle (with the same counts)
             // will believe it has nothing to do and skip history forever.
-            let coins: unknown[] = [utxo("existing", 0)];
+            let summary = stats(1);
             let history: unknown[] = [confirmedTx("existing")];
             let historyFailures = 0;
 
             mockFetch.mockImplementation((url: string) => {
-                if (url.includes("/utxo")) return Promise.resolve(okJson(coins));
+                if (isProbeUrl(url)) return Promise.resolve(okJson(summary));
                 if (url.includes("/txs")) {
                     if (historyFailures++ === 1) {
                         // Fail the first poll cycle's history fetch (index 1;
@@ -476,8 +558,8 @@ describe("EsploraProvider.watchAddresses", () => {
             });
             await provider.watchAddresses(["addr1"], callback);
 
-            // Change the UTXO set so we fall through to history.
-            coins = [utxo("existing", 0), utxo("arrived", 0)];
+            // Move the counts so we fall through to history.
+            summary = stats(2);
             history = [confirmedTx("existing"), confirmedTx("arrived")];
 
             // 1st cycle: probe succeeds, history fails.
@@ -677,13 +759,13 @@ describe("EsploraProvider.watchAddresses", () => {
             await errorHandled;
             await flush();
 
-            // One poll loop, so one fetch round per interval — not one per loop.
-            // (Counting fetches rather than timers: a pending reconnect is a
+            // One poll loop, so one cycle per interval — not one per loop.
+            // (Counting probes rather than timers: a pending reconnect is a
             // legitimate timer too, so a raw count would conflate the two.)
             mockFetch.mockClear();
             mockFetch.mockResolvedValue(okJson([]));
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
-            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(probeCount()).toBe(1);
         });
 
         it("falls back to polling and retries when the WebSocket constructor throws", async () => {
@@ -707,7 +789,7 @@ describe("EsploraProvider.watchAddresses", () => {
             // satisfy a bare "was called" even with no polling at all.
             mockFetch.mockClear();
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
-            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(probeCount()).toBe(1);
 
             // And still reaching for the socket rather than settling for polling.
             expect(FakeWebSocket.instances.length).toBeGreaterThan(1);
