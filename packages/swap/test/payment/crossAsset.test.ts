@@ -25,7 +25,9 @@ import {
 
 const ARK_ADDR =
     "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
-const USDX_ID = "aa".repeat(32);
+// A real asset id: 34 bytes of hex. `AssetId.fromString` rejects anything
+// else, and `createOffer` binds `.txid`/`.groupIndex` off the parsed value.
+const USDX_ID = "aa".repeat(34);
 const USDX: Asset = { assetId: USDX_ID, amount: 500n };
 
 /** A BTC/USDX market: BTC is the base (the side this rail gives). */
@@ -114,7 +116,7 @@ describe("crossAssetRail.available", () => {
         // orientation, so a EURX/USDX market is never returned for
         // `(btc, USDX)` however well it connects the two. There is deliberately
         // no give-side check in the rail — one would be unreachable.
-        const eurx = market({ base_asset: { id: "bb".repeat(32), decimals: 2 } });
+        const eurx = market({ base_asset: { id: "bb".repeat(34), decimals: 2 } });
         const deps = depsWith({ discover: vi.fn(async () => [eurx]) });
         expect(await crossAssetRail(deps).available?.(req, ctxWith())).toBe(false);
     });
@@ -169,6 +171,20 @@ describe("crossAssetRail.available", () => {
             false,
         );
         // Every BTC-only payment in the wallet passes through here.
+        expect(discover).not.toHaveBeenCalled();
+    });
+
+    it("does not route an asset id createOffer could not bind", async () => {
+        // 32 bytes reads like an id and is not one — they are 34. Dropping here
+        // is what stops the failure landing at send time, with an offer funded.
+        const discover = vi.fn(async () => [market()]);
+        const rail = crossAssetRail(depsWith({ discover }));
+        expect(
+            await rail.available?.(
+                { raw: ARK_ADDR, assets: [{ assetId: "aa".repeat(32), amount: 500n }] },
+                ctxWith(),
+            ),
+        ).toBe(false);
         expect(discover).not.toHaveBeenCalled();
     });
 
@@ -335,6 +351,25 @@ describe("crossAssetRail.send", () => {
             txid: "pay-txid",
             swapId: offer.offerHex,
         });
+    });
+
+    it("hands createOffer a parsed AssetId, not the hex string", async () => {
+        // `createOffer` binds `.txid` and `.groupIndex` off this value to build
+        // the covenant. A raw `Asset.assetId` string has neither, so it would
+        // publish an offer with an undefined want-asset rather than throw —
+        // an offer nobody can fill and the user has funded.
+        let seen: unknown;
+        offerStub = async (..._args: unknown[]) => {
+            seen = (_args[2] as { wantAsset?: unknown }).wantAsset;
+            return offer;
+        };
+        const quote = await crossAssetRail(depsWith()).quote(req, ctxWith());
+        await (await quote.send()).settled();
+
+        const want = seen as { txid: Uint8Array; groupIndex: number; toString(): string };
+        expect(want.txid).toBeInstanceOf(Uint8Array);
+        expect(typeof want.groupIndex).toBe("number");
+        expect(want.toString()).toBe(USDX_ID);
     });
 
     it("hands the fill watcher the record it persisted", async () => {

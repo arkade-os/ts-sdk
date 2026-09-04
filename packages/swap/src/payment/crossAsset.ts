@@ -42,7 +42,13 @@
  */
 import type { DiscoveredMarket, OfferPlan, Side } from "@arkade-os/solver-discovery";
 import type { Asset, PaymentRail, RouteQuote, RouterContext } from "@arkade-os/sdk";
-import { arkTarget, assetsOf, makeHandle, resolveAssetAmount } from "@arkade-os/sdk";
+import {
+    arkTarget,
+    asset as assetExt,
+    assetsOf,
+    makeHandle,
+    resolveAssetAmount,
+} from "@arkade-os/sdk";
 import { createOffer } from "../offer";
 import { findMarket, validatePlan, type PlanError } from "../markets";
 import { BTC_ASSET_ID } from "../store";
@@ -97,6 +103,24 @@ export interface CrossAssetRailDeps {
 const DEFAULT_CARRIER_SATS = 330;
 
 /**
+ * The asset id as `createOffer` needs it, or undefined when it is not one.
+ *
+ * `Asset.assetId` is a hex STRING (that is what `Wallet.send` takes), and
+ * `createOffer` wants an `AssetId` — it reads `.txid` and `.groupIndex` off it
+ * to bind the covenant, so handing it the string would build an offer with an
+ * undefined want-asset rather than fail. Ids are 34 bytes; `fromString` throws
+ * on anything else, and returning undefined here lets `available()` drop the
+ * rail instead of the router.
+ */
+const parseAssetId = (assetId: string): assetExt.AssetId | undefined => {
+    try {
+        return assetExt.AssetId.fromString(assetId);
+    } catch {
+        return undefined;
+    }
+};
+
+/**
  * The rail. Register it after `ark-asset`, which pays out of a balance the
  * wallet already has:
  *
@@ -146,6 +170,9 @@ export function crossAssetRail(deps: CrossAssetRailDeps): PaymentRail {
             const [asset] = assets;
             if (asset.assetId === BTC_ASSET_ID) return false;
             if (typeof asset.amount !== "bigint" || asset.amount <= 0n) return false;
+            // Parsed here so an id `createOffer` could not bind drops the rail
+            // rather than failing at send time, with the offer already funded.
+            if (!parseAssetId(asset.assetId)) return false;
             // A discovery or feed failure propagates: the router catches it,
             // warns, and drops this rail, which is the intended fallback.
             const planned = await planFor(asset);
@@ -155,6 +182,13 @@ export function crossAssetRail(deps: CrossAssetRailDeps): PaymentRail {
         quote: async (req, ctx: RouterContext): Promise<RouteQuote> => {
             const payTo = arkTarget(req.raw)!;
             const asset = resolveAssetAmount(CROSS_ASSET_RAIL, req);
+            const wantAsset = parseAssetId(asset.assetId);
+            if (!wantAsset) {
+                throw new Error(
+                    `${CROSS_ASSET_RAIL}: ${asset.assetId} is not an asset id ` +
+                        `(expected 34 bytes of hex)`,
+                );
+            }
             const planned = await planFor(asset);
             if (!planned) {
                 throw new Error(`${CROSS_ASSET_RAIL}: no market swaps BTC into ${asset.assetId}`);
@@ -193,7 +227,7 @@ export function crossAssetRail(deps: CrossAssetRailDeps): PaymentRail {
                     makeHandle(CROSS_ASSET_RAIL, async (emit) => {
                         const offer = await createOffer(ctx.wallet, deps.arkServerUrl, {
                             wantAmount: asset.amount,
-                            wantAsset: asset.assetId as never,
+                            wantAsset,
                             ...(deps.emulatorPubkey ? { emulatorPubkey: deps.emulatorPubkey } : {}),
                         });
                         const swap: CrossAssetSwap = {

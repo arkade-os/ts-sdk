@@ -25,7 +25,7 @@ import {
 
 const ARK_ADDR =
     "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
-const USDX: Asset = { assetId: "aa".repeat(32), amount: 500n };
+const USDX: Asset = { assetId: "aa".repeat(34), amount: 500n };
 
 const ctx = (send = vi.fn(async () => "txid")): RouterContext =>
     ({ wallet: { send } as never, prefs: {} }) as RouterContext;
