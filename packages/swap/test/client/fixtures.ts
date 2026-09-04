@@ -505,7 +505,15 @@ export const acceptWallet = async (
                     })),
                 ),
             }),
+            // The drive's lockup read asks for both halves; nothing here has a
+            // spend to show, which reads as "nothing learned" and leaves every
+            // deadline to decide the swap.
+            getVirtualTxs: async () => ({ txs: [] }),
         }),
+        // The offer half of the drive's construction restore scans sent
+        // transactions for offer packets. An empty history is the honest answer
+        // for a wallet that has funded nothing outside this test.
+        getTransactionHistory: async () => [],
         send: async (recipient: SentPayment) => {
             const failure = over.failSend?.();
             if (failure) throw failure;

@@ -55,6 +55,60 @@ import {
 const TERMINAL: readonly AssetSwapStatus[] = ["fulfilled", "cancelled", "recoverable"];
 
 /**
+ * What this watcher needs to know about an offer swap.
+ *
+ * Structural, and narrower than {@link AssetSwap}, because two record families
+ * now answer the same question. v1 keys its records on the funding txid — the
+ * deposit IS the identity, so no record can exist before the money does — while
+ * the v2 client keys on the quote id and writes the record BEFORE funding, with
+ * `fundingTxid` a later best-effort write. Projecting the second onto the first
+ * is impossible for the whole pre-funding window, so the parameter widens
+ * instead: `id` is whatever key the source stores under, and the spend is
+ * matched on `fundingTxid` and `swapPkScript`, which both families carry.
+ *
+ * `createdAt` is unix **milliseconds**, the unit `coverage.ts` marks issuance
+ * in; see {@link CoveredSwap}.
+ */
+export interface OfferSwapFacts {
+    readonly id: string;
+    readonly status: AssetSwapStatus;
+    /** The TLV offer, hex — what {@link classifyDepositSpend} needs. */
+    readonly offerHex: string;
+    readonly swapPkScript: string;
+    readonly fundingTxid?: string;
+    readonly spentTxid?: string;
+    readonly createdAt: number;
+}
+
+/** The record change a classified spend implies. */
+export interface OfferSpendChanges {
+    readonly status: AssetSwapStatus;
+    readonly spentTxid: string;
+    readonly completedAt?: number;
+}
+
+/**
+ * Where the watcher reads offer records and writes their spends.
+ *
+ * One seam, two implementations: {@link assetSwapSource} over v1's store, and
+ * the v2 client's own over its quote-id-keyed record store. `apply` returns
+ * both halves for the same reason `updateAssetSwapBestEffort` does — a lost
+ * write must not retire a script, and the post-update view is what the liveness
+ * check reads without a third round trip.
+ */
+export interface OfferSwapSource<S extends OfferSwapFacts = OfferSwapFacts> {
+    list(): Promise<S[]>;
+    apply(swap: S, changes: OfferSpendChanges): Promise<{ persisted: boolean; swaps: S[] }>;
+}
+
+/** v1's store, as an {@link OfferSwapSource}. The default when a caller passes
+ * a repository rather than a source. */
+export const assetSwapSource = (repository: AssetSwapRepository): OfferSwapSource<AssetSwap> => ({
+    list: () => getAssetSwaps(repository),
+    apply: async (swap, changes) => updateAssetSwapBestEffort(repository, swap.id, changes),
+});
+
+/**
  * The record change a classified spend implies, or `undefined` when it implies
  * none — an already-resolved swap, or a spend nobody could classify.
  *
@@ -63,9 +117,9 @@ const TERMINAL: readonly AssetSwapStatus[] = ["fulfilled", "cancelled", "recover
  * rewrite.
  */
 export function spendUpdate(
-    swap: AssetSwap,
+    swap: Pick<OfferSwapFacts, "status">,
     spend: { txid: string; kind: SpendKind; at?: number },
-): Partial<Omit<AssetSwap, "id">> | undefined {
+): OfferSpendChanges | undefined {
     if (TERMINAL.includes(swap.status)) return undefined;
     if (spend.kind === "indeterminate") return undefined;
 
@@ -85,11 +139,15 @@ export interface OfferSwapWatcher {
     idle(): Promise<void>;
 }
 
-export interface WatchOfferSwapsParams {
+export interface WatchOfferSwapsParams<S extends OfferSwapFacts = OfferSwapFacts> {
     wallet: IWallet;
-    repository: AssetSwapRepository;
+    /** v1's record source. Ignored when {@link source} is given. */
+    repository?: AssetSwapRepository;
+    /** Where records are read and spends written. Defaults to
+     * {@link assetSwapSource} over `repository`. */
+    source?: OfferSwapSource<S>;
     /** Called after a change is persisted. A notification, not a store. */
-    onUpdate?: (swap: AssetSwap) => void;
+    onUpdate?: (swap: S) => void;
 }
 
 /**
@@ -103,11 +161,31 @@ export interface WatchOfferSwapsParams {
  * provide an `EventSource` implementation or use a runtime where it is enabled;
  * otherwise live updates do not arrive and restore remains the fallback.
  */
-export async function watchOfferSwaps({
+export async function watchOfferSwaps(params: {
+    wallet: IWallet;
+    repository: AssetSwapRepository;
+    onUpdate?: (swap: AssetSwap) => void;
+}): Promise<OfferSwapWatcher>;
+export async function watchOfferSwaps<S extends OfferSwapFacts>(params: {
+    wallet: IWallet;
+    source: OfferSwapSource<S>;
+    onUpdate?: (swap: S) => void;
+}): Promise<OfferSwapWatcher>;
+export async function watchOfferSwaps<S extends OfferSwapFacts>({
     wallet,
     repository,
+    source,
     onUpdate,
-}: WatchOfferSwapsParams): Promise<OfferSwapWatcher> {
+}: WatchOfferSwapsParams<S>): Promise<OfferSwapWatcher> {
+    if (!source && !repository) {
+        throw new Error("watchOfferSwaps needs either a record source or a repository");
+    }
+    // The cast is the overload's seam: the first signature fixes `S` to
+    // `AssetSwap` for the repository form, and only the implementation
+    // signature — which admits both — has to reconcile them.
+    const records: OfferSwapSource<S> =
+        source ??
+        (assetSwapSource(repository as AssetSwapRepository) as unknown as OfferSwapSource<S>);
     // Independent, and on a service-worker wallet the first two are each a
     // round trip to the worker — serialized they cost twice the startup.
     // The reader is the wallet's own, so that read stays inside the worker
@@ -132,7 +210,7 @@ export async function watchOfferSwaps({
         });
     };
 
-    const classify = async (swap: AssetSwap, vtxo: ContractVtxo, spentTxid: string) => {
+    const classify = async (swap: S, vtxo: ContractVtxo, spentTxid: string) => {
         // the exact answer: only the user can cancel, and cancelOffer records
         // the txid it submitted
         if (swap.spentTxid === spentTxid && swap.status === "cancelling") return "cancelled";
@@ -163,7 +241,7 @@ export async function watchOfferSwaps({
             // deposit that funded them. Repository v1 has no indexed lookup, so
             // this is O(history) per spend event; add a query API if offer
             // event volume makes this hot.
-            const swap = (await getAssetSwaps(repository)).find(
+            const swap = (await records.list()).find(
                 (s) => s.fundingTxid === vtxo.txid && s.swapPkScript === event.contractScript,
             );
             if (!swap) continue;
@@ -175,15 +253,14 @@ export async function watchOfferSwaps({
             // notify only on a write that landed: `onUpdate` is documented as
             // firing after the change is persisted, and a consumer that caches
             // from it would otherwise run ahead of the store
-            const { persisted, swaps } = await updateAssetSwapBestEffort(
-                repository,
-                swap.id,
-                changes,
-            );
+            const { persisted, swaps } = await records.apply(swap, changes);
             // a lost write must not retire: the next restore scan still
             // believes this deposit is live
             if (!persisted) continue;
-            onUpdate?.({ ...swap, ...changes });
+            // The record as the store now holds it, not a local merge: the
+            // notification is documented as firing after the write, so it
+            // should carry what the write produced.
+            onUpdate?.(swaps.find((s) => s.id === swap.id) ?? swap);
             // `swaps` is the post-update view, so the liveness check sees this
             // record's new status without a third read
             if (changes.status && RETIRABLE.includes(changes.status)) {

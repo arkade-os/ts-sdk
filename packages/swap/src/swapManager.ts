@@ -502,6 +502,40 @@ export type AvailableRfqSwapManagerCallbacks = Omit<
 /** The actions the manager executes on a caller's behalf. */
 export type RfqSwapActionName = "claimOnchain" | "claimLockup" | "refundArkade";
 
+/**
+ * The `needs_counterparty` reasons that describe THIS PROCESS'S CONFIGURATION
+ * rather than anything about the swap.
+ *
+ * Three of the nine `block()` sites say only "nothing here is wired to do
+ * this": no claim callback, no L1 claim callback, and no refund callback or
+ * auto-actions off. The money is where it was, the counterparty has done
+ * nothing, and wiring the callback lifts the state on the next pass.
+ *
+ * Named because a consumer running the manager deliberately unwired — a
+ * read-only view, a process that reports and never actuates — would otherwise
+ * have to read every live swap as needing recovery, which is its own
+ * configuration reported back at it. Constants rather than prose in two places:
+ * the strings below are the block sites' own, and a caller matching on them is
+ * matching on the same value rather than on a copy.
+ */
+export const RFQ_CONFIGURATION_REFUSAL = {
+    noClaimLockupCallback:
+        "no claimLockup callback is wired, so this wallet cannot claim the lockup",
+    noCallbacksForClaim: "no callbacks are wired, so this wallet cannot claim the lockup",
+    noClaimOnchainCallback:
+        "no claimOnchain callback is wired, so this wallet cannot claim the L1 fill",
+    autoActionsDisabled: "automatic actions are disabled, so this wallet will not push the refund",
+    noCallbacksForRefund: "no callbacks are wired, so this wallet cannot push the refund",
+} as const;
+
+/** The five, as values. Derived, so there is no second list to drift. */
+export const RFQ_CONFIGURATION_REFUSALS: readonly string[] =
+    Object.values(RFQ_CONFIGURATION_REFUSAL);
+
+/** Whether a `blockedReason` is one of {@link RFQ_CONFIGURATION_REFUSAL}'s. */
+export const isRfqConfigurationRefusal = (reason: string | undefined): boolean =>
+    reason !== undefined && RFQ_CONFIGURATION_REFUSALS.includes(reason);
+
 export interface RfqSwapManagerEvents {
     /** Every state change, including ones that read as going backwards.
      * `claimed -> claimable` is legal and expected on a receive swap the solver
@@ -1659,8 +1693,8 @@ export class RfqSwapManager {
             return this.block(
                 swap,
                 this.callbacks
-                    ? "no claimLockup callback is wired, so this wallet cannot claim the lockup"
-                    : "no callbacks are wired, so this wallet cannot claim the lockup",
+                    ? RFQ_CONFIGURATION_REFUSAL.noClaimLockupCallback
+                    : RFQ_CONFIGURATION_REFUSAL.noCallbacksForClaim,
             );
         }
 
@@ -1759,10 +1793,7 @@ export class RfqSwapManager {
             // Fully unwired keeps reporting `claimable`, which is the
             // documented manual mode.
             if (this.callbacks && !this.callbacks.claimOnchain) {
-                this.block(
-                    swap,
-                    "no claimOnchain callback is wired, so this wallet cannot claim the L1 fill",
-                );
+                this.block(swap, RFQ_CONFIGURATION_REFUSAL.noClaimOnchainCallback);
                 return "handled";
             }
             this.setOnchainState(swap, "claimable");
@@ -1838,8 +1869,8 @@ export class RfqSwapManager {
             return this.block(
                 swap,
                 this.callbacks
-                    ? "automatic actions are disabled, so this wallet will not push the refund"
-                    : "no callbacks are wired, so this wallet cannot push the refund",
+                    ? RFQ_CONFIGURATION_REFUSAL.autoActionsDisabled
+                    : RFQ_CONFIGURATION_REFUSAL.noCallbacksForRefund,
             );
         }
         this.unblock(swap);

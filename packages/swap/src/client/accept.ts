@@ -36,10 +36,13 @@
  * too, and branching on the asset would refuse the canonical empty-wallet
  * receive for want of a balance it never spends.
  *
- * What does NOT happen here: arming. The drive loop, the watcher and the
- * outcome vocabulary are the next milestone's, and this one stops once the
- * record is durable. A receive route therefore hands back a durable invoice
- * that nothing is yet watching.
+ * **Arming is the one thing that happens after the record is durable.** The
+ * accepted swap is handed to {@link AcceptInput.drive}, which registers it with
+ * the manager and starts the loop if it is not already running — but the
+ * registration runs BEHIND the return, so this call still waits on no pass and
+ * no network read. A receive route hands back a durable invoice that IS now
+ * being watched, which is the `accepted -> open` arrow the record alone could
+ * never cross.
  */
 import { hex } from "@scure/base";
 import { asset, getAllNormalizedVtxos, type IWallet } from "@arkade-os/sdk";
@@ -52,6 +55,8 @@ import type { AssetSwapRepository } from "../repository";
 import { assetPartOf, BTC_ASSET_PART } from "./assetId";
 import { toDiscoveryLeg } from "./aliases";
 import type { CorridorSet } from "./corridors/registry";
+import type { SwapDrive } from "./drive";
+import { recordOutcome } from "./outcome";
 import { AcceptConflict, InsufficientFunds, MissingCorridorDep, QuoteExpired } from "./errors";
 import { fromAtomicDecimal } from "./amount";
 import { toSafeNumber } from "./rfqAmount";
@@ -80,6 +85,21 @@ export interface AcceptInput {
     readonly wallet: IWallet;
     readonly repository: AssetSwapRepository | undefined;
     readonly corridors: CorridorSet;
+    /**
+     * The drive, when the caller has one.
+     *
+     * Two jobs, and the second is M5's edit to this file's shipped behaviour.
+     * It turns a record into the public {@link Swap} — which now carries an
+     * `outcome`, and only the drive knows whether it holds live state for this
+     * swap — and it ARMS: the accepted swap is registered with the manager
+     * rather than persisted and left, which is what M4 deliberately did not do.
+     * The registration runs behind the return, so this call still does not wait
+     * on a first pass.
+     *
+     * Optional so the accept pipeline stays testable on its own; without one
+     * the answer is the record's projection and nothing is driven.
+     */
+    readonly drive?: SwapDrive;
     /** Unix seconds. */
     readonly now: number;
 }
@@ -343,6 +363,8 @@ const profileOf = (preparation: RfqPreparation, paymentHash: string): Record<str
 export const acceptQuote = async (input: AcceptInput): Promise<Swap> => {
     const { quote, wallet, now } = input;
     const repository = storageOf(input.repository);
+    const answer = (record: SwapRecord): Swap =>
+        input.drive ? input.drive.adopt(record) : swapOf(record, recordOutcome(record));
 
     const expired = now > quote.expiresAt;
 
@@ -357,20 +379,20 @@ export const acceptQuote = async (input: AcceptInput): Promise<Swap> => {
         // included. A duplicate receive accept therefore returns the invoice
         // that was stored rather than the one on whatever quote object the
         // caller still holds.
-        if (stored.fundingTxid !== undefined) return swapOf(stored);
-        if (!fundsFromWallet(stored.route)) return swapOf(stored);
+        if (stored.fundingTxid !== undefined) return answer(stored);
+        if (!fundsFromWallet(stored.route)) return answer(stored);
         // Persisted but unfunded. Before a second `wallet.send`, look for the
         // deposit a crashed first attempt may already have made. This path uses
         // the stored record only, so it survives a restart or preparation-cache
         // eviction.
         const found = await reconcileFunding({ wallet }, stored);
         if (found !== undefined) {
-            return swapOf(await stampFunding(repository, stored, found, now));
+            return answer(await stampFunding(repository, stored, found, now));
         }
         // No funding evidence exists yet, so retrying would move new value and
         // still has to respect the quote's deadline.
         if (expired) throw new QuoteExpired(quote.id, quote.expiresAt, now);
-        return swapOf(await fundAndStamp({ wallet, now }, stored, repository));
+        return answer(await fundAndStamp({ wallet, now }, stored, repository));
     }
 
     // Strictly past its own deadline, and not against `policy.quoteTtlFloor`:
@@ -404,8 +426,8 @@ export const acceptQuote = async (input: AcceptInput): Promise<Swap> => {
     // is not durable, and that is the whole invariant.
     await repository.saveSwapRecord(record);
 
-    if (!funds) return swapOf(record);
-    return swapOf(await fundAndStamp({ wallet, now }, record, repository));
+    if (!funds) return answer(record);
+    return answer(await fundAndStamp({ wallet, now }, record, repository));
 };
 
 /**

@@ -8,11 +8,18 @@
  * or irreversible: `quote()` opens no watcher, arms no drive, writes no record
  * and funds nothing. It returns terms and stops.
  *
- * Construction stays synchronous and touches nothing. The operator read, the
- * corridor deps and the market index are all resolved on first use, which is
- * what lets a client be built in a component body and only cost something when
- * somebody asks it a question — and what keeps a missing dep for a corridor
+ * Construction stays synchronous and INERT. It touches no network, no wallet
+ * and no repository: the operator read, the corridor deps, the market index and
+ * — from M5 — the restore-read are all driven by the first call that needs
+ * them, which for the drive is the first `await client.ready`. That is what
+ * lets a client be built in a component body and only cost something when
+ * somebody asks it a question, and what keeps a missing dep for a corridor
  * nobody uses from being a construction failure.
+ *
+ * The drive is composed onto that, not folded into it. `resolve()` and
+ * `quote()` are unchanged and still touch nothing durable; `accept()` gained one
+ * thing — it registers the swap it just persisted — and everything else the
+ * lifecycle needs lives behind {@link createSwapDrive}.
  */
 import { hex } from "@scure/base";
 import type { IWallet } from "@arkade-os/sdk";
@@ -29,6 +36,9 @@ import {
 import { discoveryIndex, type DiscoveryConfig, type DiscoveryIndex } from "./discovery";
 import { UnsupportedRoute } from "./errors";
 import { acceptQuote, type QuotePreparation } from "./accept";
+import { createSwapDrive, type RecoveryResult, type SwapDrive } from "./drive";
+import { walletLockupIndexer } from "./driveRecords";
+import type { SwapUpdate, Unsubscribe } from "./outcome";
 import type { Swap } from "./record";
 import type { SwapPolicy } from "./policy";
 import { feedFetch, quoteFromFeed, type FeedFetch } from "./quoteOffer";
@@ -79,6 +89,85 @@ export interface SwapClientConfig {
 }
 
 export interface SwapClient {
+    /**
+     * The restore-read, and — when it armed — the first pass after it.
+     *
+     * There is no required `start()`. Construction stays inert and this is what
+     * drives the one read of the repository; under `drive: "auto"` the read arms
+     * the loop when it finds live work, and the first `accept()` arms it when it
+     * does not. A resumed swap may already be past a deadline, which is why
+     * arming runs one pass immediately rather than waiting out an interval.
+     *
+     * **Rejects only when the repository itself is unreadable.** A client that
+     * cannot read its own records cannot drive them safely. Everything
+     * per-record resolves this and surfaces through the normal channels instead:
+     * a corrupt record is filtered, a swap that will not rebuild reports off its
+     * record, and a first pass that finds a swept lockup reports
+     * `needs_recovery` through {@link onUpdate}.
+     */
+    readonly ready: Promise<void>;
+
+    /**
+     * Arm the drive. Idempotent, and required only by `drive: "manual"`.
+     *
+     * Double arming is a no-op, so a React double-mount and two concurrent
+     * callers are both safe.
+     *
+     * @throws {SwapDriveRefusedError} under `drive: "readonly"`, which actuates
+     *   nothing — silence would leave two contradictory instructions standing.
+     */
+    start(): Promise<void>;
+
+    /**
+     * Release the live resources this instance owns, and stay reusable.
+     *
+     * Timers cleared, the contract subscription dropped, in-flight actions left
+     * to run to completion, and outstanding work left where it is: stop/start is
+     * a pause, not a cancellation. What is NOT undone is durable — the records
+     * stay, and so do the wallet's contract registrations, because dropping one
+     * unwatches a funded lockup.
+     */
+    stop(): Promise<void>;
+
+    /**
+     * Terminal cleanup: {@link stop} plus draining what is in flight, dropping
+     * every listener, and making the instance terminal.
+     *
+     * It drains rather than returning while a refund push is mid-flight —
+     * nothing in this package takes an `AbortSignal`, so the alternative is
+     * calling an instance terminal while it is still moving money. Durable swap
+     * records, contract registrations and recovery metadata all survive it: a
+     * new client restores and resumes from them.
+     */
+    [Symbol.asyncDispose](): Promise<void>;
+
+    /**
+     * Every outcome transition, in one vocabulary for both families.
+     *
+     * Subscribing replays the current outcome of every swap this client knows,
+     * then streams transitions. Delivery is idempotent per `(swapId, outcome)`,
+     * and because the outcome is DERIVED rather than stored the key is the
+     * derived one — so the legal `claimed -> claimable` backslide, which
+     * produces `funded` twice, is delivered once.
+     */
+    onUpdate(fn: (update: SwapUpdate) => void): Unsubscribe;
+
+    /**
+     * Recover a swap whose value was swept, then run one immediate pass.
+     *
+     * The recovery round itself is the wallet's — this package deliberately
+     * builds none — and it takes no outpoints: it reads the whole wallet, drops
+     * what it cannot settle, and caps the batch, deferring the overflow. So a
+     * settlement txid is not success, and this re-reads the named lockup to
+     * answer whether THIS swap's outputs were included.
+     *
+     * @throws {SwapDriveRefusedError} under `drive: "readonly"`; for a lockup
+     *   still inside its refund window, where a round including it can fail the
+     *   whole batch; and for a swap with nothing swept — which is what a
+     *   `needs_recovery` that came from `needs_counterparty` is.
+     */
+    recover(swapId: QuoteId): Promise<RecoveryResult>;
+
     /**
      * The route, the market that would price it, and what the active snapshot
      * serves — without disclosing anything to anybody.
@@ -139,6 +228,21 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
     const operator = config.operator ?? walletOperator(wallet);
     const feed: FeedFetch = feedFetch(config.fetchImpl ?? fetch);
     const preparations = new Map<QuoteId, QuotePreparation>();
+
+    // Built eagerly and inert: the drive touches nothing until its own `ready`
+    // is awaited, and it takes the corridor set as a thunk precisely so
+    // constructing it costs no operator read. The indexer is the wallet's own
+    // reader — this client accepts no server URL and no provider anywhere.
+    let drive: SwapDrive | undefined;
+    const driving = (): SwapDrive =>
+        (drive ??= createSwapDrive({
+            wallet,
+            operator,
+            ...(config.repository === undefined ? {} : { repository: config.repository }),
+            corridors: async () => (await resolved()).corridors,
+            ...(config.policy?.drive === undefined ? {} : { mode: config.policy.drive }),
+            indexer: walletLockupIndexer(wallet),
+        }));
 
     let context:
         | Promise<{ base: CorridorBase; corridors: CorridorSet; discovery: DiscoveryIndex }>
@@ -303,6 +407,11 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
 
         accept: async (quote) => {
             const { corridors } = await resolved();
+            const drive = driving();
+            // Before the persist, not after: the restore is what indexes the
+            // stored records, and an accept that resumed one the drive had not
+            // read would register a second live swap for the same lockup.
+            await drive.ready;
             const preparation = preparations.get(quote.id);
             return acceptQuote({
                 quote,
@@ -310,10 +419,20 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 wallet,
                 repository: config.repository,
                 corridors,
+                drive,
                 now: Math.floor(Date.now() / 1000),
             });
         },
 
         preparationOf: (id) => preparations.get(id),
+
+        get ready() {
+            return driving().ready;
+        },
+        start: () => driving().start(),
+        stop: () => driving().stop(),
+        [Symbol.asyncDispose]: () => driving().dispose(),
+        onUpdate: (fn) => driving().onUpdate(fn),
+        recover: (id) => driving().recover(id),
     };
 };
