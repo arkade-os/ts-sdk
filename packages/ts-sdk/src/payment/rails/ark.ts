@@ -11,10 +11,8 @@ import { makeHandle } from "../handle";
  * full amount and carries no counterparty or on-chain fee, so `fee` is 0 and
  * `total` equals `amount` (see {@link RouteQuote}).
  *
- * BTC only. An Arkade address is the same string whether it is paid in BTC or
- * in an asset — the asset is named by the AMOUNT — so a request carrying one
- * drops this rail rather than paying its sats and dropping the asset, leaving
- * `ark-asset` to rank.
+ * BTC only: a request naming an asset drops this rail rather than paying its
+ * sats and dropping the asset, leaving `ark-asset` to rank.
  */
 export function arkRail(): PaymentRail {
     return {
@@ -23,8 +21,6 @@ export function arkRail(): PaymentRail {
         available: (req) => assetsOf(req).length === 0,
         quote: async (req, ctx: RouterContext) => {
             const address = arkTarget(req.raw)!;
-            // Also at quote time: `available()` is a router-level filter, and a
-            // caller reaching a rail directly must get the same refusal.
             assertNoAssets("ark", req);
             const amt = resolveSendAmount("ark", req.raw, req.amount);
             return {

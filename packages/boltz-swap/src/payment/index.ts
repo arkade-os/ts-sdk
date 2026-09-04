@@ -16,9 +16,7 @@ export { onchainSwapRail } from "./onchain-swap";
  *
  * `ark-asset` is registered here as well as in core so a Lightning-capable app
  * does not silently lose asset payments by choosing this factory. It never
- * competes with `ark` — one is available only for a request naming an asset
- * and the other only for a request naming none — so none of the BTC rankings
- * below change.
+ * competes with `ark`, so no BTC ranking below changes.
  *
  * Default priority `["ark", "lightning", "onchain-swap", "onchain"]` — Ark first,
  * then Lightning, then on-chain. For a plain BTC address the chain swap

@@ -1,12 +1,8 @@
 /**
- * The asset dimension on the router, and the `ark-asset` rail that needed it.
- *
- * The load-bearing fact: an Arkade address is the SAME STRING for BTC and for
- * an asset, so the target cannot tell a BTC payment from an asset one. The
- * amount names the asset. Everything here follows from that — the two rails
- * split on `available()` rather than `match()`, and a BTC-only rail handed an
- * asset request must refuse rather than pay its carrier sats and drop the
- * asset on the floor.
+ * The asset dimension, and the `ark-asset` rail that needed it. An Arkade
+ * address is the SAME STRING for BTC and for an asset, so the amount names the
+ * asset — hence the two rails split on `available()`, and a BTC-only rail
+ * handed an asset must refuse rather than pay the carrier and drop it.
  */
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -71,9 +67,6 @@ describe("resolveAssetAmount", () => {
     });
 
     it("refuses a number where atomic units belong", () => {
-        // The whole reason the SDK types asset amounts as bigint is that Number
-        // truncates supplies past 2^53-1. A rail that accepted one would corrupt
-        // the balance silently rather than fail.
         expect(() =>
             resolveAssetAmount("ark-asset", {
                 raw: ARK_ADDR,
@@ -126,8 +119,6 @@ describe("arkAssetRail", () => {
     });
 
     it("quotes the CARRIER sats, not zero", async () => {
-        // An asset does not move on its own: `total` is what leaves the wallet,
-        // and the sats-carrying output leaves it too.
         const quote = await arkAssetRail().quote({ raw: ARK_ADDR, assets: [USDX] }, ctx());
         expect(quote.amount).toBe(ASSET_CARRIER_SATS);
         expect(quote.total).toBe(ASSET_CARRIER_SATS);
@@ -155,8 +146,6 @@ describe("arkAssetRail", () => {
     });
 
     it("refuses a malformed asset at quote time with a named error", async () => {
-        // Not a silent drop: `available()` said this rail is the one, so the
-        // reason it cannot pay has to be legible.
         await expect(
             arkAssetRail().quote({ raw: ARK_ADDR, assets: [USDX, USDX] }, ctx()),
         ).rejects.toThrow(/exactly one asset/);
@@ -167,8 +156,6 @@ describe("the BTC-only rails refuse an asset rather than dropping it", () => {
     it("ark drops itself, and refuses if reached directly", async () => {
         const req = { raw: ARK_ADDR, amount: 1000, assets: [USDX] };
         expect(await arkRail().available?.(req, ctx())).toBe(false);
-        // The failure this prevents: paying 1000 sats, reporting success, and
-        // delivering none of the asset the user asked for.
         await expect(arkRail().quote(req, ctx())).rejects.toThrow(/cannot deliver/);
     });
 
@@ -184,7 +171,6 @@ describe("the default router routes on the amount, not the target", () => {
     const router = () => createDefaultPaymentRouter({ send: vi.fn() } as never);
 
     it("sends a BTC request to `ark` and an asset request to `ark-asset`", async () => {
-        // Same address string, two different rails: the amount is what chose.
         expect(
             (await router().options({ raw: ARK_ADDR, amount: 1000 })).map((o) => o.railId),
         ).toEqual(["ark"]);

@@ -54,36 +54,17 @@ export interface RouteQuote {
     /** `amount + fee` — what leaves the wallet. */
     total: number;
     /**
-     * The asset view, on a route that moves one. Absent means BTC only, and
-     * every existing rail leaves it absent.
+     * The asset view; absent means BTC only. The sats fields keep their
+     * meaning — an asset rides a sats-carrying output, so `amount` is the
+     * carrier, not zero.
      *
-     * The three sats fields keep their meaning — they are the BTC leg, which an
-     * asset route still has: an Arkade asset rides a sats-carrying output, so
-     * `amount` is the carrier's value (dust, usually) and not "zero because
-     * this is not a BTC payment".
-     *
-     * `delivered` and `spent` are separate rather than an `amount`/`fee`/`total`
-     * triple because on a cross-asset route they name DIFFERENT assets — the
-     * wallet spends BTC and the recipient receives USDX — and `total = amount +
-     * fee` cannot hold across two units. On a same-asset route they name the
-     * same asset and the difference between them is the fee.
-     *
-     * **Prefer `assets` over the sats fields for display on a cross-asset
-     * route.** `total = amount + fee` still holds, which forces `fee` to
-     * absorb everything that leaves the wallet without reaching the recipient
-     * — on a route that BUYS the delivered asset, that is the purchase price,
-     * not a service charge. A UI rendering "fee: 100,000 sats" beside "pay 500
-     * USDX" is reporting the cost of the asset. `assets.spent` is the same
-     * number correctly labelled, and is what a cost display or a
-     * fee-threshold check should read.
-     *
-     * @see Asset — the same shape `Wallet.send` takes, `bigint` for the same
-     * reason: asset supplies routinely exceed `Number.MAX_SAFE_INTEGER`.
+     * A pair, not a triple: on a cross-asset route these name DIFFERENT
+     * assets, so `total = amount + fee` cannot hold across the two units —
+     * which forces the purchase price into `fee`. Prefer `assets.spent` for a
+     * cost display.
      */
     assets?: {
-        /** What the RECIPIENT receives. */
         delivered: Asset;
-        /** What leaves the wallet — a different asset on a cross-asset route. */
         spent: Asset;
     };
     /** Execute. Returns an observable handle, never a bare result. */
@@ -107,33 +88,15 @@ export interface RouterContext {
     prefs: RouterPreferences;
 }
 
-/**
- * A payment request: the raw target plus an optional explicit amount. Rails
- * self-extract their target from `raw` (bare address/invoice or a BIP21 URI);
- * `amount` supplements or overrides any amount encoded in `raw`.
- *
- * The shape mirrors {@link Recipient}, deliberately: an Arkade address is the
- * same string whether it is paid in BTC or in an asset, so the asset is named
- * by the AMOUNT and never by the target. `assets` is what names it, exactly as
- * it does on `Wallet.send`.
- */
+/** Mirrors {@link Recipient}: an Arkade address is the same string for BTC and
+ *  for an asset, so the AMOUNT names the asset, never the target. */
 export interface PaymentRequest {
     /** Raw target: bare address/invoice, or a BIP21 URI. */
     raw: string;
     /** Explicit sats; supplements/overrides any amount encoded in `raw`. */
     amount?: number;
-    /**
-     * Assets to deliver, in atomic units.
-     *
-     * Additive, not a replacement for `amount`: an Arkade asset transfer also
-     * moves sats, because the asset rides a sats-carrying output. So a request
-     * for 500 USDX legitimately has both — `amount` is the carrier (the wallet
-     * defaults it to dust) and `assets` is what the user actually asked to pay.
-     *
-     * Rails that do not understand assets must refuse a request carrying one
-     * rather than paying the sats and dropping it. `assetsOf()` is the shared
-     * reader that makes that refusal one line.
-     */
+    /** Additive: an asset transfer also moves sats, so a 500 USDX request
+     *  legitimately has both. A rail that cannot deliver assets must REFUSE. */
     assets?: Asset[];
 }
 

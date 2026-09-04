@@ -21,13 +21,10 @@ import type { Wallet } from "../index";
  * `createDefaultPaymentRouter(wallet, swaps)` overload composing the full set;
  * solver-routed rails live in `@arkade-os/swap` and are registered by the app.
  *
- * The default priority is `["ark", "ark-asset", "lightning", "onchain"]` — the
- * wallet's Ark > Lightning > on-chain ladder. `"lightning"` is listed so it
- * ranks correctly once the boltz rail is added; it is simply absent here.
- *
- * `ark` and `ark-asset` never compete despite both matching an Arkade address:
- * one is available only for a request naming an asset and the other only for a
- * request naming none, so their order between themselves is immaterial.
+ * The default priority is `["ark", "ark-asset", "lightning", "onchain"]`.
+ * `"lightning"` is listed so it ranks correctly once the boltz rail is added.
+ * `ark` and `ark-asset` never compete — the amount decides which is
+ * available — so their order between themselves is immaterial.
  */
 export function createDefaultPaymentRouter(wallet: Wallet): PaymentRouter {
     return new PaymentRouter({

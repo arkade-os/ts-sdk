@@ -1,17 +1,8 @@
 /**
- * `crossAssetRail` — pay an asset the wallet does not hold.
- *
- * The claim under test is the design one: **swap-then-pay fits inside a rail**,
- * with no router composition primitive. Both legs are priced into one
- * `RouteQuote`, the swap is reported on `RouteResult.swapId`, and the router is
- * unchanged. The tests that matter are therefore about the seams that would
- * otherwise leak into the router:
- *
- * - the quote names two DIFFERENT assets (`spent` BTC, `delivered` the asset),
- *   which is the reason `RouteQuote.assets` is a pair rather than a triple;
- * - the rail does not route when no corridor exists — it drops, it does not
- *   quote a swap nobody can fill;
- * - the recipient is paid only AFTER the fill, never before.
+ * `crossAssetRail`. The claim under test is the design one: swap-then-pay fits
+ * inside a rail, with no router composition primitive. The seams that would
+ * otherwise leak into the router are the two-asset quote, the drop when no
+ * corridor exists, and paying the recipient only after the fill.
  */
 import { describe, expect, it, vi } from "vitest";
 import type { DiscoveredMarket, OfferPlan, Side } from "@arkade-os/solver-discovery";
@@ -25,8 +16,7 @@ import {
 
 const ARK_ADDR =
     "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
-// A real asset id: 34 bytes of hex. `AssetId.fromString` rejects anything
-// else, and `createOffer` binds `.txid`/`.groupIndex` off the parsed value.
+// 34 bytes of hex; `AssetId.fromString` rejects anything else.
 const USDX_ID = "aa".repeat(34);
 const USDX: Asset = { assetId: USDX_ID, amount: 500n };
 
@@ -104,26 +94,19 @@ describe("crossAssetRail.available", () => {
     });
 
     it("does not route when no corridor exists", async () => {
-        // The load-bearing negative: with no market there is nothing to quote,
-        // and a rail that quoted anyway would be selling a swap nobody can fill.
         const deps = depsWith({ discover: vi.fn(async () => []) });
         expect(await crossAssetRail(deps).available?.(req, ctxWith())).toBe(false);
     });
 
     it("does not route an asset/asset market — the BTC keying is the restriction", async () => {
-        // `createOffer` is BTC<->asset only. What enforces that is `findMarket`
-        // being keyed on BTC: it matches asset ids EXACTLY in either
-        // orientation, so a EURX/USDX market is never returned for
-        // `(btc, USDX)` however well it connects the two. There is deliberately
-        // no give-side check in the rail — one would be unreachable.
+        // `findMarket` matches ids EXACTLY, so a EURX/USDX market is never
+        // returned for `(btc, USDX)`; a give-side check would be unreachable.
         const eurx = market({ base_asset: { id: "bb".repeat(34), decimals: 2 } });
         const deps = depsWith({ discover: vi.fn(async () => [eurx]) });
         expect(await crossAssetRail(deps).available?.(req, ctxWith())).toBe(false);
     });
 
     it("routes a market that names BTC on either side", async () => {
-        // The mirror of the above: BTC as the QUOTE asset is the same corridor
-        // read the other way round, and `findMarket` reports `give: "quote"`.
         const inverted = market({
             base_asset: { id: USDX_ID, decimals: 2 },
             quote_asset: { id: "btc", decimals: 8 },
@@ -150,9 +133,6 @@ describe("crossAssetRail.available", () => {
     });
 
     it("does not route a BTC 'asset', and does not ask the registry about it", async () => {
-        // That is `ark`'s payment, and there is no corridor from BTC to BTC.
-        // The check is up front for a reason: a plain BTC send must not put a
-        // registry round trip on the availability path of every other rail.
         const discover = vi.fn(async () => [market()]);
         expect(
             await crossAssetRail(depsWith({ discover })).available?.(
@@ -170,13 +150,10 @@ describe("crossAssetRail.available", () => {
         expect(await rail.available?.({ raw: ARK_ADDR, assets: [USDX, USDX] }, ctxWith())).toBe(
             false,
         );
-        // Every BTC-only payment in the wallet passes through here.
         expect(discover).not.toHaveBeenCalled();
     });
 
     it("does not route an asset id createOffer could not bind", async () => {
-        // 32 bytes reads like an id and is not one — they are 34. Dropping here
-        // is what stops the failure landing at send time, with an offer funded.
         const discover = vi.fn(async () => [market()]);
         const rail = crossAssetRail(depsWith({ discover }));
         expect(
@@ -224,9 +201,6 @@ describe("crossAssetRail.quote", () => {
     const req = { raw: ARK_ADDR, assets: [USDX] };
 
     it("names two different assets: BTC spent, the asset delivered", async () => {
-        // This is why `RouteQuote.assets` is a pair and not a third
-        // amount/fee/total triple — `total = amount + fee` cannot hold across
-        // two units.
         const quote = await crossAssetRail(depsWith()).quote(req, ctxWith());
         expect(quote.assets?.delivered).toEqual(USDX);
         expect(quote.assets?.spent).toEqual({ assetId: "btc", amount: 100_000n });
@@ -234,8 +208,6 @@ describe("crossAssetRail.quote", () => {
     });
 
     it("prices BOTH legs into the sats that leave the wallet", async () => {
-        // The swap deposit AND the delivery carrier: `total` means the same
-        // thing here as on every other rail.
         const quote = await crossAssetRail(depsWith({ carrierSats: 330 })).quote(req, ctxWith());
         expect(quote).toMatchObject({ amount: 330, fee: 100_000, total: 100_330 });
     });
@@ -283,14 +255,10 @@ describe("crossAssetRail.send", () => {
         const quote = await crossAssetRail(deps).quote(req, ctxWith(send as never));
         await (await quote.send()).settled();
 
-        // Two persists: the offer before it is funded, and the fill before the
-        // recipient is paid.
         expect(order).toEqual(["persist", "fund-offer", "await-fill", "persist", "pay-recipient"]);
     });
 
     it("does not pay the recipient when the fill never lands", async () => {
-        // The asset is not in the wallet until a filler delivers it; paying
-        // before that is a send that cannot be funded.
         offerStub = async () => offer;
         const send = vi.fn(async () => "txid");
         const deps = depsWith({
@@ -301,13 +269,11 @@ describe("crossAssetRail.send", () => {
 
         const quote = await crossAssetRail(deps).quote(req, ctxWith(send as never));
         await expect((await quote.send()).settled()).rejects.toThrow(/offer expired/);
-        // Only the offer deposit went out.
         expect(send).toHaveBeenCalledTimes(1);
         expect(send.mock.calls[0][0]).toMatchObject({ address: offer.address });
     });
 
     it("does not fund the offer when the record could not be written", async () => {
-        // `cancelOffer` rebuilds the covenant from `offerHex` and nothing else.
         offerStub = async () => offer;
         const send = vi.fn(async () => "txid");
         const deps = depsWith({
@@ -356,10 +322,8 @@ describe("crossAssetRail.send", () => {
     });
 
     it("hands createOffer a parsed AssetId, not the hex string", async () => {
-        // `createOffer` binds `.txid` and `.groupIndex` off this value to build
-        // the covenant. A raw `Asset.assetId` string has neither, so it would
-        // publish an offer with an undefined want-asset rather than throw —
-        // an offer nobody can fill and the user has funded.
+        // A raw `assetId` string has neither, so the offer would publish with
+        // an undefined want-asset rather than throw — funded, unfillable.
         let seen: unknown;
         offerStub = async (..._args: unknown[]) => {
             seen = (_args[2] as { wantAsset?: unknown }).wantAsset;
@@ -443,10 +407,6 @@ describe("no BTC-only rail silently drops an asset", () => {
 });
 
 describe("the record says which side of the fill the route is on", () => {
-    // Two states with different recoveries: a "quoted" record whose offer never
-    // filled is cancelled; a "filled" one has the asset in the wallet and owes
-    // the recipient a send. A record frozen at "quoted" after the fill landed
-    // says the opposite of the truth.
     const req = { raw: ARK_ADDR, assets: [USDX] };
 
     const runWith = async (send: ReturnType<typeof vi.fn>) => {
@@ -469,8 +429,6 @@ describe("the record says which side of the fill the route is on", () => {
     });
 
     it("records the fill even when the recipient send then fails", async () => {
-        // The window this closes: the filler delivered, the payment did not go
-        // out, and the user is holding an asset the recipient is still owed.
         let call = 0;
         const send = vi.fn(async () => {
             if (++call === 1) return "deposit-txid";
@@ -500,12 +458,7 @@ describe("the record says which side of the fill the route is on", () => {
     });
 
     it("refuses a deposit that would not survive the narrowing to a JS number", async () => {
-        // `RouteQuote.fee`/`total` are `number`. Safe for BTC, whose whole
-        // supply fits — asserted anyway, because the assumption is the give
-        // side being BTC.
         const huge = BigInt(Number.MAX_SAFE_INTEGER) + 2n;
-        // A market whose bounds admit it, so the narrowing guard is what
-        // rejects rather than `validatePlan`'s `above-max`.
         const wide = market({ max_base_amount: (huge * 4n).toString() });
         const deps = depsWith({
             discover: vi.fn(async () => [wide]),
