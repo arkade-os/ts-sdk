@@ -38,7 +38,7 @@ import {
 } from "./swapManager";
 import { createRfqSwapRecord, type RfqSwapOrigin } from "./rfqRecord";
 import { walletOperator, type LockupSpendIndexer, type SwapOperator } from "./refund";
-import { rfqClaimSecretOf, rfqSecretsProfile } from "./rfqProfileParts";
+import { rfqClaimDestinationOf, rfqClaimSecretOf, rfqSecretsProfile } from "./rfqProfileParts";
 import { onchainSendProfile } from "./rfqCorridors";
 import { arkadeRefunder } from "./arkadeRefunder";
 import { pushClaim } from "./claim";
@@ -228,8 +228,10 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
         if (!secret) throw new Error(`rfq swap ${swap.rfqId} carries no claim secret`);
         const script = swap.lockup?.script;
         if (!script) throw new Error(`rfq swap ${swap.rfqId} carries no lockup covenant`);
-        const payoutAddress = (record.profile as { payoutAddress?: string }).payoutAddress;
-        if (!payoutAddress) throw new Error(`rfq swap ${swap.rfqId} carries no payoutAddress`);
+        const payoutAddress = rfqClaimDestinationOf(record);
+        if (!payoutAddress) {
+            throw new Error(`rfq swap ${swap.rfqId} carries no claim destination`);
+        }
         return pushClaim(ark, {
             contract: script,
             receiver: await contractSigner(wallet, secret.signingDescriptor),

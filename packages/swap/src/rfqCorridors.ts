@@ -101,6 +101,10 @@ export const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfil
     // ours to use.
     claimSecret: (profile) => ({ ...profile.signer, ...profile.hashlock }),
 
+    // The other half of claiming: where it pays. Written once at request time
+    // and left alone by `project` above, so this hands back what was stored.
+    claimDestination: (profile) => profile.payoutAddress,
+
     activityTxids: (profile) => (profile.claimTxid ? [profile.claimTxid] : []),
 };
 

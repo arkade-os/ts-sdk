@@ -38,7 +38,7 @@ import {
     type SwapOperator,
 } from "../refund";
 import { RefundNotLocallyPossibleError, senderIdentityForSwapRecord } from "../refundBlocked";
-import { rfqClaimSecretOf, rfqSignerOf } from "../rfqProfileParts";
+import { rfqClaimDestinationOf, rfqClaimSecretOf, rfqSignerOf } from "../rfqProfileParts";
 import { rebuildRfqSwap, rfqSwapOriginOf } from "../rfqRecord";
 import { isRfqSwapTerminal } from "../rfqSwapState";
 import { restoreAssetSwaps, type Tx } from "../restore";
@@ -450,6 +450,21 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
     // ── the corridor driver ──────────────────────────────────────────────────
 
+    /**
+     * Held by the manager BY REFERENCE, and mutated after construction on
+     * purpose — `contracts` below, `chain` the first time an onchain record
+     * needs it (`resolveOnchain`), `repository` once there is something to
+     * restore from. None of the three is known when the manager is built, and
+     * the alternative is building it later than the callbacks it must already
+     * be reachable from.
+     *
+     * What makes it legal is that `RfqSwapManager` keeps `this.deps = deps` and
+     * reads through it at every use — where its config, one line further down
+     * the same constructor, is COPIED into a new object. That asymmetry is
+     * load-bearing and invisible from there: a refactor that snapshots deps the
+     * way config is already snapshotted takes this drive's onchain support and
+     * its restore with it, silently. The two move together or not at all.
+     */
     const managerDeps: RfqSwapManagerDeps = { indexer };
     if (config.contracts) managerDeps.contracts = config.contracts;
 
@@ -514,8 +529,10 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         if (!secret) throw new Error(`rfq swap ${swap.rfqId} carries no claim secret`);
         const script = swap.lockup?.script;
         if (!script) throw new Error(`rfq swap ${swap.rfqId} carries no lockup covenant`);
-        const payoutAddress = (record.profile as { payoutAddress?: string }).payoutAddress;
-        if (!payoutAddress) throw new Error(`rfq swap ${swap.rfqId} carries no payoutAddress`);
+        const payoutAddress = rfqClaimDestinationOf(record);
+        if (!payoutAddress) {
+            throw new Error(`rfq swap ${swap.rfqId} carries no claim destination`);
+        }
         return track(
             pushClaim(operator, {
                 contract: script,
@@ -728,6 +745,14 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         // refusal.
         if (!repository) return;
         await contractsOf();
+        // Re-run on every arm, and the seams it reads may have arrived since the
+        // last one. An offer-only client arms before any onchain record exists,
+        // so `onchainSeams` is unresolved and `claimOnchain` is absent from that
+        // first `setCallbacks` — the manager then blocks an onchain swap with
+        // `noClaimOnchainCallback`. Registering an `onchain_send` record
+        // resolves the seam and arms again, and the block lifts on the next
+        // pass. So this is not idempotent-therefore-harmless; it is how the
+        // seam gets wired at all.
         wireCallbacks();
         // Idempotent both ways: `start()` returns without re-arming when it is
         // already running, and the watcher is rebuilt only after a `stop()`
@@ -954,6 +979,15 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             // returning while a refund push is mid-flight and calling the
             // instance terminal while it is still moving money.
             await idle();
+            // A `restore()` still in flight is in neither `queue` nor
+            // `inFlight`, so nothing above waits for it — only the facade's
+            // `stop` awaits `readyPromise`, and dispose calls the inner `stop`.
+            // Its `emitAll` can therefore deliver between `disposed = true` and
+            // this line: a listener hears from a client whose `dispose()` has
+            // not returned yet. Left as is rather than clearing first —
+            // `deliver` swallows what a listener throws, and clearing before
+            // the drain would silence the last word about a refund that was
+            // still going out.
             listeners.clear();
             // No repository is closed here. Every repository reaching this
             // client was opened by its caller — `SwapClientConfig.repository` is
