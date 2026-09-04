@@ -44,7 +44,7 @@ import { createSwapClient, type SwapClient } from "../../src/client/client";
 import type { SwapUpdate } from "../../src/client/outcome";
 import { InMemoryAssetSwapRepository } from "../../src/repository";
 import type { AttestingRfqTransport } from "../../src/client/transport";
-import type { CorridorSwapRecord } from "../../src/client/record";
+import { quoteIdOfSwapId, type CorridorSwapRecord } from "../../src/client/record";
 import { encodeInvoice } from "../helpers/bolt11";
 
 const OPERATOR_URL = "http://localhost:7070";
@@ -215,7 +215,10 @@ beforeAll(async () => {
 }, 180_000);
 
 describe("the v2 drive (regtest)", () => {
+    /** The tagged public id, as `onUpdate` carries it. */
     let swapId: string;
+    /** The bare quote id underneath — what the repository keys on. */
+    let quoteId: string;
     let lockupScript: string;
 
     it("persists, funds and adopts an accepted swap", async () => {
@@ -226,6 +229,7 @@ describe("the v2 drive (regtest)", () => {
         const quote = await client.quote({ to: invoice() });
         const swap = await client.accept(quote);
         swapId = swap.id;
+        quoteId = quoteIdOfSwapId(swap.id);
 
         // The record is durable and the funding is broadcast, and NOTHING has
         // read the lockup yet: `accept()` returns once the record is at rest and
@@ -233,7 +237,7 @@ describe("the v2 drive (regtest)", () => {
         expect(swap.fundingTxid).toEqual(expect.any(String));
         expect(swap.outcome).toBe("funding");
 
-        const stored = (await repository.getSwapRecord(swapId)) as CorridorSwapRecord;
+        const stored = (await repository.getSwapRecord(quoteId)) as CorridorSwapRecord;
         expect(stored.family).toBe("rfq");
         lockupScript = stored.lockupPkScript;
 
@@ -291,8 +295,8 @@ describe("the v2 drive (regtest)", () => {
         // One record, and it is still the one `accept()` wrote: the manager's
         // mutable half is merged onto the v2 record rather than replacing it.
         const records = await repository.getAllSwapRecords();
-        expect(records.filter((r) => r.id === swapId)).toHaveLength(1);
-        const stored = (await repository.getSwapRecord(swapId)) as CorridorSwapRecord;
+        expect(records.filter((r) => r.id === quoteId)).toHaveLength(1);
+        const stored = (await repository.getSwapRecord(quoteId)) as CorridorSwapRecord;
         expect(stored.lockupPkScript).toBe(lockupScript);
         expect(stored.state).toBe("pending");
 
@@ -304,7 +308,7 @@ describe("the v2 drive (regtest)", () => {
         // Dispose is terminal for the instance and for nothing else: a new
         // client restores and resumes, and dropping the registration would
         // unwatch a funded lockup.
-        const stored = await repository.getSwapRecord(swapId);
+        const stored = await repository.getSwapRecord(quoteId);
         expect(stored).toBeDefined();
 
         const contracts = await wallet.getContractManager();

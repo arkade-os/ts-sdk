@@ -108,8 +108,11 @@ export type DriveRefusal =
  * Not a member of §7's sixteen, and it keeps the `Error` suffix to say so —
  * `errors.ts`'s own naming rule. What it replaces is `recoverVtxos`'s bare
  * `Error("No recoverable VTXOs found")`, which is outside the taxonomy and
- * carries nothing a caller can branch on. Which §7 member should carry these
- * refusals, if any, is M6's error-coverage pass.
+ * carries nothing a caller can branch on.
+ *
+ * M6's error-coverage pass ruled it a documented NON-member: no §7 member names
+ * a drive-refusal condition, so none absorbs these four, and the suffix rule is
+ * working as intended rather than marking a loose end.
  */
 export class SwapDriveRefusedError extends Error {
     override readonly name = "SwapDriveRefusedError";
@@ -197,6 +200,16 @@ export interface SwapDrive {
     swap(id: QuoteId): Swap | undefined;
     /** The outcome a record would report with no live state behind it. */
     outcomeOf(record: SwapRecord): Outcome;
+    /**
+     * Take a record written OUTSIDE the drive's own loops — today, the
+     * awaited cancel call — into the registry, and emit through `onUpdate`.
+     *
+     * Cancel writes at two edges, the gate and the settlement, and the
+     * delivery channel for both is this registry: replay plus the
+     * `(swapId, outcome)` key absorb a later pass over the same record, whether
+     * or not the drive armed.
+     */
+    ingest(record: SwapRecord): void;
     recover(id: QuoteId): Promise<RecoveryResult>;
     /** Everything this drive has in flight — registrations and money pushes.
      * Exposed so a test can be deterministic and so dispose can drain. */
@@ -219,7 +232,7 @@ const traderClaimTxid = (swap: RfqSwap): string | undefined =>
  * driving every other swap it holds. Everything checked here is something the
  * drive dereferences unconditionally.
  */
-const readableRecord = (record: SwapRecord): boolean => {
+export const readableRecord = (record: SwapRecord): boolean => {
     if (typeof record?.id !== "string" || record.route?.give === undefined) return false;
     if (record.family === "rfq") {
         return typeof record.rfqId === "string" && typeof record.lockupAddress === "string";
@@ -1037,6 +1050,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         swap: (id) => updateFor(id)?.swap,
 
         outcomeOf: (record) => outcomeOfEntry(record, live.get(record.id)),
+
+        ingest: (record) => remember(record),
 
         recover,
 
