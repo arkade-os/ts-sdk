@@ -7,7 +7,14 @@
  */
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import type { PaymentRail, RouteQuote, RouterContext } from "@arkade-os/sdk";
-import { btcTarget, makeHandle, resolveSendAmount, tryResolveSendAmount } from "@arkade-os/sdk";
+import {
+    assertNoAssets,
+    assetsOf,
+    btcTarget,
+    makeHandle,
+    resolveSendAmount,
+    tryResolveSendAmount,
+} from "@arkade-os/sdk";
 import { assertFundable, requestOnchainSend, type RfqTransport } from "../rfq";
 import { l1ScriptForAddress, type OnchainNetwork } from "../onchainHtlc";
 import { solverRendezvous, type SolverRendezvous } from "./rendezvous";
@@ -69,6 +76,8 @@ export function solverOnchainRail(deps: SolverOnchainRailDeps): PaymentRail {
         match: (req) => btcTarget(req.raw) !== undefined,
 
         available: async (req) => {
+            // BTC only: an Arkade asset has no L1 form for the solver to fill.
+            if (assetsOf(req).length > 0) return false;
             const address = btcTarget(req.raw);
             if (!address) return false;
             // Before any network call: a destination the claim cannot pay to
@@ -91,6 +100,7 @@ export function solverOnchainRail(deps: SolverOnchainRailDeps): PaymentRail {
 
         quote: async (req, ctx: RouterContext): Promise<RouteQuote> => {
             const address = btcTarget(req.raw)!;
+            assertNoAssets(SOLVER_ONCHAIN_RAIL, req);
             const amount = resolveSendAmount(SOLVER_ONCHAIN_RAIL, req.raw, req.amount);
             const payoutPkScript = l1ScriptForAddress(address, deps.l1Network);
             const rendezvous = await rendezvousFor(amount);

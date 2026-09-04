@@ -1,4 +1,4 @@
-import type { Wallet } from "../index";
+import type { Asset, Recipient, Wallet } from "../index";
 
 export type PaymentStatus = "pending" | "sent" | "settled" | "failed";
 
@@ -53,6 +53,30 @@ export interface RouteQuote {
     fee: number;
     /** `amount + fee` — what leaves the wallet. */
     total: number;
+    /**
+     * The asset view, on a route that moves one. Absent means BTC only, and
+     * every existing rail leaves it absent.
+     *
+     * The three sats fields keep their meaning — they are the BTC leg, which an
+     * asset route still has: an Arkade asset rides a sats-carrying output, so
+     * `amount` is the carrier's value (dust, usually) and not "zero because
+     * this is not a BTC payment".
+     *
+     * `delivered` and `spent` are separate rather than an `amount`/`fee`/`total`
+     * triple because on a cross-asset route they name DIFFERENT assets — the
+     * wallet spends BTC and the recipient receives USDX — and `total = amount +
+     * fee` cannot hold across two units. On a same-asset route they name the
+     * same asset and the difference between them is the fee.
+     *
+     * @see Asset — the same shape `Wallet.send` takes, `bigint` for the same
+     * reason: asset supplies routinely exceed `Number.MAX_SAFE_INTEGER`.
+     */
+    assets?: {
+        /** What the RECIPIENT receives. */
+        delivered: Asset;
+        /** What leaves the wallet — a different asset on a cross-asset route. */
+        spent: Asset;
+    };
     /** Execute. Returns an observable handle, never a bare result. */
     send(): Promise<PaymentHandle>;
     meta?: Record<string, unknown>;
@@ -74,14 +98,34 @@ export interface RouterContext {
     prefs: RouterPreferences;
 }
 
-/** A payment request: the raw target plus an optional explicit amount. Rails
- *  self-extract their target from `raw` (bare address/invoice or a BIP21 URI);
- *  `amount` supplements or overrides any amount encoded in `raw`. */
+/**
+ * A payment request: the raw target plus an optional explicit amount. Rails
+ * self-extract their target from `raw` (bare address/invoice or a BIP21 URI);
+ * `amount` supplements or overrides any amount encoded in `raw`.
+ *
+ * The shape mirrors {@link Recipient}, deliberately: an Arkade address is the
+ * same string whether it is paid in BTC or in an asset, so the asset is named
+ * by the AMOUNT and never by the target. `assets` is what names it, exactly as
+ * it does on `Wallet.send`.
+ */
 export interface PaymentRequest {
     /** Raw target: bare address/invoice, or a BIP21 URI. */
     raw: string;
     /** Explicit sats; supplements/overrides any amount encoded in `raw`. */
     amount?: number;
+    /**
+     * Assets to deliver, in atomic units.
+     *
+     * Additive, not a replacement for `amount`: an Arkade asset transfer also
+     * moves sats, because the asset rides a sats-carrying output. So a request
+     * for 500 USDX legitimately has both — `amount` is the carrier (the wallet
+     * defaults it to dust) and `assets` is what the user actually asked to pay.
+     *
+     * Rails that do not understand assets must refuse a request carrying one
+     * rather than paying the sats and dropping it. `assetsOf()` is the shared
+     * reader that makes that refusal one line.
+     */
+    assets?: Asset[];
 }
 
 /** A payment rail — registered by id, mirrors the ActivityRegistry resolver shape. */

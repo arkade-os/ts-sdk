@@ -1,5 +1,11 @@
 import type { PaymentRail, RouterContext } from "@arkade-os/sdk";
-import { invoiceTarget, makeHandle, assertSendableAmount } from "@arkade-os/sdk";
+import {
+    assertNoAssets,
+    assertSendableAmount,
+    assetsOf,
+    invoiceTarget,
+    makeHandle,
+} from "@arkade-os/sdk";
 import type { ArkadeSwaps } from "../arkade-swaps";
 import { getInvoiceSatoshis } from "../utils/decoding";
 
@@ -23,6 +29,8 @@ export function lightningRail(): PaymentRail {
         id: "lightning",
         match: (req) => invoiceTarget(req.raw) !== undefined,
         available: async (req, ctx) => {
+            // A bolt11 invoice is denominated in sats; an asset cannot ride it.
+            if (assetsOf(req).length > 0) return false;
             if (ctx.swaps == null) return false;
             const invoice = invoiceTarget(req.raw);
             if (!invoice) return false;
@@ -33,6 +41,7 @@ export function lightningRail(): PaymentRail {
         },
         quote: async (req, ctx: RouterContext) => {
             const invoice = invoiceTarget(req.raw)!;
+            assertNoAssets("lightning", req);
             // The bolt11 invoice carries the amount; reject amountless or
             // undecodable invoices instead of surfacing a `total: 0` quote.
             const amount = invoiceSats(invoice);

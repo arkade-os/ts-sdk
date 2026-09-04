@@ -7,7 +7,7 @@
  */
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import type { PaymentRail, RouteQuote, RouterContext } from "@arkade-os/sdk";
-import { invoiceTarget, makeHandle } from "@arkade-os/sdk";
+import { assertNoAssets, assetsOf, invoiceTarget, makeHandle } from "@arkade-os/sdk";
 import { assertFundable, requestLightningSend, type InvoiceFacts, type RfqTransport } from "../rfq";
 import { solverRendezvous, type SolverRendezvous } from "./rendezvous";
 
@@ -73,6 +73,8 @@ export function solverLightningRail(deps: SolverLightningRailDeps): PaymentRail 
         match: (req) => invoiceTarget(req.raw) !== undefined,
 
         available: async (req) => {
+            // A bolt11 invoice is denominated in sats; an asset cannot ride it.
+            if (assetsOf(req).length > 0) return false;
             const facts = factsOf(req.raw, deps.decodeInvoice, Math.floor(Date.now() / 1000));
             if (!facts) return false;
             // A request amount contradicting the invoice is unpayable.
@@ -81,6 +83,7 @@ export function solverLightningRail(deps: SolverLightningRailDeps): PaymentRail 
         },
 
         quote: async (req, ctx: RouterContext): Promise<RouteQuote> => {
+            assertNoAssets(SOLVER_LIGHTNING_RAIL, req);
             const facts = factsOf(req.raw, deps.decodeInvoice, Math.floor(Date.now() / 1000));
             if (!facts) {
                 throw new Error(
