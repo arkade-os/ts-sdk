@@ -79,7 +79,15 @@ export const solverRendezvous = (
     amountSats: number,
     fallbackEmulatorPubkey?: Uint8Array,
 ): SolverRendezvous | undefined => {
-    const pinned = fallbackEmulatorPubkey ? hex.encode(fallbackEmulatorPubkey) : undefined;
+    // The pin is held to the same shape a card's own key is. A 33-byte
+    // compressed key encodes to 66 hex and would otherwise be adopted verbatim
+    // for any card that advertises none — reaching `connect` as a
+    // `SolverRendezvous.emulatorPubkey` this type documents as x-only. Failing
+    // closed on the pin is the only way both rails fail closed, since neither
+    // re-derives it.
+    const encoded = fallbackEmulatorPubkey ? hex.encode(fallbackEmulatorPubkey) : undefined;
+    if (encoded !== undefined && !XONLY_HEX.test(encoded)) return undefined;
+    const pinned = encoded;
 
     for (const market of markets) {
         // A send leg goes arkade -> elsewhere: anything else on the base side

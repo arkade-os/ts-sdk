@@ -52,15 +52,29 @@ const card = (min: string, max: string, overrides: Record<string, unknown> = {})
         ...overrides,
     }) as unknown as DiscoveredMarket;
 
-/** What `requestOnchainSend` hands back, only as far as the rail reads it. */
+const NOW = () => Math.floor(Date.now() / 1000);
+
+/**
+ * What `requestOnchainSend` hands back, only as far as the rail reads it.
+ *
+ * The locktimes are live and correctly ordered — the L1 HTLC opens well before
+ * the Arkade refund, with room to confirm and claim — because `send()` re-runs
+ * `assertFundable` on exactly these fields. Placeholder locktimes would make
+ * this a quote nothing could fund.
+ */
 const negotiated = (fundAmount: number, toAmount: number) =>
     ({
         rfqId: "rfq-1",
         address: "tark1lockup",
         fundAmount,
-        quote: { from_amount: fundAmount, to_amount: toAmount, valid_until: 1_800_000_000 },
+        quote: {
+            from_amount: fundAmount,
+            to_amount: toAmount,
+            valid_until: NOW() + 3600,
+            refund_locktime: NOW() + 200 * 3600,
+        },
         htlc: { address: "bcrt1phtlc" },
-        htlcParams: {},
+        htlcParams: { refundLocktime: NOW() + 100 * 3600 },
         minConfirmations: 2,
         secrets: {},
         script: {},
@@ -166,6 +180,22 @@ describe("solverOnchainRendezvous", () => {
             const bad = card("1000", "1000000", { emulator_pubkey: "not-hex" });
             expect(solverOnchainRendezvous([bad], 100_000, pinned)).toBeUndefined();
             expect(solverOnchainRendezvous([bad], 100_000)).toBeUndefined();
+        });
+
+        it("rejects a malformed pin outright, rather than adopting it", () => {
+            // A 33-byte compressed key encodes to 66 hex. Without the check it
+            // would be adopted verbatim for any card advertising none, and
+            // reach `connect` as an `emulatorPubkey` this type documents as
+            // x-only. Neither rail re-derives it, so failing closed here is the
+            // only place both fail closed.
+            const bare = card("1000", "1000000", { emulator_pubkey: undefined });
+            const compressed = new Uint8Array(33).fill(0xbb);
+            expect(solverOnchainRendezvous([bare], 100_000, compressed)).toBeUndefined();
+            // …and it rejects for a card that DOES advertise one, too: a pin
+            // that cannot be compared is not a pin the card can agree with.
+            expect(
+                solverOnchainRendezvous([card("1000", "1000000")], 100_000, compressed),
+            ).toBeUndefined();
         });
 
         it("skips a card that disagrees with the pin rather than resolving it", () => {
@@ -462,5 +492,53 @@ describe("solverOnchainRail.send", () => {
         // The recipient's output script: not on the quote, not on the HTLC, and
         // not derivable at claim time from anything that survives this screen.
         expect(persisted[0].payoutPkScript).toBeInstanceOf(Uint8Array);
+    });
+});
+
+describe("the gates are re-run before anything is spent", () => {
+    // `requestOnchainSend` gates while quoting. `send()` is a separate user
+    // action and can be minutes later — long enough for the quote to lapse or
+    // the L1 claim window to stop being safe. Funding then buys a swap that can
+    // only refund.
+    const sendWith = async (result: Awaited<SolverOnchainSend>) => {
+        rfqStub = vi.fn(async () => result);
+        const send = vi.fn(async () => "txid");
+        const persist = vi.fn(async () => {});
+        const quote = await solverOnchainRail(depsWith({ persist })).quote(
+            { raw: BTC_ADDR, amount: 100_000 },
+            ctxWith(send),
+        );
+        return { handle: await quote.send(), send, persist };
+    };
+    const withHtlcLocktime = (at: number) => {
+        const swap = negotiated(101_000, 100_000);
+        (swap.htlcParams as unknown as { refundLocktime: number }).refundLocktime = at;
+        return swap;
+    };
+
+    it("does not persist or fund once the quote has expired", async () => {
+        const lapsed = negotiated(101_000, 100_000);
+        (lapsed.quote as { valid_until: number }).valid_until = NOW() - 1;
+        const { handle, send, persist } = await sendWith(lapsed);
+
+        await expect(handle.settled()).rejects.toThrow(/quote expired/);
+        expect(persist).not.toHaveBeenCalled();
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    it("does not fund once the L1 claim window has stopped being safe", async () => {
+        // The HTLC's locktime a minute away: no room to confirm the fill, let
+        // alone claim it.
+        const { handle, send } = await sendWith(withHtlcLocktime(NOW() + 60));
+        await expect(handle.settled()).rejects.toThrow(/claim window/);
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    it("does not fund when the Arkade refund would open before the L1 claim", async () => {
+        // The solver claims Arkade with P only AFTER the user's L1 claim, so
+        // the user's refund must open last. An inverted order is unfundable.
+        const { handle, send } = await sendWith(withHtlcLocktime(NOW() + 300 * 3600));
+        await expect(handle.settled()).rejects.toThrow(/locktime/i);
+        expect(send).not.toHaveBeenCalled();
     });
 });

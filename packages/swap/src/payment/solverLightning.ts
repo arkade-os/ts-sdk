@@ -44,7 +44,7 @@
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import type { PaymentRail, RouteQuote, RouterContext } from "@arkade-os/sdk";
 import { invoiceTarget, makeHandle } from "@arkade-os/sdk";
-import { requestLightningSend, type InvoiceFacts, type RfqTransport } from "../rfq";
+import { assertFundable, requestLightningSend, type InvoiceFacts, type RfqTransport } from "../rfq";
 import { solverRendezvous, type SolverRendezvous } from "./rendezvous";
 
 /** This rail's id, and what `RouterPreferences.priority` ranks it by. */
@@ -208,6 +208,18 @@ export function solverLightningRail(deps: SolverLightningRailDeps): PaymentRail 
                 },
                 send: async () =>
                     makeHandle(SOLVER_LIGHTNING_RAIL, async (emit) => {
+                        // Re-gate before anything is spent. `requestLightningSend`
+                        // ran `assertFundable` while quoting, and `send()` is a
+                        // separate user action that can be minutes later — long
+                        // enough for the invoice or the quote to lapse. Funding
+                        // an expired invoice's lockup buys nothing: the solver
+                        // can no longer obtain the preimage, so the only way out
+                        // is the refund leaf and its wait.
+                        assertFundable({
+                            quote: swap.quote,
+                            invoiceExpiresAt: facts.expiresAt,
+                            now: Math.floor(Date.now() / 1000),
+                        });
                         // Persist FIRST: a funded lockup with no record cannot
                         // be refunded, so a write that throws takes the payment
                         // with it.

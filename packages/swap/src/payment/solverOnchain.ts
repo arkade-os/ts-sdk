@@ -49,7 +49,7 @@
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import type { PaymentRail, RouteQuote, RouterContext } from "@arkade-os/sdk";
 import { btcTarget, makeHandle, resolveSendAmount, tryResolveSendAmount } from "@arkade-os/sdk";
-import { requestOnchainSend, type RfqTransport } from "../rfq";
+import { assertFundable, requestOnchainSend, type RfqTransport } from "../rfq";
 import { l1ScriptForAddress, type OnchainNetwork } from "../onchainHtlc";
 import { solverRendezvous, type SolverRendezvous } from "./rendezvous";
 
@@ -226,6 +226,21 @@ export function solverOnchainRail(deps: SolverOnchainRailDeps): PaymentRail {
                 },
                 send: async () =>
                     makeHandle(SOLVER_ONCHAIN_RAIL, async (emit) => {
+                        // Re-gate before anything is spent. `requestOnchainSend`
+                        // ran `assertFundable` while quoting, and `send()` is a
+                        // separate user action that can be minutes later — long
+                        // enough for the quote to lapse or the L1 claim window
+                        // to stop being safe. `htlcParams.refundLocktime` is the
+                        // same number the quote-time gate used.
+                        assertFundable({
+                            quote: swap.quote,
+                            now: Math.floor(Date.now() / 1000),
+                            onchain: {
+                                htlcLocktime: swap.htlcParams.refundLocktime,
+                                minConfirmations: swap.minConfirmations,
+                                direction: "send",
+                            },
+                        });
                         // Persist FIRST. A funded lockup with no record cannot
                         // be refunded, so a persist that throws must take the
                         // payment with it.

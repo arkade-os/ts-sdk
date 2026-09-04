@@ -328,3 +328,51 @@ describe("solverLightningRail.send", () => {
         expect(handle.status).toBe("settled");
     });
 });
+
+describe("the gates are re-run before anything is spent", () => {
+    const NOW = () => Math.floor(Date.now() / 1000);
+
+    /** Quote first, and hand the un-sent quote back so a test can move time. */
+    const quoted = async (invoiceFacts: ReturnType<typeof facts>, validUntil: number) => {
+        rfqStub = vi.fn(async () => ({
+            ...negotiated(101_500),
+            quote: {
+                from_amount: 101_500,
+                to_amount: 100_000,
+                valid_until: validUntil,
+                refund_locktime: NOW() + 200 * 3600,
+            },
+        }));
+        const send = vi.fn(async () => "txid");
+        const persist = vi.fn(async () => {});
+        const quote = await solverLightningRail(
+            depsWith({ persist, decodeInvoice: vi.fn(() => invoiceFacts) }),
+        ).quote({ raw: INVOICE }, ctxWith(send));
+        return { quote, send, persist };
+    };
+
+    it("funds when the invoice and the quote are both still live", async () => {
+        const { quote, send } = await quoted(facts(), NOW() + 3600);
+        await (await quote.send()).settled();
+        expect(send).toHaveBeenCalled();
+    });
+
+    it("does not persist or fund an invoice that expired after the quote", async () => {
+        // `available()` and `quote()` both checked expiry, but `send()` is a
+        // separate user action. Funding now buys nothing: the solver can no
+        // longer obtain the preimage, so the lockup can only refund.
+        const stale = facts();
+        const { quote, send, persist } = await quoted(stale, NOW() + 3600);
+        stale.expiresAt = NOW() - 1; // lapses between quote and send
+
+        await expect((await quote.send()).settled()).rejects.toThrow(/invoice expired/);
+        expect(persist).not.toHaveBeenCalled();
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    it("does not fund once the quote has expired", async () => {
+        const { quote, send } = await quoted(facts(), NOW() - 1);
+        await expect((await quote.send()).settled()).rejects.toThrow(/quote expired/);
+        expect(send).not.toHaveBeenCalled();
+    });
+});
