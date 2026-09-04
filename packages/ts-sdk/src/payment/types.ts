@@ -54,6 +54,11 @@ export interface RouteQuote {
     /** `amount + fee` — what leaves the wallet. */
     total: number;
     /**
+     * @experimental The asset shape is provisional. The v2 swap client models
+     * assets as `give`/`take`/`amountOn` over `AssetRef`, and the two
+     * vocabularies are expected to converge on v0.5; do not treat this field as
+     * stable 0.4.x API.
+     *
      * The asset view; absent means BTC only. The sats fields keep their
      * meaning — an asset rides a sats-carrying output, so `amount` is the
      * carrier, not zero.
@@ -95,7 +100,9 @@ export interface PaymentRequest {
     raw: string;
     /** Explicit sats; supplements/overrides any amount encoded in `raw`. */
     amount?: number;
-    /** Additive: an asset transfer also moves sats, so a 500 USDX request
+    /** @experimental — provisional, see {@link RouteQuote.assets}.
+     *
+     *  Additive: an asset transfer also moves sats, so a 500 USDX request
      *  legitimately has both. A rail that cannot deliver assets must REFUSE. */
     assets?: Asset[];
 }
