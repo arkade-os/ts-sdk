@@ -46,33 +46,19 @@
  * The rail hands the record to `persist` and reports the `rfqId` as the
  * quote's `swapId`; the manager takes it from there.
  */
-import { marketCorridor, sideLimits, type DiscoveredMarket } from "@arkade-os/solver-discovery";
-import { hex } from "@scure/base";
+import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import type { PaymentRail, RouteQuote, RouterContext } from "@arkade-os/sdk";
 import { btcTarget, makeHandle, resolveSendAmount, tryResolveSendAmount } from "@arkade-os/sdk";
 import { requestOnchainSend, type RfqTransport } from "../rfq";
 import { l1ScriptForAddress, type OnchainNetwork } from "../onchainHtlc";
+import { solverRendezvous, type SolverRendezvous } from "./rendezvous";
 
 /** This rail's id, and what `RouterPreferences.priority` ranks it by. */
 export const SOLVER_ONCHAIN_RAIL = "solver-onchain";
 
-/** 64 lowercase hex chars — the solver registry's own `emulator_pubkey` pattern. */
-const XONLY_HEX = /^[0-9a-f]{64}$/;
-
-/**
- * Where to reach a solver for an onchain send, and the bounds its card
- * advertises. Indicative only: the quote is what binds.
- */
-export interface SolverOnchainRendezvous {
-    solverPubkey: string;
-    transports: { nostr: { relays: string[] } };
-    /** The card's `emulator_pubkey`, x-only hex — the covenant cannot be
-     *  derived without it. */
-    emulatorPubkey: string;
-    /** Card bounds on the onchain (payout) side, sats. */
-    minSats: number;
-    maxSats: number;
-}
+/** @deprecated name kept for the onchain rail's own surface; the shape is
+ *  corridor-independent — see {@link SolverRendezvous}. */
+export type SolverOnchainRendezvous = SolverRendezvous;
 
 /** Everything `requestOnchainSend` handed back, plus the rendezvous it was
  *  negotiated at. This is what a record needs and what nothing later can give
@@ -133,53 +119,8 @@ export interface SolverOnchainRailDeps {
 }
 
 /**
- * What a card must carry before it can be a rendezvous: the card's own
- * `emulator_pubkey` wins, an absent one falls back to the pinned per-network
- * key, a malformed one fails closed even with a pin, and a disagreement
- * between the two is skipped rather than resolved.
- */
-const rendezvousOf = (
-    market: DiscoveredMarket,
-    pinned?: string,
-): SolverOnchainRendezvous | undefined => {
-    const transports = { nostr: { relays: market.transports?.nostr?.relays ?? [] } };
-    if (!market.discovery_pubkey || !transports.nostr.relays.length) return undefined;
-
-    const advertised = (market as { emulator_pubkey?: unknown }).emulator_pubkey;
-    const emulatorPubkey =
-        advertised === undefined || advertised === null || advertised === ""
-            ? pinned
-            : typeof advertised === "string" && XONLY_HEX.test(advertised)
-              ? advertised
-              : undefined;
-    if (!emulatorPubkey) return undefined;
-    if (pinned && emulatorPubkey !== pinned) return undefined;
-
-    // A side's bounds are what the SOLVER pays out on it, so the send leg —
-    // arkade in, L1 out — is bounded by the quote (onchain) side. `sideLimits`
-    // is the registry's own parser and reads a disabled side (max "0") or a
-    // malformed bound as null, which is what keeps a disabled corridor from
-    // reaching the user as "amount outside solver bounds".
-    const bounds = sideLimits(market, "quote");
-    if (!bounds) return undefined;
-
-    return {
-        solverPubkey: market.discovery_pubkey,
-        transports,
-        emulatorPubkey,
-        minSats: Number(bounds.min),
-        maxSats: Number(bounds.max),
-    };
-};
-
-/**
- * Pick the rendezvous for THIS amount.
- *
- * The size check is not a courtesy. A card advertises the range its solver can
- * actually fill; quoting outside it burns a negotiation, tells a third party
- * what the user is about to do, and comes back as `amount_out_of_range`
- * anyway. A card that serves the pair but not the size is skipped rather than
- * fatal — another card may take it.
+ * Pick the onchain-send rendezvous for THIS amount — {@link solverRendezvous}
+ * on the `onchain` payout corridor.
  *
  * Exported because it is the whole of `available()`'s judgement and worth
  * testing without a router around it.
@@ -188,24 +129,8 @@ export const solverOnchainRendezvous = (
     markets: DiscoveredMarket[],
     amountSats: number,
     fallbackEmulatorPubkey?: Uint8Array,
-): SolverOnchainRendezvous | undefined => {
-    const pinned = fallbackEmulatorPubkey ? hex.encode(fallbackEmulatorPubkey) : undefined;
-
-    for (const market of markets) {
-        // The send leg goes arkade -> L1: anything else on the base side is a
-        // corridor this wallet cannot fund from, and the receive direction
-        // lives on the other side of the same market.
-        if (marketCorridor(market, "base") !== "arkade") continue;
-        if (marketCorridor(market, "quote") !== "onchain") continue;
-
-        const rendezvous = rendezvousOf(market, pinned);
-        if (!rendezvous) continue;
-        if (amountSats >= rendezvous.minSats && amountSats <= rendezvous.maxSats) {
-            return rendezvous;
-        }
-    }
-    return undefined;
-};
+): SolverRendezvous | undefined =>
+    solverRendezvous(markets, "onchain", amountSats, fallbackEmulatorPubkey);
 
 /**
  * The rail. Register it alongside the core `onchain` rail and rank it first:
