@@ -78,6 +78,39 @@ const flush = async () => {
     for (let i = 0; i < 5; i++) await Promise.resolve();
 };
 
+const confirmedTxAt = (txid: string, blockHeight: number): ExplorerTransaction =>
+    ({
+        txid,
+        vout: [],
+        status: { confirmed: true, block_height: blockHeight, block_hash: "h", block_time: 1 },
+    }) as unknown as ExplorerTransaction;
+
+const unconfirmedTx = (txid: string): ExplorerTransaction =>
+    ({ txid, vout: [], status: { confirmed: false } }) as unknown as ExplorerTransaction;
+
+const blocksTip = (height: number) => okJson([{ id: "tip", height, mediantime: 1 }]);
+
+/**
+ * Route the mocked fetch by endpoint, so a test can fail address history while
+ * leaving the (much smaller) chain-tip request working — which is the whole
+ * situation the anchor exists for.
+ */
+const routeFetch = (routes: { txs?: () => unknown; blocks?: () => unknown }) => {
+    mockFetch.mockImplementation((url: string) => {
+        if (url.includes("/blocks")) {
+            return routes.blocks
+                ? Promise.resolve(routes.blocks())
+                : Promise.reject(new Error("tip unavailable"));
+        }
+        if (url.includes("/txs")) {
+            return routes.txs
+                ? Promise.resolve(routes.txs())
+                : Promise.reject(new Error("history unavailable"));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    });
+};
+
 /** `EsploraProvider`'s default HTTP poll interval. */
 const POLL_INTERVAL_MS = 15_000;
 /** First websocket reconnect delay; doubles per consecutive failure. */
@@ -316,7 +349,9 @@ describe("EsploraProvider.watchAddresses", () => {
 
             await provider.watchAddresses(["addr1"], callback);
 
-            expect(mockFetch).toHaveBeenCalledTimes(1); // it was attempted
+            // The history baseline was attempted, and its failure was followed
+            // by the chain-tip fallback that anchors a late baseline.
+            expect(mockFetch).toHaveBeenCalledTimes(2);
 
             // A failed baseline must degrade, not throw and not go deaf.
             await FakeWebSocket.instances[0].dispatch(
@@ -324,6 +359,84 @@ describe("EsploraProvider.watchAddresses", () => {
                 wsMessage("addr1", [confirmedTx("aa")]),
             );
             expect(callback).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("late baseline anchor", () => {
+        // When the creation-time history fetch fails, the chain tip is a second
+        // chance at a reference point: it is a far smaller request, so it often
+        // survives a timeout that a large address history does not.
+
+        it("reports a transaction confirmed after the watch started", async () => {
+            let history: unknown[] = [];
+            routeFetch({
+                blocks: () => blocksTip(100),
+                txs: () => okJson(history),
+            });
+            // Fail only the creation-time history fetch.
+            mockFetch.mockImplementationOnce((url: string) =>
+                url.includes("/txs")
+                    ? Promise.reject(new Error("history unavailable"))
+                    : Promise.resolve(blocksTip(100)),
+            );
+
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1"], callback);
+
+            history = [confirmedTxAt("older", 90), confirmedTxAt("newer", 105)];
+            await FakeWebSocket.instances[0].dispatch("error");
+            await flush();
+
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback.mock.calls[0][0]).toEqual([expect.objectContaining({ txid: "newer" })]);
+        });
+
+        it("treats an unconfirmed transaction at late baseline as new", async () => {
+            // A deposit landing during a short outage is typically still in the
+            // mempool. Re-announcing a genuinely pre-existing mempool tx is a
+            // duplicate notification for real funds; missing a deposit is not
+            // recoverable the same way, so bias towards reporting.
+            let history: unknown[] = [];
+            routeFetch({ blocks: () => blocksTip(100), txs: () => okJson(history) });
+            mockFetch.mockImplementationOnce((url: string) =>
+                url.includes("/txs")
+                    ? Promise.reject(new Error("history unavailable"))
+                    : Promise.resolve(blocksTip(100)),
+            );
+
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1"], callback);
+
+            history = [unconfirmedTx("in-mempool")];
+            await FakeWebSocket.instances[0].dispatch("error");
+            await flush();
+
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback.mock.calls[0][0]).toEqual([
+                expect.objectContaining({ txid: "in-mempool" }),
+            ]);
+        });
+
+        it("adopts everything and warns when the chain tip is unavailable too", async () => {
+            // Explorer fully down at creation: no history, no tip, no reference
+            // point. Unchanged behaviour — adopt silently rather than announce a
+            // whole address history, but say so.
+            routeFetch({ txs: undefined, blocks: undefined });
+
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000");
+            await provider.watchAddresses(["addr1"], callback);
+
+            routeFetch({ txs: () => okJson([confirmedTxAt("unknowable", 105)]) });
+            await FakeWebSocket.instances[0].dispatch("error");
+            await flush();
+
+            expect(callback).not.toHaveBeenCalled();
+            expect(
+                warn.mock.calls.some((c) => /may not have been reported/i.test(String(c[0]))),
+            ).toBe(true);
         });
     });
 
