@@ -281,16 +281,25 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                 "asset params are incomplete: assetTxid and assetGroupIndex must both be present or both absent",
             );
         }
-        // A row written by a strict-capable release (0.4.67 and earlier) carries
-        // a quoted bound compiled into its claim leaf. The option is gone, so
-        // that bound cannot be re-derived here — and reading the row as "not
-        // strict" would rebuild the DEFAULT covenant, a different pkScript, and
-        // die at `upsertContractRow` with an opaque `Script mismatch`. Name it.
+        // A row written by a strict-capable release (0.4.65 through 0.4.67)
+        // carries a quoted bound compiled into its claim leaf. The option is
+        // gone, so that bound cannot be re-derived here — and reading the row as
+        // "not strict" would rebuild the DEFAULT covenant, a different pkScript,
+        // and die at `upsertContractRow` with an opaque `Script mismatch`.
+        //
+        // This throw is permanent for such a row: it fires on every read, and no
+        // upgrade repairs it, so the message has to carry the way out rather
+        // than point back at a release the reader has already left. The order
+        // matters — 0.4.67 is the only build that can still rebuild the script,
+        // so the row is deleted after it is settled, never before.
         if (params.strictClaimAmount !== undefined || params.strictClaimAssetAmount !== undefined) {
             throw new Error(
-                "strict claim params on a stored row: the strict claim bound was removed " +
-                    "and this row's lockup cannot be re-derived without it — restore it with " +
-                    "the SDK version that wrote it",
+                "strict claim params on a stored row: the strict claim bound was removed in " +
+                    "0.4.68, so this row — written by 0.4.65-0.4.67 — locks to a script this " +
+                    "build cannot re-derive. To clear it: claim or refund the swap on 0.4.67, " +
+                    "then drop the settled row here with " +
+                    "`contractManager.deleteContract(script)`. Do not delete it first — any " +
+                    "balance it still holds is only reachable from 0.4.67.",
             );
         }
         // Same silent-drop shape as the two checks above, one flag further in:
