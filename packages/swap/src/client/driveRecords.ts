@@ -138,13 +138,19 @@ export const corridorRecordStore = (
     /**
      * Which stored records the restore may hand to the manager.
      *
-     * The filter exists for one case: an `arkade -> onchain` record on a client
-     * whose chain source was refused. `restoreFromRepository` restores
+     * The filter exists for two cases. An `arkade -> onchain` record on a client
+     * whose chain source was refused: `restoreFromRepository` restores
      * everything it reads, and the manager fails an onchain-send swap
      * TERMINALLY on its first pass without a `ChainSource` — a deliberate
      * refusal to watch that corridor blind. Excluding the record here leaves it
      * durable, undriven and reporting off itself, which is the honest answer to
      * "this client cannot drive this swap".
+     *
+     * And a record in a terminal state, which the drive excludes: the manager
+     * would rebuild it only to file it in `finished`, so handing it over pays
+     * a covenant derivation and a contract row lookup per record for nothing.
+     * The record itself stays readable — it is still in the drive's registry
+     * and still answers off its own stored state.
      */
     admits: (record: CorridorSwapRecord) => boolean = () => true,
 ): CorridorRecordStore => {

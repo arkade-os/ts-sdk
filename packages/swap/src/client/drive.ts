@@ -328,7 +328,20 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
     let bridge: CorridorRecordStore | undefined;
     const corridorStore = (): CorridorRecordStore =>
-        (bridge ??= corridorRecordStore(storage(), remember, (r) => !undrivable.has(r.id)));
+        (bridge ??= corridorRecordStore(
+            storage(),
+            remember,
+            // Terminal records are readable but never driven: excluding them
+            // here is what keeps `restoreFromRepository` from rebuilding each
+            // one — a covenant derivation and a contract row lookup per
+            // record — only to file it in the manager's `finished` set. The
+            // exclusion is on the manager's read, not the record: the drive's
+            // own `records` registry keeps every readable record, and the
+            // index still learns an excluded record's `rfqId` (see
+            // `getAllRfqSwaps`), so a consumer handing its swap to the manager
+            // directly keeps resolving.
+            (r) => !undrivable.has(r.id) && !isRfqSwapTerminal(r.state),
+        ));
 
     // ── the outcome ──────────────────────────────────────────────────────────
 
@@ -350,9 +363,20 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
     const outcomeOfEntry = (record: SwapRecord, current?: RfqSwap): Outcome => {
         // The offer family has no live object of its own — its watcher is
-        // event-driven over the store — and a corridor record with nothing live
-        // behind it has only itself and the clock to answer with.
-        if (record.family === "offer" || current === undefined) return recordOutcome(record);
+        // event-driven over the store — so past the funding the record IS the
+        // state.
+        if (record.family === "offer") return recordOutcome(record);
+        // A terminal record the restore deliberately did not rebuild has
+        // nothing live behind it, so it answers off its own stored state. This
+        // is the same cell the live path reads (`corridorOutcome` below), not
+        // the record-and-clock projection: `recordOutcome` ignores state and
+        // would report a settled swap as `funding`.
+        if (current === undefined) {
+            if (isRfqSwapTerminal(record.state)) return corridorOutcome(record.kind, record.state);
+            // A live record with nothing behind it has only itself and the
+            // clock to answer with.
+            return recordOutcome(record);
+        }
         const state = effectiveState(current);
         // `pending` before any pass is the accept-time word, not an answer: the
         // record says the funding was broadcast and nothing has looked at the
@@ -776,12 +800,19 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         const { corridor, offer } = splitRecords(all.filter(readableRecord));
         for (const record of [...corridor, ...offer]) records.set(record.id, record);
 
+        // Terminal records stay readable but are never driven: indexing one,
+        // probing it and rebuilding it buys nothing — the manager would file
+        // it in `finished` and no callback path a never-admitted swap can
+        // produce reaches the `rfqId -> QuoteId` index. Every readable record
+        // is already in `records` above, so `list()` and the `onUpdate` replay
+        // keep seeing settled swaps; only this driving half narrows.
+        const liveCorridor = corridor.filter((record) => !isRfqSwapTerminal(record.state));
         const store = corridorStore();
-        for (const record of corridor) store.index(record);
+        for (const record of liveCorridor) store.index(record);
 
-        if (corridor.length > 0) {
+        if (liveCorridor.length > 0) {
             await contractsOf();
-            for (const record of corridor) {
+            for (const record of liveCorridor) {
                 if (!(await drivable(record))) undrivable.add(record.id);
             }
             managerDeps.repository = store;
