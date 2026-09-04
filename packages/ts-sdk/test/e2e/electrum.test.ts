@@ -63,6 +63,52 @@ describe("ElectrumOnchainProvider integration tests", () => {
         expect(tipAgain.height).toBeGreaterThanOrEqual(tip.height);
     });
 
+    it("computes median-time-past from real headers, not the tip's own time", {
+        timeout: 15_000,
+    }, async () => {
+        // `tip.time` is specified as MTP, and this provider computes it by
+        // fetching the eleven-block window over `blockchain.block.header`.
+        // A unit test can only prove the arithmetic; what it cannot prove is
+        // that a real Fulcrum answers a batch of ten header requests at all.
+        //
+        // The window read degrades to the tip's own `nTime` and warns rather
+        // than throwing, so `time > 0` above passes either way. Asserting the
+        // warning did NOT fire is what distinguishes "the median was computed"
+        // from "the fallback was taken" — the two are otherwise identical from
+        // outside.
+        const warnings: unknown[][] = [];
+        const original = console.warn;
+        console.warn = (...args: unknown[]) => {
+            warnings.push(args);
+        };
+
+        let tip: { height: number; time: number };
+        try {
+            // A fresh provider: the first call is the one that reads the window,
+            // and the shared `provider` has already cached its MTP by now.
+            const fresh = new ElectrumOnchainProvider(ws, networks.regtest);
+            tip = await fresh.getChainTip();
+        } finally {
+            console.warn = original;
+        }
+
+        expect(warnings.filter((w) => String(w[0]).includes("median-time-past"))).toHaveLength(0);
+        expect(tip.time).toBeGreaterThan(0);
+
+        // MTP is the median of the window, so on a chain whose blocks are mined
+        // in order it never runs ahead of the tip's own timestamp. Comparing
+        // against the header this provider does NOT use is the second half of
+        // the distinction.
+        const header = await chain.fetchBlockHeader(tip.height);
+        const tipNTime = Number(
+            new DataView(
+                Uint8Array.from((header.hex.match(/../g) ?? []).map((b) => Number.parseInt(b, 16)))
+                    .buffer,
+            ).getUint32(68, true),
+        );
+        expect(tip.time).toBeLessThanOrEqual(tipNTime);
+    });
+
     it("returns a positive sat/vB fee rate for the regtest mempool", {
         timeout: 10_000,
     }, async () => {
