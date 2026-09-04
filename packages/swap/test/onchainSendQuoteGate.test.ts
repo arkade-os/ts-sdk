@@ -1,18 +1,7 @@
 /**
- * `requestOnchainSend` must fund only a quote that prices the trade the caller
- * asked for.
- *
- * The call returns `fundAmount: quote.from_amount` — the number the caller
- * locks up — so a quote that names a different amount than the request is not a
- * quote for this trade, and funding it spends the solver's figure rather than
- * the user's. The receive corridors have always applied `assertQuotedAmount`;
- * this leg is the one that did not, and every consumer was left to re-check it
- * (the Arkade wallet does, by hand, in its own send flow).
- *
- * `requestLightningSend` is deliberately not covered here: a BOLT11 profile
- * carries no `amountSide`, and that entrypoint makes the same two comparisons
- * against the invoice's own amount instead — `rfqDerivedSecrets.test.ts` owns
- * those.
+ * `requestOnchainSend` returns `fundAmount: quote.from_amount` verbatim, so a
+ * quote naming a different amount than the request is funded at the solver's
+ * number. `requestLightningSend` compares against the invoice instead.
  */
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
@@ -137,13 +126,11 @@ describe("requestOnchainSend prices the trade that was asked for", () => {
     it("funds the quoted from_amount when the quote matches the request", async () => {
         const result = await send(quoting(101_000, 100_000), 100_000, "to");
         expect(result.quote.to_amount).toBe(100_000);
-        // The fee is the spread, and `fundAmount` is what leaves the wallet.
         expect(result.fundAmount).toBe(101_000);
     });
 
     it("refuses an exact-out quote that pays out less than was asked for", async () => {
-        // The shape the old fixtures encoded: ask for 100_000 on the L1 side,
-        // get quoted 99_000, and fund 100_000 anyway.
+        // The shape the old fixtures encoded, unnoticed by eleven tests.
         await expect(send(quoting(100_000, 99_000), 100_000, "to")).rejects.toThrow(
             /to_amount 99000 does not match the requested 100000/,
         );
@@ -156,8 +143,7 @@ describe("requestOnchainSend prices the trade that was asked for", () => {
     });
 
     it("refuses a quote that pays out more than it takes in", async () => {
-        // Not a generosity check: a negative spread means the amounts describe
-        // some other trade, and the one thing this leg cannot do is fund it.
+        // Not generosity: a negative spread describes some other trade.
         await expect(send(quoting(100_000, 100_001), 100_001, "to")).rejects.toThrow(
             /pays out more than it takes in/,
         );

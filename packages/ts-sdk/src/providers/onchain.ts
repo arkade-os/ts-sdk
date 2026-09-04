@@ -119,16 +119,12 @@ export interface OnchainProvider {
      *
      * @returns Current chain height, median-time-past, and block hash
      * @remarks
-     * `time` is the tip's **median-time-past** — the median of the last eleven
-     * block timestamps — not the tip header's own `nTime`. That is what BIP-113
-     * evaluates a seconds-typed `OP_CHECKLOCKTIMEVERIFY` / `OP_CHECKSEQUENCEVERIFY`
-     * against, and every consumer in this SDK reads it as such (the wallet's
-     * `ContractManagerConfig.chainTip`, the exit executor's maturity test). MTP
-     * lags the tip by roughly an hour and is monotonic; the header's own
-     * timestamp is neither, and may sit up to two hours in the future. An
-     * implementation that returns the header time calls a timelock mature before
-     * the network does, which surfaces as a broadcast the node rejects rather
-     * than as a visible bug here.
+     * `time` is the tip's **median-time-past**, not the header's own `nTime`.
+     * BIP-113 evaluates seconds-typed `OP_CHECKLOCKTIMEVERIFY` /
+     * `OP_CHECKSEQUENCEVERIFY` against MTP, which lags the tip by roughly an
+     * hour; the header time may sit two hours ahead of it. An implementation
+     * returning the header time calls a timelock mature before the network
+     * does — surfacing as a broadcast the node rejects, not as a bug here.
      */
     getChainTip(): Promise<{
         height: number;
@@ -410,9 +406,8 @@ export class EsploraProvider implements OnchainProvider {
         const hash = tip[0].id;
         return {
             height: tip[0].height,
-            // `mediantime`, never `timestamp`: the interface specifies
-            // median-time-past, and esplora already publishes the tip block's
-            // own MTP. Reading `timestamp` here would be the header's `nTime`.
+            // `mediantime`, never `timestamp`: the latter is the header's own
+            // `nTime`, and this field is specified as MTP.
             time: tip[0].mediantime,
             hash,
         };

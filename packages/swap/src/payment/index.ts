@@ -1,11 +1,6 @@
-/**
- * Payment rails backed by an Arkade Intents solver.
- *
- * These live here rather than in `@arkade-os/sdk/payment/rails` because the
- * dependency runs one way: this package depends on the SDK, never the reverse.
- * `PaymentRail` is a structural interface, so a rail defined here is a rail —
- * the app registers it on the router with `use()`.
- */
+/** Payment rails backed by an Arkade Intents solver. They live here because
+ *  the SDK does not depend on this package; `PaymentRail` is structural, so
+ *  the app registers them with `use()`. */
 export { solverRendezvous, type SolverRendezvous } from "./rendezvous";
 export {
     SOLVER_ONCHAIN_RAIL,

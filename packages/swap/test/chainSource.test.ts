@@ -1,12 +1,7 @@
 /**
- * `chainSourceFrom` — the package's L1 view, taken from the SDK's own
- * `OnchainProvider` instead of a hand-written esplora client per consumer.
- *
- * Every test here is about a mapping that is NOT one-to-one. A provider read
- * that returns the wrong shape is caught by types; the ones that are not are
- * the depth arithmetic, the address the script decodes to, and above all MTP —
- * each of which fails as a claim window that quietly closed rather than as an
- * error.
+ * `chainSourceFrom`. Every test is a mapping that is NOT one-to-one — the depth
+ * arithmetic, the address a script decodes to, and MTP — each of which fails as
+ * a claim window that quietly closed rather than as an error.
  */
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
@@ -46,9 +41,7 @@ describe("chainSourceFrom.getScriptUtxos", () => {
 
         await chain.getScriptUtxos(HTLC.pkScript);
 
-        // The HTLC's own address, derived independently by onchainHtlcScript —
-        // not a string this test made up, so a wrong network or a byte-reversed
-        // lookup cannot agree with it by accident.
+        // Derived independently, so a wrong network cannot agree by accident.
         expect(getCoins).toHaveBeenCalledWith(HTLC.address);
     });
 
@@ -58,7 +51,6 @@ describe("chainSourceFrom.getScriptUtxos", () => {
             seen.push(address);
             return [];
         });
-        // Same script, read as mainnet: a bc1p address, not the bcrt1p one.
         await chainSourceFrom(providerWith({ getCoins }), "bitcoin").getScriptUtxos(HTLC.pkScript);
 
         expect(seen[0].startsWith("bc1p")).toBe(true);
@@ -105,8 +97,6 @@ describe("chainSourceFrom.getScriptUtxos", () => {
     });
 
     it("reports an unconfirmed output as zero-deep, never one", async () => {
-        // A `minConfirmations: 1` policy must not claim against a mempool
-        // output, which can still be replaced.
         const chain = chainSourceFrom(
             providerWith({
                 getCoins: vi.fn(async () => [
@@ -133,9 +123,7 @@ describe("chainSourceFrom.getScriptUtxos", () => {
     });
 
     it("never reports a negative depth when the tip lags the output", async () => {
-        // A provider whose tip read is behind its utxo read (two endpoints, one
-        // race) must not produce a negative number the comparison would read as
-        // "not deep enough" in one direction and as garbage in the other.
+        // Two endpoints, one race: a tip behind the utxo must not go negative.
         const chain = chainSourceFrom(
             providerWith({
                 getChainTip: vi.fn(async () => ({ height: 90, time: 1_000, hash: "tip" })),
@@ -188,9 +176,6 @@ describe("chainSourceFrom.getSpendingTx", () => {
     });
 
     it("reports no spend when the deployment omits the spender txid", async () => {
-        // `txid` is optional on the interface; some esplora deployments drop it.
-        // The only caller reads P out of the spend and retries, so "not yet" is
-        // the honest answer — an invented txid would not be.
         const chain = chainSourceFrom(
             providerWith({
                 getTxOutspends: vi.fn(async () => [{ spent: true }]),
@@ -232,10 +217,6 @@ describe("chainSourceFrom.getMtp", () => {
             providerWith({
                 getChainTip: vi.fn(async () => ({
                     height: 100,
-                    // MTP lags the tip's own header time by roughly an hour;
-                    // `OnchainProvider.getChainTip().time` is specified as the
-                    // former, and a refund gated on the latter would broadcast
-                    // before the leaf actually opens.
                     time: 1_699_996_400,
                     hash: "tip",
                 })),
@@ -247,9 +228,8 @@ describe("chainSourceFrom.getMtp", () => {
     });
 
     it("does not fall back to the host clock", async () => {
-        // A `Date.now()` here reads as MTP being roughly wall-clock, which it is
-        // not: it is a chain observation and can lag arbitrarily on a stalled
-        // chain, which is exactly when a refund must NOT fire.
+        // MTP is a chain observation: on a stalled chain it lags arbitrarily,
+        // which is exactly when a refund must NOT fire.
         const chain = chainSourceFrom(
             providerWith({
                 getChainTip: vi.fn(async () => ({ height: 1, time: 1, hash: "tip" })),
@@ -263,8 +243,7 @@ describe("chainSourceFrom.getMtp", () => {
 
 describe("the adapter round-trips the real HTLC script", () => {
     it("decodes the pkScript back to the address the HTLC published", () => {
-        // Guards the decode itself: if `OutScript.decode` and `Address.encode`
-        // ever disagree for a P2TR output, every lookup silently returns [].
+        // If decode/encode ever disagree on P2TR, every lookup returns [].
         const decoded = btc
             .Address({ ...btc.TEST_NETWORK, bech32: "bcrt" })
             .encode(btc.OutScript.decode(HTLC.pkScript));

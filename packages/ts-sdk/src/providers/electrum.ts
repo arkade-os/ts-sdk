@@ -71,7 +71,6 @@ const MAX_FETCH_TRANSACTIONS_ATTEMPTS = 5;
 // Bitcoin block header is 80 bytes
 const BLOCK_HEADER_SIZE = 80;
 
-/** How many block timestamps consensus takes the median of (`nMedianTimeSpan`). */
 const MTP_WINDOW = 11;
 
 export type TransactionHistory = {
@@ -558,7 +557,6 @@ export class WsElectrumChainSource {
  */
 export class ElectrumOnchainProvider implements OnchainProvider {
     private chain: WsElectrumChainSource;
-    /** Last computed median-time-past, keyed by the tip hash it was taken at. */
     private mtpCache?: { hash: string; mtp: number };
 
     constructor(
@@ -894,13 +892,8 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         };
     }
 
-    /**
-     * @remarks
-     * `time` is median-time-past, per {@link OnchainProvider.getChainTip}.
-     * Electrum serves raw headers and no MTP of its own, so it is computed here
-     * from the window itself — the tip header alone carries only `nTime`, which
-     * is not the same number and matures a seconds-typed timelock too early.
-     */
+    /** `time` is median-time-past, per {@link OnchainProvider.getChainTip};
+     *  Electrum serves raw headers and no MTP, so it is computed here. */
     async getChainTip(): Promise<{
         height: number;
         time: number;
@@ -917,32 +910,17 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     }
 
     /**
-     * The median of the last {@link MTP_WINDOW} block timestamps ending at
-     * `height` — consensus's `GetMedianTimePast`, which includes the block
-     * itself.
+     * Consensus's `GetMedianTimePast`, ending at and including `height`.
      *
-     * Cached per tip hash, not merely per height. `subscribeHeaders` serves its
-     * tip from a subscription that only changes on a new block, and this is
-     * called on every balance read through `resolveTimeHeight`; without the
-     * cache each of those would fetch ten headers. Keying on the hash rather
-     * than the height means a reorg to a different block at the same height
-     * recomputes instead of serving the orphaned chain's median.
-     *
-     * The tip's own header is not refetched: `subscribeHeaders` already has it,
-     * and asking the server for a height it has just announced is a round trip
-     * that can also race the next block.
-     *
-     * Degrades rather than throws. Every caller uses `time` to decide whether a
-     * timelock has matured, and an exception there stops the read entirely
-     * instead of answering. The fallback is the tip's own `nTime` — the number
-     * this method previously returned outright — which errs toward calling a
-     * timelock mature early, so it is a fallback and never the answer.
+     * Cached per tip HASH, not height: this runs on every balance read, and
+     * hashing means a reorg at the same height recomputes rather than serving
+     * the orphaned chain's median. Degrades to the tip's `nTime` rather than
+     * throwing — a caller that cannot read the tip at all is worse off.
      */
     private async medianTimePast(height: number, tipHex: string, hash: string): Promise<number> {
         if (this.mtpCache?.hash === hash) return this.mtpCache.mtp;
         const tipTime = parseBlockHeader(tipHex).timestamp;
-        // Stops at 0: a chain shorter than the window (a fresh regtest) takes
-        // the median of what exists, which is what consensus does there too.
+        // Stops at 0: near genesis, consensus takes the median of what exists.
         const heights: number[] = [];
         for (let h = height - 1; h >= 0 && heights.length < MTP_WINDOW - 1; h--) heights.push(h);
         if (heights.length === 0) return tipTime;
@@ -955,8 +933,8 @@ export class ElectrumOnchainProvider implements OnchainProvider {
                 ...headers.map((header) => parseBlockHeader(header.hex).timestamp),
             ];
         } catch (e) {
-            // Deliberately NOT cached: the next call should retry the window
-            // rather than serve the early-maturing fallback for this whole block.
+            // Not cached: retry the window next call rather than serve the
+            // early-maturing fallback for this whole block.
             console.warn(
                 "Failed to fetch the median-time-past window; using the tip's own time",
                 e,

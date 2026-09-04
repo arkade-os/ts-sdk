@@ -84,9 +84,7 @@ const h160FromPaymentHash = (paymentHash: string): Uint8Array => ripemd160(hex.d
 
 export type OnchainNetwork = "bitcoin" | "testnet" | "regtest";
 
-/** `OnchainNetwork` → that chain's address/script parameters. Exported for
- * {@link chainSourceFrom}, which decodes a pkScript to the address an
- * `OnchainProvider` is keyed by. */
+/** `OnchainNetwork` → that chain's address/script parameters. */
 export const L1_NETWORKS: Record<OnchainNetwork, typeof btc.NETWORK> = {
     bitcoin: btc.NETWORK,
     testnet: btc.TEST_NETWORK,
@@ -94,17 +92,10 @@ export const L1_NETWORKS: Record<OnchainNetwork, typeof btc.NETWORK> = {
 };
 
 /**
- * The output script paying `address` on `network` — the `payoutPkScript` that
- * {@link buildHtlcClaim} pays the fill to.
- *
- * Resolved from the address the user typed, and resolved EARLY: the claim
- * transaction's output is the spender's own choice, so nothing in the quote,
- * the HTLC, or anything else that survives a send screen names it. A swap
- * whose destination cannot be encoded has nowhere to pay and must be refused
- * before it is negotiated, not discovered at claim time.
- *
- * Throws on an address this build cannot decode, or one belonging to a
- * different network — `btc.Address` checks the HRP and version byte.
+ * The `payoutPkScript` {@link buildHtlcClaim} pays the fill to. Resolved EARLY:
+ * the claim's output is the spender's own choice, so nothing that survives a
+ * send screen names it, and a destination that cannot be encoded must be
+ * refused before the swap is negotiated rather than at claim time.
  */
 export const l1ScriptForAddress = (address: string, network: OnchainNetwork): Uint8Array =>
     btc.OutScript.encode(btc.Address(L1_NETWORKS[network]).decode(address));

@@ -397,14 +397,8 @@ describe("ElectrumOnchainProvider", () => {
         });
     });
 
-    /**
-     * `getChainTip().time` is specified as median-time-past — what BIP-113
-     * matures a seconds-typed timelock against. Electrum serves raw headers and
-     * no MTP of its own, so this provider computes it; returning the tip
-     * header's `nTime` (which it used to) calls a timelock mature before the
-     * network does, and the two do not diverge visibly until a node rejects the
-     * spend.
-     */
+    /** `time` is MTP, not the tip header's `nTime`; the two do not diverge
+     *  visibly until a node rejects the spend. */
     describe("getChainTip median-time-past", () => {
         /** The genesis header with its 4-byte LE `nTime` (offset 68) replaced. */
         const headerAt = (time: number): string => {
@@ -415,9 +409,8 @@ describe("ElectrumOnchainProvider", () => {
         const headerCalls = () =>
             wsMock.request.mock.calls.filter((call) => call[0] === "blockchain.block.header");
 
-        // Deliberately unordered, and the tip is the LATEST of the eleven, so
-        // "return the tip's time" and "return the newest in the window" both
-        // give 2000 while the median is 1005.
+        // Unordered, and the tip is the LATEST, so "the tip's time" and "the
+        // newest in the window" both give 2000 while the median is 1005.
         const WINDOW_TIMES = [1000, 1009, 1001, 1008, 1002, 1007, 1003, 1006, 1004, 1005];
         const TIP_TIME = 2000;
         // Sorted: [1000…1009, 2000]; the sixth of eleven is 1005.
@@ -445,8 +438,6 @@ describe("ElectrumOnchainProvider", () => {
 
         it("does not refetch the window while the tip is unchanged", async () => {
             tipAt100();
-            // getChainTip() is on the balance-read path; ten header fetches per
-            // call would be a round trip per coin listing.
             expect((await provider.getChainTip()).time).toBe(MEDIAN);
             expect(headerCalls().length).toBe(10);
             expect((await provider.getChainTip()).time).toBe(MEDIAN);
@@ -454,8 +445,7 @@ describe("ElectrumOnchainProvider", () => {
         });
 
         it("takes the median of what exists on a chain shorter than the window", async () => {
-            // Height 2 => the tip plus blocks 1 and 0: three timestamps, and the
-            // median is the middle one. Consensus does the same near genesis.
+            // Height 2 => three timestamps; consensus does the same near genesis.
             deliverHeadersTip(wsMock.subscribe, { height: 2, hex: headerAt(500) });
             mockBatch(wsMock.request, [headerAt(100), headerAt(300)]);
 
@@ -466,8 +456,6 @@ describe("ElectrumOnchainProvider", () => {
             deliverHeadersTip(wsMock.subscribe, { height: 100, hex: headerAt(TIP_TIME) });
             wsMock.request.mockRejectedValue(new Error("server gone"));
 
-            // A tip that cannot be read at all is worse than one whose time is
-            // early: every caller still needs the height back.
             expect((await provider.getChainTip()).time).toBe(TIP_TIME);
         });
 

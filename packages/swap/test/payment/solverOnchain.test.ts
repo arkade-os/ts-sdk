@@ -1,15 +1,8 @@
 /**
- * `solverOnchainRail` — the solver-routed onchain send, as a rail.
- *
- * The subject is not "does it call requestOnchainSend". It is the three things
- * the Arkade wallet reimplemented app-side and this rail exists to give back to
- * `PaymentRouter`:
- *
- * 1. selection — which card, and only one that serves the SIZE;
- * 2. the drop — every refusal is `available()` returning false, so the router's
- *    ranking hands the send to the collaborative-exit `onchain` rail with no
- *    error type and no enum in between;
- * 3. the order — the record is written before the lockup is funded, always.
+ * `solverOnchainRail` — the three things the wallet reimplemented app-side:
+ * selection (only a card that serves the SIZE), the drop (every refusal is
+ * `available()` returning false), and the order (the record is written before
+ * the lockup is funded, always).
  */
 import { describe, expect, it, vi } from "vitest";
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
@@ -27,14 +20,8 @@ const SOLVER_PUBKEY = "aa".repeat(32);
 const EMULATOR_PUBKEY = "bb".repeat(32);
 const PAYOUT_PUBKEY = new Uint8Array(32).fill(15);
 
-/**
- * A card serving `arkade:BTC -> onchain:BTC`, paying out between `min` and
- * `max` sats on the onchain (quote) side.
- *
- * The field names are the registry's own — `base_corridor`/`quote_corridor`
- * carry the corridor and `min_quote_amount`/`max_quote_amount` the bounds, and
- * `marketCorridor` defaults an absent or malformed corridor to `arkade`.
- */
+/** A card serving `arkade:BTC -> onchain:BTC`, paying out between `min` and
+ *  `max` sats. Field names are the registry's own. */
 const card = (min: string, max: string, overrides: Record<string, unknown> = {}) =>
     ({
         pair: "BTC/onchain:BTC",
@@ -54,14 +41,8 @@ const card = (min: string, max: string, overrides: Record<string, unknown> = {})
 
 const NOW = () => Math.floor(Date.now() / 1000);
 
-/**
- * What `requestOnchainSend` hands back, only as far as the rail reads it.
- *
- * The locktimes are live and correctly ordered — the L1 HTLC opens well before
- * the Arkade refund, with room to confirm and claim — because `send()` re-runs
- * `assertFundable` on exactly these fields. Placeholder locktimes would make
- * this a quote nothing could fund.
- */
+/** What `requestOnchainSend` hands back, as far as the rail reads it. The
+ *  locktimes are live and correctly ordered because `send()` re-gates on them. */
 const negotiated = (fundAmount: number, toAmount: number) =>
     ({
         rfqId: "rfq-1",
@@ -118,8 +99,6 @@ describe("solverOnchainRendezvous", () => {
     });
 
     it("skips a card that serves the pair but not the size", () => {
-        // Quoting outside a card's advertised range burns a negotiation, tells
-        // a third party what the user is about to do, and is refused anyway.
         expect(solverOnchainRendezvous([card("1000", "50000")], 100_000)).toBeUndefined();
         expect(solverOnchainRendezvous([card("200000", "1000000")], 100_000)).toBeUndefined();
     });
@@ -150,7 +129,6 @@ describe("solverOnchainRendezvous", () => {
     });
 
     it("skips a plain intra-Arkade market, which has no L1 side at all", () => {
-        // An absent corridor field defaults to `arkade` on both sides.
         const intraArkade = card("1000", "1000000", {
             base_corridor: undefined,
             quote_corridor: undefined,
@@ -159,8 +137,6 @@ describe("solverOnchainRendezvous", () => {
     });
 
     it("reads a disabled quote side as no corridor, not as out-of-bounds", () => {
-        // `sideLimits` reads max "0" as null; without that a disabled corridor
-        // would surface to the user as "amount outside solver bounds".
         expect(solverOnchainRendezvous([card("0", "0")], 100_000)).toBeUndefined();
     });
 
@@ -172,7 +148,6 @@ describe("solverOnchainRendezvous", () => {
             expect(solverOnchainRendezvous([bare], 100_000, pinned)?.emulatorPubkey).toBe(
                 EMULATOR_PUBKEY,
             );
-            // …and without a pin there is nothing to derive the covenant from.
             expect(solverOnchainRendezvous([bare], 100_000)).toBeUndefined();
         });
 
@@ -183,16 +158,9 @@ describe("solverOnchainRendezvous", () => {
         });
 
         it("rejects a malformed pin outright, rather than adopting it", () => {
-            // A 33-byte compressed key encodes to 66 hex. Without the check it
-            // would be adopted verbatim for any card advertising none, and
-            // reach `connect` as an `emulatorPubkey` this type documents as
-            // x-only. Neither rail re-derives it, so failing closed here is the
-            // only place both fail closed.
             const bare = card("1000", "1000000", { emulator_pubkey: undefined });
             const compressed = new Uint8Array(33).fill(0xbb);
             expect(solverOnchainRendezvous([bare], 100_000, compressed)).toBeUndefined();
-            // …and it rejects for a card that DOES advertise one, too: a pin
-            // that cannot be compared is not a pin the card can agree with.
             expect(
                 solverOnchainRendezvous([card("1000", "1000000")], 100_000, compressed),
             ).toBeUndefined();
@@ -234,12 +202,8 @@ describe("solverOnchainRail.available", () => {
     });
 
     it("drops itself for a destination the claim could not pay to", async () => {
-        // Checked BEFORE discovery: a funded HTLC whose claim has nowhere to go
-        // is worse than a collaborative exit, and cheaper to rule out.
         const discover = vi.fn(async () => [card("1000", "1000000")]);
         const rail = solverOnchainRail(depsWith({ discover }));
-        // A mainnet address on a regtest deployment: decodable as an address,
-        // not decodable on this network.
         expect(
             await rail.available?.(
                 { raw: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", amount: 100_000 },
@@ -250,8 +214,6 @@ describe("solverOnchainRail.available", () => {
     });
 
     it("drops itself for an amountless request", async () => {
-        // Nothing can be bounds-checked without an amount, so the rail cannot
-        // claim to fit; `quote()` owns the "an amount is required" rejection.
         expect(await solverOnchainRail(depsWith()).available?.({ raw: BTC_ADDR }, ctxWith())).toBe(
             false,
         );
@@ -259,7 +221,6 @@ describe("solverOnchainRail.available", () => {
 
     it("reads the BIP21 amount when the request carries no explicit one", async () => {
         const rail = solverOnchainRail(depsWith());
-        // 0.001 BTC = 100_000 sats, inside 1000..1000000
         expect(await rail.available?.({ raw: `bitcoin:${BTC_ADDR}?amount=0.001` }, ctxWith())).toBe(
             true,
         );
@@ -295,9 +256,6 @@ describe("the router drops this rail rather than failing the payment", () => {
     });
 
     it("leaves the collaborative exit standing when discovery itself throws", async () => {
-        // The registry being unreachable is a reason to exit collaboratively,
-        // never a reason to fail the payment. The router's own contract is what
-        // makes that true — this rail adds no error type of its own.
         const deps = depsWith({
             discover: vi.fn(async () => {
                 throw new Error("registry unreachable");
@@ -310,7 +268,7 @@ describe("the router drops this rail rather than failing the payment", () => {
                 amount: 100_000,
             });
             expect(options.map((o) => o.railId)).toEqual(["onchain"]);
-            // Dropped, but never silently: a rail broken by a bug must not vanish.
+            // Dropped, never silently.
             expect(warn).toHaveBeenCalled();
         } finally {
             warn.mockRestore();
@@ -344,8 +302,6 @@ describe("solverOnchainRail.quote", () => {
     });
 
     it("asks the solver to fix the L1 side, not the amount that leaves the wallet", async () => {
-        // `amountSide: "to"` is what makes the quote receiver-exact, and what
-        // `assertQuotedAmount` then pins inside `requestOnchainSend`.
         const { spy } = mockRequest();
         rfqStub = spy;
         await solverOnchainRail(depsWith()).quote({ raw: BTC_ADDR, amount: 100_000 }, ctxWith());
@@ -407,8 +363,6 @@ describe("solverOnchainRail.send", () => {
     });
 
     it("does not fund when the record could not be written", async () => {
-        // A funded lockup with no record cannot be refunded. This is the one
-        // ordering in the rail that cannot be relaxed.
         rfqStub = mockRequest().spy;
         const send = vi.fn(async () => "txid");
         const persist = vi.fn(async () => {
@@ -436,8 +390,6 @@ describe("solverOnchainRail.send", () => {
     });
 
     it("stops at 'sent' with the swap id when no settlement watcher is wired", async () => {
-        // The recipient has nothing until the solver fills the L1 HTLC and this
-        // wallet claims it; reporting 'settled' on a funded lockup would be a lie.
         rfqStub = mockRequest().spy;
         const quote = await solverOnchainRail(depsWith()).quote(
             { raw: BTC_ADDR, amount: 100_000 },
@@ -489,17 +441,12 @@ describe("solverOnchainRail.send", () => {
             rfqId: "rfq-1",
             rendezvous: { solverPubkey: SOLVER_PUBKEY },
         });
-        // The recipient's output script: not on the quote, not on the HTLC, and
-        // not derivable at claim time from anything that survives this screen.
+        // Not on the quote, not on the HTLC, not derivable at claim time.
         expect(persisted[0].payoutPkScript).toBeInstanceOf(Uint8Array);
     });
 });
 
 describe("the gates are re-run before anything is spent", () => {
-    // `requestOnchainSend` gates while quoting. `send()` is a separate user
-    // action and can be minutes later — long enough for the quote to lapse or
-    // the L1 claim window to stop being safe. Funding then buys a swap that can
-    // only refund.
     const sendWith = async (result: Awaited<SolverOnchainSend>) => {
         rfqStub = vi.fn(async () => result);
         const send = vi.fn(async () => "txid");
@@ -527,8 +474,7 @@ describe("the gates are re-run before anything is spent", () => {
     });
 
     it("does not fund once the L1 claim window has stopped being safe", async () => {
-        // The HTLC's locktime a minute away: no room to confirm the fill, let
-        // alone claim it.
+        // A locktime a minute away: no room to confirm, let alone claim.
         const { handle, send } = await sendWith(withHtlcLocktime(NOW() + 60));
         await expect(handle.settled()).rejects.toThrow(/claim window/);
         expect(send).not.toHaveBeenCalled();

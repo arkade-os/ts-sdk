@@ -15,8 +15,7 @@ import { waitFor } from "./utils";
 // WebSocket on this port.
 const ELECTRUM_WS_URL = "ws://localhost:50003";
 
-/** Blocks consensus takes the median of; the provider fetches `n - 1` headers
- *  below the tip, so a chain at least this deep exercises the whole batch. */
+/** Blocks consensus takes the median of; `n - 1` are fetched below the tip. */
 const MTP_WINDOW = 11;
 
 function faucet(address: string, btc = 0.001): number {
@@ -75,24 +74,11 @@ describe("ElectrumOnchainProvider integration tests", () => {
     it("computes median-time-past from real headers, not the tip's own time", {
         timeout: 15_000,
     }, async () => {
-        // `tip.time` is specified as MTP, and this provider computes it by
-        // fetching the eleven-block window over `blockchain.block.header`.
-        // A unit test can only prove the arithmetic; what it cannot prove is
-        // that a real Fulcrum answers a batch of ten header requests at all.
-        //
-        // The window read degrades to the tip's own `nTime` and warns rather
-        // than throwing, so `time > 0` above passes either way. Asserting the
-        // warning did NOT fire is what distinguishes "the median was computed"
-        // from "the fallback was taken" — the two are otherwise identical from
-        // outside.
-        //
-        // A chain shallower than the window would ALSO pass silently: below
-        // height 10 the short-window branch fetches fewer than ten headers (and
-        // none at all at height 0), warns about nothing, and proves nothing
-        // about the batch this test exists to exercise. The stack does not
-        // guarantee a depth, so mine up to one — with two blocks of headroom,
-        // so a headers subscription that observes the mine a block late still
-        // sees a full window rather than failing the assertion below.
+        // The unit tests prove the arithmetic; only a real Fulcrum proves it
+        // answers a batch of ten header requests. Two ways this could pass
+        // while testing nothing: the window read degrades to the tip's own
+        // `nTime` and only warns, and below height 10 the short-window branch
+        // fetches fewer than ten headers. Hence the mine, and both assertions.
         const start = await provider.getChainTip();
         mine(Math.max(0, MTP_WINDOW + 1 - start.height));
 
@@ -104,8 +90,7 @@ describe("ElectrumOnchainProvider integration tests", () => {
 
         let tip: { height: number; time: number };
         try {
-            // A fresh provider: the first call is the one that reads the window,
-            // and the shared `provider` has already cached its MTP by now.
+            // Fresh: the shared `provider` has already cached its MTP.
             const fresh = new ElectrumOnchainProvider(ws, networks.regtest);
             tip = await fresh.getChainTip();
         } finally {
@@ -115,10 +100,8 @@ describe("ElectrumOnchainProvider integration tests", () => {
         expect(warnings.filter((w) => String(w[0]).includes("median-time-past"))).toHaveLength(0);
         expect(tip.time).toBeGreaterThan(0);
 
-        // MTP is the median of the window, so on a chain whose blocks are mined
-        // in order it never runs ahead of the tip's own timestamp. Comparing
-        // against the header this provider does NOT use is the second half of
-        // the distinction.
+        // MTP never runs ahead of the tip's own timestamp on an in-order chain
+        // — compared against the header this provider does NOT use.
         const header = await chain.fetchBlockHeader(tip.height);
         const tipNTime = Number(
             new DataView(

@@ -1,10 +1,7 @@
 /**
- * `solverLightningRail` — the solver-routed BOLT11 send, as a rail.
- *
- * The corridor's own shape is what is under test: the invoice fixes the
- * amount, so an explicit request amount can only agree or be wrong, and an
- * invoice that cannot be paid at all (amountless, expired, undecodable) drops
- * the rail before a negotiation is spent on it.
+ * `solverLightningRail`. The invoice fixes the amount, so an explicit request
+ * amount can only agree or be wrong, and an unpayable invoice must drop the
+ * rail before a negotiation is spent on it.
  */
 import { describe, expect, it, vi } from "vitest";
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
@@ -125,8 +122,7 @@ describe("solverLightningRail.available", () => {
     });
 
     it("gates on the INVOICE's amount, not on the request's", async () => {
-        // Bounds 1000..50000 with a 100_000-sat invoice: out of range, even
-        // though nothing in the request says 100_000.
+        // Bounds 1000..50000 vs a 100_000-sat invoice; the request says neither.
         const deps = depsWith({ discover: vi.fn(async () => [card("1000", "50000")]) });
         expect(await solverLightningRail(deps).available?.({ raw: INVOICE }, ctxWith())).toBe(
             false,
@@ -134,7 +130,6 @@ describe("solverLightningRail.available", () => {
     });
 
     it("drops itself for an amountless invoice", async () => {
-        // A solver cannot price one and neither can the rail.
         const deps = depsWith({ decodeInvoice: vi.fn(() => facts({ amountSats: 0 })) });
         expect(await solverLightningRail(deps).available?.({ raw: INVOICE }, ctxWith())).toBe(
             false,
@@ -165,8 +160,6 @@ describe("solverLightningRail.available", () => {
     });
 
     it("drops itself when the request names an amount the invoice contradicts", async () => {
-        // The payee is paid the invoice. A request asking for a different
-        // number is asking for a payment nobody can make.
         const rail = solverLightningRail(depsWith());
         expect(await rail.available?.({ raw: INVOICE, amount: 50_000 }, ctxWith())).toBe(false);
         expect(await rail.available?.({ raw: INVOICE, amount: 100_000 }, ctxWith())).toBe(true);
@@ -218,9 +211,7 @@ describe("solverLightningRail.quote", () => {
         rfqStub = spy;
         await solverLightningRail(depsWith()).quote({ raw: `lightning:${INVOICE}` }, ctxWith());
 
-        // The `lightning:` prefix is stripped by `invoiceTarget` before the
-        // decoder sees it, and the facts — not the string — are what the
-        // covenant binds.
+        // `invoiceTarget` strips the prefix before the decoder sees it.
         expect(spy.mock.calls[0][3]).toMatchObject({
             invoice: { raw: INVOICE, amountSats: 100_000 },
         });
@@ -296,8 +287,6 @@ describe("solverLightningRail.send", () => {
     });
 
     it("stops at 'sent' when no settlement watcher is wired", async () => {
-        // Funding is acceptance, but the invoice is not paid until the solver's
-        // claim witness reveals the preimage.
         rfqStub = vi.fn(async () => negotiated(101_500));
         const handle = await (
             await solverLightningRail(depsWith()).quote({ raw: INVOICE }, ctxWith())
@@ -358,9 +347,6 @@ describe("the gates are re-run before anything is spent", () => {
     });
 
     it("does not persist or fund an invoice that expired after the quote", async () => {
-        // `available()` and `quote()` both checked expiry, but `send()` is a
-        // separate user action. Funding now buys nothing: the solver can no
-        // longer obtain the preimage, so the lockup can only refund.
         const stale = facts();
         const { quote, send, persist } = await quoted(stale, NOW() + 3600);
         stale.expiresAt = NOW() - 1; // lapses between quote and send
