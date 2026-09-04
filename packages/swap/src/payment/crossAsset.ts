@@ -21,9 +21,13 @@ import { BTC_ASSET_ID } from "../store";
 
 export const CROSS_ASSET_RAIL = "cross-asset";
 
-/** The two states need different recovery: a `"quoted"` record whose offer
- *  never filled is cancelled; a `"filled"` one owes the recipient a send. */
-export type CrossAssetPhase = "quoted" | "filled";
+/**
+ * Recovery branches on this. `filled` means the payout is NOT yet broadcast;
+ * `paying` means it WAS and the outcome is unknown — resolve that against
+ * chain state, never by resending. Persisting only afterwards would leave a
+ * crash between send and persist looking exactly like `filled`.
+ */
+export type CrossAssetPhase = "quoted" | "filled" | "paying" | "settled";
 
 export interface CrossAssetSwap {
     phase: CrossAssetPhase;
@@ -34,6 +38,8 @@ export interface CrossAssetSwap {
     asset: Asset;
     payTo: string;
     plan: OfferPlan;
+    /** The payout, once `settled` — the receipt a `paying` record looks for. */
+    txid?: string;
 }
 
 export interface CrossAssetRailDeps {
@@ -44,9 +50,8 @@ export interface CrossAssetRailDeps {
     quote(market: DiscoveredMarket, give: Side, wantAmount: bigint): Promise<OfferPlan>;
     btcBalance(): Promise<bigint>;
     dust(): Promise<bigint>;
-    /** Called twice, both before an irreversible step: `"quoted"` before the
-     *  offer is funded, `"filled"` after delivery and before the recipient is
-     *  paid. Keyed by `offerHex`, stable across both. */
+    /** Before every irreversible step and once after the last. See
+     *  {@link CrossAssetPhase}. Keyed by `offerHex`. */
     persist(swap: CrossAssetSwap): Promise<void>;
     /** Resolve once a filler has delivered the asset to this wallet.
      *
@@ -174,11 +179,14 @@ export function crossAssetRail(deps: CrossAssetRailDeps): PaymentRail {
                         await deps.awaitFill(swap);
                         // Before paying: "quoted" would say it never filled.
                         await deps.persist({ ...swap, phase: "filled" });
+                        // Before the send, not after: a crash must not read as unpaid.
+                        await deps.persist({ ...swap, phase: "paying" });
                         const txid = await ctx.wallet.send({
                             address: payTo,
                             amount: carrier,
                             assets: [asset],
                         });
+                        await deps.persist({ ...swap, phase: "settled", txid });
                         const result = {
                             railId: CROSS_ASSET_RAIL,
                             txid,

@@ -1,6 +1,11 @@
 import type { PaymentRail, RouteQuote, RouterContext } from "../types";
 import { arkTarget } from "../targets";
-import { assetsOf, resolveAssetAmount, tryResolveSendAmount } from "../amount";
+import {
+    assertSendableAmount,
+    assetsOf,
+    resolveAssetAmount,
+    tryResolveSendAmount,
+} from "../amount";
 import { makeHandle } from "../handle";
 
 /** The sats carrier an asset rides on; mirrors `Recipient.amount`'s default. */
@@ -22,7 +27,8 @@ export function arkAssetRail(): PaymentRail {
         quote: async (req, ctx: RouterContext): Promise<RouteQuote> => {
             const address = arkTarget(req.raw)!;
             const asset = resolveAssetAmount("ark-asset", req);
-            // Defaulted here so the quote states the sats that will leave.
+            // A stated amount is validated, never defaulted: `0` is not "pick one".
+            if (req.amount !== undefined) assertSendableAmount("ark-asset", req.amount);
             const carrier = tryResolveSendAmount(req.raw, req.amount) ?? ASSET_CARRIER_SATS;
             return {
                 railId: "ark-asset",

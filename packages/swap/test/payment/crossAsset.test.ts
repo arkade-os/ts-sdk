@@ -255,7 +255,15 @@ describe("crossAssetRail.send", () => {
         const quote = await crossAssetRail(deps).quote(req, ctxWith(send as never));
         await (await quote.send()).settled();
 
-        expect(order).toEqual(["persist", "fund-offer", "await-fill", "persist", "pay-recipient"]);
+        expect(order).toEqual([
+            "persist",
+            "fund-offer",
+            "await-fill",
+            "persist",
+            "persist",
+            "pay-recipient",
+            "persist",
+        ]);
     });
 
     it("does not pay the recipient when the fill never lands", async () => {
@@ -412,20 +420,57 @@ describe("the record says which side of the fill the route is on", () => {
     const runWith = async (send: ReturnType<typeof vi.fn>) => {
         offerStub = async () => offer;
         const phases: string[] = [];
+        const records: CrossAssetSwap[] = [];
         const persist = vi.fn(async (s: CrossAssetSwap) => {
             phases.push(s.phase);
+            records.push({ ...s });
         });
         const quote = await crossAssetRail(depsWith({ persist })).quote(
             req,
             ctxWith(send as never),
         );
-        return { handle: await quote.send(), phases };
+        return { handle: await quote.send(), phases, records };
     };
 
     it("records 'quoted' before funding and 'filled' before paying", async () => {
         const { handle, phases } = await runWith(vi.fn(async () => "txid"));
         await handle.settled();
-        expect(phases).toEqual(["quoted", "filled"]);
+        expect(phases.slice(0, 2)).toEqual(["quoted", "filled"]);
+    });
+
+    it("marks the payout attempted BEFORE broadcasting it", async () => {
+        const order: string[] = [];
+        offerStub = async () => offer;
+        const persist = vi.fn(async (s: CrossAssetSwap) => {
+            order.push(`persist:${s.phase}`);
+        });
+        const send = vi.fn(async () => {
+            order.push("send");
+            return "txid";
+        });
+        const quote = await crossAssetRail(depsWith({ persist })).quote(
+            req,
+            ctxWith(send as never),
+        );
+        await (await quote.send()).settled();
+
+        expect(order).toEqual([
+            "persist:quoted",
+            "send",
+            "persist:filled",
+            "persist:paying",
+            "send",
+            "persist:settled",
+        ]);
+    });
+
+    it("leaves a completed swap in a terminal phase carrying the payout txid", async () => {
+        const { handle, records } = await runWith(vi.fn(async () => "txid"));
+        await handle.settled();
+        const final = records[records.length - 1];
+
+        expect(final.phase).toBe("settled");
+        expect(final.txid).toBe("txid");
     });
 
     it("records the fill even when the recipient send then fails", async () => {
@@ -437,7 +482,7 @@ describe("the record says which side of the fill the route is on", () => {
         const { handle, phases } = await runWith(send);
 
         await expect(handle.settled()).rejects.toThrow(/wallet locked/);
-        expect(phases).toEqual(["quoted", "filled"]);
+        expect(phases).toEqual(["quoted", "filled", "paying"]);
     });
 
     it("does not record a fill that never happened", async () => {
@@ -455,6 +500,55 @@ describe("the record says which side of the fill the route is on", () => {
         ).quote(req, ctxWith());
         await expect((await quote.send()).settled()).rejects.toThrow(/offer expired/);
         expect(phases).toEqual(["quoted"]);
+    });
+
+    it("a recovery pass over a completed swap sends nothing", async () => {
+        const resendIfOwed = async (
+            swap: CrossAssetSwap,
+            wallet: { send: ReturnType<typeof vi.fn> },
+        ) => {
+            if (swap.phase !== "filled") return;
+            await wallet.send({
+                address: swap.payTo,
+                amount: 330,
+                assets: [swap.asset],
+            });
+        };
+
+        const { handle, records } = await runWith(vi.fn(async () => "txid"));
+        await handle.settled();
+
+        const recoverySend = vi.fn(async () => "second-txid");
+        await resendIfOwed(records[records.length - 1], { send: recoverySend });
+
+        expect(recoverySend).not.toHaveBeenCalled();
+    });
+
+    it("a recovery pass BEFORE the payout still sends, so the guard is not blanket", async () => {
+        const resendIfOwed = async (
+            swap: CrossAssetSwap,
+            wallet: { send: ReturnType<typeof vi.fn> },
+        ) => {
+            if (swap.phase !== "filled") return;
+            await wallet.send({ address: swap.payTo, amount: 330, assets: [swap.asset] });
+        };
+
+        offerStub = async () => offer;
+        const records: CrossAssetSwap[] = [];
+        const quote = await crossAssetRail(
+            depsWith({
+                persist: vi.fn(async (s: CrossAssetSwap) => {
+                    records.push({ ...s });
+                }),
+            }),
+        ).quote(req, ctxWith(vi.fn(async () => "txid") as never));
+        await (await quote.send()).settled();
+
+        const filled = records.find((r) => r.phase === "filled")!;
+        const recoverySend = vi.fn(async () => "second-txid");
+        await resendIfOwed(filled, { send: recoverySend });
+
+        expect(recoverySend).toHaveBeenCalledTimes(1);
     });
 
     it("refuses a deposit that would not survive the narrowing to a JS number", async () => {

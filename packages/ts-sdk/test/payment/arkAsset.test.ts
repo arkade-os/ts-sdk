@@ -132,6 +132,14 @@ describe("arkAssetRail", () => {
         expect(quote.total).toBe(5_000);
     });
 
+    it("refuses an explicit carrier amount that is not sendable", async () => {
+        for (const amount of [0, -1, 1.5]) {
+            await expect(
+                arkAssetRail().quote({ raw: ARK_ADDR, amount, assets: [USDX] }, ctx()),
+            ).rejects.toThrow(/invalid amount/);
+        }
+    });
+
     it("sends the asset alongside the carrier, in one Recipient", async () => {
         const send = vi.fn(async () => "the-txid");
         const quote = await arkAssetRail().quote({ raw: ARK_ADDR, assets: [USDX] }, ctx(send));

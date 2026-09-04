@@ -19,6 +19,7 @@ export {
 export {
     CROSS_ASSET_RAIL,
     crossAssetRail,
+    type CrossAssetPhase,
     type CrossAssetRailDeps,
     type CrossAssetSwap,
 } from "./crossAsset";
