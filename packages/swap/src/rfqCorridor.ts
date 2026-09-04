@@ -80,6 +80,21 @@ export interface RfqCorridorHandler<P extends Record<string, unknown> = Record<s
     claimSecret?(profile: P): RfqClaimSecretProjection;
 
     /**
+     * Where this corridor's claim pays, off its own profile.
+     *
+     * Omitted alongside {@link claimSecret} by a leg we never claim, so the
+     * claim path is told "not this corridor's move" rather than reading a key
+     * that was never written. Answered by the handler for the same reason
+     * {@link activityTxids} is: a corridor added later names its own
+     * destination key without a `kind` switch anywhere outside this registry.
+     *
+     * Hands back what was STORED, unvalidated — `rfqClaimDestinationOf` is what
+     * checks it, because the row is whatever a backend returned and the
+     * declared `string` is a claim about the type, not about what is there.
+     */
+    claimDestination?(profile: P): string;
+
+    /**
      * The corridor's own transaction ids off its profile — the ones that are
      * this leg's alone, like the receive leg's `claimTxid` or the onchain
      * leg's L1 `claimTxid`. Whatever the record's common half already carries

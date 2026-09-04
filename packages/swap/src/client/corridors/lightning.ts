@@ -57,7 +57,7 @@ const PAYMENT_HASH = /^[0-9a-f]{64}$/;
  * the solver's, the trader has no refund at all, and the deadline is a moment to
  * have claimed BEFORE.
  */
-const LIGHTNING_DRIVE: CorridorDrive = {
+export const LIGHTNING_DRIVE = {
     give: {
         lockups: [{ covenant: "arkade_lockup", owner: "solver", deadline: "refund_locktime" }],
         actions: ["claimLockup"],
@@ -68,7 +68,7 @@ const LIGHTNING_DRIVE: CorridorDrive = {
         actions: ["refundArkade"],
         seams: ["indexer"],
     },
-};
+} as const satisfies CorridorDrive;
 
 export const lightningCorridor: CorridorFactory<LightningCorridorDeps> = Object.assign(
     (deps: LightningCorridorDeps): CorridorModule<LightningCorridorDeps> => ({

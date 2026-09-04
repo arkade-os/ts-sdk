@@ -12,5 +12,10 @@ export * from "./contract";
 export * from "./deps";
 export * from "./registry";
 export { arkadeCorridor } from "./arkade";
-export { lightningCorridor, networksOfInvoiceHrp, INVOICE_HRPS } from "./lightning";
-export { onchainCorridor } from "./onchain";
+export {
+    lightningCorridor,
+    networksOfInvoiceHrp,
+    INVOICE_HRPS,
+    LIGHTNING_DRIVE,
+} from "./lightning";
+export { onchainCorridor, ONCHAIN_DRIVE } from "./onchain";

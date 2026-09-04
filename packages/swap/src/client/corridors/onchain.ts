@@ -37,7 +37,7 @@ import type { OnchainCorridorDeps } from "./deps";
  * trader holds only the claim key — so reaching `htlc.refundLocktime` does not
  * mean "refund the HTLC", it means the claim was missed.
  */
-const ONCHAIN_DRIVE: CorridorDrive = {
+export const ONCHAIN_DRIVE = {
     take: {
         lockups: [
             { covenant: "arkade_lockup", owner: "trader", deadline: "refund_locktime" },
@@ -46,7 +46,7 @@ const ONCHAIN_DRIVE: CorridorDrive = {
         actions: ["claimOnchain", "refundArkade"],
         seams: ["indexer", "chain"],
     },
-};
+} as const satisfies CorridorDrive;
 
 export const onchainCorridor: CorridorFactory<OnchainCorridorDeps> = Object.assign(
     (deps: OnchainCorridorDeps): CorridorModule<OnchainCorridorDeps> => {

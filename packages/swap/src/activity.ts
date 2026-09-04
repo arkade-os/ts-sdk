@@ -6,6 +6,7 @@ import {
 } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { isRfqSwapTerminal, type RfqSwapState } from "./swapManager";
+import { ACTIVITY_TOKEN, corridorOutcome } from "./client/outcome";
 import type { LockupSpendIndexer } from "./refund";
 import { rfqCorridorHandlers } from "./rfqCorridor";
 // Side-effecting, as in `rfqRecord.ts`: the handlers this reads register
@@ -40,30 +41,24 @@ const LABELS: Record<SwapActivityInput["kind"], string> = {
 };
 
 /**
- * How a swap state reads as an outcome token, keyed exhaustively off
- * `RfqSwapState` so a state added upstream is a compile error here rather
- * than silently rendering as something misleading. Opaque lowercase machine
- * tokens, not display text — see `ActivityIntent.outcome`.
+ * How a swap reads as an activity token — a PROJECTION of the client's
+ * {@link Outcome}, not a second table.
  *
- * `lightning_receive` + `refunded` is handled separately in `resolve`: it
- * does not read off this table.
+ * This file used to key a `Record<RfqSwapState, string>` off the raw state and
+ * handle `lightning_receive` + `refunded` beside it, by hand, because the raw
+ * state alone cannot tell a send leg's refund (the money coming back) from a
+ * receive leg's (the incoming payment never arriving). The client's outcome
+ * vocabulary already draws that line — `refunded` against `lapsed` — and
+ * already keys on the corridor kind, so the special case disappears rather than
+ * being restated: `lostReceive` is what `lapsed` projects to.
+ *
+ * Exhaustiveness is stronger than before, and in both directions: the
+ * translation is total over `RfqSwapState` × lockup owner, and
+ * {@link ACTIVITY_TOKEN} is total over `Outcome`, so a new protocol state or a
+ * new outcome is a compile error rather than a blank row.
  */
-const OUTCOME: Record<RfqSwapState, string> = {
-    pending: "pending",
-    // `claimable` and `claimed` are both in-progress states with no
-    // user-visible phase distinct from "pending". `needs_counterparty` is
-    // different in kind — the swap is BLOCKED, not merely in flight, since no
-    // unilateral trader move exists (see `RfqSwapState`). Collapsing it into
-    // `pending` here is a deliberate choice the opaque-token design permits —
-    // apps map tokens themselves — but a future reader weighing a `"blocked"`
-    // or `"stuck"` token should know this was already considered.
-    claimable: "pending",
-    claimed: "pending",
-    needs_counterparty: "pending",
-    settled: "settled",
-    refunded: "refunded",
-    failed: "failed",
-};
+const outcomeToken = (kind: SwapActivityInput["kind"], state: RfqSwapState): string =>
+    ACTIVITY_TOKEN[corridorOutcome(kind, state)];
 
 /**
  * Group each RFQ swap's transactions into one activity carrying its outcome.
@@ -100,21 +95,17 @@ export function swapActivityResolver(deps: {
             const key = tx.key.arkTxid || tx.key.commitmentTxid || tx.key.boardingTxid;
             const swap = key ? byTxid.get(key) : undefined;
             if (!swap) return undefined;
-            // A `lightning_receive` that ends `refunded` is a LOSS, not money
-            // returned: that leg has no trader-side refund, every non-claim leaf
-            // of the covenant is the solver's, and a swap ending here is one
-            // whose incoming payment never arrived (see `RfqSwapState`'s
-            // `refunded` case in swapManager.ts). A send leg's `refunded` is the
-            // opposite — the lockup coming back — so the two need distinct
-            // tokens; `lostReceive` is this package's own name for the case (see
-            // the `lostReceive` local in `outcomeOf`, swapManager.ts).
-            const lostReceive = swap.kind === "lightning_receive" && swap.state === "refunded";
             return [
                 {
                     groupId: `swap:${swap.rfqId}`,
                     label: LABELS[swap.kind],
                     kind: "swap",
-                    outcome: lostReceive ? "lost" : OUTCOME[swap.state],
+                    // `"lost"` for a receive leg that ended `refunded` comes out
+                    // of the translation rather than out of a branch here: that
+                    // leg has no trader-side refund, every non-claim leaf of its
+                    // covenant is the solver's, and the client's `lapsed` is
+                    // that fact.
+                    outcome: outcomeToken(swap.kind, swap.state),
                     metadata: { rfqId: swap.rfqId, swapKind: swap.kind },
                 },
             ];

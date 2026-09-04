@@ -2,10 +2,10 @@
  * Application policy: the vetoes and floors a client applies before it
  * discloses anything, plus the two names §10 reserved.
  *
- * Five members touch the quote path — three active here, two inert — and the
- * remaining two belong to milestones that own the behaviour they configure:
- * `drive` is the lifecycle's and `maxFee` the verbs' ceiling, and each is added
- * by the milestone that can enforce it rather than declared early and ignored.
+ * Five members touch the quote path — three active here, two inert — and
+ * {@link SwapPolicy.drive} is the lifecycle's. `maxFee` still belongs to the
+ * milestone that can enforce it: the verbs' ceiling is added by the layer that
+ * applies it rather than declared early and ignored.
  *
  * Every active member has the same shape of purpose: it runs BEFORE the RFQ
  * round trip that discloses an invoice or an amount. A policy that could only
@@ -32,7 +32,39 @@ export interface RfqAuctionPolicy {
     readonly freshTransportKey?: boolean;
 }
 
+/**
+ * How much the client drives on its own.
+ *
+ * The split is the one `RfqSwapManager` already draws between reading its
+ * records and driving them: `restoreFromRepository` is documented as NOT part
+ * of `start()`, precisely so a consumer can look at its swaps without being
+ * made to move money to do it. This promotes that to configuration.
+ */
+export type DriveMode =
+    /**
+     * Default. Construction's restore-read arms the drive when it finds live
+     * work, and the first `accept()` arms it when it does not.
+     */
+    | "auto"
+    /** Restores, then waits: no timer and no stream until `start()`. */
+    | "manual"
+    /**
+     * Restores and reports, and never actuates. It discovers nothing new — no
+     * pass runs, so no claim, no refund and no recovery round — which is what
+     * keeps `swaps()` and `onUpdate` honest for an inspection-only consumer.
+     */
+    | "readonly";
+
 export interface SwapPolicy {
+    /**
+     * How much the client drives on its own. Default `"auto"`.
+     *
+     * Policy rather than a `SwapClientConfig` field for the same reason the
+     * other five members are: it is a caller's decision about behaviour, not a
+     * dependency the client needs to work.
+     */
+    readonly drive?: DriveMode;
+
     /**
      * The last word on which market prices a swap.
      *

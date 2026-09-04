@@ -48,7 +48,12 @@ import type { LightningReceiveSwap } from "../src/swapManager";
 import { onchainHtlcScript, paymentHashOf } from "../src/onchainHtlc";
 import { contractPreimage } from "@arkade-os/sdk";
 import { preimageForSwapRecord } from "../src/store";
-import { rfqClaimSecretOf, rfqSecretsProfile, rfqSignerOf } from "../src/rfqProfileParts";
+import {
+    rfqClaimDestinationOf,
+    rfqClaimSecretOf,
+    rfqSecretsProfile,
+    rfqSignerOf,
+} from "../src/rfqProfileParts";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
@@ -1043,6 +1048,28 @@ describe("a static wallet's receive record hands P back", () => {
         expect(() =>
             rfqSignerOf({ ...record, profile: { ...record.profile, signer: {} } }),
         ).toThrow(/signingDescriptor/);
+    });
+
+    it("reads the claim destination off the corridor, and refuses a wrong-shaped one", async () => {
+        // What the cast this replaced could not do: `profile` is
+        // `Record<string, unknown>`, so `as { payoutAddress?: string }` passed
+        // any truthy value straight to `ArkAddress.decode`.
+        const flow = await lightningReceiveFlow({ wallet: staticWallet() });
+        const record = recordFor(await flow.run());
+        expect(rfqClaimDestinationOf(record)).toBe(record.profile.payoutAddress as string);
+        expect(() =>
+            rfqClaimDestinationOf({ ...record, profile: { ...record.profile, payoutAddress: 7 } }),
+        ).toThrow(/claim destination is unusable/);
+    });
+
+    it("answers undefined for a leg that claims nothing", async () => {
+        // `lightning_send` registers no `claimDestination`, the same way it
+        // registers no `claimSecret`: P belongs to the payee. Read off the kind
+        // rather than off the key, so a stray `payoutAddress` on a leg we never
+        // claim cannot be mistaken for one.
+        const flow = await lightningReceiveFlow({ wallet: staticWallet() });
+        const record = recordFor(await flow.run());
+        expect(rfqClaimDestinationOf({ ...record, kind: "lightning_send" })).toBeUndefined();
     });
 });
 

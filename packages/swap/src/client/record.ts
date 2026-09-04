@@ -31,6 +31,7 @@ import { fromAtomicDecimal, toAtomicDecimal, type AtomicDecimal } from "./amount
 import type { AssetId } from "./assetId";
 import type { Corridor, CorridorId } from "./corridor";
 import type { Hex, Pubkey } from "./primitives";
+import type { Outcome } from "./outcome";
 import type { Artifact, Instrument, Route } from "./route";
 import type { MarketRef, QuoteId, QuoteLeg } from "./quote";
 
@@ -268,12 +269,19 @@ export type SwapRecord = OfferSwapRecord | CorridorSwapRecord;
  * `artifact` stays optional: M7's `ReceiveRequest` is `Swap & { artifact:
  * Artifact }`, and an intersection cannot narrow a field that is already
  * required. `id` is the bare {@link QuoteId} — M6 owns the tagged public form
- * and takes this key as given. No `outcome`: that is M5's, and declaring an
- * inert one here would occupy the name.
+ * and takes this key as given.
+ *
+ * {@link outcome} and the two reason strings are M5's, and they are here rather
+ * than on `SwapUpdate.detail` because `detail` is typed `RawState` — the raw
+ * machine word and nothing else. The reasons live on `SwapRecordCommon`, the
+ * internal record, so without this a consumer told a swap `needs_recovery` had
+ * nowhere to read WHY.
  */
 export interface Swap {
     readonly id: QuoteId;
     readonly family: SwapFamily;
+    /** Where this swap stands, in the one vocabulary both families share. */
+    readonly outcome: Outcome;
     /** Both endpoints resolved, instruments included. */
     readonly route: Route;
     /** What the trader gives, fee included. */
@@ -292,6 +300,22 @@ export interface Swap {
     readonly expiresAt: number;
     /** Absent until the funding is broadcast and its txid written. */
     readonly fundingTxid?: string;
+    /**
+     * Why the swap `failed`, when it did.
+     *
+     * Carried across from the record rather than derived: the outcome says
+     * WHICH terminal state, and only the record says why.
+     */
+    readonly failure?: string;
+    /**
+     * Why this wallet will not act, while the outcome is `needs_recovery`.
+     *
+     * Also what makes a suppressed configuration block legible: under
+     * `drive: "manual"` or `"readonly"` the three configuration refusals are
+     * not translated to `needs_recovery`, and this is where the reason is
+     * still read.
+     */
+    readonly blockedReason?: string;
     readonly createdAt: number;
     readonly updatedAt: number;
 }
@@ -394,6 +418,11 @@ export const legOf = (leg: RecordedLeg): QuoteLeg => ({
  * than from the in-memory preparation cache — which is bounded, evicted in
  * insertion order, and therefore not a durable answer to anything.
  *
+ * The outcome is a parameter rather than a field read off the record: it is
+ * derived from the record, the clock AND whether the drive holds live state for
+ * this swap, and only the drive knows the third. Passing it keeps `Swap.outcome`
+ * non-optional, which is what stops a caller from having to test for it.
+ *
  * The `Route` is reassembled from the two stored endpoints. The cast is the
  * seam: `Route` is a closed union of four corridor pairs and a record read off
  * disk carries two independently-typed endpoints, so nothing in the type system
@@ -401,9 +430,10 @@ export const legOf = (leg: RecordedLeg): QuoteLeg => ({
  * ever writes a record from a `Quote` whose route was already resolved through
  * that union.
  */
-export const swapOf = (record: SwapRecord): Swap => ({
+export const swapOf = (record: SwapRecord, outcome: Outcome): Swap => ({
     id: record.id,
     family: record.family,
+    outcome,
     route: {
         give: {
             corridor: record.route.give.corridor,
@@ -426,6 +456,8 @@ export const swapOf = (record: SwapRecord): Swap => ({
     ...(record.artifact === undefined ? {} : { artifact: artifactOf(record.artifact) }),
     expiresAt: record.expiresAt,
     ...(record.fundingTxid === undefined ? {} : { fundingTxid: record.fundingTxid }),
+    ...(record.failure === undefined ? {} : { failure: record.failure }),
+    ...(record.blockedReason === undefined ? {} : { blockedReason: record.blockedReason }),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
 });

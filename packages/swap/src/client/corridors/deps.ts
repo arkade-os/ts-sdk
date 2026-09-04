@@ -35,6 +35,7 @@ import {
 } from "@arkade-os/sdk";
 import type { ChainSource } from "../../onchainHtlc";
 import { L1_NETWORKS } from "../../onchainHtlc";
+import type { RfqSwapManagerCallbacks } from "../../swapManager";
 import { l1NetworkFromArk, type InvoiceFacts } from "../../rfq";
 import type { SwapOperator } from "../../refund";
 import type { AssetSwapRepository } from "../../repository";
@@ -111,8 +112,21 @@ export interface CorridorOverrides {
         /** Default: `ESPLORA_URL[network]`. The override is the URL, not a
          * `ChainSource`: there is no wallet-held provider to substitute. */
         chain?: { esploraUrl: string } | null;
+        /**
+         * How the trader's L1 claim is built and broadcast. No default: see
+         * {@link OnchainCorridorDeps.claim}.
+         */
+        claim?: OnchainClaim | null;
     };
 }
+
+/**
+ * Build and broadcast the L1 claim of an `arkade -> onchain` fill.
+ *
+ * The manager's own callback type, so a caller wires `claimOnchainFill` to it
+ * without a second shape to translate through.
+ */
+export type OnchainClaim = RfqSwapManagerCallbacks["claimOnchain"];
 
 /** The arkade corridor's deps. Only the repository is overridable. */
 export interface ArkadeCorridorDeps {
@@ -146,6 +160,24 @@ export interface LightningCorridorDeps {
 export interface OnchainCorridorDeps {
     readonly networkName: NetworkName;
     readonly chain: ChainSource;
+    /**
+     * How the trader's L1 claim is built and broadcast, when a caller supplies
+     * one.
+     *
+     * **Absent by default, and deliberately not defaulted.** `claimOnchainFill`
+     * needs a fee rate and a signer, both of which are environment-specific and
+     * neither of which the wallet answers for an L1 key — so there is nothing
+     * honest to construct here. Without it the drive reports an
+     * `arkade -> onchain` swap's L1 half blocked, with the reason naming the
+     * missing callback rather than a counterparty who has done nothing wrong;
+     * the Arkade lockup keeps being driven and refunded either way.
+     *
+     * A dep of the onchain corridor rather than a `SwapClientConfig` field,
+     * because that is what it is: a route that never touches this corridor
+     * never resolves it, and a deliberate `null` refuses at the same boundary
+     * as the chain source.
+     */
+    readonly claim?: OnchainClaim;
 }
 
 /** Which corridor gets which dep record. */
@@ -255,6 +287,7 @@ export function resolveCorridorDeps(
         }
         case "onchain": {
             const chain = refusedIfNull(overrides?.onchain?.chain, "onchain", "chain source");
+            const claim = refusedIfNull(overrides?.onchain?.claim, "onchain", "L1 claim callback");
             return {
                 networkName: base.networkName,
                 chain: esploraChainSource({
@@ -262,6 +295,7 @@ export function resolveCorridorDeps(
                     network: L1_NETWORKS[l1NetworkFromArk(base.networkName)],
                     fetchImpl: base.fetchImpl,
                 }),
+                ...(claim === undefined ? {} : { claim }),
             };
         }
     }
