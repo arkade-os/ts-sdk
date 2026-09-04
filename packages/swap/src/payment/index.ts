@@ -16,3 +16,34 @@ export {
     type SolverLightningRailDeps,
     type SolverLightningSend,
 } from "./solverLightning";
+
+/** The v2 swap rails: `SwapClient`-backed, one dep each, and the router that
+ *  registers them beside core's own. The `solver-*` rails above are the v1 RFQ
+ *  path and predate them. */
+export {
+    LIGHTNING_RAIL,
+    lightningRail,
+} from "./lightning";
+export {
+    ONCHAIN_SWAP_RAIL,
+    claimFeeSats,
+    onchainSwapRail,
+    type OnchainSwapRailDeps,
+} from "./onchainSwap";
+export {
+    SWAP_ROUTER_PRIORITY,
+    createSwapPaymentRouter,
+    type SwapPaymentRouterConfig,
+} from "./router";
+export {
+    PAYMENT_STATUS,
+    isTerminalStatus,
+    paymentStatusOf,
+} from "./status";
+export {
+    SwapPaymentFailedError,
+    railAvailable,
+    receiverExact,
+    swapHandle,
+    type SwapRailClient,
+} from "./swapRail";

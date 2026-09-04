@@ -21,6 +21,11 @@
  * thing — it registers the swap it just persisted — and everything else the
  * lifecycle needs lives behind {@link createSwapDrive}.
  *
+ * From M7 the three verbs hang off the same object: `pay`, `receive` and
+ * `exchange` are `quote` -> fee ceiling -> `accept` and nothing else, and they
+ * add no capability — everything they call was already here. What they add is
+ * the ceiling; what they subtract is vocabulary.
+ *
  * From M6 the surface closes: `cancel`, `swaps`, `markets`, and `ClientDisposed`
  * enforced across every member after disposal. Disposal is terminal; what the
  * terminal gate refuses is a NEW act, and an `Unsubscribe` already handed out
@@ -60,6 +65,17 @@ import { feedFetch, quoteFromFeed, type FeedFetch } from "./quoteOffer";
 import { quoteViaRfq } from "./quoteRfq";
 import type { Quote, QuoteId, QuoteInput, RouteResolution } from "./quote";
 import { resolveRoute, type ResolvedRoute } from "./resolve";
+import {
+    exchange,
+    pay,
+    receive,
+    type ExchangeOptions,
+    type PayOptions,
+    type PayResult,
+    type ReceiveOptions,
+    type ReceiveRequest,
+    type VerbDeps,
+} from "./verbs";
 import { cardMarketOf, marketBackendOf, marketKeyOf, usableMarkets, type Market } from "./market";
 import { nostrTransportFactory, type RfqTransportFactory } from "./transport";
 
@@ -278,6 +294,42 @@ export interface SwapClient {
      */
     accept(quote: Quote): Promise<Swap>;
     /**
+     * Pay a destination: a bolt11, a `bc1…`, or a plain Arkade address.
+     *
+     * One call for §5's whole pay box. `quote` → fee ceiling → `accept`, with
+     * the amount taken as what the recipient gets; an amount-bearing invoice
+     * pins it already, so passing one beside it is `AmountMismatch`.
+     *
+     * A plain Arkade address is **not** a swap and does not become one: it
+     * settles through `wallet.send` and answers `{ kind: "payment", txid }`,
+     * which is why the return is a union. Rejecting it would put the same
+     * branch in every product that has one pay box.
+     *
+     * @throws {MaxFeeExceeded} when the quoted fee is over `maxFee` or
+     *   `policy.maxFee`, whichever is tighter — before anything is funded.
+     */
+    pay(destination: string, options?: PayOptions): Promise<PayResult>;
+
+    /**
+     * Ask for an incoming payment, and get back the artifact to show its payer.
+     *
+     * Returns only after `accept()` has persisted, which is the point: an
+     * invoice shown to a payer while its claim secret is still in memory buys a
+     * lockup nobody can claim. The artifact is non-optional on the return type
+     * for the same reason — a receive has one by construction.
+     *
+     * @throws {MaxFeeExceeded} as {@link pay} does.
+     */
+    receive(options: ReceiveOptions): Promise<ReceiveRequest>;
+
+    /**
+     * Swap one Arkade asset for another.
+     *
+     * @throws {MaxFeeExceeded} as {@link pay} does.
+     */
+    exchange(options: ExchangeOptions): Promise<Swap>;
+
+    /**
      * What the quote with this id derived — the covenant, the keys, the wire
      * reply.
      *
@@ -409,7 +461,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         }
     };
 
-    return {
+    const client: SwapClient = {
         resolve: async (input) => {
             ensureLive("resolve");
             return (await route(input, "resolve")).resolution;
@@ -600,6 +652,21 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             );
         },
 
+        pay: async (destination, options) => {
+            ensureLive("pay");
+            return pay(verbs, destination, options);
+        },
+
+        receive: async (options) => {
+            ensureLive("receive");
+            return receive(verbs, options);
+        },
+
+        exchange: async (options) => {
+            ensureLive("exchange");
+            return exchange(verbs, options);
+        },
+
         preparationOf: (id) => {
             ensureLive("preparationOf");
             return preparations.get(id);
@@ -636,4 +703,18 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             return driving().recover(quoteIdOfSwapId(id));
         },
     };
+
+    /**
+     * What the verbs call: the client's own gated members, not the raw helpers,
+     * so a verb inherits `quote`'s market re-pin and `accept`'s
+     * restore-before-persist rather than reimplementing either.
+     */
+    const verbs: VerbDeps = {
+        wallet,
+        quote: (input) => client.quote(input),
+        accept: (quote) => client.accept(quote),
+        ...(config.policy?.maxFee === undefined ? {} : { policyMaxFee: config.policy.maxFee }),
+    };
+
+    return client;
 };

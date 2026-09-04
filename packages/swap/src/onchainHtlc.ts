@@ -69,6 +69,22 @@ export const ONCHAIN_SECONDS_PER_BLOCK = 600;
  */
 export const ONCHAIN_DUST_SATS = BigInt(330);
 
+/**
+ * vsize of the trader's claim transaction, for pricing it before it is built.
+ *
+ * The claim is one-in-one-out with a fixed witness — a 64-byte DEFAULT-sighash
+ * signature, the 32-byte preimage, the claim leaf and its control block — so
+ * the only variable is the payout script, and this is the largest standard one
+ * (P2TR, 34 bytes; P2WPKH measures 140 and P2PKH 143). Rounded UP on purpose:
+ * a rail quoting a claim fee must not under-charge, since the shortfall would
+ * come out of the recipient's payout.
+ *
+ * Pinned against a real sizing pass in `onchainHtlc.test.ts` — the number is an
+ * estimate of a transaction this module builds, so a change to the leaf shape
+ * has to move both together.
+ */
+export const ONCHAIN_CLAIM_VSIZE = 152;
+
 // ── Preimage utilities ───────────────────────────────────────────────────────
 
 /** 32 random bytes. The user generates P for BOTH onchain directions. */
