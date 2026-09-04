@@ -151,6 +151,7 @@ export {
     type OnchainHtlcPhase,
     type OnchainNetwork,
 } from "./onchainHtlc";
+export { chainSourceFrom } from "./chainSource";
 export {
     ONCHAIN_BTC,
     ONCHAIN_RECEIVE_PAIR,

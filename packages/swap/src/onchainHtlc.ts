@@ -84,7 +84,10 @@ const h160FromPaymentHash = (paymentHash: string): Uint8Array => ripemd160(hex.d
 
 export type OnchainNetwork = "bitcoin" | "testnet" | "regtest";
 
-const L1_NETWORKS: Record<OnchainNetwork, typeof btc.NETWORK> = {
+/** `OnchainNetwork` → that chain's address/script parameters. Exported for
+ * {@link chainSourceFrom}, which decodes a pkScript to the address an
+ * `OnchainProvider` is keyed by. */
+export const L1_NETWORKS: Record<OnchainNetwork, typeof btc.NETWORK> = {
     bitcoin: btc.NETWORK,
     testnet: btc.TEST_NETWORK,
     regtest: { ...btc.TEST_NETWORK, bech32: "bcrt" },

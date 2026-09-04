@@ -1364,6 +1364,14 @@ export async function requestOnchainSend(
             amountSide: params.amountSide,
         }),
     );
+    // The quote must price the trade that was ASKED for. Without this the side
+    // the request fixed is never compared to what came back, and `fundAmount`
+    // below hands the caller `quote.from_amount` verbatim — so a quote naming a
+    // different amount is funded at the solver's number, silently. The receive
+    // legs have always applied this; the send leg is the one that did not, and
+    // `requestLightningSend` only escapes because the invoice pins `to_amount`
+    // for it (see its own two checks).
+    assertQuotedAmount(quote, params.amountSide, params.amount);
 
     const network = getNetwork(info.network as NetworkName);
     const derived = deriveOnchainSend({
@@ -1416,11 +1424,15 @@ export async function requestOnchainSend(
     };
 }
 
-// ── Receive corridors: the solver funds Arkade, the trader pays outside ─────
-
-/** The exact-out/exact-in consistency check every receive flow applies: the
- * fixed side of the quote must equal the amount the request named. Anything
- * else is a quote for a different trade. */
+/** The exact-out/exact-in consistency check every amount-carrying flow applies:
+ * the fixed side of the quote must equal the amount the request named. Anything
+ * else is a quote for a different trade.
+ *
+ * Declared here, above both the send and the receive corridors, because it
+ * belongs to neither: a quote that reprices the trade is not fundable in any
+ * direction. `requestLightningSend` is the one caller that does not reach for
+ * it, because a BOLT11 profile carries no `amountSide` — the invoice fixes
+ * `to_amount`, and it makes the same two comparisons against that instead. */
 const assertQuotedAmount = (quote: RfqQuote, amountSide: "from" | "to", amount: number): void => {
     const quoted = amountSide === "from" ? quote.from_amount : quote.to_amount;
     if (quoted !== amount) {
@@ -1433,6 +1445,8 @@ const assertQuotedAmount = (quote: RfqQuote, amountSide: "from" | "to", amount: 
         throw new Error("quote pays out more than it takes in — not a quote to fund");
     }
 };
+
+// ── Receive corridors: the solver funds Arkade, the trader pays outside ─────
 
 /** Default floor for the window between the last moment the hold invoice can
  * be paid and the solver's refund leaf opening. */
