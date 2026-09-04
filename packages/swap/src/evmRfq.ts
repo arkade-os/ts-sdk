@@ -340,6 +340,30 @@ export interface EvmSendQuoteProfile extends EvmQuoteProfileCommon {
      */
     receiver_pk_script: string;
     /**
+     * The SOLVER's EVM address — and on this leg the client cannot settle
+     * without it.
+     *
+     * Every EVM address on this wire names a ROLE, not a party.
+     * `evm_refund_address` is whoever the CONTRACT refunds, which here is the
+     * solver, because the solver is the side that locks. It is the mirror of
+     * the receive leg, where the client locks and sends its own
+     * `evm_refund_address` in the request — same name, same meaning, other
+     * party. Read it as "the client's" on both and this leg silently breaks.
+     *
+     * TWO uses, neither optional:
+     *
+     * 1. The sixth field of the swap key. `ERC20Swap` stores no per-swap
+     *    struct — just `mapping(bytes32 => bool)` over
+     *    `keccak256(abi.encode(preimageHash, amount, tokenAddress,
+     *    claimAddress, refundAddress, timelock))`. With five of six a client
+     *    cannot compute the key, so it cannot read `swaps(key)` to prove the
+     *    solver locked before it parts with the preimage.
+     * 2. An explicit argument to `claim(bytes32,uint256,address,address,
+     *    uint256)`. The caller is the claimer, so the contract takes
+     *    `claimAddress` from `msg.sender` and must be told the other side.
+     */
+    evm_refund_address: string;
+    /**
      * The deadline the SOLVER's own ERC20 lock carries, as a BLOCK HEIGHT —
      * `ERC20Swap` denominates its timeout in `block.number`.
      *
@@ -464,6 +488,13 @@ export const readEvmSendQuote = (
     );
     readCommonProfile(profile);
     assertHex(profile.receiver_pk_script, "profile.receiver_pk_script");
+    // Required, not optional. A send quote without it is one this client can
+    // neither verify nor claim — see `EvmSendQuoteProfile.evm_refund_address`.
+    // Refusing at the quote is the only place that failure is cheap.
+    assertEvmAddress(
+        asString(profile.evm_refund_address, "profile.evm_refund_address"),
+        "profile.evm_refund_address",
+    );
     assertPositiveInteger(profile.evm_timeout_block, "profile.evm_timeout_block");
     // Refused rather than read as a number: the token side of this quote is
     // what the client is buying, and a rounded value would be compared against
