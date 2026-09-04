@@ -281,6 +281,16 @@ export const evmReceiveRequest = (input: {
     payoutPubkey: Uint8Array;
 }): Record<string, unknown> => {
     assertPositiveInteger(input.evmTimeoutBlock, "evmTimeoutBlock");
+    // Zero is a legal ENCODING and not a legal amount, which is why the check
+    // belongs here and not in `evmAmountToWire`: `"0"` is canonical per § 2.1
+    // and the codec has to keep emitting and reading it, while a lock of no
+    // tokens is a swap that cannot be filled. The solver refuses it as
+    // `amount_out_of_range`; saying so here names the field instead.
+    if (input.evmAmount <= 0n) {
+        throw new Error(
+            `evmAmount must be a positive number of atomic units, got ${input.evmAmount}`,
+        );
+    }
     return {
         v: 1,
         type: "rfq_request",
@@ -457,7 +467,10 @@ export const readEvmSendQuote = (
     assertPositiveInteger(profile.evm_timeout_block, "profile.evm_timeout_block");
     // Refused rather than read as a number: the token side of this quote is
     // what the client is buying, and a rounded value would be compared against
-    // the ERC20 lock and match nothing.
+    // the ERC20 lock and match nothing. Called for the THROW, not the value —
+    // the amount is retrieved later, from the returned quote, via
+    // `evmQuoteTokenAmount`. Returning it here would hand callers a second,
+    // divergeable copy of a number the quote already carries.
     evmAmountFromWire(quote.to_amount, "to_amount");
     assertPositiveInteger(quote.from_amount, "from_amount");
     return quote as unknown as EvmSendQuote;
@@ -480,6 +493,7 @@ export const readEvmReceiveQuote = (
         asString(profile.evm_claim_address, "profile.evm_claim_address"),
         "profile.evm_claim_address",
     );
+    // Called for the throw, not the value — see the send reader above.
     evmAmountFromWire(quote.from_amount, "from_amount");
     assertPositiveInteger(quote.to_amount, "to_amount");
     return quote as unknown as EvmReceiveQuote;
@@ -555,6 +569,15 @@ const assertHex = (value: unknown, field: string): void => {
     }
 };
 
+/** A 32-byte hash: exactly 64 lowercase hex. The solver's `HEX32`, restated —
+ * fixed-length, unlike {@link assertHex}, because a payment hash of the wrong
+ * SIZE is a different value, not a truncated spelling of the right one. */
+const assertHash32 = (value: unknown, field: string): void => {
+    if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) {
+        throw new Error(`${field} must be 64 lowercase hex characters, got ${String(value)}`);
+    }
+};
+
 const asString = (value: unknown, field: string): string => {
     if (typeof value !== "string") {
         throw new Error(`${field} must be a string, got ${String(value)}`);
@@ -597,7 +620,14 @@ const readEvmQuoteEnvelope = (
 };
 
 const readCommonProfile = (profile: Record<string, unknown>): void => {
-    asString(profile.payment_hash, "profile.payment_hash");
+    // 32 bytes, not merely a string: this is `sha256(P)`, and every other
+    // structured field here enforces its encoding. A solver echoing a
+    // `payment_hash` that is not hex would otherwise reach the caller intact
+    // and fail at the covenant, reported as a broken covenant rather than as
+    // the malformed echo it is. The solver's own schema is `HEX32`, so a
+    // correct one never sends this — the reader should still be the layer that
+    // says so.
+    assertHash32(profile.payment_hash, "profile.payment_hash");
     asString(profile.lockup_address, "profile.lockup_address");
     assertEvmAddress(
         asString(profile.evm_contract_address, "profile.evm_contract_address"),

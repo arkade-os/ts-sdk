@@ -585,9 +585,17 @@ describe("request builders", () => {
         expect(() => evmReceiveRequest({ ...receive, evmTimeoutBlock: 0 })).toThrow(
             /evmTimeoutBlock/,
         );
-        expect(() => evmReceiveRequest({ ...receive, evmAmount: -1n })).toThrow(
-            /may not be negative/,
-        );
+        // Both non-positive amounts are refused by the BUILDER, with one
+        // message, because "not a positive amount" is one rule. The codec's own
+        // negative guard is a separate concern and is tested directly above:
+        // `"0"` is canonical on the wire and `evmAmountToWire` must keep
+        // emitting and accepting it, so the corridor's rule cannot live there.
+        for (const bad of [0n, -1n]) {
+            expect(() => evmReceiveRequest({ ...receive, evmAmount: bad })).toThrow(
+                /evmAmount must be a positive number of atomic units/,
+            );
+        }
+        expect(evmAmountToWire(0n)).toBe("0");
         expect(() => evmReceiveRequest({ ...receive, evmRefundAddress: "nope" })).toThrow(
             /evmRefundAddress/,
         );
@@ -706,6 +714,38 @@ describe("quote readers", () => {
                     { tokenAddress: USDC, rfqId: RFQ_ID },
                 ),
             ).toThrow(/profile\.evm_claim_address must be 0x then 40 hex/);
+        }
+    });
+
+    it("refuses a payment_hash that is not a 32-byte hash", () => {
+        // It is `sha256(P)`, and every other structured field in the profile
+        // enforces its encoding. A bad one reaching the caller intact fails at
+        // the covenant instead, reported as a broken covenant rather than the
+        // malformed echo it is.
+        const withProfile = (
+            quote: Record<string, unknown>,
+            over: Record<string, unknown>,
+        ): Record<string, unknown> => ({
+            ...quote,
+            profile: { ...(quote.profile as Record<string, unknown>), ...over },
+        });
+        for (const bad of ["", "not-hex", "b2".repeat(31), "b2".repeat(33), "B2".repeat(32), 7]) {
+            expect(() =>
+                readEvmSendQuote(
+                    withProfile(sendQuote() as unknown as Record<string, unknown>, {
+                        payment_hash: bad,
+                    }),
+                    { tokenAddress: USDC, rfqId: RFQ_ID },
+                ),
+            ).toThrow(/profile\.payment_hash must be 64 lowercase hex/);
+            expect(() =>
+                readEvmReceiveQuote(
+                    withProfile(receiveQuote() as unknown as Record<string, unknown>, {
+                        payment_hash: bad,
+                    }),
+                    { tokenAddress: USDC, rfqId: RFQ_ID },
+                ),
+            ).toThrow(/profile\.payment_hash must be 64 lowercase hex/);
         }
     });
 
