@@ -8,7 +8,8 @@ import { encodeOffer, offerContract, OFFER_CONTRACT_KIND, type Offer } from "../
 import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
 import { lightningSendContract } from "../src/rfq";
-import { onchainHtlcScript } from "../src/onchainHtlc";
+import * as btc from "@scure/btc-signer";
+import { L1_NETWORKS, onchainHtlcScript } from "../src/onchainHtlc";
 import type { LightningSendSwap, OnchainSendSwap } from "../src/swapManager";
 import { createSwapClient, type SwapQuote, type UnifiedSwap } from "../src/swapClient";
 import { btcUsd } from "./fixtures";
@@ -270,9 +271,15 @@ const htlcParams = {
     refundLocktime: HTLC_LOCKTIME,
 };
 
+/** Where the L1 claim pays. With no `payoutAddress` on the quote input,
+ * `quote()` defaults it to the trader's own claim key as a key-path P2TR; the
+ * fixture pins the same script so what the record stores is checkable. */
+const PAYOUT_PK_SCRIPT = btc.p2tr(htlcParams.claimKey, undefined, L1_NETWORKS.regtest).script;
+
 const onchainSendQuote = (rfqId = "rfq-onchain-send") =>
     ({
         kind: "onchain_send",
+        payoutPkScript: PAYOUT_PK_SCRIPT,
         market: { ...lnMarket, pair: "BTC/onchain:BTC", quote_corridor: "onchain" },
         request: {
             rfqId,
@@ -356,7 +363,14 @@ describe("createSwapClient — accept() persists before it funds", () => {
         expect(await repository.getRfqSwap("rfq-onchain-send")).toMatchObject({
             kind: "onchain_send",
             // the L1 half, whose deadline is a different one entirely
-            profile: { htlcLocktime: HTLC_LOCKTIME, minConfirmations: 1, network: "regtest" },
+            profile: {
+                htlcLocktime: HTLC_LOCKTIME,
+                minConfirmations: 1,
+                network: "regtest",
+                // nothing on the wire names where the claim pays, so a record
+                // without it cannot build one after a restart
+                payoutPkScript: hex.encode(PAYOUT_PK_SCRIPT),
+            },
         });
     });
 });

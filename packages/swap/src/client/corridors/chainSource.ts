@@ -71,16 +71,18 @@ export const chainSourceOver = (
      * `mempool.arkade.sh`, which is `ESPLORA_URL.bitcoin` — so the spend is
      * recovered the way core recovers a boarding output's: scan the spent
      * output's own address history for the transaction whose vin names this
-     * outpoint. The address is derived from the funding transaction rather than
-     * passed in, because `getSpendingTx` is handed an outpoint and nothing else.
+     * outpoint. The address comes from the `pkScript` the interface hands over,
+     * which is why that parameter is on `getSpendingTx` at all — the outpoint
+     * alone would cost a second fetch of the funding transaction to decode.
      */
-    const spenderFromVins = async (txid: string, vout: number): Promise<string | undefined> => {
+    const spenderFromVins = async (
+        txid: string,
+        vout: number,
+        pkScript: Uint8Array,
+    ): Promise<string | undefined> => {
         let address: string;
         try {
-            const funding = btc.RawTx.decode(await backend.provider.getRawTransaction(txid));
-            const output = funding.outputs[vout];
-            if (!output?.script) return undefined;
-            address = addressOfScript(output.script, network);
+            address = addressOfScript(pkScript, network);
         } catch {
             return undefined;
         }
@@ -118,13 +120,17 @@ export const chainSourceOver = (
             }));
         },
 
-        async getSpendingTx(txid: string, vout: number): Promise<{ txHex: string } | null> {
+        async getSpendingTx(
+            txid: string,
+            vout: number,
+            pkScript: Uint8Array,
+        ): Promise<{ txHex: string } | null> {
             const outspends = await backend.provider.getTxOutspends(txid);
             const outspend = outspends[vout];
             if (!outspend?.spent) return null;
             // `||`, not `??`: the electrum provider uses `txid: ""` as its
             // unspent sentinel, and an empty string is not a spender either.
-            const spender = outspend.txid || (await spenderFromVins(txid, vout));
+            const spender = outspend.txid || (await spenderFromVins(txid, vout, pkScript));
             if (!spender) return null;
             return { txHex: hex.encode(await backend.provider.getRawTransaction(spender)) };
         },

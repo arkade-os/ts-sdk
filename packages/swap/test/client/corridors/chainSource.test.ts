@@ -26,8 +26,8 @@ const PK_SCRIPT = btc.OutScript.encode({
 });
 const ADDRESS = btc.Address(NETWORK).encode(btc.OutScript.decode(PK_SCRIPT));
 
-/** A raw transaction paying `PK_SCRIPT`, so the fallback can derive its
- * address from the outpoint alone. */
+/** A raw transaction paying `PK_SCRIPT`, so the outpoint under test names a
+ * real funding output rather than an invented txid. */
 const funding = (() => {
     const tx = new btc.Transaction({ allowUnknownInputs: true, allowUnknownOutputs: true });
     tx.addInput({ txid: new Uint8Array(32), index: 0 });
@@ -96,15 +96,17 @@ describe("the default chain source's adapter", () => {
                 }),
                 NETWORK,
             );
-            expect(await chain.getSpendingTx(FUNDING_TXID, 0)).toEqual({ txHex: SPEND_HEX });
+            expect(await chain.getSpendingTx(FUNDING_TXID, 0, PK_SCRIPT)).toEqual({
+                txHex: SPEND_HEX,
+            });
             expect(getRawTransaction).toHaveBeenCalledWith("c".repeat(64));
         });
 
         it("scans the spent output's address history when `/outspends` omits the txid", async () => {
             // Some deployments answer `{spent: true}` with no `txid` —
             // `mempool.arkade.sh`, which is `ESPLORA_URL.bitcoin`. The address
-            // is derived from the funding transaction, because `getSpendingTx`
-            // is handed an outpoint and nothing else.
+            // is derived from the `pkScript` the interface passes alongside the
+            // outpoint, so the fallback costs one history read and no refetch.
             const history: ExplorerTransaction[] = [
                 {
                     txid: "d".repeat(64),
@@ -129,7 +131,9 @@ describe("the default chain source's adapter", () => {
                 }),
                 NETWORK,
             );
-            expect(await chain.getSpendingTx(FUNDING_TXID, 0)).toEqual({ txHex: SPEND_HEX });
+            expect(await chain.getSpendingTx(FUNDING_TXID, 0, PK_SCRIPT)).toEqual({
+                txHex: SPEND_HEX,
+            });
             expect(getTransactions).toHaveBeenCalledWith(ADDRESS);
         });
 
@@ -143,7 +147,7 @@ describe("the default chain source's adapter", () => {
                 }),
                 NETWORK,
             );
-            expect(await chain.getSpendingTx(FUNDING_TXID, 0)).toBe(null);
+            expect(await chain.getSpendingTx(FUNDING_TXID, 0, PK_SCRIPT)).toBe(null);
         });
 
         it("answers null for an unspent outpoint", async () => {
@@ -151,7 +155,7 @@ describe("the default chain source's adapter", () => {
                 backendOver({ getTxOutspends: async () => [{ spent: false }] }),
                 NETWORK,
             );
-            expect(await chain.getSpendingTx(FUNDING_TXID, 0)).toBe(null);
+            expect(await chain.getSpendingTx(FUNDING_TXID, 0, PK_SCRIPT)).toBe(null);
         });
     });
 

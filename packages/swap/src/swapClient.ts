@@ -42,7 +42,13 @@ import { rfqClaimDestinationOf, rfqClaimSecretOf, rfqSecretsProfile } from "./rf
 import { onchainSendProfile } from "./rfqCorridors";
 import { arkadeRefunder } from "./arkadeRefunder";
 import { pushClaim } from "./claim";
-import type { ChainSource } from "./onchainHtlc";
+import {
+    L1_NETWORKS,
+    l1ScriptForAddress,
+    type ChainSource,
+    type OnchainNetwork,
+} from "./onchainHtlc";
+import * as btc from "@scure/btc-signer";
 
 type SideCorridor = "arkade" | "lightning" | "onchain";
 
@@ -80,6 +86,16 @@ export interface SwapQuoteInput {
     invoice?: InvoiceFacts;
     /** Trader's x-only L1 claim key; required when the receive side is onchain. */
     payoutPubkey?: Uint8Array;
+    /**
+     * The L1 address the claim PAYS to, when the receive side is onchain.
+     *
+     * Distinct from {@link payoutPubkey}, which only AUTHORISES the claim: the
+     * claim's output is the spender's own choice, and nothing on the wire names
+     * it. Omitted, the claim pays the trader's own `payoutPubkey` as a key-path
+     * P2TR — the conservative default, since that is the one destination the
+     * trader is already known to hold the key for.
+     */
+    payoutAddress?: string;
     preimage?: Uint8Array;
     maxPayAmount?: number;
 }
@@ -88,6 +104,24 @@ const need = <T>(value: T | undefined, what: string, leg: string): T => {
     if (value === undefined) throw new Error(`a ${leg} quote needs ${what}`);
     return value;
 };
+
+/**
+ * Where an onchain send's claim pays.
+ *
+ * A named address is encoded against the network the HTLC was derived for, so a
+ * destination this client cannot pay to is refused before the swap is funded
+ * rather than at claim time. With none named it falls back to the trader's own
+ * claim key as a key-path P2TR: this client's onchain leg takes a key and never
+ * an address, so that key is the only destination it can name without guessing.
+ */
+const payoutScriptFor = (
+    address: string | undefined,
+    payoutPubkey: Uint8Array,
+    network: OnchainNetwork,
+): Uint8Array =>
+    address !== undefined
+        ? l1ScriptForAddress(address, network)
+        : btc.p2tr(payoutPubkey, undefined, L1_NETWORKS[network]).script;
 
 const corridorAmount = (
     input: SwapQuoteInput,
@@ -126,6 +160,10 @@ export interface OnchainSendQuote {
     kind: "onchain_send";
     market: DiscoveredMarket;
     request: Awaited<ReturnType<typeof requestOnchainSend>>;
+    /** Where the claim pays, resolved at quote time from `payoutAddress` (or
+     * defaulted to the trader's own claim key) and persisted with the record:
+     * `buildHtlcClaim` needs it and nothing else gives it back. */
+    payoutPkScript: Uint8Array;
 }
 
 export type SwapQuote = SpotQuote | LightningSendQuote | LightningReceiveQuote | OnchainSendQuote;
@@ -287,14 +325,27 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
             case "onchain_send": {
                 // without L1 access the manager would fail the swap after funding
                 need(deps.chain, "deps.chain (L1 access)", kind);
+                const payoutPubkey = need(input.payoutPubkey, "a payoutPubkey", kind);
                 const params = {
                     ...corridorAmount(input, kind),
-                    payoutPubkey: need(input.payoutPubkey, "a payoutPubkey", kind),
+                    payoutPubkey,
                     preimage: input.preimage,
                     emulatorPubkey: deps.emulatorPubkey,
                 };
                 const request = await requestOnchainSend(wallet, transportFor(market), params);
-                return { kind, market, request };
+                // After the request, because the network the address is encoded
+                // under is the one the HTLC was derived for, and only the
+                // request settles that mapping.
+                return {
+                    kind,
+                    market,
+                    request,
+                    payoutPkScript: payoutScriptFor(
+                        input.payoutAddress,
+                        payoutPubkey,
+                        request.l1Network,
+                    ),
+                };
             }
             case "onchain_receive":
                 throw new Error(
@@ -443,6 +494,7 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
                     refundLocktime: request.refundLocktime,
                     htlc: request.htlc,
                     minConfirmations: request.minConfirmations,
+                    payoutPkScript: accepted.payoutPkScript,
                     createdAt: now,
                     updatedAt: now,
                 };
@@ -451,7 +503,10 @@ export function createSwapClient(deps: SwapClientDeps): SwapClient {
                     lockupAddress: request.address,
                     profile: {
                         ...rfqSecretsProfile(request.secrets, paymentHash),
-                        ...onchainSendProfile(request),
+                        ...onchainSendProfile({
+                            ...request,
+                            payoutPkScript: accepted.payoutPkScript,
+                        }),
                     },
                     amount: request.fundAmount,
                 };

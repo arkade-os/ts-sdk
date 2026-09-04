@@ -347,6 +347,7 @@ const profileOf = (preparation: RfqPreparation, paymentHash: string): Record<str
                     htlcParams: preparation.htlcParams,
                     l1Network: preparation.l1Network,
                     minConfirmations: preparation.minConfirmations,
+                    payoutPkScript: preparation.payoutPkScript,
                 }),
             };
     }

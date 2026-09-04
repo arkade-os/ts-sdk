@@ -752,3 +752,155 @@ describe("offerTermsFromQuote", () => {
         expect(() => offerTermsFromQuote(quoteFixture(), {})).toThrow(/exactly one/);
     });
 });
+
+/** The max-fee gate: the client's own ceiling on what a quote may charge. */
+describe("assertFundable — the max-fee gate", () => {
+    const now = 1_800_000_000;
+    const fundable = (over: Partial<RfqQuote>, maxFee?: { bps?: number; sats?: number }) =>
+        assertFundable({
+            quote: quoteFixture({ valid_until: now + 900, refund_locktime: now + 7200, ...over }),
+            invoiceExpiresAt: now + 3600,
+            now,
+            maxFee,
+        });
+
+    it("does not gate at all when no ceiling is given", () => {
+        expect(() => fundable({ from_amount: 10_000, to_amount: 1 })).not.toThrow();
+    });
+
+    const reasonOf = (run: () => unknown): string => {
+        try {
+            run();
+        } catch (error) {
+            return (error as { reason?: string }).reason ?? "<threw without a reason>";
+        }
+        return "<did not throw>";
+    };
+
+    it.each([
+        ["bps past 100%", { bps: 10_001 }],
+        ["negative bps", { bps: -1 }],
+        ["fractional bps", { bps: 12.5 }],
+        ["negative sats", { sats: -1 }],
+        ["fractional sats", { sats: 0.5 }],
+    ])("refuses a ceiling that is not a usable bound: %s", (_label, maxFee) => {
+        expect(reasonOf(() => fundable({ from_amount: 100_000, to_amount: 99_999 }, maxFee))).toBe(
+            "max_fee_out_of_range",
+        );
+    });
+
+    it("allows the boundary values, so the guard does not become the bug", () => {
+        const quote = { from_amount: 100_000, to_amount: 99_999 };
+        expect(() => fundable(quote, { bps: 10_000 })).not.toThrow();
+        expect(() => fundable(quote, { bps: 0, sats: 1 })).not.toThrow();
+        expect(() => fundable(quote, { sats: 0, bps: 1 })).not.toThrow();
+    });
+
+    it("refuses a fee above the proportional ceiling", () => {
+        expect(() =>
+            fundable({ from_amount: 100_000, to_amount: 99_000 }, { bps: 100 }),
+        ).not.toThrow();
+        expect(() => fundable({ from_amount: 100_000, to_amount: 98_999 }, { bps: 100 })).toThrow(
+            /fee/i,
+        );
+    });
+
+    it("allows a flat network fee on a small swap that a bare percentage would refuse", () => {
+        expect(() => fundable({ from_amount: 5_420, to_amount: 5_000 }, { bps: 100 })).toThrow(
+            /fee/i,
+        );
+        expect(() =>
+            fundable({ from_amount: 5_420, to_amount: 5_000 }, { bps: 100, sats: 1_000 }),
+        ).not.toThrow();
+    });
+
+    it("keeps the proportional bound on a large swap, where the absolute one is slack", () => {
+        // allowed = max(1_000, 1% of 500_000) = 5_000.
+        expect(() =>
+            fundable({ from_amount: 500_000, to_amount: 495_000 }, { bps: 100, sats: 1_000 }),
+        ).not.toThrow();
+        expect(() =>
+            fundable({ from_amount: 500_000, to_amount: 494_999 }, { bps: 100, sats: 1_000 }),
+        ).toThrow(/fee/i);
+    });
+
+    it("refuses to pretend it can gate a cross-asset pair", () => {
+        expect(() =>
+            fundable(
+                { pair: "arkade:BTC->ethereum:0xa0b86991", from_amount: 100_000, to_amount: 42 },
+                { bps: 100 },
+            ),
+        ).toThrow(/cross-asset|different assets/i);
+    });
+
+    it("refuses a ceiling that names neither bound, rather than tolerating no fee", () => {
+        expect(() => fundable({ from_amount: 100_000, to_amount: 99_999 }, {})).toThrow(
+            /bps|sats/i,
+        );
+    });
+});
+
+/**
+ * Cross-asset: with `R` in to-units per from-unit the fee in FROM units is
+ * `(from_amount * R - to_amount) / R`, and the same max() rule applies.
+ */
+describe("assertFundable — the max-fee gate, cross-asset", () => {
+    const now = 1_800_000_000;
+    const CROSS = "arkade:BTC->ethereum:0xa0b86991";
+    const gate = (
+        over: Partial<RfqQuote>,
+        maxFee?: { bps?: number; sats?: number; referenceRate?: number },
+    ) =>
+        assertFundable({
+            quote: quoteFixture({
+                pair: CROSS,
+                from_amount: 100_000,
+                valid_until: now + 900,
+                refund_locktime: now + 7200,
+                ...over,
+            }),
+            invoiceExpiresAt: now + 3600,
+            now,
+            maxFee,
+        });
+
+    it("gates on the spread against the caller's own rate", () => {
+        // R = 0.5: 100_000 sats is worth 50_000; 49_500 received = 1_000 sats fee = 1%.
+        expect(() => gate({ to_amount: 49_500 }, { bps: 100, referenceRate: 0.5 })).not.toThrow();
+        expect(() => gate({ to_amount: 49_499 }, { bps: 100, referenceRate: 0.5 })).toThrow(/fee/i);
+    });
+
+    it("still refuses when no rate is supplied — unchanged from before", () => {
+        expect(() => gate({ to_amount: 42 }, { bps: 100 })).toThrow(/different assets|rate/i);
+    });
+
+    it("refuses a rate that cannot price anything", () => {
+        for (const referenceRate of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+            expect(() => gate({ to_amount: 49_500 }, { bps: 100, referenceRate })).toThrow(
+                /referenceRate/i,
+            );
+        }
+    });
+
+    // The only case that distinguishes ceil from floor: R = 3, 2_999 short =
+    // 999.67 sats, which ceil refuses against a 999-sat ceiling and floor funds.
+    it("rounds a fractional cross-asset fee up, not down", () => {
+        expect(() => gate({ to_amount: 297_001 }, { sats: 999, referenceRate: 3 })).toThrow(/fee/i);
+    });
+
+    it("ignores a rate on a same-asset pair, where the exact fee is already known", () => {
+        expect(() =>
+            assertFundable({
+                quote: quoteFixture({
+                    from_amount: 100_000,
+                    to_amount: 99_500,
+                    valid_until: now + 900,
+                    refund_locktime: now + 7200,
+                }),
+                invoiceExpiresAt: now + 3600,
+                now,
+                maxFee: { bps: 100, referenceRate: 0.5 },
+            }),
+        ).not.toThrow();
+    });
+});

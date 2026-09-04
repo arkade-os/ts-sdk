@@ -180,8 +180,8 @@ const onchainTransport = (seen: { paymentHash?: string; senderPubkey?: string })
             type: "rfq_quote",
             rfq_id: payload.rfq_id as string,
             pair: ONCHAIN_SEND_PAIR,
-            from_amount: 100_000,
-            to_amount: 99_000,
+            from_amount: 101_000,
+            to_amount: 100_000,
             solver_pubkey: hex.encode(SOLVER),
             valid_until: VALID_UNTIL,
             refund_locktime: REFUND_LOCKTIME,
@@ -629,7 +629,7 @@ describe("what an RFQ record stores about its corridor's keys", () => {
                         // one P unlocks both legs, so the L1 inputs carry the
                         // same sha256(P) the arkade lockup commits to
                         ...rfqSecretsProfile(result.secrets, result.htlcParams.paymentHash),
-                        ...onchainSendProfile(result),
+                        ...onchainSendProfile({ ...result, payoutPkScript: p2tr(key(21)) }),
                     },
                 },
                 {

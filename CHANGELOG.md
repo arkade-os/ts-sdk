@@ -39,6 +39,13 @@ style and have not been backfilled.
   `/v1/info` round-trip per call (each entrypoint still performs its own
   live read — deliberately, see the `requireLive` entry below). Drop the argument at every call site; nothing
   else about these calls changed. (#734)
+- **`@arkade-os/swap`: the solver payment rails drop their
+  `arkServerUrl` dep.** `SolverLightningRailDeps` and
+  `SolverOnchainRailDeps` carried the URL for the one reason above — to
+  hand it to `requestLightningSend` / `requestOnchainSend` — so with the
+  positional gone the field has no reader. Remove it from the object you
+  pass `solverLightningRail` / `solverOnchainRail`; both rails already
+  take the wallet from the `RouterContext` they are quoted with. (#734)
 - **`@arkade-os/swap`: `cancelOffer` and `watchOfferSwaps` lose their
   server URL too.** `cancelOffer(wallet, offerHex, opts)` and
   `watchOfferSwaps({ wallet, repository })`. These two need more than

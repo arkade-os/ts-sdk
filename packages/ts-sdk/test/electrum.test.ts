@@ -397,6 +397,132 @@ describe("ElectrumOnchainProvider", () => {
         });
     });
 
+    /** `time` is MTP, not the tip header's `nTime`; the two do not diverge
+     *  visibly until a node rejects the spend. */
+    describe("getChainTip median-time-past", () => {
+        /** The genesis header with its 4-byte LE `nTime` (offset 68) replaced. */
+        const headerAt = (time: number): string => {
+            const bytes = hex.decode(GENESIS_HEADER_HEX);
+            new DataView(bytes.buffer, bytes.byteOffset).setUint32(68, time, true);
+            return hex.encode(bytes);
+        };
+        const headerCalls = () =>
+            wsMock.request.mock.calls.filter((call) => call[0] === "blockchain.block.header");
+
+        // Unordered, and the tip is the LATEST, so "the tip's time" and "the
+        // newest in the window" both give 2000 while the median is 1005.
+        const WINDOW_TIMES = [1000, 1009, 1001, 1008, 1002, 1007, 1003, 1006, 1004, 1005];
+        const TIP_TIME = 2000;
+        // Sorted: [1000…1009, 2000]; the sixth of eleven is 1005.
+        const MEDIAN = 1005;
+
+        const tipAt100 = () => {
+            deliverHeadersTip(wsMock.subscribe, { height: 100, hex: headerAt(TIP_TIME) });
+            mockBatch(wsMock.request, WINDOW_TIMES.map(headerAt));
+        };
+
+        it("returns the median of the eleven-block window, not the tip's own time", async () => {
+            tipAt100();
+            const tip = await provider.getChainTip();
+            expect(tip.time).toBe(MEDIAN);
+            expect(tip.time).not.toBe(TIP_TIME);
+        });
+
+        it("asks for exactly the ten blocks below the tip", async () => {
+            tipAt100();
+            await provider.getChainTip();
+            expect(headerCalls().map((call) => call[1])).toEqual([
+                99, 98, 97, 96, 95, 94, 93, 92, 91, 90,
+            ]);
+        });
+
+        it("does not refetch the window while the tip is unchanged", async () => {
+            tipAt100();
+            expect((await provider.getChainTip()).time).toBe(MEDIAN);
+            expect(headerCalls().length).toBe(10);
+            expect((await provider.getChainTip()).time).toBe(MEDIAN);
+            expect(headerCalls().length).toBe(10);
+        });
+
+        it("collapses concurrent readers on a fresh tip onto one window fetch", async () => {
+            tipAt100();
+            const tips = await Promise.all([
+                provider.getChainTip(),
+                provider.getChainTip(),
+                provider.getChainTip(),
+                provider.getChainTip(),
+                provider.getChainTip(),
+            ]);
+
+            expect(tips.map((t) => t.time)).toEqual([MEDIAN, MEDIAN, MEDIAN, MEDIAN, MEDIAN]);
+            expect(headerCalls().length).toBe(10);
+        });
+
+        it("never serves one tip's pending window to another tip", async () => {
+            // Adopting any pending read would answer B with A's median.
+            let releaseA = () => {};
+            const blockA = new Promise<void>((resolve) => {
+                releaseA = resolve;
+            });
+            let pushHeader: ((h: { height: number; hex: string }) => void) | undefined;
+            wsMock.subscribe.mockImplementationOnce(
+                async (_method: string, cb: (h: { height: number; hex: string }) => void) => {
+                    pushHeader = cb;
+                    cb({ height: 100, hex: headerAt(TIP_TIME) });
+                },
+            );
+            for (const time of WINDOW_TIMES) {
+                wsMock.request.mockImplementationOnce(async () => {
+                    await blockA;
+                    return headerAt(time);
+                });
+            }
+
+            const a = provider.getChainTip();
+            await vi.waitFor(() => expect(headerCalls().length).toBe(10));
+
+            pushHeader!({ height: 200, hex: headerAt(9000) });
+            mockBatch(wsMock.request, new Array(10).fill(headerAt(8000)));
+            const b = await provider.getChainTip();
+            releaseA();
+
+            expect(b.time).toBe(8000);
+            expect((await a).time).toBe(MEDIAN);
+        });
+
+        it("takes the median of what exists on a chain shorter than the window", async () => {
+            // Height 2 => three timestamps; consensus does the same near genesis.
+            deliverHeadersTip(wsMock.subscribe, { height: 2, hex: headerAt(500) });
+            mockBatch(wsMock.request, [headerAt(100), headerAt(300)]);
+
+            expect((await provider.getChainTip()).time).toBe(300);
+        });
+
+        it("falls back to the tip's own time when the window cannot be fetched", async () => {
+            deliverHeadersTip(wsMock.subscribe, { height: 100, hex: headerAt(TIP_TIME) });
+            wsMock.request.mockRejectedValue(new Error("server gone"));
+
+            expect((await provider.getChainTip()).time).toBe(TIP_TIME);
+        });
+
+        it("does not cache the fallback — the next call retries the window", async () => {
+            deliverHeadersTip(wsMock.subscribe, { height: 100, hex: headerAt(TIP_TIME) });
+            wsMock.request.mockRejectedValueOnce(new Error("server gone"));
+            expect((await provider.getChainTip()).time).toBe(TIP_TIME);
+
+            wsMock.request.mockReset();
+            mockBatch(wsMock.request, WINDOW_TIMES.map(headerAt));
+            expect((await provider.getChainTip()).time).toBe(MEDIAN);
+        });
+
+        it("keeps a genesis-only chain answering with its own header time", async () => {
+            deliverHeadersTip(wsMock.subscribe, { height: 0, hex: GENESIS_HEADER_HEX });
+
+            expect((await provider.getChainTip()).time).toBe(GENESIS_BLOCK_TIME);
+            expect(headerCalls()).toEqual([]); // nothing below genesis to ask for
+        });
+    });
+
     describe("getTxStatus", () => {
         it("returns confirmed=false when transaction.get_merkle is not yet available (mempool)", async () => {
             // electrs raises an error for txs not yet in a block; fetchTxMerkle

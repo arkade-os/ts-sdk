@@ -346,6 +346,39 @@ if (incomingFunds.type === "vtxo") {
 }
 ```
 
+#### Cancelling a wait
+
+`waitForIncomingFunds` is **a live subscription, not a one-shot query**. It opens an onchain address watcher plus an indexer stream and holds them until it settles. Cancel it whenever you might not await it to completion — pass a `timeoutMs`, or an `AbortSignal`:
+
+```typescript
+const controller = new AbortController()
+
+try {
+  const funds = await waitForIncomingFunds(wallet, { signal: controller.signal })
+} catch (error) {
+  if ((error as Error).name !== "AbortError") throw error
+  // cancelled — watchers already released
+}
+
+// or bound the wait directly
+await waitForIncomingFunds(wallet, { timeoutMs: 30_000 })
+```
+
+Do **not** `Promise.race` an uncancelled call against a timer:
+
+```typescript
+// WRONG: race abandons the loser without stopping it. Repeat this on a
+// polling loop and the subscriptions stack until the process exits.
+await Promise.race([sleep(15_000), waitForIncomingFunds(wallet)])
+
+// Right: the signal tears the watcher down when the timer wins.
+await waitForIncomingFunds(wallet, { timeoutMs: 15_000 }).catch(() => null)
+```
+
+If you want a plain polling loop, use your own timer plus `wallet.getBalance()` — it observes new funds on the next cycle. If you want to keep a watcher across many iterations, call `wallet.notifyIncomingFunds(cb)` **once** and hold its `stop()` function, rather than resubscribing per tick.
+
+Concurrent watchers over the same address set share a single Esplora subscription, so a duplicated or leaked watcher no longer multiplies explorer traffic. That is a safety net, not a licence to skip `stop()`.
+
 ### Onboarding
 
 Onboarding allows you to swap onchain funds into virtual outputs:

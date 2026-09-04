@@ -14,6 +14,9 @@ import { faucetOnchain, mineBlocks, waitFor } from "./utils";
 // WebSocket on this port.
 const ELECTRUM_WS_URL = "ws://localhost:50003";
 
+/** Blocks consensus takes the median of; `n - 1` are fetched below the tip. */
+const MTP_WINDOW = 11;
+
 function faucet(address: string, btc = 0.001): number {
     faucetOnchain(address, Math.round(btc * 100_000_000));
     // Mine a block immediately so electrs has a stable confirmed state to
@@ -23,6 +26,11 @@ function faucet(address: string, btc = 0.001): number {
     // change for the same reason (settlement.test.ts etc.).
     mineBlocks(1);
     return Math.round(btc * 100_000_000);
+}
+
+/** Mine `n` blocks. */
+function mine(n: number): void {
+    if (n > 0) execSync(`node regtest/regtest.mjs mine ${n}`);
 }
 
 describe("ElectrumOnchainProvider integration tests", () => {
@@ -60,6 +68,47 @@ describe("ElectrumOnchainProvider integration tests", () => {
         // not register a new one server-side.
         const tipAgain = await provider.getChainTip();
         expect(tipAgain.height).toBeGreaterThanOrEqual(tip.height);
+    });
+
+    it("computes median-time-past from real headers, not the tip's own time", {
+        timeout: 15_000,
+    }, async () => {
+        // The unit tests prove the arithmetic; only a real Fulcrum proves it
+        // answers a batch of ten header requests. Two ways this could pass
+        // while testing nothing: the window read degrades to the tip's own
+        // `nTime` and only warns, and below height 10 the short-window branch
+        // fetches fewer than ten headers. Hence the mine, and both assertions.
+        const start = await provider.getChainTip();
+        mine(Math.max(0, MTP_WINDOW + 1 - start.height));
+
+        const warnings: unknown[][] = [];
+        const original = console.warn;
+        console.warn = (...args: unknown[]) => {
+            warnings.push(args);
+        };
+
+        let tip: { height: number; time: number };
+        try {
+            // Fresh: the shared `provider` has already cached its MTP.
+            const fresh = new ElectrumOnchainProvider(ws, networks.regtest);
+            tip = await fresh.getChainTip();
+        } finally {
+            console.warn = original;
+        }
+
+        expect(warnings.filter((w) => String(w[0]).includes("median-time-past"))).toHaveLength(0);
+        expect(tip.time).toBeGreaterThan(0);
+
+        // MTP never runs ahead of the tip's own timestamp on an in-order chain
+        // — compared against the header this provider does NOT use.
+        const header = await chain.fetchBlockHeader(tip.height);
+        const tipNTime = Number(
+            new DataView(
+                Uint8Array.from((header.hex.match(/../g) ?? []).map((b) => Number.parseInt(b, 16)))
+                    .buffer,
+            ).getUint32(68, true),
+        );
+        expect(tip.time).toBeLessThanOrEqual(tipNTime);
     });
 
     it("returns a positive sat/vB fee rate for the regtest mempool", {

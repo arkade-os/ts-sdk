@@ -31,6 +31,7 @@ import {
 } from "@arkade-os/sdk";
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { sealClaimPacket } from "../claimPacket";
+import { l1ScriptForAddress } from "../onchainHtlc";
 import type { OnchainHtlc, OnchainHtlcParams, OnchainNetwork } from "../onchainHtlc";
 import {
     deriveLightningReceive,
@@ -119,6 +120,11 @@ export type RfqPreparation =
           readonly fundAmount: bigint;
           /** The L1 claim key, provisioned by the wallet like every other key. */
           readonly payoutKey: ProvisionedKey;
+          /** Where the claim PAYS — the take endpoint's own address, encoded.
+           * Distinct from {@link payoutKey}, which only AUTHORISES the claim:
+           * the claim's output is the spender's choice and the resolved
+           * destination is the only thing that names it. */
+          readonly payoutPkScript: Uint8Array;
           readonly htlc: OnchainHtlc;
           readonly htlcParams: OnchainHtlcParams;
           readonly l1Network: OnchainNetwork;
@@ -458,6 +464,11 @@ const quoteOnchainSend = async (
     if (destination?.kind !== "address") {
         throw new Error("an onchain send is quoted against the L1 address it pays");
     }
+    const l1Network = l1NetworkFromArk(input.info.network);
+    // Before the request, per `l1ScriptForAddress`: a destination the claim
+    // cannot pay to must be refused while nothing has been negotiated, not at
+    // claim time with a funded lockup already on the table.
+    const payoutPkScript = l1ScriptForAddress(destination.address, l1Network);
     const pair = rfqPairFor(input.legs.give, input.legs.take);
     const rfqId = newRfqId();
 
@@ -498,7 +509,7 @@ const quoteOnchainSend = async (
             emulatorPubkey: covenant.emulatorPubkey,
             claimDelay: covenant.claimDelay,
             hrp: covenant.hrp,
-            l1Network: l1NetworkFromArk(input.info.network),
+            l1Network,
             refundAddress: payoutKey.address,
             senderPubkey: secrets.pubkey,
         }),
@@ -554,6 +565,7 @@ const quoteOnchainSend = async (
             refundAddress: payoutKey.address,
             fundAmount: parsed.give,
             payoutKey,
+            payoutPkScript,
             htlc: derived.htlc,
             htlcParams: derived.htlcParams,
             l1Network: derived.l1Network,
