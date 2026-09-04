@@ -10,6 +10,7 @@
  */
 
 import { scriptFromArkAddress } from "../scriptFromAddress";
+import { legacyVtxoFacts } from "../legacyVtxoFacts";
 
 export const ArkVtxoSchema = {
     name: "ArkVtxo",
@@ -36,7 +37,8 @@ export const ArkVtxoSchema = {
         isSwept: "bool?",
         isPreconfirmed: "bool?",
         commitmentTxIdsJson: "string?",
-        expiresAt: "string?",
+        expiresAt: "string?", // ISO 8601
+        expiresAtHeight: "int?",
         assetsJson: "string?",
         // scriptPubKey (hex) locking this VTXO, indexed so contract-scoped
         // queries can resolve ownership without touching address mapping.
@@ -213,7 +215,9 @@ export const ArkExperimentalRealmSchemas = [
  *     without one reads as `watched`, which is the coverage every
  *     existing contract has today.
  *   - v4: ArkVtxo.virtualStatusJson removed.
- *   - v5: ArkVtxo stores canonical VTXO facts directly.
+ *   - v5: ArkVtxo stores the canonical VTXO facts that blob used to project —
+ *     `isSwept`, `isPreconfirmed`, `commitmentTxIdsJson`, `expiresAt`,
+ *     `expiresAtHeight` — backfilled from it during migration.
  *
  * The intent/virtualtx schemas ({@link ArkExperimentalRealmSchemas}) are NOT
  * counted here: they are experimental and inert, so they never move the
@@ -234,19 +238,51 @@ export const ARK_REALM_SCHEMA_VERSION = 5;
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function runArkRealmMigrations(oldRealm: any, newRealm: any): void {
+    // v4 → v5: the canonical facts used to live inside `virtualStatusJson`, which v4 drops. Realm
+    // deletes a removed property from the new realm, so the old one is the only place left to read
+    // it from — and without the copy a swept row comes back `isSwept: false`, spendable, until the
+    // first indexer sync. Keyed by `pk` rather than by position: the two collections are parallel
+    // in practice, but a mismatch here would write one row's state onto another's.
+    const legacyByPk = new Map<string, unknown>();
+    const oldVtxos = oldRealm?.objects?.("ArkVtxo") ?? [];
+    for (let i = 0; i < oldVtxos.length; i++) {
+        const raw = oldVtxos[i].virtualStatusJson;
+        if (raw) legacyByPk.set(oldVtxos[i].pk, raw);
+    }
+
     const newVtxos = newRealm.objects("ArkVtxo");
     for (let i = 0; i < newVtxos.length; i++) {
         const newVtxo = newVtxos[i];
         if (!newVtxo.script) {
             newVtxo.script = scriptFromArkAddress(newVtxo.address);
         }
+
+        const facts = legacyVtxoFacts(legacyByPk.get(newVtxo.pk));
+        // Only fill blanks: a row the new code has already written carries the authoritative value,
+        // and the legacy projection is the lossier of the two.
+        if (facts) {
+            if (newVtxo.isSpent == null) newVtxo.isSpent = facts.isSpent;
+            if (newVtxo.isSwept == null) newVtxo.isSwept = facts.isSwept;
+            if (newVtxo.isPreconfirmed == null) newVtxo.isPreconfirmed = facts.isPreconfirmed;
+            if (newVtxo.commitmentTxIdsJson == null && facts.commitmentTxIds) {
+                newVtxo.commitmentTxIdsJson = JSON.stringify(facts.commitmentTxIds);
+            }
+            if (newVtxo.expiresAt == null && facts.expiresAt) {
+                newVtxo.expiresAt = facts.expiresAt.toISOString();
+            }
+            if (newVtxo.expiresAtHeight == null && facts.expiresAtHeight !== undefined) {
+                newVtxo.expiresAtHeight = facts.expiresAtHeight;
+            }
+        }
     }
 
-    // v3 → v4: ArkVirtualTx.hex was renamed to psbt (both hold the same
-    // serialized tx payload). A rename is drop-old + add-new, so the value
-    // would be lost unless we copy it across. Guard on the old schema actually
-    // defining ArkVirtualTx — a v1/v2 realm never had it, and reading objects
-    // of an unknown type throws.
+    // ArkVirtualTx.hex was renamed to psbt (both hold the same serialized tx
+    // payload). A rename is drop-old + add-new, so the value would be lost
+    // unless we copy it across. The step is versioned by the consumer's own
+    // counter, not by ARK_REALM_SCHEMA_VERSION: these schemas are opt-in and
+    // never move it. Guard on the old schema actually defining ArkVirtualTx —
+    // a realm that never opted in doesn't have it, and reading objects of an
+    // unknown type throws.
     const oldHasVirtualTx =
         Array.isArray(oldRealm?.schema) &&
         oldRealm.schema.some((s: { name: string }) => s.name === "ArkVirtualTx");

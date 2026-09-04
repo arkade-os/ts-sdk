@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";
 import { IndexedDBWalletRepository } from "../src/repositories/indexedDB/walletRepository";
-import { deserializeVtxo, serializeVtxo } from "../src/repositories/serialization";
+import {
+    deserializeAsset,
+    deserializeVtxo,
+    serializeVtxo,
+} from "../src/repositories/serialization";
 import { getVtxosForContract } from "../src/contracts/vtxoOwnership";
 import type { ExtendedVirtualCoin, VirtualCoin } from "../src/wallet";
 import type { WalletRepository } from "../src/repositories/walletRepository";
@@ -88,6 +92,28 @@ describe("deserialization normalization", () => {
         expect(loaded.commitmentTxIds).toEqual([]);
         expect(loaded.spentBy).toBe("");
         expect(loaded.expiresAt).toBeUndefined();
+    });
+});
+
+describe("asset amount deserialization", () => {
+    it("accepts a legacy JSON-number amount", () => {
+        // Amounts became bigint (persisted as decimal strings) after some databases were already
+        // written with raw JSON numbers; those must keep round-tripping.
+        expect(deserializeAsset({ assetId: "a", amount: 21_000 })).toEqual({
+            assetId: "a",
+            amount: 21_000n,
+        });
+    });
+
+    it("names the precision loss instead of letting BigInt() throw on it", () => {
+        expect(() =>
+            deserializeAsset({ assetId: "a", amount: Number.MAX_SAFE_INTEGER + 2 }),
+        ).toThrow(/Unsafe legacy asset amount for a/);
+    });
+
+    it("passes strings and bigints through unchanged", () => {
+        expect(deserializeAsset({ assetId: "a", amount: "21000" }).amount).toBe(21_000n);
+        expect(deserializeAsset({ assetId: "a", amount: 21_000n }).amount).toBe(21_000n);
     });
 });
 

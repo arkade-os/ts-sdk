@@ -1037,11 +1037,19 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     protected static async setupWalletConfig(config: ReadonlyWalletConfig, pubKey: Uint8Array) {
         const arkProvider = config.arkProvider || new RestArkProvider();
-        const indexerProvider =
-            config.indexerProvider ||
-            new RestIndexerProvider(
-                extractArkProviderUrl(arkProvider) ?? DEFAULT_ARKADE_SERVER_URL,
-            );
+        let indexerProvider = config.indexerProvider;
+        if (!indexerProvider) {
+            const derived = extractArkProviderUrl(arkProvider);
+            // Refuse to pair a caller's own ark provider with the public default: the wallet would
+            // read its VTXOs from a server that has never seen them, and report phantom coins and
+            // missed receipts rather than an error.
+            if (!derived && config.arkProvider) {
+                throw new Error(
+                    "indexerProvider is required when arkProvider is provided without a discoverable serverUrl",
+                );
+            }
+            indexerProvider = new RestIndexerProvider(derived ?? DEFAULT_ARKADE_SERVER_URL);
+        }
 
         // Instantiate the repositories BEFORE the first required server-info
         // fetch so boot can read a cached snapshot and fall back to it when the

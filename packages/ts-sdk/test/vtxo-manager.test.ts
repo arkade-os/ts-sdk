@@ -863,6 +863,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     value: 1000,
                     createdAt: new Date(now - 90_000),
                     virtualStatus: { state: "settled", batchExpiry: now + 10_000 },
+                    expiresAt: new Date(now + 10_000),
                     isUnrolled,
                 }) as ExtendedVirtualCoin;
 

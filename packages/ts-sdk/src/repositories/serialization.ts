@@ -25,16 +25,29 @@ export const serializeAsset = (a: Asset): SerializedAsset => ({
     amount: a.amount.toString(),
 });
 
-export const deserializeAsset = (a: { assetId: string; amount: string | bigint }): Asset => ({
-    assetId: a.assetId,
-    amount: typeof a.amount === "bigint" ? a.amount : BigInt(a.amount),
-});
+// `number` is still accepted: amounts persisted before they became bigint are on disk as JSON
+// numbers, and `BigInt()` would take a fractional one as a throw rather than a diagnosis. The
+// guard turns silent precision loss into a message that says what to do about it.
+export const deserializeAsset = (a: {
+    assetId: string;
+    amount: string | number | bigint;
+}): Asset => {
+    if (typeof a.amount === "number" && !Number.isSafeInteger(a.amount)) {
+        throw new Error(
+            `Unsafe legacy asset amount for ${a.assetId}; re-sync from the original source`,
+        );
+    }
+    return {
+        assetId: a.assetId,
+        amount: typeof a.amount === "bigint" ? a.amount : BigInt(a.amount),
+    };
+};
 
 export const serializeAssets = (assets: Asset[] | undefined): SerializedAsset[] | undefined =>
     assets?.map(serializeAsset);
 
 export const deserializeAssets = (
-    assets: Array<{ assetId: string; amount: string | bigint }> | undefined,
+    assets: Array<{ assetId: string; amount: string | number | bigint }> | undefined,
 ): Asset[] | undefined => assets?.map(deserializeAsset);
 
 export const serializeVtxo = (v: ExtendedVirtualCoin) => ({

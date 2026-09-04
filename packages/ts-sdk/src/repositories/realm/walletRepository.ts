@@ -95,6 +95,7 @@ export class RealmWalletRepository implements WalletRepository {
                                 : s.expiresAt instanceof Date
                                   ? s.expiresAt.toISOString()
                                   : new Date(s.expiresAt).toISOString(),
+                        expiresAtHeight: s.expiresAtHeight ?? null,
                         spentBy: s.spentBy ?? null,
                         settledBy: s.settledBy ?? null,
                         arkTxId: s.arkTxId ?? null,
@@ -297,6 +298,7 @@ function vtxoObjectToDomain(obj: any): ExtendedVirtualCoin {
         isPreconfirmed: obj.isPreconfirmed == null ? undefined : obj.isPreconfirmed,
         commitmentTxIds: obj.commitmentTxIdsJson ? JSON.parse(obj.commitmentTxIdsJson) : undefined,
         expiresAt: obj.expiresAt ? new Date(obj.expiresAt) : undefined,
+        expiresAtHeight: obj.expiresAtHeight ?? undefined,
         spentBy: obj.spentBy ?? undefined,
         settledBy: obj.settledBy ?? undefined,
         arkTxId: obj.arkTxId ?? undefined,

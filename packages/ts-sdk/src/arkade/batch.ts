@@ -248,7 +248,11 @@ export function createArkadeBatchHandler(
                     continue;
                 }
 
-                // Recoverable or subdust VTXOs don't require a forfeit tx
+                // Recoverable or subdust VTXOs don't require a forfeit tx.
+                // `canRecoverOnchain` — swept OR past expiry — is the client side of arkd's
+                // `Vtxo.RequiresForfeit()` (`!Swept && !IsExpired() && !IsNote() && !Unrolled`),
+                // so an expired-but-unswept coin correctly settles without one. The predicate this
+                // replaced was swept-only, and built a forfeit the server never asked for.
                 if (
                     canRecoverOnchain(input, { timestamp: new Date() }) ||
                     isSubdust(input, info.dust)

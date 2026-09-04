@@ -210,7 +210,13 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
         (s) => parentInputTxids(s.parent),
     );
 
-    // Per-VTXO sweep resolution.
+    // Per-VTXO sweep resolution. The wallet's key has to come along: a handler that cannot place
+    // the wallet among a contract's parties answers wrongly in one of two ways — VHTLC offers no
+    // path at all, so the coin is silently skipped as unexitable, while the Arkade handler drops
+    // its signer filter and offers leaves this wallet cannot sign, one of which the shortest-delay
+    // pick below would pre-sign. Raw x-only hex is what the rest of the SDK passes as the
+    // descriptor (see `assertSpendableNow`); `resolveRole` accepts it alongside `tr(...)`.
+    const walletDescriptor = hex.encode(await wallet.identity.xOnlyPublicKey());
     const infos: ExitVtxoInfo[] = [];
     const sweeps: ExitSweepPlan[] = [];
     for (const vtxo of vtxos) {
@@ -220,6 +226,7 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
                 vtxo,
                 scriptHex: hex.encode(VtxoScript.decode(vtxo.tapTree).pkScript),
                 contractRepository: wallet.contractRepository,
+                walletDescriptor,
                 currentTime: Date.now(),
             });
             const sweepFee = sweepFeeFor(

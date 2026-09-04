@@ -69,6 +69,23 @@ describe("Wallet", () => {
             expect(wallet.network.bech32).toBe("bc");
             expect(wallet.address.startsWith("bc1p")).toBe(true);
         });
+
+        it("refuses a custom arkProvider whose server URL it cannot discover", async () => {
+            // Falling back to the public default here would point the indexer at a server that has
+            // never seen this wallet's VTXOs: phantom coins and missed receipts, no error.
+            await expect(
+                Wallet.create({
+                    identity: mockIdentity,
+                    arkProvider: {
+                        getInfo: vi.fn(),
+                    } as Partial<ArkProvider> as ArkProvider,
+                    storage: {
+                        walletRepository: new InMemoryWalletRepository(),
+                        contractRepository: new InMemoryContractRepository(),
+                    },
+                }),
+            ).rejects.toThrow(/indexerProvider is required when arkProvider is provided/);
+        });
     });
 
     describe("getBalance", () => {
