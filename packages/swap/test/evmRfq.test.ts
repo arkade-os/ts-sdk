@@ -55,6 +55,8 @@ const USDC_CHECKSUMMED = "0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48";
 const ERC20_SWAP = "0x1111111111111111111111111111111111111111";
 const CLAIM_ADDRESS = "0x2222222222222222222222222222222222222222";
 const SOLVER_CLAIM_ADDRESS = "0x3333333333333333333333333333333333333333";
+/** The solver's own EVM address, as the SEND quote carries it. */
+const SOLVER_EVM_ADDRESS = "0x4444444444444444444444444444444444444444";
 
 const NOW = 1_800_000_000;
 
@@ -191,6 +193,10 @@ const SOLVER_SEND_QUOTE_PROFILE_KEYS = [
     "payment_hash",
     "lockup_address",
     "receiver_pk_script",
+    // The SOLVER's address on this leg. Five of the swap key's six fields were
+    // already reachable from the quote; this is the sixth, and it is also an
+    // explicit argument to `claim`.
+    "evm_refund_address",
     "evm_timeout_block",
     "evm_contract_address",
     "evm_chain_id",
@@ -249,6 +255,7 @@ const sendQuote = (over: Record<string, unknown> = {}): EvmSendQuote =>
             payment_hash: PAYMENT_HASH,
             lockup_address: "ark1qlockup",
             receiver_pk_script: "51201234",
+            evm_refund_address: SOLVER_EVM_ADDRESS,
             evm_timeout_block: 21_000_000,
             evm_contract_address: ERC20_SWAP,
             evm_chain_id: 1,
@@ -714,7 +721,44 @@ describe("quote readers", () => {
                     { tokenAddress: USDC, rfqId: RFQ_ID },
                 ),
             ).toThrow(/profile\.evm_claim_address must be 0x then 40 hex/);
+            // The send leg's third address, and the one a wrong value breaks
+            // most quietly: it is a field of the swap key, so a bad one yields
+            // a key that matches no lock rather than an error.
+            expect(() =>
+                readEvmSendQuote(
+                    withProfile(sendQuote() as unknown as Record<string, unknown>, {
+                        evm_refund_address: bad,
+                    }),
+                    { tokenAddress: USDC, rfqId: RFQ_ID },
+                ),
+            ).toThrow(/profile\.evm_refund_address must be 0x then 40 hex/);
         }
+    });
+
+    it("gives a send client all six fields of the swap key", () => {
+        // The property the field was added for. `ERC20Swap` stores
+        // `mapping(bytes32 => bool)` keyed by
+        // keccak256(abi.encode(preimageHash, amount, tokenAddress,
+        // claimAddress, refundAddress, timelock)) — so a client short of any
+        // one of them cannot address the lock at all: it cannot read
+        // `swaps(key)` to prove the solver locked, and cannot build the claim
+        // call, which takes refundAddress explicitly.
+        const quote = readEvmSendQuote(sendQuote(), { tokenAddress: USDC, rfqId: RFQ_ID });
+        const key = {
+            preimageHash: quote.profile.payment_hash,
+            amount: evmQuoteTokenAmount(quote),
+            tokenAddress: evmTokenOf(quote.pair),
+            // The client's own, from its request — never taken from the quote.
+            claimAddress: CLAIM_ADDRESS,
+            refundAddress: quote.profile.evm_refund_address,
+            timelock: quote.profile.evm_timeout_block,
+        };
+        for (const [field, value] of Object.entries(key)) {
+            expect(value, `${field} is not derivable from the quote`).toBeDefined();
+        }
+        expect(key.refundAddress).toBe(SOLVER_EVM_ADDRESS);
+        expect(key.tokenAddress).toBe(USDC);
+        expect(key.amount).toBe(249_750_000_000_000_000_000n);
     });
 
     it("refuses a payment_hash that is not a 32-byte hash", () => {
