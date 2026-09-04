@@ -448,6 +448,49 @@ describe("EsploraProvider.watchAddresses", () => {
 
             expect(urlsOf().some((u) => u.includes("/txs"))).toBe(true);
         });
+
+        it("retries history on the next cycle if the first fetch fails after a probe success", async () => {
+            // The bug this protects against: if history fails, the fingerprint
+            // must not be committed, or the next cycle (with the same UTXO set)
+            // will believe it has nothing to do and skip history forever.
+            let coins: unknown[] = [utxo("existing", 0)];
+            let history: unknown[] = [confirmedTx("existing")];
+            let historyFailures = 0;
+
+            mockFetch.mockImplementation((url: string) => {
+                if (url.includes("/utxo")) return Promise.resolve(okJson(coins));
+                if (url.includes("/txs")) {
+                    if (historyFailures++ === 1) {
+                        // Fail the first poll cycle's history fetch (index 1;
+                        // index 0 was the creation-time baseline).
+                        return Promise.reject(new Error("history unavailable"));
+                    }
+                    return Promise.resolve(okJson(history));
+                }
+                return Promise.reject(new Error("unexpected fetch"));
+            });
+
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+            });
+            await provider.watchAddresses(["addr1"], callback);
+
+            // Change the UTXO set so we fall through to history.
+            coins = [utxo("existing", 0), utxo("arrived", 0)];
+            history = [confirmedTx("existing"), confirmedTx("arrived")];
+
+            // 1st cycle: probe succeeds, history fails.
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+            expect(callback).not.toHaveBeenCalled();
+
+            // 2nd cycle: probe still sees the same change, history succeeds this time.
+            await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 2); // includes backoff
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback.mock.calls[0][0]).toEqual([
+                expect.objectContaining({ txid: "arrived" }),
+            ]);
+        });
     });
 
     describe("late baseline anchor", () => {

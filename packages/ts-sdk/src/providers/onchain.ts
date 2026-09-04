@@ -530,7 +530,6 @@ export class EsploraProvider implements OnchainProvider {
                         schedule();
                         return;
                     }
-                    lastFingerprint = fingerprint;
 
                     const currentTxs = await getAllTxs();
 
@@ -541,6 +540,11 @@ export class EsploraProvider implements OnchainProvider {
                     // and the explorer keeps getting hit — either with no handle
                     // left to clear it, or alongside a perfectly healthy socket.
                     if (!isCurrentLoop()) return;
+
+                    // Only commit the fingerprint once the history fetch has
+                    // succeeded: otherwise a transient failure in history
+                    // would mask the deposit until a *second* UTXO change.
+                    lastFingerprint = fingerprint;
 
                     if (baselined) {
                         report(currentTxs);
