@@ -93,6 +93,22 @@ export const L1_NETWORKS: Record<OnchainNetwork, typeof btc.NETWORK> = {
     regtest: { ...btc.TEST_NETWORK, bech32: "bcrt" },
 };
 
+/**
+ * The output script paying `address` on `network` — the `payoutPkScript` that
+ * {@link buildHtlcClaim} pays the fill to.
+ *
+ * Resolved from the address the user typed, and resolved EARLY: the claim
+ * transaction's output is the spender's own choice, so nothing in the quote,
+ * the HTLC, or anything else that survives a send screen names it. A swap
+ * whose destination cannot be encoded has nowhere to pay and must be refused
+ * before it is negotiated, not discovered at claim time.
+ *
+ * Throws on an address this build cannot decode, or one belonging to a
+ * different network — `btc.Address` checks the HRP and version byte.
+ */
+export const l1ScriptForAddress = (address: string, network: OnchainNetwork): Uint8Array =>
+    btc.OutScript.encode(btc.Address(L1_NETWORKS[network]).decode(address));
+
 export interface OnchainHtlcParams {
     /** `sha256(P)`, hex; the HASH160 commitment is derived internally. */
     paymentHash: string;
