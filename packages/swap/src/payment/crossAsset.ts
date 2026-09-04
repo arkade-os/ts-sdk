@@ -56,8 +56,17 @@ import { BTC_ASSET_ID } from "../store";
 /** This rail's id, and what `RouterPreferences.priority` ranks it by. */
 export const CROSS_ASSET_RAIL = "cross-asset";
 
+/**
+ * How far the route has got. Persisted, because the two states need different
+ * recovery: a `"quoted"` record whose offer never filled is cancelled, while a
+ * `"filled"` one has the asset in the wallet and owes the recipient a send.
+ */
+export type CrossAssetPhase = "quoted" | "filled";
+
 /** The offer this rail funded, and the payment it was funded for. */
 export interface CrossAssetSwap {
+    /** Where the route has got to; see {@link CrossAssetPhase}. */
+    phase: CrossAssetPhase;
     /** `createOffer`'s encoded offer — the only input `cancelOffer` needs. */
     offerHex: string;
     /** The swap address the deposit went to. */
@@ -75,7 +84,17 @@ export interface CrossAssetSwap {
 export interface CrossAssetRailDeps {
     /** Arkade Service REST URL — `createOffer` reads `getInfo()` from it. */
     arkServerUrl: string;
-    /** Markets to price and route over. `discoverMarkets` already caches. */
+    /**
+     * Markets to price and route over.
+     *
+     * Called once by `available()` and again by `quote()` — the router
+     * deliberately does not carry a result between them, so a rail that
+     * decided it could route must decide again when asked for a price. With
+     * `discoverMarkets` (1h cache) and `makeCachedFeedFetch` (30s, with
+     * in-flight collapsing) behind these, an `options()`-then-`route()` pass
+     * costs one round trip rather than two. Passing a bare registry fetch
+     * makes it four.
+     */
     discover(): Promise<DiscoveredMarket[]>;
     /**
      * Price the swap leg. Pass `quoteOffer` from `@arkade-os/solver-discovery`,
@@ -199,6 +218,16 @@ export function crossAssetRail(deps: CrossAssetRailDeps): PaymentRail {
                 );
             }
             const { plan } = planned;
+            // `RouteQuote.fee`/`total` and `Recipient.amount` are `number`, so
+            // the deposit narrows here. Safe for BTC — the entire supply is
+            // ~2.1e15 sats against a 9.0e15 safe integer — but asserted rather
+            // than assumed, because the assumption is the give side being BTC
+            // and a future non-BTC deposit corridor would silently break it.
+            if (!Number.isSafeInteger(Number(plan.deposit.atomic))) {
+                throw new Error(
+                    `${CROSS_ASSET_RAIL}: deposit of ${plan.deposit.atomic} does not fit a JS number`,
+                );
+            }
             const depositSats = Number(plan.deposit.atomic);
             const carrier = deps.carrierSats ?? DEFAULT_CARRIER_SATS;
 
@@ -231,6 +260,7 @@ export function crossAssetRail(deps: CrossAssetRailDeps): PaymentRail {
                             ...(deps.emulatorPubkey ? { emulatorPubkey: deps.emulatorPubkey } : {}),
                         });
                         const swap: CrossAssetSwap = {
+                            phase: "quoted",
                             offerHex: offer.offerHex,
                             address: offer.address,
                             swapPkScript: offer.swapPkScript,
@@ -253,6 +283,12 @@ export function crossAssetRail(deps: CrossAssetRailDeps): PaymentRail {
                         // A filler delivers the asset to this wallet; only then
                         // is there anything to pay the recipient with.
                         await deps.awaitFill(swap);
+                        // Record the fill BEFORE attempting the payment. If the
+                        // send then fails — a locked wallet, a lost connection —
+                        // the user is holding the asset and the recipient is
+                        // still owed; a record frozen at "quoted" would say the
+                        // opposite, and the offer would look cancellable.
+                        await deps.persist({ ...swap, phase: "filled" });
                         const txid = await ctx.wallet.send({
                             address: payTo,
                             amount: carrier,

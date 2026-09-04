@@ -283,7 +283,9 @@ describe("crossAssetRail.send", () => {
         const quote = await crossAssetRail(deps).quote(req, ctxWith(send as never));
         await (await quote.send()).settled();
 
-        expect(order).toEqual(["persist", "fund-offer", "await-fill", "pay-recipient"]);
+        // Two persists: the offer before it is funded, and the fill before the
+        // recipient is paid.
+        expect(order).toEqual(["persist", "fund-offer", "await-fill", "persist", "pay-recipient"]);
     });
 
     it("does not pay the recipient when the fill never lands", async () => {
@@ -437,5 +439,81 @@ describe("no BTC-only rail silently drops an asset", () => {
         const lnReq = { raw: "lnbcrt1u1pjexampleinvoice", assets: [USDX] };
         expect(await lightning.available?.(lnReq, ctxWith())).toBe(false);
         await expect(lightning.quote(lnReq, ctxWith())).rejects.toThrow(/cannot deliver/);
+    });
+});
+
+describe("the record says which side of the fill the route is on", () => {
+    // Two states with different recoveries: a "quoted" record whose offer never
+    // filled is cancelled; a "filled" one has the asset in the wallet and owes
+    // the recipient a send. A record frozen at "quoted" after the fill landed
+    // says the opposite of the truth.
+    const req = { raw: ARK_ADDR, assets: [USDX] };
+
+    const runWith = async (send: ReturnType<typeof vi.fn>) => {
+        offerStub = async () => offer;
+        const phases: string[] = [];
+        const persist = vi.fn(async (s: CrossAssetSwap) => {
+            phases.push(s.phase);
+        });
+        const quote = await crossAssetRail(depsWith({ persist })).quote(
+            req,
+            ctxWith(send as never),
+        );
+        return { handle: await quote.send(), phases };
+    };
+
+    it("records 'quoted' before funding and 'filled' before paying", async () => {
+        const { handle, phases } = await runWith(vi.fn(async () => "txid"));
+        await handle.settled();
+        expect(phases).toEqual(["quoted", "filled"]);
+    });
+
+    it("records the fill even when the recipient send then fails", async () => {
+        // The window this closes: the filler delivered, the payment did not go
+        // out, and the user is holding an asset the recipient is still owed.
+        let call = 0;
+        const send = vi.fn(async () => {
+            if (++call === 1) return "deposit-txid";
+            throw new Error("wallet locked");
+        });
+        const { handle, phases } = await runWith(send);
+
+        await expect(handle.settled()).rejects.toThrow(/wallet locked/);
+        expect(phases).toEqual(["quoted", "filled"]);
+    });
+
+    it("does not record a fill that never happened", async () => {
+        offerStub = async () => offer;
+        const phases: string[] = [];
+        const quote = await crossAssetRail(
+            depsWith({
+                persist: vi.fn(async (s: CrossAssetSwap) => {
+                    phases.push(s.phase);
+                }),
+                awaitFill: vi.fn(async () => {
+                    throw new Error("offer expired");
+                }),
+            }),
+        ).quote(req, ctxWith());
+        await expect((await quote.send()).settled()).rejects.toThrow(/offer expired/);
+        expect(phases).toEqual(["quoted"]);
+    });
+
+    it("refuses a deposit that would not survive the narrowing to a JS number", async () => {
+        // `RouteQuote.fee`/`total` are `number`. Safe for BTC, whose whole
+        // supply fits — asserted anyway, because the assumption is the give
+        // side being BTC.
+        const huge = BigInt(Number.MAX_SAFE_INTEGER) + 2n;
+        // A market whose bounds admit it, so the narrowing guard is what
+        // rejects rather than `validatePlan`'s `above-max`.
+        const wide = market({ max_base_amount: (huge * 4n).toString() });
+        const deps = depsWith({
+            discover: vi.fn(async () => [wide]),
+            quote: vi.fn(async () => ({ ...plan(huge, 500n), market: wide }) as OfferPlan),
+            btcBalance: vi.fn(async () => huge * 2n),
+        });
+        await expect(crossAssetRail(deps).quote(req, ctxWith())).rejects.toThrow(
+            /does not fit a JS number/,
+        );
     });
 });

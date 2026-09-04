@@ -68,6 +68,15 @@ export interface RouteQuote {
      * fee` cannot hold across two units. On a same-asset route they name the
      * same asset and the difference between them is the fee.
      *
+     * **Prefer `assets` over the sats fields for display on a cross-asset
+     * route.** `total = amount + fee` still holds, which forces `fee` to
+     * absorb everything that leaves the wallet without reaching the recipient
+     * — on a route that BUYS the delivered asset, that is the purchase price,
+     * not a service charge. A UI rendering "fee: 100,000 sats" beside "pay 500
+     * USDX" is reporting the cost of the asset. `assets.spent` is the same
+     * number correctly labelled, and is what a cost display or a
+     * fee-threshold check should read.
+     *
      * @see Asset — the same shape `Wallet.send` takes, `bigint` for the same
      * reason: asset supplies routinely exceed `Number.MAX_SAFE_INTEGER`.
      */
