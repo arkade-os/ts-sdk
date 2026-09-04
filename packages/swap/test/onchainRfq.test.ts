@@ -34,6 +34,7 @@ const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
 
 const RFQ_ID = "a1".repeat(32);
+const PAYOUT = p2tr(key(21));
 const PREIMAGE = new Uint8Array(32).fill(7);
 const PAYMENT_HASH = paymentHashOf(PREIMAGE);
 const NOW = 1_800_000_000;
@@ -294,13 +295,14 @@ describe("deriveOnchainSend", () => {
         // entirely), the keys go to hex, and `htlcAddress` is derived — no
         // input carries it, and it is what the rebuild checks against.
         const derived = deriveOnchainSend({ quote: consistentQuote(), ...derivation() });
-        expect(onchainSendProfile(derived)).toEqual({
+        expect(onchainSendProfile({ ...derived, payoutPkScript: PAYOUT })).toEqual({
             claimKey: hex.encode(key(5)),
             refundKey: hex.encode(key(11)),
             htlcLocktime: HTLC_LOCKTIME,
             network: "regtest",
             htlcAddress: derived.htlc.address,
             minConfirmations: 2,
+            payoutPkScript: hex.encode(PAYOUT),
         });
     });
 
@@ -317,7 +319,7 @@ describe("deriveOnchainSend", () => {
                 profile: {
                     signer: { signingDescriptor: `tr(${hex.encode(SENDER_PUBKEY)})` },
                     hashlock: { paymentHash: PAYMENT_HASH },
-                    ...onchainSendProfile(derived),
+                    ...onchainSendProfile({ ...derived, payoutPkScript: PAYOUT }),
                 },
             },
             {
@@ -337,11 +339,55 @@ describe("deriveOnchainSend", () => {
         const rebuilt = rebuildRfqSwap(
             record,
             VHTLCV2ContractHandler.serializeParams(derived.script.options),
-        ) as { htlc: OnchainHtlc; minConfirmations: number };
+        ) as {
+            htlc: OnchainHtlc;
+            minConfirmations: number;
+            payoutPkScript?: Uint8Array;
+        };
 
         expect(rebuilt.htlc.address).toBe(derived.htlc.address);
         expect(hex.encode(rebuilt.htlc.pkScript)).toBe(hex.encode(derived.htlc.pkScript));
         expect(rebuilt.minConfirmations).toBe(2);
+        expect(rebuilt.payoutPkScript).toEqual(PAYOUT);
+    });
+
+    it("restores a record written before the payout script had a slot", () => {
+        const derived = deriveOnchainSend({ quote: consistentQuote(), ...derivation() });
+        const { payoutPkScript: _dropped, ...legacy } = onchainSendProfile({
+            ...derived,
+            payoutPkScript: PAYOUT,
+        });
+        const record = createRfqSwapRecord(
+            {
+                kind: "onchain_send",
+                lockupAddress: derived.address,
+                profile: {
+                    signer: { signingDescriptor: `tr(${hex.encode(SENDER_PUBKEY)})` },
+                    hashlock: { paymentHash: PAYMENT_HASH },
+                    ...legacy,
+                },
+            },
+            {
+                kind: "onchain_send",
+                rfqId: RFQ_ID,
+                state: "pending",
+                lockupPkScript: derived.swapPkScript,
+                paymentHash: PAYMENT_HASH,
+                refundLocktime: derived.refundLocktime,
+                htlc: derived.htlc,
+                minConfirmations: derived.minConfirmations,
+                createdAt: NOW,
+                updatedAt: NOW,
+            } as unknown as Parameters<typeof createRfqSwapRecord>[1],
+        );
+
+        const rebuilt = rebuildRfqSwap(
+            record,
+            VHTLCV2ContractHandler.serializeParams(derived.script.options),
+        ) as { htlc: OnchainHtlc; payoutPkScript?: Uint8Array };
+
+        expect(rebuilt.htlc.address).toBe(derived.htlc.address);
+        expect(rebuilt.payoutPkScript).toBeUndefined();
     });
 });
 

@@ -36,6 +36,8 @@ export interface PaymentHandle {
  *
  * Rails whose underlying primitive *deducts* its fee (the collaborative exit)
  * gross the amount up to honour this; rails that add it on top pass it through.
+ * A rail that does not perform the deducting spend cannot gross up to a fee it
+ * never chooses, and flags that instead: see `claimFeeDeductedFromPayout`.
  *
  * `fee` is a pre-send estimate wherever the true cost is only fixed later: the
  * swap rails quote from Boltz's advertised pricing and are superseded by the

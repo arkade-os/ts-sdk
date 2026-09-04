@@ -223,6 +223,9 @@ export interface OnchainSendSwap extends RfqSwapCommon {
     htlc: OnchainHtlc;
     /** `profile.min_confirmations` from the quote. */
     minConfirmations: number;
+    /** Where {@link RfqSwapManagerCallbacks.claimOnchain} pays; optional only
+     * so records predating its profile slot still restore. */
+    payoutPkScript?: Uint8Array;
     /** The fill's outpoint, learned on first sighting. Without it a SPENT
      * HTLC reads as never funded — see {@link classifyOnchainHtlc}. */
     funding?: { txid: string; vout: number };

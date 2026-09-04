@@ -1428,6 +1428,9 @@ export async function requestOnchainSend(
             amountSide: params.amountSide,
         }),
     );
+    // `fundAmount` below is `quote.from_amount` verbatim, so without this a
+    // quote naming a different amount is funded at the solver's number.
+    assertQuotedAmount(quote, params.amountSide, params.amount);
 
     const network = getNetwork(info.network as NetworkName);
     const derived = deriveOnchainSend({
@@ -1480,11 +1483,11 @@ export async function requestOnchainSend(
     };
 }
 
-// ── Receive corridors: the solver funds Arkade, the trader pays outside ─────
-
-/** The exact-out/exact-in consistency check every receive flow applies: the
- * fixed side of the quote must equal the amount the request named. Anything
- * else is a quote for a different trade. */
+/** The fixed side of the quote must equal the amount the request named;
+ * anything else is a quote for a different trade. Above both corridors because
+ * it belongs to neither. `requestLightningSend` is the one caller that does
+ * not reach for it: a BOLT11 profile carries no `amountSide`, so it makes the
+ * same two comparisons against the invoice instead. */
 const assertQuotedAmount = (quote: RfqQuote, amountSide: "from" | "to", amount: number): void => {
     const quoted = amountSide === "from" ? quote.from_amount : quote.to_amount;
     if (quoted !== amount) {
@@ -1497,6 +1500,8 @@ const assertQuotedAmount = (quote: RfqQuote, amountSide: "from" | "to", amount: 
         throw new Error("quote pays out more than it takes in — not a quote to fund");
     }
 };
+
+// ── Receive corridors: the solver funds Arkade, the trader pays outside ─────
 
 /** Default floor for the window between the last moment the hold invoice can
  * be paid and the solver's refund leaf opening. */

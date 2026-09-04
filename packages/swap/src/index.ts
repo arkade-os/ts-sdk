@@ -141,6 +141,7 @@ export {
     classifyOnchainHtlc,
     extractPreimage,
     newPreimage,
+    l1ScriptForAddress,
     onchainHtlcScript,
     paymentHashOf,
     type ChainSource,
@@ -151,6 +152,8 @@ export {
     type OnchainHtlcPhase,
     type OnchainNetwork,
 } from "./onchainHtlc";
+export { chainSourceFrom } from "./chainSource";
+export * from "./payment";
 export {
     ONCHAIN_BTC,
     ONCHAIN_RECEIVE_PAIR,
