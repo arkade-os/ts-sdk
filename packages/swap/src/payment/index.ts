@@ -12,7 +12,6 @@ export {
     solverOnchainRail,
     solverOnchainRendezvous,
     type SolverOnchainRailDeps,
-    type SolverOnchainRendezvous,
     type SolverOnchainSend,
 } from "./solverOnchain";
 export {

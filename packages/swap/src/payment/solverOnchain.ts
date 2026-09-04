@@ -56,20 +56,23 @@ import { solverRendezvous, type SolverRendezvous } from "./rendezvous";
 /** This rail's id, and what `RouterPreferences.priority` ranks it by. */
 export const SOLVER_ONCHAIN_RAIL = "solver-onchain";
 
-/** @deprecated name kept for the onchain rail's own surface; the shape is
- *  corridor-independent — see {@link SolverRendezvous}. */
-export type SolverOnchainRendezvous = SolverRendezvous;
-
 /** Everything `requestOnchainSend` handed back, plus the rendezvous it was
  *  negotiated at. This is what a record needs and what nothing later can give
  *  back — `onchainSendProfile()` maps it into an `RfqSwapOrigin`. */
 export type SolverOnchainSend = Awaited<ReturnType<typeof requestOnchainSend>> & {
-    rendezvous: SolverOnchainRendezvous;
+    rendezvous: SolverRendezvous;
     /** The RECIPIENT's output script — where the claim actually pays.
      *
      * Carried because the claim happens later, possibly in another process:
      * the claim transaction's output is the spender's own choice, and nothing
-     * on the quote or the HTLC names it. */
+     * on the quote or the HTLC names it.
+     *
+     * `Uint8Array`, so it is NOT JSON-serialisable: `JSON.stringify` turns it
+     * into `{"0":81,"1":32,…}` and `JSON.parse` gives back a plain object with
+     * no `.length` any script builder will accept. A `persist` writing to a
+     * JSON store must `hex.encode` this (and `hex.decode` it on the way back)
+     * — the loss is silent, and only shows up as a claim that cannot be built
+     * long after the swap was funded. */
     payoutPkScript: Uint8Array;
 };
 
@@ -92,7 +95,7 @@ export interface SolverOnchainRailDeps {
     discover(): Promise<DiscoveredMarket[]>;
     /** Open an RFQ transport to `rendezvous` for the duration of `fn`. */
     connect<T>(
-        rendezvous: SolverOnchainRendezvous,
+        rendezvous: SolverRendezvous,
         fn: (transport: RfqTransport) => Promise<T>,
     ): Promise<T>;
     /**
@@ -149,7 +152,7 @@ export function solverOnchainRail(deps: SolverOnchainRailDeps): PaymentRail {
      *  not one. Never throws: `available()` reads it as "not this rail". */
     const rendezvousFor = async (
         amount: number | undefined,
-    ): Promise<SolverOnchainRendezvous | undefined> => {
+    ): Promise<SolverRendezvous | undefined> => {
         if (amount === undefined) return undefined;
         const markets = await deps.discover();
         return solverOnchainRendezvous(markets, amount, deps.fallbackEmulatorPubkey);
