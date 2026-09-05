@@ -17,6 +17,10 @@ the package-level developer UX note for the new client surface as it lands; the
 current README still documents the existing package exports and protocol
 building blocks.
 
+The v2 client (`createSwapClient`, `pay`/`receive`/`exchange`, the `SwapError`
+taxonomy) is published from `@arkade-os/swap/client`; the root's
+`createSwapClient` is still the v1 facade until M8 moves the v2 client to the root.
+
 **The covenant-deriving entry points need a wallet and nothing else.** `createOffer`,
 `requestLightningSend`, `requestLightningReceive`, `requestOnchainSend` and
 `requestOnchainReceive` take their server facts from `wallet.getArkadeInfo()`: the network and

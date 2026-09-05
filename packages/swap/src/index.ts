@@ -245,6 +245,10 @@ export {
     type RfqSwapActivityDeps,
     type SwapActivityInput,
 } from "./activity";
+// The v2 `createSwapClient`/`SwapClient` live at `@arkade-os/swap/client` until
+// M8 swaps them onto these root names; this block stays the v1 (#793) facade
+// meanwhile. Do not "fix" the duplication by merging the two — same names,
+// different declarations.
 export {
     createSwapClient,
     type LightningReceiveQuote,
