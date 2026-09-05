@@ -177,6 +177,10 @@ const SOURCES = ((): string => {
     return walk(root).join("\n");
 })();
 
+/** Substring search, deliberately: it only sees a throw spelled exactly
+ * `throw new Name(`. A throw behind a local (`const e = new X(); throw e;`)
+ * or a factory helper defeats the check silently — keep new throwing sites in
+ * the direct form so the coverage map keeps proving what it claims. */
 const throws = (name: SwapErrorName): boolean => SOURCES.includes(`throw new ${name}(`);
 
 describe("the error-coverage map", () => {

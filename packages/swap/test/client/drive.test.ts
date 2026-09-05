@@ -299,6 +299,47 @@ describe("the lifecycle", () => {
         await h.drive.dispose();
     });
 
+    it("reports terminal records off their stored state without rebuilding them", async () => {
+        // The restore deliberately does not hand terminal records to the
+        // manager — rebuilding each one is a covenant derivation and a
+        // contract row lookup for a swap the manager would only file in
+        // `finished`. They stay readable and answer off their own state,
+        // through the same table cell the live path reads.
+        const records = [
+            signable({ id: "q1", rfqId: "rfq-1", state: "settled", fundingTxid: "aa".repeat(32) }),
+            signable({ id: "q2", rfqId: "rfq-2", state: "refunded", fundingTxid: "bb".repeat(32) }),
+            signable({
+                id: "q3",
+                rfqId: "rfq-3",
+                kind: "lightning_receive",
+                state: "refunded",
+                fundingTxid: "cc".repeat(32),
+            }),
+            signable({ id: "q4", rfqId: "rfq-4", state: "failed", fundingTxid: "dd".repeat(32) }),
+            // No contract row, no profile: nothing here could be rebuilt, so
+            // a `paid` below proves the rebuild was never attempted rather
+            // than merely survived.
+            signable({
+                id: "q5",
+                rfqId: "rfq-5",
+                state: "settled",
+                fundingTxid: "ee".repeat(32),
+                lockupAddress: "bogus",
+                profile: {},
+            }),
+        ];
+        const h = await build({ records, vtxos: unspent() });
+
+        expect(h.drive.swap("q1")?.outcome).toBe("paid");
+        expect(h.drive.swap("q2")?.outcome).toBe("refunded");
+        // The inversion: the wire calls both `refunded`, but on the receive
+        // leg the lockup was the solver's, so the payment never arrived.
+        expect(h.drive.swap("q3")?.outcome).toBe("lapsed");
+        expect(h.drive.swap("q4")?.outcome).toBe("failed");
+        expect(h.drive.swap("q5")?.outcome).toBe("paid");
+        await h.drive.dispose();
+    });
+
     it("arms on the first accept, which M4 deliberately did not do", async () => {
         const h = await build({ vtxos: unspent() });
         const record = signable({ fundingTxid: "aa".repeat(32) });
