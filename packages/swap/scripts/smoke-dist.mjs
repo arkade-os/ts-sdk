@@ -65,6 +65,27 @@ for (const specifier of specifiers) {
     }
 }
 
+// Named-symbol coverage: the walk above only proves each subpath resolves
+// non-empty. A barrel that drops a name resolves fine and breaks the consumer's
+// first import instead of the release, so pin the names this package exists to
+// publish: the v2 factory and one verb off `./client`, the v1 facade off the root.
+const clientEsm = await import("@arkade-os/swap/client");
+const clientCjs = require("@arkade-os/swap/client");
+for (const [condition, mod] of [
+    ["import", clientEsm],
+    ["require", clientCjs],
+]) {
+    for (const name of ["createSwapClient", "pay"]) {
+        if (typeof mod[name] !== "function") {
+            throw new Error(`@arkade-os/swap/client (${condition}) is missing ${name}`);
+        }
+    }
+}
+const root = await import("@arkade-os/swap");
+if (typeof root.createSwapClient !== "function") {
+    throw new Error("@arkade-os/swap is missing createSwapClient");
+}
+
 // Constructing is the check: neither handle is touched.
 const stubExecutor = { run: async () => {}, get: async () => undefined, all: async () => [] };
 new SQLiteAssetSwapRepository(stubExecutor);
