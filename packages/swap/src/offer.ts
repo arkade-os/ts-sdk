@@ -720,6 +720,127 @@ export async function cancelOffer(
     },
 ): Promise<string> {
     const { repository, fundingTxid, swapAddress } = opts;
+    const prepared = await prepareOfferCancel(wallet, offerHex, {
+        ...(fundingTxid === undefined ? {} : { fundingTxid }),
+        ...(swapAddress === undefined ? {} : { swapAddress }),
+    });
+    // v1 keys its local-record half on the v1 store by `fundingTxid ?? vtxo.txid`
+    // — the deposit IS the identity there. The v2 client keys on the client-minted
+    // quote id, so it never passes through this half: it runs the same ordering
+    // over its own record (see `client/cancel.ts`).
+    const swapId = fundingTxid ?? prepared.vtxo.txid;
+    // Strict read: a failed one must not read as "no local record here" and
+    // send us past the marker into the broadcast.
+    const hasLocalRecord = (await getAssetSwapsOrThrow(repository)).some((s) => s.id === swapId);
+    // The in-flight marker is useful only when there is a local record to
+    // update; a different or empty repository intentionally leaves the cancel
+    // for event/restore classification. It gates the broadcast, so it throws:
+    // the marker is what keeps a crash here from leaving a swap that still
+    // looks pending.
+    if (hasLocalRecord) await updateAssetSwap(repository, swapId, { status: "cancelling" });
+    const txid = await prepared.send();
+    if (hasLocalRecord) {
+        // Past the point of no return: the cancel is broadcast, so a lost write
+        // must not fail the caller. The watcher classifies by covenant leaf and
+        // the restore scan re-derives the outcome.
+        const { persisted, swaps } = await updateAssetSwapBestEffort(repository, swapId, {
+            status: "cancelled",
+            spentTxid: txid,
+        });
+        // Retiring belongs here for the same reason the status does: recording
+        // its own outcome is what leaves the watcher nothing to do, and a
+        // watcher that sees a terminal record returns before it would retire
+        // (`spendUpdate`). Nothing else would ever drop this script.
+        //
+        // Only on a persisted write, as the watcher does: a record that still
+        // reads `pending` to the next restore scan must stay watched.
+        if (persisted) {
+            const contractManager = await wallet.getContractManager();
+            await retireOfferContract(
+                contractManager,
+                swaps,
+                hex.encode(prepared.offer.swapPkScript),
+            );
+        }
+    }
+    return txid;
+}
+
+const OFFER_COVENANT_MISMATCH = "rebuilt covenant does not match the offer's swapPkScript";
+
+/**
+ * No deposit left to cancel at the swap address.
+ *
+ * Almost always the fill winning the race — v1's documented
+ * throw-means-completed trap, which the v2 client's `cancel()` reconciles
+ * against the covenant's leaves instead of surfacing (see `client/cancel.ts`).
+ * Typed so that reconciliation is an `instanceof`, not a message match; the
+ * message is v1's, unchanged.
+ */
+export class NoSpendableDepositError extends Error {
+    override readonly name = "NoSpendableDepositError";
+    constructor(options?: ErrorOptions) {
+        super("no spendable VTXO at the swap address", options);
+    }
+}
+
+/**
+ * The rebuilt covenant disagrees with the offer's own `swapPkScript`: the
+ * operator key the rebuild pinned is not the one the covenant was funded with.
+ *
+ * v1's fallback read this as a missing VTXO; with a pinned `swapAddress` the
+ * only remaining causes are a record corrupted or a `swapAddress` that is not
+ * the one funded — so the condition is typed rather than left to surface raw.
+ * Fires before any broadcast, where §7's law still governs.
+ */
+export class OfferCovenantMismatchError extends Error {
+    override readonly name = "OfferCovenantMismatchError";
+    constructor(
+        readonly swapPkScript: string,
+        options?: ErrorOptions,
+    ) {
+        super(
+            `${OFFER_COVENANT_MISMATCH} — the operator signing key pinned by the ` +
+                "rebuild does not reproduce the funded covenant; the signing key has " +
+                "likely rotated since funding (pass swapAddress, the funded address, to " +
+                "pin the original key), or the record is corrupt",
+            options,
+        );
+    }
+}
+
+/** A cancel ready to broadcast: the deposit it spends, and the send. */
+export interface PreparedOfferCancel {
+    /** The decoded offer — the covenant's script is the watcher's matching key. */
+    readonly offer: Offer;
+    /** The deposit selected for the cancel. */
+    readonly vtxo: { txid: string; vout: number; value: number };
+    /** Broadcast the cancel and return its txid. */
+    send(): Promise<string>;
+}
+
+/**
+ * Rebuild an offer's covenant, pin the funding-time operator key, select the
+ * deposit and build the `cancel` spend — everything {@link cancelOffer} does
+ * before the broadcast, extracted so the caller owns the record ordering that
+ * gates it.
+ *
+ * The protocol-level half of {@link cancelOffer}. The v2 client's `cancel()`
+ * runs the same mechanics over its own record ordering — the `cancelling`
+ * write, the broadcast, the terminal write — without re-deriving any of this.
+ * Prepares and sends nothing durable: it touches no record.
+ */
+export async function prepareOfferCancel(
+    wallet: IWallet,
+    offerHex: string,
+    opts: {
+        fundingTxid?: string;
+        /** The funded address — pins the operator key the covenant was built
+         * with, so cancel keeps working across a signer rotation. */
+        swapAddress?: string;
+    },
+): Promise<PreparedOfferCancel> {
+    const { fundingTxid, swapAddress } = opts;
     const offer = decodeOffer(hex.decode(offerHex));
 
     const [contractManager, info, reader, broadcaster] = await Promise.all([
@@ -755,11 +876,7 @@ export async function cancelOffer(
     // return nothing, so fail with the diagnosis instead
     const rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
     if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {
-        throw new Error(
-            "rebuilt covenant does not match the offer's swapPkScript — the operator " +
-                "signing key has likely rotated since funding; pass swapAddress (the " +
-                "funded address) to pin the original key",
-        );
+        throw new OfferCovenantMismatchError(hex.encode(offer.swapPkScript));
     }
     const contract = new arkade.ArkadeContract(client, program, args, keys);
 
@@ -772,7 +889,7 @@ export async function cancelOffer(
         );
     }
     const vtxo = fundingTxid ? vtxos.find((v) => v.txid === fundingTxid) : vtxos[0];
-    if (!vtxo) throw new Error("no spendable VTXO at the swap address");
+    if (!vtxo) throw new NoSpendableDepositError();
 
     const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
     const cancel = contract.functions
@@ -787,35 +904,9 @@ export async function cancelOffer(
             outputs: [{ vout: 0, amount: BigInt(a.amount) }],
         });
     }
-    const swapId = fundingTxid ?? vtxo.txid;
-    // Strict read: a failed one must not read as "no local record here" and
-    // send us past the marker into the broadcast.
-    const hasLocalRecord = (await getAssetSwapsOrThrow(repository)).some((s) => s.id === swapId);
-    // The in-flight marker is useful only when there is a local record to
-    // update; a different or empty repository intentionally leaves the cancel
-    // for event/restore classification. It gates the broadcast, so it throws:
-    // the marker is what keeps a crash here from leaving a swap that still
-    // looks pending.
-    if (hasLocalRecord) await updateAssetSwap(repository, swapId, { status: "cancelling" });
-    const { txid } = await cancel.send();
-    if (hasLocalRecord) {
-        // Past the point of no return: the cancel is broadcast, so a lost write
-        // must not fail the caller. The watcher classifies by covenant leaf and
-        // the restore scan re-derives the outcome.
-        const { persisted, swaps } = await updateAssetSwapBestEffort(repository, swapId, {
-            status: "cancelled",
-            spentTxid: txid,
-        });
-        // Retiring belongs here for the same reason the status does: recording
-        // its own outcome is what leaves the watcher nothing to do, and a
-        // watcher that sees a terminal record returns before it would retire
-        // (`spendUpdate`). Nothing else would ever drop this script.
-        //
-        // Only on a persisted write, as the watcher does: a record that still
-        // reads `pending` to the next restore scan must stay watched.
-        if (persisted) {
-            await retireOfferContract(contractManager, swaps, hex.encode(offer.swapPkScript));
-        }
-    }
-    return txid;
+    return {
+        offer,
+        vtxo: { txid: vtxo.txid, vout: vtxo.vout, value: vtxo.value },
+        send: async () => (await cancel.send()).txid,
+    };
 }

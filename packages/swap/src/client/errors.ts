@@ -276,16 +276,23 @@ export class ClientDisposed extends Error {
 }
 
 /**
- * `cancel()` on a corridor swap. The asymmetry is structural: an offer covenant
- * has no expiry, so cancellation is an unfilled offer's only exit, where an HTLC
- * has phases and its exits are a claim or a refund.
+ * `cancel()` on a swap this client cannot cancel. The asymmetry is structural:
+ * an offer covenant has no expiry, so cancellation is an unfilled offer's only
+ * exit, where an HTLC has phases and its exits are a claim or a refund.
  *
- * Boundary: `cancel()`, for ids that arrive untyped from `swaps()`.
+ * Three ways of refusing, one condition. A corridor-tagged id is refused on the
+ * parse of its prefix, with no repository read; an `offer:` id no record backs
+ * is refused after the one read cancel needed anyway; and an untagged id from
+ * `/protocol`'s readers takes that same read. The taxonomy stays at sixteen —
+ * a "no such swap" member would split one condition across two classes by
+ * which call noticed it.
+ *
+ * Boundary: `cancel()`.
  */
 export class NotCancellable extends Error {
     override readonly name = "NotCancellable";
     constructor(readonly swapId: string) {
-        super(`swap ${swapId} is a corridor swap; only asset swaps cancel`);
+        super(`swap ${swapId} is not a cancellable asset swap`);
     }
 }
 

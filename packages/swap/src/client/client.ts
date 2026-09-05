@@ -20,6 +20,13 @@
  * `quote()` are unchanged and still touch nothing durable; `accept()` gained one
  * thing — it registers the swap it just persisted — and everything else the
  * lifecycle needs lives behind {@link createSwapDrive}.
+ *
+ * From M6 the surface closes: `cancel`, `swaps`, `markets`, and `ClientDisposed`
+ * enforced across every member after disposal. Disposal is terminal; what the
+ * terminal gate refuses is a NEW act, and an `Unsubscribe` already handed out
+ * stays callable as a no-op — disposal drops every listener, so the closure has
+ * nothing left to do, and refusing it would turn correct React-effect teardown
+ * into a throw.
  */
 import { hex } from "@scure/base";
 import type { IWallet } from "@arkade-os/sdk";
@@ -34,17 +41,26 @@ import {
     type CorridorOverrides,
 } from "./corridors/deps";
 import { discoveryIndex, type DiscoveryConfig, type DiscoveryIndex } from "./discovery";
-import { UnsupportedRoute } from "./errors";
+import { ClientDisposed, MissingCorridorDep, NotCancellable, UnsupportedRoute } from "./errors";
 import { acceptQuote, type QuotePreparation } from "./accept";
-import { createSwapDrive, type RecoveryResult, type SwapDrive } from "./drive";
+import { cancelSwap, type CancelOutcome } from "./cancel";
+import { createSwapDrive, readableRecord, type RecoveryResult, type SwapDrive } from "./drive";
 import { walletLockupIndexer } from "./driveRecords";
-import type { SwapUpdate, Unsubscribe } from "./outcome";
-import type { Swap } from "./record";
+import type { Outcome, SwapUpdate, Unsubscribe } from "./outcome";
+import {
+    familyOfSwapId,
+    quoteIdOfSwapId,
+    swapOf,
+    type AssetSwapId,
+    type Swap,
+    type SwapFamily,
+} from "./record";
 import type { SwapPolicy } from "./policy";
 import { feedFetch, quoteFromFeed, type FeedFetch } from "./quoteOffer";
 import { quoteViaRfq } from "./quoteRfq";
 import type { Quote, QuoteId, QuoteInput, RouteResolution } from "./quote";
 import { resolveRoute, type ResolvedRoute } from "./resolve";
+import { cardMarketOf, marketBackendOf, marketKeyOf, usableMarkets, type Market } from "./market";
 import { nostrTransportFactory, type RfqTransportFactory } from "./transport";
 
 export interface SwapClientConfig {
@@ -137,7 +153,13 @@ export interface SwapClient {
      * nothing in this package takes an `AbortSignal`, so the alternative is
      * calling an instance terminal while it is still moving money. Durable swap
      * records, contract registrations and recovery metadata all survive it: a
-     * new client restores and resumes from them.
+     * new client restores and resumes from them, and an injected repository is
+     * never closed — the client closes only a connection it opened itself.
+     *
+     * From M6 every other member refuses with {@link ClientDisposed} afterwards.
+     * The two exceptions are teardown, and for one reason: refusing a cleanup
+     * call turns correct teardown into a throw. A second dispose is a no-op, and
+     * so is an {@link Unsubscribe} this client already handed out.
      */
     [Symbol.asyncDispose](): Promise<void>;
 
@@ -166,7 +188,62 @@ export interface SwapClient {
      *   whole batch; and for a swap with nothing swept — which is what a
      *   `needs_recovery` that came from `needs_counterparty` is.
      */
-    recover(swapId: QuoteId): Promise<RecoveryResult>;
+    recover(swapId: AssetSwapId): Promise<RecoveryResult>;
+
+    /**
+     * Cancel an asset swap: take back an unfilled offer's deposit.
+     *
+     * Defined only for asset swaps and typed that way — an HTLC corridor swap
+     * has phases instead, and its exits are a claim or a refund. The id arrives
+     * tagged (`offer:<quoteId>` / `rfq:<quoteId>`), so a corridor id refuses on
+     * the parse with no repository read, and an offer id no record backs refuses
+     * after the one read this call needed anyway.
+     *
+     * Cancel races a fill. When the deposit is already spent, the spending
+     * transaction is reconciled against the covenant's leaves and the outcome
+     * is `filled` rather than a throw — v1's documented throw-means-completed
+     * behaviour was a trap. A spend the local rebuild cannot classify is
+     * `needs_recovery`: value moved and the client cannot name how, which is
+     * what {@link recover} drives.
+     *
+     * @throws {NotCancellable} for a corridor-tagged id, or an id no record backs.
+     * @throws {MissingCorridorDep} when the client was given no repository.
+     * @throws {ClientDisposed} after disposal.
+     */
+    cancel(swapId: AssetSwapId): Promise<{ outcome: CancelOutcome }>;
+
+    /**
+     * Every swap this client wrote — both families, live and ended.
+     *
+     * One read over the uniform v2 keyspace, projected through the same
+     * derivation the drive publishes: the drive's live answer where it holds the
+     * record, the no-live-state projection otherwise. Membership is therefore
+     * independent of `start()` and of drive mode. A record that will not decode
+     * is skipped rather than fatal. **The v2 keyspace is never pruned** — the
+     * store grows for the life of the wallet, which this method documents
+     * rather than hides.
+     *
+     * The filter is in-memory; the scope is the v2 client's own history. v1-era
+     * rows in the `swaps` and `rfqSwaps` keyspaces are not part of the answer —
+     * they belong to `/protocol`'s re-exported readers.
+     */
+    swaps(filter?: SwapFilter): Promise<Swap[]>;
+
+    /**
+     * The markets a `quote()` could be priced against, as {@link Market} — one
+     * shape with what `Quote.market` references. The escape hatch for a caller
+     * picking a market for a custom `quote()`: it reads the same card the quote
+     * will cite, and the same filters the routing read applies, so it cannot
+     * offer one `quote()` would then refuse. Never required.
+     *
+     * Reads the snapshot the way `quote()` does and not the way `resolve()`
+     * does — fetching when there is none in hand — because this is what a
+     * caller reaches for BEFORE quoting.
+     *
+     * @throws {DiscoverySnapshotUnavailable} when the fetch leaves it with
+     *   nothing either.
+     */
+    markets(): Promise<Market[]>;
 
     /**
      * The route, the market that would price it, and what the active snapshot
@@ -212,6 +289,12 @@ export interface SwapClient {
     preparationOf(id: QuoteId): QuotePreparation | undefined;
 }
 
+/** The in-memory filter {@link SwapClient.swaps} applies. */
+export interface SwapFilter {
+    readonly family?: SwapFamily;
+    readonly outcome?: Outcome;
+}
+
 /**
  * How many quotes' derivations are kept.
  *
@@ -228,6 +311,32 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
     const operator = config.operator ?? walletOperator(wallet);
     const feed: FeedFetch = feedFetch(config.fetchImpl ?? fetch);
     const preparations = new Map<QuoteId, QuotePreparation>();
+    // The wallet's own reader, built once: the drive's observation seam and the
+    // cancel path's fill-race read share it, so both see the same chain.
+    const indexer = walletLockupIndexer(wallet);
+
+    /**
+     * Disposal is terminal, and M6 closes the gate over the whole method set —
+     * which is possible only now that the set is closed.
+     *
+     * The drive already refuses the four members it owns (`start`, `onUpdate`,
+     * `recover`, `adopt`); this covers the ones it never sees — the quote path,
+     * `stop`, the record reads and cancel — so no member is left answering after
+     * disposal. What the gate refuses is a NEW act: a second dispose and an
+     * {@link Unsubscribe} already handed out are teardown, and both are no-ops,
+     * because disposal has already dropped every listener and refusing a
+     * cleanup call would turn correct React-effect teardown into a throw.
+     *
+     * The promise-returning members reject rather than throwing synchronously —
+     * they are declared `Promise<...>` and a caller is entitled to `.catch()`
+     * them — while `ready`, `onUpdate` and `preparationOf` throw where they
+     * stand. A getter handing back a rejected promise nobody awaited would be
+     * an unhandled rejection.
+     */
+    let disposed = false;
+    const ensureLive = (method: string): void => {
+        if (disposed) throw new ClientDisposed(method);
+    };
 
     // Built eagerly and inert: the drive touches nothing until its own `ready`
     // is awaited, and it takes the corridor set as a thunk precisely so
@@ -241,7 +350,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             ...(config.repository === undefined ? {} : { repository: config.repository }),
             corridors: async () => (await resolved()).corridors,
             ...(config.policy?.drive === undefined ? {} : { mode: config.policy.drive }),
-            indexer: walletLockupIndexer(wallet),
+            indexer,
         }));
 
     let context:
@@ -301,9 +410,13 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
     };
 
     return {
-        resolve: async (input) => (await route(input, "resolve")).resolution,
+        resolve: async (input) => {
+            ensureLive("resolve");
+            return (await route(input, "resolve")).resolution;
+        },
 
         quote: async (input) => {
+            ensureLive("quote");
             const { corridors, discovery } = await resolved();
             let resolvedRoute = await route(input, "quote");
 
@@ -406,6 +519,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         },
 
         accept: async (quote) => {
+            ensureLive("accept");
             const { corridors } = await resolved();
             const drive = driving();
             // Before the persist, not after: the restore is what indexes the
@@ -424,15 +538,102 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             });
         },
 
-        preparationOf: (id) => preparations.get(id),
+        cancel: async (swapId) => {
+            ensureLive("cancel");
+            // The tag parse is the refusal: a corridor id answers `NotCancellable`
+            // with no repository read, which is the point of the prefix. An id
+            // that arrives untagged takes the one read the tagged form takes.
+            if (familyOfSwapId(swapId) === "rfq") throw new NotCancellable(swapId);
+            const repository = config.repository;
+            if (repository === undefined) {
+                throw new MissingCorridorDep("arkade", "repository");
+            }
+            const drive = driving();
+            // Before the read, for `accept()`'s reason: the restore is what
+            // indexes the stored records, and a gate written onto a record the
+            // drive had never read would emit into an empty registry.
+            await drive.ready;
+            // The one read, and the only one: what comes back is what the gate
+            // is written from, so nothing re-reads it downstream.
+            const record = await repository.getSwapRecord(quoteIdOfSwapId(swapId));
+            if (record === undefined || record.family !== "offer") {
+                throw new NotCancellable(swapId);
+            }
+            return cancelSwap({ wallet, repository, record, drive, indexer });
+        },
+
+        swaps: async (filter) => {
+            ensureLive("swaps");
+            const repository = config.repository;
+            if (repository === undefined) return [];
+            const drive = driving();
+            await drive.ready;
+            const records = await repository.getAllSwapRecords();
+            const swaps: Swap[] = [];
+            for (const record of records) {
+                if (!readableRecord(record)) continue;
+                const live = drive.swap(record.id);
+                swaps.push(live ?? swapOf(record, drive.outcomeOf(record)));
+            }
+            if (filter === undefined) return swaps;
+            return swaps.filter(
+                (swap) =>
+                    (filter.family === undefined || swap.family === filter.family) &&
+                    (filter.outcome === undefined || swap.outcome === filter.outcome),
+            );
+        },
+
+        markets: async () => {
+            ensureLive("markets");
+            const { discovery } = await resolved();
+            // `load`, as `quote()` reads it and not as `resolve()` does: the
+            // escape hatch is what a caller reaches for BEFORE quoting, so a
+            // client that has never routed anything must not answer with a
+            // refusal it would not have given the quote.
+            const snapshot = await discovery.load();
+            // One shape with `Quote.market`: the same card a quote will cite,
+            // key for key and snapshot for snapshot. The filter is the routing
+            // read's own, so the hatch cannot offer a card `quote()` would then
+            // refuse — a disallowed registry, or an unaddressable corridor card.
+            return usableMarkets(snapshot, config.policy).map((card) =>
+                cardMarketOf(card, snapshot.ref, marketKeyOf(card), marketBackendOf(card)),
+            );
+        },
+
+        preparationOf: (id) => {
+            ensureLive("preparationOf");
+            return preparations.get(id);
+        },
 
         get ready() {
+            ensureLive("ready");
             return driving().ready;
         },
-        start: () => driving().start(),
-        stop: () => driving().stop(),
-        [Symbol.asyncDispose]: () => driving().dispose(),
-        onUpdate: (fn) => driving().onUpdate(fn),
-        recover: (id) => driving().recover(id),
+        // `async`, so the refusal is a rejection rather than a synchronous
+        // throw: these are declared `Promise<void>` and a caller is entitled to
+        // `.catch()` them.
+        start: async () => {
+            ensureLive("start");
+            return driving().start();
+        },
+        stop: async () => {
+            ensureLive("stop");
+            return driving().stop();
+        },
+        [Symbol.asyncDispose]: async () => {
+            if (disposed) return;
+            disposed = true;
+            // Only a drive that exists: construction is inert, and building one
+            // to dispose it would be the one thing a never-driven client pays.
+            await drive?.dispose();
+        },
+        onUpdate: (fn) => {
+            ensureLive("onUpdate");
+            return driving().onUpdate(fn);
+        },
+        recover: async (id) => {
+            ensureLive("recover");
+            return driving().recover(quoteIdOfSwapId(id));
+        },
     };
 };

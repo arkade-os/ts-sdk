@@ -42,10 +42,57 @@ import type { MarketRef, QuoteId, QuoteLeg } from "./quote";
  * Not a cosmetic tag. v1's two families occupied one `string` id space by
  * accident — an offer record's id a funding txid, a corridor record's an
  * `rfqId` — and keying both on `QuoteId` closes that collision (§B). The tag is
- * what lets M6 build `offer:<quoteId>` / `rfq:<quoteId>` without a repository
- * read, and what lets M5 branch its outcome table without one either.
+ * what M6's public id carries, and what lets M5 branch its outcome table
+ * without a repository read.
  */
 export type SwapFamily = "offer" | "rfq";
+
+/**
+ * The public swap id: the family tag over the client-minted quote id,
+ * `offer:<QuoteId>` / `rfq:<QuoteId>`, as {@link Swap.id} carries it.
+ *
+ * The tag is presentation, not a second identity — storage, the drive and
+ * `accept()`'s idempotency stay keyed on the bare quote id. But a branded
+ * string erases at runtime, so the tag is not cosmetic either: it makes
+ * `NotCancellable` a parse of the prefix — a corridor id refused with no
+ * repository read, an offer id distinguished from a corridor id the way the v1
+ * read could not be — and it retypes the id a caller hands around, so
+ * `cancel(swap.id)` and `recover(swap.id)` stop being two spellings of one
+ * thing. An id arriving untagged from `/protocol`'s re-exported readers takes
+ * the same one read the tagged form takes.
+ */
+export type AssetSwapId = `${SwapFamily}:${QuoteId}`;
+
+/** The public id a record answers with — the tag, minted off its family. */
+export const assetSwapIdOf = (family: SwapFamily, quoteId: QuoteId): AssetSwapId =>
+    `${family}:${quoteId}`;
+
+export const OFFER_SWAP_ID_PREFIX = "offer:" as const;
+export const RFQ_SWAP_ID_PREFIX = "rfq:" as const;
+
+/**
+ * The family an id names, or `undefined` for an id no prefix tags — the form
+ * `/protocol`'s re-exported readers still hand back, which takes the
+ * repository read rather than the parse.
+ */
+export const familyOfSwapId = (swapId: string): SwapFamily | undefined =>
+    swapId.startsWith(OFFER_SWAP_ID_PREFIX)
+        ? "offer"
+        : swapId.startsWith(RFQ_SWAP_ID_PREFIX)
+          ? "rfq"
+          : undefined;
+
+/**
+ * The bare quote id under the tag — what storage, the drive and `accept()`'s
+ * idempotency key on. Strips a family prefix when one is present and passes an
+ * untagged id through unchanged, so a reader-era id still reaches its record.
+ */
+export const quoteIdOfSwapId = (swapId: string): QuoteId =>
+    swapId.startsWith(OFFER_SWAP_ID_PREFIX)
+        ? swapId.slice(OFFER_SWAP_ID_PREFIX.length)
+        : swapId.startsWith(RFQ_SWAP_ID_PREFIX)
+          ? swapId.slice(RFQ_SWAP_ID_PREFIX.length)
+          : swapId;
 
 /** One leg's obligation, in the form a record holds it. */
 export interface RecordedLeg {
@@ -268,8 +315,9 @@ export type SwapRecord = OfferSwapRecord | CorridorSwapRecord;
  *
  * `artifact` stays optional: M7's `ReceiveRequest` is `Swap & { artifact:
  * Artifact }`, and an intersection cannot narrow a field that is already
- * required. `id` is the bare {@link QuoteId} — M6 owns the tagged public form
- * and takes this key as given.
+ * required. `id` is the tagged public form {@link AssetSwapId} — minted from
+ * `record.family` by {@link swapOf} — while storage, the drive and `accept()`'s
+ * idempotency stay keyed on the bare quote id.
  *
  * {@link outcome} and the two reason strings are M5's, and they are here rather
  * than on `SwapUpdate.detail` because `detail` is typed `RawState` — the raw
@@ -278,7 +326,7 @@ export type SwapRecord = OfferSwapRecord | CorridorSwapRecord;
  * nowhere to read WHY.
  */
 export interface Swap {
-    readonly id: QuoteId;
+    readonly id: AssetSwapId;
     readonly family: SwapFamily;
     /** Where this swap stands, in the one vocabulary both families share. */
     readonly outcome: Outcome;
@@ -431,7 +479,7 @@ export const legOf = (leg: RecordedLeg): QuoteLeg => ({
  * that union.
  */
 export const swapOf = (record: SwapRecord, outcome: Outcome): Swap => ({
-    id: record.id,
+    id: assetSwapIdOf(record.family, record.id),
     family: record.family,
     outcome,
     route: {
