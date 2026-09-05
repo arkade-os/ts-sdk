@@ -2,10 +2,10 @@
  * Application policy: the vetoes and floors a client applies before it
  * discloses anything, plus the two names §10 reserved.
  *
- * Five members touch the quote path — three active here, two inert — and
- * {@link SwapPolicy.drive} is the lifecycle's. `maxFee` still belongs to the
- * milestone that can enforce it: the verbs' ceiling is added by the layer that
- * applies it rather than declared early and ignored.
+ * Six members touch the quote path — four active here, two inert — and
+ * {@link SwapPolicy.drive} is the lifecycle's. `maxFee` landed with M7, the
+ * milestone that can enforce it: a ceiling declared before a layer applies it
+ * is a field, not a policy.
  *
  * Every active member has the same shape of purpose: it runs BEFORE the RFQ
  * round trip that discloses an invoice or an amount. A policy that could only
@@ -13,6 +13,7 @@
  */
 import type { MarketCandidate } from "./market";
 import type { RankedBid } from "./quote";
+import type { FeeCeiling } from "./verbs";
 
 /**
  * A published-RFQ auction's parameters (§10, Q9).
@@ -64,6 +65,21 @@ export interface SwapPolicy {
      * dependency the client needs to work.
      */
     readonly drive?: DriveMode;
+
+    /**
+     * The most a swap may cost, as a standing instruction.
+     *
+     * The verbs take the **minimum** of this and their own `maxFee`, so a call
+     * can only tighten it: a policy ceiling a call could raise would be
+     * decorative. Enforced between `quote` and `accept` and nowhere else —
+     * before funding, which is the only place a ceiling is worth anything.
+     *
+     * Denominated, like every ceiling on this surface: the fee sits on the give
+     * leg on corridor routes and the take leg on asset swaps, so a bare number
+     * would name no asset. A ceiling whose asset is not the quoted fee's is
+     * refused rather than converted.
+     */
+    readonly maxFee?: FeeCeiling;
 
     /**
      * The last word on which market prices a swap.
