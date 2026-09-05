@@ -366,9 +366,12 @@ describe("cancel() — the pinned operator key", () => {
             OfferCovenantMismatchError,
         );
         expect(state.sends).toBe(0);
-        // The gate landed first, deliberately: the ordering does not depend on
-        // what the rebuild will say.
-        expect((await h.stored()).status).toBe("cancelling");
+        // Pre-broadcast and non-retryable, so the gate rolls back to the
+        // pre-gate status instead of stranding the record at `cancelling`:
+        // nothing moved, so there is nothing `recover()` could drive, and a
+        // second cancel re-reads a pending record rather than a stuck one.
+        expect((await h.stored()).status).toBe("pending");
+        expect(h.outcomes()).toEqual(["open", "cancelling", "open"]);
         await h.drive.dispose();
     });
 });

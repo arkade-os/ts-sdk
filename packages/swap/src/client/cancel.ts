@@ -37,7 +37,12 @@
 import { base64, hex } from "@scure/base";
 import { ArkAddress, Transaction, type IWallet } from "@arkade-os/sdk";
 import { retireOfferContract } from "../coverage";
-import { NoSpendableDepositError, decodeOffer, prepareOfferCancel } from "../offer";
+import {
+    NoSpendableDepositError,
+    OfferCovenantMismatchError,
+    decodeOffer,
+    prepareOfferCancel,
+} from "../offer";
 import { classifyDepositSpend, spendTxidsOf } from "../restore";
 import { offerOutcome } from "./outcome";
 import type { AssetSwapRepository } from "../repository";
@@ -97,7 +102,9 @@ export const cancelSwap = async (input: CancelInput): Promise<{ outcome: CancelO
     // `cancelling` with no recorded spend is a cancel that never broadcast —
     // the gate's write landed and the call died before `send()`. Resuming is
     // the same idempotence-absorbing retry `accept()` gives; the `cancelling`
-    // write below is a rewrite of an identical marker.
+    // write below is a rewrite of an identical marker. The one exception is a
+    // pre-broadcast rebuild refusal (`OfferCovenantMismatchError`): retrying
+    // cannot help, so the catch rolls the gate back instead of leaving it.
 
     // The gate, written BEFORE the broadcast: it is what keeps a crash between
     // submit and record from leaving a swap that still looks pending. It
@@ -113,6 +120,26 @@ export const cancelSwap = async (input: CancelInput): Promise<{ outcome: CancelO
             ...(record.fundingTxid === undefined ? {} : { fundingTxid: record.fundingTxid }),
         });
     } catch (error) {
+        if (error instanceof OfferCovenantMismatchError) {
+            // Pre-broadcast and non-retryable: the rebuild disagrees with the
+            // funded covenant (rotated operator key, wrong swapAddress, corrupt
+            // record), so a second cancel would fail the same way. Roll the
+            // gate back to the pre-gate status rather than leaving a
+            // `cancelling` no retry can move past — `recover()` is for funds
+            // that moved, and nothing moved here. Best-effort: a lost rollback
+            // write must not mask the mismatch the caller has to act on.
+            const rolledBack = withStatus(record, record.status, now());
+            try {
+                await repository.saveSwapRecord(rolledBack);
+            } catch (rollbackError) {
+                console.warn(
+                    `[swap] could not roll back cancel gate for ${record.id}`,
+                    rollbackError,
+                );
+            }
+            drive.ingest(rolledBack);
+            throw error;
+        }
         if (isMissingVtxo(error)) {
             // The fill won the race: the deposit is already spent. Reconcile
             // the spend rather than throwing — v1's documented throw here meant
@@ -218,7 +245,16 @@ const withStatus = (
     updatedAt: now,
 });
 
-/** A write the caller must not be failed by: the money has already moved. */
+/** A write the caller must not be failed by: the money has already moved.
+ *
+ * The drive ingests the settlement even when this write is lost, so a lost
+ * write diverges the two: the drive reads settled while the store still reads
+ * `cancelling`. In `auto`/`manual` mode the watcher classifies the landed
+ * spend from chain and writes the terminal record, rectifying the gap in the
+ * background; in `readonly` mode nothing re-reads the chain, so the gap lasts
+ * until a new client instance restores. No fund loss either way — the
+ * broadcast already happened — but a `readonly` UI restarts on the stale
+ * status. */
 const persistBestEffort = async (
     repository: AssetSwapRepository,
     record: OfferSwapRecord,
