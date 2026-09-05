@@ -269,18 +269,25 @@ const persistBestEffort = async (
 };
 
 /** Retire this record's offer script once nothing at it still needs coverage —
- * the same liveness check the watcher applies, over the whole v2 record set. */
+ * the same liveness check the watcher applies, over the whole v2 record set.
+ * Best-effort: the cancel is broadcast and recorded by the time this runs, so
+ * a store read failure or a retire failure must not fail the caller — a script
+ * left watched is recovered by the next restore scan. */
 const retireOfferScripts = async (
     wallet: IWallet,
     repository: AssetSwapRepository,
     record: OfferSwapRecord,
 ): Promise<void> => {
-    const { offer } = splitRecords(await repository.getAllSwapRecords());
-    await retireOfferContract(
-        await wallet.getContractManager(),
-        offer.map(offerFactsOf),
-        record.swapPkScript,
-    );
+    try {
+        const { offer } = splitRecords(await repository.getAllSwapRecords());
+        await retireOfferContract(
+            await wallet.getContractManager(),
+            offer.map(offerFactsOf),
+            record.swapPkScript,
+        );
+    } catch (error) {
+        console.warn(`[swap] could not retire offer script for ${record.id}`, error);
+    }
 };
 
 const isMissingVtxo = (error: unknown): boolean => error instanceof NoSpendableDepositError;

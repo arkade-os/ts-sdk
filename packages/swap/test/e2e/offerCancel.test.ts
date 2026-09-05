@@ -203,7 +203,7 @@ describe("the v2 cancel (regtest)", () => {
         // script the offer's own `swapPkScript` does not match.
         const rotated = new ArkAddress(
             hex.decode("11".repeat(32)),
-            decoded.tweakedPublicKey,
+            decoded.vtxoTaprootKey,
             decoded.hrp,
         ).encode();
         await store.saveSwapRecord({ ...record, swapAddress: rotated });
