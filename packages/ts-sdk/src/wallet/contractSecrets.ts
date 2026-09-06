@@ -41,6 +41,7 @@ import {
     isHDWalletCapable,
 } from "./hdWalletCapable";
 import type { IWallet } from ".";
+import { ArkAddress } from "../script/address";
 
 /**
  * Domain separator for the preimage derivation.
@@ -137,10 +138,30 @@ export interface ProvisionedKey {
      * artifact; {@link contractSigner} resolves it back to a signer.
      */
     descriptor: string;
+    /**
+     * The Ark scriptPubKey that corresponds to this key — the pkScript of the
+     * wallet's current receive address. Returned alongside {@link pubkey} so
+     * callers building the lockup script do not need a separate
+     * {@link IWallet.getAddress} round-trip or an `ArkAddress.decode` call.
+     */
+    pkScript: Uint8Array;
+    /**
+     * The receive address {@link pkScript} was decoded from, captured in the
+     * same single {@link IWallet.getAddress} read. The quote-time refund
+     * address and the covenant's `refundPkScript` must always name the same
+     * script, and two independent reads of a wallet that rotates its receive
+     * address would not guarantee that — reuse this, never a second
+     * `getAddress()` call.
+     */
+    address: string;
 }
 
-/** A claim key together with the preimage it claims with. */
-export interface ProvisionedClaimSecret extends ProvisionedKey {
+/**
+ * A claim key together with the preimage it claims with. `pkScript` and
+ * `address` are excluded: a claim leg funds nothing, so it names no refund
+ * destination.
+ */
+export interface ProvisionedClaimSecret extends Omit<ProvisionedKey, "pkScript" | "address"> {
     preimage: Uint8Array;
     /** `sha256(preimage)` — what the contract commits to. */
     paymentHash: Uint8Array;
@@ -189,14 +210,31 @@ async function provisionDescriptor(wallet: IWallet): Promise<string> {
  * the failure would surface at refund time with the money already committed.
  * Throws {@link ForeignDescriptorError} instead, before there is a quote.
  *
- * On an HD wallet this consumes an index even if the artifact is never built,
- * and a swap index never becomes a funded receive contract, so a long run of
- * them widens the gap a seed-only restore scan sees.
+ * The wallet's identity key is reused rather than a fresh HD child, so no
+ * index is consumed when the artifact is never built — and the covenant's
+ * refund path is on the same key as the refund address the caller sends to
+ * at quote time.
  */
 export async function provisionRefundKey(wallet: IWallet): Promise<ProvisionedKey> {
-    const descriptor = await provisionDescriptor(wallet);
+    const descriptor = await identityDescriptor(wallet.identity);
     const signer = await contractSigner(wallet, descriptor);
-    return { descriptor, pubkey: await signer.xOnlyPublicKey() };
+    const pubkey = await signer.xOnlyPublicKey();
+    // Sanity: the descriptor and the wallet's current identity must name the same key.
+    // A divergence here would mean the lockup's refund path and the refund destination
+    // are controlled by different keys — the user could not recover the funds.
+    const identityPubkey = await wallet.identity.xOnlyPublicKey();
+    if (!equalBytes(pubkey, identityPubkey)) {
+        throw new Error(
+            "provisionRefundKey: descriptor pubkey does not match wallet identity — " +
+                "the refund key and the refund address would be on different keys",
+        );
+    }
+    // One read, one pair: the caller sends `address` as the refund destination
+    // and binds `pkScript` into the covenant, so both must come from the same
+    // getAddress() answer.
+    const address = await wallet.getAddress();
+    const { pkScript } = ArkAddress.decode(address);
+    return { descriptor, pubkey, pkScript, address };
 }
 
 /**
@@ -228,7 +266,13 @@ export async function provisionClaimSecret(
         // Refused before an HD index is consumed.
         throw new Error(`preimage must be 32 bytes, got ${opts.preimage.length}`);
     }
-    const { descriptor, pubkey } = await provisionRefundKey(wallet);
+    // provisionClaimSecret allocates a fresh HD index so each artifact's preimage
+    // is uniquely derivable from the seed. provisionRefundKey now reuses the
+    // identity key (no index bump); the two have diverged in allocation strategy,
+    // so provisionClaimSecret calls provisionDescriptor directly.
+    const descriptor = await provisionDescriptor(wallet);
+    const signer = await contractSigner(wallet, descriptor);
+    const pubkey = await signer.xOnlyPublicKey();
     const claim = async (): Promise<
         Pick<ProvisionedClaimSecret, "preimage" | "preimageSalt" | "mustPersistPreimage">
     > => {
@@ -251,7 +295,7 @@ export async function provisionClaimSecret(
             // absorb. A wallet that does not hold the key, or holds it and
             // cannot sign at all, must propagate: degrading those to a stored
             // preimage would fund a leg nothing can spend and report success.
-            // `provisionRefundKey` resolved a signer moments ago, so reaching
+            // The provisioning signer resolved a signer moments ago, so reaching
             // here means the signer changed under us.
             if (cause instanceof ForeignDescriptorError || cause instanceof WalletCannotSignError) {
                 throw cause;
