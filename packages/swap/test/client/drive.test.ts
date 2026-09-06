@@ -12,7 +12,12 @@ import { hex } from "@scure/base";
 import { SingleKey } from "@arkade-os/sdk";
 import { createSwapDrive, SwapDriveRefusedError, type SwapDrive } from "../../src/client/drive";
 import type { SwapUpdate } from "../../src/client/outcome";
-import type { CorridorSwapRecord, OfferSwapRecord, SwapRecord } from "../../src/client/record";
+import {
+    quoteIdOfSwapId,
+    type CorridorSwapRecord,
+    type OfferSwapRecord,
+    type SwapRecord,
+} from "../../src/client/record";
 import { RFQ_CONFIGURATION_REFUSAL, RFQ_CONFIGURATION_REFUSALS } from "../../src/swapManager";
 import { REFUND_MTP_LAG_SECONDS } from "../../src/refund";
 import { RefundNotLocallyPossibleError } from "../../src/refundBlocked";
@@ -143,7 +148,10 @@ const build = async (
         resolved: corridors.resolved,
         seen,
         recoveries,
-        outcomes: (id) => seen.filter((u) => u.swap.id === id).map((u) => u.outcome),
+        // `swap.id` is the tagged public form; these fixtures name the bare
+        // quote id, which is what storage and the drive key on.
+        outcomes: (id) =>
+            seen.filter((u) => quoteIdOfSwapId(u.swap.id) === id).map((u) => u.outcome),
         settle: () => drive.idle(),
     };
 };

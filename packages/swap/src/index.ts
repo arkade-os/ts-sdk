@@ -5,6 +5,8 @@ export {
     decodeOffer,
     offerContract,
     swapPrograms,
+    NoSpendableDepositError,
+    OfferCovenantMismatchError,
     OFFER_PACKET_TYPE,
     type Offer,
 } from "./offer";

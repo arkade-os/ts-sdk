@@ -16,7 +16,7 @@ import { MissingCorridorDep } from "../../src/client/errors";
 import { SwapDriveRefusedError } from "../../src/client/drive";
 import type { SwapUpdate } from "../../src/client/outcome";
 import type { QuoteInput } from "../../src/client/quote";
-import type { CorridorSwapRecord } from "../../src/client/record";
+import { quoteIdOfSwapId, type CorridorSwapRecord } from "../../src/client/record";
 import {
     EMULATOR_PUBKEY_HEX,
     PAYMENT_HASH,
@@ -143,7 +143,7 @@ describe("arming", () => {
         const quote = await h.client.quote(RECEIVE);
         const swap = await h.client.accept(quote);
         expect(swap.outcome).toBe("accepted");
-        expect(await h.repository.getSwapRecord(swap.id)).toBeDefined();
+        expect(await h.repository.getSwapRecord(quoteIdOfSwapId(swap.id))).toBeDefined();
         // And nothing was driven: the swap keeps the outcome the record gave it.
         expect(h.seen.map((u) => u.outcome)).toEqual(["accepted"]);
         await h.client[Symbol.asyncDispose]();
@@ -180,7 +180,9 @@ describe("dispose", () => {
         // Records and contract registrations survive: a new client restores and
         // resumes from them, and dropping a registration would unwatch a funded
         // lockup.
-        const stored = (await h.repository.getSwapRecord(swap.id)) as CorridorSwapRecord;
+        const stored = (await h.repository.getSwapRecord(
+            quoteIdOfSwapId(swap.id),
+        )) as CorridorSwapRecord;
         expect(stored.lockupAddress).toEqual(expect.any(String));
         expect(h.wallet.contracts).toHaveLength(registered);
         expect(h.wallet.watched.filter(([, state]) => state === "retained")).toEqual([]);
@@ -198,7 +200,9 @@ describe("dispose", () => {
 describe("recover()", () => {
     it("refuses an id the client holds no record for", async () => {
         const h = await harness();
-        await expect(h.client.recover("nope")).rejects.toMatchObject({ reason: "unknown-swap" });
+        await expect(h.client.recover("rfq:nope")).rejects.toMatchObject({
+            reason: "unknown-swap",
+        });
         await h.client[Symbol.asyncDispose]();
     });
 });
