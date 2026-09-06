@@ -3,6 +3,15 @@
  * `RfqSwapManager`) and arkade↔arkade offers (watched by `watchOfferSwaps`).
  * The market picks the backend: a non-arkade leg means RFQ over its card's
  * rendezvous, two arkade legs mean a card-priced offer covenant.
+ *
+ * **Unreferenced as of M8, and deliberately so.** The v2 client took the
+ * `createSwapClient` and `SwapClient` names on the root (`index.ts`), so
+ * nothing imports this file and no entry point reaches it — it compiles and
+ * ships nowhere. It is left standing rather than deleted because M8 moves
+ * barrels and prose only; deleting it and `test/swapClient.test.ts` is a
+ * follow-up with no consumer-visible half. Do not re-export it in the
+ * meantime — its `SwapQuoteInput`, `UnifiedSwap` and `SwapClientDeps` are `D`
+ * in `scripts/dispositions.json`, with no `/protocol` floor by design.
  */
 import { hex } from "@scure/base";
 import { ArkAddress, asset, contractSigner, type IWallet } from "@arkade-os/sdk";

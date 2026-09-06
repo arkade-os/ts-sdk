@@ -9,17 +9,18 @@ introduces the API they describe, or be marked as future shape.
 
 ## Status
 
-The v2 client surface has landed through M7 and is published from the
-`@arkade-os/swap/client` subpath. The root export continues to expose the
-existing offer, RFQ, restore, watch and manager building blocks — including the
-v1 `createSwapClient` facade — until the deprecation milestone moves the v2
-client onto the root name and the protocol helpers behind their final boundary.
+The v2 client surface has landed through M8 and is the root export. The v1
+`createSwapClient` facade it replaced is gone, and the offer, RFQ, restore,
+watch and manager building blocks moved to `@arkade-os/swap/protocol` under
+`@deprecated` pointers — off the root in the same release, with no window in
+which both spellings work. The `@arkade-os/swap/client` subpath that published
+this surface for one release is retired; see `MIGRATION.md`.
 
 Current imports look like this:
 
 ```ts
-import { createSwapClient } from "@arkade-os/swap/client";
-import { Amount, canonicalAssetId } from "@arkade-os/swap/client";
+import { createSwapClient } from "@arkade-os/swap";
+import { Amount, canonicalAssetId } from "@arkade-os/swap";
 ```
 
 ## The Shape
