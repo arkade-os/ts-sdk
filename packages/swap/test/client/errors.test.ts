@@ -157,7 +157,7 @@ const COVERAGE = {
         thrownAt: "cancel(), on a corridor id or an id no record backs",
     },
     ClientDisposed: { owner: "M6", thrownAt: "any client member after async disposal" },
-    MaxFeeExceeded: { owner: "M7", thrownAt: "the verb layer, before accept", pending: "M7" },
+    MaxFeeExceeded: { owner: "M7", thrownAt: "the verb layer, between quote and accept" },
     InconsistentRoute: { owner: "M1", thrownAt: null },
 } as const satisfies Record<
     SwapErrorName,
