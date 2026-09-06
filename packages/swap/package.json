@@ -31,6 +31,16 @@
                 "default": "./dist/nostr.cjs"
             }
         },
+        "./client": {
+            "import": {
+                "types": "./dist/client/index.d.ts",
+                "default": "./dist/client/index.js"
+            },
+            "require": {
+                "types": "./dist/client/index.d.ts",
+                "default": "./dist/client/index.cjs"
+            }
+        },
         "./node": {
             "import": {
                 "types": "./dist/node/index.d.ts",
@@ -67,7 +77,7 @@
     ],
     "scripts": {
         "build": "pnpm run build:web && pnpm run build:node",
-        "build:web": "tsup src/index.ts src/nostr.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
+        "build:web": "tsup src/index.ts src/nostr.ts src/client/index.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
         "build:node": "tsup --config tsup.node.config.ts",
         "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
         "format": "biome format --write src test",

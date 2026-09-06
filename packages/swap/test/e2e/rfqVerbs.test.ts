@@ -23,7 +23,7 @@
  *
  * `exchange` is not here. Its route is `arkade <-> arkade`, which needs an
  * issued asset and a live price feed rather than a stubbed RFQ answer, and the
- * offer primitive it funds already has `offerCancel.test.ts` against this stack.
+ * offer primitive it funds already has `offerCancel.test.ts` on the block stack.
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { execSync } from "child_process";
