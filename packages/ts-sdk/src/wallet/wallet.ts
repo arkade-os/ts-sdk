@@ -4478,7 +4478,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             },
             onBatchFinalization: async (
                 event: BatchFinalizationEvent,
-                _?: TxTree,
+                vtxoTree?: TxTree,
                 connectorTree?: TxTree,
             ): Promise<void> => {
                 if (!this.forfeitOutputScript) {
@@ -4487,6 +4487,39 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
                 if (connectorTree) {
                     validateConnectorsTxGraph(event.commitmentTx, connectorTree);
+                }
+
+                if (boardingRegistration) {
+                    if (
+                        !validatedBoardingBatch ||
+                        !vtxoTree ||
+                        event.id !== validatedBoardingBatch.batchId
+                    ) {
+                        throw new Error("named boarding finalization lacks its signed batch tree");
+                    }
+                    const signedTree = snapshotTxTree(vtxoTree);
+                    const captured = new Map(
+                        validatedBoardingBatch.vtxoTree.map((node) => [node.txid, node]),
+                    );
+                    if (!signedTree.length || signedTree.length !== captured.size) {
+                        throw new Error("named boarding final tree changed");
+                    }
+                    for (const node of signedTree) {
+                        const prior = captured.get(node.txid);
+                        if (
+                            !prior ||
+                            JSON.stringify(node.children) !== JSON.stringify(prior.children)
+                        ) {
+                            throw new Error("named boarding final tree changed");
+                        }
+                        const tx = Transaction.fromPSBT(base64.decode(node.tx));
+                        if (tx.inputsLength !== 1 || tx.getInput(0).tapKeySig?.length !== 64) {
+                            throw new Error("named boarding final tree is not signed");
+                        }
+                    }
+                    // The adapter verifies these final aggregate signatures before
+                    // co-signing; retain the previously validated batch authority.
+                    validatedBoardingBatch = { ...validatedBoardingBatch, vtxoTree: signedTree };
                 }
 
                 await this.handleSettlementFinalizationEvent(
