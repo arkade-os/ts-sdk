@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
+    ArkAddress,
     DescriptorIdentity,
     HDDescriptorProvider,
     InMemoryWalletRepository,
@@ -34,6 +35,11 @@ import {
     provisionRefundKey,
 } from "../src/wallet/contractSecrets";
 
+const REFUND_ADDRESS = new ArkAddress(
+    new Uint8Array(32).fill(1),
+    new Uint8Array(32).fill(2),
+).encode();
+
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
@@ -53,6 +59,7 @@ const hdWallet = async (repository = new InMemoryWalletRepository()) => {
         repository,
         wallet: {
             identity,
+            getAddress: vi.fn(async () => REFUND_ADDRESS),
             getCurrentSigningDescriptor: () => provider.getCurrentSigningDescriptor(),
             getNextSigningDescriptor: () => provider.getNextSigningDescriptor(),
             getUsedSigningDescriptors: async () => [],
@@ -67,7 +74,11 @@ const hdWallet = async (repository = new InMemoryWalletRepository()) => {
 };
 
 /** A wallet with no descriptor surface at all: its identity is its policy. */
-const staticWallet = () => ({ identity: SingleKey.fromRandomBytes() }) as unknown as IWallet;
+const staticWallet = () =>
+    ({
+        identity: SingleKey.fromRandomBytes(),
+        getAddress: vi.fn(async () => REFUND_ADDRESS),
+    }) as unknown as IWallet;
 
 const indexOf = (descriptor: string): number => strictSigningDescriptorIndex(descriptor)!;
 
@@ -131,22 +142,25 @@ describe("buildSaltedPreimageMessage", () => {
 });
 
 describe("provisionRefundKey", () => {
-    it("gives every artifact its own key on an HD wallet", async () => {
-        // The regression test for peeking instead of allocating: a peek
-        // returns the same descriptor until the wallet rotates.
+    it("reuses the identity key without allocating an HD index", async () => {
         const { wallet } = await hdWallet();
+        const allocate = vi.spyOn(wallet, "getNextSigningDescriptor" as never);
         const keys = [
             await provisionRefundKey(wallet),
             await provisionRefundKey(wallet),
             await provisionRefundKey(wallet),
         ];
-        expect(new Set(keys.map((k) => k.descriptor)).size).toBe(3);
-        expect(new Set(keys.map((k) => hex.encode(k.pubkey))).size).toBe(3);
-        // and the pubkey really is the descriptor's key, not the baseline one
-        for (const k of keys) {
-            expect(
-                hex.encode(await (await contractSigner(wallet, k.descriptor)).xOnlyPublicKey()),
-            ).toBe(hex.encode(k.pubkey));
+        const identityPubkey = await wallet.identity.xOnlyPublicKey();
+        expect(allocate).not.toHaveBeenCalled();
+        expect(wallet.getAddress).toHaveBeenCalledTimes(3);
+        for (const key of keys) {
+            expect(key.descriptor).toBe(`tr(${hex.encode(identityPubkey)})`);
+            expect(key.pubkey).toEqual(identityPubkey);
+            expect(key.address).toBe(REFUND_ADDRESS);
+            expect(key.pkScript).toEqual(ArkAddress.decode(key.address).pkScript);
+            expect(await (await contractSigner(wallet, key.descriptor)).xOnlyPublicKey()).toEqual(
+                key.pubkey,
+            );
         }
     });
 
@@ -173,13 +187,23 @@ describe("provisionRefundKey", () => {
             signerForDescriptor: (d: string) => resolveDescriptorSigner(d, wallet.identity),
         } as unknown as IWallet;
 
-        await expect(provisionRefundKey(rogue)).rejects.toThrow(/holds no key/);
-        // and the claim-secret path inherits it, including the arm that
-        // supplies its own preimage and so never derives one
+        // Claim provisioning allocates and must refuse the foreign descriptor,
+        // including when the caller supplies a preimage and never derives one.
         await expect(provisionClaimSecret(rogue)).rejects.toThrow(/holds no key/);
         await expect(
             provisionClaimSecret(rogue, { preimage: new Uint8Array(32).fill(1) }),
         ).rejects.toThrow(/holds no key/);
+    });
+
+    it("refuses a refund signer that answers with a foreign key", async () => {
+        const { wallet } = await hdWallet();
+        const rogue = {
+            ...wallet,
+            signerForDescriptor: async () => SingleKey.fromRandomBytes(),
+        } as unknown as IWallet;
+
+        await expect(provisionRefundKey(rogue)).rejects.toBeInstanceOf(ForeignDescriptorError);
+        expect(wallet.getAddress).not.toHaveBeenCalled();
     });
 
     it("refuses a wallet that holds the key but cannot sign with it", async () => {
@@ -365,7 +389,7 @@ describe("provisionClaimSecret", () => {
         // broken wallet, not a fallback case — the salted arm's tolerance must
         // not leak into this one.
         const { wallet } = await hdWallet();
-        const { descriptor } = await provisionRefundKey(wallet);
+        const { descriptor } = await provisionClaimSecret(wallet);
         const identity = (wallet as unknown as { identity: Record<string, unknown> }).identity;
         const broken = {
             identity,
@@ -421,8 +445,8 @@ describe("contractSigner", () => {
         const { wallet } = await hdWallet();
         // Burn index 0 first: a fresh seed's baseline key aliases the index-0
         // child key, and an aliased key would be a RIGHT answer.
-        await provisionRefundKey(wallet);
-        const { descriptor } = await provisionRefundKey(wallet);
+        await provisionClaimSecret(wallet);
+        const { descriptor } = await provisionClaimSecret(wallet);
         const broken = {
             ...wallet,
             signerForDescriptor: async () => wallet.identity,
@@ -438,7 +462,7 @@ describe("contractSigner", () => {
 
     it("refuses a wallet with no descriptor surface for another wallet's record", async () => {
         const { wallet } = await hdWallet();
-        const { descriptor } = await provisionRefundKey(wallet);
+        const { descriptor } = await provisionClaimSecret(wallet);
         await expect(contractSigner(staticWallet(), descriptor)).rejects.toBeInstanceOf(
             ForeignDescriptorError,
         );
@@ -446,7 +470,7 @@ describe("contractSigner", () => {
 
     it("signs deterministically, from the same identity the message is built from", async () => {
         const { wallet } = await hdWallet();
-        const { descriptor } = await provisionRefundKey(wallet);
+        const { descriptor } = await provisionClaimSecret(wallet);
         const signer = await contractSigner(wallet, descriptor);
 
         // Passing a different key in is the silent-failure mode: a
@@ -458,7 +482,7 @@ describe("contractSigner", () => {
 describe("contractPreimage", () => {
     it("prefers a stored preimage over deriving one", async () => {
         const { wallet } = await hdWallet();
-        const { descriptor } = await provisionRefundKey(wallet);
+        const { descriptor } = await provisionClaimSecret(wallet);
         const stored = new Uint8Array(32).fill(3);
         expect(await contractPreimage(wallet, descriptor, { stored })).toEqual(stored);
     });
@@ -508,12 +532,12 @@ describe("adoptContractDescriptor", () => {
         // Reallocating it would derive that artifact's preimage for a new one.
         const source = await hdWallet();
         let ahead = "";
-        for (let i = 0; i < 3; i++) ahead = (await provisionRefundKey(source.wallet)).descriptor;
+        for (let i = 0; i < 3; i++) ahead = (await provisionClaimSecret(source.wallet)).descriptor;
 
         const fresh = await hdWallet();
         await adoptContractDescriptor(fresh.wallet, ahead);
 
-        const next = (await provisionRefundKey(fresh.wallet)).descriptor;
+        const next = (await provisionClaimSecret(fresh.wallet)).descriptor;
         expect(next).not.toBe(ahead);
         expect(indexOf(next)).toBeGreaterThan(indexOf(ahead));
     });
@@ -560,7 +584,7 @@ describe("adoptContractDescriptor", () => {
         expect(spy).not.toHaveBeenCalled();
 
         // and an own artifact still adopts through the same path
-        const own = (await provisionRefundKey(wallet)).descriptor;
+        const own = (await provisionClaimSecret(wallet)).descriptor;
         await adoptContractDescriptor(honest, own);
         expect(spy).toHaveBeenCalledWith(own);
     });

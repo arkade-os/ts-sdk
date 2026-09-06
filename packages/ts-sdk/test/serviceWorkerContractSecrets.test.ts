@@ -22,6 +22,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
 import {
+    ArkAddress,
     ForeignDescriptorError,
     InMemoryContractRepository,
     InMemoryWalletRepository,
@@ -348,7 +349,7 @@ describe("contract secrets behind the service worker", () => {
     it("allocates over the bus and hands back a descriptor that signs", async () => {
         const { sw, identity } = await hdPair();
 
-        const { descriptor, pubkey } = await provisionRefundKey(sw as unknown as IWallet);
+        const { descriptor, pubkey } = await provisionClaimSecret(sw as unknown as IWallet);
 
         // Allocation really crossed the bus rather than being answered locally.
         expect((sw.serviceWorker as any).postMessage).toHaveBeenCalledWith(
@@ -357,6 +358,25 @@ describe("contract secrets behind the service worker", () => {
         expect(hex.encode(pubkey)).toBe(hex.encode(deriveDescriptorLeafPubKey(descriptor)));
         expect(hex.encode(pubkey)).not.toBe(hex.encode(await identity.xOnlyPublicKey()));
 
+        const signer = await contractSigner(sw as unknown as IWallet, descriptor);
+        await expect(signsUnderDescriptorKey(signer, descriptor)).resolves.toBe(true);
+    });
+
+    it("reads the refund address over the bus and keeps the identity key", async () => {
+        const { sw, identity, inner } = await hdPair();
+        const { descriptor, pubkey, address, pkScript } = await provisionRefundKey(
+            sw as unknown as IWallet,
+        );
+
+        expect((sw.serviceWorker as any).postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: "GET_ADDRESS" }),
+        );
+        expect((sw.serviceWorker as any).postMessage).not.toHaveBeenCalledWith(
+            expect.objectContaining({ type: "GET_NEXT_SIGNING_DESCRIPTOR" }),
+        );
+        expect(pubkey).toEqual(await identity.xOnlyPublicKey());
+        expect(address).toBe(await inner.getAddress());
+        expect(pkScript).toEqual(ArkAddress.decode(address).pkScript);
         const signer = await contractSigner(sw as unknown as IWallet, descriptor);
         await expect(signsUnderDescriptorKey(signer, descriptor)).resolves.toBe(true);
     });
