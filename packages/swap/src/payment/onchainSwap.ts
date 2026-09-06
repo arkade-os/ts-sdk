@@ -32,7 +32,13 @@
  * `quote()` — before a lockup exists, rather than after one is funded.
  */
 import type { PaymentRail, RouteQuote } from "@arkade-os/sdk";
-import { btcTarget, resolveSendAmount, tryResolveSendAmount } from "@arkade-os/sdk";
+import {
+    assertNoAssets,
+    assetsOf,
+    btcTarget,
+    resolveSendAmount,
+    tryResolveSendAmount,
+} from "@arkade-os/sdk";
 import { ONCHAIN_CLAIM_VSIZE, ONCHAIN_DUST_SATS } from "../onchainHtlc";
 import type { QuoteInput } from "../client/quote";
 import { railAvailable, receiverExact, swapHandle, type SwapRailClient } from "./swapRail";
@@ -82,6 +88,9 @@ export function onchainSwapRail(client: SwapRailClient, deps: OnchainSwapRailDep
         match: (req) => btcTarget(req.raw) !== undefined,
 
         available: async (req) => {
+            // BTC only: an Arkade asset has no L1 form to swap out to, and
+            // paying this request's carrier sats would deliver none of it.
+            if (assetsOf(req).length > 0) return false;
             const address = btcTarget(req.raw);
             if (address === undefined) return false;
             // An amountless request defers to `quote()`, which is where "an
@@ -106,6 +115,7 @@ export function onchainSwapRail(client: SwapRailClient, deps: OnchainSwapRailDep
             if (address === undefined) {
                 throw new Error(`${ONCHAIN_SWAP_RAIL}: the request carries no bitcoin address`);
             }
+            assertNoAssets(ONCHAIN_SWAP_RAIL, req);
             const amount = resolveSendAmount(ONCHAIN_SWAP_RAIL, req.raw, req.amount);
             const quote = await client.quote(inputFor(address, amount));
             // What lands at the address: the HTLC the solver locks, minus the
