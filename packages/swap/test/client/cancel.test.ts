@@ -374,6 +374,21 @@ describe("cancel() — the pinned operator key", () => {
         expect(h.outcomes()).toEqual(["open", "cancelling", "open"]);
         await h.drive.dispose();
     });
+
+    it("names the mismatch when the pinned key derives no covenant at all", async () => {
+        // A corrupt record can pin bytes that are not a curve point: the
+        // taproot encoder throws before there is a script to compare. Same
+        // diagnosis, same rollback — never a raw "OutScript/tr_ns" error.
+        const corrupt = new ArkAddress(new Uint8Array(32).fill(0x11), key(21), HRP).encode();
+        const h = await build({ record: record({ swapAddress: corrupt }) });
+
+        await expect(h.cancel({ swapAddress: corrupt })).rejects.toBeInstanceOf(
+            OfferCovenantMismatchError,
+        );
+        expect(state.sends).toBe(0);
+        expect((await h.stored()).status).toBe("pending");
+        await h.drive.dispose();
+    });
 });
 
 describe("the swap address is what pins the key", () => {

@@ -874,7 +874,16 @@ export async function prepareOfferCancel(
     // disagrees, this operator key is not the one the covenant was built with
     // (rotated since funding, or a wrong swapAddress) — getUtxos would just
     // return nothing, so fail with the diagnosis instead
-    const rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
+    let rebuilt: InstanceType<typeof arkade.ArkadeProgramScript>;
+    try {
+        rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
+    } catch (cause) {
+        // A pinned key that is not even a curve point derives no covenant at
+        // all: the taproot encoder throws before there is a script to compare.
+        // Same diagnosis as a script that differs — the pin is not the funded
+        // key — so it must not surface as a raw encoder error.
+        throw new OfferCovenantMismatchError(hex.encode(offer.swapPkScript), { cause });
+    }
     if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {
         throw new OfferCovenantMismatchError(hex.encode(offer.swapPkScript));
     }
