@@ -7,17 +7,19 @@
  * rail can carry — that `RouteResult.swapId` round-trips from a payment handle
  * back to `client.swaps()`.
  *
- * Same stub-solver posture as `rfqDrive.test.ts`: the solver quotes back the
- * maker's OWN derivation, which is all the trust model lets a maker use from a
- * quote anyway. Nothing here fills a swap — a fill needs a solver that pays the
- * invoice — so what is real is everything the maker side does.
+ * Same stack and same stub-solver posture as `rfqDrive.test.ts`: the solver
+ * quotes back the maker's OWN derivation, which is all the trust model lets a
+ * maker use from a quote anyway. Nothing here fills a swap — a fill needs a
+ * solver that pays the invoice — so what is real is everything the maker side
+ * does.
  *
- * The `rfq` prefix is routing, not decoration: `test:integration:rfq` selects
- * `test/e2e/rfq*` onto the seconds-typed arkd stack (`.env.regtest.rfq`), while
- * `test:integration` runs everything else on the block-typed one. This file
- * derives its claim delay from the server's own exit delay, and
- * `unilateralClaimDelay` refuses the block stack's 20 outright — so a name
- * without the prefix puts the suite on a server it cannot quote against.
+ * The `rfq` prefix on the filename is the ROUTING, not the subject: it is what
+ * puts the file on the seconds-typed `swap-rfq` profile and keeps it off the
+ * block-typed `swap` one (`packages/swap/package.json`'s two e2e scripts split
+ * on exactly that prefix). `lightningSendContract` emits seconds-typed
+ * timelocks and `unilateralClaimDelay` refuses a server exit delay below 512s,
+ * so on the offer suite's arkd (`ARKD_UNILATERAL_EXIT_DELAY=20`) this suite
+ * throws in `beforeAll` before a single verb runs. See `.env.regtest.rfq`.
  *
  * `exchange` is not here. Its route is `arkade <-> arkade`, which needs an
  * issued asset and a live price feed rather than a stubbed RFQ answer, and the

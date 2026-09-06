@@ -220,6 +220,31 @@ describe("the quote a rail hands the router", () => {
         expect(quote.meta?.htlcAmountSats).toBe(Number(target + CLAIM_FEE));
     });
 
+    it("refuses a payout the claim could not build, before a lockup exists", async () => {
+        // 200 sat asked for is 200 sat left after the gross-up — under the L1
+        // dust limit, so `buildHtlcClaim` would refuse. It refuses at claim
+        // time, with the lockup funded; the rail refuses here, with nothing
+        // committed.
+        const target = 200n;
+        const client = double({ quoted: quoteFor(1_000n, target + CLAIM_FEE, BITCOIN_BTC) });
+        const rail = onchainSwapRail(client, { claimFeeRateSatVb: CLAIM_RATE });
+        await expect(rail.quote({ raw: BCRT1, amount: Number(target) }, ctx)).rejects.toThrow(
+            /leaves 200 sat after the 152 sat claim fee, under the 330 sat dust limit/,
+        );
+    });
+
+    it("names the cause when a take leg does not even cover the claim", async () => {
+        // The degenerate end of the same check. `receiverExact`'s invariant
+        // holds here — the claim-fee terms cancel — so without the guard this
+        // reaches `satsOf` and surfaces as a complaint about a safe-integer
+        // window, which says nothing about a solver under-delivering.
+        const client = double({ quoted: quoteFor(1_000n, 100n, BITCOIN_BTC) });
+        const rail = onchainSwapRail(client, { claimFeeRateSatVb: CLAIM_RATE });
+        await expect(rail.quote({ raw: BCRT1, amount: 10_000 }, ctx)).rejects.toThrow(
+            /take leg of 100 sat leaves -52 sat after the 152 sat claim fee/,
+        );
+    });
+
     it("prices the claim off the measured vsize", () => {
         expect(claimFeeSats({ claimFeeRateSatVb: 10 })).toBe(BigInt(ONCHAIN_CLAIM_VSIZE * 10));
         expect(claimFeeSats({ claimFeeRateSatVb: 1.5, claimVsize: 100 })).toBe(150n);
@@ -260,6 +285,17 @@ describe("ranking against core's rails", () => {
             amount: 100_000_000_000,
         });
         expect(options.map((o) => o.railId)).toEqual(["onchain"]);
+    });
+
+    it("self-heals by dust too: a payout the claim would eat drops the rail", async () => {
+        // Not a market bound — the solver would quote this happily — but a
+        // payout under the dust limit, which the trader's own claim could not
+        // build. The exit takes it, with no error and no quote round trip.
+        const client = double();
+        const quote = vi.spyOn(client, "quote");
+        const options = await router(client).options({ raw: BCRT1, amount: 300 });
+        expect(options.map((o) => o.railId)).toEqual(["onchain"]);
+        expect(quote).not.toHaveBeenCalled();
     });
 
     it("leaves a plain Arkade address to core's ark rail alone", async () => {

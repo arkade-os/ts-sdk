@@ -16,7 +16,7 @@
  * and no solver selection to configure here.
  */
 import type { PaymentRail, RouteQuote } from "@arkade-os/sdk";
-import { invoiceTarget } from "@arkade-os/sdk";
+import { assertNoAssets, assetsOf, invoiceTarget } from "@arkade-os/sdk";
 import type { QuoteInput } from "../client/quote";
 import { railAvailable, receiverExact, swapHandle, type SwapRailClient } from "./swapRail";
 
@@ -50,6 +50,8 @@ export function lightningRail(client: SwapRailClient): PaymentRail {
         match: (req) => invoiceTarget(req.raw) !== undefined,
 
         available: async (req) => {
+            // A bolt11 invoice is denominated in sats; an asset cannot ride it.
+            if (assetsOf(req).length > 0) return false;
             const invoice = invoiceTarget(req.raw);
             if (invoice === undefined) return false;
             // Resolution, never a quote: quoting here would disclose the
@@ -63,6 +65,7 @@ export function lightningRail(client: SwapRailClient): PaymentRail {
             if (invoice === undefined) {
                 throw new Error(`${LIGHTNING_RAIL}: the request carries no BOLT11 invoice`);
             }
+            assertNoAssets(LIGHTNING_RAIL, req);
             const quote = await client.quote(inputFor(invoice, req.amount));
             // The payee is paid the invoice, and the spread sits on top: on a
             // corridor route the fee is denominated on the give leg, so the
