@@ -1,6 +1,6 @@
 import type { PaymentRail, RouterContext } from "../types";
 import { btcTarget } from "../targets";
-import { resolveSendAmount } from "../amount";
+import { assertNoAssets, assetsOf, resolveSendAmount } from "../amount";
 import { makeHandle } from "../handle";
 import { Ramps, offboardDestinationScript } from "../../wallet/ramps";
 import { Estimator } from "../../arkfee";
@@ -61,7 +61,10 @@ export function onchainRail(): PaymentRail {
     return {
         id: "onchain",
         match: (req) => btcTarget(req.raw) !== undefined,
+        // BTC only: an Arkade asset has no L1 representation to offboard to.
+        available: (req) => assetsOf(req).length === 0,
         quote: async (req, ctx: RouterContext) => {
+            assertNoAssets("onchain", req);
             const address = btcTarget(req.raw)!;
             // Reject missing/zero/fractional amounts up front: 0 sats would
             // silently settle nothing, and BigInt(amt) throws on non-integers.

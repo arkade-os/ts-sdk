@@ -16,6 +16,13 @@ export {
     type SolverLightningRailDeps,
     type SolverLightningSend,
 } from "./solverLightning";
+export {
+    CROSS_ASSET_RAIL,
+    crossAssetRail,
+    type CrossAssetPhase,
+    type CrossAssetRailDeps,
+    type CrossAssetSwap,
+} from "./crossAsset";
 
 /** The v2 swap rails: `SwapClient`-backed, one dep each, and the router that
  *  registers them beside core's own. The `solver-*` rails above are the v1 RFQ
