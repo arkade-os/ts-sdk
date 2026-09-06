@@ -25,10 +25,15 @@
  * and it reports the estimate inside `fee` where a ranking can see it. A fee
  * rate is environment-specific and is nobody's to default — the same reason
  * `CorridorOverrides.onchain.claim` has no default.
+ *
+ * The same arithmetic gives the rail its floor: a payout under
+ * {@link ONCHAIN_DUST_SATS} is one `buildHtlcClaim` refuses to build, so an
+ * amount that small drops the rail at `available()` and is refused outright at
+ * `quote()` — before a lockup exists, rather than after one is funded.
  */
 import type { PaymentRail, RouteQuote } from "@arkade-os/sdk";
 import { btcTarget, resolveSendAmount, tryResolveSendAmount } from "@arkade-os/sdk";
-import { ONCHAIN_CLAIM_VSIZE } from "../onchainHtlc";
+import { ONCHAIN_CLAIM_VSIZE, ONCHAIN_DUST_SATS } from "../onchainHtlc";
 import type { QuoteInput } from "../client/quote";
 import { railAvailable, receiverExact, swapHandle, type SwapRailClient } from "./swapRail";
 
@@ -84,6 +89,12 @@ export function onchainSwapRail(client: SwapRailClient, deps: OnchainSwapRailDep
             // without one, so the rail cannot claim to fit.
             const amount = tryResolveSendAmount(req.raw, req.amount);
             if (amount === undefined) return false;
+            // The gross-up is exactly the claim's fee, so the payout the
+            // recipient is left with IS the requested amount. A request under
+            // the dust limit is therefore out of this rail's range, and
+            // dropping it here is what lets the collaborative exit win with no
+            // error — the same self-healing the bounds check below performs.
+            if (BigInt(amount) < ONCHAIN_DUST_SATS) return false;
             // Resolution, never a quote — and the address is validated against
             // the wallet's network by the corridor that claims it, so a `tb1…`
             // on mainnet drops this rail here rather than at settlement.
@@ -97,10 +108,25 @@ export function onchainSwapRail(client: SwapRailClient, deps: OnchainSwapRailDep
             }
             const amount = resolveSendAmount(ONCHAIN_SWAP_RAIL, req.raw, req.amount);
             const quote = await client.quote(inputFor(address, amount));
+            // What lands at the address: the HTLC the solver locks, minus the
+            // claim this wallet will broadcast to take it.
+            const payout = quote.take.amount - claimFee;
+            // `buildHtlcClaim` applies this same floor — but it applies it at
+            // claim time, with the lockup funded and the swap committed, where
+            // the only way out is a refund. Applied here it is a refusal before
+            // anything moves. It covers the degenerate end too: a take leg that
+            // does not even cover the claim arrives as a negative payout, named
+            // with its cause, rather than as `satsOf`'s `AmountEncodingUnsupported`
+            // complaining about a window it never explains.
+            if (payout < ONCHAIN_DUST_SATS) {
+                throw new Error(
+                    `${ONCHAIN_SWAP_RAIL}: the solver's take leg of ${quote.take.amount} sat ` +
+                        `leaves ${payout} sat after the ${claimFee} sat claim fee, under the ` +
+                        `${ONCHAIN_DUST_SATS} sat dust limit the claim is built against`,
+                );
+            }
             const amounts = receiverExact(ONCHAIN_SWAP_RAIL, {
-                // What lands at the address, which is the HTLC the solver locks
-                // minus the claim this wallet will broadcast to take it.
-                amount: quote.take.amount - claimFee,
+                amount: payout,
                 // Both halves of the cost, inside one number: the solver's
                 // spread, and the claim the trader pays for out of the payout.
                 fee: quote.fee.amount + claimFee,
@@ -118,9 +144,9 @@ export function onchainSwapRail(client: SwapRailClient, deps: OnchainSwapRailDep
                     ...(quote.solver === undefined ? {} : { solver: quote.solver }),
                     ...(quote.lock === undefined ? {} : { paymentHash: quote.lock.hash }),
                     market: quote.market.key,
-                    /** The estimate folded into `fee`, so a caller can see it. */
+                    // The estimate folded into `fee`, so a caller can see it.
                     claimFeeSats: Number(claimFee),
-                    /** What the solver locks on L1, before the claim's fee. */
+                    // What the solver locks on L1, before the claim's fee.
                     htlcAmountSats: Number(quote.take.amount),
                 },
                 send: () => swapHandle(ONCHAIN_SWAP_RAIL, client, quote),
