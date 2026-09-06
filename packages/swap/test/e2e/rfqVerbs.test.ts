@@ -12,9 +12,16 @@
  * quote anyway. Nothing here fills a swap — a fill needs a solver that pays the
  * invoice — so what is real is everything the maker side does.
  *
+ * The `rfq` prefix is routing, not decoration: `test:integration:rfq` selects
+ * `test/e2e/rfq*` onto the seconds-typed arkd stack (`.env.regtest.rfq`), while
+ * `test:integration` runs everything else on the block-typed one. This file
+ * derives its claim delay from the server's own exit delay, and
+ * `unilateralClaimDelay` refuses the block stack's 20 outright — so a name
+ * without the prefix puts the suite on a server it cannot quote against.
+ *
  * `exchange` is not here. Its route is `arkade <-> arkade`, which needs an
  * issued asset and a live price feed rather than a stubbed RFQ answer, and the
- * offer primitive it funds already has `offerCancel.test.ts` against this stack.
+ * offer primitive it funds already has `offerCancel.test.ts` on the block stack.
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { execSync } from "child_process";

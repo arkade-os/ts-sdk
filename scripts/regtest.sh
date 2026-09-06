@@ -11,6 +11,12 @@
 # types — see that file's header. The profiles share ports, so only one stack
 # can be up at a time.
 #
+# The FILENAME picks the profile: `test/e2e/rfq*.test.ts` runs on the
+# seconds-typed stack, everything else on the block-typed one (see the swap
+# package's `test:integration` / `test:integration:rfq` scripts). The default is
+# the block stack, so a new seconds-typed suite that forgets the prefix fails on
+# a server it cannot quote against — name it `rfq*`.
+#
 # Usage: scripts/regtest.sh <ts-sdk|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]
 #   up     – clean + start with the package's .env.regtest
 #   down   – stop the stack (preserves data)
