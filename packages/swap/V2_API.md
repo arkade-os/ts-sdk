@@ -13,8 +13,9 @@ The v2 client surface has landed through M8 and is the root export. The v1
 `createSwapClient` facade it replaced is gone, and the offer, RFQ, restore,
 watch and manager building blocks moved to `@arkade-os/swap/protocol` under
 `@deprecated` pointers — off the root in the same release, with no window in
-which both spellings work. The `@arkade-os/swap/client` subpath that published
-this surface for one release is retired; see `MIGRATION.md`.
+which both spellings work. The `@arkade-os/swap/client` subpath that carried
+this surface on the release branch is retired without ever having shipped; see
+`MIGRATION.md`.
 
 Current imports look like this:
 

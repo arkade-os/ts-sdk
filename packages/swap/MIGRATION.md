@@ -30,9 +30,10 @@ quiet one: `AssetId` is a string alias rather than a branded type, so `give: "ba
 compiles and now means an asset id spelled `base`, which `quote()` refuses at runtime with
 `UnsupportedRoute`. Grep for `give: "base"` and `give: "quote"` before upgrading.
 
-If you were on `@arkade-os/swap/client`, that subpath is gone and the fix is one line: import from
-`@arkade-os/swap` instead. It existed for one release, to publish the v2 client while the root
-name was still occupied.
+If you tracked the release branch and imported from `@arkade-os/swap/client`, that subpath is
+gone and the fix is one line: import from `@arkade-os/swap` instead. It never appeared in a
+published version — it existed on the branch to make the v2 client reachable while the root name
+was still occupied, which is exactly what this release resolves.
 
 ### Everything below the client: `@arkade-os/swap/protocol`
 

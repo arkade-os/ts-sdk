@@ -68,8 +68,9 @@ describe("the M8 disposition record", () => {
 
     it("binds each R name to the v2 declaration, not the facade it replaced", () => {
         // The whole of B in one assertion: the name survived, the declaration
-        // behind it did not. `src/swapClient.ts` is unreferenced after this and
-        // goes with the removal pass.
+        // behind it did not. `src/swapClient.ts` is deleted, so what this
+        // guards is a re-import — the facade coming back under the name that
+        // replaced it.
         const declaredIn = moduleOf(ROOT_ENTRY);
         for (const name of R) {
             expect(client.has(name)).toBe(true);
