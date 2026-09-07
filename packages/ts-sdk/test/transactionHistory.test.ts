@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import transactionHistory from "./fixtures/transaction_history.json";
 import { VirtualCoin, TxType, ArkTransaction } from "../src/wallet";
 import { buildTransactionHistory } from "../src/utils/transactionHistory";
+import { gatedContracts, type Contract } from "../src";
 
 describe("buildTransactionHistory", () => {
     // TODO FIX THIS!
@@ -1095,6 +1096,552 @@ describe("buildTransactionHistory", () => {
             const byTxid = new Map(sentTxs.map((t) => [t.key.arkTxid, t.createdAt]));
             expect(byTxid.get("ark-tx-1")).toBe(1_700_000_000_000);
             expect(byTxid.get("ark-tx-2")).toBe(baseDate.getTime() + 1);
+        });
+    });
+
+    /**
+     * The gate history shares with `getBalance`: VTXOs locked to a contract row
+     * generic spending is closed on are read as an external counterparty, not as
+     * the wallet's own coins.
+     *
+     * Without it a swap covenant registered by `@arkade-os/swap` is a contract
+     * of the funding wallet, so its deposit output counts as change: the sats
+     * net to zero, `subtractAssets` cancels the units to nothing, and the guard
+     * against ghost rows drops the whole movement. Funding, fill and cancel each
+     * produce no row at all, and an asset-side swap — whose whole movement is
+     * asset units on a dust carrier — disappears completely.
+     *
+     * Assertions key on the ark txid of the leg under test rather than on the
+     * whole array. Each fixture starts from a coin the wallet already held, and
+     * the transaction that created *that* is outside the fixture, so the builder
+     * reports it as an earlier receive — correctly, and irrelevantly here.
+     */
+    describe("Gated contracts (swap covenants)", () => {
+        const baseDate = new Date("2026-02-01T10:00:00Z");
+        const at = (offsetMs: number) => new Date(baseDate.getTime() + offsetMs);
+        const assetX = "asset-id-xxx";
+
+        const walletScript = "wallet-receive-script";
+        const covenantScript = "swap-covenant-script";
+
+        /**
+         * A spend is a checkpoint per input plus the ark tx that spends the
+         * checkpoints, so `spentBy` and `arkTxId` are never the same value. The
+         * builder keys on `arkTxId`; `spentBy` is here so the fixtures are the
+         * shape `convertVtxo` actually produces.
+         */
+        const checkpointOf = (arkTxid: string) => `${arkTxid}-checkpoint`;
+
+        /** A contract row the way `@arkade-os/swap`'s `createOffer` registers it. */
+        const offerContract = (overrides: Partial<Contract> = {}): Contract => ({
+            type: "arkade",
+            params: {},
+            script: covenantScript,
+            address: "ark1swapcovenant",
+            state: "active",
+            createdAt: baseDate.getTime(),
+            metadata: { genericallySpendable: false, kind: "asset-swap-offer" },
+            ...overrides,
+        });
+
+        /** The gate as both read paths build it, straight off the contract rows. */
+        const gate = (...contracts: Contract[]) => gatedContracts(contracts);
+
+        const coin = (
+            over: Partial<VirtualCoin> & Pick<VirtualCoin, "txid" | "value">,
+        ): VirtualCoin => ({
+            vout: 0,
+            status: { confirmed: false },
+            virtualStatus: { state: "preconfirmed" },
+            createdAt: baseDate,
+            isUnrolled: false,
+            isSpent: false,
+            script: walletScript,
+            ...over,
+        });
+
+        const sentOf = (txs: ArkTransaction[]) => txs.filter((t) => t.type === TxType.TxSent);
+        const rowsFor = (txs: ArkTransaction[], arkTxid: string) =>
+            txs.filter((t) => t.key.arkTxid === arkTxid);
+        const sentFor = (txs: ArkTransaction[], arkTxid: string) =>
+            rowsFor(txs, arkTxid).filter((t) => t.type === TxType.TxSent);
+        const receivedFor = (txs: ArkTransaction[], arkTxid: string) =>
+            rowsFor(txs, arkTxid).filter((t) => t.type === TxType.TxReceived);
+
+        describe("BTC give, asset want", () => {
+            const fundingTxid = "btc-give-funding-tx";
+            const fillTxid = "btc-give-fill-tx";
+            const cancelTxid = "btc-give-cancel-tx";
+
+            /** 10_000 sats in, 6_000 into the covenant, 4_000 back as change. */
+            const funding = () => [
+                coin({
+                    txid: "wallet-coin-btc-give",
+                    value: 10_000,
+                    isSpent: true,
+                    spentBy: checkpointOf(fundingTxid),
+                    arkTxId: fundingTxid,
+                }),
+                coin({
+                    txid: fundingTxid,
+                    vout: 0,
+                    value: 6_000,
+                    script: covenantScript,
+                    createdAt: at(1_000),
+                }),
+                coin({
+                    txid: fundingTxid,
+                    vout: 1,
+                    value: 4_000,
+                    createdAt: at(1_000),
+                }),
+            ];
+
+            /** The covenant coin, spent by whichever leg closes the offer. */
+            const closedBy = (txid: string) => {
+                const [walletCoin, covenant, change] = funding();
+                return [
+                    walletCoin,
+                    { ...covenant, isSpent: true, spentBy: checkpointOf(txid), arkTxId: txid },
+                    change,
+                ];
+            };
+
+            it("records the deposit as a send once the covenant is funded", async () => {
+                const txs = await buildTransactionHistory(
+                    funding(),
+                    [],
+                    new Set(),
+                    undefined,
+                    gate(offerContract()),
+                );
+
+                const sent = sentFor(txs, fundingTxid);
+                expect(sent).toHaveLength(1);
+                expect(sent[0].amount).toBe(6_000);
+                // Attributable, not silently dropped: the counterparty is the
+                // user's own escrow, not a stranger.
+                expect(sent[0].tag).toBe("gated");
+                // The change output is change, and the covenant output is not a receive.
+                expect(receivedFor(txs, fundingTxid)).toHaveLength(0);
+            });
+
+            it("records the solver's fill as a receive of the bought asset", async () => {
+                const txs = await buildTransactionHistory(
+                    [
+                        ...closedBy(fillTxid),
+                        coin({
+                            txid: fillTxid,
+                            value: 330,
+                            createdAt: at(2_000),
+                            assets: [{ assetId: assetX, amount: 5_000n }],
+                        }),
+                    ],
+                    [],
+                    new Set(),
+                    undefined,
+                    gate(offerContract()),
+                );
+
+                // The escrow leaving is not a second send: it was already sent.
+                const sent = sentOf(txs);
+                expect(sent).toHaveLength(1);
+                expect(sent[0].key.arkTxid).toBe(fundingTxid);
+                expect(sent[0].amount).toBe(6_000);
+
+                const received = receivedFor(txs, fillTxid);
+                expect(received).toHaveLength(1);
+                expect(received[0].amount).toBe(330);
+                expect(received[0].assets).toStrictEqual([{ assetId: assetX, amount: 5_000n }]);
+                expect(received[0].tag).toBe("gated");
+            });
+
+            it("records a cancel as the deposit coming back", async () => {
+                const txs = await buildTransactionHistory(
+                    [
+                        ...closedBy(cancelTxid),
+                        coin({ txid: cancelTxid, value: 6_000, createdAt: at(2_000) }),
+                    ],
+                    [],
+                    new Set(),
+                    undefined,
+                    gate(offerContract()),
+                );
+
+                const sent = sentOf(txs);
+                expect(sent).toHaveLength(1);
+                expect(sent[0].key.arkTxid).toBe(fundingTxid);
+
+                const received = receivedFor(txs, cancelTxid);
+                expect(received).toHaveLength(1);
+                expect(received[0].amount).toBe(6_000);
+                expect(received[0].tag).toBe("gated");
+            });
+
+            it("nets the funding to nothing with the covenant left in the wallet's set", async () => {
+                // The defect itself, and the guard against a silent revert: with
+                // no gate the covenant output is change, so `spentAmount -
+                // changeAmount` is 0, no assets move, and the ghost-row guard
+                // drops the only record the swap would have had.
+                const txs = await buildTransactionHistory(funding(), [], new Set());
+                expect(sentOf(txs)).toHaveLength(0);
+                expect(rowsFor(txs, fundingTxid)).toHaveLength(0);
+            });
+        });
+
+        describe("asset give, BTC want", () => {
+            const fundingTxid = "asset-give-funding-tx";
+            const fillTxid = "asset-give-fill-tx";
+            const cancelTxid = "asset-give-cancel-tx";
+
+            /**
+             * The whole movement is asset-side: 1_000 units ride a 500-sat dust
+             * carrier into the covenant, with no change.
+             */
+            const funding = () => [
+                coin({
+                    txid: "wallet-coin-asset-give",
+                    value: 500,
+                    isSpent: true,
+                    spentBy: checkpointOf(fundingTxid),
+                    arkTxId: fundingTxid,
+                    assets: [{ assetId: assetX, amount: 1_000n }],
+                }),
+                coin({
+                    txid: fundingTxid,
+                    vout: 0,
+                    value: 500,
+                    script: covenantScript,
+                    createdAt: at(1_000),
+                    assets: [{ assetId: assetX, amount: 1_000n }],
+                }),
+            ];
+
+            const closedBy = (txid: string) => {
+                const [walletCoin, covenant] = funding();
+                return [
+                    walletCoin,
+                    { ...covenant, isSpent: true, spentBy: checkpointOf(txid), arkTxId: txid },
+                ];
+            };
+
+            it("records the deposited units on the funding send", async () => {
+                const txs = await buildTransactionHistory(
+                    funding(),
+                    [],
+                    new Set(),
+                    undefined,
+                    gate(offerContract()),
+                );
+
+                const sent = sentFor(txs, fundingTxid);
+                expect(sent).toHaveLength(1);
+                // The carrier sats are the amount; the units are the movement.
+                expect(sent[0].amount).toBe(500);
+                expect(sent[0].assets).toStrictEqual([{ assetId: assetX, amount: -1_000n }]);
+                expect(sent[0].tag).toBe("gated");
+                expect(receivedFor(txs, fundingTxid)).toHaveLength(0);
+            });
+
+            it("leaves units that stayed behind out of the funding send", async () => {
+                const txs = await buildTransactionHistory(
+                    [
+                        coin({
+                            txid: "wallet-coin-asset-partial",
+                            value: 800,
+                            isSpent: true,
+                            spentBy: checkpointOf(fundingTxid),
+                            arkTxId: fundingTxid,
+                            assets: [{ assetId: assetX, amount: 1_000n }],
+                        }),
+                        coin({
+                            txid: fundingTxid,
+                            vout: 0,
+                            value: 300,
+                            script: covenantScript,
+                            createdAt: at(1_000),
+                            assets: [{ assetId: assetX, amount: 600n }],
+                        }),
+                        coin({
+                            txid: fundingTxid,
+                            vout: 1,
+                            value: 500,
+                            createdAt: at(1_000),
+                            assets: [{ assetId: assetX, amount: 400n }],
+                        }),
+                    ],
+                    [],
+                    new Set(),
+                    undefined,
+                    gate(offerContract()),
+                );
+
+                const sent = sentFor(txs, fundingTxid);
+                expect(sent).toHaveLength(1);
+                expect(sent[0].amount).toBe(300);
+                // 600 deposited, not the 1_000 the input carried.
+                expect(sent[0].assets).toStrictEqual([{ assetId: assetX, amount: -600n }]);
+            });
+
+            it("records the fill as a receive of the sats the solver paid", async () => {
+                const txs = await buildTransactionHistory(
+                    [
+                        ...closedBy(fillTxid),
+                        coin({ txid: fillTxid, value: 9_000, createdAt: at(2_000) }),
+                    ],
+                    [],
+                    new Set(),
+                    undefined,
+                    gate(offerContract()),
+                );
+
+                const received = receivedFor(txs, fillTxid);
+                expect(received).toHaveLength(1);
+                expect(received[0].amount).toBe(9_000);
+                expect(received[0]).not.toHaveProperty("assets");
+                expect(received[0].tag).toBe("gated");
+
+                // The escrowed units leave once, on the funding row — the fill
+                // must not report them as a second send.
+                const sent = sentOf(txs);
+                expect(sent).toHaveLength(1);
+                expect(sent[0].key.arkTxid).toBe(fundingTxid);
+            });
+
+            it("records a cancel as every unit coming back", async () => {
+                const txs = await buildTransactionHistory(
+                    [
+                        ...closedBy(cancelTxid),
+                        coin({
+                            txid: cancelTxid,
+                            value: 500,
+                            createdAt: at(2_000),
+                            assets: [{ assetId: assetX, amount: 1_000n }],
+                        }),
+                    ],
+                    [],
+                    new Set(),
+                    undefined,
+                    gate(offerContract()),
+                );
+
+                const received = receivedFor(txs, cancelTxid);
+                expect(received).toHaveLength(1);
+                expect(received[0].amount).toBe(500);
+                expect(received[0].assets).toStrictEqual([{ assetId: assetX, amount: 1_000n }]);
+                expect(received[0].tag).toBe("gated");
+            });
+
+            it("reports nothing at all with the covenant left in the wallet's set", async () => {
+                // The worse half of the defect: the movement is entirely
+                // asset-side, so both the sats and the units cancel.
+                const txs = await buildTransactionHistory(funding(), [], new Set());
+                expect(sentOf(txs)).toHaveLength(0);
+                expect(rowsFor(txs, fundingTxid)).toHaveLength(0);
+            });
+
+            it("dates the deposit from the covenant output, without an indexer call", async () => {
+                // With no change output there is nothing of the wallet's left in
+                // the funding tx to read the time off. The escrow's own output
+                // is that time and is already in hand, so the row must not fall
+                // back to the input coin's timestamp — which would be a month
+                // stale here — nor pay for a round-trip to learn it.
+                const resolveTxCreatedAt = vi.fn(async () => new Map<string, number>());
+                const txs = await buildTransactionHistory(
+                    funding(),
+                    [],
+                    new Set(),
+                    resolveTxCreatedAt,
+                    gate(offerContract()),
+                );
+
+                expect(resolveTxCreatedAt).not.toHaveBeenCalled();
+                expect(sentFor(txs, fundingTxid)[0].createdAt).toBe(at(1_000).getTime());
+            });
+        });
+
+        describe("what the gate must not swallow", () => {
+            it("keeps an arkade row marked genericallySpendable in history", async () => {
+                // One coin, standing alone at the contract's script with nothing
+                // of the wallet's spending into it: the only shape where "kept"
+                // and "dropped" look different. The marker is the only
+                // difference between the two runs.
+                const deposit = [
+                    coin({
+                        txid: "third-party-deposit",
+                        value: 7_000,
+                        script: covenantScript,
+                        createdAt: at(1_000),
+                    }),
+                ];
+                const marked = offerContract({
+                    metadata: { genericallySpendable: true, kind: "asset-swap-offer" },
+                });
+
+                expect(gate(marked).size).toBe(0);
+                const kept = await buildTransactionHistory(
+                    deposit,
+                    [],
+                    new Set(),
+                    undefined,
+                    gate(marked),
+                );
+                expect(kept).toHaveLength(1);
+                expect(kept[0].type).toBe(TxType.TxReceived);
+                expect(kept[0].amount).toBe(7_000);
+
+                // Unmarked, the same coin is escrow: not the wallet's money, so
+                // no row. This is the gate's reach beyond swaps — any default-
+                // closed `arkade` row funded from outside the wallet loses the
+                // receive it used to report.
+                expect(gate(offerContract()).get(covenantScript)).toBe("arkade");
+                expect(
+                    await buildTransactionHistory(
+                        deposit,
+                        [],
+                        new Set(),
+                        undefined,
+                        gate(offerContract()),
+                    ),
+                ).toHaveLength(0);
+            });
+
+            it("leaves an ordinary payment made while an offer is live alone", async () => {
+                const paymentTxid = "ordinary-payment-tx";
+                const txs = await buildTransactionHistory(
+                    [
+                        coin({
+                            txid: "wallet-coin-ordinary",
+                            value: 10_000,
+                            isSpent: true,
+                            spentBy: checkpointOf(paymentTxid),
+                            arkTxId: paymentTxid,
+                        }),
+                        // What the stranger got is not in the wallet's set; the
+                        // change is.
+                        coin({
+                            txid: paymentTxid,
+                            vout: 1,
+                            value: 3_000,
+                            createdAt: at(1_000),
+                        }),
+                        // A funded covenant sits in the same history and must
+                        // not colour a payment it has nothing to do with.
+                        coin({
+                            txid: "unrelated-funding-tx",
+                            value: 6_000,
+                            script: covenantScript,
+                            createdAt: at(500),
+                        }),
+                    ],
+                    [],
+                    new Set(),
+                    undefined,
+                    gate(offerContract()),
+                );
+
+                const sent = sentFor(txs, paymentTxid);
+                expect(sent).toHaveLength(1);
+                expect(sent[0].amount).toBe(7_000);
+                expect(sent[0].tag).toBe("offchain");
+            });
+
+            it("keeps a VTXO with no script in history", async () => {
+                const scriptless = (
+                    over: Partial<VirtualCoin> & Pick<VirtualCoin, "txid" | "value">,
+                ) => {
+                    const { script: _script, ...rest } = coin(over);
+                    return rest as VirtualCoin;
+                };
+
+                const txs = await buildTransactionHistory(
+                    [
+                        scriptless({
+                            txid: "scriptless-spent",
+                            value: 1_000,
+                            isSpent: true,
+                            spentBy: checkpointOf("scriptless-tx"),
+                            arkTxId: "scriptless-tx",
+                        }),
+                        scriptless({ txid: "scriptless-tx", value: 400, createdAt: at(1_000) }),
+                    ],
+                    [],
+                    new Set(),
+                    undefined,
+                    gate(offerContract()),
+                );
+
+                // No script means no contract row to judge the coin by, so it is
+                // the wallet's own and the ordinary send stands.
+                const sent = sentFor(txs, "scriptless-tx");
+                expect(sent).toHaveLength(1);
+                expect(sent[0].amount).toBe(600);
+                expect(sent[0].tag).toBe("offchain");
+            });
+
+            it("still records no ghost row for a signer-rotation self-transfer", async () => {
+                const arkTxId = "gated-migration-ark-tx";
+                const txs = await buildTransactionHistory(
+                    [
+                        coin({
+                            txid: "old-signer-coin",
+                            value: 184_875,
+                            isSpent: true,
+                            spentBy: checkpointOf(arkTxId),
+                            arkTxId,
+                        }),
+                        coin({ txid: arkTxId, value: 184_875, createdAt: at(1_000) }),
+                    ],
+                    [],
+                    new Set(),
+                    undefined,
+                    gate(offerContract()),
+                );
+
+                expect(sentOf(txs)).toHaveLength(0);
+                expect(rowsFor(txs, arkTxId)).toHaveLength(0);
+            });
+
+            // [name, ark txid, units spent, units in change, the row's asset amount]
+            it.each([
+                ["issuance", "gated-issuance", 0n, 500n, 500n],
+                ["reissuance", "gated-reissuance", 500n, 900n, 400n],
+                ["burn", "gated-burn", 900n, 400n, -500n],
+            ] as const)(
+                "still records %s as a zero-sat asset row",
+                async (_name, arkTxId, spentUnits, changeUnits, expected) => {
+                    const txs = await buildTransactionHistory(
+                        [
+                            coin({
+                                txid: `${arkTxId}-input`,
+                                value: 1_000,
+                                isSpent: true,
+                                spentBy: checkpointOf(arkTxId),
+                                arkTxId,
+                                ...(spentUnits > 0n && {
+                                    assets: [{ assetId: assetX, amount: spentUnits }],
+                                }),
+                            }),
+                            coin({
+                                txid: arkTxId,
+                                value: 1_000,
+                                createdAt: at(1_000),
+                                assets: [{ assetId: assetX, amount: changeUnits }],
+                            }),
+                        ],
+                        [],
+                        new Set(),
+                        undefined,
+                        gate(offerContract()),
+                    );
+
+                    const sent = sentFor(txs, arkTxId);
+                    expect(sent).toHaveLength(1);
+                    expect(sent[0].amount).toBe(0);
+                    expect(sent[0].assets).toStrictEqual([{ assetId: assetX, amount: expected }]);
+                    expect(sent[0].tag).toBe("offchain");
+                },
+            );
         });
     });
 

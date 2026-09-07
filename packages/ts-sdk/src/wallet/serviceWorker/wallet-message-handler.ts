@@ -1166,9 +1166,7 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_TRANSACTION_HISTORY": {
-                    const allVtxos = await this.getVtxosFromRepo();
-                    const transactions =
-                        (await this.buildTransactionHistoryFromCache(allVtxos)) ?? [];
+                    const transactions = (await this.buildTransactionHistoryFromCache()) ?? [];
                     return this.tagged({
                         id,
                         type: "TRANSACTION_HISTORY",
@@ -1865,9 +1863,6 @@ export class WalletMessageHandler
             return;
         }
 
-        // Read virtual outputs from repository (now populated by contract manager)
-        const vtxos = await this.getVtxosFromRepo();
-
         // Fetch boarding inputs across the full boarding-address set (current +
         // historical rotated; plan §6-IV.2). Fetch FIRST: getBoardingUtxos
         // re-fetches each boarding address from the onchain provider and saves
@@ -1888,7 +1883,7 @@ export class WalletMessageHandler
 
         // Build transaction history from cached virtual outputs (no indexer call)
         const address = await this.readonlyWallet.getAddress();
-        const txs = await this.buildTransactionHistoryFromCache(vtxos);
+        const txs = await this.buildTransactionHistoryFromCache();
         if (txs) await this.walletRepository.saveTransactions(address, txs);
     }
 
@@ -2152,11 +2147,17 @@ export class WalletMessageHandler
     /**
      * Build transaction history from cached virtual outputs, hitting the indexer only for
      * uncached timestamps. Best-effort, like the plain Wallet path.
+     *
+     * Takes its own {@link repoSnapshot} rather than a caller-supplied VTXO
+     * list: the coins and the gate that judges them have to come off one read
+     * or they answer about different instants. It is also the worker's only
+     * history builder, so neither of its two callers can pass coins without the
+     * gate that judges them.
      */
-    private async buildTransactionHistoryFromCache(
-        vtxos: ExtendedVirtualCoin[],
-    ): Promise<ArkTransaction[] | null> {
+    private async buildTransactionHistoryFromCache(): Promise<ArkTransaction[] | null> {
         if (!this.readonlyWallet) return null;
+
+        const { snapshot, vtxos } = await this.repoSnapshot();
 
         const { boardingTxs, commitmentsToIgnore } = await this.readonlyWallet.getBoardingTxs();
 
@@ -2165,7 +2166,19 @@ export class WalletMessageHandler
             ? (txids: string[]) => fetchVtxoCreatedAtByTxid(indexerProvider, txids)
             : undefined;
 
-        return buildTransactionHistory(vtxos, boardingTxs, commitmentsToIgnore, resolveTxCreatedAt);
+        // The gate `handleGetBalance` builds off this same snapshot, for the
+        // same reason: an escrowed contract's coins are not the wallet's own,
+        // so history must not read them as change. `ReadonlyWallet` derives the
+        // identical expression from its own snapshot, so the two sides of the
+        // bus classify a coin the same way — they still differ in freshness, as
+        // the balance reads do, because this snapshot never syncs.
+        return buildTransactionHistory(
+            vtxos,
+            boardingTxs,
+            commitmentsToIgnore,
+            resolveTxCreatedAt,
+            gatedContracts(snapshot.map((_) => _.contract)),
+        );
     }
 
     private async ensureContractEventBroadcasting() {

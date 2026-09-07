@@ -29,6 +29,30 @@ export function gatedContracts(contracts: readonly Contract[]): Map<string, stri
 /** The minimum a VTXO must carry to be matched against an exclusion set. */
 export type ExcludableVtxo = { txid: string; vout: number; script?: string };
 
+/** {@link gatedContracts}' answer, as callers that only read it should take it. */
+export type GatedContracts = ReadonlyMap<string, string>;
+
+/**
+ * The type of the gated contract this VTXO belongs to, or `undefined` when
+ * generic spending is open to it.
+ *
+ * The single spelling of the per-VTXO question, so the gate cannot be asked two
+ * subtly different ways. Strict on `script`, matching `isVtxoForScript`: a VTXO
+ * with a missing or empty script belongs to no contract row at all, so it is the
+ * wallet's own coin.
+ */
+export function gatedTypeOf(
+    vtxo: Pick<ExcludableVtxo, "script">,
+    gated: GatedContracts,
+): string | undefined {
+    return vtxo.script ? gated.get(vtxo.script) : undefined;
+}
+
+/** {@link gatedTypeOf} as a predicate, for callers with no use for the type. */
+export function isGatedVtxo(vtxo: Pick<ExcludableVtxo, "script">, gated: GatedContracts): boolean {
+    return gatedTypeOf(vtxo, gated) !== undefined;
+}
+
 /**
  * Why generic spending skips a VTXO, or `undefined` when it does not — phrased
  * to follow the outpoint in a log line.
@@ -51,9 +75,9 @@ export type VtxoExclusion = (vtxo: ExcludableVtxo) => string | undefined;
  * already available here, so the message can tell them apart instead of
  * collapsing both into one sentence that reads as the same case either way.
  */
-export function gateExclusion(gated: ReadonlyMap<string, string>): VtxoExclusion {
+export function gateExclusion(gated: GatedContracts): VtxoExclusion {
     return (vtxo) => {
-        const type = vtxo.script === undefined ? undefined : gated.get(vtxo.script);
+        const type = gatedTypeOf(vtxo, gated);
         if (type === undefined) return undefined;
         // A handler present but declaring no `isGenericallySpendable` predicate
         // reads the same as an explicit decline here: both are this build

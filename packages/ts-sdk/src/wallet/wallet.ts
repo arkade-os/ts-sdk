@@ -1479,9 +1479,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Return wallet transaction history derived from Arkade state and boarding transactions.
      */
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const contractManager = await this.getContractManager();
-        const response = await contractManager.getContractsWithVtxos();
-        const allVtxos = response.flatMap((_) => _.vtxos);
+        const snapshot = await this.contractSnapshot();
+        const allVtxos = snapshot.flatMap((_) => _.vtxos);
 
         const { boardingTxs, commitmentsToIgnore } = await this.getBoardingTxs();
 
@@ -1490,11 +1489,19 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const resolveTxCreatedAt = (txids: string[]) =>
             fetchVtxoCreatedAtByTxid(this.indexerProvider, txids);
 
+        // `getBalance`'s gate, built the same way off one snapshot: an escrowed
+        // contract's coins are not the wallet's own money, so history must not
+        // read them as change. Without it a swap deposit and its covenant output
+        // cancel to zero and the whole movement disappears. Balance withholds
+        // such a coin from `available` but still counts it in `total`; history
+        // drops it from the ledger, because the movement it reports is the one
+        // facing the escrow, not the escrow itself.
         return buildTransactionHistory(
             allVtxos,
             boardingTxs,
             commitmentsToIgnore,
             resolveTxCreatedAt,
+            gatedContracts(snapshot.map((_) => _.contract)),
         );
     }
 
