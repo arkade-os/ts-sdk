@@ -22,18 +22,18 @@ import {
     SingleKey,
     Wallet,
 } from "@arkade-os/sdk";
+import { InMemoryAssetSwapRepository } from "../../src";
 import {
     addAssetSwap,
     cancelOffer,
     createOffer,
     decodeOffer,
     getAssetSwaps,
-    InMemoryAssetSwapRepository,
     restoreAssetSwaps,
     watchOfferSwaps,
     type AssetSwap,
     type Tx,
-} from "../../src";
+} from "../../src/protocol";
 
 const OPERATOR_URL = "http://localhost:7070";
 // mempool serves the Esplora REST API under `/api`; the root path is the HTML UI
