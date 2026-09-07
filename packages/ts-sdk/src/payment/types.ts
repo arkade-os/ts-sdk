@@ -1,4 +1,4 @@
-import type { Asset, Recipient, Wallet } from "../index";
+import type { Asset, IWallet, Recipient, Wallet } from "../index";
 
 export type PaymentStatus = "pending" | "sent" | "settled" | "failed";
 
@@ -86,8 +86,8 @@ export interface RouterPreferences {
     tieBreak?: "first" | "require-choice";
 }
 
-export interface RouterContext {
-    wallet: Wallet;
+export interface RouterContext<W extends IWallet = Wallet> {
+    wallet: W;
     /** Loosely typed in core to avoid a dependency on boltz-swap; swap rails cast it. */
     swaps?: unknown;
     prefs: RouterPreferences;
@@ -108,13 +108,15 @@ export interface PaymentRequest {
 }
 
 /** A payment rail — registered by id, mirrors the ActivityRegistry resolver shape. */
-export interface PaymentRail {
+// Properties, not methods: method parameters stay bivariant even under
+// `strictFunctionTypes`, letting a `PaymentRail<Wallet>` onto a `Router<IWallet>`.
+export interface PaymentRail<W extends IWallet = Wallet> {
     id: string;
     /** Classification only — amount-blind; takes the request for uniformity. */
-    match(req: PaymentRequest, ctx: RouterContext): boolean;
+    match: (req: PaymentRequest, ctx: RouterContext<W>) => boolean;
     /** Availability gate — where a rail drops itself for an out-of-limits amount. */
-    available?(req: PaymentRequest, ctx: RouterContext): boolean | Promise<boolean>;
-    quote(req: PaymentRequest, ctx: RouterContext): Promise<RouteQuote>;
+    available?: (req: PaymentRequest, ctx: RouterContext<W>) => boolean | Promise<boolean>;
+    quote: (req: PaymentRequest, ctx: RouterContext<W>) => Promise<RouteQuote>;
 }
 
 export interface PaymentOption {

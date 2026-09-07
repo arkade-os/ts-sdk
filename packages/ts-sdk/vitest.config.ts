@@ -24,6 +24,10 @@ export default mergeConfig(
             sequence: {
                 sequencer: CustomSequencer,
             },
+            typecheck: {
+                enabled: true,
+                tsconfig: "./tsconfig.typecheck.json",
+            },
         },
     }),
 );

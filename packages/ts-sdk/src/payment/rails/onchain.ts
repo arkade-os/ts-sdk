@@ -1,4 +1,5 @@
 import type { PaymentRail, RouterContext } from "../types";
+import type { Wallet } from "../../index";
 import { btcTarget } from "../targets";
 import { assertNoAssets, assetsOf, resolveSendAmount } from "../amount";
 import { makeHandle } from "../handle";
@@ -57,13 +58,13 @@ function grossUpOffboard(
  * An explicit amount is mandatory. To sweep the full balance, call
  * `Ramps.offboard(address, feeInfo)` directly — the router has no amountless path.
  */
-export function onchainRail(): PaymentRail {
+export function onchainRail(): PaymentRail<Wallet> {
     return {
         id: "onchain",
         match: (req) => btcTarget(req.raw) !== undefined,
         // BTC only: an Arkade asset has no L1 representation to offboard to.
         available: (req) => assetsOf(req).length === 0,
-        quote: async (req, ctx: RouterContext) => {
+        quote: async (req, ctx: RouterContext<Wallet>) => {
             assertNoAssets("onchain", req);
             const address = btcTarget(req.raw)!;
             // Reject missing/zero/fractional amounts up front: 0 sats would

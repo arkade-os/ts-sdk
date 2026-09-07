@@ -1,4 +1,5 @@
 import type { PaymentRail, RouteQuote, RouterContext } from "../types";
+import type { IWallet } from "../../index";
 import { arkTarget } from "../targets";
 import {
     assertSendableAmount,
@@ -18,13 +19,13 @@ export const ASSET_CARRIER_SATS = 330;
  * match the address; which one can pay is a question about the amount, so
  * `options()` returns exactly one and their relative priority is immaterial.
  */
-export function arkAssetRail(): PaymentRail {
+export function arkAssetRail(): PaymentRail<IWallet> {
     return {
         id: "ark-asset",
         match: (req) => arkTarget(req.raw) !== undefined,
         // A malformed asset is `quote()`'s to name, not this rail's to drop.
         available: (req) => assetsOf(req).length > 0,
-        quote: async (req, ctx: RouterContext): Promise<RouteQuote> => {
+        quote: async (req, ctx: RouterContext<IWallet>): Promise<RouteQuote> => {
             const address = arkTarget(req.raw)!;
             const asset = resolveAssetAmount("ark-asset", req);
             // A stated amount is validated, never defaulted: `0` is not "pick one".
