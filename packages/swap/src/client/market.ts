@@ -115,9 +115,14 @@ export const usableMarkets = (
  * is what makes a card's own `min/max` bounds mean something: without it a
  * snapshot serving the pair answers "eligible" for any size, and the swap rails'
  * documented self-healing — an out-of-range amount drops the rail at
- * `available()` and the collaborative exit wins — never fires. Only a take-side
- * pin is passed, because that is the side `wantSide` names; converting a
- * give-side pin would need the price this read deliberately does not have.
+ * `available()` and the collaborative exit wins — never fires.
+ *
+ * @param takeAmount The pin on the TAKE leg only, which is the side `wantSide`
+ *   names. Omitting it skips the bounds entirely — an unpinned read is not a
+ *   zero-sized trade. A GIVE-side pin is deliberately not converted and passed:
+ *   that would need a price this read does not have, so a give-side amount past
+ *   a card's ceiling still answers `eligible: 1` here and is refused by the
+ *   solver instead. That asymmetry is the known sharp edge of this parameter.
  */
 export const eligibleMarkets = (
     snapshot: DiscoverySnapshot,
