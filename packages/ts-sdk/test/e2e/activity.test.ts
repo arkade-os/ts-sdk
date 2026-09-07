@@ -118,15 +118,16 @@ describe("a custom resolver over real transactions (regtest)", () => {
 
     it("prepares before it resolves, and can correlate on what prepare loaded", async () => {
         const seen: string[] = [];
-        // The correlation data lands only AFTER an await, so a builder that
-        // called `prepare()` without awaiting it would resolve against an empty
-        // table and fail here rather than pass on the synchronous first line.
+        // The correlation data lands a macrotask later, so a builder that
+        // CALLED `prepare()` without awaiting it resolves against an empty
+        // table and fails here. A microtask boundary is not enough: the
+        // surrounding `await Promise.all` flushes those anyway.
         let loaded: string | undefined;
         const activities = await activitiesWith({
             id: "test:prepared",
             prepare: async () => {
                 seen.push("prepare");
-                await Promise.resolve();
+                await new Promise((r) => setTimeout(r, 0));
                 loaded = sendTxid;
             },
             resolve: (tx) => {
