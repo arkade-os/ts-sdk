@@ -948,4 +948,42 @@ describe("assertFundable accepts an EVM quote", () => {
         const receiveTight = receiveQuote({ refund_locktime: NOW + MIN_HEADROOM_SECONDS - 1 });
         expect(() => assertFundable({ quote: receiveTight, now: NOW })).toThrow(/headroom/);
     });
+
+    it.each([
+        ["send", () => sendQuote()],
+        ["receive", () => receiveQuote()],
+    ])("refuses maxFee on an EVM %s quote rather than coercing it", (_direction, quote) => {
+        for (const maxFee of [
+            { sats: 0 },
+            { bps: 100 },
+            { bps: 100, referenceRate: 0.5 },
+            { sats: 1_000_000_000, bps: 10_000 },
+        ]) {
+            let thrown: unknown;
+            try {
+                assertFundable({ quote: quote(), now: NOW, maxFee });
+            } catch (error) {
+                thrown = error;
+            }
+            expect((thrown as { reason?: string } | undefined)?.reason).toBe(
+                "fee_gate_unavailable",
+            );
+            expect(String(thrown)).toMatch(/EVM token leg/);
+        }
+    });
+
+    it("leaves the sats-only gate on a BTC quote working", () => {
+        const btc = {
+            rfq_id: RFQ_ID,
+            pair: "arkade:BTC->lightning:BTC",
+            from_amount: 100_000,
+            to_amount: 99_500,
+            valid_until: NOW + 60,
+            refund_locktime: NOW + MIN_HEADROOM_SECONDS + 60,
+        };
+        expect(() => assertFundable({ quote: btc, now: NOW, maxFee: { sats: 500 } })).not.toThrow();
+        expect(() => assertFundable({ quote: btc, now: NOW, maxFee: { sats: 499 } })).toThrow(
+            /fee 500 exceeds/,
+        );
+    });
 });

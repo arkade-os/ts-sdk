@@ -444,7 +444,8 @@ const matchQuotedLockup = (
  * EVM quote's token leg is a canonical decimal string, so `from_amount` and
  * `to_amount` are `number | string` across the union and no arithmetic
  * compiles against them unsplit — read them through `evmQuoteSats` and
- * `evmQuoteTokenAmount`, which pick the side off the pair. */
+ * `evmQuoteTokenAmount`, which pick the side off the pair. `maxFee` is
+ * therefore REFUSED on an EVM quote with `fee_gate_unavailable`. */
 export const assertFundable = (input: {
     quote: RfqQuote | EvmRfqQuote;
     invoiceExpiresAt?: number;
@@ -501,6 +502,18 @@ export const assertFundable = (input: {
         if (sats !== undefined && (!Number.isInteger(sats) || sats < 0)) {
             fail("max_fee_out_of_range", `maxFee.sats must be a non-negative integer, got ${sats}`);
         }
+        // NOT NaN: `*` and `-` coerce the token leg's decimal string, so the
+        // gate would compare base units against sats and answer confidently.
+        // Measured without this: a send quote passes even `{ sats: 0 }`.
+        const { from_amount: fromAmount, to_amount: toAmount } = input.quote;
+        if (typeof fromAmount !== "number" || typeof toAmount !== "number") {
+            throw gateError(
+                "fee_gate_unavailable",
+                `maxFee cannot gate ${input.quote.pair}: an EVM token leg is a decimal ` +
+                    `string, not sats, and this gate does its arithmetic in numbers. ` +
+                    `Omit maxFee for an EVM corridor until the token-aware gate lands`,
+            );
+        }
         const legs = input.quote.pair.split("->");
         const assetOf = (leg: string): string => leg.slice(leg.indexOf(":") + 1);
         const sameAsset = legs.length === 2 && assetOf(legs[0]!) === assetOf(legs[1]!);
@@ -521,15 +534,11 @@ export const assertFundable = (input: {
         }
         // Rounds UP: refuse a borderline quote, do not fund a rounding artefact.
         const fee = sameAsset
-            ? input.quote.from_amount - input.quote.to_amount
+            ? fromAmount - toAmount
             : Math.ceil(
-                  (input.quote.from_amount * (referenceRate as number) - input.quote.to_amount) /
-                      (referenceRate as number),
+                  (fromAmount * (referenceRate as number) - toAmount) / (referenceRate as number),
               );
-        const allowed = Math.max(
-            sats ?? 0,
-            Math.floor((input.quote.from_amount * (bps ?? 0)) / 10_000),
-        );
+        const allowed = Math.max(sats ?? 0, Math.floor((fromAmount * (bps ?? 0)) / 10_000));
         if (fee > allowed) {
             fail("fee_too_high", `fee ${fee} exceeds the ${allowed} this client allows`);
         }
