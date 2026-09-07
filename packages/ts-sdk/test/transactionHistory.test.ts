@@ -1144,8 +1144,40 @@ describe("buildTransactionHistory", () => {
             ...overrides,
         });
 
-        /** The gate as both read paths build it, straight off the contract rows. */
-        const gate = (...contracts: Contract[]) => gatedContracts(contracts);
+        /**
+         * The builder under the gate both read paths build, straight off the
+         * contract rows. Boarding transactions and ignored commitments are
+         * beside the point here; the `createdAt` resolver is only passed by the
+         * one test that asserts it is never called.
+         */
+        const history = (
+            vtxos: VirtualCoin[],
+            contract: Contract = offerContract(),
+            resolveTxCreatedAt?: (txids: string[]) => Promise<Map<string, number>>,
+        ) =>
+            buildTransactionHistory(
+                vtxos,
+                [],
+                new Set(),
+                resolveTxCreatedAt,
+                gatedContracts([contract]),
+            );
+
+        /** The same builder with no gate at all: the behaviour that predates it. */
+        const ungatedHistory = (vtxos: VirtualCoin[]) =>
+            buildTransactionHistory(vtxos, [], new Set());
+
+        /**
+         * A funding fixture with its covenant coin spent by whichever leg closes
+         * the offer — a solver's fill, or a cancel. Keyed on the script rather
+         * than a position, so it survives a fixture growing an output.
+         */
+        const closedBy = (coins: VirtualCoin[], txid: string) =>
+            coins.map((c) =>
+                c.script === covenantScript
+                    ? { ...c, isSpent: true, spentBy: checkpointOf(txid), arkTxId: txid }
+                    : c,
+            );
 
         const coin = (
             over: Partial<VirtualCoin> & Pick<VirtualCoin, "txid" | "value">,
@@ -1197,24 +1229,8 @@ describe("buildTransactionHistory", () => {
                 }),
             ];
 
-            /** The covenant coin, spent by whichever leg closes the offer. */
-            const closedBy = (txid: string) => {
-                const [walletCoin, covenant, change] = funding();
-                return [
-                    walletCoin,
-                    { ...covenant, isSpent: true, spentBy: checkpointOf(txid), arkTxId: txid },
-                    change,
-                ];
-            };
-
             it("records the deposit as a send once the covenant is funded", async () => {
-                const txs = await buildTransactionHistory(
-                    funding(),
-                    [],
-                    new Set(),
-                    undefined,
-                    gate(offerContract()),
-                );
+                const txs = await history(funding());
 
                 const sent = sentFor(txs, fundingTxid);
                 expect(sent).toHaveLength(1);
@@ -1227,21 +1243,15 @@ describe("buildTransactionHistory", () => {
             });
 
             it("records the solver's fill as a receive of the bought asset", async () => {
-                const txs = await buildTransactionHistory(
-                    [
-                        ...closedBy(fillTxid),
-                        coin({
-                            txid: fillTxid,
-                            value: 330,
-                            createdAt: at(2_000),
-                            assets: [{ assetId: assetX, amount: 5_000n }],
-                        }),
-                    ],
-                    [],
-                    new Set(),
-                    undefined,
-                    gate(offerContract()),
-                );
+                const txs = await history([
+                    ...closedBy(funding(), fillTxid),
+                    coin({
+                        txid: fillTxid,
+                        value: 330,
+                        createdAt: at(2_000),
+                        assets: [{ assetId: assetX, amount: 5_000n }],
+                    }),
+                ]);
 
                 // The escrow leaving is not a second send: it was already sent.
                 const sent = sentOf(txs);
@@ -1257,16 +1267,10 @@ describe("buildTransactionHistory", () => {
             });
 
             it("records a cancel as the deposit coming back", async () => {
-                const txs = await buildTransactionHistory(
-                    [
-                        ...closedBy(cancelTxid),
-                        coin({ txid: cancelTxid, value: 6_000, createdAt: at(2_000) }),
-                    ],
-                    [],
-                    new Set(),
-                    undefined,
-                    gate(offerContract()),
-                );
+                const txs = await history([
+                    ...closedBy(funding(), cancelTxid),
+                    coin({ txid: cancelTxid, value: 6_000, createdAt: at(2_000) }),
+                ]);
 
                 const sent = sentOf(txs);
                 expect(sent).toHaveLength(1);
@@ -1283,7 +1287,7 @@ describe("buildTransactionHistory", () => {
                 // no gate the covenant output is change, so `spentAmount -
                 // changeAmount` is 0, no assets move, and the ghost-row guard
                 // drops the only record the swap would have had.
-                const txs = await buildTransactionHistory(funding(), [], new Set());
+                const txs = await ungatedHistory(funding());
                 expect(sentOf(txs)).toHaveLength(0);
                 expect(rowsFor(txs, fundingTxid)).toHaveLength(0);
             });
@@ -1317,22 +1321,8 @@ describe("buildTransactionHistory", () => {
                 }),
             ];
 
-            const closedBy = (txid: string) => {
-                const [walletCoin, covenant] = funding();
-                return [
-                    walletCoin,
-                    { ...covenant, isSpent: true, spentBy: checkpointOf(txid), arkTxId: txid },
-                ];
-            };
-
             it("records the deposited units on the funding send", async () => {
-                const txs = await buildTransactionHistory(
-                    funding(),
-                    [],
-                    new Set(),
-                    undefined,
-                    gate(offerContract()),
-                );
+                const txs = await history(funding());
 
                 const sent = sentFor(txs, fundingTxid);
                 expect(sent).toHaveLength(1);
@@ -1344,37 +1334,31 @@ describe("buildTransactionHistory", () => {
             });
 
             it("leaves units that stayed behind out of the funding send", async () => {
-                const txs = await buildTransactionHistory(
-                    [
-                        coin({
-                            txid: "wallet-coin-asset-partial",
-                            value: 800,
-                            isSpent: true,
-                            spentBy: checkpointOf(fundingTxid),
-                            arkTxId: fundingTxid,
-                            assets: [{ assetId: assetX, amount: 1_000n }],
-                        }),
-                        coin({
-                            txid: fundingTxid,
-                            vout: 0,
-                            value: 300,
-                            script: covenantScript,
-                            createdAt: at(1_000),
-                            assets: [{ assetId: assetX, amount: 600n }],
-                        }),
-                        coin({
-                            txid: fundingTxid,
-                            vout: 1,
-                            value: 500,
-                            createdAt: at(1_000),
-                            assets: [{ assetId: assetX, amount: 400n }],
-                        }),
-                    ],
-                    [],
-                    new Set(),
-                    undefined,
-                    gate(offerContract()),
-                );
+                const txs = await history([
+                    coin({
+                        txid: "wallet-coin-asset-partial",
+                        value: 800,
+                        isSpent: true,
+                        spentBy: checkpointOf(fundingTxid),
+                        arkTxId: fundingTxid,
+                        assets: [{ assetId: assetX, amount: 1_000n }],
+                    }),
+                    coin({
+                        txid: fundingTxid,
+                        vout: 0,
+                        value: 300,
+                        script: covenantScript,
+                        createdAt: at(1_000),
+                        assets: [{ assetId: assetX, amount: 600n }],
+                    }),
+                    coin({
+                        txid: fundingTxid,
+                        vout: 1,
+                        value: 500,
+                        createdAt: at(1_000),
+                        assets: [{ assetId: assetX, amount: 400n }],
+                    }),
+                ]);
 
                 const sent = sentFor(txs, fundingTxid);
                 expect(sent).toHaveLength(1);
@@ -1384,16 +1368,10 @@ describe("buildTransactionHistory", () => {
             });
 
             it("records the fill as a receive of the sats the solver paid", async () => {
-                const txs = await buildTransactionHistory(
-                    [
-                        ...closedBy(fillTxid),
-                        coin({ txid: fillTxid, value: 9_000, createdAt: at(2_000) }),
-                    ],
-                    [],
-                    new Set(),
-                    undefined,
-                    gate(offerContract()),
-                );
+                const txs = await history([
+                    ...closedBy(funding(), fillTxid),
+                    coin({ txid: fillTxid, value: 9_000, createdAt: at(2_000) }),
+                ]);
 
                 const received = receivedFor(txs, fillTxid);
                 expect(received).toHaveLength(1);
@@ -1409,21 +1387,15 @@ describe("buildTransactionHistory", () => {
             });
 
             it("records a cancel as every unit coming back", async () => {
-                const txs = await buildTransactionHistory(
-                    [
-                        ...closedBy(cancelTxid),
-                        coin({
-                            txid: cancelTxid,
-                            value: 500,
-                            createdAt: at(2_000),
-                            assets: [{ assetId: assetX, amount: 1_000n }],
-                        }),
-                    ],
-                    [],
-                    new Set(),
-                    undefined,
-                    gate(offerContract()),
-                );
+                const txs = await history([
+                    ...closedBy(funding(), cancelTxid),
+                    coin({
+                        txid: cancelTxid,
+                        value: 500,
+                        createdAt: at(2_000),
+                        assets: [{ assetId: assetX, amount: 1_000n }],
+                    }),
+                ]);
 
                 const received = receivedFor(txs, cancelTxid);
                 expect(received).toHaveLength(1);
@@ -1435,7 +1407,7 @@ describe("buildTransactionHistory", () => {
             it("reports nothing at all with the covenant left in the wallet's set", async () => {
                 // The worse half of the defect: the movement is entirely
                 // asset-side, so both the sats and the units cancel.
-                const txs = await buildTransactionHistory(funding(), [], new Set());
+                const txs = await ungatedHistory(funding());
                 expect(sentOf(txs)).toHaveLength(0);
                 expect(rowsFor(txs, fundingTxid)).toHaveLength(0);
             });
@@ -1447,13 +1419,7 @@ describe("buildTransactionHistory", () => {
                 // back to the input coin's timestamp — which would be a month
                 // stale here — nor pay for a round-trip to learn it.
                 const resolveTxCreatedAt = vi.fn(async () => new Map<string, number>());
-                const txs = await buildTransactionHistory(
-                    funding(),
-                    [],
-                    new Set(),
-                    resolveTxCreatedAt,
-                    gate(offerContract()),
-                );
+                const txs = await history(funding(), offerContract(), resolveTxCreatedAt);
 
                 expect(resolveTxCreatedAt).not.toHaveBeenCalled();
                 expect(sentFor(txs, fundingTxid)[0].createdAt).toBe(at(1_000).getTime());
@@ -1478,14 +1444,8 @@ describe("buildTransactionHistory", () => {
                     metadata: { genericallySpendable: true, kind: "asset-swap-offer" },
                 });
 
-                expect(gate(marked).size).toBe(0);
-                const kept = await buildTransactionHistory(
-                    deposit,
-                    [],
-                    new Set(),
-                    undefined,
-                    gate(marked),
-                );
+                expect(gatedContracts([marked]).size).toBe(0);
+                const kept = await history(deposit, marked);
                 expect(kept).toHaveLength(1);
                 expect(kept[0].type).toBe(TxType.TxReceived);
                 expect(kept[0].amount).toBe(7_000);
@@ -1494,51 +1454,37 @@ describe("buildTransactionHistory", () => {
                 // no row. This is the gate's reach beyond swaps — any default-
                 // closed `arkade` row funded from outside the wallet loses the
                 // receive it used to report.
-                expect(gate(offerContract()).get(covenantScript)).toBe("arkade");
-                expect(
-                    await buildTransactionHistory(
-                        deposit,
-                        [],
-                        new Set(),
-                        undefined,
-                        gate(offerContract()),
-                    ),
-                ).toHaveLength(0);
+                expect(gatedContracts([offerContract()]).get(covenantScript)).toBe("arkade");
+                expect(await history(deposit)).toHaveLength(0);
             });
 
             it("leaves an ordinary payment made while an offer is live alone", async () => {
                 const paymentTxid = "ordinary-payment-tx";
-                const txs = await buildTransactionHistory(
-                    [
-                        coin({
-                            txid: "wallet-coin-ordinary",
-                            value: 10_000,
-                            isSpent: true,
-                            spentBy: checkpointOf(paymentTxid),
-                            arkTxId: paymentTxid,
-                        }),
-                        // What the stranger got is not in the wallet's set; the
-                        // change is.
-                        coin({
-                            txid: paymentTxid,
-                            vout: 1,
-                            value: 3_000,
-                            createdAt: at(1_000),
-                        }),
-                        // A funded covenant sits in the same history and must
-                        // not colour a payment it has nothing to do with.
-                        coin({
-                            txid: "unrelated-funding-tx",
-                            value: 6_000,
-                            script: covenantScript,
-                            createdAt: at(500),
-                        }),
-                    ],
-                    [],
-                    new Set(),
-                    undefined,
-                    gate(offerContract()),
-                );
+                const txs = await history([
+                    coin({
+                        txid: "wallet-coin-ordinary",
+                        value: 10_000,
+                        isSpent: true,
+                        spentBy: checkpointOf(paymentTxid),
+                        arkTxId: paymentTxid,
+                    }),
+                    // What the stranger got is not in the wallet's set; the
+                    // change is.
+                    coin({
+                        txid: paymentTxid,
+                        vout: 1,
+                        value: 3_000,
+                        createdAt: at(1_000),
+                    }),
+                    // A funded covenant sits in the same history and must
+                    // not colour a payment it has nothing to do with.
+                    coin({
+                        txid: "unrelated-funding-tx",
+                        value: 6_000,
+                        script: covenantScript,
+                        createdAt: at(500),
+                    }),
+                ]);
 
                 const sent = sentFor(txs, paymentTxid);
                 expect(sent).toHaveLength(1);
@@ -1554,22 +1500,16 @@ describe("buildTransactionHistory", () => {
                     return rest as VirtualCoin;
                 };
 
-                const txs = await buildTransactionHistory(
-                    [
-                        scriptless({
-                            txid: "scriptless-spent",
-                            value: 1_000,
-                            isSpent: true,
-                            spentBy: checkpointOf("scriptless-tx"),
-                            arkTxId: "scriptless-tx",
-                        }),
-                        scriptless({ txid: "scriptless-tx", value: 400, createdAt: at(1_000) }),
-                    ],
-                    [],
-                    new Set(),
-                    undefined,
-                    gate(offerContract()),
-                );
+                const txs = await history([
+                    scriptless({
+                        txid: "scriptless-spent",
+                        value: 1_000,
+                        isSpent: true,
+                        spentBy: checkpointOf("scriptless-tx"),
+                        arkTxId: "scriptless-tx",
+                    }),
+                    scriptless({ txid: "scriptless-tx", value: 400, createdAt: at(1_000) }),
+                ]);
 
                 // No script means no contract row to judge the coin by, so it is
                 // the wallet's own and the ordinary send stands.
@@ -1581,22 +1521,16 @@ describe("buildTransactionHistory", () => {
 
             it("still records no ghost row for a signer-rotation self-transfer", async () => {
                 const arkTxId = "gated-migration-ark-tx";
-                const txs = await buildTransactionHistory(
-                    [
-                        coin({
-                            txid: "old-signer-coin",
-                            value: 184_875,
-                            isSpent: true,
-                            spentBy: checkpointOf(arkTxId),
-                            arkTxId,
-                        }),
-                        coin({ txid: arkTxId, value: 184_875, createdAt: at(1_000) }),
-                    ],
-                    [],
-                    new Set(),
-                    undefined,
-                    gate(offerContract()),
-                );
+                const txs = await history([
+                    coin({
+                        txid: "old-signer-coin",
+                        value: 184_875,
+                        isSpent: true,
+                        spentBy: checkpointOf(arkTxId),
+                        arkTxId,
+                    }),
+                    coin({ txid: arkTxId, value: 184_875, createdAt: at(1_000) }),
+                ]);
 
                 expect(sentOf(txs)).toHaveLength(0);
                 expect(rowsFor(txs, arkTxId)).toHaveLength(0);
@@ -1610,30 +1544,24 @@ describe("buildTransactionHistory", () => {
             ] as const)(
                 "still records %s as a zero-sat asset row",
                 async (_name, arkTxId, spentUnits, changeUnits, expected) => {
-                    const txs = await buildTransactionHistory(
-                        [
-                            coin({
-                                txid: `${arkTxId}-input`,
-                                value: 1_000,
-                                isSpent: true,
-                                spentBy: checkpointOf(arkTxId),
-                                arkTxId,
-                                ...(spentUnits > 0n && {
-                                    assets: [{ assetId: assetX, amount: spentUnits }],
-                                }),
+                    const txs = await history([
+                        coin({
+                            txid: `${arkTxId}-input`,
+                            value: 1_000,
+                            isSpent: true,
+                            spentBy: checkpointOf(arkTxId),
+                            arkTxId,
+                            ...(spentUnits > 0n && {
+                                assets: [{ assetId: assetX, amount: spentUnits }],
                             }),
-                            coin({
-                                txid: arkTxId,
-                                value: 1_000,
-                                createdAt: at(1_000),
-                                assets: [{ assetId: assetX, amount: changeUnits }],
-                            }),
-                        ],
-                        [],
-                        new Set(),
-                        undefined,
-                        gate(offerContract()),
-                    );
+                        }),
+                        coin({
+                            txid: arkTxId,
+                            value: 1_000,
+                            createdAt: at(1_000),
+                            assets: [{ assetId: assetX, amount: changeUnits }],
+                        }),
+                    ]);
 
                     const sent = sentFor(txs, arkTxId);
                     expect(sent).toHaveLength(1);
@@ -1644,7 +1572,6 @@ describe("buildTransactionHistory", () => {
             );
         });
     });
-
     describe("Handles real-life histories correctly", () => {
         transactionHistory.forEach(
             ({

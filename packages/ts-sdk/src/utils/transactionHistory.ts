@@ -30,14 +30,9 @@ function gatedTouchpoints(gated: readonly NormalizedVirtualCoin[]): {
     const paidIn = new Map<string, number>();
     const paidOut = new Set<string>();
     for (const vtxo of gated) {
-        if (vtxo.txid) {
-            const createdAt = vtxo.createdAt.getTime();
-            const known = paidIn.get(vtxo.txid);
-            // Outputs of one transaction share a creation time; taking the
-            // earliest keeps the answer independent of iteration order if a
-            // backend ever hands back two that disagree.
-            if (known === undefined || createdAt < known) paidIn.set(vtxo.txid, createdAt);
-        }
+        // First write wins: the caller passes these in `createdAt` order, and
+        // outputs of one transaction share a creation time anyway.
+        if (vtxo.txid && !paidIn.has(vtxo.txid)) paidIn.set(vtxo.txid, vtxo.createdAt.getTime());
         if (vtxo.isSpent && vtxo.arkTxId) paidOut.add(vtxo.arkTxId);
     }
     return { paidIn, paidOut };

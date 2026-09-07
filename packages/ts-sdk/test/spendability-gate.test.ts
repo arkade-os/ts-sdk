@@ -167,6 +167,7 @@ async function seededWallet(opts?: {
     return { wallet, defaultScript, walletRepository, contractRepository };
 }
 
+const amountsOf = (txs: { amount: number }[]) => txs.map((t) => t.amount).sort((a, b) => a - b);
 const scriptsOf = (vtxos: { script: string }[]) => vtxos.map((v) => v.script).sort();
 const txidsOf = (vtxos: { txid: string }[]) => vtxos.map((v) => v.txid).sort();
 
@@ -580,7 +581,7 @@ describe("gated reads stay ungated (D1b/D1d)", () => {
         // Only the two coins generic spending may touch: the wallet's own, and
         // the `arkade` row marked `genericallySpendable`. The unmarked escrow
         // and the unregistered type are both default-closed.
-        expect(history.map((tx) => tx.amount).sort((a, b) => a - b)).toEqual([10_000, 40_000]);
+        expect(amountsOf(history)).toEqual([10_000, 40_000]);
         expect(scriptsOf(await wallet.getVtxos())).toContain(ESCROW_SCRIPT);
         expect(defaultScript).not.toBe(ESCROW_SCRIPT);
     });
@@ -958,7 +959,10 @@ describe("main-thread / worker balance parity", () => {
      * because it is bounded and self-inflicted — such a spend is doomed at the
      * server, and the wedge lasts until it rejects.
      */
-    const workerBalance = async (seeded: Awaited<ReturnType<typeof seededWallet>>) => {
+    const workerRequest = async (
+        seeded: Awaited<ReturnType<typeof seededWallet>>,
+        type: "GET_BALANCE" | "GET_TRANSACTION_HISTORY",
+    ) => {
         // Same wallet, same repository as the main-thread read — two stubs
         // would agree with each other and prove nothing.
         const handler = new WalletMessageHandler();
@@ -970,11 +974,14 @@ describe("main-thread / worker balance parity", () => {
         const response = await handler.handleMessage({
             id: "1",
             tag: DEFAULT_MESSAGE_TAG,
-            type: "GET_BALANCE",
+            type,
         } as any);
         expect(response.error).toBeUndefined();
-        return (response as any).payload as Awaited<ReturnType<Wallet["getBalance"]>>;
+        return (response as any).payload;
     };
+
+    const workerBalance = async (seeded: Awaited<ReturnType<typeof seededWallet>>) =>
+        (await workerRequest(seeded, "GET_BALANCE")) as Awaited<ReturnType<Wallet["getBalance"]>>;
 
     it("reports the same unrolled bucket on both sides of the bus", async () => {
         const seeded = await seededWallet();
@@ -1024,27 +1031,13 @@ describe("main-thread / worker balance parity", () => {
         const seeded = await seededWallet();
 
         const main = await seeded.wallet.getTransactionHistory();
-        const handler = new WalletMessageHandler();
-        (handler as any).readonlyWallet = seeded.wallet;
-        (handler as any).walletRepository = seeded.walletRepository;
-        (handler as any).indexerProvider = offlineIndexer();
-        (handler as any).arkProvider = {};
-        const response = await handler.handleMessage({
-            id: "1",
-            tag: DEFAULT_MESSAGE_TAG,
-            type: "GET_TRANSACTION_HISTORY",
-        } as any);
-        expect(response.error).toBeUndefined();
-        const worker = (response as any).payload.transactions as Awaited<
-            ReturnType<Wallet["getTransactionHistory"]>
-        >;
+        const worker = (await workerRequest(seeded, "GET_TRANSACTION_HISTORY"))
+            .transactions as Awaited<ReturnType<Wallet["getTransactionHistory"]>>;
 
-        const amounts = (txs: { amount: number }[]) =>
-            txs.map((t) => t.amount).sort((a, b) => a - b);
         // Non-empty first: two paths both reporting nothing must not pass as
         // parity. The escrowed 10_000 and the unregistered-type 10_000 are the
         // two the gate removes.
-        expect(amounts(main)).toEqual([10_000, 40_000]);
-        expect(amounts(worker)).toEqual(amounts(main));
+        expect(amountsOf(main)).toEqual([10_000, 40_000]);
+        expect(amountsOf(worker)).toEqual(amountsOf(main));
     });
 });

@@ -176,6 +176,8 @@ import { CandidateDeps, Contract, ContractWithVtxos, DiscoveryDeps } from "../co
 import {
     gateExclusion,
     gatedContracts,
+    gatedFrom,
+    isGatedVtxo,
     logExcludedVtxos,
     outpointExclusion,
     type VtxoExclusion,
@@ -1284,7 +1286,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const vtxos = filterSnapshotVtxos(snapshot, filter, this._pendingSpendOutpoints);
         const { gated, pendingRecovery } = this.spendabilityView(snapshot);
         const selectable = vtxos.filter(
-            (vtxo) => !gated.has(vtxo.script) && !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
+            (vtxo) =>
+                !isGatedVtxo(vtxo, gated) && !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
         );
         const unlocked = await spendableVtxosExcludingLocked(selectable, this.intentRepository);
         logExcludedVtxos("getSpendableVtxos", vtxos, [
@@ -1415,7 +1418,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         pendingRecovery: ReadonlySet<string>;
     } {
         return {
-            gated: gatedContracts(snapshot.map((_) => _.contract)),
+            gated: gatedFrom(snapshot),
             pendingRecovery: this.selectPendingRecovery(snapshot),
         };
     }
@@ -1435,7 +1438,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return {
             now: { timestamp: new Date() },
             isPendingRecovery: (vtxo) => pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
-            isGenericallySpendable: (vtxo) => !gated.has(vtxo.script),
+            isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
         };
     }
@@ -1479,29 +1482,28 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Return wallet transaction history derived from Arkade state and boarding transactions.
      */
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const snapshot = await this.contractSnapshot();
+        // Independent: one syncs against the indexer, the other reads the
+        // onchain provider. `getBalance` pairs its two reads the same way.
+        const [snapshot, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
+            this.contractSnapshot(),
+            this.getBoardingTxs(),
+        ]);
         const allVtxos = snapshot.flatMap((_) => _.vtxos);
-
-        const { boardingTxs, commitmentsToIgnore } = await this.getBoardingTxs();
 
         // Best-effort: a retryable indexer failure yields a partial map, not a
         // failed read; terminal failures still propagate.
         const resolveTxCreatedAt = (txids: string[]) =>
             fetchVtxoCreatedAtByTxid(this.indexerProvider, txids);
 
-        // `getBalance`'s gate, built the same way off one snapshot: an escrowed
-        // contract's coins are not the wallet's own money, so history must not
-        // read them as change. Without it a swap deposit and its covenant output
-        // cancel to zero and the whole movement disappears. Balance withholds
-        // such a coin from `available` but still counts it in `total`; history
-        // drops it from the ledger, because the movement it reports is the one
-        // facing the escrow, not the escrow itself.
+        // The gate off the same snapshot the coins came from, so both answer
+        // about one instant — see `buildTransactionHistory`'s `gatedScripts` for
+        // why history needs it at all.
         return buildTransactionHistory(
             allVtxos,
             boardingTxs,
             commitmentsToIgnore,
             resolveTxCreatedAt,
-            gatedContracts(snapshot.map((_) => _.contract)),
+            gatedFrom(snapshot),
         );
     }
 

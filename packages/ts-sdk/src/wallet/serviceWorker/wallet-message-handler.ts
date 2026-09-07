@@ -50,7 +50,7 @@ import {
 } from "../wallet";
 import { computeOffchainBalance } from "../balance";
 import { isHDAllocationCapable, isHDWalletCapable } from "../hdWalletCapable";
-import { gatedContracts } from "../../contracts/spendability";
+import { gatedFrom, isGatedVtxo } from "../../contracts/spendability";
 import type {
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,
@@ -1650,7 +1650,7 @@ export class WalletMessageHandler
             }
         }
 
-        const gated = gatedContracts(snapshot.map((_) => _.contract));
+        const gated = gatedFrom(snapshot);
         const unlocked = new Set(
             (
                 await spendableVtxosExcludingLocked(allVtxos, this.readonlyWallet?.intentRepository)
@@ -1662,7 +1662,7 @@ export class WalletMessageHandler
         const offchain = computeOffchainBalance(allVtxos, {
             now: { timestamp: new Date() },
             isPendingRecovery: (vtxo) => pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
-            isGenericallySpendable: (vtxo) => !gated.has(vtxo.script),
+            isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
         });
 
@@ -2157,27 +2157,29 @@ export class WalletMessageHandler
     private async buildTransactionHistoryFromCache(): Promise<ArkTransaction[] | null> {
         if (!this.readonlyWallet) return null;
 
-        const { snapshot, vtxos } = await this.repoSnapshot();
-
-        const { boardingTxs, commitmentsToIgnore } = await this.readonlyWallet.getBoardingTxs();
+        // Independent halves — repository rows here, the onchain provider
+        // there — so they run together, as `handleGetBalance` already runs its
+        // own pair.
+        const [{ snapshot, vtxos }, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
+            this.repoSnapshot(),
+            this.readonlyWallet.getBoardingTxs(),
+        ]);
 
         const indexerProvider = this.indexerProvider;
         const resolveTxCreatedAt = indexerProvider
             ? (txids: string[]) => fetchVtxoCreatedAtByTxid(indexerProvider, txids)
             : undefined;
 
-        // The gate `handleGetBalance` builds off this same snapshot, for the
-        // same reason: an escrowed contract's coins are not the wallet's own,
-        // so history must not read them as change. `ReadonlyWallet` derives the
-        // identical expression from its own snapshot, so the two sides of the
-        // bus classify a coin the same way — they still differ in freshness, as
-        // the balance reads do, because this snapshot never syncs.
+        // Same gate `handleGetBalance` builds, off the same kind of snapshot as
+        // `ReadonlyWallet`'s, so both sides of the bus classify a coin alike —
+        // still differing in freshness, as the balance reads do, because this
+        // snapshot never syncs.
         return buildTransactionHistory(
             vtxos,
             boardingTxs,
             commitmentsToIgnore,
             resolveTxCreatedAt,
-            gatedContracts(snapshot.map((_) => _.contract)),
+            gatedFrom(snapshot),
         );
     }
 

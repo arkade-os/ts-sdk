@@ -26,6 +26,15 @@ export function gatedContracts(contracts: readonly Contract[]): Map<string, stri
     return gated;
 }
 
+/**
+ * {@link gatedContracts} over the contract+VTXO snapshot every read path
+ * actually holds, so the four callers that need the gate do not keep
+ * `gatedContracts(snapshot.map((_) => _.contract))` in step by hand.
+ */
+export function gatedFrom(snapshot: readonly { contract: Contract }[]): Map<string, string> {
+    return gatedContracts(snapshot.map((entry) => entry.contract));
+}
+
 /** The minimum a VTXO must carry to be matched against an exclusion set. */
 export type ExcludableVtxo = { txid: string; vout: number; script?: string };
 
