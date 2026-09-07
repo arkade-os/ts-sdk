@@ -1,6 +1,6 @@
 import { IndexerProvider, SubscriptionResponse } from "../providers/indexer";
 import { VirtualCoin } from "../wallet";
-import { getAllNormalizedVtxos, normalizeVtxo } from "../wallet/vtxo";
+import { getAllNormalizedVtxos, hasTerminalSpend, normalizeVtxo } from "../wallet/vtxo";
 import { extendVirtualCoinForContract } from "../wallet/utils";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
@@ -918,6 +918,17 @@ export class ContractWatcher {
                   : undefined;
             if (!target) {
                 unknownScript++;
+                continue;
+            }
+            // The watch-only baseline has to admit only what the spendable
+            // poll would return, or the next tick reads the difference as a
+            // spend and emits `script_vtxo_spent` for an output nobody spent.
+            // Spend notifications stay unfiltered.
+            if (
+                target === byWatchedScript &&
+                eventType === "vtxo_received" &&
+                (hasTerminalSpend(vtxo) || normalizeVtxo(vtxo).isSwept)
+            ) {
                 continue;
             }
             let bucket = target.get(vtxo.script);

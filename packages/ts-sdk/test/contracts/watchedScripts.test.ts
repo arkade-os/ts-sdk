@@ -156,6 +156,34 @@ describe("ContractWatcher watch-only scripts", () => {
         await watcher.stopWatching();
     });
 
+    // Admitting one would make the next spendable-only poll read its absence
+    // as a spend and emit `script_vtxo_spent` for an output nobody spent.
+    it("keeps an already-spent subscription output out of the watch-only baseline", async () => {
+        vi.useFakeTimers();
+
+        const dead = createMockVtxo({ script: FOREIGN_SCRIPT, value: 1500, isSpent: true });
+        (mockIndexer.getSubscription as any).mockImplementation(
+            subscriptionYielding([{ newVtxos: [dead] }]),
+        );
+
+        const callback = vi.fn();
+        await watcher.addWatchedScript(FOREIGN_SCRIPT);
+        await watcher.startWatching(callback);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(callback).not.toHaveBeenCalledWith(
+            expect.objectContaining({ type: "script_vtxo_received" }),
+        );
+
+        // And no phantom spend on the next poll, since it never entered.
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(callback).not.toHaveBeenCalledWith(
+            expect.objectContaining({ type: "script_vtxo_spent" }),
+        );
+
+        await watcher.stopWatching();
+    });
+
     it("fails closed when the indexer rejects: no event, state preserved", async () => {
         vi.useFakeTimers();
 
