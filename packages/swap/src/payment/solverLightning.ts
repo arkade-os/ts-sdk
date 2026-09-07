@@ -11,14 +11,19 @@ import { assertNoAssets, assetsOf, invoiceTarget, makeHandle } from "@arkade-os/
 import { assertFundable, requestLightningSend, type InvoiceFacts, type RfqTransport } from "../rfq";
 import { solverRendezvous, type SolverRendezvous } from "./rendezvous";
 
+/** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const SOLVER_LIGHTNING_RAIL = "solver-lightning";
 
+/** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export type SolverLightningSend = Awaited<ReturnType<typeof requestLightningSend>> & {
     invoice: InvoiceFacts;
     rendezvous: SolverRendezvous;
 };
 
-/** Mirrors {@link SolverOnchainRailDeps}; see there for the shared seams. */
+/** Mirrors {@link SolverOnchainRailDeps}; see there for the shared seams.
+ *
+ * @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export interface SolverLightningRailDeps {
     /** A decoder that throws drops the rail rather than taking the router
      *  down — correct, since an undecodable invoice cannot be paid. */
@@ -56,6 +61,7 @@ const factsOf = (
     return facts;
 };
 
+/** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const solverLightningRendezvous = (
     markets: DiscoveredMarket[],
     amountSats: number,
@@ -63,6 +69,7 @@ export const solverLightningRendezvous = (
 ): SolverRendezvous | undefined =>
     solverRendezvous(markets, "lightning", amountSats, fallbackEmulatorPubkey);
 
+/** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export function solverLightningRail(deps: SolverLightningRailDeps): PaymentRail {
     const rendezvousFor = async (amountSats: number): Promise<SolverRendezvous | undefined> =>
         solverLightningRendezvous(await deps.discover(), amountSats, deps.fallbackEmulatorPubkey);

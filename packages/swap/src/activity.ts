@@ -24,6 +24,8 @@ import { normalizeRfqSwapRecord, type RfqSwapRecord } from "./rfqRecord";
  * testable with plain data rather than a repository. {@link rfqSwapActivityInputs}
  * derives these from the record store and, where a record cannot answer, the
  * funding lockup's VTXOs.
+ *
+ * @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface SwapActivityInput {
     rfqId: string;
@@ -73,6 +75,8 @@ const outcomeToken = (kind: SwapActivityInput["kind"], state: RfqSwapState): str
  *
  * `prepare` loads once and `resolve` stays pure and synchronous, as the SDK's
  * `ActivityResolver` contract requires.
+ *
+ * @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function swapActivityResolver(deps: {
     listSwaps(): Promise<readonly SwapActivityInput[]>;
@@ -113,6 +117,7 @@ export function swapActivityResolver(deps: {
     };
 }
 
+/** @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface RfqSwapActivityDeps {
     repository: Pick<AssetSwapRepository, "getAllRfqSwaps">;
     /**
@@ -139,6 +144,8 @@ export interface RfqSwapActivityDeps {
  * A missing txid costs an activity a row, never a wrong one: a swap that
  * contributes fewer txids simply leaves those transactions ungrouped, which is
  * what they already are.
+ *
+ * @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function rfqSwapActivityInputs(
     deps: RfqSwapActivityDeps,

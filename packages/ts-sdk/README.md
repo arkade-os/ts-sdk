@@ -1170,7 +1170,7 @@ The `StorageAdapter` API is deprecated. Use repositories instead. If you omit `s
 
 #### Repository Versioning
 
-`WalletRepository`, `ContractRepository`, and `SwapRepository` (in
+`WalletRepository`, `ContractRepository`, and `AssetSwapRepository` (in
 `@arkade-os/swap`) each declare a `readonly version` field with a literal
 type. All built-in implementations set this to the current version. If you
 maintain a custom repository implementation, TypeScript will produce a compile

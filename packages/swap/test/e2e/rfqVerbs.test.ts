@@ -47,17 +47,17 @@ import {
     lightningSendContract,
     unilateralClaimDelay,
     type RfqQuote,
+} from "../../src/protocol";
+import {
+    type AttestingRfqTransport,
+    btcOn,
+    createSwapClient,
+    createSwapPaymentRouter,
+    InMemoryAssetSwapRepository,
+    LIGHTNING_RAIL,
+    type SwapClient,
+    quoteIdOfSwapId,
 } from "../../src";
-// The v2 client is still internal to the package — `src/index.ts` exports the
-// v1 facade under the same name — so it is imported by path, as the unit suite
-// does. M8 is what slims the root export to the v2 surface.
-import { createSwapClient, type SwapClient } from "../../src/client/client";
-import { quoteIdOfSwapId } from "../../src/client/record";
-import { btcOn } from "../../src/client/assetId";
-import type { AttestingRfqTransport } from "../../src/client/transport";
-import { InMemoryAssetSwapRepository } from "../../src/repository";
-import { LIGHTNING_RAIL } from "../../src/payment/lightning";
-import { createSwapPaymentRouter } from "../../src/payment/router";
 import { encodeInvoice } from "../helpers/bolt11";
 
 const OPERATOR_URL = "http://localhost:7070";

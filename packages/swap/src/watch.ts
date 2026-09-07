@@ -133,12 +133,16 @@ export function spendUpdate(
 }
 
 /** A running watcher. `idle()` exists because the writes are async: shutdown
- * and tests both need to know when in-flight updates have settled. */
+ * and tests both need to know when in-flight updates have settled.
+ *
+ * @deprecated The drive watches; subscribe with `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export interface OfferSwapWatcher {
     stop(): void;
     idle(): Promise<void>;
 }
 
+/** @deprecated The drive watches; subscribe with `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface WatchOfferSwapsParams<S extends OfferSwapFacts = OfferSwapFacts> {
     wallet: IWallet;
     /** v1's record source. Ignored when {@link source} is given. */
@@ -160,17 +164,21 @@ export interface WatchOfferSwapsParams<S extends OfferSwapFacts = OfferSwapFacts
  * This depends on the wallet's contract event transport. In Node, callers must
  * provide an `EventSource` implementation or use a runtime where it is enabled;
  * otherwise live updates do not arrive and restore remains the fallback.
+ *
+ * @deprecated The drive watches; subscribe with `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function watchOfferSwaps(params: {
     wallet: IWallet;
     repository: AssetSwapRepository;
     onUpdate?: (swap: AssetSwap) => void;
 }): Promise<OfferSwapWatcher>;
+/** @deprecated The drive watches; subscribe with `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export async function watchOfferSwaps<S extends OfferSwapFacts>(params: {
     wallet: IWallet;
     source: OfferSwapSource<S>;
     onUpdate?: (swap: S) => void;
 }): Promise<OfferSwapWatcher>;
+/** @deprecated The drive watches; subscribe with `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export async function watchOfferSwaps<S extends OfferSwapFacts>({
     wallet,
     repository,

@@ -97,10 +97,15 @@ const solverHex = (value: string, field: string): Uint8Array => {
 
 // ── Pairs ────────────────────────────────────────────────────────────────────
 
-/** Legs are `<corridor>:<asset>`; a pair is directional, `from->to`. */
+/** Legs are `<corridor>:<asset>`; a pair is directional, `from->to`.
+ *
+ * @deprecated An RFQ pair leg, not an asset id — the client builds the pair from the route. The v2 asset id is `btcOn("arkade", network)`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const ARKADE_BTC = "arkade:BTC";
+/** @deprecated An RFQ pair leg, not an asset id — the client builds the pair from the route. The v2 asset id is `btcOn("bolt11", network)`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const LIGHTNING_BTC = "lightning:BTC";
 
+/** @deprecated An RFQ pair leg, not an asset id — the client builds the pair from the route. The v2 asset id is `btcOn("bitcoin", network)`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const ONCHAIN_BTC = "onchain:BTC";
 
 /** The arkade leg for an asset: the asset id itself, 68 lowercase hex. The id
@@ -112,7 +117,10 @@ export const ONCHAIN_BTC = "onchain:BTC";
  * `hex.decode` accepts uppercase while `hex.encode` only emits lowercase, so a
  * value that reached us as `A1B2…` leaves here as `a1b2…`. Solvers compare pair
  * strings byte for byte — a sender that normalised only in its key derivation
- * would reach the right subscription and then be skipped as an unserved pair. */
+ * would reach the right subscription and then be skipped as an unserved pair.
+ *
+ * @deprecated An RFQ pair leg, not an asset id — the client builds the pair from the route. The v2 asset id is `arkadeAsset(network, id)`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const arkadeAssetLeg = (id: asset.AssetId): string => `arkade:${id.toString()}`;
 
 /** @deprecated The coarse asset leg. No solver serves it: `ASSET` is neither a
@@ -122,18 +130,33 @@ export const ARKADE_ASSET = "arkade:ASSET";
 
 export const rfqPair = (from: string, to: string): string => `${from}->${to}`;
 
-/** The implemented pair: pay a BOLT11 invoice out of an Arkade balance. */
+/** The implemented pair: pay a BOLT11 invoice out of an Arkade balance.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const LIGHTNING_SEND_PAIR = rfqPair(ARKADE_BTC, LIGHTNING_BTC);
-/** On-board via Lightning: pay the solver's hold invoice, land on Arkade. */
+/** On-board via Lightning: pay the solver's hold invoice, land on Arkade.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const LIGHTNING_RECEIVE_PAIR = rfqPair(LIGHTNING_BTC, ARKADE_BTC);
-/** Off-board: Arkade sats out to a Bitcoin-L1 HTLC. */
+/** Off-board: Arkade sats out to a Bitcoin-L1 HTLC.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const ONCHAIN_SEND_PAIR = rfqPair(ARKADE_BTC, ONCHAIN_BTC);
-/** On-board: a Bitcoin-L1 HTLC in, Arkade sats out. */
+/** On-board: a Bitcoin-L1 HTLC in, Arkade sats out.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const ONCHAIN_RECEIVE_PAIR = rfqPair(ONCHAIN_BTC, ARKADE_BTC);
 
 // ── Errors and closed sets ───────────────────────────────────────────────────
 
-/** The closed refusal set. Treat any unknown reason as a generic decline. */
+/** The closed refusal set. Treat any unknown reason as a generic decline.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export type RfqRefusalReason =
     | "unsupported_pair"
     | "unsupported_payload"
@@ -166,6 +189,8 @@ export class SwapRefusal extends Error {
  * The solver's address does not match the local derivation. NEVER fund past
  * this. `derived` is every candidate address tried — more than one when the
  * derivation itself is ambiguous, see {@link verifyLockupAddress}.
+ *
+ * @deprecated Folded into `QuoteVerificationFailed`, which `client.quote()` throws. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export class AddressMismatch extends Error {
     readonly derived: string | string[];
@@ -183,6 +208,7 @@ export class AddressMismatch extends Error {
 /** A fresh client-chosen negotiation id: 32 random bytes, lowercase hex. */
 export const newRfqId = (): string => hex.encode(crypto.getRandomValues(new Uint8Array(32)));
 
+/** @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface RfqQuote {
     v: 1;
     type: "rfq_quote";
@@ -198,6 +224,7 @@ export interface RfqQuote {
     [key: string]: unknown;
 }
 
+/** @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface RfqStatus {
     v: 1;
     type: "rfq_status";
@@ -216,7 +243,10 @@ export interface RfqStatus {
  * script. On the wire it's `client_refund_pubkey` (the payload schemas are
  * public at https://docs.arkadeos.com/intents/reference/rfq — the solver's schema
  * is `.strict()`, so both the wrong name AND the missing required field would
- * refuse every request). */
+ * refuse every request).
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const lightningSendRequest = (input: {
     rfqId: string;
     invoice: string;
@@ -238,7 +268,10 @@ export const lightningSendRequest = (input: {
 /** The rfq_request for an arkade↔arkade swap. Exactly one side may name an
  * asset id per direction (BTC has none), and the id is the leg itself — see
  * {@link arkadeAssetLeg}. Forward-looking: the wire shape is specified, the
- * reference solver does not serve it yet. */
+ * reference solver does not serve it yet.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const arkadeSwapRequest = (input: {
     rfqId: string;
     /** Asset the trader deposits; omit when depositing BTC. */
@@ -369,6 +402,8 @@ export const assertPairLength = (pair: string): void => {
  *
  * Throws {@link AddressMismatch} only when NONE of the candidates match.
  * Returns the address that matched, so calls chain exactly as before.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const verifyLockupAddress = (quote: RfqQuote, derivedAddress: string | string[]): string => {
     const quoted = quote.profile?.lockup_address;
@@ -562,6 +597,7 @@ export const assertFundable = (input: {
 
 // ── Transports ───────────────────────────────────────────────────────────────
 
+/** @deprecated Transport is an inference; `@arkade-os/swap/nostr` stays the hand-built floor. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface RfqTransport {
     requestQuote(payload: Record<string, unknown>): Promise<RfqQuote>;
     status(rfqId: string): Promise<RfqStatus | null>;
@@ -607,7 +643,10 @@ export const pairOf = (payload: Record<string, unknown>): string | undefined =>
     typeof payload.pair === "string" ? payload.pair : undefined;
 
 /** HTTP: POST /v1/swap for quotes, GET /v1/rfq/<rfq_id> for status.
- * `fetchImpl` is injectable for tests and non-global-fetch runtimes. */
+ * `fetchImpl` is injectable for tests and non-global-fetch runtimes.
+ *
+ * @deprecated A dev transport; `client.quote()` opens the card's rendezvous itself. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const httpTransport = (
     baseUrl: string,
     options: { fetchImpl?: typeof fetch } = {},
@@ -658,7 +697,10 @@ export const httpTransport = (
 };
 
 /** Minimal WebSocket surface the relay transport needs — satisfied by the DOM
- * WebSocket and by `ws` alike, so neither becomes a dependency. */
+ * WebSocket and by `ws` alike, so neither becomes a dependency.
+ *
+ * @deprecated A dev transport; `client.quote()` opens the card's rendezvous itself. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export interface RelaySocket {
     send(data: string): void;
     close(): void;
@@ -667,7 +709,10 @@ export interface RelaySocket {
 
 /** Relay: both parties outbound, addressed by x-only pubkey, speaking the dev
  * broker framing. Nostr (directed kind + NIP-44) replaces only this function.
- * One socket; replies correlated by rfq_id. */
+ * One socket; replies correlated by rfq_id.
+ *
+ * @deprecated A dev transport; `client.quote()` opens the card's rendezvous itself. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const relayTransport = (
     relayUrl: string,
     options: {
@@ -793,7 +838,10 @@ export const SOLO_REFUND_HEADROOM_SECONDS = 8 * SEQUENCE_GRANULARITY_SECONDS;
 /** The solver's unilateral-claim delay, derived from the Ark server's reported
  * exit delay exactly as the reference solver derives it — both sides read the
  * SAME server, so the derivation (not a quote field) is what keeps the two
- * scripts identical. */
+ * scripts identical.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const unilateralClaimDelay = (operatorExitDelaySeconds: number): number => {
     if (
         !Number.isFinite(operatorExitDelaySeconds) ||
@@ -823,13 +871,19 @@ export const unilateralClaimDelay = (operatorExitDelaySeconds: number): number =
 /** VHTLC's `unilateralRefund` tier: sender + receiver, no server — LEVEL with
  * `claimDelay`, not above it. Neither party can spend a two-signature leaf
  * alone, so separating it buys no safety, and every second spent separating it
- * is a second taken off the headroom that does matter. */
+ * is a second taken off the headroom that does matter.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const unilateralRefundDelay = (claimDelay: number): number => claimDelay;
 
 /** VHTLC's `unilateralRefundWithoutReceiver` tier: sender alone, needing
  * nobody. The only leaf whose timing can steal — a funder able to refund
  * before the claimant can claim takes money from someone holding the preimage
- * — so it opens last, by {@link SOLO_REFUND_HEADROOM_SECONDS}. */
+ * — so it opens last, by {@link SOLO_REFUND_HEADROOM_SECONDS}.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const unilateralRefundWithoutReceiverDelay = (claimDelay: number): number =>
     claimDelay + SOLO_REFUND_HEADROOM_SECONDS;
 
@@ -849,6 +903,8 @@ export const unilateralRefundWithoutReceiverDelay = (claimDelay: number): number
  * (server + emulator alone, after `refundLocktime` — the only refund tier
  * needing no participant at all). Nine leaves in all, unless `legacy` says
  * otherwise.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function lightningSendContract(params: {
     /** Binding field #1: the solver's x-only key, from the quote. */
@@ -908,11 +964,17 @@ export function lightningSendContract(params: {
 }
 
 /** Every input {@link lightningSendContract} builds from. Derived from the
- * builder rather than restated, so the two cannot drift. */
+ * builder rather than restated, so the two cannot drift.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export type LightningSendContractParams = Parameters<typeof lightningSendContract>[0];
 
 /** The BOLT11 facts the trader read from its OWN decode — this module takes
- * the facts, not the decoder, so any wallet's existing decoder serves. */
+ * the facts, not the decoder, so any wallet's existing decoder serves.
+ *
+ * @deprecated Bolt11 strings at the boundary; `client.quote()` decodes them. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export interface InvoiceFacts {
     /** The raw BOLT11 — what travels in the request profile. */
     raw: string;
@@ -1028,6 +1090,8 @@ export function deriveLightningSend(input: {
  * signer is found again. `nonInteractiveRefund` recovers the funds even
  * without it — but it needs the SOLVER's active cooperation, not just
  * infrastructure uptime.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function requestLightningSend(
     wallet: IWallet,
@@ -1195,7 +1259,10 @@ export const l1NetworkFromArk = (network: string): OnchainNetwork =>
 /** The rfq_request for `arkade:BTC->onchain:BTC`. Exact-out means "this much
  * lands in the L1 HTLC". `senderPubkey` is the user's own key for the
  * VHTLC's sender-side leaves — same role as in {@link lightningSendRequest}.
- * On the wire it's `client_refund_pubkey`, same as there. */
+ * On the wire it's `client_refund_pubkey`, same as there.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const onchainSendRequest = (input: {
     rfqId: string;
     /** `sha256(P)`, hex — user-chosen; see {@link paymentHashOf}. */
@@ -1227,7 +1294,10 @@ export const onchainSendRequest = (input: {
  * `H` plus `P` sealed to covclaimd — the solver never sees `P` until it
  * appears in a claim witness. `payoutPubkey` is the trader's own x-only
  * Arkade key — the covenant's `receiver` role on this leg, so the trader can
- * claim the lockup itself without covclaimd. */
+ * claim the lockup itself without covclaimd.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const lightningReceiveRequest = (input: {
     rfqId: string;
     /** `H = sha256(P)`, hex — trader-chosen; see {@link paymentHashOf}. */
@@ -1259,7 +1329,10 @@ export const lightningReceiveRequest = (input: {
  * (holding its refund role) and receives Arkade; P travels sealed to
  * covclaimd (see `sealClaimPacket`) so the user can go offline after
  * funding. `payoutPubkey` is the trader's own x-only Arkade key — the
- * covenant's `receiver` role, same as the Lightning receive leg's. */
+ * covenant's `receiver` role, same as the Lightning receive leg's.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const onchainReceiveRequest = (input: {
     rfqId: string;
     paymentHash: string;
@@ -1295,6 +1368,8 @@ export const onchainReceiveRequest = (input: {
  * mismatch. Binding: `solver_pubkey`, `refund_locktime`, `htlc_pubkey`,
  * `htlc_locktime`, `min_confirmations`; `lockup_address` and `htlc_address`
  * are compare-only.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function deriveOnchainSend(input: {
     quote: RfqQuote;
@@ -1413,6 +1488,8 @@ export function deriveOnchainSend(input: {
  *   offline: it must claim the L1 HTLC (`awaitOnchainFill` →
  *   `claimOnchainFill`) before `htlc.refundLocktime`. Missing that window
  *   forfeits the fill and falls back to the Arkade covenant refund.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function requestOnchainSend(
     wallet: IWallet,
@@ -1605,6 +1682,8 @@ export const MIN_CLAIM_WINDOW_SECONDS = 30 * 60;
  *
  * Reasons: `invoice_undecodable` | `invoice_hash_mismatch` |
  * `invoice_amount_mismatch` | `quote_malformed`.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const verifyReceiveInvoice = (input: {
     invoice: string;
@@ -1713,7 +1792,10 @@ export const assertReceivable = (input: {
  * `receiver` (it generated `P` and claims the lockup with it), the solver is
  * the `sender` (it funds the lockup and holds the refund recourse). One
  * function shared by both receive corridors, mirroring the send legs' sharing
- * of `lightningSendContract`. */
+ * of `lightningSendContract`.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export function lightningReceiveContract(params: {
     /** Binding field #1: the solver's x-only key, from the quote — VHTLC's
      * `sender` role on the receive corridors. */
@@ -1767,7 +1849,10 @@ export function lightningReceiveContract(params: {
 }
 
 /** Every input {@link lightningReceiveContract} builds from; see
- * {@link LightningSendContractParams}. */
+ * {@link LightningSendContractParams}.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export type LightningReceiveContractParams = Parameters<typeof lightningReceiveContract>[0];
 
 /**
@@ -1777,6 +1862,8 @@ export type LightningReceiveContractParams = Parameters<typeof lightningReceiveC
  * this leg — verification is still what makes paying the hold invoice safe:
  * the lockup the solver will fund must be the tree whose claim paths pay the
  * trader.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function deriveLightningReceive(input: {
     quote: RfqQuote;
@@ -1873,6 +1960,8 @@ export function deriveLightningReceive(input: {
  * nothing publishable comes back from a failed check, registration included.
  * Pay before `invoiceExpiresAt`: the hold-invoice window is minutes, not the
  * quote's `valid_until`.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function requestLightningReceive(
     wallet: IWallet,
@@ -2011,6 +2100,8 @@ export async function requestLightningReceive(
  * funds — and refuse on any mismatch. Binding: `solver_pubkey`,
  * `refund_locktime`, `claim_pubkey`, `htlc_locktime`, `min_confirmations`;
  * `lockup_address` and `htlc_address` are compare-only.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function deriveOnchainReceive(input: {
     quote: RfqQuote;
@@ -2109,6 +2200,8 @@ export function deriveOnchainReceive(input: {
  * if the swap never settles, the L1 HTLC's refund leaf (the trader's
  * `refundPubkey`) opens at `htlc.refundLocktime` — `buildHtlcRefund` takes it
  * back from there.
+ *
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function requestOnchainReceive(
     wallet: IWallet,

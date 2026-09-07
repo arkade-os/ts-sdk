@@ -56,6 +56,8 @@ type Artifact = Parameters<typeof arkade.parseArtifact>[0];
  * in a static artifact without splitting these into one file per exit variant.
  * {@link withExitClosure} owns that step, and the golden in `offer.test.ts`
  * pins the artifact it produces so the whole contract is still readable as data.
+ *
+ * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const swapPrograms: Record<
     "wantAsset" | "wantBtc",
@@ -70,7 +72,10 @@ export const swapPrograms: Record<
 /** A full-fill offer. Exactly one field names an asset: `wantAsset` set = the
  * fill must deliver that asset (the deposit may be BTC or another asset,
  * identified by the funding vtxo itself); `offerAsset` set = the user
- * deposits that asset and wants sats. */
+ * deposits that asset and wants sats.
+ *
+ * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export interface Offer {
     /** The scriptPubKey of the swap contract. */
     swapPkScript: Uint8Array;
@@ -187,7 +192,10 @@ export function swapProgramBinding(
     };
 }
 
-/** Compile the offer's contract: program + args -> taproot tree. */
+/** Compile the offer's contract: program + args -> taproot tree.
+ *
+ * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export function offerContract(
     offer: Omit<Offer, "swapPkScript">,
     operatorPubkey: Uint8Array,
@@ -201,7 +209,10 @@ export function offerContract(
 // so a solver can discover it from the txid alone.
 // Payload: `[type: 1B][length: 2B BE][value]` records.
 
-/** Extension packet type tag for Arkade Intents offers. */
+/** Extension packet type tag for Arkade Intents offers.
+ *
+ * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const OFFER_PACKET_TYPE = 0x03;
 
 /** The wire fields: tag, and for the fixed-width ones the exact byte length.
@@ -268,7 +279,10 @@ function tlv(type: number, value: Uint8Array): Uint8Array {
     return concatBytes(Uint8Array.of(type, (value.length >> 8) & 0xff, value.length & 0xff), value);
 }
 
-/** Serialize an offer to TLV bytes (the packet payload). */
+/** Serialize an offer to TLV bytes (the packet payload).
+ *
+ * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export function encodeOffer(offer: Offer): Uint8Array {
     // decodeOffer rejects all of these on the way in; reject them on the way
     // out too, so a malformed offer fails at its source instead of at every
@@ -346,7 +360,10 @@ function assertExitDelay(exit: RelativeTimelock): RelativeTimelock {
     return exit;
 }
 
-/** Parse TLV bytes into an offer. Throws on malformed or unknown records. */
+/** Parse TLV bytes into an offer. Throws on malformed or unknown records.
+ *
+ * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export function decodeOffer(data: Uint8Array): Offer {
     const fields: Partial<Record<FieldName, Uint8Array>> = {};
     let off = 0;
@@ -561,6 +578,8 @@ function serverExitDelay(delay: bigint): RelativeTimelock {
  * VTXO expires and the operator sweeps it. An offer has no expiry of its own,
  * so that exposure has no end. `noExit` opts out for a caller who wants the
  * smaller tree and accepts the dependency.
+ *
+ * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function createOffer(
     wallet: IWallet,
@@ -709,6 +728,8 @@ export async function createOffer(
  * `wallet.getArkadeBroadcaster()` and the indexer fallback from
  * `wallet.getArkadeReader()`, so the wallet's own connection is the only one
  * used (#734).
+ *
+ * @deprecated Use `client.cancel()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function cancelOffer(
     wallet: IWallet,
@@ -776,6 +797,8 @@ const OFFER_COVENANT_MISMATCH = "rebuilt covenant does not match the offer's swa
  * against the covenant's leaves instead of surfacing (see `client/cancel.ts`).
  * Typed so that reconciliation is an `instanceof`, not a message match; the
  * message is v1's, unchanged.
+ *
+ * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export class NoSpendableDepositError extends Error {
     override readonly name = "NoSpendableDepositError";
@@ -792,6 +815,8 @@ export class NoSpendableDepositError extends Error {
  * only remaining causes are a record corrupted or a `swapAddress` that is not
  * the one funded — so the condition is typed rather than left to surface raw.
  * Fires before any broadcast, where §7's law still governs.
+ *
+ * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export class OfferCovenantMismatchError extends Error {
     override readonly name = "OfferCovenantMismatchError";

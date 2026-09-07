@@ -25,14 +25,15 @@ import {
     SingleKey,
     Wallet,
 } from "@arkade-os/sdk";
-// The v2 client is still internal to the package — `src/index.ts` exports the
-// v1 facade under the same name — so it is imported by path, as the unit suite
-// does. M8 is what slims the root export to the v2 surface.
-import { createSwapClient, type SwapClient } from "../../src/client/client";
-import { NotCancellable } from "../../src/client/errors";
-import { quoteIdOfSwapId, type OfferSwapRecord } from "../../src/client/record";
-import { OfferCovenantMismatchError } from "../../src/offer";
-import { InMemoryAssetSwapRepository } from "../../src/repository";
+import {
+    createSwapClient,
+    InMemoryAssetSwapRepository,
+    NotCancellable,
+    type OfferSwapRecord,
+    type SwapClient,
+    quoteIdOfSwapId,
+} from "../../src";
+import { OfferCovenantMismatchError } from "../../src/protocol";
 
 const OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";

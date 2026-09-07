@@ -19,6 +19,7 @@ import { createOffer } from "../offer";
 import { findMarket, validatePlan, type PlanError } from "../markets";
 import { BTC_ASSET_ID } from "../store";
 
+/** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const CROSS_ASSET_RAIL = "cross-asset";
 
 /**
@@ -26,9 +27,12 @@ export const CROSS_ASSET_RAIL = "cross-asset";
  * `paying` means it WAS and the outcome is unknown — resolve that against
  * chain state, never by resending. Persisting only afterwards would leave a
  * crash between send and persist looking exactly like `filled`.
+ *
+ * @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export type CrossAssetPhase = "quoted" | "filled" | "paying" | "settled";
 
+/** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface CrossAssetSwap {
     phase: CrossAssetPhase;
     offerHex: string;
@@ -42,6 +46,7 @@ export interface CrossAssetSwap {
     txid?: string;
 }
 
+/** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface CrossAssetRailDeps {
     /** Called by `available()` and again by `quote()`; pass the caching
      *  `discoverMarkets`, not a bare registry fetch. */
@@ -74,7 +79,10 @@ const parseAssetId = (assetId: string): assetExt.AssetId | undefined => {
 };
 
 /** Rank after `ark-asset`, which pays from a balance already held. Both match,
- *  so `options()` can offer "pay from your USDX" beside "buy USDX and pay". */
+ *  so `options()` can offer "pay from your USDX" beside "buy USDX and pay".
+ *
+ * @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export function crossAssetRail(deps: CrossAssetRailDeps): PaymentRail {
     const planFor = async (
         asset: Asset,

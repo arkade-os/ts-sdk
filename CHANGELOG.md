@@ -11,6 +11,31 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **`@arkade-os/swap`: the root export is the v2 client, and the v1
+  building blocks moved to `@arkade-os/swap/protocol`.** `createSwapClient`
+  and `SwapClient` on the root are now the v2 declarations, not the facade
+  `0.1.0-rc.1` published: the factory takes a `SwapClientConfig`,
+  `quote(market, input)` became `quote(input)`, `cancel` takes a swap id
+  rather than a funding txid, `onUpdate` delivers `{ swap, outcome, detail }`,
+  and `client.manager` is gone. `quote`'s arity change fails loudly;
+  `SwapQuoteInput.give: "base" | "quote"` is the quiet one, since `AssetId` is
+  a string alias — it still compiles and is refused at runtime with
+  `UnsupportedRoute`, so grep for `give: "base"` before upgrading. 200 further
+  names — requests, covenants, records, the RFQ manager, the restore scan, the
+  v1 solver rails — move to `@arkade-os/swap/protocol`, one specifier edit
+  each, under `@deprecated` pointers naming their v2 replacement. There is
+  deliberately **no window** in which both spellings work: this release breaks
+  regardless, so re-exporting them from the root would split one migration into
+  two and leave 200 v1 names on a root whose claim is to be the v2 surface. The
+  subpath is a permanent floor and nothing on it is scheduled for removal.
+  Removed outright, with no floor: the rest of the facade (`SwapQuoteInput`,
+  `UnifiedSwap`, `SwapClientDeps`, `SwapQuote`, `SpotQuote`,
+  `LightningSendQuote`, `LightningReceiveQuote`, `OnchainSendQuote`),
+  `ARKADE_ASSET`, and seventeen internals the client absorbed. The
+  `@arkade-os/swap/client` subpath is gone — it never shipped in a published
+  version, only on the release branch, and the client is the root now. Full table, including every name with no floor and why, in
+  [`packages/swap/MIGRATION.md`](packages/swap/MIGRATION.md).
+
 - **`@arkade-os/swap`: `AssetSwapRepository.version` is `5`, adding a v2
   swap-record store.** Four methods land beside the existing ones —
   `saveSwapRecord`, `getSwapRecord`, `getAllSwapRecords`,

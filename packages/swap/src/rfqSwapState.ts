@@ -16,6 +16,8 @@
  * to claim on: the L1 fill on an onchain send, and the solver-funded lockup on
  * a receive. Only `lightning_send` has neither — there the solver claims the
  * lockup, and the trader's only move is the refund.
+ *
+ * @deprecated Use `Outcome`, delivered by `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export type RfqSwapState =
     /** Live; nothing actionable yet. On a receive leg this covers the whole
@@ -84,5 +86,6 @@ export type RfqSwapState =
  * whose claim is still the thing that ends the swap. */
 export const RFQ_SWAP_TERMINAL_STATES = ["settled", "refunded", "failed"] as const;
 
+/** @deprecated Use `Outcome`, delivered by `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const isRfqSwapTerminal = (state: RfqSwapState): boolean =>
     (RFQ_SWAP_TERMINAL_STATES as readonly string[]).includes(state);
