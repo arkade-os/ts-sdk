@@ -108,8 +108,9 @@ export interface PaymentRequest {
 }
 
 /** A payment rail — registered by id, mirrors the ActivityRegistry resolver shape. */
-// Properties, not methods: method parameters stay bivariant even under
-// `strictFunctionTypes`, letting a `PaymentRail<Wallet>` onto a `Router<IWallet>`.
+// Properties, not methods: property parameters are contravariant under
+// `strictFunctionTypes`, so a `PaymentRail<Wallet>` cannot register on a
+// `PaymentRouter<IWallet>`. Method syntax is bivariant and would allow it.
 export interface PaymentRail<W extends IWallet = Wallet> {
     id: string;
     /** Classification only — amount-blind; takes the request for uniformity. */
