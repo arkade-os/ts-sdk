@@ -121,7 +121,11 @@ const wallet = {
     getContractManager: async () => ({}),
 } as unknown as IWallet;
 
-const coin = { txid: "dd".repeat(32), vout: 0, value: 60_000 };
+/** A sats-only deposit — what a want-ASSET offer is funded with. */
+const satsDeposit = { txid: "dd".repeat(32), vout: 0, value: 60_000 };
+/** A want-BTC deposit carrying the asset the offer sells — the covenant does not
+ * check that it does, so `fillOffer` has to. */
+const coin = { ...satsDeposit, assets: [{ assetId: DEPOSIT_ASSET, amount: 7 }] };
 /** One taker coin. `as never` because a real `ArkTxInput` also carries a
  * tapLeafScript and an encoded vtxo script, neither of which the mocked builder
  * looks at — the shape under test is what the fill ASKS for, not the coin. */
@@ -130,9 +134,9 @@ const fundingCoin = (
 ) => [{ txid: "ee".repeat(32), vout: 1, value: 80_000, ...over }] as never;
 const fund = fundingCoin();
 
-const reset = () => {
+const reset = (deposit: (typeof coin)[] = [coin]) => {
     state.serverKey = fundedServerKey;
-    state.utxos = [coin];
+    state.utxos = deposit;
     state.calls = [];
     state.connects = [];
     state.sends = 0;
@@ -203,6 +207,21 @@ describe("fillOffer refuses what it cannot build correctly", () => {
             fillOffer(wallet, "http://ark", wantBtcHex, { fund, emulator: EMULATOR }),
         ).rejects.toThrow(/no spendable VTXO at the swap address/);
     });
+
+    // `offerAsset` is a TLV claim about a deposit the covenant never inspects:
+    // it gates output 0 only. A fill against an unbacked deposit succeeds
+    // on-chain and pays wantAmount for nothing.
+    it.each([
+        ["carrying nothing", undefined],
+        ["carrying a different asset", [{ assetId: STRAY_ASSET, amount: 9 }]],
+        ["carrying a zero amount of it", [{ assetId: DEPOSIT_ASSET, amount: 0 }]],
+    ])("refuses a deposit %s the offer says it sells", async (_label, assets) => {
+        reset([{ ...satsDeposit, ...(assets ? { assets } : {}) }]);
+        await expect(
+            fillOffer(wallet, "http://ark", wantBtcHex, { fund, emulator: EMULATOR }),
+        ).rejects.toThrow(/carries no aa+0000, which this offer sells/);
+        expect(state.sends).toBe(0);
+    });
 });
 
 describe("fillOffer builds the spend the covenant inspects", () => {
@@ -228,7 +247,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
     });
 
     it("pays an ASSET want through the packet, with only a carrier at output 0", async () => {
-        reset();
+        reset([satsDeposit]);
         const txid = await fillOffer(wallet, "http://ark", wantAssetHex, {
             fund: fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }),
             emulator: EMULATOR,
@@ -257,7 +276,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
     });
 
     it("returns the taker's surplus of the wanted asset, in the same group", async () => {
-        reset();
+        reset([satsDeposit]);
         await fillOffer(wallet, "http://ark", wantAssetHex, {
             fund: fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 80_000 }] }),
             emulator: EMULATOR,
@@ -319,7 +338,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
     });
 
     it("lets the caller raise the carrier for a higher dust threshold", async () => {
-        reset();
+        reset([satsDeposit]);
         await fillOffer(wallet, "http://ark", wantAssetHex, {
             fund: fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }),
             emulator: EMULATOR,
@@ -400,6 +419,32 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         // the maker the asset AND the sats.
         expect(spec.inputs).toEqual([{ vin: 0, amount: BigInt(2_000) }]);
         expect(spec.outputs).toEqual([{ vout: 1, amount: BigInt(2_000) }]);
+    });
+
+    it("declares BOTH assets when one deposit VTXO carries two", async () => {
+        reset([
+            {
+                ...satsDeposit,
+                assets: [
+                    { assetId: DEPOSIT_ASSET, amount: 2_000 },
+                    { assetId: STRAY_ASSET, amount: 5 },
+                ],
+            },
+        ]);
+        await fillOffer(wallet, "http://ark", wantBtcHex, {
+            fund,
+            emulator: EMULATOR,
+            payoutScript: TAKER_PAYOUT,
+        });
+
+        const specs = callsOf("withAsset").map(
+            (c) => c.args[0] as { assetId: string; inputs: unknown[]; outputs: unknown[] },
+        );
+        expect(specs.map((s) => s.assetId)).toEqual([DEPOSIT_ASSET, STRAY_ASSET]);
+        for (const spec of specs) {
+            expect(spec.inputs).toEqual([{ vin: 0, amount: expect.any(BigInt) }]);
+            expect(spec.outputs).toEqual([{ vout: 1, amount: expect.any(BigInt) }]);
+        }
     });
 
     it("selects a named deposit when the address holds several", async () => {

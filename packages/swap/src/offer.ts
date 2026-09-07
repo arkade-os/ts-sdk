@@ -246,7 +246,7 @@ function u64(name: string, value: bigint): Uint8Array {
     if (value < BigInt(0) || value >> BigInt(64) > BigInt(0)) {
         throw new Error(`${name} does not fit the offer wire format (u64)`);
     }
-    const out = new Uint8Array(FIELDS.wantAmount.width);
+    const out = new Uint8Array(8);
     new DataView(out.buffer).setBigUint64(0, value, false);
     return out;
 }
@@ -977,6 +977,22 @@ export async function fillOffer(
     }
     const vtxo = fundingTxid ? vtxos.find((v) => v.txid === fundingTxid) : vtxos[0];
     if (!vtxo) throw new Error("no spendable VTXO at the swap address");
+
+    // The covenant checks OUTPUT 0 — what the maker is paid — and says nothing
+    // about what the deposit carries. `offerAsset` is a TLV claim, so a deposit
+    // holding a different asset or none at all still fills: the taker pays
+    // wantAmount and receives what was there, not what was advertised.
+    if (offer.offerAsset) {
+        const offered = offer.offerAsset.toString();
+        const deposited = amountOfAsset(vtxo.assets, offered);
+        if (deposited <= BigInt(0)) {
+            throw new Error(
+                `the deposit at the swap address carries no ${offered}, which this offer sells — ` +
+                    "filling it would pay wantAmount for nothing. The indexer may be behind, or " +
+                    "the offer may not be backed by what it advertises",
+            );
+        }
+    }
 
     const payout = payoutScript ?? ArkAddress.decode(takerAddress).pkScript;
     // A BTC want is paid in sats at output 0; an asset want is paid through the
