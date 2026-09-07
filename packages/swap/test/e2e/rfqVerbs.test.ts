@@ -55,6 +55,7 @@ import {
     createSwapPaymentRouter,
     InMemoryAssetSwapRepository,
     LIGHTNING_RAIL,
+    InsufficientFunds,
     type SwapClient,
     quoteIdOfSwapId,
 } from "../../src";
@@ -143,7 +144,9 @@ const invoice = (): string => invoiceFor(PAYMENT_HASH, INVOICE_SATS);
  * A solver that quotes back the maker's own derivation on both legs, and
  * attests to the card's own key so the responder check runs for real.
  */
-const stubTransport = (): AttestingRfqTransport => ({
+const stubTransport = (
+    amounts: { from: number; to: number } = { from: LOCKUP_SATS, to: INVOICE_SATS },
+): AttestingRfqTransport => ({
     attestedResponder: DISCOVERY_KEY,
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
@@ -173,11 +176,11 @@ const stubTransport = (): AttestingRfqTransport => ({
             return {
                 ...base,
                 pair: LIGHTNING_RECEIVE_PAIR,
-                from_amount: LOCKUP_SATS,
-                to_amount: INVOICE_SATS,
+                from_amount: amounts.from,
+                to_amount: amounts.to,
                 profile: {
                     payment_hash: paymentHash,
-                    invoice: invoiceFor(paymentHash, LOCKUP_SATS),
+                    invoice: invoiceFor(paymentHash, amounts.from),
                     lockup_address: contract.address(hrp, operatorPubkey).encode(),
                     solver_refund_pk_script: hex.encode(SOLVER_PK_SCRIPT),
                 },
@@ -197,8 +200,8 @@ const stubTransport = (): AttestingRfqTransport => ({
         return {
             ...base,
             pair: LIGHTNING_SEND_PAIR,
-            from_amount: LOCKUP_SATS,
-            to_amount: INVOICE_SATS,
+            from_amount: amounts.from,
+            to_amount: amounts.to,
             profile: {
                 receiver_pk_script: hex.encode(SOLVER_PK_SCRIPT),
                 lockup_address: contract.address(hrp, operatorPubkey).encode(),
@@ -213,12 +216,12 @@ const stubTransport = (): AttestingRfqTransport => ({
 
 const repository = new InMemoryAssetSwapRepository();
 
-const clientOn = (): SwapClient =>
+const clientOn = (amounts?: { from: number; to: number }): SwapClient =>
     createSwapClient({
         wallet,
         repository,
         discovery: { snapshot: [CARD] },
-        transportFor: () => stubTransport(),
+        transportFor: () => stubTransport(amounts),
     });
 
 beforeAll(async () => {
@@ -347,4 +350,59 @@ describe("the lightning rail through a real router (regtest)", () => {
 
         await client[Symbol.asyncDispose]();
     }, 240_000);
+});
+
+/**
+ * The drain, on the side of the SDK that cannot take one.
+ *
+ * `offerCancel.test.ts` funds an offer with the entire balance and it works,
+ * because an asset swap denominates its fee on the TAKE leg. A corridor route
+ * is the other way round: the invoice is the take leg verbatim and the give leg
+ * is the invoice PLUS the corridor's fee (`quoteRfq.ts`). So the same instinct —
+ * "send everything I have" — is unfundable here by exactly the spread, and the
+ * two tests below are the refusal and the amount that does fit, which is what a
+ * product's "send max" button has to compute.
+ *
+ * These run last on purpose: the second one locks up every remaining sat, and a
+ * corridor lockup has no cancel to hand it back.
+ */
+describe("a corridor drain (regtest)", () => {
+    /** The solver's spread — what the give leg carries and the take leg does not. */
+    const SPREAD = 10;
+
+    it("refuses an invoice for the whole balance, by exactly the corridor fee", async () => {
+        const { available } = await wallet.getBalance();
+        expect(available).toBeGreaterThan(SPREAD);
+
+        // Asking the payee to receive everything asks this wallet for everything
+        // plus the fee.
+        const client = clientOn({ from: available + SPREAD, to: available });
+        await expect(client.pay(invoiceFor(PAYMENT_HASH, available))).rejects.toBeInstanceOf(
+            InsufficientFunds,
+        );
+
+        // And it is refused before the lockup is funded, not after: the balance
+        // is untouched, which is the whole value of checking at `accept` time.
+        expect((await wallet.getBalance()).available).toBe(available);
+        await client[Symbol.asyncDispose]();
+    }, 180_000);
+
+    it("funds the drain that leaves the fee behind", async () => {
+        const { available } = await wallet.getBalance();
+        const payee = available - SPREAD;
+
+        const client = clientOn({ from: available, to: payee });
+        const result = await client.pay(invoiceFor(PAYMENT_HASH, payee));
+
+        expect(result.kind).toBe("swap");
+        if (result.kind !== "swap") return;
+        expect(result.swap.give.amount).toBe(BigInt(available));
+        expect(result.swap.take.amount).toBe(BigInt(payee));
+        expect(result.swap.fundingTxid).toEqual(expect.any(String));
+
+        // Every sat is in the lockup now — owned, escrowed, and out of generic
+        // reach, the same shape the offer drain leaves behind.
+        await waitFor(async () => (await wallet.getBalance()).available === 0);
+        await client[Symbol.asyncDispose]();
+    }, 180_000);
 });
