@@ -227,7 +227,15 @@ export const resolveRoute = async (
     const amount = pinAmount(input, take.instrument);
 
     // 7. The market, after the policy filters that must run before disclosure.
-    const candidates = eligibleMarkets(snapshot, { give: giveLeg, take: takeLeg }, deps.policy);
+    //    A take-side pin also bounds-checks the card, so a size no solver on
+    //    this snapshot serves is `eligible: 0` here rather than an RFQ round
+    //    trip that discloses the amount only to be refused.
+    const candidates = eligibleMarkets(
+        snapshot,
+        { give: giveLeg, take: takeLeg },
+        deps.policy,
+        amount?.on === "take" ? amount.value : undefined,
+    );
     const market = chooseMarket(candidates, deps.policy);
 
     const resolution: RouteResolution = {
