@@ -70,7 +70,8 @@ const decodeKey = (value: unknown, field: string): Uint8Array => {
     return bytes;
 };
 
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+// `[::1]` bracketed, because that is the form `URL.hostname` reports.
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /** `info()` decides which key `P` is sealed to, so plain HTTP hands the preimage
  * to whoever can rewrite the response. Loopback is exempt — no network to be on,
@@ -118,12 +119,27 @@ export const covclaimdClient = (
         return response;
     };
 
+    /** A 2xx carrying a proxy's HTML is still a failed call, so it leaves here as
+     * a `CovclaimdRevealError` rather than a bare `SyntaxError` from the parser. */
+    const readJson = async (what: string, response: Response): Promise<unknown> => {
+        const body = await response.text();
+        try {
+            return JSON.parse(body) as unknown;
+        } catch {
+            throw new CovclaimdRevealError(
+                what,
+                response.status,
+                `non-JSON body: ${body.slice(0, 200)}`,
+            );
+        }
+    };
+
     return {
         async info() {
             const response = await send("info", "/v1/preimage/covclaimd-pubkey", {
                 method: "GET",
             });
-            const body = (await response.json()) as Record<string, unknown> | null;
+            const body = (await readJson("info", response)) as Record<string, unknown> | null;
             return {
                 covclaimdPubkey: decodeKey(body?.covclaimd_pub_key, "covclaimd_pub_key"),
                 emulatorPubkey: hex.encode(decodeKey(body?.emulator_pub_key, "emulator_pub_key")),

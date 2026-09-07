@@ -162,6 +162,17 @@ describe("covclaimdClient", () => {
         ).rejects.toThrow(/covclaimd_pub_key is not hex/);
     });
 
+    it("reports a 200 carrying a non-JSON body as CovclaimdRevealError, not SyntaxError", async () => {
+        const { impl } = stubFetch([{ body: "<html>502 Bad Gateway</html>" }]);
+        const error = await covclaimdClient("https://cov.example", { fetchImpl: impl })
+            .info()
+            .catch((e: unknown) => e as CovclaimdRevealError);
+        expect(error).toBeInstanceOf(CovclaimdRevealError);
+        expect(error.status).toBe(200);
+        expect(error.retryable).toBe(false);
+        expect(error.message).toContain("502 Bad Gateway");
+    });
+
     it("POSTs /v1/reveal with the nested packet body covclaimd parses", async () => {
         const { impl, calls } = stubFetch([{ body: "{}" }]);
         await covclaimdClient("https://cov.example", { fetchImpl: impl }).reveal({
