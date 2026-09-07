@@ -44,7 +44,7 @@ export function createDefaultPaymentRouter(wallet: Wallet, swaps: ArkadeSwaps): 
     })
         .use(arkRail())
         .use(arkAssetRail())
-        .use(onchainRail())
+        .use(onchainRail({ feeInfo: async () => (await wallet.arkProvider.getInfo()).fees }))
         .use(lightningRail())
         .use(onchainSwapRail());
 }

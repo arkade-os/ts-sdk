@@ -1,5 +1,4 @@
 import type { PaymentRail, RouterContext } from "../types";
-import type { Wallet } from "../../index";
 import { btcTarget } from "../targets";
 import { assertNoAssets, assetsOf, resolveSendAmount } from "../amount";
 import { makeHandle } from "../handle";
@@ -57,14 +56,18 @@ function grossUpOffboard(
  *
  * An explicit amount is mandatory. To sweep the full balance, call
  * `Ramps.offboard(address, feeInfo)` directly — the router has no amountless path.
+ *
+ * @param deps.feeInfo - Source of the operator's fee schedule. Required: a rail
+ * that cannot price an offboard must not be constructible — a silently dropped
+ * rail on the money path is worse than a wiring error at startup.
  */
-export function onchainRail(): PaymentRail<Wallet> {
+export function onchainRail(deps: { feeInfo: () => Promise<FeeInfo> }): PaymentRail {
     return {
         id: "onchain",
         match: (req) => btcTarget(req.raw) !== undefined,
         // BTC only: an Arkade asset has no L1 representation to offboard to.
         available: (req) => assetsOf(req).length === 0,
-        quote: async (req, ctx: RouterContext<Wallet>) => {
+        quote: async (req, ctx: RouterContext) => {
             assertNoAssets("onchain", req);
             const address = btcTarget(req.raw)!;
             // Reject missing/zero/fractional amounts up front: 0 sats would
@@ -72,7 +75,7 @@ export function onchainRail(): PaymentRail<Wallet> {
             const amt = resolveSendAmount("onchain", req.raw, req.amount);
             // Priced here rather than in send() so the quote carries a real fee;
             // the same FeeInfo is reused at settlement, so the two cannot drift.
-            const { fees } = await ctx.wallet.arkProvider.getInfo();
+            const fees = await deps.feeInfo();
             const script = hex.encode(offboardDestinationScript(address));
             const { gross, fee } = grossUpOffboard(amt, fees, script);
             return {

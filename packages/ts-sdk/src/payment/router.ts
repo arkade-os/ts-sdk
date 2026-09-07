@@ -6,7 +6,6 @@ import type {
     RouterContext,
     RouteQuote,
 } from "./types";
-import type { IWallet, Wallet } from "../index";
 
 /** Thrown by `route()` when several options survive and `tieBreak` is
  *  `"require-choice"` — the app must disambiguate via `options()`. */
@@ -25,13 +24,13 @@ export class AmbiguousRouteError extends Error {
  * gates on the amount. `options()` returns every matching+available rail ranked
  * by preferences; `route()` is the "take the top" convenience.
  */
-export class PaymentRouter<W extends IWallet = Wallet> {
-    private readonly rails = new Map<string, PaymentRail<W>>();
+export class PaymentRouter {
+    private readonly rails = new Map<string, PaymentRail>();
 
-    constructor(private readonly ctx: RouterContext<W>) {}
+    constructor(private readonly ctx: RouterContext) {}
 
     /** Register a rail (or overwrite one with the same id). */
-    use(rail: PaymentRail<W>): this {
+    use(rail: PaymentRail): this {
         this.rails.set(rail.id, rail);
         return this;
     }
@@ -46,7 +45,7 @@ export class PaymentRouter<W extends IWallet = Wallet> {
      *  `priority` (unlisted rails keep insertion order, after listed ones). */
     async options(req: PaymentRequest, prefs?: RouterPreferences): Promise<PaymentOption[]> {
         const merged = { ...this.ctx.prefs, ...prefs };
-        const ctx: RouterContext<W> = { ...this.ctx, prefs: merged };
+        const ctx: RouterContext = { ...this.ctx, prefs: merged };
 
         const matched = [...this.rails.values()].filter(
             (rail) => !merged.disabled?.includes(rail.id) && rail.match(req, ctx),
@@ -66,7 +65,7 @@ export class PaymentRouter<W extends IWallet = Wallet> {
                     }
                 }),
             )
-        ).filter((rail): rail is PaymentRail<W> => rail !== null);
+        ).filter((rail): rail is PaymentRail => rail !== null);
 
         const rank = (id: string): number => {
             const i = merged.priority?.indexOf(id) ?? -1;

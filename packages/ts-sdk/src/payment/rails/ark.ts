@@ -1,5 +1,4 @@
 import type { PaymentRail, RouterContext } from "../types";
-import type { IWallet } from "../../index";
 import { arkTarget } from "../targets";
 import { assertNoAssets, assetsOf, resolveSendAmount } from "../amount";
 import { makeHandle } from "../handle";
@@ -15,12 +14,12 @@ import { makeHandle } from "../handle";
  * BTC only: a request naming an asset drops this rail rather than paying its
  * sats and dropping the asset, leaving `ark-asset` to rank.
  */
-export function arkRail(): PaymentRail<IWallet> {
+export function arkRail(): PaymentRail {
     return {
         id: "ark",
         match: (req) => arkTarget(req.raw) !== undefined,
         available: (req) => assetsOf(req).length === 0,
-        quote: async (req, ctx: RouterContext<IWallet>) => {
+        quote: async (req, ctx: RouterContext) => {
             const address = arkTarget(req.raw)!;
             assertNoAssets("ark", req);
             const amt = resolveSendAmount("ark", req.raw, req.amount);

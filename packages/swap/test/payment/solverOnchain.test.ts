@@ -253,13 +253,13 @@ describe("solverOnchainRail.available", () => {
 
 describe("the router drops this rail rather than failing the payment", () => {
     /** A request the collaborative-exit rail can price without a live wallet. */
-    const arkProvider = { getInfo: async () => ({ fees: {} }) };
+    const feeInfo = async () => ({}) as never;
     const routerCtx = (rail: ReturnType<typeof solverOnchainRail>) =>
         new PaymentRouter({
-            wallet: { arkProvider } as never,
+            wallet: {} as never,
             prefs: { priority: [SOLVER_ONCHAIN_RAIL, "onchain"] },
         })
-            .use(onchainRail())
+            .use(onchainRail({ feeInfo }))
             .use(rail);
 
     it("ranks the solver route first when a card takes the send", async () => {

@@ -33,5 +33,5 @@ export function createDefaultPaymentRouter(wallet: Wallet): PaymentRouter {
     })
         .use(arkRail())
         .use(arkAssetRail())
-        .use(onchainRail());
+        .use(onchainRail({ feeInfo: async () => (await wallet.arkProvider.getInfo()).fees }));
 }
