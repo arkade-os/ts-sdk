@@ -74,6 +74,20 @@ the list to grep, rather than this table, when you want to know about a specific
 deprecated declaration also carries an `@deprecated` tag naming its replacement, so your editor
 will tell you in place.
 
+### The orchestration internals: `@arkade-os/swap/advanced`
+
+On the release branch between `0.1.0-rc.1` and `0.1.0`, the root was briefly
+`export * from "./client"` — which left ~160 v2-internal names on it beside the curated surface:
+`acceptQuote`, `createSwapDrive`, `corridorSet`, `quoteViaRfq`, `walletLockupIndexer` and every
+helper they work with. None of them shipped in `0.1.0-rc.1` itself, where the root was the v1
+facade, so for published-version consumers this is not a new break — but anyone who pinned the
+branch and imported an orchestration name from the root now imports it from
+`@arkade-os/swap/advanced` instead. The root exports exactly the client factory, the verbs, the
+route/amount/asset vocabulary, the error taxonomy, the durable record, storage and the payment
+rails, and `test/exports.test.ts` asserts that membership exactly; everything else the client
+modules define is on `./advanced`. The subpath is deliberate but not the compatibility promise
+the root is: its names move with the client's internals across minor versions.
+
 ### Removed with no `/protocol` floor
 
 Two small sets. Both are deliberate: a floor under them would keep alive the exact thing v2
