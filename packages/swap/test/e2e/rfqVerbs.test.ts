@@ -49,7 +49,6 @@ import {
     type RfqQuote,
 } from "../../src/protocol";
 import {
-    type AttestingRfqTransport,
     btcOn,
     createSwapClient,
     createSwapPaymentRouter,
@@ -59,6 +58,7 @@ import {
     type SwapClient,
     quoteIdOfSwapId,
 } from "../../src";
+import type { AttestingRfqTransport } from "../../src/client/transport";
 import { encodeInvoice } from "../helpers/bolt11";
 
 const OPERATOR_URL = "http://localhost:7070";
