@@ -110,11 +110,25 @@ export const usableMarkets = (
  * `source` and not `discovery_pubkey` because the latter is the field a cached
  * card carries unvalidated: filtering trust on untrusted content would give the
  * allowlist the shape of a check and none of the effect.
+ *
+ * `takeAmount` is the pinned trade size on the leg the trader receives, and it
+ * is what makes a card's own `min/max` bounds mean something: without it a
+ * snapshot serving the pair answers "eligible" for any size, and the swap rails'
+ * documented self-healing — an out-of-range amount drops the rail at
+ * `available()` and the collaborative exit wins — never fires.
+ *
+ * @param takeAmount The pin on the TAKE leg only, which is the side `wantSide`
+ *   names. Omitting it skips the bounds entirely — an unpinned read is not a
+ *   zero-sized trade. A GIVE-side pin is deliberately not converted and passed:
+ *   that would need a price this read does not have, so a give-side amount past
+ *   a card's ceiling still answers `eligible: 1` here and is refused by the
+ *   solver instead. That asymmetry is the known sharp edge of this parameter.
  */
 export const eligibleMarkets = (
     snapshot: DiscoverySnapshot,
     legs: { give: DiscoveryLeg; take: DiscoveryLeg },
     policy?: SwapPolicy,
+    takeAmount?: bigint,
 ): MarketCandidate[] => {
     const markets = usableMarkets(snapshot, policy);
 
@@ -135,6 +149,7 @@ export const eligibleMarkets = (
             // The trader receives the take leg, so that side must be one the
             // solver can pay out; a direction nobody solves yields no market.
             wantSide: side === "base" ? "quote" : "base",
+            ...(takeAmount === undefined ? {} : { wantAmount: takeAmount }),
         }).map((card) => ({
             card,
             give: side,

@@ -288,6 +288,25 @@ describe("what the snapshot serves", () => {
         expect((await client.resolve({ to: invoiceFor(PAYMENT_HASH, CLOCK) })).eligible).toBe(0);
     });
 
+    it("lands a size the cards do not serve there as well, without disclosing it", async () => {
+        const { client, transport } = await withCards();
+        const overCeiling = { to: BCRT1, amount: 50_000_001n, amountOn: "take" } as const;
+        expect((await client.resolve(overCeiling)).eligible).toBe(0);
+        expect((await client.resolve({ ...overCeiling, amount: 100_000n })).eligible).toBe(1);
+        await expect(client.quote(overCeiling)).rejects.toThrow(UnsupportedRoute);
+        expect(transport.sent).toHaveLength(0);
+    });
+
+    it("leaves a give-side pin unbounded, having no price to convert it with", async () => {
+        const { client } = await withCards();
+        const resolution = await client.resolve({
+            to: BCRT1,
+            amount: 50_000_001n,
+            amountOn: "give",
+        });
+        expect(resolution.eligible).toBe(1);
+    });
+
     it("resolves an asset swap's tickers against the cards", async () => {
         const { client } = await withCards();
         const resolution = await client.resolve({

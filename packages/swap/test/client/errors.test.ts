@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { AddressMismatch, SwapRefusal } from "../../src/rfq";
 import { SwapDriveRefusedError } from "../../src/client/drive";
@@ -167,7 +168,8 @@ const COVERAGE = {
 /** Every `.ts` under `src/`, concatenated — what "has a throwing site" is read
  * from, so the map cannot claim coverage the code does not have. */
 const SOURCES = ((): string => {
-    const root = new URL("../../src", import.meta.url).pathname;
+    // `fileURLToPath`, not `.pathname`: the latter yields `/C:/…` on Windows.
+    const root = fileURLToPath(new URL("../../src", import.meta.url));
     const walk = (dir: string): string[] =>
         readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
             const path = join(dir, entry.name);
