@@ -138,7 +138,7 @@ import {
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
 import { DelegateProvider } from "../providers/delegate";
-import { buildTransactionHistory } from "../utils/transactionHistory";
+import { buildTransactionHistory, historyVtxos } from "../utils/transactionHistory";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "./activity";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
 import { Extension, type ExtensionPacket } from "../extension";
@@ -1481,7 +1481,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async getTransactionHistory(): Promise<ArkTransaction[]> {
         const contractManager = await this.getContractManager();
         const response = await contractManager.getContractsWithVtxos();
-        const allVtxos = response.flatMap((_) => _.vtxos);
+        // Gated contracts stay out, as they do for the balance: their outputs are
+        // destinations, not change. @see historyVtxos
+        const allVtxos = historyVtxos(
+            response.map((_) => _.contract),
+            response.flatMap((_) => _.vtxos),
+        );
 
         const { boardingTxs, commitmentsToIgnore } = await this.getBoardingTxs();
 

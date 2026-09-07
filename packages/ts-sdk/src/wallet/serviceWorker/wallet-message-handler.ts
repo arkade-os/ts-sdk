@@ -63,7 +63,7 @@ import type {
 import type { SignerStatus } from "../signerRotation";
 import { MessageHandler, RequestEnvelope, ResponseEnvelope } from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
-import { buildTransactionHistory } from "../../utils/transactionHistory";
+import { buildTransactionHistory, historyVtxos } from "../../utils/transactionHistory";
 import {
     getVtxosForContract,
     saveVtxosForContract,
@@ -1166,7 +1166,7 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_TRANSACTION_HISTORY": {
-                    const allVtxos = await this.getVtxosFromRepo();
+                    const allVtxos = await this.getHistoryVtxosFromRepo();
                     const transactions =
                         (await this.buildTransactionHistoryFromCache(allVtxos)) ?? [];
                     return this.tagged({
@@ -1866,7 +1866,7 @@ export class WalletMessageHandler
         }
 
         // Read virtual outputs from repository (now populated by contract manager)
-        const vtxos = await this.getVtxosFromRepo();
+        const vtxos = await this.getHistoryVtxosFromRepo();
 
         // Fetch boarding inputs across the full boarding-address set (current +
         // historical rotated; plan §6-IV.2). Fetch FIRST: getBoardingUtxos
@@ -2069,6 +2069,18 @@ export class WalletMessageHandler
      */
     private async getVtxosFromRepo(): Promise<NormalizedExtendedVirtualCoin[]> {
         return (await this.repoSnapshot()).vtxos;
+    }
+
+    /**
+     * The repository VTXOs history may treat as the wallet's own — the plain
+     * Wallet path's read, off the same snapshot the gate uses. @see historyVtxos
+     */
+    private async getHistoryVtxosFromRepo(): Promise<NormalizedExtendedVirtualCoin[]> {
+        const { snapshot, vtxos } = await this.repoSnapshot();
+        return historyVtxos(
+            snapshot.map((_) => _.contract),
+            vtxos,
+        );
     }
 
     /**

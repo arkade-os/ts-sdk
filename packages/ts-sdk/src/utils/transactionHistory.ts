@@ -1,5 +1,31 @@
+import { gatedContracts } from "../contracts/spendability";
+import type { Contract } from "../contracts/types";
 import { ArkTransaction, Asset, BuiltinTxTag, TxKey, TxType, VirtualCoin } from "../wallet";
 import { normalizeVtxo, type NormalizedVirtualCoin } from "../wallet/vtxo";
+
+/**
+ * The VTXOs history may treat as the wallet's own: everything outside a
+ * contract the spendability gate closes.
+ *
+ * A gated contract — an escrow, a swap offer covenant, a swap lockup, a VHTLC —
+ * is money committed to a covenant, not the wallet's balance, and history has
+ * to read it the same way the balance does. Counting its outputs as the
+ * wallet's made funding one net to zero (the covenant output looked like
+ * change, so no row at all), and made its later spend read as a send of the
+ * escrowed amount. Outside the wallet's set, the same movements read like they
+ * do against any other counterparty: funding is SENT, a claim or refund back
+ * into the wallet is RECEIVED, and a spend by the counterparty is not ours.
+ *
+ * The gate is keyed on script, like {@link gatedContracts}; a VTXO with no
+ * script belongs to no contract row and stays.
+ */
+export function historyVtxos<V extends { script?: string }>(
+    contracts: readonly Contract[],
+    vtxos: readonly V[],
+): V[] {
+    const gated = gatedContracts(contracts);
+    return vtxos.filter((vtxo) => vtxo.script === undefined || !gated.has(vtxo.script));
+}
 
 type ExtendedArkTransaction = ArkTransaction & {
     tag: BuiltinTxTag;
