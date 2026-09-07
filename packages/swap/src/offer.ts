@@ -25,6 +25,7 @@
 import { hex } from "@scure/base";
 import { concatBytes } from "@scure/btc-signer/utils.js";
 import {
+    ASSET_CARRIER_SATS as SDK_ASSET_CARRIER_SATS,
     ArkAddress,
     RestArkProvider,
     RestEmulatorProvider,
@@ -817,8 +818,12 @@ export async function cancelOffer(
 
 /** Sats output 0 carries when the maker is paid in an ASSET rather than sats:
  * the covenant checks the asset there, and the output still needs a carrier of
- * its own. Overridable per fill via `assetCarrierSats`. */
-export const ASSET_CARRIER_SATS = BigInt(330);
+ * its own. Overridable per fill via `assetCarrierSats`.
+ *
+ * Derived from the SDK's constant rather than restated, so the two spellings of
+ * one dust threshold cannot drift apart; `bigint` only because this package's
+ * amounts are. */
+export const ASSET_CARRIER_SATS = BigInt(SDK_ASSET_CARRIER_SATS);
 
 /**
  * A coin the taker supplies, plus whatever assets it carries.
