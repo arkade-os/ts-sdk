@@ -240,3 +240,78 @@ describe("BucketSync — batch atomicity", () => {
         });
     });
 });
+
+describe("BucketSync — a bad entry must not wedge the bucket", () => {
+    /** One entry sealed under a different KWK, so exactly one fails to open. */
+    async function bucketWithOneUnreadable() {
+        const bucket = new FakeBucket();
+        const readable = kwk();
+        await new BucketSync(bucket, readable).putOne("contract:a", enc("A"));
+        await new BucketSync(bucket, kwk()).putOne("contract:bad", enc("X"));
+        await new BucketSync(bucket, readable).putOne("contract:z", enc("Z"));
+        return { bucket, readable };
+    }
+
+    it("skips it, keeps the rest, and reports the key", async () => {
+        const { bucket, readable } = await bucketWithOneUnreadable();
+        const failures: string[] = [];
+        const sync = new BucketSync(bucket, readable, {
+            onEntryError: (key) => failures.push(key),
+        });
+
+        const out: Record<string, string | null> = {};
+        const applied = await sync.pull((key, pt) => {
+            out[key] = dec(pt);
+        });
+        expect(out).toEqual({ "contract:a": "A", "contract:z": "Z" });
+        expect(failures).toEqual(["contract:bad"]);
+        expect(applied).toBe(2);
+    });
+
+    it("advances the cursor past it, so a later sync is not stuck at the same seq", async () => {
+        const { bucket, readable } = await bucketWithOneUnreadable();
+        const sync = new BucketSync(bucket, readable, { onEntryError: () => {} });
+        await sync.pull(() => {});
+        expect(sync.cursorSeq).toBe(3);
+
+        await new BucketSync(bucket, readable).putOne("contract:later", enc("L"));
+        const seen: string[] = [];
+        await sync.pull((key) => {
+            seen.push(key);
+        });
+        expect(seen).toEqual(["contract:later"]);
+    });
+
+    it("propagates a failing apply() the same way, rather than aborting the page", async () => {
+        const bucket = new FakeBucket();
+        const key = kwk();
+        await new BucketSync(bucket, key).put(
+            new Map([
+                ["contract:a", enc("A")],
+                ["contract:b", enc("B")],
+            ]),
+        );
+        const failures: string[] = [];
+        const sync = new BucketSync(bucket, key, { onEntryError: (k) => failures.push(k) });
+        const applied: string[] = [];
+        await sync.pull((k) => {
+            if (k === "contract:a") throw new Error("consumer blew up");
+            applied.push(k);
+        });
+        expect(applied).toEqual(["contract:b"]);
+        expect(failures).toEqual(["contract:a"]);
+    });
+});
+
+describe("BucketSync — an unreadable entry keeps its CAS guard", () => {
+    it("refuses the next local write to that key instead of overwriting it silently", async () => {
+        const bucket = new FakeBucket();
+        const readable = kwk();
+        await new BucketSync(bucket, kwk()).putOne("contract:bad", enc("X"));
+
+        const sync = new BucketSync(bucket, readable, { onEntryError: () => {} });
+        await sync.pull(() => {});
+        // Recording the version would make this a silent overwrite instead.
+        await expect(sync.putOne("contract:bad", enc("mine"))).rejects.toThrow(/ghash|gcm/i);
+    });
+});

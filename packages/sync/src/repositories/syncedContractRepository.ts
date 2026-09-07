@@ -19,7 +19,11 @@ const enc = (s: string) => new TextEncoder().encode(s);
  * swallow) and the next `WalletSync.backup()`/`sync()` reconciles it.
  */
 export class SyncedContractRepository implements ContractRepository {
-    readonly version = 1 as const;
+    // Delegated, not restated: this wrapper persists nothing itself, so the
+    // literal it replaces went stale silently when the SDK moved to 2.
+    get version(): ContractRepository["version"] {
+        return this.base.version;
+    }
 
     constructor(
         private readonly base: ContractRepository,

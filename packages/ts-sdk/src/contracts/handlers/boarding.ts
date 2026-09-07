@@ -106,6 +106,9 @@ export const BoardingContractHandler: ContractHandler<BoardingContractParams, De
         return DefaultContractHandler.getSpendablePaths(script, contract, context);
     },
 
+    /** Preserves today's settle/board behaviour. */
+    isGenericallySpendable: () => true,
+
     /**
      * Probe the on-chain UTXO set for a boarding output at this HD index.
      *

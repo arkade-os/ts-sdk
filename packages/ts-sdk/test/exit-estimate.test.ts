@@ -12,7 +12,7 @@ import { P2A } from "../src/utils/anchor";
 import { Transaction } from "../src/utils/transaction";
 import { buildExitDag } from "../src/wallet/exit/chain";
 import { IndexerExitDataSource } from "../src/wallet/exit/indexerSource";
-import { CHILD_OUTPUT_DUST, estimate } from "../src/wallet/exit/estimate";
+import { CHILD_OUTPUT_DUST, computeExitLayout, estimate } from "../src/wallet/exit/estimate";
 import type { ExitOptions } from "../src/wallet/exit/estimate";
 
 const COMMIT = "c0".repeat(32);
@@ -298,5 +298,68 @@ describe("estimate", () => {
         });
         opts.vtxos = [{ txid: vtxo.txid, vout: 0 }];
         await expect(estimate(exitOpts)).rejects.toThrow(/no contract registered/);
+    });
+});
+
+describe("graph-mode funding quote", () => {
+    /**
+     * Graph mode funds CPFP bumps at execution time from one recycling change
+     * address, and `buildAnchorChild` refuses to write a change output below
+     * `CHILD_DUST_AMOUNT`. Quoting bare fees therefore quotes an amount that
+     * cannot finish the exit: the last bump has nowhere legal to put what is
+     * left, and both it and every sweep depending on it fail.
+     *
+     * `funded` mode already reserves this — `stepFundingAmount` is
+     * `stepFee + CHILD_OUTPUT_DUST` per step, because each child is pre-funded
+     * separately. Graph mode needs exactly one reserve, since the change from
+     * each bump pays for the next.
+     */
+    it("reserves one dust floor on top of the CPFP fees", async () => {
+        const { exitOpts } = await estimateFixture();
+        const quote = await estimate({ ...exitOpts, mode: "graph" });
+
+        const sweepFees = quote.vtxos.reduce((s, v) => s + (v.sweepFee ?? 0), 0);
+        const stepFees = quote.totals.totalFeeSats - sweepFees;
+
+        expect(stepFees).toBeGreaterThan(0);
+        expect(quote.totals.fundingRequiredSats).toBe(stepFees + CHILD_OUTPUT_DUST);
+        expect(quote.shortfallSats).toBe(quote.totals.fundingRequiredSats);
+    });
+
+    /**
+     * The property that actually matters: deposit exactly what we quote, spend
+     * each bump in turn, and every change output must clear the dust floor. On
+     * the bare-fee quote the final change lands at 0 and the exit dies there.
+     */
+    it("quotes an amount that survives every bump", async () => {
+        const { exitOpts } = await estimateFixture();
+        const opts = { ...exitOpts, mode: "graph" as const };
+        const quote = await estimate(opts);
+        // Each step's own fee, not an average of them: `perBump = total / count`
+        // is a float, so the final balance lands on the floor plus or minus an
+        // epsilon and a fixture with indivisible fees would fail spuriously.
+        // The property holds for any distribution — uniformity is incidental.
+        const { steps } = await computeExitLayout(opts, quote.feeRate);
+
+        expect(steps.length).toBeGreaterThan(1);
+
+        let balance = quote.totals.fundingRequiredSats;
+        for (const step of steps) {
+            balance -= step.stepFee;
+            expect(balance).toBeGreaterThanOrEqual(CHILD_OUTPUT_DUST);
+        }
+        // Exactly one floor is reserved, and it is all that is left: quoting
+        // more would over-charge, quoting less would strand the last bump.
+        expect(balance).toBe(CHILD_OUTPUT_DUST);
+    });
+
+    it("leaves the funded-mode quote alone", async () => {
+        const { exitOpts } = await estimateFixture();
+        const quote = await estimate(exitOpts);
+        const sweepFees = quote.vtxos.reduce((s, v) => s + (v.sweepFee ?? 0), 0);
+        // One dust per step, not one overall: funded pre-funds each child.
+        expect(quote.totals.fundingRequiredSats).toBe(
+            quote.totals.totalFeeSats - sweepFees + 2 * CHILD_OUTPUT_DUST,
+        );
     });
 });

@@ -8,6 +8,7 @@ import { mnemonicToSeedSync } from "@scure/bip39";
 import { schnorr, verifyAsync } from "@noble/secp256k1";
 import { pubSchnorr } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
+import { p2tr, SigHash } from "@scure/btc-signer";
 import { HDKey, expand, networks } from "@bitcoinerlab/descriptors-scure";
 import { Transaction } from "../src/utils/transaction";
 
@@ -219,6 +220,49 @@ describe("SeedIdentity", () => {
             const defaulted = SeedIdentity.fromSeed(seed, {});
             expect(defaulted.descriptor).toBe(explicit.descriptor);
             expect(defaulted.descriptor).toMatch(/\/86'\/0'\/0'\]/);
+        });
+    });
+
+    describe("signSchnorrDeterministic", () => {
+        const messageHash = new Uint8Array(32).fill(0x33);
+        const identityOf = () =>
+            SeedIdentity.fromSeed(mnemonicToSeedSync(TEST_MNEMONIC), { isMainnet: false });
+
+        it("is stable across calls and across instances on one seed", async () => {
+            // An `auto`-mode wallet resolves its bare descriptor to the
+            // identity itself, so this is what its swap preimage derives from.
+            const first = await identityOf().signSchnorrDeterministic(messageHash);
+            const second = await identityOf().signSchnorrDeterministic(messageHash);
+
+            expect(hex.encode(first)).toBe(hex.encode(second));
+            expect(
+                await schnorr.verifyAsync(first, messageHash, await identityOf().xOnlyPublicKey()),
+            ).toBe(true);
+        });
+
+        it("agrees with the descriptor sibling for the identity's own key", async () => {
+            // The two paths reach the same key by different routes; a
+            // construction drift between them would make a preimage derived
+            // through one unrecoverable through the other.
+            const identity = identityOf();
+            expect(hex.encode(await identity.signSchnorrDeterministic(messageHash))).toBe(
+                hex.encode(
+                    await identity.signSchnorrDeterministicWithDescriptor(
+                        identity.descriptor.replace("/*", "/0"),
+                        messageHash,
+                    ),
+                ),
+            );
+        });
+
+        it("does not draw a random aux_rand, unlike signMessage", async () => {
+            const identity = identityOf();
+            const a = await identity.signMessage(messageHash, "schnorr");
+            const b = await identity.signMessage(messageHash, "schnorr");
+            expect(hex.encode(a)).not.toBe(hex.encode(b));
+            expect(hex.encode(await identity.signSchnorrDeterministic(messageHash))).toBe(
+                hex.encode(await identity.signSchnorrDeterministic(messageHash)),
+            );
         });
     });
 });
@@ -705,5 +749,48 @@ describe("MnemonicIdentity DescriptorProvider", () => {
         expect(identity.descriptor).toBe(seedIdentity.descriptor);
         expect(descriptorAtIndex(identity, 42)).toBe(descriptorAtIndex(seedIdentity, 42));
         expect(identity.isOurs(descriptorAtIndex(identity, 99))).toBe(true);
+    });
+});
+
+describe("SeedIdentity sighash policy", () => {
+    const P2TR_OUT = new Uint8Array([0x51, 0x20, ...new Uint8Array(32).fill(0xab)]);
+
+    async function spendOwnKeyPath(sighashType?: number, inputIndexes?: number[]) {
+        const identity = SeedIdentity.fromSeed(mnemonicToSeedSync(TEST_MNEMONIC), {
+            isMainnet: false,
+        });
+        const pay = p2tr(await identity.xOnlyPublicKey());
+        const tx = new Transaction({ allowUnknownOutputs: true });
+        tx.addInput({
+            ...pay,
+            txid: new Uint8Array(32).fill(1),
+            index: 0,
+            witnessUtxo: { script: pay.script, amount: 1000n },
+            sighashType,
+        });
+        tx.addOutput({ script: P2TR_OUT, amount: 900n });
+        return identity.sign(tx, inputIndexes);
+    }
+
+    it.each([
+        ["SIGHASH_NONE", SigHash.NONE],
+        ["SIGHASH_SINGLE", SigHash.SINGLE],
+        ["SIGHASH_NONE|ANYONECANPAY", SigHash.NONE_ANYONECANPAY],
+    ])("refuses to bulk sign an input declaring %s", async (_name, sighashType) => {
+        await expect(spendOwnKeyPath(sighashType)).rejects.toThrow(
+            /Unallowed sighash type|not allowed sigHash/,
+        );
+    });
+
+    it("refuses the same on the indexed path", async () => {
+        await expect(spendOwnKeyPath(SigHash.NONE, [0])).rejects.toThrow(/not allowed sigHash/);
+    });
+
+    it.each([
+        ["SIGHASH_DEFAULT", SigHash.DEFAULT],
+        ["SIGHASH_ALL", SigHash.ALL],
+        ["nothing", undefined],
+    ])("still signs an input declaring %s", async (_name, sighashType) => {
+        await expect(spendOwnKeyPath(sighashType)).resolves.toBeDefined();
     });
 });

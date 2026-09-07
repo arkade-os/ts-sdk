@@ -1,4 +1,4 @@
-import { Contract, ContractState } from "../../contracts/types";
+import { Contract, ContractState, ContractWatchState } from "../../contracts/types";
 import { ContractFilter, ContractRepository } from "../contractRepository";
 import { RealmLike } from "./types";
 
@@ -12,7 +12,7 @@ import { RealmLike } from "./types";
  * The consumer owns the Realm lifecycle — `[Symbol.asyncDispose]` is a no-op.
  */
 export class RealmContractRepository implements ContractRepository {
-    readonly version = 1 as const;
+    readonly version = 2 as const;
 
     constructor(private readonly realm: RealmLike) {}
 
@@ -68,6 +68,7 @@ export class RealmContractRepository implements ContractRepository {
                 filter.type,
                 argIndex,
             );
+            argIndex = this.addWatchCondition(filterParts, filterArgs, filter.watch, argIndex);
 
             if (filterParts.length > 0) {
                 const query = filterParts.join(" AND ");
@@ -92,6 +93,7 @@ export class RealmContractRepository implements ContractRepository {
                     createdAt: contract.createdAt,
                     label: contract.label ?? null,
                     metadataJson: contract.metadata ? JSON.stringify(contract.metadata) : null,
+                    watch: contract.watch ?? null,
                 },
                 "modified",
             );
@@ -131,6 +133,28 @@ export class RealmContractRepository implements ContractRepository {
             return argIndex + 1;
         }
     }
+
+    /**
+     * Same as {@link addFilterCondition}, except a row predating the
+     * property stores null and must match `"watched"`.
+     */
+    private addWatchCondition(
+        parts: string[],
+        args: unknown[],
+        value: ContractWatchState | ContractWatchState[] | undefined,
+        argIndex: number,
+    ): number {
+        if (value === undefined) return argIndex;
+
+        const wanted = Array.isArray(value) ? value : [value];
+        if (wanted.length === 0) return argIndex;
+
+        const conditions = wanted.map((_, i) => `watch == $${argIndex + i}`);
+        if (wanted.includes("watched")) conditions.push("watch == null");
+        parts.push(`(${conditions.join(" OR ")})`);
+        args.push(...wanted);
+        return argIndex + wanted.length;
+    }
 }
 
 // ── Realm object → Domain converter ──────────────────────────────────────
@@ -151,6 +175,9 @@ function contractObjectToDomain(obj: any): Contract {
     }
     if (obj.metadataJson !== null && obj.metadataJson !== undefined) {
         contract.metadata = JSON.parse(obj.metadataJson);
+    }
+    if (obj.watch !== null && obj.watch !== undefined) {
+        contract.watch = obj.watch as ContractWatchState;
     }
 
     return contract;

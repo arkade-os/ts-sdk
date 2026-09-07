@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
+import { hex } from "@scure/base";
+import { p2tr, SigHash } from "@scure/btc-signer";
+import { Transaction } from "../src/utils/transaction";
 import { SingleKey, ReadonlySingleKey } from "../src/identity/singleKey";
 import { InMemoryStorageAdapter } from "../src/storage/inMemory";
 import { schnorr, verifyAsync } from "@noble/secp256k1";
+
+const zeroAux = new Uint8Array(32);
 
 describe("SingleKey", () => {
     it("should create random keys with fromRandomBytes", async () => {
@@ -151,6 +156,41 @@ describe("SingleKey", () => {
             expect(Array.from(compressedPubKey)).toEqual(Array.from(readonlyCompressedPubKey));
         });
     });
+
+    describe("signSchnorrDeterministic", () => {
+        const messageHash = new Uint8Array(32).fill(0x11);
+
+        it("returns the same signature every call", async () => {
+            // What a static wallet's swap preimage is derived from: a signature
+            // that moves would make the preimage unrecoverable.
+            const key = SingleKey.fromHex("11".repeat(32));
+            const first = await key.signSchnorrDeterministic(messageHash);
+            const second = await key.signSchnorrDeterministic(messageHash);
+
+            expect(Buffer.from(first).toString("hex")).toBe(Buffer.from(second).toString("hex"));
+            expect(await schnorr.verifyAsync(first, messageHash, await key.xOnlyPublicKey())).toBe(
+                true,
+            );
+        });
+
+        it("matches an aux_rand = 0 BIP-340 signature, not signMessage's", async () => {
+            // signMessage's schnorr branch draws a random aux_rand. Routing the
+            // deterministic path through it would still verify, so only this
+            // comparison catches the mistake.
+            const key = SingleKey.fromHex("22".repeat(32));
+            const deterministic = await key.signSchnorrDeterministic(messageHash);
+
+            expect(Buffer.from(deterministic).toString("hex")).toBe(
+                Buffer.from(
+                    await schnorr.signAsync(messageHash, hex.decode("22".repeat(32)), zeroAux),
+                ).toString("hex"),
+            );
+
+            const a = await key.signMessage(messageHash, "schnorr");
+            const b = await key.signMessage(messageHash, "schnorr");
+            expect(Buffer.from(a).toString("hex")).not.toBe(Buffer.from(b).toString("hex"));
+        });
+    });
 });
 
 describe("ReadonlySingleKey", () => {
@@ -224,5 +264,79 @@ describe("ReadonlySingleKey", () => {
 
         expect(xOnlyPubKey).toHaveLength(32);
         expect(xOnlyPubKey).toBeInstanceOf(Uint8Array);
+    });
+});
+
+describe("SingleKey sighash policy", () => {
+    const P2TR_OUT = new Uint8Array([0x51, 0x20, ...new Uint8Array(32).fill(0xab)]);
+
+    async function spendOwnKeyPath(sighashType?: number) {
+        const key = SingleKey.fromPrivateKey(new Uint8Array(32).fill(3));
+        const pay = p2tr(await key.xOnlyPublicKey());
+        const tx = new Transaction({ allowUnknownOutputs: true });
+        tx.addInput({
+            ...pay,
+            txid: new Uint8Array(32).fill(1),
+            index: 0,
+            witnessUtxo: { script: pay.script, amount: 1000n },
+            sighashType,
+        });
+        tx.addOutput({ script: P2TR_OUT, amount: 900n });
+        return key.sign(tx, [0]);
+    }
+
+    it.each([
+        ["SIGHASH_NONE", SigHash.NONE],
+        ["SIGHASH_SINGLE", SigHash.SINGLE],
+        ["SIGHASH_NONE|ANYONECANPAY", SigHash.NONE_ANYONECANPAY],
+        ["SIGHASH_SINGLE|ANYONECANPAY", SigHash.SINGLE_ANYONECANPAY],
+    ])("refuses to sign an input declaring %s", async (_name, sighashType) => {
+        await expect(spendOwnKeyPath(sighashType)).rejects.toThrow(/not allowed sigHash/);
+    });
+
+    it.each([
+        ["SIGHASH_DEFAULT", SigHash.DEFAULT],
+        ["SIGHASH_ALL", SigHash.ALL],
+        ["SIGHASH_ALL|ANYONECANPAY", SigHash.ALL_ANYONECANPAY],
+        ["nothing", undefined],
+    ])("still signs an input declaring %s", async (_name, sighashType) => {
+        await expect(spendOwnKeyPath(sighashType)).resolves.toBeDefined();
+    });
+    // Bulk signing (no inputIndexes) delegates to scure's `sign`, which skips an
+    // input it may not sign rather than reporting it. Without a preflight that is
+    // indistinguishable from "nothing to sign".
+    async function spendTwo(sighashTypes: (number | undefined)[]) {
+        const key = SingleKey.fromPrivateKey(new Uint8Array(32).fill(3));
+        const pay = p2tr(await key.xOnlyPublicKey());
+        const tx = new Transaction({ allowUnknownOutputs: true });
+        sighashTypes.forEach((sighashType, i) =>
+            tx.addInput({
+                ...pay,
+                txid: new Uint8Array(32).fill(i + 1),
+                index: 0,
+                witnessUtxo: { script: pay.script, amount: 1000n },
+                sighashType,
+            }),
+        );
+        tx.addOutput({ script: P2TR_OUT, amount: 900n });
+        return key.sign(tx);
+    }
+
+    it("does not return an unsigned tx when every input is disallowed", async () => {
+        await expect(spendTwo([SigHash.NONE, SigHash.NONE])).rejects.toThrow(
+            /Unallowed sighash type 0x02 for input 0/,
+        );
+    });
+
+    it("does not silently skip a disallowed input alongside an allowed one", async () => {
+        await expect(spendTwo([SigHash.DEFAULT, SigHash.SINGLE])).rejects.toThrow(
+            /Unallowed sighash type 0x03 for input 1/,
+        );
+    });
+
+    it("still bulk signs when every input is allowed", async () => {
+        const signed = await spendTwo([SigHash.DEFAULT, undefined]);
+        expect(signed.getInput(0).tapKeySig).toBeDefined();
+        expect(signed.getInput(1).tapKeySig).toBeDefined();
     });
 });

@@ -7,7 +7,7 @@ import {
     isTerminalIntentState,
 } from "../repositories/intentRepository";
 import type { Outpoint, VirtualCoin } from ".";
-import { getNormalizedVtxos } from "./vtxo";
+import { getNormalizedVtxos, hasTerminalSpend } from "./vtxo";
 
 /**
  * Intent states a persisted intent can be stuck in after a crash: none of
@@ -33,7 +33,7 @@ export interface IntentReconciliationDeps {
 
 /** A VTXO is consumed once the indexer reports it spent (offchain) or settled onchain. */
 function isConsumed(vtxo: VirtualCoin | undefined): boolean {
-    return vtxo !== undefined && (vtxo.isSpent === true || vtxo.settledBy !== undefined);
+    return vtxo !== undefined && hasTerminalSpend(vtxo);
 }
 
 /**
@@ -48,6 +48,8 @@ function isConsumed(vtxo: VirtualCoin | undefined): boolean {
  *
  *   - all inputs consumed by a batch  → `batch_succeeded` (the money moved;
  *     the crash lost only the local record, not the funds);
+ *   - any input unilaterally exited → `cancelled` (an onchain output cannot be
+ *     an input to a batch, so the intent is dead however the server records it);
  *   - never submitted (`waiting_to_submit`), inputs still unspent → `cancelled`
  *     (arkd never saw it, so the inputs are safe to unlock);
  *   - past `validUntil`, inputs still unspent → `cancelled` (expired);
@@ -72,6 +74,19 @@ export async function classifyIntent(
             intent.commitmentTransactionId ??
             consumed.map((v) => v?.settledBy).find((s): s is string => !!s);
         return terminal(intent, "batch_succeeded", now, { commitmentTransactionId });
+    }
+
+    // An exited input can never be batched, so the intent is dead — and unlike
+    // the cases below, waiting does not help. Tested after `batch_succeeded`, so
+    // an input that settled AND unrolled still reports the settlement.
+    //
+    // Bare `isUnrolled`, not `canSweepOnchain`: the question here is whether the
+    // input can still join a batch, and an exited output cannot whether or not
+    // its onchain spend has happened yet.
+    if (consumed.some((vtxo) => vtxo?.isUnrolled)) {
+        return terminal(intent, "cancelled", now, {
+            cancellationReason: "reconciliation: an input was unilaterally exited",
+        });
     }
 
     // From here the inputs are (at least partly) still unspent.

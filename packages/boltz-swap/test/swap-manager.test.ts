@@ -2212,4 +2212,136 @@ describe("SwapManager", () => {
             }
         });
     });
+
+    describe("Chain claim txid persistence", () => {
+        const claimTxid = "f".repeat(64);
+
+        // BTC => ARK: the side the manager claims itself via claimArk.
+        const btcToArkSwap: BoltzChainSwap = {
+            ...mockChainSwap,
+            status: "swap.created",
+            request: { ...mockChainSwap.request, from: "BTC", to: "ARK" },
+        };
+
+        const triggerStatus = async (status: string) => {
+            await mockWebSocket.onmessage({
+                data: JSON.stringify({
+                    event: "update",
+                    args: [{ id: btcToArkSwap.id, status }],
+                }),
+            });
+        };
+
+        beforeEach(() => {
+            global.fetch = vi.fn(() =>
+                Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve({ status: "swap.created" }),
+                    headers: new Headers({ "content-length": "100" }),
+                } as Response),
+            );
+        });
+
+        afterEach(async () => {
+            await swapManager?.stop();
+        });
+
+        it("keeps the claim txid stored across later status updates", async () => {
+            // Mirrors the repository: saveSwap replaces the whole record.
+            const stored = new Map<string, BoltzChainSwap>();
+            const saveSwap = vi.fn(async (swap: BoltzChainSwap) => {
+                stored.set(swap.id, clone(swap));
+            });
+            // Mirrors ArkadeSwaps.claimArk: persists the txid against its own
+            // snapshot without mutating the caller's swap.
+            const claimArk = vi.fn(async (swap: BoltzChainSwap) => {
+                stored.set(swap.id, { ...clone(swap), claimTxid });
+                return { txid: claimTxid };
+            });
+
+            swapManager = new SwapManager(swapProvider, swapManagerConfig);
+            swapManager.setCallbacks(makeCallbacks({ claimArk, saveSwap }));
+
+            await swapManager.start([clone(btcToArkSwap)]);
+            mockWebSocket.onopen();
+
+            await triggerStatus("transaction.server.mempool");
+            expect(claimArk).toHaveBeenCalledTimes(1);
+            expect(stored.get(btcToArkSwap.id)?.claimTxid).toBe(claimTxid);
+
+            // The next status saves the monitored swap again — it must carry
+            // the claim txid rather than write the pre-claim snapshot back.
+            await triggerStatus("transaction.claim.pending");
+            expect(stored.get(btcToArkSwap.id)?.claimTxid).toBe(claimTxid);
+        });
+
+        it("co-signs after the claim lands when claim.pending raced it", async () => {
+            let releaseClaim: (() => void) | undefined;
+            const claimArk = vi.fn(
+                () =>
+                    new Promise<{ txid: string }>((resolve) => {
+                        releaseClaim = () => resolve({ txid: claimTxid });
+                    }),
+            );
+            const signServerClaim = vi.fn(async () => {});
+
+            swapManager = new SwapManager(swapProvider, swapManagerConfig);
+            swapManager.setCallbacks(makeCallbacks({ claimArk, signServerClaim }));
+
+            await swapManager.start([clone(btcToArkSwap)]);
+            mockWebSocket.onopen();
+
+            const claiming = triggerStatus("transaction.server.mempool");
+            await sleep(5);
+            expect(claimArk).toHaveBeenCalledTimes(1);
+
+            // The co-sign request lands while the claim is still in flight:
+            // the in-progress lock drops it, and Boltz sends no further
+            // update for an unchanged status.
+            await triggerStatus("transaction.claim.pending");
+            expect(signServerClaim).not.toHaveBeenCalled();
+
+            releaseClaim!();
+            await claiming;
+            await sleep(5);
+            expect(signServerClaim).toHaveBeenCalledTimes(1);
+        });
+
+        it("co-signs exactly once when claim.pending follows a settled claim", async () => {
+            const claimArk = vi.fn(async () => ({ txid: claimTxid }));
+            const signServerClaim = vi.fn(async () => {});
+
+            swapManager = new SwapManager(swapProvider, swapManagerConfig);
+            swapManager.setCallbacks(makeCallbacks({ claimArk, signServerClaim }));
+
+            await swapManager.start([clone(btcToArkSwap)]);
+            mockWebSocket.onopen();
+
+            await triggerStatus("transaction.server.mempool");
+            expect(signServerClaim).not.toHaveBeenCalled();
+
+            await triggerStatus("transaction.claim.pending");
+            expect(signServerClaim).toHaveBeenCalledTimes(1);
+        });
+
+        it("does not record a txid when the claim fails", async () => {
+            const stored = new Map<string, BoltzChainSwap>();
+            const saveSwap = vi.fn(async (swap: BoltzChainSwap) => {
+                stored.set(swap.id, clone(swap));
+            });
+            const claimArk = vi.fn(async () => {
+                throw new Error("claim failed");
+            });
+
+            swapManager = new SwapManager(swapProvider, swapManagerConfig);
+            swapManager.setCallbacks(makeCallbacks({ claimArk, saveSwap }));
+
+            await swapManager.start([clone(btcToArkSwap)]);
+            mockWebSocket.onopen();
+
+            await triggerStatus("transaction.server.mempool");
+            await triggerStatus("transaction.claim.pending");
+            expect(stored.get(btcToArkSwap.id)?.claimTxid).toBeUndefined();
+        });
+    });
 });

@@ -48,6 +48,9 @@ export interface BucketSyncOptions {
     maxRetries?: number;
     /** Diff page size (max commits per page). Default 500. */
     pageLimit?: number;
+    /** Called for a pulled entry that would not open or apply; defaults to a
+     * `console.warn`. See {@link BucketSync.pull}. */
+    onEntryError?: (key: string, error: unknown) => void;
 }
 
 /**
@@ -65,6 +68,7 @@ export class BucketSync {
     private readonly resolver: ConflictResolver;
     private readonly maxRetries: number;
     private readonly pageLimit: number;
+    private readonly onEntryError: (key: string, error: unknown) => void;
 
     constructor(
         private readonly api: BucketApi,
@@ -74,6 +78,9 @@ export class BucketSync {
         this.resolver = opts.resolver ?? localWins;
         this.maxRetries = opts.maxRetries ?? 5;
         this.pageLimit = opts.pageLimit ?? 500;
+        this.onEntryError =
+            opts.onEntryError ??
+            ((key, error) => console.warn(`bucket-sync: skipping entry ${key}:`, error));
     }
 
     /** The seq cursor this engine has caught up to. */
@@ -146,10 +153,20 @@ export class BucketSync {
         for (;;) {
             const page = await this.api.diff(this.cursor, this.pageLimit);
             for (const e of page.entries) {
-                await apply(
-                    e.key,
-                    e.deleted ? null : open(base64.decode(e.value), this.kwk, e.key),
-                );
+                try {
+                    await apply(
+                        e.key,
+                        e.deleted ? null : open(base64.decode(e.value), this.kwk, e.key),
+                    );
+                } catch (error) {
+                    // Skip, do not abort: aborting leaves the cursor before this
+                    // entry, so one corrupt value wedges the bucket permanently.
+                    // Its version is deliberately NOT recorded, so a later local
+                    // write takes the CAS-conflict path instead of silently
+                    // overwriting a record this device never read.
+                    this.onEntryError(e.key, error);
+                    continue;
+                }
                 this.versions.set(e.key, e.version);
                 applied++;
             }

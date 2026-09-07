@@ -13,10 +13,14 @@ import {
 } from "../script/base";
 import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
-import { setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
-import { Transaction } from "./transaction";
+import { ConditionWitness, setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
+import { assertAllowedSighashTypes, formatSighash, Transaction } from "./transaction";
 import { ArkAddress } from "../script/address";
 import { Extension } from "../extension";
+import { ServerResponseMismatchError } from "../providers/errors";
+import { toXOnly } from "./keys";
+
+export { assertAllowedSighashTypes };
 
 export type ArkTxInput = {
     // the script used to spend the virtual output
@@ -128,7 +132,15 @@ function buildVirtualTx(inputs: ArkTxInput[], outputs: TransactionOutput[]) {
     return tx;
 }
 
-function buildCheckpointTx(
+/**
+ * Build the checkpoint transaction spending `vtxo`, plus the input that spends
+ * it (the ark tx's actual input).
+ *
+ * A pure function of `(vtxo, serverUnrollScript)` — nothing here is
+ * server-supplied — so finalization paths can rebuild the checkpoint they
+ * expect from their own VTXO data and reject any other one.
+ */
+export function buildCheckpointTx(
     vtxo: ArkTxInput,
     serverUnrollScript: CSVMultisigTapscript.Type,
 ): { tx: Transaction; input: ArkTxInput } {
@@ -195,13 +207,6 @@ export function hasBoardingTxExpired(
     const now = BigInt(Math.floor(Date.now() / 1000));
     const blockTime = BigInt(Math.floor(coin.status.block_time));
     return blockTime + boardingTimelock.value <= now;
-}
-
-/**
- * Formats a sighash type as a hex string (e.g., 0x01)
- */
-function formatSighash(type: number): string {
-    return `0x${type.toString(16).padStart(2, "0")}`;
 }
 
 /**
@@ -401,7 +406,7 @@ export interface OffchainTxSubmitProvider {
     submitTx(
         signedArkTx: string,
         checkpointTxs: string[],
-    ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }>;
+    ): Promise<{ arkTxid: string; finalArkTx?: string; signedCheckpointTxs: string[] }>;
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
 }
 
@@ -438,6 +443,194 @@ export interface OffchainTxSigner {
 }
 
 /**
+ * Pair each server-returned checkpoint PSBT with the locally built checkpoint
+ * of the same txid, rejecting anything else.
+ *
+ * The ark tx signed just above spends each checkpoint at `checkpointTxid:0`, so
+ * the response is only usable if it carries the same txids: a checkpoint with
+ * any other txid leaves that ark tx unspendable. The two sets are therefore
+ * equal by construction, and this pairing is what the signing step below
+ * consumes.
+ *
+ * Matching is by txid rather than by position — nothing in the wire contract
+ * promises arkd echoes checkpoints in submission order — while the result keeps
+ * the server's order, so nothing downstream is reordered.
+ *
+ * Comparing txids is sound while checkpoint inputs are taproot-only: witness
+ * data does not affect the txid, so the server's signature cannot change it. A
+ * future P2SH-wrapped/scriptSig input could acquire a `finalScriptSig`
+ * server-side and legitimately change txid; that protocol shape would need a
+ * different comparison target.
+ */
+export function matchServerCheckpoints(
+    serverCheckpointTxs: string[],
+    expectedCheckpoints: Transaction[],
+    context: string,
+): { server: Transaction; local: Transaction }[] {
+    if (serverCheckpointTxs.length !== expectedCheckpoints.length) {
+        throw new ServerResponseMismatchError(
+            `${context} returned ${serverCheckpointTxs.length} checkpoints, expected ${expectedCheckpoints.length}`,
+        );
+    }
+
+    // Checkpoints spend distinct VTXOs, so their txids are distinct and the map
+    // cannot collapse two entries. Deleting on match keeps a duplicated server
+    // txid from satisfying two slots; with equal counts that gives a bijection.
+    const byTxid = new Map(expectedCheckpoints.map((c) => [c.id, c]));
+
+    return serverCheckpointTxs.map((encoded, index) => {
+        const server = Transaction.fromPSBT(base64.decode(encoded));
+        const local = byTxid.get(server.id);
+        if (!local) {
+            throw new ServerResponseMismatchError(
+                `${context} checkpoint ${index} txid ${server.id} does not match any submitted checkpoint`,
+            );
+        }
+        byTxid.delete(server.id);
+        return { server, local };
+    });
+}
+
+/**
+ * Assert a `submitTx` response refers to the ark transaction just submitted.
+ *
+ * The returned `arkTxid` is what gets passed to `finalizeTx` and persisted by
+ * callers, so a stale or misrouted response must be rejected before either
+ * happens: it must equal the locally signed transaction's txid, and when the
+ * response carries the counter-signed `finalArkTx`, that transaction's txid
+ * must match too. Server signatures live in the witness and cannot
+ * legitimately change either — with the same taproot-only caveat as
+ * {@link matchServerCheckpoints}.
+ */
+export function assertSubmittedArkTxid(
+    response: { arkTxid: string; finalArkTx?: string },
+    signedArkTx: Transaction,
+    context: string,
+): void {
+    if (response.arkTxid !== signedArkTx.id) {
+        throw new ServerResponseMismatchError(
+            `${context} returned ark txid ${response.arkTxid}, expected ${signedArkTx.id}`,
+        );
+    }
+    if (response.finalArkTx === undefined) return;
+    const finalTxid = Transaction.fromPSBT(base64.decode(response.finalArkTx)).id;
+    if (finalTxid !== signedArkTx.id) {
+        throw new ServerResponseMismatchError(
+            `${context} returned final ark tx ${finalTxid}, expected ${signedArkTx.id}`,
+        );
+    }
+}
+
+/**
+ * Opt-in proof that the server co-signed what it handed back.
+ *
+ * Be precise about what this buys, because it is less than it sounds like. It
+ * does NOT protect a preimage or any other condition value: those reach the
+ * server at `submitTx`, before any of this runs. What it buys is a loud,
+ * immediate failure instead of a caller reporting success, watching nothing
+ * confirm, and learning the truth when the counterparty's refund lands.
+ */
+export interface VerifyServerSignatures {
+    /** The Ark server's key; x-only or compressed, both accepted. */
+    serverPubkey: Uint8Array;
+}
+
+/**
+ * Verify the server's signature on one input of `serverTx` against the leaf
+ * the LOCAL transaction spends at that index.
+ *
+ * Two things this ordering buys. The expected leaf is read from `localTx`, so a
+ * response carrying some other leaf is a mismatch rather than a self-consistent
+ * pass — taking the leaf from the server's own copy would ask the counterparty
+ * what it should have signed. And it is per-input, so a transaction mixing
+ * leaves, or spending several contracts at once, is checked honestly instead of
+ * against one assumed-shared leaf.
+ */
+function assertServerSignedLeaf(
+    serverTx: Transaction,
+    localTx: Transaction,
+    inputIndex: number,
+    serverPubkeyHex: string,
+    context: string,
+): void {
+    const leaf = localTx.getInput(inputIndex).tapLeafScript?.[0];
+    if (!leaf) {
+        throw new Error(
+            `${context}: input ${inputIndex} carries no spend leaf to verify the server signature against`,
+        );
+    }
+    try {
+        verifyTapscriptSignatures(
+            serverTx,
+            inputIndex,
+            [serverPubkeyHex],
+            undefined,
+            undefined,
+            tapLeafHash(scriptFromTapLeafScript(leaf)),
+        );
+    } catch (error) {
+        throw new ServerResponseMismatchError(
+            `${context}: input ${inputIndex} is not signed by the server on the leaf being spent ` +
+                `(${error instanceof Error ? error.message : String(error)})`,
+        );
+    }
+}
+
+/**
+ * Assert every checkpoint in `checkpoints` is the one this wallet would build
+ * for one of `inputs`, by rebuilding it from local VTXO data.
+ *
+ * Used by the finalization paths, which resume a transaction submitted in an
+ * earlier process and so have no locally built set to compare against. The
+ * expected checkpoint is a pure function of `(VTXO, server unroll script)`, so
+ * it can simply be derived again.
+ *
+ * `unrollCandidates` accepts more than one script because the checkpoint output
+ * commits to the server key that was current when it was built — a tx submitted
+ * before a signer rotation and finalized after it must still match.
+ */
+export function assertCheckpointsMatchInputs(
+    checkpoints: Transaction[],
+    inputs: ArkTxInput[],
+    unrollCandidates: CSVMultisigTapscript.Type[],
+    context: string,
+): void {
+    const byOutpoint = new Map(inputs.map((input) => [`${input.txid}:${input.vout}`, input]));
+
+    for (const [index, checkpoint] of checkpoints.entries()) {
+        if (checkpoint.inputsLength !== 1) {
+            throw new ServerResponseMismatchError(
+                `${context}: checkpoint ${index} spends ${checkpoint.inputsLength} inputs, expected 1`,
+            );
+        }
+
+        const spent = checkpoint.getInput(0);
+        if (!spent.txid || spent.index === undefined) {
+            throw new ServerResponseMismatchError(
+                `${context}: checkpoint ${index} has no input outpoint`,
+            );
+        }
+
+        const outpoint = `${hex.encode(spent.txid)}:${spent.index}`;
+        const input = byOutpoint.get(outpoint);
+        if (!input) {
+            throw new ServerResponseMismatchError(
+                `${context}: checkpoint ${index} spends ${outpoint}, which is not one of the requested virtual outputs`,
+            );
+        }
+
+        const rebuilt = unrollCandidates.some(
+            (unroll) => buildCheckpointTx(input, unroll).tx.id === checkpoint.id,
+        );
+        if (!rebuilt) {
+            throw new ServerResponseMismatchError(
+                `${context}: checkpoint ${index} txid ${checkpoint.id} differs from the checkpoint built locally for ${outpoint}`,
+            );
+        }
+    }
+}
+
+/**
  * Submit a pre-built offchain transaction to the Ark server and finalize it.
  *
  * Owns the submit → checkpoint-sign → finalize sequence shared by every Ark
@@ -447,6 +640,10 @@ export interface OffchainTxSigner {
  * machinery. Optional {@link hooks} let the wallet mark/clear its pending-tx
  * recovery flag around the network round-trip; a stateless caller omits them.
  *
+ * `options.verifyServerSignatures` is off by default, so every existing caller
+ * is unchanged; see {@link VerifyServerSignatures} for what it does and does
+ * not prove.
+ *
  * @returns The Ark transaction id and the server-signed checkpoint PSBTs
  * (the raw server response, for the wallet's bookkeeping).
  */
@@ -455,6 +652,7 @@ export async function submitOffchainTx(
     offchainTx: OffchainTx,
     signer: OffchainTxSigner,
     hooks?: { beforeSubmit?: () => Promise<void>; afterFinalize?: () => Promise<void> },
+    options?: { verifyServerSignatures?: VerifyServerSignatures },
 ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
     const { arkTx: signedArkTx, userSignedCheckpoints } = await signer.signArkTx(
         offchainTx.arkTx,
@@ -477,33 +675,79 @@ export async function submitOffchainTx(
     // finalize, its recovery hook can retry from persisted state.
     await hooks?.beforeSubmit?.();
 
-    const { arkTxid, signedCheckpointTxs } = await provider.submitTx(
+    const response = await provider.submitTx(
         base64.encode(signedArkTx.toPSBT()),
         offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT())),
     );
+    assertSubmittedArkTxid(response, signedArkTx, "submitTx");
+    const { arkTxid, signedCheckpointTxs } = response;
 
-    // The server returns one signed checkpoint per submitted checkpoint; both
-    // branches below pair them positionally. A short response would silently
-    // drop the tail (→ incomplete finalizeTx), a long one would carry
-    // checkpoints that were never built.
-    if (signedCheckpointTxs.length !== offchainTx.checkpoints.length) {
-        throw new Error(
-            `submitTx returned ${signedCheckpointTxs.length} checkpoints, expected ${offchainTx.checkpoints.length}`,
+    // The server returns one signed checkpoint per submitted checkpoint, and
+    // each must be one we built: nothing below signs a checkpoint that has not
+    // been matched to a local one.
+    const matched = matchServerCheckpoints(signedCheckpointTxs, offchainTx.checkpoints, "submitTx");
+
+    // Matching pins the checkpoint body, but the sighash type is declared
+    // outside it: a returned checkpoint is signed below, so what it asks to be
+    // signed under is checked here.
+    matched.forEach(({ server }, index) => {
+        try {
+            assertAllowedSighashTypes(server);
+        } catch (error) {
+            throw new ServerResponseMismatchError(
+                `submitTx checkpoint ${index}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
+    });
+
+    const verify = options?.verifyServerSignatures;
+    if (verify) {
+        // Fail closed: `finalArkTx` is optional in the wire type and
+        // `assertSubmittedArkTxid` skips it when absent, but a check that was
+        // asked for and cannot be run is a failed check, not a passed one.
+        if (response.finalArkTx === undefined) {
+            throw new ServerResponseMismatchError(
+                "submitTx: server returned no final ark tx to verify its signatures against",
+            );
+        }
+        const finalArkTx = Transaction.fromPSBT(base64.decode(response.finalArkTx));
+        const serverPubkeyHex = hex.encode(toXOnly(verify.serverPubkey, "server key"));
+        for (let i = 0; i < offchainTx.arkTx.inputsLength; i++) {
+            assertServerSignedLeaf(
+                finalArkTx,
+                offchainTx.arkTx,
+                i,
+                serverPubkeyHex,
+                "submitTx ark tx",
+            );
+        }
+        // Each checkpoint carries exactly one input, the VTXO being spent.
+        matched.forEach(({ server, local }, index) =>
+            assertServerSignedLeaf(
+                server,
+                local,
+                0,
+                serverPubkeyHex,
+                `submitTx checkpoint ${index}`,
+            ),
         );
     }
 
     let finalCheckpoints: string[];
     if (userSignedCheckpoints) {
-        finalCheckpoints = signedCheckpointTxs.map((c, i) => {
-            const serverSigned = Transaction.fromPSBT(base64.decode(c));
-            combineTapscriptSigs(userSignedCheckpoints[i], serverSigned);
-            return base64.encode(serverSigned.toPSBT());
+        // The signer's array is positional against `offchainTx.checkpoints`, so
+        // it is indexed by txid too rather than paired with the server's order.
+        const userByTxid = new Map(
+            userSignedCheckpoints.map((c, i) => [offchainTx.checkpoints[i].id, c] as const),
+        );
+        finalCheckpoints = matched.map(({ server, local }) => {
+            combineTapscriptSigs(userByTxid.get(local.id)!, server);
+            return base64.encode(server.toPSBT());
         });
     } else {
         finalCheckpoints = await Promise.all(
-            signedCheckpointTxs.map(async (c) => {
-                const tx = Transaction.fromPSBT(base64.decode(c));
-                const signed = await signer.signCheckpoint(tx);
+            matched.map(async ({ server }) => {
+                const signed = await signer.signCheckpoint(server);
                 return base64.encode(signed.toPSBT());
             }),
         );
@@ -533,6 +777,8 @@ export async function signAndSubmitOffchainTx(params: {
     inputs: ArkTxInput[];
     outputs: TransactionOutput[];
     serverUnrollScript: CSVMultisigTapscript.Type;
+    /** Forwarded to {@link submitOffchainTx}; omitted, nothing is checked. */
+    verifyServerSignatures?: VerifyServerSignatures;
 }): Promise<string> {
     const offchainTx = buildOffchainTx(params.inputs, params.outputs, params.serverUnrollScript);
     // Single key: every input is signed by the same identity (all indexes), and
@@ -542,6 +788,41 @@ export async function signAndSubmitOffchainTx(params: {
         signArkTx: async (arkTx) => ({ arkTx: await params.identity.sign(arkTx) }),
         signCheckpoint: (checkpoint) => params.identity.sign(checkpoint),
     };
-    const { arkTxid } = await submitOffchainTx(params.provider, offchainTx, signer);
+    const { arkTxid } = await submitOffchainTx(params.provider, offchainTx, signer, undefined, {
+        verifyServerSignatures: params.verifyServerSignatures,
+    });
     return arkTxid;
+}
+
+/**
+ * Decorate a signer so it reveals `preimage` on every input it signs.
+ *
+ * The ordering encoded here is the whole point: the condition witness is NOT
+ * part of what is signed, so attaching it before signing leaves a signature
+ * over a PSBT that no longer matches once the field is present — which the
+ * server rejects as `INVALID_SIGNATURE`. Decorate per spend, never wallet-wide.
+ *
+ * For any condition-leaf spend (VHTLC claims on both swap directions); the
+ * generic signature keeps the decorated identity's own type, so the result is
+ * still whatever was passed in.
+ */
+export function claimWithPreimageIdentity<
+    T extends { sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> },
+>(identity: T, preimage: Uint8Array): T {
+    return {
+        ...identity,
+        sign: async (tx: Transaction, inputIndexes?: number[]): Promise<Transaction> => {
+            // Clone-and-round-trip so the caller's transaction is never mutated
+            // and the signed result is a fresh object we can add a field to.
+            const signed = Transaction.fromPSBT(
+                (await identity.sign(tx.clone(), inputIndexes)).toPSBT(),
+            );
+            const indexes =
+                inputIndexes ?? Array.from({ length: signed.inputsLength }, (_, i) => i);
+            for (const index of indexes) {
+                setArkPsbtField(signed, index, ConditionWitness, [preimage]);
+            }
+            return signed;
+        },
+    };
 }

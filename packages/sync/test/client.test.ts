@@ -85,16 +85,61 @@ describe("BucketSyncClient — auth handshake", () => {
         expect(client.authenticated).toBe(true);
     });
 
-    it("throws BucketSyncAuthError when both register and verify fail", async () => {
+    it("throws BucketSyncAuthError when both register and verify reject the signature", async () => {
+        const seen: string[] = [];
         const client = new BucketSyncClient({
             baseUrl: "http://server",
             fetch: mockFetch({
                 "/v1/auth/schnorr/challenge": () => json({ nonce: nonce("ef"), expiresAt: "" }),
-                "/v1/auth/schnorr/register": () => new Response("", { status: 401 }),
-                "/v1/auth/schnorr/verify": () => new Response("", { status: 401 }),
+                "/v1/auth/schnorr/register": () => {
+                    seen.push("register");
+                    return new Response("", { status: 409 });
+                },
+                "/v1/auth/schnorr/verify": () => {
+                    seen.push("verify");
+                    return new Response("", { status: 401 });
+                },
             }),
         });
         await expect(client.authenticate(stubSigner)).rejects.toBeInstanceOf(BucketSyncAuthError);
+        expect(seen).toEqual(["register", "verify"]);
+    });
+
+    // A server fault reported as an auth failure points the user at their seed.
+    it.each([500, 502, 503, 429, 400])(
+        "surfaces a %d from register instead of retrying it as verify",
+        async (status) => {
+            let verifies = 0;
+            const client = new BucketSyncClient({
+                baseUrl: "http://server",
+                fetch: mockFetch({
+                    "/v1/auth/schnorr/challenge": () => json({ nonce: nonce("ef"), expiresAt: "" }),
+                    "/v1/auth/schnorr/register": () => new Response("upstream down", { status }),
+                    "/v1/auth/schnorr/verify": () => {
+                        verifies++;
+                        return json({ token: "tok", expiresAt: "" });
+                    },
+                }),
+            });
+            const err = await client.authenticate(stubSigner).catch((e) => e);
+            expect(err).toBeInstanceOf(BucketSyncHttpError);
+            expect(err.status).toBe(status);
+            expect(err.body).toBe("upstream down");
+            expect(verifies).toBe(0);
+        },
+    );
+
+    // 409 means "already registered", which only `register` can act on.
+    it.each([409, 500])("surfaces a %d from verify rather than an auth failure", async (status) => {
+        const client = new BucketSyncClient({
+            baseUrl: "http://server",
+            fetch: mockFetch({
+                "/v1/auth/schnorr/challenge": () => json({ nonce: nonce("ef"), expiresAt: "" }),
+                "/v1/auth/schnorr/register": () => new Response("", { status: 409 }),
+                "/v1/auth/schnorr/verify": () => new Response("boom", { status }),
+            }),
+        });
+        await expect(client.authenticate(stubSigner)).rejects.toBeInstanceOf(BucketSyncHttpError);
     });
 
     it("sends the correct pubkey, computed signature, nonce and device", async () => {
@@ -214,6 +259,21 @@ describe("BucketSyncClient — SSE stream", () => {
         const client = await authedClient({
             "/v1/bucket/stream": () => streamOf(["id: 1\nda", "ta: 1\n\nid: 2\ndata: 2\n\n"]),
         });
+        const seqs: number[] = [];
+        for await (const s of client.stream()) seqs.push(s);
+        expect(seqs).toEqual([1, 2]);
+    });
+
+    const CR = "\r";
+    it.each([
+        ["CRLF frames", [`id: 1${CR}\ndata: 1${CR}\n${CR}\n`, `id: 2${CR}\ndata: 2${CR}\n${CR}\n`]],
+        [
+            "a CRLF split between its \\r and its \\n",
+            [`id: 1${CR}\ndata: 1${CR}\n${CR}`, `\nid: 2${CR}\ndata: 2${CR}\n${CR}\n`],
+        ],
+        ["a server that mixes both", ["id: 1\ndata: 1\n\n", `id: 2${CR}\ndata: 2${CR}\n${CR}\n`]],
+    ])("yields seqs from %s", async (_label, chunks) => {
+        const client = await authedClient({ "/v1/bucket/stream": () => streamOf(chunks) });
         const seqs: number[] = [];
         for await (const s of client.stream()) seqs.push(s);
         expect(seqs).toEqual([1, 2]);

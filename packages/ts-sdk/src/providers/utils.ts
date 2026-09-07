@@ -1,3 +1,5 @@
+import type { EventSourceLike } from "./eventSource";
+
 export type ManagedEventSourceIterator = AsyncGenerator<MessageEvent, void, unknown> & {
     close(): void;
 };
@@ -15,7 +17,7 @@ function createAbortError(): Error {
  * close() closes the EventSource, removes listeners, and wakes any pending
  * next() even when the browser does not emit an error from EventSource.close().
  */
-export function eventSourceIterator(eventSource: EventSource): ManagedEventSourceIterator {
+export function eventSourceIterator(eventSource: EventSourceLike): ManagedEventSourceIterator {
     const messageQueue: MessageEvent[] = [];
     const errorQueue: Error[] = [];
     let messageResolve: ((value: MessageEvent) => void) | null = null;

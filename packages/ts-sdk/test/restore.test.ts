@@ -1,6 +1,9 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { hex } from "@scure/base";
-import { signingDescriptorIndex } from "../src/wallet/walletReceiveRotator";
+import {
+    signingDescriptorIndex,
+    strictSigningDescriptorIndex,
+} from "../src/wallet/walletReceiveRotator";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { HDKey, networks, scriptExpressions } from "@bitcoinerlab/descriptors-scure";
 import { deriveDescriptorLeafPubKey } from "../src/identity/descriptor";
@@ -1223,6 +1226,32 @@ describe("signingDescriptorIndex", () => {
     });
 });
 
+describe("strictSigningDescriptorIndex", () => {
+    const at = (index: string) => `tr([aa/86'/0'/0']xpub6.../0/${index})`;
+
+    it("parses index 0 as 0, not as the absent case", () => {
+        expect(strictSigningDescriptorIndex(at("0"))).toBe(0);
+    });
+
+    it("returns undefined when there is no concrete trailing index", () => {
+        expect(strictSigningDescriptorIndex(at("*"))).toBeUndefined();
+        expect(strictSigningDescriptorIndex("tr(deadbeef)")).toBeUndefined();
+    });
+
+    it("holds at the largest exactly-representable index", () => {
+        expect(strictSigningDescriptorIndex(at("9007199254740991"))).toBe(Number.MAX_SAFE_INTEGER);
+    });
+
+    it("refuses an index past 2^53, where the parse stops being faithful", () => {
+        // `Number("9007199254740993")` is 9007199254740992 — a different
+        // index than the descriptor names. Reporting that would advance a
+        // watermark to a descriptor nobody ever issued, so the strict parse
+        // reports "no index" and lets the caller reject.
+        expect(strictSigningDescriptorIndex(at("9007199254740993"))).toBeUndefined();
+        expect(strictSigningDescriptorIndex(at("99999999999999999999"))).toBeUndefined();
+    });
+});
+
 describe("Wallet.restore", () => {
     beforeEach(() => {
         installRestoreHarness();
@@ -1700,7 +1729,7 @@ describe("Wallet.restore", () => {
                     dust: 1000,
                     forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
                     checkpointTapscript:
-                        "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                        "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
                     deprecatedSigners,
                 });
             if (url.includes("subscribe") || url.includes("subscriptions"))

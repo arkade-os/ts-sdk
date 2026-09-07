@@ -192,6 +192,88 @@ export class VHTLCAddressMismatchError extends SwapError {
     }
 }
 
+/**
+ * Thrown when a cooperative claim co-signature is requested for a chain swap
+ * whose claim side we have not claimed yet.
+ *
+ * Co-signing is a courtesy: the counterparty can always spend the claim leaf
+ * once it holds the preimage, so declining until our own claim is recorded
+ * costs it a larger transaction and nothing else. Non-fatal at every call
+ * site — the request is re-evaluated while the swap stays claimable.
+ *
+ * Past the service-worker boundary only `message` survives, so the swap id
+ * and the reason are carried there.
+ */
+export class CooperativeSignRefusedError extends SwapError {
+    public readonly swapId: string;
+
+    constructor(options: ErrorOptions & { swapId: string; reason: string }) {
+        super({
+            ...options,
+            message:
+                options.message ??
+                `Swap ${options.swapId}: not co-signing the counterparty claim — ${options.reason}`,
+        });
+        this.name = "CooperativeSignRefusedError";
+        this.swapId = options.swapId;
+    }
+}
+
+/**
+ * Thrown when a chain swap's claim-side lockup holds less than the agreed
+ * amount. The claim is not performed, so the preimage is never disclosed and
+ * the funded side stays recoverable through the regular refund paths.
+ */
+export class LockupAmountMismatchError extends SwapError {
+    public readonly swapId: string;
+    public readonly expectedAmount: number;
+    public readonly lockedAmount: number;
+
+    constructor(
+        options: ErrorOptions & { swapId: string; expectedAmount: number; lockedAmount: number },
+    ) {
+        super({
+            ...options,
+            message:
+                options.message ??
+                `Swap ${options.swapId}: claim-side lockup holds ${options.lockedAmount} sats, ` +
+                    `below the agreed ${options.expectedAmount} sats — not claiming`,
+        });
+        this.name = "LockupAmountMismatchError";
+        this.swapId = options.swapId;
+        this.expectedAmount = options.expectedAmount;
+        this.lockedAmount = options.lockedAmount;
+    }
+}
+
+/**
+ * Thrown when a submarine swap's `expectedAmount` exceeds the invoice amount
+ * plus the advertised submarine fee schedule. The response of a consistent
+ * server always reconciles with its own advertised fees, so the swap is
+ * rejected before it is persisted or funded.
+ */
+export class ExpectedAmountExceededError extends SwapError {
+    public readonly swapId: string;
+    public readonly expectedAmount: number;
+    public readonly maxAcceptable: number;
+
+    constructor(
+        options: ErrorOptions & { swapId: string; expectedAmount: number; maxAcceptable: number },
+    ) {
+        super({
+            ...options,
+            message:
+                options.message ??
+                `Swap ${options.swapId}: expected funding amount ${options.expectedAmount} sats ` +
+                    `exceeds the invoice amount plus advertised fees (${options.maxAcceptable} sats)`,
+        });
+        this.name = "ExpectedAmountExceededError";
+        this.swapId = options.swapId;
+        this.expectedAmount = options.expectedAmount;
+        this.maxAcceptable = options.maxAcceptable;
+    }
+}
+
 /** Reason a `quoteSwap` was rejected before being posted to Boltz. */
 export type QuoteRejectionReason =
     | "below_floor"

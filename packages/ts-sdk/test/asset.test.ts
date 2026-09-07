@@ -12,8 +12,8 @@ import {
     MetadataList,
     AssetGroup,
     Packet,
+    ASSET_ID_VECTORS,
 } from "../src/extension/asset";
-import assetIdFixtures from "./fixtures/asset_id_fixtures.json";
 import assetRefFixtures from "./fixtures/asset_ref_fixtures.json";
 import assetInputFixtures from "./fixtures/asset_input_fixtures.json";
 import assetOutputFixtures from "./fixtures/asset_output_fixtures.json";
@@ -21,40 +21,108 @@ import metadataFixtures from "./fixtures/metadata_fixtures.json";
 import assetGroupFixtures from "./fixtures/asset_group_fixtures.json";
 import packetFixtures from "./fixtures/packet_fixtures.json";
 
+// Driven off the shared vector rather than a local fixture: the same bytes are
+// pinned by lss, solver-registry and NArk, so a failure here means the encoding
+// drifted from the other repos, not just from this suite. Assertion messages
+// carry the vector's `label` so the failure names which property broke.
+const V = ASSET_ID_VECTORS;
+const drift = (label: string) => `asset id encoding drifted from ASSET_ID_VECTORS (${label})`;
+
 describe("AssetId", () => {
     describe("valid", () => {
-        assetIdFixtures.valid.forEach((v) => {
-            it(v.name, () => {
-                const index = v.index & 0xffff; // Handle overflow/underflow
-                const assetId = AssetId.create(v.txid, index);
-                expect(assetId).toBeDefined();
+        V.valid.forEach((v) => {
+            it(v.label, () => {
+                const assetId = AssetId.create(V.txid_hex, v.group_index);
+                expect(assetId.toString(), drift(v.label)).toBe(v.asset_id_hex);
+                expect(hex.encode(assetId.serialize()), drift(v.label)).toBe(v.asset_id_hex);
 
-                const serialized = assetId.serialize();
-                expect(serialized).toBeDefined();
-                expect(serialized.length).toBeGreaterThan(0);
-                expect(assetId.toString()).toBe(v.serializedHex);
+                const decoded = AssetId.fromString(v.asset_id_hex);
+                expect(hex.encode(decoded.txid), drift(v.label)).toBe(V.txid_hex);
+                expect(decoded.groupIndex, drift(v.label)).toBe(v.group_index);
+                expect(decoded.toString(), drift(v.label)).toBe(v.asset_id_hex);
 
-                const fromString = AssetId.fromString(v.serializedHex);
-                expect(hex.encode(fromString.txid)).toBe(v.txid);
-                expect(fromString.groupIndex).toBe(index);
-                expect(fromString.toString()).toBe(v.serializedHex);
+                const fromBytes = AssetId.fromBytes(hex.decode(v.asset_id_hex));
+                expect(fromBytes.toString(), drift(v.label)).toBe(v.asset_id_hex);
+            });
+        });
+
+        it("script_txid_hex is txid_hex in serialization order", () => {
+            // Form 1 vs form 2: the identity carries the txid as the SDK reports
+            // it, the covenant push carries it reversed. Swapping them is the
+            // bug the whole vector exists to name.
+            expect(hex.encode(hex.decode(V.txid_hex).reverse()), drift("txid orientation")).toBe(
+                V.script_txid_hex,
+            );
+            V.valid.forEach((v) => {
+                expect(v.asset_id_hex.slice(0, 64), drift(v.label)).toBe(V.txid_hex);
+                expect(v.asset_id_hex.slice(0, 64), drift(v.label)).not.toBe(V.script_txid_hex);
             });
         });
     });
 
     describe("invalid", () => {
-        describe("create", () => {
-            assetIdFixtures.invalid.newAssetId.forEach((v) => {
-                it(v.name, () => {
-                    expect(() => AssetId.create(v.txid, v.index)).toThrow(v.expectedError);
+        describe("identity", () => {
+            const IDENTITY = /^[0-9a-f]{68}$/;
+
+            V.valid.forEach((v) => {
+                it(`accepts ${v.label}`, () => {
+                    expect(IDENTITY.test(v.asset_id_hex), drift(v.label)).toBe(true);
                 });
+            });
+
+            V.invalid_identity.forEach((v) => {
+                it(`rejects ${v.label}`, () => {
+                    expect(IDENTITY.test(v.value), drift(v.label)).toBe(false);
+                });
+            });
+
+            // The decoder is deliberately more lenient than the identity rule:
+            // uppercase decodes, and `toString()` is what every identity surface
+            // must compare. Tightening `fromString` instead would break a public
+            // API for a case this normalisation already handles.
+            V.invalid_identity
+                .filter((v) => v.normalizes_to !== undefined)
+                .forEach((v) => {
+                    it(`${v.label} still decodes, and normalizes`, () => {
+                        expect(AssetId.fromString(v.value).toString(), drift(v.label)).toBe(
+                            v.normalizes_to,
+                        );
+                        expect(IDENTITY.test(v.normalizes_to!), drift(v.label)).toBe(true);
+                    });
+                });
+        });
+
+        describe("decode", () => {
+            V.invalid_decode.forEach((v) => {
+                it(v.label, () => {
+                    expect(() => AssetId.fromString(v.value), drift(v.label)).toThrow(
+                        v.expected_error,
+                    );
+                });
+            });
+
+            it("uppercase is absent here on purpose", () => {
+                expect(V.invalid_decode.map((v) => v.label)).not.toContain("uppercase");
             });
         });
 
-        describe("fromString", () => {
-            assetIdFixtures.invalid.newAssetIdFromString.forEach((v) => {
-                it(v.name, () => {
-                    expect(() => AssetId.fromString(v.serializedHex)).toThrow(v.expectedError);
+        describe("construction", () => {
+            V.invalid_construction.forEach((v) => {
+                it(v.label, () => {
+                    // No masking: `& 0xffff` here would turn the two out-of-range
+                    // entries back into duplicates of the valid cases and test
+                    // JavaScript's `&` operator instead of the range check.
+                    expect(() => AssetId.create(v.txid_hex, v.group_index), drift(v.label)).toThrow(
+                        v.expected_error,
+                    );
+                });
+            });
+
+            it("outside_uint16 marks exactly the indexes a u16 cannot hold", () => {
+                V.invalid_construction.forEach((v) => {
+                    expect(Boolean(v.outside_uint16), drift(v.label)).toBe(
+                        v.group_index < 0 || v.group_index > 0xffff,
+                    );
                 });
             });
         });

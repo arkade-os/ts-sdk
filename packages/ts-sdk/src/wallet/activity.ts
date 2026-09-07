@@ -16,6 +16,13 @@ export interface GroupMembership {
     /** App category for icon/filtering, e.g. "game". */
     kind?: string;
     /**
+     * Outcome of the action this membership belongs to, e.g. "failed",
+     * "refunded" — an opaque machine token for the app to map to its own
+     * copy or icon, not display text. Merged first-writer-wins across
+     * resolvers sharing a `groupId`, like `label` and `kind`.
+     */
+    outcome?: string;
+    /**
      * Free-form row data. Same-group metadata is shallow-merged with
      * earlier-resolver keys winning.
      */
@@ -53,6 +60,12 @@ export interface ActivityIntent {
     label?: string;
     /** App category for icon/filtering, e.g. "game". */
     kind?: string;
+    /**
+     * Resolver-declared outcome for the group, e.g. "failed", "refunded" — an
+     * opaque machine token for the app to map to its own copy or icon, not
+     * display text.
+     */
+    outcome?: string;
     /** Free-form row data, shallow-merged across the group's resolvers (first-writer-wins). */
     metadata?: Record<string, unknown>;
 }
@@ -110,6 +123,7 @@ export async function buildActivities(
         groupId: a.groupId,
         label: a.label ?? b.label,
         kind: a.kind ?? b.kind,
+        outcome: a.outcome ?? b.outcome,
         metadata: { ...b.metadata, ...a.metadata },
         amount: a.amount ?? b.amount,
     });
@@ -156,6 +170,7 @@ export async function buildActivities(
             b.intent = {
                 label: b.intent?.label ?? m.label,
                 kind: b.intent?.kind ?? m.kind,
+                outcome: b.intent?.outcome ?? m.outcome,
                 metadata: { ...m.metadata, ...b.intent?.metadata },
             };
             b.members.push({ tx, amount: signedAmount(tx, m.amount ?? tx.amount) });

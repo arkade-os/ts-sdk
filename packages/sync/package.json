@@ -23,8 +23,8 @@
     "scripts": {
         "build": "tsup src/index.ts --format esm,cjs --dts --clean",
         "typecheck": "tsc --noEmit",
-        "format": "prettier --write src test",
-        "lint": "prettier --check src test",
+        "format": "biome format --write src test",
+        "lint": "biome format src test",
         "test": "vitest run",
         "test:unit": "vitest run --exclude test/e2e",
         "test:integration": "vitest run test/e2e",

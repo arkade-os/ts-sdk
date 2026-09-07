@@ -17,7 +17,7 @@ const privKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207
 const arkInfo = (): ArkInfo => ({
     boardingExitDelay: 144n,
     checkpointTapscript:
-        "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+        "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
     deprecatedSigners: [],
     digest: "d",
     dust: 1000n,

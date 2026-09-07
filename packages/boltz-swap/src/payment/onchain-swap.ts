@@ -1,5 +1,12 @@
 import type { PaymentRail, RouterContext } from "@arkade-os/sdk";
-import { btcTarget, makeHandle, resolveSendAmount, tryResolveSendAmount } from "@arkade-os/sdk";
+import {
+    assertNoAssets,
+    assetsOf,
+    btcTarget,
+    makeHandle,
+    resolveSendAmount,
+    tryResolveSendAmount,
+} from "@arkade-os/sdk";
 import type { ArkadeSwaps } from "../arkade-swaps";
 import type { ChainFeesResponse } from "../types";
 
@@ -53,6 +60,9 @@ export function onchainSwapRail(): PaymentRail {
         id: "onchain-swap",
         match: (req) => btcTarget(req.raw) !== undefined,
         available: async (req, ctx) => {
+            // BTC only: an Arkade asset has no L1 form to swap out to, and
+            // paying this request's carrier sats would deliver none of it.
+            if (assetsOf(req).length > 0) return false;
             if (ctx.swaps == null) return false;
             const amt = tryResolveSendAmount(req.raw, req.amount);
             if (amt === undefined) return true; // amount-required deferred to quote()
@@ -70,6 +80,7 @@ export function onchainSwapRail(): PaymentRail {
         },
         quote: async (req, ctx: RouterContext) => {
             const address = btcTarget(req.raw)!;
+            assertNoAssets("onchain-swap", req);
             const amt = resolveSendAmount("onchain-swap", req.raw, req.amount);
             // Estimated from the same reconstruction available() brackets on, so
             // the gate and the quote cannot disagree. Boltz returns the

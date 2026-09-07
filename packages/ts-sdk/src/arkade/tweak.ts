@@ -11,6 +11,8 @@
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { bytesToNumberBE } from "@noble/curves/utils.js";
 
+import { toXOnly } from "../utils/keys";
+
 const TAG_SCRIPT = "ArkScriptHash";
 const TAG_WITNESS = "ArkWitnessHash";
 
@@ -53,8 +55,7 @@ export function arkadeWitnessHash(witness: Uint8Array): Uint8Array {
 export function computeArkadeScriptPublicKey(pubKey: Uint8Array, script: Uint8Array): Uint8Array {
     const hash = arkadeScriptHash(script);
 
-    const xOnly = pubKey.length === 33 ? pubKey.subarray(1) : pubKey;
-    const point = schnorr.utils.lift_x(bytesToNumberBE(xOnly));
+    const point = schnorr.utils.lift_x(bytesToNumberBE(toXOnly(pubKey, "emulator key")));
 
     // tweak = (scriptHash mod n) * G
     const scalar = bytesToNumberBE(hash) % secp256k1.Point.CURVE().n;

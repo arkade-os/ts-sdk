@@ -43,6 +43,7 @@ import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
 import { getDustAmount } from "./utils";
+import { logExcludedVtxos, outpointReasons } from "../contracts/spendability";
 
 /**
  * Outpoints (`txid:vout`) of VTXOs that are NOT cooperatively spendable because
@@ -73,7 +74,12 @@ export function selectPendingRecoveryOutpoints(
             continue;
         }
         for (const v of vtxos) {
-            if (!hasTerminalSpend(v) && !v.isSwept) out.add(`${v.txid}:${v.vout}`);
+            // Exited coins are excluded: their remedy is `completeUnroll`,
+            // not a signer rotation, and reporting them here would blame the
+            // rotation for a coin the user took onchain themselves.
+            if (!hasTerminalSpend(v) && !v.isSwept && !v.isUnrolled) {
+                out.add(`${v.txid}:${v.vout}`);
+            }
         }
     }
     return out;
@@ -304,6 +310,101 @@ export function capSettlementBatch<T extends { value: number }>(
         total = next;
     }
     return batch;
+}
+
+/**
+ * Price a settlement's VTXO inputs against the operator's intent-fee policy,
+ * dropping any input that cannot pay for itself.
+ *
+ * An intent's fee IS `sum(inputs) - sum(outputs)`, so a single-output settlement
+ * asking for the gross input sum offers exactly zero and the server rejects the
+ * whole intent with `INTENT_INSUFFICIENT_FEE` wherever the operator prices
+ * offchain inputs at all. `subtotal` is what the inputs are worth once each has
+ * paid its own way; the caller still owes {@link deductOffchainOutputFee} on top.
+ *
+ * An input whose fee meets or exceeds its value is skipped rather than settled —
+ * it would take more out of the output than it puts in. Callers filter with this
+ * BEFORE {@link capSettlementBatch} so an uneconomic input cannot occupy a slot
+ * that a viable one behind it could have used.
+ *
+ * Each survivor's net is returned alongside it so a caller that then narrows the
+ * batch can total the survivors through {@link subtotalOf} without pricing
+ * anything twice.
+ */
+function priceSettlementInputs<T extends NormalizedExtendedVirtualCoin>(
+    vtxos: T[],
+    estimator: Estimator,
+): { payable: T[]; net: ReadonlyMap<string, bigint> } {
+    const payable: T[] = [];
+    const net = new Map<string, bigint>();
+    for (const vtxo of vtxos) {
+        const inputFee = estimator.evalOffchainInput(toOffchainInputFeeParams(vtxo));
+        if (inputFee.satoshis >= vtxo.value) {
+            continue;
+        }
+        payable.push(vtxo);
+        net.set(`${vtxo.txid}:${vtxo.vout}`, BigInt(vtxo.value - inputFee.satoshis));
+    }
+    return { payable, net };
+}
+
+/**
+ * Total what a settlement's inputs are worth once each has paid its own intent
+ * fee, from the nets {@link priceSettlementInputs} already computed.
+ *
+ * `vtxos` must come from that call's `payable` — a batch cap may have narrowed
+ * it, nothing else may. An input with no priced net throws rather than counting
+ * as zero: silently dropping one understates the output, which offers the server
+ * MORE fee than asked and quietly overpays out of the user's own funds.
+ */
+function subtotalOf(
+    vtxos: readonly { txid: string; vout: number }[],
+    net: ReadonlyMap<string, bigint>,
+): bigint {
+    let subtotal = 0n;
+    for (const vtxo of vtxos) {
+        const priced = net.get(`${vtxo.txid}:${vtxo.vout}`);
+        if (priced === undefined) {
+            throw new Error(`Unpriced settlement input ${vtxo.txid}:${vtxo.vout}`);
+        }
+        subtotal += priced;
+    }
+    return subtotal;
+}
+
+/**
+ * Take the operator's offchain output fee off a settlement's single output.
+ *
+ * The fee is evaluated on `subtotal` — the amount before this deduction — rather
+ * than on the amount finally committed, matching what
+ * {@link VtxoManager.runPeriodicSettle} and the no-argument `Wallet.settle()`
+ * branch already do. Under a percentage rate `r` that implies a fee of
+ * `r * subtotal` where the server asks only `r * subtotal * (1 - r)`, i.e. an
+ * over-payment of `r^2 * subtotal`. Deliberate: paying over is always accepted,
+ * whereas solving the fixed point exactly to recover those satoshis risks
+ * landing one under the minimum — which is the rejection this pricing exists to
+ * avoid.
+ *
+ * Can return a value below dust, or below zero, when a flat output fee outweighs
+ * the inputs; every caller checks the result against the dust threshold.
+ */
+function deductOffchainOutputFee(
+    subtotal: bigint,
+    estimator: Estimator,
+    arkAddress: string,
+): bigint {
+    // Mirror the estimator's own early return rather than reaching it through
+    // `ArkAddress.decode`: with no output program the script is never read, and
+    // an operator that doesn't price outputs shouldn't make a decodable address
+    // a precondition for renewing or recovering.
+    if (!estimator.config.offchainOutput) {
+        return subtotal;
+    }
+    const outputFee = estimator.evalOffchainOutput({
+        amount: subtotal,
+        script: hex.encode(ArkAddress.decode(arkAddress).pkScript),
+    });
+    return subtotal - BigInt(outputFee.satoshis);
 }
 
 /** Default renewal threshold in seconds (3 days). */
@@ -554,6 +655,9 @@ function getRecoverableWithSubdust(
 /**
  * Check if a virtual output is expiring soon based on threshold
  *
+ * Always `false` for an unilaterally exited output: "expiring soon" is a renewal
+ * signal, and no batch can renew an output that already lives onchain.
+ *
  * @param vtxo - The virtual output to check
  * @param thresholdMs - Threshold in milliseconds from now
  * @returns true if virtual output expires within threshold, false otherwise
@@ -562,6 +666,9 @@ export function isVtxoExpiringSoon(
     vtxo: ExtendedVirtualCoin,
     thresholdMs: number, // in milliseconds
 ): boolean {
+    // Bare, not off the normalized coin: `normalizeVtxo` never defaults this flag.
+    if (vtxo.isUnrolled) return false;
+
     const realThresholdMs = thresholdMs <= 100 ? DEFAULT_THRESHOLD_MS : thresholdMs;
 
     // Being synchronous, this has no chain tip to compare a height-encoded expiry against, so
@@ -578,7 +685,9 @@ export function isVtxoExpiringSoon(
 }
 
 /**
- * Filter virtual outputs that are expiring soon or are recoverable/subdust
+ * Filter virtual outputs that are expiring soon or are recoverable/subdust.
+ * Unilaterally exited outputs are never included — none of the three arms
+ * describes a coin a batch can take.
  *
  * @param vtxos - Array of virtual outputs to check
  * @param thresholdMs - Threshold in milliseconds from now
@@ -592,10 +701,13 @@ export function getExpiringAndRecoverableVtxos(
     now: TimeHeight,
 ): NormalizedExtendedVirtualCoin[] {
     return vtxos.filter(
+        // The leading exclusion covers the `isSubdust` arm too, which is a value
+        // property and would otherwise re-admit an exited coin on its own.
         (vtxo) =>
-            isVtxoExpiringSoon(vtxo, thresholdMs) ||
-            canRecoverOnchain(vtxo, now) ||
-            isSubdust(vtxo, dustAmount),
+            !vtxo.isUnrolled &&
+            (isVtxoExpiringSoon(vtxo, thresholdMs) ||
+                canRecoverOnchain(vtxo, now) ||
+                isSubdust(vtxo, dustAmount)),
     );
 }
 
@@ -748,7 +860,12 @@ export interface MigrationLegReport {
  * separate settle-backed migration. They are never combined into one intent.
  */
 export interface DeprecatedSignerMigrationReport {
-    /** Whether a mid-session server-signer rotation was applied first. */
+    /**
+     * Whether this pass moved the wallet's receive state onto the active
+     * signer — directly, or through the server-info refresh it opens with.
+     * `false` when the wallet was already there, which includes a rotation an
+     * earlier refresh elsewhere in the session already applied.
+     */
     rotated: boolean;
     /** Global skip; when set, neither leg is present. */
     skipped?: MigrationGlobalSkipReason;
@@ -785,6 +902,13 @@ interface MigrationCapableWallet {
     rotateServerSigner(newServerPubKey: Uint8Array, checkpointTapscript: string): Promise<void>;
     /** Refresh the wallet's cached deprecated-signer set from a fresh {@link ArkInfo} snapshot. */
     refreshDeprecatedSigners(info: ArkInfo): void;
+    /**
+     * Drain a rotation the wallet is applying off an `onServerInfoChanged`
+     * emit, so this pass classifies against a settled signer snapshot instead
+     * of a half-rotated one. Optional: only the concrete `Wallet` subscribes to
+     * server-info events, so proxy / mock implementations omit it.
+     */
+    settleServerInfoChanges?(): Promise<void>;
     /**
      * Spend an explicit set of the wallet's own deprecated-signer VTXOs into a
      * single full-value active-signer output through the Ark send path (not
@@ -1066,6 +1190,31 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     // ========== Recovery Methods ==========
 
     /**
+     * Outpoints recovery must not name yet, with the reason each was refused.
+     * Empty when the manager offers no opinion — an embedder's may not implement
+     * the predicate, and every contract type but VHTLC never answers.
+     *
+     * Reaches only a lockup whose `sender` is this wallet's own key: role
+     * resolution matches that key against the contract's params, so a
+     * descriptor-derived sender (every RFQ lockup) is not matched and such a row
+     * still fails its batch at submit.
+     *
+     * The key stays a thunk so an ordinary recovery never touches the identity,
+     * and the full coins are passed rather than bare outpoints because only they
+     * carry the confirmation a relative timelock is measured from.
+     */
+    private async unspendableNow(
+        vtxos: readonly NormalizedExtendedVirtualCoin[],
+    ): Promise<Map<string, string>> {
+        const contractManager = await this.wallet.getContractManager();
+        return (
+            (await contractManager.unspendableNowReasons?.(vtxos, async () =>
+                hex.encode(await this.wallet.identity.xOnlyPublicKey()),
+            )) ?? new Map()
+        );
+    }
+
+    /**
      * Recover swept/expired virtual outputs by settling them back to the wallet's Arkade address.
      *
      * This method:
@@ -1076,6 +1225,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      *
      * Note: Settled virtual outputs with long expiry are NOT recovered to avoid locking liquidity unnecessarily.
      * Only preconfirmed subdust is recovered to consolidate small amounts.
+     *
+     * Inputs whose contract refuses a spend right now — an immature VHTLC refund
+     * path — are skipped rather than failing the batch that holds them, and
+     * {@link getRecoverableBalance} skips the same set. See
+     * {@link unspendableNow} for which rows that reaches.
      *
      * @param eventCallback - Optional callback to receive settlement events
      * @returns Settlement transaction ID
@@ -1106,10 +1260,47 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // Filter recoverable virtual outputs and handle subdust logic
         const now = await fetchTimeHeight(this.wallet);
-        let { vtxosToRecover, totalAmount } = getRecoverableWithSubdust(allVtxos, dustAmount, now);
+        let { vtxosToRecover } = getRecoverableWithSubdust(allVtxos, dustAmount, now);
 
         if (vtxosToRecover.length === 0) {
             throw new Error("No recoverable VTXOs found");
+        }
+
+        // Before pricing: the cap below fills slots highest-value-first, so a
+        // refused input filtered after it would occupy a slot and then vanish,
+        // under-filling the settlement.
+        const refused = await this.unspendableNow(vtxosToRecover);
+        if (refused.size > 0) {
+            logExcludedVtxos("recoverVtxos", vtxosToRecover, [outpointReasons(refused)]);
+            const held = vtxosToRecover.length;
+            vtxosToRecover = vtxosToRecover.filter(
+                (vtxo) => !refused.has(`${vtxo.txid}:${vtxo.vout}`),
+            );
+            // Neither message may reuse "No recoverable VTXOs found": the coins
+            // were found and declined, and the handler's text says when to retry.
+            if (vtxosToRecover.length === 0) {
+                // Every reason, not the first: lockups at different maturities
+                // become recoverable at different times, and naming one of them
+                // dates the whole wallet by the wrong clock. Same shape as
+                // `IContractManager.assertSpendableNow`'s multi-input refusal.
+                const why =
+                    refused.size === 1
+                        ? [...refused.values()][0]
+                        : [...refused]
+                              .map(([outpoint, reason]) => `${outpoint}: ${reason}`)
+                              .join("; ");
+                throw new Error(
+                    `All ${held} recoverable VTXO(s) are held by a contract that refuses a ` +
+                        `spend right now: ${why}`,
+                );
+            }
+            ({ vtxosToRecover } = getRecoverableWithSubdust(vtxosToRecover, dustAmount, now));
+            if (vtxosToRecover.length === 0) {
+                throw new Error(
+                    `Excluding ${refused.size} VTXO(s) not yet spendable, the remaining ` +
+                        `recoverable amount is below the dust threshold ${dustAmount}`,
+                );
+            }
         }
 
         // Cap the recovery batch to stay under both the server's intent-size
@@ -1124,21 +1315,46 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // overflow is recovered next cycle.
         const info = await this.getInfoProvider()?.getInfo();
         const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
-        const capped = capSettlementBatch(byValueDescending(vtxosToRecover), vtxoMaxAmount);
+
+        // Price the batch before capping so a VTXO that cannot pay its own intent
+        // fee is dropped here rather than occupying a slot in the capped batch
+        // ahead of one that can. Subdust inputs survive this whenever they are
+        // still worth more than their own fee, which is what keeps consolidating
+        // them possible. `info` is undefined only when no ark provider is wired,
+        // which prices as zero and leaves the gross behaviour untouched.
+        const estimator = new Estimator(info?.fees.intentFee ?? {});
+        const { payable, net } = priceSettlementInputs(vtxosToRecover, estimator);
+        const capped = capSettlementBatch(byValueDescending(payable), vtxoMaxAmount);
+        // Compared against the pre-pricing count deliberately: this fires when
+        // EITHER filter narrowed the batch, fee pricing or a size cap, since both
+        // mean the subdust decision above was made over a set we are no longer
+        // settling and has to be re-run. Not just the cap, despite the name.
         if (capped.length < vtxosToRecover.length) {
             const recoverableCount = vtxosToRecover.length;
-            ({ vtxosToRecover, totalAmount } = getRecoverableWithSubdust(capped, dustAmount, now));
+            // Two different things can narrow the batch, and an operator
+            // debugging a stuck wallet needs to know which one did: a size cap
+            // defers the overflow to the next cycle, whereas fee filtering means
+            // the coins cost more to move than they are worth and no later cycle
+            // will change that on its own.
+            const cappedAway = capped.length < payable.length;
+            ({ vtxosToRecover } = getRecoverableWithSubdust(capped, dustAmount, now));
             if (vtxosToRecover.length === 0) {
-                // Recoverable VTXOs exist, but the highest-value subset that
-                // fits in one settlement stays below dust, so submitting it
-                // would be rejected and the next cycle would pick the same
-                // prefix. Distinct from the "none recoverable" case above so
-                // operators can tell a stuck-but-funded wallet from an empty
-                // one. Recovery resumes once the prefix accumulates dust.
+                // Recoverable VTXOs exist, but what survives stays below dust, so
+                // submitting it would be rejected and the next cycle would pick
+                // the same prefix. Distinct from the "none recoverable" case
+                // above so operators can tell a stuck-but-funded wallet from an
+                // empty one.
+                if (!cappedAway) {
+                    throw new Error(
+                        `All ${recoverableCount} recoverable VTXOs that can pay their own ` +
+                            `intent fee total less than the dust threshold ${dustAmount}`,
+                    );
+                }
                 throw new Error(
                     `Capped recovery batch (highest-value subset of ${recoverableCount} ` +
                         `recoverable VTXOs within the ${MAX_VTXOS_PER_SETTLEMENT}-input and ` +
-                        `${vtxoMaxAmount}-sat limits) is below the dust threshold ${dustAmount}`,
+                        `${vtxoMaxAmount}-sat limits, net of intent fees) is below the ` +
+                        `dust threshold ${dustAmount}`,
                 );
             }
         }
@@ -1154,7 +1370,31 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             await this.rotateForRecoverableInputs(vtxosToRecover, info);
         }
 
+        // Read AFTER any rotation above, so the output fee is priced against the
+        // script the recovered VTXO actually lands on.
         const arkAddress = await this.wallet.getAddress();
+
+        // The fee an intent offers IS `sum(inputs) - sum(outputs)`, so the output
+        // has to come back short by what the operator's programs price. Asking
+        // for the gross recoverable sum offers zero and the server rejects with
+        // INTENT_INSUFFICIENT_FEE — see `priceSettlementInputs`.
+        const totalAmount = deductOffchainOutputFee(
+            subtotalOf(vtxosToRecover, net),
+            estimator,
+            arkAddress,
+        );
+
+        // getRecoverableWithSubdust judges subdust inclusion on gross value, but
+        // the fees come off after that decision, so a batch that cleared dust
+        // gross can still land under it here. The server would reject such an
+        // output; say so instead, and let the next cycle retry once the
+        // recoverable set is worth more.
+        if (totalAmount < dustAmount) {
+            throw new Error(
+                `Recoverable amount ${totalAmount} net of intent fees is below ` +
+                    `dust threshold ${dustAmount}`,
+            );
+        }
 
         // Settle all recoverable virtual outputs back to the wallet
         return this.wallet.settle(
@@ -1175,6 +1415,22 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * Get information about recoverable balance without executing recovery.
      *
      * Useful for displaying to users before they decide to recover funds.
+     *
+     * Both amounts are net of the operator's intent fees, so `recoverable` is
+     * what {@link recoverVtxos} would actually hand back rather than the gross
+     * sum of the inputs. `subdust` is net of the per-input fees only — the
+     * output fee is charged on the batch as a whole and is not attributed per
+     * coin — so it reports what the subdust coins are worth once each has paid
+     * its own way, and is not strictly a slice of `recoverable`. It can exceed
+     * `recoverable` where a flat output fee meets a wholly subdust wallet.
+     *
+     * The batch size caps are not applied here: they defer the overflow to the
+     * next cycle rather than reducing what is recoverable.
+     *
+     * Inputs a contract refuses right now are excluded, so this and
+     * {@link recoverVtxos} answer over the same set. `Balance.recoverable` still
+     * counts them: that field reports what the wallet owns, this one what a
+     * batch would hand back today.
      *
      * @returns Object containing recoverable amounts and subdust information
      *
@@ -1203,23 +1459,80 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         });
 
         const dustAmount = getDustAmount(this.wallet);
+        const now = await fetchTimeHeight(this.wallet);
 
-        const { vtxosToRecover, includesSubdust, totalAmount } = getRecoverableWithSubdust(
+        let { vtxosToRecover, includesSubdust } = getRecoverableWithSubdust(
             allVtxos,
             dustAmount,
-            await fetchTimeHeight(this.wallet),
+            now,
         );
 
-        // Calculate subdust amount separately for reporting
-        const subdustAmount = vtxosToRecover
-            .filter((v) => BigInt(v.value) < dustAmount)
-            .reduce((sum, v) => sum + BigInt(v.value), 0n);
+        // Excluded outright rather than reported in a field of their own: this
+        // answers what a recovery batch would hand back, and `Balance.recoverable`
+        // keeps counting the funds, so nothing disappears. Mirrors `recoverVtxos`
+        // so the preview and the sweep agree by construction — and it is the only
+        // channel through which a caller sees a partial drop.
+        const refused = await this.unspendableNow(vtxosToRecover);
+        if (refused.size > 0) {
+            logExcludedVtxos("getRecoverableBalance", vtxosToRecover, [outpointReasons(refused)]);
+            const remaining = vtxosToRecover.filter(
+                (vtxo) => !refused.has(`${vtxo.txid}:${vtxo.vout}`),
+            );
+            ({ vtxosToRecover, includesSubdust } = getRecoverableWithSubdust(
+                remaining,
+                dustAmount,
+                now,
+            ));
+        }
+
+        // Priced the same way `recoverVtxos` prices what it settles. This exists
+        // to tell a user what recovery would hand back, so it has to answer net
+        // of the operator's intent fees — reporting the gross sum would promise
+        // more than the sweep delivers under any non-zero fee policy, and the two
+        // are reachable from the same worker call.
+        //
+        // Not applied here: the batch caps. They defer the overflow to the next
+        // cycle rather than reducing what is recoverable, and matching them would
+        // mean re-running the subdust decision over a capped subset. That gap
+        // predates the fee pricing and is left alone.
+        const info = await this.getInfoProvider()?.getInfo();
+        const estimator = new Estimator(info?.fees.intentFee ?? {});
+        const { payable, net } = priceSettlementInputs(vtxosToRecover, estimator);
+        const priced = deductOffchainOutputFee(
+            subtotalOf(payable, net),
+            estimator,
+            await this.wallet.getAddress(),
+        );
+        // A flat output fee can outweigh the inputs; recovery refuses that rather
+        // than settling it, so report nothing recoverable instead of a negative.
+        const recoverable = priced > 0n ? priced : 0n;
+
+        // Subdust is CLASSIFIED on gross value — that is what makes a coin
+        // subdust, and what `getRecoverableWithSubdust` judged inclusion on — but
+        // REPORTED net of the per-input fees, so it is on the same footing as
+        // `recoverable` rather than a figure on a different basis. Summing it
+        // gross overstated it under every non-zero input-fee policy.
+        //
+        // Net of the INPUT fees only, though: the output fee comes off the whole
+        // batch at once and does not decompose per coin, so it is not attributed
+        // here. `subdust <= recoverable` therefore holds whenever no output fee
+        // is configured or the non-subdust coins cover it, but NOT in general —
+        // a flat output fee against an all-subdust wallet still leaves `subdust`
+        // the larger of the two. Read this as "what the subdust coins are worth
+        // once each has paid its own way", not as a slice of `recoverable`.
+        //
+        // Totalled through `subtotalOf` so an unpriced input throws instead of
+        // silently contributing zero.
+        const subdustAmount = subtotalOf(
+            payable.filter((v) => BigInt(v.value) < dustAmount),
+            net,
+        );
 
         return {
-            recoverable: totalAmount,
+            recoverable,
             subdust: subdustAmount,
             includesSubdust,
-            vtxoCount: vtxosToRecover.length,
+            vtxoCount: payable.length,
         };
     }
 
@@ -1267,7 +1580,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return [];
         }
 
-        const vtxos = await this.wallet.getVtxos({ withRecoverable: true });
+        const vtxos = await this.wallet.getSpendableVtxos({ withRecoverable: true });
 
         // Resolve threshold: method param > settlementConfig (seconds→ms) > renewalConfig > default
         let threshold: number;
@@ -1394,6 +1707,24 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // renewed on the next cycle.
             const info = await this.getInfoProvider()?.getInfo();
             const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
+
+            // Price the candidates before capping so a VTXO that cannot pay its
+            // own intent fee is dropped here rather than occupying a slot in the
+            // capped batch ahead of one that can. `info` is undefined only when no
+            // ark provider is wired, which prices as zero and leaves the gross
+            // behaviour untouched.
+            const estimator = new Estimator(info?.fees.intentFee ?? {});
+            const { payable, net } = priceSettlementInputs(vtxos, estimator);
+            vtxos = payable;
+            if (vtxos.length === 0) {
+                // Worded to match the benign cases the vtxo_received subscription
+                // already swallows: nothing is wrong, there is just nothing worth
+                // renewing at this fee policy.
+                throw new Error(
+                    "No VTXOs available to renew: every expiring VTXO is worth less than its own intent fee",
+                );
+            }
+
             const capped = capSettlementBatch(byExpiryAscending(vtxos, now), vtxoMaxAmount);
             if (vtxoMaxAmount >= 0n) {
                 // A VTXO whose value alone exceeds the per-output ceiling can
@@ -1424,17 +1755,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 }
             }
 
-            const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
-
             // Get dust amount from wallet
             const dustAmount = getDustAmount(this.wallet);
-
-            // Check if total amount is above dust threshold
-            if (BigInt(totalAmount) < dustAmount) {
-                throw new Error(
-                    `Total amount ${totalAmount} is below dust threshold ${dustAmount}`,
-                );
-            }
 
             // Renewal includes recoverable VTXOs (getExpiringVtxos pulls them
             // in). If any carries a now-deprecated signer and the wallet's own
@@ -1448,7 +1770,28 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 await this.rotateForRecoverableInputs(vtxos, info);
             }
 
+            // Read AFTER any rotation above, so the output fee is priced against
+            // the script the renewed VTXO actually lands on.
             const arkAddress = await this.wallet.getAddress();
+
+            // The fee an intent offers IS `sum(inputs) - sum(outputs)`, so the
+            // output has to come back short by what the operator's programs
+            // price. Asking for the gross sum offers zero and the server rejects
+            // with INTENT_INSUFFICIENT_FEE — see `priceSettlementInputs`.
+            const totalAmount = deductOffchainOutputFee(
+                subtotalOf(vtxos, net),
+                estimator,
+                arkAddress,
+            );
+
+            // Dust is judged on the NET output, not the gross input sum: the fees
+            // come off after selection, so a batch that clears dust gross can
+            // land under it here.
+            if (totalAmount < dustAmount) {
+                throw new Error(
+                    `Total amount ${totalAmount} is below dust threshold ${dustAmount}`,
+                );
+            }
 
             const txid = await this.wallet.settle(
                 {
@@ -1456,7 +1799,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     outputs: [
                         {
                             address: arkAddress,
-                            amount: BigInt(totalAmount),
+                            amount: totalAmount,
                         },
                     ],
                 },
@@ -1678,6 +2021,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     async getDeprecatedSignerStatus(): Promise<DeprecatedSignerReport[]> {
         const wallet = this.requireMigrationCapableWallet();
         const info = await wallet.arkProvider.getInfo();
+        // This refresh can itself surface a rotated operator config, which the
+        // wallet applies off the emit. Let it settle so the counts below are
+        // read from one signer epoch rather than a half-rotated wallet.
+        await wallet.settleServerInfoChanges?.();
         const { reports: vtxoReports } = await this.classifyDeprecatedSignerContracts(info);
         const { reports: boardingReports } = await this.classifyDeprecatedSignerBoarding(info);
         return mergeSignerReports(vtxoReports, boardingReports);
@@ -1694,7 +2041,18 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         options?: MigrateDeprecatedSignerOptions,
     ): Promise<DeprecatedSignerMigrationReport> {
         const wallet = this.requireMigrationCapableWallet();
+        // Read BEFORE the refresh: the refresh itself can surface a rotated
+        // operator config, which the wallet applies off the emit — so the
+        // rotation this pass reports may be the one that handler performed
+        // rather than the one `ensureReceiveOnActiveSigner` performs below.
+        const signerBeforeRefresh = hex.encode(wallet.arkServerPublicKey);
         const info = await wallet.arkProvider.getInfo();
+        // Drain that handler before reading anything signer-derived: mid-rotation
+        // the active signer's contract rows are already persisted while
+        // `arkServerPublicKey` still holds the deprecated one, and both chains
+        // would otherwise race to rotate.
+        await wallet.settleServerInfoChanges?.();
+        const rotatedOnRefresh = signerBeforeRefresh !== hex.encode(wallet.arkServerPublicKey);
         // Refresh the wallet's cached deprecated-signer set from this fresh
         // snapshot before any classification or early-exit, so the spendability
         // filter that excludes EXPIRED deprecated-signer inputs from settle() is
@@ -1711,7 +2069,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // Common cheap exit: nothing deprecated advertised and our own snapshot
         // is current → no contract sweep, no indexer round-trip.
         if (signerSet.deprecated.size === 0 && walletClass.status === "CURRENT") {
-            return { rotated: false, expired: [], signers: [] };
+            return { rotated: rotatedOnRefresh, expired: [], signers: [] };
         }
 
         // The wallet's own signer is neither active nor advertised deprecated:
@@ -1721,7 +2079,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             const { reports: vtxoReports } = await this.classifyDeprecatedSignerContracts(info);
             const { reports: boardingReports } = await this.classifyDeprecatedSignerBoarding(info);
             return {
-                rotated: false,
+                // Normally false here — a drained rotation targets the active
+                // signer, which classifies CURRENT, not UNKNOWN. It is true only
+                // when a second rotation landed inside the drain, leaving us on a
+                // signer newer than `info`: still a rotation this pass applied.
+                rotated: rotatedOnRefresh,
                 expired: [],
                 signers: mergeSignerReports(vtxoReports, boardingReports),
                 skipped: "unknown-wallet-signer",
@@ -1734,7 +2096,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // (UNKNOWN_SIGNER already returned above, so the guard rotates here iff
         // the snapshot is MIGRATABLE/DUE_NOW/EXPIRED — identical to the prior
         // `!== CURRENT` test.)
-        const rotated = await this.ensureReceiveOnActiveSigner(info);
+        const rotated = (await this.ensureReceiveOnActiveSigner(info)) || rotatedOnRefresh;
 
         // Collect stale VTXOs AND boarding UTXOs AFTER any rotation, so the
         // just-deprecated former receive/boarding contracts are included in the
@@ -1984,8 +2346,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // are exactly the funds already draining into the active signer, so
             // the report still counts them (recoverableCount) alongside the
             // not-yet-swept holdings (awaitingSweepCount) (Section 6 / post-cutoff).
-            const recoverable = vtxos.filter((v) => v.isSwept && !hasTerminalSpend(v));
-            const spendable = vtxos.filter((v) => !hasTerminalSpend(v) && !v.isSwept);
+            // Exited coins are on neither leg — `completeUnroll` is their only
+            // remedy — so they belong in no migration bucket. Without this the
+            // report over-counts migratable value and announces the coin as
+            // recovering through the sweep path, which will never happen.
+            const live = vtxos.filter((v) => !v.isUnrolled);
+            const recoverable = live.filter((v) => v.isSwept && !hasTerminalSpend(v));
+            const spendable = live.filter((v) => !hasTerminalSpend(v) && !v.isSwept);
 
             const value = spendable.reduce((sum, v) => sum + v.value, 0);
 

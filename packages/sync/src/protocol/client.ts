@@ -122,7 +122,15 @@ export class BucketSyncClient {
             }),
         });
         if (res.ok) return (await this.json<TokenResponse>(res)).token;
-        return null;
+        // 409 from `register` is the ONLY fall-through — the pubkey already has
+        // a bucket, which is what `verify` is for. Falling through on anything
+        // else reports a 500 as "authentication failed", sending the user to
+        // re-enter a seed that was fine.
+        if (verb === "register" && res.status === 409) return null;
+        if (res.status === 401) {
+            throw new BucketSyncAuthError(`${verb} rejected the signature`);
+        }
+        throw new BucketSyncHttpError(res.status, await res.text());
     }
 
     /** Current bucket head: the sync cursor high-water mark and content hash. */
@@ -204,7 +212,9 @@ export class BucketSyncClient {
             for (;;) {
                 const { done, value } = await reader.read();
                 if (done) break;
-                buf += decoder.decode(value, { stream: true });
+                // CRLF is a legal SSE terminator; without this the tail finds
+                // no frame at all and goes silent while looking connected.
+                buf = (buf + decoder.decode(value, { stream: true })).replace(/\r\n/g, "\n");
                 let sep: number;
                 // SSE frames are separated by a blank line; each carries `data: <seq>`.
                 while ((sep = buf.indexOf("\n\n")) >= 0) {

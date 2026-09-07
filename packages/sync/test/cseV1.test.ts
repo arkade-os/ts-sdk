@@ -15,6 +15,13 @@ describe("cse-v1 envelope", () => {
         expect(open(env, k, "swap:abc")).toEqual(pt);
     });
 
+    it.each([0, 16, 31, 33, 64])("refuses a %d-byte key-wrapping key on both sides", (len) => {
+        const wrong = new Uint8Array(len);
+        const env = seal(enc("secret"), kwk(), "swap:abc");
+        expect(() => seal(enc("secret"), wrong, "swap:abc")).toThrow(/key-wrapping key must be/);
+        expect(() => open(env, wrong, "swap:abc")).toThrow(/key-wrapping key must be/);
+    });
+
     it("throws when opened with the wrong key", () => {
         const env = seal(enc("secret"), kwk(), "swap:abc");
         expect(() => open(env, kwk(), "swap:abc")).toThrow();

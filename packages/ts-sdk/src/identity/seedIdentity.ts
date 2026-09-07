@@ -3,7 +3,7 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { pubECDSA, pubSchnorr } from "@scure/btc-signer/utils.js";
 import { SigHash } from "@scure/btc-signer";
 import { hex } from "@scure/base";
-import { Transaction } from "../utils/transaction";
+import { assertAllowedSighashTypes, Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, signAsync } from "@noble/secp256k1";
 import {
@@ -18,7 +18,9 @@ import { DescriptorSigningRequest } from "./descriptorProvider";
 import { HDCapableIdentity, ReadonlyHDCapableIdentity } from "./hdCapableIdentity";
 import { descriptorIsOurs, isMainnetDescriptor } from "./descriptor";
 
-const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
+// SIGHASH_NONE / SIGHASH_SINGLE do not commit to the outputs we intend to
+// fund, so a PSBT we did not build must never talk us into one.
+const ALLOWED_SIGHASH = [SigHash.DEFAULT, SigHash.ALL, SigHash.ALL_ANYONECANPAY];
 
 /**
  * Secret-bearing state for seed-backed identities, held off the public
@@ -228,6 +230,20 @@ export class SeedIdentity implements HDCapableIdentity {
         return this.signMessageWithKey(this.derivedKey, message, signatureType);
     }
 
+    /**
+     * BIP-340 sign `messageHash` with this identity's own key, aux_rand = 0.
+     *
+     * The descriptor-less sibling of
+     * {@link signSchnorrDeterministicWithDescriptor}, for an `auto`-mode wallet
+     * whose bare `tr(pubkey)` resolves to the identity itself rather than to a
+     * {@link DescriptorIdentity}. Deliberately NOT routed through
+     * `signMessage`, whose schnorr branch draws a random aux_rand and would
+     * make the "deterministic" signature unreproducible.
+     */
+    async signSchnorrDeterministic(messageHash: Uint8Array): Promise<Uint8Array> {
+        return schnorr.signAsync(messageHash, this.derivedKey, new Uint8Array(32));
+    }
+
     signerSession(): SignerSession {
         return TreeSignerSession.random();
     }
@@ -339,8 +355,12 @@ export class SeedIdentity implements HDCapableIdentity {
         const txCpy = tx.clone();
 
         if (!inputIndexes) {
+            // scure skips an input whose declared sighash is outside the policy,
+            // which the "No inputs signed" catch below would report as nothing to do
+            assertAllowedSighashTypes(txCpy, ALLOWED_SIGHASH);
+
             try {
-                if (!txCpy.sign(key, ALL_SIGHASH)) {
+                if (!txCpy.sign(key, ALLOWED_SIGHASH)) {
                     throw new Error("Failed to sign transaction");
                 }
             } catch (e) {
@@ -351,8 +371,10 @@ export class SeedIdentity implements HDCapableIdentity {
                 }
             }
         } else {
+            // no preflight here: signIdx rejects a disallowed sighash itself,
+            // rather than skipping the input the way the bulk path does
             for (const idx of inputIndexes) {
-                if (!txCpy.signIdx(key, idx, ALL_SIGHASH)) {
+                if (!txCpy.signIdx(key, idx, ALLOWED_SIGHASH)) {
                     throw new Error(`Failed to sign input #${idx}`);
                 }
             }

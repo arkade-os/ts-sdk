@@ -1,5 +1,12 @@
 # Arkade Swaps
 
+> [!WARNING]
+> **Deprecated and unmaintained.** This package is no longer actively developed
+> and receives no integration testing — its regtest CI job was removed. It is
+> left published so existing integrations keep resolving, but expect no fixes,
+> no compatibility work against newer `@arkade-os/sdk` releases, and no support.
+> Do not build anything new on it.
+
 > Lightning and chain swaps for Arkade using Boltz
 
 `@arkade-os/boltz-swap` provides seamless integration with the Lightning Network and Bitcoin on-chain through Boltz swaps, allowing users to move funds between Arkade, Lightning, and Bitcoin.

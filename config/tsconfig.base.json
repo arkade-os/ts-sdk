@@ -5,6 +5,7 @@
         "moduleResolution": "bundler",
         "lib": ["es2022"],
         "strict": true,
+        "noImplicitReturns": true,
         "noUnusedLocals": true,
         "noUnusedParameters": true,
         "esModuleInterop": true,

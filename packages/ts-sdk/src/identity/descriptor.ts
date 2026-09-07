@@ -233,3 +233,20 @@ export function parseHDDescriptor(descriptor: string): ParsedHDDescriptor | null
         derivationPath: key.keyPath.replace(/^\//, ""),
     };
 }
+
+/**
+ * The descriptor that names an identity's own key: the whole of a static
+ * wallet's key policy, and the descriptor a record bound before an `auto`
+ * wallet became HD carries.
+ *
+ * One spelling, deliberately. Every site that mints this must produce
+ * byte-identical output for one identity, or a stored descriptor stops
+ * round-tripping through `signerForDescriptor` and `contractSigner`'s
+ * pubkey-equality check — a record the wallet can sign for, refused as
+ * foreign.
+ */
+export async function identityDescriptor(identity: {
+    xOnlyPublicKey(): Promise<Uint8Array>;
+}): Promise<string> {
+    return normalizeToDescriptor(hex.encode(await identity.xOnlyPublicKey()));
+}

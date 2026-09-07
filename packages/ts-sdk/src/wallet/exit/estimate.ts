@@ -11,13 +11,22 @@ import type { Wallet } from "../wallet";
 import { getNormalizedVtxos } from "../vtxo";
 import { buildExitDag, DagNode, topoSortByDeps } from "./chain";
 import { createExitChainResolver } from "./resolver";
+import { CHILD_DUST_AMOUNT } from "../../utils/anchor";
 import { finalizeVirtualTx } from "./finalizeVirtualTx";
 import { ExitPathError, ResolvedExitPath, resolveUnilateralPath } from "./path";
 import { sweepFeeFor } from "./sweep";
 import { ExitDelay, ExitMode, ExitQuote, ExitTotals, ExitVtxoInfo } from "./types";
 
-/** Dust floor granted to every fee child's change output. */
-export const CHILD_OUTPUT_DUST = 546;
+/**
+ * Dust floor granted to every fee child's change output.
+ *
+ * An alias, not a second constant: `buildAnchorChild` throws when change falls
+ * below {@link CHILD_DUST_AMOUNT}, so that is the floor the quote has to
+ * reserve. Declaring 546 independently here meant the two could drift — and a
+ * quote that under-reserves by even one sat strands the final bump, which is
+ * the failure this whole path exists to avoid.
+ */
+export const CHILD_OUTPUT_DUST = CHILD_DUST_AMOUNT;
 
 export type ExitOptions = {
     /** Wallet owning the VTXOs: identity (signing) + indexer + onchain provider. */
@@ -278,10 +287,22 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
         // splitter. funded: + 1 splitter tx and pre-signed children.
         txCount: (graph ? 0 : steps.length > 0 ? 1 : 0) + steps.length * 2 + sweeps.length,
         totalFeeSats: splitterFee + stepFees + sweepFees,
-        // graph funding is what the executor sends to its own fee address:
-        // just the CPFP fees (change recycles); funded also locks the
-        // per-child dust into the splitter.
-        fundingRequiredSats: graph ? stepFees : splitterFee + fundingTotal,
+        // graph funding is what the executor sends to its own fee address: the
+        // CPFP fees, plus one dust floor. Change recycles through that single
+        // address, so each bump hands its remainder to the next and only the
+        // *final* change has to clear `CHILD_DUST_AMOUNT` — but it does have to,
+        // and `buildAnchorChild` throws rather than absorbing a short remainder
+        // into the fee. Quoting bare fees quotes an amount that strands the last
+        // bump and every sweep behind it.
+        //
+        // funded reserves the same floor per step instead of once overall (see
+        // `stepFundingAmount`), because it pre-funds each child separately
+        // through the splitter rather than recycling one output.
+        fundingRequiredSats: graph
+            ? steps.length > 0
+                ? stepFees + CHILD_OUTPUT_DUST
+                : 0
+            : splitterFee + fundingTotal,
         recoveredSats: sweeps.reduce((s, x) => s + (x.vtxo.value - x.sweepFee), 0),
     };
 

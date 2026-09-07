@@ -27,7 +27,9 @@ const enc = (s: string) => new TextEncoder().encode(s);
  * reconciles anything that did not land.
  */
 export class SyncedSwapRepository implements SwapRepository {
-    readonly version = 1 as const;
+    get version(): SwapRepository["version"] {
+        return this.base.version;
+    }
 
     constructor(
         private readonly base: SwapRepository,

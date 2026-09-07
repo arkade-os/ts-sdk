@@ -6,7 +6,13 @@ import {
     hasImpossibleSwapsFilter,
     SwapRepository,
 } from "../swap-repository";
-import { closeDatabase, openDatabase } from "@arkade-os/sdk";
+import {
+    awaitTransaction,
+    createManagedConnection,
+    getAllByIndexValues,
+    promisifyRequest,
+    type ManagedConnection,
+} from "@arkade-os/sdk";
 
 const DEFAULT_DB_NAME = "arkade-boltz-swap";
 const DB_VERSION = 2;
@@ -30,36 +36,28 @@ function asArray<T>(v: T | T[] | undefined): T[] | undefined {
 
 export class IndexedDbSwapRepository implements SwapRepository {
     readonly version = 1 as const;
-    private db: IDBDatabase | null = null;
+    private readonly connection: ManagedConnection;
 
-    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+    constructor(dbName: string = DEFAULT_DB_NAME) {
+        this.connection = createManagedConnection(dbName, DB_VERSION, initDatabase);
+    }
 
-    private async getDB(): Promise<IDBDatabase> {
-        if (this.db) return this.db;
-        this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
-        return this.db;
+    private getDB(): Promise<IDBDatabase> {
+        return this.connection.get();
     }
 
     async saveSwap<T extends BoltzSwap>(swap: T): Promise<void> {
         const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([STORE_SWAPS_STATE], "readwrite");
-            const store = transaction.objectStore(STORE_SWAPS_STATE);
-            const request = store.put(swap);
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error);
-        });
+        const transaction = db.transaction([STORE_SWAPS_STATE], "readwrite");
+        transaction.objectStore(STORE_SWAPS_STATE).put(swap);
+        await awaitTransaction(transaction);
     }
 
     async deleteSwap(id: string): Promise<void> {
         const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([STORE_SWAPS_STATE], "readwrite");
-            const store = transaction.objectStore(STORE_SWAPS_STATE);
-            const request = store.delete(id);
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error);
-        });
+        const transaction = db.transaction([STORE_SWAPS_STATE], "readwrite");
+        transaction.objectStore(STORE_SWAPS_STATE).delete(id);
+        await awaitTransaction(transaction);
     }
 
     async getAllSwaps<T extends BoltzSwap>(filter?: GetSwapsFilter): Promise<T[]> {
@@ -68,31 +66,9 @@ export class IndexedDbSwapRepository implements SwapRepository {
 
     async clear(): Promise<void> {
         const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([STORE_SWAPS_STATE], "readwrite");
-            const store = transaction.objectStore(STORE_SWAPS_STATE);
-            const request = store.clear();
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error);
-        });
-    }
-
-    private getSwapsByIndexValues<T>(
-        store: IDBObjectStore,
-        indexName: string,
-        values: string[],
-    ): Promise<T[]> {
-        if (values.length === 0) return Promise.resolve([]);
-        const index = store.index(indexName);
-        const requests = values.map(
-            (value) =>
-                new Promise<T[]>((resolve, reject) => {
-                    const request = index.getAll(value);
-                    request.onerror = () => reject(request.error);
-                    request.onsuccess = () => resolve(request.result ?? []);
-                }),
-        );
-        return Promise.all(requests).then((results) => results.flatMap((result) => result));
+        const transaction = db.transaction([STORE_SWAPS_STATE], "readwrite");
+        transaction.objectStore(STORE_SWAPS_STATE).clear();
+        await awaitTransaction(transaction);
     }
 
     private async getAllSwapsFromStore<
@@ -111,37 +87,26 @@ export class IndexedDbSwapRepository implements SwapRepository {
             .objectStore(STORE_SWAPS_STATE);
 
         if (!filter || Object.keys(filter).length === 0) {
-            return new Promise((resolve, reject) => {
-                const request = store.getAll();
-                request.onsuccess = () => resolve((request.result ?? []) as T[]);
-                request.onerror = () => reject(request.error);
-            });
+            return (await promisifyRequest<T[]>(store.getAll())) ?? [];
         }
 
         const ids = asArray(filter.id);
         if (ids) {
             const swaps = await Promise.all(
-                ids.map(
-                    (id) =>
-                        new Promise<T | undefined>((resolve, reject) => {
-                            const request = store.get(id);
-                            request.onsuccess = () => resolve(request.result as T | undefined);
-                            request.onerror = () => reject(request.error);
-                        }),
-                ),
+                ids.map((id) => promisifyRequest<T | undefined>(store.get(id))),
             );
             return applyCreatedAtOrder(applySwapsFilter(swaps, filter) as T[], filter);
         }
 
         const types = asArray(filter.type);
         if (types) {
-            const swaps = await this.getSwapsByIndexValues<T>(store, "type", types);
+            const swaps = await getAllByIndexValues<T>(store, "type", types);
             return applyCreatedAtOrder(applySwapsFilter(swaps, filter) as T[], filter);
         }
 
         const statuses = asArray(filter.status);
         if (statuses) {
-            const swaps = await this.getSwapsByIndexValues<T>(store, "status", statuses);
+            const swaps = await getAllByIndexValues<T>(store, "status", statuses);
             return applyCreatedAtOrder(applySwapsFilter(swaps, filter) as T[], filter);
         }
 
@@ -149,11 +114,7 @@ export class IndexedDbSwapRepository implements SwapRepository {
             return this.getAllSwapsByCreatedAt<T>(store, filter.orderDirection);
         }
 
-        const allSwaps = await new Promise<T[]>((resolve, reject) => {
-            const request = store.getAll();
-            request.onsuccess = () => resolve(request.result ?? []);
-            request.onerror = () => reject(request.error);
-        });
+        const allSwaps = (await promisifyRequest<T[]>(store.getAll())) ?? [];
 
         return applyCreatedAtOrder(applySwapsFilter(allSwaps, filter) as T[], filter);
     }
@@ -181,8 +142,6 @@ export class IndexedDbSwapRepository implements SwapRepository {
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
-        if (!this.db) return;
-        await closeDatabase(this.dbName);
-        this.db = null;
+        await this.connection[Symbol.asyncDispose]();
     }
 }

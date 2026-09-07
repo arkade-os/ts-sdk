@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer";
+import { SigHash, Transaction } from "@scure/btc-signer";
 import { Wallet, ArkadeCashCreateError } from "../src/wallet/wallet";
 import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
@@ -19,7 +19,7 @@ import type { VirtualCoin } from "../src/wallet";
 
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const CHECKPOINT_TAPSCRIPT =
-    "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac";
+    "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac";
 
 const info = {
     signerPubkey: SERVER_PUBKEY_HEX,
@@ -105,6 +105,11 @@ function spentCashVtxo(cashPkScript: string): VirtualCoin {
     } as VirtualCoin;
 }
 
+/** The same VTXO after a unilateral exit: onchain now, but nothing spent it. */
+function exitedCashVtxo(cashPkScript: string): VirtualCoin {
+    return { ...spentCashVtxo(cashPkScript), isSpent: false, isUnrolled: true };
+}
+
 /** A distinct spent arkadeCash VTXO, one per index, all at the same pkScript. */
 function spentCashVtxoAt(cashPkScript: string, index: number): VirtualCoin {
     return {
@@ -117,12 +122,17 @@ function spentCashVtxoAt(cashPkScript: string, index: number): VirtualCoin {
  * The pending sweep the crashed claim left on the server: the offchain tx it
  * built and submitted but never finalized, paying `destinationPkScript`.
  */
-function pendingSweep(cash: ArkadeCash, destinationPkScript: Uint8Array) {
+function pendingSweep(
+    cash: ArkadeCash,
+    destinationPkScript: Uint8Array,
+    txid = CASH_TXID,
+    serverUnrollScript = CSVMultisigTapscript.decode(hex.decode(CHECKPOINT_TAPSCRIPT)),
+) {
     const cashScript = cash.vtxoScript;
     const offchainTx = buildOffchainTx(
         [
             {
-                txid: CASH_TXID,
+                txid,
                 vout: 0,
                 value: CASH_VALUE,
                 tapLeafScript: cashScript.forfeit(),
@@ -130,7 +140,7 @@ function pendingSweep(cash: ArkadeCash, destinationPkScript: Uint8Array) {
             },
         ],
         [{ script: destinationPkScript, amount: BigInt(CASH_VALUE) }],
-        CSVMultisigTapscript.decode(hex.decode(CHECKPOINT_TAPSCRIPT)),
+        serverUnrollScript,
     );
 
     return {
@@ -138,6 +148,14 @@ function pendingSweep(cash: ArkadeCash, destinationPkScript: Uint8Array) {
         finalArkTx: base64.encode(offchainTx.arkTx.toPSBT()),
         signedCheckpointTxs: offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT())),
     };
+}
+
+/** A checkpoint unroll script under a server key this wallet does not use. */
+function foreignUnrollScript() {
+    return CSVMultisigTapscript.encode({
+        ...CSVMultisigTapscript.decode(hex.decode(CHECKPOINT_TAPSCRIPT)).params,
+        pubkeys: [new Uint8Array(32).fill(9)],
+    });
 }
 
 const makeCash = () =>
@@ -148,6 +166,34 @@ const makeCash = () =>
     );
 
 describe("claimCash drain-pending accounting", () => {
+    // A server-returned checkpoint is signed here in place, so it must declare
+    // SIGHASH_DEFAULT like the ones we build.
+    it("refuses to sign a pending checkpoint declaring another sighash type", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const finalizeTx = vi.fn(async () => {});
+        const getPendingTxs = vi.fn();
+
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [spentCashVtxo(cashPkScript)]), {
+            getPendingTxs,
+            finalizeTx,
+        });
+
+        const myPkScript = ArkAddress.decode(await wallet.getAddress()).pkScript;
+        const sweep = pendingSweep(cash, myPkScript);
+        sweep.signedCheckpointTxs = sweep.signedCheckpointTxs.map((c) => {
+            const tx = Transaction.fromPSBT(base64.decode(c));
+            tx.updateInput(0, { sighashType: SigHash.ALL });
+            return base64.encode(tx.toPSBT());
+        });
+        getPendingTxs.mockResolvedValue([sweep]);
+
+        const result = await wallet.claimCash(cash.toString());
+
+        expect(finalizeTx).not.toHaveBeenCalled();
+        expect(result.swept).toBe(0);
+    });
+
     it("reports a drained sweep as swept, not unclaimed", async () => {
         const cash = makeCash();
         const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
@@ -217,7 +263,7 @@ describe("claimCash drain-pending accounting", () => {
         // Every batch surfaces the same pending sweep; dedup by arkTxid must
         // collapse them so the tx is finalized exactly once.
         const myPkScript = ArkAddress.decode(await wallet.getAddress()).pkScript;
-        getPendingTxs.mockResolvedValue([pendingSweep(cash, myPkScript)]);
+        getPendingTxs.mockResolvedValue([pendingSweep(cash, myPkScript, drainable[0].txid)]);
 
         await wallet.claimCash(cash.toString());
 
@@ -230,6 +276,147 @@ describe("claimCash drain-pending accounting", () => {
         }
         // Same arkTxid across all batches → finalized once, not three times.
         expect(finalizeTx).toHaveBeenCalledOnce();
+    });
+
+    // The drain co-signs checkpoints returned by the server, so each one must
+    // reconcile with the checkpoint this wallet builds for that VTXO.
+    it("leaves a pending tx alone when its checkpoint does not rebuild", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const finalizeTx = vi.fn(async () => {});
+        const getPendingTxs = vi.fn();
+
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [spentCashVtxo(cashPkScript)]), {
+            getPendingTxs,
+            finalizeTx,
+        });
+
+        const myPkScript = ArkAddress.decode(await wallet.getAddress()).pkScript;
+        // Same VTXO, but a checkpoint locked to a different server key: its
+        // output script — and so its txid — is not the one we build.
+        getPendingTxs.mockResolvedValue([
+            pendingSweep(cash, myPkScript, CASH_TXID, foreignUnrollScript()),
+        ]);
+
+        const result = await wallet.claimCash(cash.toString());
+
+        expect(finalizeTx).not.toHaveBeenCalled();
+        expect(result.swept).toBe(0);
+        expect(result.unclaimed.vtxos).toEqual([
+            { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "already-spent" },
+        ]);
+    });
+
+    it("finalizes a checkpoint built under a deprecated signer", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const finalizeTx = vi.fn(async () => {});
+        const getPendingTxs = vi.fn();
+
+        // The sweep was submitted before a signer rotation, so its checkpoint
+        // is locked to the now-deprecated key.
+        const deprecated = hex.encode(new Uint8Array(32).fill(3));
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [spentCashVtxo(cashPkScript)]), {
+            getPendingTxs,
+            finalizeTx,
+            getInfo: vi.fn(async () => ({
+                ...info,
+                deprecatedSigners: [{ pubkey: deprecated, cutoffDate: 0n }],
+            })),
+        });
+
+        const myPkScript = ArkAddress.decode(await wallet.getAddress()).pkScript;
+        getPendingTxs.mockResolvedValue([
+            pendingSweep(
+                cash,
+                myPkScript,
+                CASH_TXID,
+                CSVMultisigTapscript.encode({
+                    ...CSVMultisigTapscript.decode(hex.decode(CHECKPOINT_TAPSCRIPT)).params,
+                    pubkeys: [hex.decode(deprecated)],
+                }),
+            ),
+        ]);
+
+        await wallet.claimCash(cash.toString());
+
+        expect(finalizeTx).toHaveBeenCalledOnce();
+    });
+
+    // An exited output lives onchain: the thin sweep is an offchain spend, so
+    // it can only report the coin — and it must say so as `exited`, not as a
+    // spend that never happened.
+    it("reports an exited VTXO as `exited` and never sweeps it", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const submitTx = vi.fn();
+        const finalizeTx = vi.fn(async () => {});
+        const getPendingTxs = vi.fn(async () => []);
+
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [exitedCashVtxo(cashPkScript)]), {
+            getPendingTxs,
+            finalizeTx,
+            submitTx,
+        });
+
+        const result = await wallet.claimCash(cash.toString());
+
+        expect(submitTx).not.toHaveBeenCalled();
+        expect(finalizeTx).not.toHaveBeenCalled();
+        expect(result.swept).toBe(0);
+        expect(result.unclaimed.amount).toBe(CASH_VALUE);
+        expect(result.unclaimed.vtxos).toEqual([
+            { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "exited" },
+        ]);
+    });
+
+    // Exit is a location, spend is a fate: a coin carrying both is reported by
+    // its fate, so the terminal-spend branch deliberately runs first.
+    it("reports an exited VTXO that was also spent as already-spent", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const finalizeTx = vi.fn(async () => {});
+        const getPendingTxs = vi.fn(async () => []);
+
+        const exitedAndSpent = { ...spentCashVtxo(cashPkScript), isUnrolled: true };
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [exitedAndSpent]), {
+            getPendingTxs,
+            finalizeTx,
+        });
+
+        const result = await wallet.claimCash(cash.toString());
+
+        expect(result.swept).toBe(0);
+        expect(result.unclaimed.vtxos).toEqual([
+            { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "already-spent" },
+        ]);
+    });
+
+    // Excluded by state, not by value: the drain finalizes pending sweeps, and
+    // no sweep naming an output that already lives onchain can ever close.
+    it("keeps an exited VTXO out of the drain proof", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const finalizeTx = vi.fn(async () => {});
+        const getPendingTxs = vi.fn(async () => []);
+
+        const healthy = spentCashVtxoAt(cashPkScript, 1);
+        const exited = { ...spentCashVtxoAt(cashPkScript, 2), isSpent: false, isUnrolled: true };
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [healthy, exited]), {
+            getPendingTxs,
+            finalizeTx,
+        });
+
+        await wallet.claimCash(cash.toString());
+
+        expect(getPendingTxs).toHaveBeenCalledOnce();
+        const { proof } = (getPendingTxs.mock.calls as unknown as [{ proof: string }][])[0][0];
+        const tx = Transaction.fromPSBT(base64.decode(proof), { allowUnknown: true });
+        const inputs = Array.from({ length: tx.inputsLength }, (_, i) =>
+            hex.encode(tx.getInput(i).txid!),
+        );
+        expect(inputs).toContain(healthy.txid);
+        expect(inputs).not.toContain(exited.txid);
     });
 
     it("surfaces the recoverable token when the funding send fails", async () => {

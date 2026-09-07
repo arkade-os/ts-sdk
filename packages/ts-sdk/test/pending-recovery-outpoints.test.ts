@@ -20,7 +20,7 @@ const signerSet: SignerSet = {
 
 // Minimal VirtualCoin-shaped stub: selectPendingRecoveryOutpoints only reads
 // txid/vout (outpoint) and the spend/swept facts.
-const vtxo = (txid: string, vout: number, state: string, isSpent = false) =>
+const vtxo = (txid: string, vout: number, state: string, isSpent = false, isUnrolled = false) =>
     ({
         txid,
         vout,
@@ -28,6 +28,7 @@ const vtxo = (txid: string, vout: number, state: string, isSpent = false) =>
         isSpent,
         isSwept: state === "swept",
         isPreconfirmed: state === "preconfirmed",
+        isUnrolled,
         spentBy: "",
         commitmentTxIds: [],
     }) as never;
@@ -51,6 +52,22 @@ describe("selectPendingRecoveryOutpoints", () => {
             NOW,
         );
         expect([...out]).toEqual(["exp-settled:0"]);
+    });
+
+    it("excludes an exited VTXO while keeping its sibling on the same contract", () => {
+        // The exit is the user's own doing and `completeUnroll` is its remedy;
+        // reporting it as pendingRecovery would blame the signer rotation.
+        const out = selectPendingRecoveryOutpoints(
+            [
+                row(EXPIRED_SIGNER, [
+                    vtxo("exp-live", 0, "settled"),
+                    vtxo("exp-exited", 1, "settled", false, true),
+                ]),
+            ],
+            signerSet,
+            NOW,
+        );
+        expect([...out]).toEqual(["exp-live:0"]);
     });
 
     it("is empty when there are no deprecated signers", () => {

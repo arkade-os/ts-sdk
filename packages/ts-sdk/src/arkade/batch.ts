@@ -28,13 +28,20 @@ import type {
 
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript } from "../script/tapscript";
+import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "../wallet/batchExpiry";
+import type { BatchExpiryPolicy } from "../wallet/batchExpiry";
 import { Transaction } from "../utils/transaction";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
-import { validateBatchRecipients } from "../wallet/validation";
+import {
+    assertFinalCommitmentMatchesValidated,
+    validateBatchRecipients,
+    validateBatchRecipientsWithoutTree,
+} from "../wallet/validation";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
 import { Intent } from "../intent";
 import { isRecoverable, isSubdust, isVirtualCoin } from "../wallet";
+import { toXOnly } from "../utils/keys";
 import type { ExtendedVirtualCoin } from "../wallet";
 import type { TxTree } from "../tree/txTree";
 
@@ -74,13 +81,20 @@ export function createArkadeBatchHandler(
     network: Network,
     /**
      * Expected recipients of the settlement, validated against the virtual
-     * output tree before co-signing it (mirrors `Wallet.createBatchHandler`).
-     * Without this the handler signs whatever tree the server proposes.
+     * output tree before co-signing it, and — when tree signing did not run —
+     * against the commitment tx before signing anything at finalization
+     * (mirrors `Wallet.createBatchHandler`). Without this the handler signs
+     * whatever the server proposes, on both paths.
      */
     recipients?: Recipient[],
+    /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
+    batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
 ): Batch.Handler {
     let batchId: string;
     let sweepTapTreeRoot: Uint8Array;
+    // Assigned only after the tree it commits to has been validated, so it
+    // always names a commitment tx this handler has checked.
+    let validatedCommitmentTxid: string | undefined;
 
     return {
         onBatchStarted: async (event: BatchStartedEvent): Promise<{ skip: boolean }> => {
@@ -89,17 +103,25 @@ export function createArkadeBatchHandler(
             const intentIdHashStr = hex.encode(intentIdHash);
 
             if (!event.intentIdHashes.includes(intentIdHashStr)) return { skip: true };
+
+            const info = await arkProvider.getInfo();
+            // Bound the expiry before confirming, so a rejected round is never
+            // confirmed to the operator.
+            const timelock = assertValidBatchExpiry(
+                event.batchExpiry,
+                resolveBatchExpiryPolicy(network, {
+                    advertisedVtxoTreeExpiry: info.vtxoTreeExpiry,
+                    ...batchExpiryPolicy,
+                }),
+            );
+
             await arkProvider.confirmRegistration(intentId);
 
             batchId = event.id;
 
             const sweepTapscript = CSVMultisigTapscript.encode({
-                timelock: {
-                    value: event.batchExpiry,
-                    // BIP-65: values >= 512 are interpreted as seconds, below as blocks
-                    type: event.batchExpiry >= 512n ? "seconds" : "blocks",
-                },
-                pubkeys: [hex.decode((await arkProvider.getInfo()).forfeitPubkey).subarray(1)],
+                timelock,
+                pubkeys: [toXOnly(hex.decode(info.forfeitPubkey), "forfeit key")],
             }).script;
 
             sweepTapTreeRoot = tapLeafHash(sweepTapscript);
@@ -111,8 +133,10 @@ export function createArkadeBatchHandler(
             vtxoTree: TxTree,
         ): Promise<{ skip: boolean }> => {
             const signerPubKey = await session.getPublicKey();
-            const xonlySignerPubKey = signerPubKey.subarray(1);
-            const xOnlyPubkeys = event.cosignersPublicKeys.map((k) => k.slice(2));
+            const xonlySignerPubKey = toXOnly(signerPubKey, "signer key");
+            const xOnlyPubkeys = event.cosignersPublicKeys.map((k) =>
+                hex.encode(toXOnly(hex.decode(k), "cosigner key")),
+            );
 
             if (!xOnlyPubkeys.includes(hex.encode(xonlySignerPubKey))) {
                 return { skip: true };
@@ -132,6 +156,8 @@ export function createArkadeBatchHandler(
             if (!sharedOutput?.amount) {
                 throw new Error("Shared output not found");
             }
+
+            validatedCommitmentTxid = commitmentTx.id;
 
             await session.init(vtxoTree, sweepTapTreeRoot, sharedOutput.amount);
 
@@ -169,6 +195,18 @@ export function createArkadeBatchHandler(
             }
 
             let commitmentPsbt = Transaction.fromPSBT(base64.decode(event.commitmentTx));
+            assertFinalCommitmentMatchesValidated(
+                commitmentPsbt,
+                validatedCommitmentTxid,
+                "arkade batch finalization",
+            );
+
+            // No validated txid means tree signing never ran, so the recipients
+            // have not been checked yet and this commitment tx is the only thing
+            // to check them against. Before any signature is handed over.
+            if (!validatedCommitmentTxid && recipients && recipients.length > 0) {
+                validateBatchRecipientsWithoutTree(commitmentPsbt, recipients, network);
+            }
             const signedForfeits: string[] = [];
             let connectorIndex = 0;
             const connectorLeaves = connectorTree?.leaves() || [];

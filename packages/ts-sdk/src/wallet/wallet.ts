@@ -8,6 +8,7 @@ import { DefaultVtxo } from "../script/default";
 import { DEFAULT_ARKADE_SERVER_URL, getNetwork, Network, NetworkName } from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
+    ArkInfo,
     ArkProvider,
     BatchFinalizationEvent,
     BatchStartedEvent,
@@ -21,7 +22,11 @@ import {
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
-import { validateBatchRecipients } from "./validation";
+import {
+    assertFinalCommitmentMatchesValidated,
+    validateBatchRecipients,
+    validateBatchRecipientsWithoutTree,
+} from "./validation";
 import { Identity, ReadonlyIdentity, isBatchSignable } from "../identity";
 import {
     canRecoverOnchain,
@@ -48,15 +53,19 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
+    GetNewAddressesOptions,
     IAssetManager,
     IReadonlyAssetManager,
     IReadonlyWallet,
     isSubdust,
     IWallet,
+    NewAddress,
+    NewAddressType,
     Outpoint,
     ReadonlyWalletConfig,
     Recipient,
     SendBitcoinParams,
+    SendParams,
     SettleParams,
     TxType,
     VirtualCoin,
@@ -64,10 +73,19 @@ import {
     WalletConfig,
 } from ".";
 import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } from "./asset";
-import { VtxoScript } from "../script/base";
+import { TapTreeCoder, VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
-import { toXOnlySignerHex } from "./signerRotation";
+import { classifyAgainstSignerSet, signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
+import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "./batchExpiry";
+import type { BatchExpiryPolicy } from "./batchExpiry";
 import {
+    assertValidServerUnrollScript,
+    resolveCheckpointExitDelayPolicy,
+} from "./checkpointExitDelay";
+import type { CheckpointExitDelayPolicy } from "./checkpointExitDelay";
+import {
+    assertAllowedSighashTypes,
+    assertCheckpointsMatchInputs,
     buildOffchainTx,
     hasBoardingTxExpired,
     isValidArkAddress,
@@ -75,6 +93,7 @@ import {
     submitOffchainTx,
     type OffchainTxSigner,
 } from "../utils/arkTransaction";
+import { toXOnly } from "../utils/keys";
 import {
     byValueDescending,
     DEFAULT_RENEWAL_CONFIG,
@@ -96,7 +115,12 @@ import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositorie
 import { isTerminalIntentState } from "../repositories/intentRepository";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
-import { extendCoinWithTapscript, validateRecipients } from "./utils";
+import {
+    assertRecipientArkAddress,
+    extendCoinWithTapscript,
+    validateRecipients,
+    type RecipientAddressContext,
+} from "./utils";
 import {
     captureExitBranch,
     DEFAULT_EXIT_CAPTURE_MODE,
@@ -132,14 +156,31 @@ import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoOwnership";
-import { WalletReceiveRotator, signingDescriptorIndex } from "./walletReceiveRotator";
+import {
+    WalletReceiveRotator,
+    buildReceiveContract,
+    signingDescriptorIndex,
+    strictSigningDescriptorIndex,
+} from "./walletReceiveRotator";
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import { DescriptorProvider } from "../identity/descriptorProvider";
-import { DescriptorIdentity } from "../identity/descriptorIdentity";
-import { HDWalletCapable } from "./hdWalletCapable";
-import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
+import {
+    AddressAllocationCapable,
+    HDWalletCapable,
+    WalletCannotAllocateAddressError,
+    resolveDescriptorSigner,
+} from "./hdWalletCapable";
+import { deriveDescriptorLeafPubKey, identityDescriptor } from "../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
-import { CandidateDeps, DiscoveryDeps } from "../contracts/types";
+import { CandidateDeps, Contract, ContractWithVtxos, DiscoveryDeps } from "../contracts/types";
+import {
+    gateExclusion,
+    gatedContracts,
+    logExcludedVtxos,
+    outpointExclusion,
+    type VtxoExclusion,
+} from "../contracts/spendability";
+import { computeOffchainBalance, type BalanceCapabilities } from "./balance";
 import { InputSignerRouter, InputSigningJob } from "./inputSignerRouter";
 import {
     DescriptorSigningProviderMissingError,
@@ -162,10 +203,24 @@ function intentProofJobs(coins: ReadonlyArray<{ tapTree: Bytes }>): InputSigning
     return [{ index: 0, lookupScript: coinJobs[0].lookupScript }, ...coinJobs];
 }
 
-// Built-in ArkProvider implementations (Rest/Expo) expose `serverUrl`,
-// but the interface itself does not declare a URL accessor — so this is a
-// structural read that returns undefined for custom implementations.
-function extractArkProviderUrl(provider: ArkProvider): string | undefined {
+// `send` takes either a recipient list or an options object, told apart by
+// `recipients` — which no `Recipient` has and every `SendParams` does — rather
+// than by "one argument", which both forms produce for a single recipient.
+function asSendParams(args: [SendParams] | [Recipient, ...Recipient[]]): SendParams {
+    const [first] = args;
+    if (args.length === 1 && first && "recipients" in first) {
+        const params = first as SendParams;
+        if (params.recipients.length === 0) {
+            throw new Error("At least one receiver is required");
+        }
+        return params;
+    }
+    return { recipients: args as [Recipient, ...Recipient[]] };
+}
+
+// Built-in and decorated ArkProvider implementations may expose `serverUrl`.
+// The interface does not require it, so custom providers can return undefined.
+export function extractArkProviderUrl(provider: ArkProvider): string | undefined {
     const serverUrl = (provider as { serverUrl?: unknown }).serverUrl;
     return typeof serverUrl === "string" && serverUrl.length > 0 ? serverUrl : undefined;
 }
@@ -177,20 +232,39 @@ function extractArkProviderUrl(provider: ArkProvider): string | undefined {
  */
 export const DEFAULT_LOOK_AHEAD_WINDOW = 20;
 
+/**
+ * A {@link NewAddress} plus the two fields only the wallet needs: the built
+ * tapscript (so the deprecated boarding allocator can swap its display
+ * script) and whether an index was actually burned (so it does not announce a
+ * rotation that did not happen on a wallet with no stream).
+ *
+ * Discriminated on `type` rather than carrying a widened tapscript, so the
+ * boarding branch narrows to {@link DefaultVtxo.Script} on its own. For that
+ * to pay off, {@link Wallet.mintAddress} has to build each flavour inside its
+ * own branch: a `type === "boarding" ? … : …` expression widens the result
+ * before the union ever sees it, and the narrowing is then bought back with
+ * an unchecked cast — precisely where the wallet's displayed boarding script
+ * gets written.
+ *
+ * @internal Never crosses the public API — {@link Wallet.getNewAddresses}
+ * projects it down to {@link NewAddress}.
+ */
+type AllocatedAddress = NewAddress & { allocated: boolean } & (
+        | { type: "boarding"; tapscript: DefaultVtxo.Script }
+        | { type: "default"; tapscript: DefaultVtxo.Script | DelegateVtxo.Script }
+    );
+
+/**
+ * Maximum caller-requested HD descriptors materialized past the watermark by
+ * getUsedSigningDescriptors(). Bounds plugin/restore probes without changing
+ * the wallet's actual allocation watermark.
+ */
+export const MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD = 1_000;
+
 // Historical unilateral exit delay for mainnet (~7 days in seconds).
 // Kept so existing wallets can still discover and spend VTXOs sent to the
 // legacy address after arkd starts advertising a different delay.
 const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
-
-// Normalize a server signer pubkey to the x-only (32-byte) form script
-// encoding requires (CSVMultisigTapscript.encode throws on anything else).
-// A 33-byte compressed key drops its parity prefix; a 32-byte key is already
-// x-only. Mirrors the setup path's `hex.decode(info.signerPubkey).slice(1)`.
-function toXOnlyPubKey(pubkey: Uint8Array): Uint8Array {
-    if (pubkey.length === 33) return pubkey.slice(1);
-    if (pubkey.length === 32) return pubkey;
-    throw new Error(`invalid signer pubkey length: expected 32 or 33, got ${pubkey.length}`);
-}
 
 function delayToTimelock(delay: bigint): RelativeTimelock {
     return {
@@ -323,6 +397,80 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 export { DescriptorSigningProviderMissingError, MissingSigningDescriptorError };
 
 /**
+ * Apply {@link GetVtxosFilter} to a contract snapshot. Pure, so `getVtxos` and
+ * {@link IReadonlyWallet.getSpendableVtxos} share one definition of the filter
+ * instead of each re-reading (and possibly disagreeing on) the snapshot.
+ *
+ * No chain tip: the balance and send paths are offline-first reads, so
+ * height-encoded expiry reads as not expired here too.
+ */
+export function filterSnapshotVtxos(
+    snapshot: readonly ContractWithVtxos[],
+    filter: GetVtxosFilter | undefined,
+    pendingSpendOutpoints: ReadonlySet<string>,
+): NormalizedExtendedVirtualCoin[] {
+    const f = filter ?? { withRecoverable: true, withUnrolled: false };
+    const now = { timestamp: new Date() };
+    return snapshot
+        .flatMap((_) => _.vtxos)
+        .filter((vtxo) => {
+            if (pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
+                return false;
+            }
+            // Location before spend: `withUnrolled` is authoritative for an
+            // exited coin whatever else is true of it, which is also what
+            // preserves today's behaviour for unrolled-and-spent coins.
+            if (vtxo.isUnrolled) {
+                return !!f.withUnrolled;
+            }
+            if (hasTerminalSpend(vtxo)) {
+                return false;
+            }
+            if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
+                return false;
+            }
+            return true;
+        });
+}
+
+/**
+ * Shared by the two places a past-cutoff signer excludes a VTXO: the
+ * outpoint-level `pendingRecovery` set and the script-level check
+ * {@link ReadonlyWallet.logUngatedInputs} can afford.
+ */
+const PENDING_RECOVERY_REASON =
+    "is past its operator signer's rotation cutoff — the operator will not co-sign it until it recovers";
+
+/**
+ * The fourth reason generic selection drops a coin. Reported from the raw
+ * snapshot rather than through the other exclusions: {@link filterSnapshotVtxos}
+ * removes unrolled coins before they reach that call, so an exclusion there
+ * could never match.
+ */
+const UNROLLED_REASON =
+    "was unilaterally exited and lives onchain — `Unroll.completeUnroll` is the only spend that reaches it";
+
+/**
+ * What signer classification needs of a snapshot: contract params and the coins
+ * under them. Structural rather than {@link ContractWithVtxos} so a repository-
+ * built snapshot — the worker's, whose VTXOs carry no `contractScript` — can be
+ * classified without allocating a parallel array to satisfy the nominal type.
+ */
+type PendingRecoverySnapshot = Parameters<typeof selectPendingRecoveryOutpoints>[0];
+
+/** The outpoints in `before` that `after` dropped. */
+function omittedOutpoints(
+    before: readonly { txid: string; vout: number }[],
+    after: readonly { txid: string; vout: number }[],
+): Set<string> {
+    if (before.length === after.length) return new Set();
+    const kept = new Set(after.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`));
+    return new Set(
+        before.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`).filter((outpoint) => !kept.has(outpoint)),
+    );
+}
+
+/**
  * Drop VTXOs whose outpoint is locked by a non-terminal intent. Returns the
  * input array unchanged when nothing is locked (cheap no-op for the common
  * case where no `intentRepository` is configured).
@@ -388,6 +536,8 @@ export interface BoardingUtxoGroup {
  * - `subdust` — below dust, so it sits at an OP_RETURN script with no spendable
  *   leaf. Unspendable as cash; `createCash` prevents minting these.
  * - `already-spent` — someone else claimed it first.
+ * - `exited` — unilaterally exited onchain, so the offchain sweep cannot reach it;
+ *   `Unroll.completeUnroll` is the remedy.
  * - `has-assets` — asset-bearing; the BTC-only sweep would burn the assets.
  * - `sweep-failed` — spendable, but its own sweep was rejected.
  */
@@ -395,6 +545,7 @@ export type ArkadeCashUnclaimedReason =
     | "swept"
     | "subdust"
     | "already-spent"
+    | "exited"
     | "has-assets"
     | "sweep-failed";
 
@@ -715,6 +866,23 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
+     * `serverPubKey` defaults to the live key; spend paths that snapshot it
+     * against mid-flight rotation pass their snapshot, so the check reads from
+     * one rotation epoch.
+     */
+    protected recipientAddressContext(
+        serverPubKey: Bytes = this._arkServerPublicKey,
+    ): RecipientAddressContext {
+        return {
+            hrp: this.network.hrp,
+            signerSet: {
+                active: toXOnlySignerHex(hex.encode(serverPubKey)),
+                deprecated: this._deprecatedSigners,
+            },
+        };
+    }
+
+    /**
      * Currently-active receive tapscript. Read-only from the outside;
      * mutated only via {@link Wallet.setOffchainTapscriptForRotation}
      * by {@link WalletReceiveRotator.rotate}.
@@ -908,17 +1076,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
         };
 
         // Generate tapscripts for offchain and boarding address
-        const serverPubKey = hex.decode(info.signerPubkey).slice(1);
+        const serverPubKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
 
         const delegatePubKey = config.delegateProvider
             ? await config.delegateProvider
                   .getDelegateInfo()
-                  .then((info) => hex.decode(info.pubkey).slice(1))
+                  .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
                   .catch(() => undefined)
             : config.delegatorProvider
               ? await config.delegatorProvider
                     .getDelegateInfo()
-                    .then((info) => hex.decode(info.pubkey).slice(1))
+                    .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
                     .catch(() => undefined)
               : undefined;
 
@@ -1038,20 +1206,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Return the wallet's combined onchain and offchain balances.
      */
     async getBalance(): Promise<WalletBalance> {
-        const [boardingUtxos, vtxos, pendingOutpoints] = await Promise.all([
+        const [boardingUtxos, snapshot] = await Promise.all([
             this.getBoardingUtxos(),
-            this.getVtxos(),
-            this.pendingRecoveryOutpoints(),
+            this.contractSnapshot(),
         ]);
-        const isPendingRecovery = (coin: ExtendedVirtualCoin) =>
-            pendingOutpoints.has(`${coin.txid}:${coin.vout}`);
-
-        // `settled`/`preconfirmed`/`total` and the asset rollup count every
-        // spendable VTXO, including those locked by a non-terminal intent (still
-        // the wallet's funds); only `available` subtracts the locked ones. The
-        // lock read is offline-first and fails open — see
-        // {@link spendableVtxosExcludingLocked}.
-        const unlockedVtxos = await spendableVtxosExcludingLocked(vtxos, this.intentRepository);
+        // Explicit, not the default filter: the default drops unrolled coins,
+        // and `computeOffchainBalance` cannot report a bucket it never sees.
+        const vtxos = filterSnapshotVtxos(
+            snapshot,
+            { withRecoverable: true, withUnrolled: true },
+            this._pendingSpendOutpoints,
+        );
 
         // boarding
         let confirmed = 0;
@@ -1064,62 +1229,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
 
-        // offchain
-        let recoverable = 0;
-        let pendingRecovery = 0;
-        // Buckets read the same capability the send path does, so nothing counted as available can
-        // be refused by `send`. No chain tip: balance is an offline-first read and must not gain a
-        // network dependency, so height-encoded expiry reads as not expired — as it does on the
-        // send path.
-        const now = { timestamp: new Date() };
-        // Funds under a past-cutoff (EXPIRED) deprecated signer that are not yet
-        // swept are NOT spendable — excluded from settled/preconfirmed/available
-        // and surfaced under `pendingRecovery` (they still count toward `total`).
-        const settled = vtxos
-            .filter(
-                (coin) =>
-                    canSpendOffchain(coin, now) && !coin.isPreconfirmed && !isPendingRecovery(coin),
-            )
-            .reduce((sum, coin) => sum + coin.value, 0);
-        const preconfirmed = vtxos
-            .filter(
-                (coin) =>
-                    canSpendOffchain(coin, now) && coin.isPreconfirmed && !isPendingRecovery(coin),
-            )
-            .reduce((sum, coin) => sum + coin.value, 0);
-        // Spendable-right-now subset: the same rule, but over VTXOs not
-        // currently locked by an in-flight intent.
-        const available = unlockedVtxos
-            .filter((coin) => canSpendOffchain(coin, now) && !isPendingRecovery(coin))
-            .reduce((sum, coin) => sum + coin.value, 0);
-        // `!isPendingRecovery` keeps the buckets disjoint, so `totalOffchain` counts each VTXO
-        // once: a pending-recovery VTXO past its batch expiry satisfies `canRecoverOnchain` too,
-        // and it belongs to `pendingRecovery` — it cannot be renewed until it recovers.
-        recoverable = vtxos
-            .filter((coin) => canRecoverOnchain(coin, now) && !isPendingRecovery(coin))
-            .reduce((sum, coin) => sum + coin.value, 0);
-        pendingRecovery = vtxos
-            .filter(isPendingRecovery)
-            .reduce((sum, coin) => sum + coin.value, 0);
-
+        // `settled`/`preconfirmed`/`total` and the `assets` rollup count every VTXO
+        // the wallet owns, including escrowed and intent-locked ones; `available`
+        // and `availableAssets` count only what generic spending would pick, so
+        // nothing reported as available can be refused by `send`.
         const totalBoarding = confirmed + unconfirmed;
-        const totalOffchain = settled + preconfirmed + recoverable + pendingRecovery;
-
-        // aggregate asset balances from spendable virtual outputs
-        const assetBalances = new Map<string, bigint>();
-        for (const vtxo of vtxos) {
-            if (hasTerminalSpend(vtxo)) continue;
-            if (vtxo.assets) {
-                for (const a of vtxo.assets) {
-                    const current = assetBalances.get(a.assetId) ?? 0n;
-                    assetBalances.set(a.assetId, current + a.amount);
-                }
-            }
-        }
-        const assets = Array.from(assetBalances.entries()).map(([assetId, amount]) => ({
-            assetId,
-            amount,
-        }));
+        const offchain = computeOffchainBalance(
+            vtxos,
+            await this.balanceCapabilities(snapshot, vtxos),
+        );
 
         return {
             boarding: {
@@ -1127,42 +1245,199 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 unconfirmed,
                 total: totalBoarding,
             },
-            settled,
-            preconfirmed,
-            available,
-            recoverable,
-            pendingRecovery,
-            total: totalBoarding + totalOffchain,
-            assets,
+            settled: offchain.settled,
+            preconfirmed: offchain.preconfirmed,
+            available: offchain.available,
+            gated: offchain.gated,
+            intentLocked: offchain.intentLocked,
+            recoverable: offchain.recoverable,
+            pendingRecovery: offchain.pendingRecovery,
+            unrolled: offchain.unrolled,
+            total: totalBoarding + offchain.total,
+            assets: offchain.assets,
+            availableAssets: offchain.availableAssets,
         };
     }
 
     /**
      * Return virtual outputs tracked by the wallet.
      *
+     * The raw reporting/recovery read: escrowed, locked and awaiting-recovery
+     * funds are all present. Coin selection must use
+     * {@link getSpendableVtxos} instead — feeding this straight into
+     * `settle({ inputs })` or `sendBitcoin({ selectedVtxos })` bypasses the
+     * generic-spending gate.
+     *
      * @param filter - Optional flags controlling whether recoverable or unrolled VTXOs are included
      */
     async getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
-        const f = filter ?? { withRecoverable: true, withUnrolled: false };
-        const contractManager = await this.getContractManager();
-        const vtxos = await contractManager.getContractsWithVtxos();
+        return filterSnapshotVtxos(
+            await this.contractSnapshot(),
+            filter,
+            this._pendingSpendOutpoints,
+        );
+    }
 
-        // No chain tip, for the same reason as `getBalance`, which this must agree with.
-        const now = { timestamp: new Date() };
-        return vtxos
-            .flatMap((_) => _.vtxos)
-            .filter((vtxo) => {
-                if (this._pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
-                    return false;
-                }
-                if (!hasTerminalSpend(vtxo)) {
-                    if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
+    /** @inheritdoc */
+    async getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+        const snapshot = await this.contractSnapshot();
+        const vtxos = filterSnapshotVtxos(snapshot, filter, this._pendingSpendOutpoints);
+        const { gated, pendingRecovery } = this.spendabilityView(snapshot);
+        const selectable = vtxos.filter(
+            (vtxo) => !gated.has(vtxo.script) && !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
+        );
+        const unlocked = await spendableVtxosExcludingLocked(selectable, this.intentRepository);
+        logExcludedVtxos("getSpendableVtxos", vtxos, [
+            gateExclusion(gated),
+            outpointExclusion(pendingRecovery, PENDING_RECOVERY_REASON),
+            outpointExclusion(
+                omittedOutpoints(selectable, unlocked),
+                "is locked by an in-flight settlement intent",
+            ),
+        ]);
+        // Its own call over its own array: the set above cannot contain these,
+        // and widening it to the raw snapshot would report every terminally-spent
+        // coin under a gated contract as gated. Skipped when the caller asked for
+        // unrolled coins — those were not excluded. A completed unroll stays out:
+        // `completeUnroll` no longer reaches it either.
+        if (!filter?.withUnrolled) {
+            logExcludedVtxos(
+                "getSpendableVtxos",
+                snapshot
+                    .flatMap((contract) => contract.vtxos)
+                    .filter((vtxo) => vtxo.isUnrolled && !hasTerminalSpend(vtxo)),
+                [() => UNROLLED_REASON],
+            );
+        }
+        return unlocked;
+    }
+
+    /**
+     * Debug-log any explicit input generic selection would have excluded, for
+     * each of the three reasons it excludes on. Explicit-input APIs stay ungated
+     * on purpose (naming an outpoint *is* the intent the gate protects, and it
+     * is how an escrowed deposit is recovered once generic selection stops
+     * covering it), so this only makes the crossing visible — notably
+     * `settle({ inputs: await wallet.getVtxos() })`, which launders the raw read
+     * into a spend. Never throws into a spend path.
+     *
+     * Public so the worker handler and plugins can report their own
+     * explicit-input crossings through the same three checks.
+     */
+    async logUngatedInputs(
+        source: string,
+        inputs: readonly { txid: string; vout: number; script?: string }[],
+    ): Promise<void> {
+        try {
+            // Pure repository reads: no indexer sync, so this cannot slow or
+            // fail a spend. That rules out reusing `spendabilityView`, whose
+            // snapshot syncs; each exclusion is rebuilt from contract rows and
+            // the intent store instead.
+            const manager = await this.getContractManager();
+            const contracts = await manager.getContracts();
+            const locked = await this.lockedOutpoints();
+            logExcludedVtxos(source, inputs, [
+                gateExclusion(gatedContracts(contracts)),
+                this.expiredSignerExclusion(contracts),
+                outpointExclusion(locked, "is locked by an in-flight settlement intent"),
+            ]);
+        } catch {
+            // diagnostics only
+        }
+    }
+
+    /**
+     * Contracts whose operator signer is past its rotation cutoff, as an
+     * exclusion over scripts. The outpoint-level `pendingRecovery` set needs a
+     * synced VTXO snapshot to also drop already-swept coins; this answers the
+     * same question about a caller-supplied input without one, and a swept
+     * outpoint is unspendable regardless.
+     */
+    private expiredSignerExclusion(contracts: readonly Contract[]): VtxoExclusion {
+        if (this._deprecatedSigners.size === 0) return () => undefined;
+        const signerSet = {
+            active: toXOnlySignerHex(hex.encode(this.offchainTapscript.options.serverPubKey)),
+            deprecated: this._deprecatedSigners,
+        };
+        const expired = new Set(
+            contracts
+                .filter((contract) => {
+                    const serverPubKey = contract.params.serverPubKey;
+                    if (typeof serverPubKey !== "string") return false;
+                    try {
+                        return (
+                            classifyAgainstSignerSet(serverPubKey, signerSet).status === "EXPIRED"
+                        );
+                    } catch {
+                        // One malformed row must not suppress every other
+                        // input's diagnostics; `refreshDeprecatedSigners` skips
+                        // malformed keys the same way.
                         return false;
                     }
-                    return true;
-                }
-                return !!(f.withUnrolled && vtxo.isUnrolled);
-            });
+                })
+                .map((contract) => contract.script),
+        );
+        return (vtxo) =>
+            vtxo.script !== undefined && expired.has(vtxo.script)
+                ? PENDING_RECOVERY_REASON
+                : undefined;
+    }
+
+    /** The intent store's lock set. Fails open, like every other read of it. */
+    private async lockedOutpoints(): Promise<Set<string>> {
+        if (!this.intentRepository) return new Set();
+        try {
+            const locked = await this.intentRepository.getLockedVtxoOutpoints();
+            return new Set(locked.map((o) => `${o.txid}:${o.vout}`));
+        } catch {
+            return new Set();
+        }
+    }
+
+    /**
+     * One contract+VTXO read. `getContractsWithVtxos` opportunistically syncs
+     * against the indexer, so every caller that needs more than one view of the
+     * wallet's coins takes a single snapshot and derives them all from it —
+     * otherwise the gate and the pending-recovery set answer about two different
+     * points in time, and each read costs another sync.
+     */
+    protected async contractSnapshot(): Promise<ContractWithVtxos[]> {
+        const contractManager = await this.getContractManager();
+        return contractManager.getContractsWithVtxos();
+    }
+
+    /**
+     * The two exclusion sets the gate is made of, derived from one snapshot so
+     * {@link getSpendableVtxos} and the balance answer about the same instant.
+     */
+    private spendabilityView(snapshot: readonly ContractWithVtxos[]): {
+        gated: ReturnType<typeof gatedContracts>;
+        pendingRecovery: ReadonlySet<string>;
+    } {
+        return {
+            gated: gatedContracts(snapshot.map((_) => _.contract)),
+            pendingRecovery: this.selectPendingRecovery(snapshot),
+        };
+    }
+
+    /** The capability probes {@link computeOffchainBalance} needs, over one snapshot. */
+    private async balanceCapabilities(
+        snapshot: readonly ContractWithVtxos[],
+        vtxos: readonly NormalizedExtendedVirtualCoin[],
+    ): Promise<BalanceCapabilities> {
+        const { gated, pendingRecovery } = this.spendabilityView(snapshot);
+        // Offline-first and fails open — see {@link spendableVtxosExcludingLocked}.
+        const unlocked = new Set(
+            (await spendableVtxosExcludingLocked([...vtxos], this.intentRepository)).map(
+                (vtxo) => `${vtxo.txid}:${vtxo.vout}`,
+            ),
+        );
+        return {
+            now: { timestamp: new Date() },
+            isPendingRecovery: (vtxo) => pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
+            isGenericallySpendable: (vtxo) => !gated.has(vtxo.script),
+            isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
+        };
     }
 
     /**
@@ -1171,13 +1446,30 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * classifies the repo's contracts against the cached signer set (active +
      * {@link _deprecatedSigners}, cutoffs included). Empty fast-path when no
      * signer is deprecated. Consumed by {@link getBalance} (the `pendingRecovery`
-     * bucket) and the send coin-selection path so neither counts nor spends them.
+     * bucket) and by {@link getSpendableVtxos} so neither counts nor spends them.
+     *
+     * Takes a fresh {@link contractSnapshot}, which syncs against the indexer.
+     * Callers that already hold a snapshot — or that must not sync at all, like
+     * the worker's balance read — pass it to
+     * {@link pendingRecoveryOutpointsIn} instead.
      */
     async pendingRecoveryOutpoints(): Promise<Set<string>> {
         if (this._deprecatedSigners.size === 0) return new Set();
-        const contractManager = await this.getContractManager();
-        const contractsWithVtxos = await contractManager.getContractsWithVtxos();
-        return selectPendingRecoveryOutpoints(contractsWithVtxos, {
+        return this.selectPendingRecovery(await this.contractSnapshot());
+    }
+
+    /**
+     * {@link pendingRecoveryOutpoints} over a snapshot the caller already has:
+     * pure classification against the cached signer set, no repository or
+     * network read of its own.
+     */
+    pendingRecoveryOutpointsIn(snapshot: PendingRecoverySnapshot): Set<string> {
+        return this.selectPendingRecovery(snapshot);
+    }
+
+    private selectPendingRecovery(snapshot: PendingRecoverySnapshot): Set<string> {
+        if (this._deprecatedSigners.size === 0) return new Set();
+        return selectPendingRecoveryOutpoints(snapshot, {
             active: toXOnlySignerHex(hex.encode(this.offchainTapscript.options.serverPubKey)),
             deprecated: this._deprecatedSigners,
         });
@@ -1822,6 +2114,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
             onVtxosSpent,
             watcherConfig: this.watcherConfig,
             lookAhead: this.lookAheadConfig(),
+            // Without this a PathContext carries no blockHeight, and every
+            // height-typed CLTV reads as unsatisfied however mature it is.
+            // The tip's `time` matters just as much: it is what seconds-typed
+            // timelocks are judged against, in place of this host's clock.
+            // @see ContractManagerConfig.chainTip
+            chainTip: async () => {
+                const { height, time } = await this.onchainProvider.getChainTip();
+                return { height, time };
+            },
         });
 
         // Register the wallet's baseline always-active contracts: every
@@ -2029,7 +2330,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
  * });
  * ```
  */
-export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
+export class Wallet
+    extends ReadonlyWallet
+    implements IWallet, HDWalletCapable, AddressAllocationCapable
+{
     static MIN_FEE_RATE = 1; // sats/vbyte
 
     override readonly identity: Identity;
@@ -2076,7 +2380,8 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     private async handleServerInfoChanged(info: {
         signerPubkey: string;
         checkpointTapscript: string;
-        deprecatedSigners?: readonly { pubkey?: string }[];
+        // without cutoffDate a past-cutoff signer reads as DUE_NOW
+        deprecatedSigners?: readonly { pubkey?: string; cutoffDate?: bigint }[];
     }): Promise<void> {
         this.refreshDeprecatedSigners(info);
         try {
@@ -2097,6 +2402,29 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             console.warn("server-signer rotation on info change failed", e);
         }
     }
+
+    /**
+     * Await an `onServerInfoChanged` handler still applying a rotation.
+     *
+     * The provider emits synchronously but {@link handleServerInfoChanged} runs
+     * off the emit, so between the two a caller can observe a half-applied
+     * rotation: {@link rotateServerSigner} persists the active signer's contract
+     * rows *before* committing the tapscripts, so `arkServerPublicKey` still
+     * reads the old key while the new key's rows are already in the repository.
+     * A path that refreshes server info and then reads signer-derived state must
+     * drain the chain first, or it both reads that torn state and races the
+     * handler for the rotation itself.
+     *
+     * Resolves once the chain is idle; a handler that threw already logged, and
+     * its rejection is swallowed here.
+     *
+     * @internal Invoked by {@link dispose} and the {@link VtxoManager} migration
+     * pass; not part of the stable public API.
+     */
+    async settleServerInfoChanges(): Promise<void> {
+        await this._serverInfoInFlight?.catch(() => undefined);
+    }
+
     private _receiveRotatorInstalled = false;
 
     /**
@@ -2127,9 +2455,10 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         return {
             size: this._lookAheadWindow,
             currentWatermark: async () => (await provider.getLastIndexUsed()) ?? -1,
+            allocate: () => provider.getNextSigningDescriptor(),
+            advanceWatermark: (index) => provider.advanceLastIndexUsed(index),
             materialize: (index) => provider.materializeDescriptorAt(index),
             candidateDeps: () => this.receiveCandidateDeps(),
-            onPromoted: (index) => provider.advanceLastIndexUsed(index),
         };
     }
 
@@ -2249,54 +2578,323 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * provider and keeps a single index-0 boarding address for its lifetime,
      * so this returns the existing {@link getBoardingAddress} unchanged
      * (no rotation, no index burned).
+     *
+     * **Behaviour change.** A wallet configured with a custom
+     * {@link DescriptorProvider} (`walletMode: <provider>`) now rotates here.
+     * It previously did not: allocation went through the contract manager,
+     * which only wires an `allocate` hook for {@link HDDescriptorProvider}, so
+     * such a wallet read as "declined to allocate" and silently kept its
+     * index-0 boarding address forever. Those wallets now burn an index per
+     * call — including via {@link maybeRotateBoardingAfterBoard}, which fires
+     * on every settle that consumes a boarding UTXO. Funds at retired
+     * addresses stay reachable: each rotation persists its `boarding` contract
+     * before swapping, and {@link getBoardingUtxos} fans out over the full
+     * historical set.
+     *
+     * @deprecated Use {@link getNewAddresses} — it mints any combination of
+     * address types at one shared index, and reports the contract row behind
+     * each. Note the difference in display behaviour: this method *swaps* the
+     * advertised boarding address, where `getNewAddresses` mints side
+     * addresses and leaves {@link getBoardingAddress} alone. To keep this
+     * method's behaviour, keep calling this method.
      */
     async getNewBoardingAddress(): Promise<string> {
-        const provider = this._descriptorProvider;
-        if (!provider) {
-            // Static / `auto`: single fixed boarding address, no rotation.
-            return this.getBoardingAddress();
+        // `allocateAddresses` persists before it returns, so the swap below
+        // only ever runs on a registered script: if registration throws, the
+        // wallet keeps displaying the previous (registered) boarding address —
+        // never an unwatched one (mirrors `rotate()`).
+        const [minted] = await this.allocateAddresses(["boarding"], false, true);
+        // A wallet with no index to burn — or a provider that declined to
+        // allocate — leaves the display address untouched, exactly as the
+        // pre-`getNewAddresses` implementation did.
+        if (!minted?.allocated) return this.getBoardingAddress();
+        // `type` narrows the tapscript to `DefaultVtxo.Script`, so this write
+        // path takes no unchecked cast.
+        if (minted.type === "boarding") this.setBoardingTapscriptForRotation(minted.tapscript);
+        return minted.address;
+    }
+
+    /**
+     * Allocate a *fresh* address of each requested type, all derived from one
+     * newly allocated HD index.
+     *
+     * This is the explicit allocator the receive path otherwise lacks:
+     * {@link getAddress} and {@link getBoardingAddress} are stable reads of the
+     * wallet's display addresses, and the display receive address only advances
+     * when a payment arrives ({@link WalletReceiveRotator} rotates on
+     * `vtxo_received`). Issuing a second address before the first is paid — one
+     * invoice for Alice, another for Bob — has to go through here.
+     *
+     * Each call:
+     *
+     * - allocates **one** index from the shared HD stream, however many types
+     *   were asked for, so a `default` + `boarding` pair are siblings rather
+     *   than two burnt indices;
+     * - builds each requested script at that index, preserving every other
+     *   option of the wallet's current script for that flavour (including a
+     *   delegate wallet's `delegate` shape);
+     * - persists each as an `active` contract carrying its `signingDescriptor`,
+     *   so the ContractWatcher monitors it, the balance counts it, and
+     *   {@link signerForDescriptor} can recover the key;
+     * - slides the look-ahead band, since the watermark moved past indices an
+     *   external issuer may still be handing out.
+     *
+     * The minted rows are deliberately left **untagged**: the boot lookups
+     * adopt the newest {@link WALLET_RECEIVE_SOURCE}-tagged row as the display
+     * address, and a side address issued to one counterparty must not become
+     * the address the wallet advertises to everyone else. {@link getAddress}
+     * and {@link getBoardingAddress} are unchanged by this call.
+     *
+     * A wallet with no HD stream (`walletMode: 'static'` / `'auto'`) has one
+     * address per flavour for its lifetime. Without `forceNew` it returns those
+     * — the real persisted rows, no index burned; with `forceNew` it throws
+     * {@link WalletCannotAllocateAddressError} rather than hand back an address
+     * that is not in fact fresh.
+     *
+     * @example
+     * ```typescript
+     * const [invoice] = await wallet.getNewAddresses({ forceNew: true });
+     * // hand `invoice.address` to Alice, keep the descriptor with the invoice
+     * const signer = await wallet.signerForDescriptor(invoice.signingDescriptor);
+     * ```
+     */
+    async getNewAddresses(opts?: GetNewAddressesOptions): Promise<NewAddress[]> {
+        const minted = await this.allocateAddresses(
+            opts?.types ?? ["default"],
+            opts?.forceNew ?? false,
+            false,
+        );
+        // Drop the internal tapscript/type/allocated fields: the display swap is
+        // the caller's business only inside this class.
+        return minted.map(({ address, signingDescriptor, contract }) => ({
+            address,
+            signingDescriptor,
+            contract,
+        }));
+    }
+
+    /**
+     * Shared allocation core behind {@link getNewAddresses} and the deprecated
+     * {@link getNewBoardingAddress}, so the two cannot drift on what an
+     * allocation costs or what gets persisted.
+     *
+     * @param tagSource - Tag the persisted rows {@link WALLET_RECEIVE_SOURCE},
+     * making the next boot adopt them as the display address. Only the
+     * deprecated boarding allocator passes `true`; `getNewAddresses` mints side
+     * addresses and must not hijack what the wallet advertises.
+     */
+    private async allocateAddresses(
+        types: readonly NewAddressType[],
+        forceNew: boolean,
+        tagSource: boolean,
+    ): Promise<AllocatedAddress[]> {
+        // Before anything is allocated: an empty request that burned an index
+        // would report success while handing back nothing, leaving a gap in the
+        // stream that no contract row explains.
+        if (types.length === 0) {
+            throw new Error("getNewAddresses: `types` must name at least one address type");
         }
 
-        const descriptor = await provider.getNextSigningDescriptor();
-        const pubKey = deriveDescriptorLeafPubKey(descriptor);
-        const newBoarding = new DefaultVtxo.Script({
+        const manager = await this.getContractManager();
+        const provider = this._descriptorProvider;
+        // One allocation for the whole call — every requested type derives from
+        // the same index.
+        //
+        // The built-in HD provider is allocated through the contract manager,
+        // which owns cross-context serialization and slides the look-ahead band
+        // with the watermark. A custom provider has neither: `lookAheadConfig()`
+        // only wires the band for an `HDDescriptorProvider`, so the manager has
+        // no `allocate` hook and would answer `undefined` — reading as "declined
+        // to allocate" for a provider that allocates perfectly well. Ask it
+        // directly. Without any provider there is no stream to advance at all.
+        const descriptor = !provider
+            ? undefined
+            : provider instanceof HDDescriptorProvider
+              ? await manager.getNextSigningDescriptor()
+              : await provider.getNextSigningDescriptor();
+
+        if (!descriptor) {
+            if (forceNew) {
+                throw new WalletCannotAllocateAddressError(
+                    provider
+                        ? "the descriptor provider declined to allocate an index"
+                        : "this wallet has no HD stream (walletMode 'static' / 'auto')",
+                );
+            }
+            // Re-register the current display scripts: `createContract` is
+            // first-wins on script, so this returns the rows already persisted
+            // at construction rather than minting anything.
+            return this.currentAddresses(manager, types);
+        }
+
+        const allocated: AllocatedAddress[] = [];
+        try {
+            for (const type of types) {
+                allocated.push(await this.mintAddress(manager, type, descriptor, tagSource, true));
+            }
+        } finally {
+            // The watermark moved past offchain indices an external issuer may
+            // still be handing out, so the band has to slide (and keep covering
+            // the low side). In `finally` because the watermark moves before the
+            // first contract is written: a type that fails partway through still
+            // leaves the band trailing the stream, and skipping the slide would
+            // strand it there until the next successful allocation.
+            //
+            // Best-effort: the allocation is already committed, so a failed
+            // slide must not replace the caller's error — or fail the call.
+            try {
+                await manager.refillLookAhead();
+            } catch (e) {
+                console.warn("look-ahead refill after address allocation failed", e);
+            }
+        }
+        return allocated;
+    }
+
+    /**
+     * The wallet's existing display addresses, as persisted contract rows —
+     * the honest answer for a wallet with no index to burn.
+     *
+     * Each type is minted from the descriptor that already owns its display
+     * script ({@link displayDescriptor}), not from the identity key, so the
+     * returned `signingDescriptor` is the one that signs for the returned
+     * `address` even on a wallet that has rotated.
+     */
+    private async currentAddresses(
+        manager: ContractManager,
+        types: readonly NewAddressType[],
+    ): Promise<AllocatedAddress[]> {
+        const out: AllocatedAddress[] = [];
+        for (const type of types) {
+            const descriptor = await this.displayDescriptor(manager, type);
+            out.push(await this.mintAddress(manager, type, descriptor, false, false));
+        }
+        return out;
+    }
+
+    /**
+     * The descriptor that owns the wallet's current display script for `type`,
+     * read off the row the wallet persisted when it adopted that script.
+     *
+     * Deriving it from the identity instead is only correct for a wallet that
+     * never rotates. On one that has — an HD wallet whose provider later
+     * declines to allocate — the display script belongs to an HD child, and
+     * pairing its address with the identity descriptor hands the caller a
+     * {@link NewAddress} whose `signingDescriptor` resolves, via
+     * {@link signerForDescriptor}, to a signer holding the wrong key.
+     *
+     * Falls back to the identity's pathless `tr(pubkey)` when no row carries a
+     * descriptor: the static / `auto` case, where the identity key genuinely
+     * owns the display script and this is what `getNextSigningDescriptor`
+     * answers too. (The index-0 baselines registered at construction carry no
+     * `signingDescriptor` metadata, so those wallets take this path.)
+     */
+    private async displayDescriptor(
+        manager: ContractManager,
+        type: NewAddressType,
+    ): Promise<string> {
+        const display = type === "boarding" ? this._boardingTapscript : this.offchainTapscript;
+        const [row] = await manager.getContracts({ script: hex.encode(display.pkScript) });
+        const persisted = row?.metadata?.signingDescriptor;
+        if (typeof persisted === "string") return persisted;
+        return identityDescriptor(this.identity);
+    }
+
+    /**
+     * Build, persist and shape one address of `type` owned by `descriptor` —
+     * the single build-and-register path behind both {@link allocateAddresses}
+     * and {@link currentAddresses}, so a freshly allocated address and a
+     * re-registered display address cannot disagree on what gets written.
+     *
+     * The descriptor is the sole source of the script's owner key in both
+     * branches. Deriving one flavour from the descriptor and the other from a
+     * tapscript field is what lets `address` and `signingDescriptor` drift
+     * apart.
+     */
+    private async mintAddress(
+        manager: ContractManager,
+        type: NewAddressType,
+        descriptor: string,
+        tagSource: boolean,
+        allocated: boolean,
+    ): Promise<AllocatedAddress> {
+        // Persist before returning: an address the caller hands out but the
+        // watcher never saw is one whose payment silently never lands.
+        if (type === "boarding") {
+            const built = this.buildBoardingContract(
+                deriveDescriptorLeafPubKey(descriptor),
+                descriptor,
+                tagSource,
+            );
+            const contract = await manager.createContract(built.params);
+            return {
+                type,
+                // `built.tapscript` is a `DefaultVtxo.Script` here without a
+                // cast — the branch, not a widened local, does the narrowing.
+                tapscript: built.tapscript,
+                // A boarding row persists the *ark* encoding of its script, so
+                // `contract.address` is unusable for an onchain sender: the
+                // onchain form has to be re-derived.
+                address: built.tapscript.onchainAddress(this.network),
+                signingDescriptor: descriptor,
+                contract,
+                allocated,
+            };
+        }
+        const built = buildReceiveContract(
+            this.offchainTapscript,
+            descriptor,
+            this.network.hrp,
+            tagSource,
+        );
+        const contract = await manager.createContract(built.params);
+        return {
+            type,
+            tapscript: built.tapscript,
+            // Offchain rows already store the address they advertise, and
+            // reading it back keeps a coalesced row (`createContract` is
+            // first-wins on script) honest about what was actually persisted.
+            address: contract.address,
+            signingDescriptor: descriptor,
+            contract,
+            allocated,
+        };
+    }
+
+    /**
+     * Build the boarding contract owned by `pubKey`, keeping every other option
+     * of the wallet's current boarding tapscript (notably the boarding-exit
+     * CSV, which is index-independent). The offchain analogue lives in
+     * {@link buildReceiveContract}.
+     */
+    private buildBoardingContract(
+        pubKey: Bytes,
+        descriptor: string,
+        tagSource: boolean,
+    ): { tapscript: DefaultVtxo.Script; params: CreateContractParams } {
+        const tapscript = new DefaultVtxo.Script({
             ...this._boardingTapscript.options,
             pubKey,
         });
-        const csvTimelock = newBoarding.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
-
-        const manager = await this.getContractManager();
-        // Persist BEFORE swapping the visible tapscript: if registration
-        // throws, the wallet keeps displaying the previous (registered)
-        // boarding address — never an unwatched one (mirrors `rotate()`).
-        await manager.createContract({
-            type: "boarding",
+        const csvTimelock = tapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        return {
+            tapscript,
             params: {
-                pubKey: hex.encode(pubKey),
-                serverPubKey: hex.encode(newBoarding.options.serverPubKey),
-                csvTimelock: timelockToSequence(csvTimelock).toString(),
+                type: "boarding",
+                params: {
+                    pubKey: hex.encode(pubKey),
+                    serverPubKey: hex.encode(tapscript.options.serverPubKey),
+                    csvTimelock: timelockToSequence(csvTimelock).toString(),
+                },
+                script: hex.encode(tapscript.pkScript),
+                address: tapscript.address(this.network.hrp, this.arkServerPublicKey).encode(),
+                state: "active",
+                metadata: {
+                    ...(tagSource && { source: WALLET_RECEIVE_SOURCE }),
+                    signingDescriptor: descriptor,
+                },
             },
-            script: hex.encode(newBoarding.pkScript),
-            address: newBoarding.address(this.network.hrp, this.arkServerPublicKey).encode(),
-            state: "active",
-            metadata: {
-                source: WALLET_RECEIVE_SOURCE,
-                signingDescriptor: descriptor,
-            },
-        });
-
-        this.setBoardingTapscriptForRotation(newBoarding);
-        // Boarding shares the HD index stream, so this allocation moved the
-        // watermark past an offchain index an external issuer may still hand
-        // out — the band has to slide (and keep covering it on the low side).
-        // Best-effort: the boarding address is already allocated and committed,
-        // so a failed band slide must not fail the allocation.
-        try {
-            await manager.refillLookAhead();
-        } catch (e) {
-            console.warn("look-ahead refill after boarding allocation failed", e);
-        }
-        return newBoarding.onchainAddress(this.network);
+        };
     }
 
     /**
@@ -2309,6 +2907,45 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     }
 
     /**
+     * @see HDAllocationCapable.getNextSigningDescriptor
+     *
+     * Every `Wallet` answers — this is where the wallet's key-provisioning
+     * policy lives, so consumers never have to branch on wallet shape:
+     * - HD: allocate a fresh index through the contract manager (which owns
+     *   cross-context serialization and the look-ahead band).
+     * - custom provider: whatever the provider allocates.
+     * - static / `auto`: the identity key as a bare `tr(pubkey)` descriptor —
+     *   the same answer every call, because that IS the static policy.
+     */
+    async getNextSigningDescriptor(): Promise<string | undefined> {
+        if (this._descriptorProvider instanceof HDDescriptorProvider) {
+            return (await this.getContractManager()).getNextSigningDescriptor();
+        }
+        return identityDescriptor(this.identity);
+    }
+
+    /**
+     * @see HDAllocationCapable.advanceSigningDescriptorWatermark
+     */
+    async advanceSigningDescriptorWatermark(descriptor: string): Promise<void> {
+        const provider = this._descriptorProvider;
+        // Nothing to move without an index stream, so nothing to validate.
+        if (!(provider instanceof HDDescriptorProvider)) return;
+        if (!provider.isOurs(descriptor)) {
+            throw new Error(`descriptor is not derivable from this wallet: ${descriptor}`);
+        }
+        // Strict on purpose: `signingDescriptorIndex` answers 0 for anything
+        // it cannot parse, and 0 is a legitimate index, so a bare or
+        // malformed descriptor would move the watermark nowhere while
+        // reporting success.
+        const index = strictSigningDescriptorIndex(descriptor);
+        if (index === undefined) {
+            throw new Error(`descriptor has no trailing child index: ${descriptor}`);
+        }
+        await (await this.getContractManager()).advanceSigningDescriptorWatermark(index);
+    }
+
+    /**
      * @see HDWalletCapable.getUsedSigningDescriptors
      *
      * Union of the watermark band and the descriptors persisted on contracts:
@@ -2316,12 +2953,24 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * alone would miss indices allocated for something the wallet never
      * persisted (a swap, an externally issued invoice).
      */
-    async getUsedSigningDescriptors(): Promise<string[]> {
+    async getUsedSigningDescriptors(opts?: { lookAhead?: number }): Promise<string[]> {
         const provider = this._descriptorProvider;
         const descriptors = new Set<string>();
         if (provider instanceof HDDescriptorProvider) {
             const lastIndexUsed = await provider.getLastIndexUsed();
-            for (let i = 0; i <= (lastIndexUsed ?? -1); i++) {
+            const requestedLookAhead = opts?.lookAhead ?? 0;
+            if (!Number.isFinite(requestedLookAhead)) {
+                throw new Error(
+                    `lookAhead must be a finite number (got ${String(requestedLookAhead)})`,
+                );
+            }
+            const lookAhead = Math.min(
+                MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
+                Math.max(0, Math.trunc(requestedLookAhead)),
+            );
+            // Probing past the watermark must not move it: an index nothing
+            // has claimed yet stays available to the next allocation.
+            for (let i = 0; i <= (lastIndexUsed ?? -1) + lookAhead; i++) {
                 descriptors.add(provider.materializeDescriptorAt(i));
             }
         }
@@ -2338,13 +2987,16 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
     /**
      * @see HDWalletCapable.signerForDescriptor
+     *
+     * Fail-loud contract: the returned identity is always the descriptor's
+     * own key. A descriptor this wallet cannot sign for throws
+     * {@link ForeignDescriptorError} instead of silently substituting the
+     * baseline identity — that identity would sign happily with the wrong
+     * key, and the failure would only surface as a rejected transaction or a
+     * dead script, far from the call that caused it.
      */
     async signerForDescriptor(descriptor: string): Promise<Identity> {
-        const provider = this._descriptorProvider;
-        if (!(provider instanceof HDDescriptorProvider) || !provider.isOurs(descriptor)) {
-            return this.identity;
-        }
-        return new DescriptorIdentity({ descriptor, signer: provider, base: this.identity });
+        return resolveDescriptorSigner(descriptor, this.identity, this._descriptorProvider);
     }
 
     /**
@@ -2376,22 +3028,22 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * the stable public API.
      */
     async rotateServerSigner(newServerPubKey: Bytes, checkpointTapscript: string): Promise<void> {
-        const xonly = toXOnlyPubKey(newServerPubKey);
+        const xonly = toXOnly(newServerPubKey, "ark signer key");
 
-        // Decode the new epoch's checkpoint script FIRST, before any
-        // persistence. The checkpoint script is server-controlled state the
+        // Decode and validate the new epoch's checkpoint script FIRST, before
+        // any persistence. The checkpoint script is server-controlled state the
         // send path builds its checkpoint outputs from; a missing/empty/
-        // undecodable value (the provider defaults it to "" when the server
-        // omits it) fails the rotation up front — mirroring `Wallet.create` —
-        // so a bad rotation is side-effect-free and the wallet keeps operating
-        // against its previous consistent epoch (old key + tapscripts + unroll
-        // script).
-        let newServerUnrollScript: CSVMultisigTapscript.Type;
-        try {
-            newServerUnrollScript = CSVMultisigTapscript.decode(hex.decode(checkpointTapscript));
-        } catch (e) {
-            throw new Error("Invalid checkpointTapscript from server");
-        }
+        // undecodable/sub-floor/wrong-pubkey value (the provider defaults it to
+        // "" when the server omits it) fails the rotation up front — mirroring
+        // `Wallet.create` — so a bad rotation is side-effect-free and the
+        // wallet keeps operating against its previous consistent epoch (old
+        // key + tapscripts + unroll script). The forfeit pubkey does not
+        // rotate, so it is pinned against `this.forfeitPubkey` here rather
+        // than trusted from the same response the script came from.
+        const newServerUnrollScript = assertValidServerUnrollScript(
+            checkpointTapscript,
+            resolveCheckpointExitDelayPolicy(this.network, this.checkpointExitDelayPolicy),
+        );
 
         // Fast-path idempotency. The authoritative re-check happens inside
         // `_doRotateServerSigner` after the serialization barrier, so two
@@ -2633,9 +3285,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // `isHDCapableIdentity`.
         const hd = provider instanceof HDDescriptorProvider;
 
-        const staticDescriptor = hd
-            ? undefined
-            : `tr(${hex.encode(await this.identity.xOnlyPublicKey())})`;
+        const staticDescriptor = hd ? undefined : await identityDescriptor(this.identity);
         const materialize = (index: number): string =>
             hd ? provider.materializeDescriptorAt(index) : staticDescriptor!;
 
@@ -2650,9 +3300,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // snapshot rather than `this.offchainTapscript.options.serverPubKey`
         // avoids mixing a stale instance signer with fresh history.
         const arkInfo = await this.arkProvider.getInfo();
-        const currentSignerPubKey = toXOnlyPubKey(hex.decode(arkInfo.signerPubkey));
+        const currentSignerPubKey = toXOnly(hex.decode(arkInfo.signerPubkey), "ark signer key");
         const deprecatedSignerPubKeys = arkInfo.deprecatedSigners.map((s) =>
-            toXOnlyPubKey(hex.decode(s.pubkey)),
+            toXOnly(hex.decode(s.pubkey), "deprecated signer key"),
         );
 
         const deps: DiscoveryDeps = {
@@ -2684,7 +3334,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // below would otherwise be handed an already-funded index as a fresh
         // receive address. See `ScanResult.highestConfirmedUsedIndex`.
         if (hd && result.highestConfirmedUsedIndex >= 0) {
-            await provider.advanceLastIndexUsed(result.highestConfirmedUsedIndex);
+            await manager.advanceSigningDescriptorWatermark(result.highestConfirmedUsedIndex);
         }
 
         // Leave the wallet watching ahead of the watermark the scan just moved.
@@ -2757,6 +3407,10 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         receiveRotator?: WalletReceiveRotator,
         descriptorProvider?: DescriptorProvider,
         lookAheadWindow?: number,
+        /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
+        protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
+        /** Overrides for the checkpoint exit delay bounds; defaults derive from `network`. */
+        protected readonly checkpointExitDelayPolicy?: Partial<CheckpointExitDelayPolicy>,
     ) {
         super(
             identity,
@@ -2872,7 +3526,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // dispose the contract manager underneath it.
         this._serverInfoUnsub?.();
         this._serverInfoUnsub = undefined;
-        await this._serverInfoInFlight?.catch(() => undefined);
+        await this.settleServerInfoChanges();
 
         // Tear down the rotation subscription + drain in-flight rotations
         // first so no late `vtxo_received` event can queue work on a
@@ -2940,21 +3594,29 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
         const setup = await ReadonlyWallet.setupWalletConfig(config, pubkey);
 
-        // Compute Wallet-specific forfeit and unroll scripts
-        // the serverUnrollScript is the one used to create output scripts of the checkpoint transactions
-        let serverUnrollScript: CSVMultisigTapscript.Type;
-        try {
-            const raw = hex.decode(setup.info.checkpointTapscript);
-            serverUnrollScript = CSVMultisigTapscript.decode(raw);
-        } catch (e) {
-            throw new Error("Invalid checkpointTapscript from server");
-        }
-
         // parse the server forfeit address
         // server is expecting funds to be sent to this address
-        const forfeitPubkey = hex.decode(setup.info.forfeitPubkey).slice(1);
+        const forfeitPubkey = toXOnly(hex.decode(setup.info.forfeitPubkey), "forfeit key");
         const forfeitAddress = Address(setup.network).decode(setup.info.forfeitAddress);
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
+
+        // Compute Wallet-specific unroll script — the serverUnrollScript is
+        // used to create output scripts of the checkpoint transactions. No
+        // prior pin exists at first contact, so this checks self-consistency
+        // against this same response's forfeitPubkey (catches malformed
+        // responses) and relies on the exit-delay floor as the real defense
+        // against a malicious operator (mirrors the `arkServerPublicKey` TOFU
+        // caveat, and #686's own batch-expiry floor-first defense).
+        const checkpointExitDelayOverrides: Partial<CheckpointExitDelayPolicy> = {
+            advertisedForfeitPubkey: forfeitPubkey,
+            ...(config.minCheckpointExitDelaySeconds !== undefined
+                ? { minSeconds: config.minCheckpointExitDelaySeconds }
+                : {}),
+        };
+        const serverUnrollScript = assertValidServerUnrollScript(
+            setup.info.checkpointTapscript,
+            resolveCheckpointExitDelayPolicy(setup.network, checkpointExitDelayOverrides),
+        );
 
         // HD wiring (boot path) — resolved via the descriptor provider.
         // The rotator (when present) is handed to the constructor as
@@ -2987,6 +3649,14 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             boot?.rotator,
             boot?.provider,
             config.lookAheadWindow,
+            // Pinned at setup rather than refetched per round.
+            {
+                advertisedVtxoTreeExpiry: setup.info.vtxoTreeExpiry,
+                ...(config.minBatchExpirySeconds !== undefined
+                    ? { minSeconds: config.minBatchExpirySeconds }
+                    : {}),
+            },
+            checkpointExitDelayOverrides,
         );
         wallet._serverInfoSource = setup.serverInfoSource;
         // The response cleared construction validation — network/signer in
@@ -3009,7 +3679,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     cb: (info: {
                         signerPubkey: string;
                         checkpointTapscript: string;
-                        deprecatedSigners?: readonly { pubkey?: string }[];
+                        deprecatedSigners?: readonly { pubkey?: string; cutoffDate?: bigint }[];
                     }) => void,
                 ): () => void;
             }>;
@@ -3122,6 +3792,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         }
 
         if (params.selectedVtxos && params.selectedVtxos.length > 0) {
+            void this.logUngatedInputs("sendBitcoin({ selectedVtxos })", params.selectedVtxos);
             return this._withTxLock(async () => {
                 // Snapshot the active receive tapscript synchronously
                 // before any `await` so the change output's pkScript and
@@ -3153,6 +3824,11 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 };
 
                 const outputAddress = ArkAddress.decode(params.address);
+                assertRecipientArkAddress(
+                    params.address,
+                    outputAddress,
+                    this.recipientAddressContext(serverPubKey),
+                );
                 const outputScript =
                     BigInt(params.amount) < this.dustAmount
                         ? outputAddress.subdustPkScript
@@ -3198,6 +3874,13 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     /**
      * Settle boarding inputs and/or virtual outputs into a finalized mainnet transaction.
      *
+     * `params.inputs` is **ungated**: whatever the caller names is settled,
+     * including VTXOs generic selection would skip. That is what makes an
+     * escrowed or otherwise gated deposit recoverable by hand — but it also
+     * means `settle({ inputs: await wallet.getVtxos() })` silently bypasses the
+     * gate. Pass {@link getSpendableVtxos} instead when the intent is "settle
+     * whatever is spendable".
+     *
      * @param params - Optional settlement inputs and outputs. When omitted, the wallet settles all eligible funds.
      * @param eventCallback - Optional callback invoked for settlement stream events.
      * @returns The finalized Arkade transaction id
@@ -3224,6 +3907,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     }
                 }
             }
+            void this.logUngatedInputs("settle({ inputs })", params.inputs as ExtendedCoin[]);
         }
 
         // Resolve the wallet's receive address once and reuse it for every read
@@ -3278,7 +3962,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 amount += utxo.value - inputFee.satoshis;
             }
 
-            const vtxos = await this.getVtxos({ withRecoverable: true });
+            const vtxos = await this.getSpendableVtxos({ withRecoverable: true });
 
             // Cap the VTXOs per settlement to stay under the server's
             // intent-size limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its
@@ -3355,15 +4039,25 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         const outputs: TransactionOutput[] = [];
         let hasOffchainOutputs = false;
 
+        let recipientContext: RecipientAddressContext | undefined;
         for (const [index, output] of params.outputs.entries()) {
             let script: Bytes | undefined;
+
+            // decode only: a binding failure must surface as its own error,
+            // not fall through to the onchain branch
+            let arkAddress: ArkAddress | undefined;
             try {
-                // offchain
-                const addr = ArkAddress.decode(output.address);
-                script = addr.pkScript;
-                hasOffchainOutputs = true;
+                arkAddress = ArkAddress.decode(output.address);
             } catch {
-                // onchain
+                arkAddress = undefined;
+            }
+
+            if (arkAddress) {
+                recipientContext ??= this.recipientAddressContext();
+                assertRecipientArkAddress(output.address, arkAddress, recipientContext);
+                script = arkAddress.pkScript;
+                hasOffchainOutputs = true;
+            } else {
                 const addr = Address(this.network).decode(output.address);
                 script = OutScript.encode(addr);
                 onchainOutputIndexes.push(index);
@@ -3471,6 +4165,25 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // local cleanup failure may cancel it. Authoritative in memory even if
         // the hook's terminal repo write failed, which repo state can't tell us.
         let committedTxid: string | undefined;
+
+        // Last check before anything leaves the wallet, for the same reason as
+        // in `buildAndSubmitOffchainTx`: `updateDbAfterSettle` re-annotates
+        // these inputs, and by then the batch has already finalized. Placed
+        // after the cheap local validation above — an unspendable recipient or
+        // a bad arknote should still report itself first — and before the
+        // intent. Arknotes and boarding inputs carry no vtxo script, so they
+        // are not the ones this can speak about.
+        const settleInputVtxos = params.inputs.filter(isVirtualCoin);
+        const contractManager = await this.getContractManager();
+        await contractManager.assertAnnotatable(settleInputVtxos);
+        // And the timelock, for the same reason one line up: a lockup named
+        // before its refund path opens builds and registers fine here, and is
+        // refused by the server — after the round trip, in terms that do not
+        // say which timelock was not yet mature. Only handlers that are certain
+        // answer, so this is a no-op for ordinary coins.
+        await contractManager.assertSpendableNow?.(settleInputVtxos, async () =>
+            hex.encode(await this.identity.xOnlyPublicKey()),
+        );
 
         // Optimistically hide these inputs from concurrent getVtxos() callers
         // while the settlement is in flight. Set before safeRegisterIntent so
@@ -3603,7 +4316,10 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * `typeof` guard skips the arknote strings settle also accepts.
      *
      * No-ops for static / `auto` wallets (no descriptor provider — boarding
-     * stays on its fixed index-0 address). Best-effort and non-fatal: the
+     * stays on its fixed index-0 address). Wallets on a custom
+     * {@link DescriptorProvider} DO rotate here now, where they previously
+     * no-opped — see the behaviour-change note on {@link
+     * getNewBoardingAddress}. Best-effort and non-fatal: the
      * settle has already committed and its txid must be returned, so a
      * rotation failure is logged and swallowed rather than thrown. Funds at
      * the retired boarding address remain discoverable — the old `boarding`
@@ -3627,12 +4343,27 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         event: BatchFinalizationEvent,
         inputs: SettleParams["inputs"],
         forfeitOutputScript: Bytes,
+        expectedRecipients: Recipient[],
         connectorsGraph?: TxTree,
+        validatedCommitmentTxid?: string,
     ) {
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
 
         let settlementPsbt = Transaction.fromPSBT(base64.decode(event.commitmentTx));
+        assertFinalCommitmentMatchesValidated(
+            settlementPsbt,
+            validatedCommitmentTxid,
+            "settlement finalization",
+        );
+
+        // No validated txid means tree signing never ran (onchain-only settle),
+        // so the recipients have not been checked yet and this commitment tx is
+        // the only thing to check them against. Before any signature is handed
+        // over, in either direction: boarding inputs below, forfeits after.
+        if (!validatedCommitmentTxid && expectedRecipients.length > 0) {
+            validateBatchRecipientsWithoutTree(settlementPsbt, expectedRecipients, this.network);
+        }
         let hasBoardingUtxos = false;
 
         let connectorIndex = 0;
@@ -3795,34 +4526,37 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         session?: SignerSession,
     ): Batch.Handler {
         let sweepTapTreeRoot: Uint8Array | undefined;
+        // Assigned only after the tree it commits to has been validated, so it
+        // always names a commitment tx this handler has checked.
+        let validatedCommitmentTxid: string | undefined;
         return {
             onBatchStarted: async (event: BatchStartedEvent): Promise<{ skip: boolean }> => {
                 const utf8IntentId = new TextEncoder().encode(intentId);
                 const intentIdHash = sha256(utf8IntentId);
                 const intentIdHashStr = hex.encode(intentIdHash);
 
-                let skip = true;
-
                 // check if our intent ID hash matches any in the event
-                for (const idHash of event.intentIdHashes) {
-                    if (idHash === intentIdHashStr) {
-                        if (!this.arkProvider) {
-                            throw new Error("Arkade provider not configured");
-                        }
-                        await this.arkProvider.confirmRegistration(intentId);
-                        skip = false;
-                    }
-                }
+                const skip = !event.intentIdHashes.includes(intentIdHashStr);
 
                 if (skip) {
                     return { skip };
                 }
 
+                if (!this.arkProvider) {
+                    throw new Error("Arkade provider not configured");
+                }
+
+                // Bound the expiry before confirming, so a rejected round is
+                // never confirmed to the operator.
+                const timelock = assertValidBatchExpiry(
+                    event.batchExpiry,
+                    resolveBatchExpiryPolicy(this.network, this.batchExpiryPolicy),
+                );
+
+                await this.arkProvider.confirmRegistration(intentId);
+
                 const sweepTapscript = CSVMultisigTapscript.encode({
-                    timelock: {
-                        value: event.batchExpiry,
-                        type: event.batchExpiry >= 512n ? "seconds" : "blocks",
-                    },
+                    timelock,
                     pubkeys: [this.forfeitPubkey],
                 }).script;
 
@@ -3841,9 +4575,11 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     throw new Error("Sweep tap tree root not set");
                 }
 
-                const xOnlyPublicKeys = event.cosignersPublicKeys.map((k) => k.slice(2));
+                const xOnlyPublicKeys = event.cosignersPublicKeys.map((k) =>
+                    hex.encode(toXOnly(hex.decode(k), "cosigner key")),
+                );
                 const signerPublicKey = await session.getPublicKey();
-                const xonlySignerPublicKey = signerPublicKey.subarray(1);
+                const xonlySignerPublicKey = toXOnly(signerPublicKey, "signer key");
 
                 if (!xOnlyPublicKeys.includes(hex.encode(xonlySignerPublicKey))) {
                     // not a cosigner, skip the signing
@@ -3870,6 +4606,8 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 if (!sharedOutput?.amount) {
                     throw new Error("Shared output not found");
                 }
+
+                validatedCommitmentTxid = commitmentTx.id;
 
                 await session.init(vtxoTree, sweepTapTreeRoot, sharedOutput.amount);
 
@@ -3913,7 +4651,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     event,
                     inputs,
                     this.forfeitOutputScript,
+                    expectedRecipients,
                     connectorTree,
+                    validatedCommitmentTxid,
                 );
             },
         };
@@ -4140,6 +4880,15 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             batches.push(vtxos.slice(i, i + MAX_INPUTS_PER_INTENT));
         }
 
+        const unrollCandidates = this.checkpointUnrollCandidates(await this.arkProvider.getInfo());
+        // Checked against every VTXO of this run, not the chunk that produced
+        // the proof: a pending tx spends whatever the interrupted send did, and
+        // its inputs can straddle two chunks.
+        const checkpointInputs = vtxos.map((vtxo) => ({
+            ...vtxo,
+            tapLeafScript: vtxo.forfeitTapLeafScript,
+        }));
+
         // Track seen arkTxids so parallel batches don't finalize the same tx twice
         const seen = new Set<string>();
 
@@ -4157,8 +4906,20 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
                     batchPending.push(pendingTx.arkTxid);
                     try {
-                        const checkpointTxs = pendingTx.signedCheckpointTxs.map((c) =>
-                            Transaction.fromPSBT(base64.decode(c)),
+                        const checkpointTxs = pendingTx.signedCheckpointTxs.map((c) => {
+                            const tx = Transaction.fromPSBT(base64.decode(c));
+                            assertAllowedSighashTypes(tx);
+                            return tx;
+                        });
+                        // The send that registered this tx ran in an earlier
+                        // process, so its checkpoints are rebuilt here rather
+                        // than recalled. A tx that does not reconcile is left
+                        // pending for the next init to re-check.
+                        assertCheckpointsMatchInputs(
+                            checkpointTxs,
+                            checkpointInputs,
+                            unrollCandidates,
+                            `pending tx ${pendingTx.arkTxid}`,
                         );
                         const checkpointJobs = checkpointTxs.map((tx) =>
                             this.inputSigningJobsFromWitnessUtxos(tx),
@@ -4232,6 +4993,34 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         }
 
         return { finalized, pending };
+    }
+
+    /**
+     * The server unroll scripts a pending checkpoint may legitimately have been
+     * built under: this wallet's configured one, the server's current one, and
+     * one per deprecated signer (same closure, deprecated key). A tx submitted
+     * before a signer rotation was built under the old key, so rebuilding
+     * against the current key alone would leave it pending forever.
+     */
+    private checkpointUnrollCandidates(info: ArkInfo): CSVMultisigTapscript.Type[] {
+        const current = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
+        const candidates = [this._serverUnrollScript, current];
+        for (const deprecated of signerSetFromInfo(info).deprecated.keys()) {
+            candidates.push(
+                CSVMultisigTapscript.encode({
+                    ...current.params,
+                    pubkeys: [hex.decode(deprecated)],
+                }),
+            );
+        }
+
+        const seen = new Set<string>();
+        return candidates.filter((candidate) => {
+            const script = hex.encode(candidate.script);
+            if (seen.has(script)) return false;
+            seen.add(script);
+            return true;
+        });
     }
 
     private async hasPendingTxFlag(): Promise<boolean> {
@@ -4352,8 +5141,12 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // regardless: the proof describes every input by the contract's P2TR
         // pkScript, which is a lie for an OP_RETURN outpoint and would have the
         // server reject the whole proof. It is excluded by value, since the
-        // indexer reports subdust under that same P2TR script.
-        const drainable = vtxos.filter((vtxo) => !isSubdust(vtxo, this.dustAmount));
+        // indexer reports subdust under that same P2TR script. An exited output
+        // is excluded by state instead: it lives onchain, so no pending sweep
+        // naming it can ever be finalized.
+        const drainable = vtxos.filter(
+            (vtxo) => !isSubdust(vtxo, this.dustAmount) && !vtxo.isUnrolled,
+        );
         if (drainable.length > 0) {
             let drained = { count: 0, swept: 0, claimed: new Set<string>() };
             try {
@@ -4390,8 +5183,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
         if (spendable.length > 0) {
             const info = await this.arkProvider.getInfo();
-            const serverUnrollScript = CSVMultisigTapscript.decode(
-                hex.decode(info.checkpointTapscript),
+            const serverUnrollScript = assertValidServerUnrollScript(
+                info.checkpointTapscript,
+                resolveCheckpointExitDelayPolicy(this.network, this.checkpointExitDelayPolicy),
             );
 
             // One tx per VTXO: a stale or rejected input then dents only its own
@@ -4449,6 +5243,12 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         for (const vtxo of vtxos) {
             if (hasTerminalSpend(vtxo)) {
                 unclaimed.push(cashReport(vtxo, "already-spent"));
+            } else if (vtxo.isUnrolled) {
+                // Exited onchain. The thin sweep is an offchain spend, so it
+                // cannot reach the output whatever its dust or sweep state —
+                // hence before both of those checks, and with its own reason:
+                // the remedy is `completeUnroll`, not a settlement.
+                unclaimed.push(cashReport(vtxo, "exited"));
             } else if (isSubdust(vtxo, this.dustAmount)) {
                 // Subdust lives at an OP_RETURN output: no forfeit leaf, nothing
                 // to spend, and no settlement can lift it out on its own. The
@@ -4564,14 +5364,28 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             }
         }
 
+        if (pendingTxs.length === 0) return result;
+
         const myPkScriptHex = hex.encode(myPkScript);
+        const unrollCandidates = this.checkpointUnrollCandidates(await this.arkProvider.getInfo());
 
         for (const pendingTx of pendingTxs) {
             try {
                 // These checkpoints already carry the server's signature; the
                 // arkadeCash key adds its own share in place.
-                const checkpointTxs = pendingTx.signedCheckpointTxs.map((checkpoint) =>
-                    Transaction.fromPSBT(base64.decode(checkpoint)),
+                const checkpointTxs = pendingTx.signedCheckpointTxs.map((checkpoint) => {
+                    const tx = Transaction.fromPSBT(base64.decode(checkpoint));
+                    assertAllowedSighashTypes(tx);
+                    return tx;
+                });
+                assertCheckpointsMatchInputs(
+                    checkpointTxs,
+                    inputs.map((input) => ({
+                        ...input,
+                        tapLeafScript: input.forfeitTapLeafScript,
+                    })),
+                    unrollCandidates,
+                    `pending arkadeCash tx ${pendingTx.arkTxid}`,
                 );
                 const finalCheckpoints = await Promise.all(
                     checkpointTxs.map(async (checkpoint) =>
@@ -4619,10 +5433,13 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     }
 
     /**
-     * Send BTC and/or assets to one or more recipients.
+     * Send BTC and/or assets to one or more recipients, passed either as
+     * variadic `Recipient`s or as a single `SendParams` object — the latter
+     * also carries the virtual outputs to spend.
      *
-     * @param args - Recipients with their addresses, BTC amounts, and assets
+     * @param args - Recipients, or a `SendParams` object
      * @returns Promise resolving to the Arkade transaction ID
+     * @see SendParams
      *
      * @example
      * ```typescript
@@ -4631,15 +5448,33 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      *     amount: 1000, // (optional, default to dust) btc amount to send to the output
      *     assets: [{ assetId: 'abc123...', amount: 50n }] // (optional) list of assets to send
      * });
+     *
+     * // choosing the inputs as well as the outputs
+     * const txid = await wallet.send({
+     *     recipients: [{ address: 'ark1q...', amount: 1000 }],
+     *     selectedVtxos: mine, // spent as given, nothing added
+     * });
      * ```
      */
-    async send(...args: [Recipient, ...Recipient[]]): Promise<string> {
-        return this._withTxLock(() => this._sendImpl(...args));
+    async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
+        const params = asSendParams(args);
+        return this._withTxLock(() => this._sendImpl(params));
     }
 
-    private async _sendImpl(...args: [Recipient, ...Recipient[]]): Promise<string> {
+    private async _sendImpl({ recipients: args, selectedVtxos }: SendParams): Promise<string> {
         if (args.length === 0) {
+            // The variadic tuple type rules out `send()`; only a JS caller gets here.
             throw new Error("At least one receiver is required");
+        }
+        if (selectedVtxos && selectedVtxos.length === 0) {
+            // Distinct from `undefined`, which means "choose for me": a caller that
+            // meant to name inputs and named none is not asking the wallet to pick.
+            throw new Error("send({ selectedVtxos }): no inputs");
+        }
+        if (selectedVtxos) {
+            // Naming inputs skips the generic-spending gate, as it does on
+            // `sendBitcoin`; report the crossing under this API's own label.
+            void this.logUngatedInputs("send({ selectedVtxos })", selectedVtxos);
         }
 
         // Snapshot the active receive tapscript synchronously before any
@@ -4662,117 +5497,169 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         const address = outputAddress.encode();
 
         // validate recipients and populate undefined amount with dust amount
-        const recipients = validateRecipients(args, Number(this.dustAmount));
+        const recipients = validateRecipients(
+            args,
+            Number(this.dustAmount),
+            this.recipientAddressContext(serverPubKey),
+        );
 
-        const allVirtualCoins = await this.getVtxos({
-            withRecoverable: false,
-        });
-        // Drop funds under a past-cutoff (EXPIRED) deprecated signer: the operator
-        // will not co-sign a spend of them, so selecting one would fail at submit.
-        const pendingRecovery = await this.pendingRecoveryOutpoints();
-        const virtualCoins = pendingRecovery.size
-            ? allVirtualCoins.filter((c) => !pendingRecovery.has(`${c.txid}:${c.vout}`))
-            : allVirtualCoins;
+        // Left empty when the caller named its own inputs: that path never reaches
+        // for a coin it was not given, so the wallet's own outputs go unread.
+        // Otherwise escrowed contracts, past-cutoff deprecated-signer funds (the
+        // operator will not co-sign them) and intent-locked outpoints are all
+        // excluded by the accessor, from one snapshot.
+        let virtualCoins: NormalizedExtendedVirtualCoin[] = [];
+        if (!selectedVtxos) {
+            virtualCoins = await this.getSpendableVtxos({
+                withRecoverable: false,
+            });
+        }
 
         // keep track of asset changes
         const assetChanges = new Map<string, bigint>();
 
-        let selectedCoins: ExtendedVirtualCoin[] = [];
+        let selectedCoins: ExtendedVirtualCoin[] = selectedVtxos ? [...selectedVtxos] : [];
         let btcAmountToSelect = 0;
 
         for (const recipient of recipients) {
             btcAmountToSelect += Math.max(recipient.amount, Number(this.dustAmount));
         }
 
-        // select assets
-        for (const recipient of recipients) {
-            if (!recipient.assets) {
-                continue;
+        if (selectedVtxos) {
+            // Every asset arriving on a named input still has to leave on an output,
+            // so the whole input set is folded in at once and the recipients' amounts
+            // drawn back off it; the generic path below builds the map as it picks.
+            for (const coin of selectedCoins) {
+                for (const asset of coin.assets ?? []) {
+                    const existing = assetChanges.get(asset.assetId) ?? 0n;
+                    assetChanges.set(asset.assetId, existing + asset.amount);
+                }
             }
-            for (const receiverAsset of recipient.assets) {
-                let amountToSelect = receiverAsset.amount;
-
-                // check if existing change covers the needed amount
-                const existingChange = assetChanges.get(receiverAsset.assetId) ?? 0n;
-                if (existingChange >= amountToSelect) {
-                    assetChanges.set(receiverAsset.assetId, existingChange - amountToSelect);
-                    if (assetChanges.get(receiverAsset.assetId) === 0n) {
-                        assetChanges.delete(receiverAsset.assetId);
+            for (const recipient of recipients) {
+                for (const asset of recipient.assets) {
+                    const remaining = (assetChanges.get(asset.assetId) ?? 0n) - asset.amount;
+                    if (remaining < 0n) {
+                        throw new Error(
+                            `send({ selectedVtxos }): inputs are short ${-remaining} of asset ${asset.assetId}`,
+                        );
                     }
+                    if (remaining === 0n) {
+                        assetChanges.delete(asset.assetId);
+                    } else {
+                        assetChanges.set(asset.assetId, remaining);
+                    }
+                }
+            }
+        } else {
+            // select assets
+            for (const recipient of recipients) {
+                if (!recipient.assets) {
                     continue;
                 }
-                if (existingChange > 0n) {
-                    amountToSelect -= existingChange;
-                    assetChanges.delete(receiverAsset.assetId);
-                }
+                for (const receiverAsset of recipient.assets) {
+                    let amountToSelect = receiverAsset.amount;
 
+                    // check if existing change covers the needed amount
+                    const existingChange = assetChanges.get(receiverAsset.assetId) ?? 0n;
+                    if (existingChange >= amountToSelect) {
+                        assetChanges.set(receiverAsset.assetId, existingChange - amountToSelect);
+                        if (assetChanges.get(receiverAsset.assetId) === 0n) {
+                            assetChanges.delete(receiverAsset.assetId);
+                        }
+                        continue;
+                    }
+                    if (existingChange > 0n) {
+                        amountToSelect -= existingChange;
+                        assetChanges.delete(receiverAsset.assetId);
+                    }
+
+                    const availableCoins = virtualCoins.filter(
+                        (c) =>
+                            !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
+                    );
+
+                    const { selected, totalAssetAmount } = selectCoinsWithAsset(
+                        availableCoins,
+                        receiverAsset.assetId,
+                        amountToSelect,
+                    );
+
+                    for (const coin of selected) {
+                        selectedCoins.push(coin);
+                        // asset coins contain btc, subtract from total amount to select
+                        btcAmountToSelect -= coin.value;
+                        // coin may contain other assets, add them to asset changes
+                        if (coin.assets) {
+                            for (const a of coin.assets) {
+                                if (a.assetId === receiverAsset.assetId) {
+                                    continue;
+                                }
+                                const existing = assetChanges.get(a.assetId) ?? 0n;
+                                assetChanges.set(a.assetId, existing + a.amount);
+                            }
+                        }
+                    }
+
+                    const assetChangeAmount = totalAssetAmount - amountToSelect;
+                    if (assetChangeAmount > 0n) {
+                        const existing = assetChanges.get(receiverAsset.assetId) ?? 0n;
+                        assetChanges.set(receiverAsset.assetId, existing + assetChangeAmount);
+                    }
+                }
+            }
+
+            // select remaining btc
+            if (btcAmountToSelect > 0) {
                 const availableCoins = virtualCoins.filter(
                     (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
                 );
+                const { inputs: btcCoins } = selectVirtualCoins(availableCoins, btcAmountToSelect);
 
-                const { selected, totalAssetAmount } = selectCoinsWithAsset(
-                    availableCoins,
-                    receiverAsset.assetId,
-                    amountToSelect,
-                );
-
-                for (const coin of selected) {
-                    selectedCoins.push(coin);
-                    // asset coins contain btc, subtract from total amount to select
-                    btcAmountToSelect -= coin.value;
-                    // coin may contain other assets, add them to asset changes
+                // some coins may contain assets, add them to asset changes
+                for (const coin of btcCoins) {
                     if (coin.assets) {
-                        for (const a of coin.assets) {
-                            if (a.assetId === receiverAsset.assetId) {
-                                continue;
-                            }
-                            const existing = assetChanges.get(a.assetId) ?? 0n;
-                            assetChanges.set(a.assetId, existing + a.amount);
+                        for (const asset of coin.assets) {
+                            const existing = assetChanges.get(asset.assetId) ?? 0n;
+                            assetChanges.set(asset.assetId, existing + asset.amount);
                         }
                     }
                 }
 
-                const assetChangeAmount = totalAssetAmount - amountToSelect;
-                if (assetChangeAmount > 0n) {
-                    const existing = assetChanges.get(receiverAsset.assetId) ?? 0n;
-                    assetChanges.set(receiverAsset.assetId, existing + assetChangeAmount);
-                }
+                selectedCoins = [...selectedCoins, ...btcCoins];
             }
-        }
-
-        // select remaining btc
-        if (btcAmountToSelect > 0) {
-            const availableCoins = virtualCoins.filter(
-                (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
-            );
-            const { inputs: btcCoins } = selectVirtualCoins(availableCoins, btcAmountToSelect);
-
-            // some coins may contain assets, add them to asset changes
-            for (const coin of btcCoins) {
-                if (coin.assets) {
-                    for (const asset of coin.assets) {
-                        const existing = assetChanges.get(asset.assetId) ?? 0n;
-                        assetChanges.set(asset.assetId, existing + asset.amount);
-                    }
-                }
-            }
-
-            selectedCoins = [...selectedCoins, ...btcCoins];
         }
 
         let totalBtcSelected = selectedCoins.reduce((sum, c) => sum + c.value, 0);
 
         // build tx outputs
-        const outputs = recipients.map((recipient) => ({
+        const outputs: TransactionOutput[] = recipients.map((recipient) => ({
             script: recipient.script,
             amount: BigInt(recipient.amount),
+            // Already checked against the recipient address in `validateRecipients`.
+            ...(recipient.tapTree ? { tapTree: TapTreeCoder.decode(recipient.tapTree) } : {}),
         }));
 
         const totalBtcOutput = outputs.reduce((sum, o) => sum + Number(o.amount), 0);
         let changeAmount = totalBtcSelected - totalBtcOutput;
 
+        if (changeAmount < 0) {
+            // Only reachable with caller-selected inputs: generic selection either
+            // covers the outputs or throws while it is still selecting.
+            throw new Error(
+                `send({ selectedVtxos }): inputs total ${totalBtcSelected} sats, outputs need ${totalBtcOutput}`,
+            );
+        }
+
         // enforce minimum change amount when there are asset changes
         if (assetChanges.size > 0 && changeAmount < Number(this.dustAmount)) {
+            if (selectedVtxos) {
+                // Asset change needs a change output at or above dust, and this path
+                // may not reach for a coin the caller did not name.
+                throw new Error(
+                    `send({ selectedVtxos }): ${changeAmount} sats of change cannot carry ` +
+                        `${assetChanges.size} asset change(s), needs ${this.dustAmount}`,
+                );
+            }
             const availableCoins = virtualCoins.filter(
                 (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
             );
@@ -5020,6 +5907,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     /**
      * Build an offchain transaction from the given inputs and outputs,
      * sign it, submit to the Arkade provider, and finalize.
+     *
+     * Signs whatever it is handed, ungated — see {@link settle} for the trade.
+     *
      * @returns The Arkade transaction id and server-signed checkpoint PSBTs (for bookkeeping)
      */
     async buildAndSubmitOffchainTx(
@@ -5027,6 +5917,11 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         outputs: TransactionOutput[],
         serverUnrollScript: CSVMultisigTapscript.Type = this.serverUnrollScript,
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+        void this.logUngatedInputs("buildAndSubmitOffchainTx", inputs);
+        // Before anything is signed or submitted: the tx would build fine from
+        // the tapscripts stored on each coin, and only `updateDbAfterOffchainTx`
+        // would fail — after the broadcast. @see IContractManager.assertAnnotatable
+        await (await this.getContractManager()).assertAnnotatable(inputs);
         const offchainTx = buildOffchainTx(
             inputs.map((input) => {
                 return {
@@ -5149,29 +6044,35 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 );
             }
 
-            const safeLength = Math.min(inputs.length, signedCheckpointTxs.length);
+            // Keyed by the outpoint each checkpoint spends, never by position:
+            // `submitTx` may return its checkpoints in any order (they are
+            // matched by txid, not index), so pairing this array with `inputs`
+            // positionally would record every VTXO as spent by another one's
+            // checkpoint.
+            const checkpointIdByOutpoint = new Map<string, string>();
+            for (const encoded of signedCheckpointTxs) {
+                const checkpoint = Transaction.fromPSBT(base64.decode(encoded));
+                for (let i = 0; i < checkpoint.inputsLength; i++) {
+                    const input = checkpoint.getInput(i);
+                    if (!input.txid) continue;
+                    checkpointIdByOutpoint.set(
+                        `${hex.encode(input.txid)}:${input.index}`,
+                        checkpoint.id,
+                    );
+                }
+            }
+
             const cm = await this.getContractManager();
             const annotatedInputs = await cm.annotateVtxos(inputs);
-            for (const [inputIndex, vtxo] of annotatedInputs.entries()) {
+            for (const vtxo of annotatedInputs) {
                 const spentFacts = { ...vtxo, isSpent: true };
-                if (inputIndex < safeLength && signedCheckpointTxs[inputIndex]) {
-                    const checkpoint = Transaction.fromPSBT(
-                        base64.decode(signedCheckpointTxs[inputIndex]),
-                    );
-
-                    spentVtxos.push({
-                        ...spentFacts,
-                        virtualStatus: toVirtualStatus(spentFacts),
-                        spentBy: checkpoint.id,
-                        arkTxId: arkTxid,
-                    });
-                } else {
-                    spentVtxos.push({
-                        ...spentFacts,
-                        virtualStatus: toVirtualStatus(spentFacts),
-                        arkTxId: arkTxid,
-                    });
-                }
+                const spentBy = checkpointIdByOutpoint.get(`${vtxo.txid}:${vtxo.vout}`);
+                spentVtxos.push({
+                    ...spentFacts,
+                    virtualStatus: toVirtualStatus(spentFacts),
+                    ...(spentBy ? { spentBy } : {}),
+                    arkTxId: arkTxid,
+                });
 
                 for (const id of vtxo.commitmentTxIds) {
                     commitmentTxIds.add(id);
@@ -5460,15 +6361,118 @@ export function selectVirtualCoins(
 }
 
 /**
- * Wait for incoming funds to the wallet
- * @param wallet - The wallet to wait for incoming funds
- * @returns A promise that resolves the next new coins received by the wallet's address
+ * Raised when a wait is cancelled through its `AbortSignal` or `timeoutMs`.
+ *
+ * `name` is `"AbortError"`, matching both the platform convention and the
+ * `error.name === "AbortError"` checks the provider layer already makes, so a
+ * caller can treat DOM and SDK aborts identically.
  */
-export async function waitForIncomingFunds(wallet: Wallet): Promise<IncomingFunds> {
+export class AbortError extends Error {
+    constructor(message = "Operation aborted") {
+        super(message);
+        this.name = "AbortError";
+    }
+}
+
+/** Options for {@link waitForIncomingFunds}. */
+export interface WaitForIncomingFundsOptions {
+    /**
+     * Cancels the wait. On abort the underlying subscription is stopped and
+     * the returned promise rejects — with the signal's `reason` when the
+     * caller supplied an `Error`, otherwise an {@link AbortError}.
+     */
+    signal?: AbortSignal;
+
+    /**
+     * Cancels the wait after this many milliseconds, rejecting with an
+     * {@link AbortError}. Equivalent to passing an `AbortSignal.timeout`
+     * signal, without requiring that API on the target platform.
+     */
+    timeoutMs?: number;
+}
+
+/**
+ * Surface an aborted signal's reason the way `fetch` does: pass a caller's
+ * `Error` through untouched, and synthesise an {@link AbortError} otherwise
+ * (a bare `abort()` sets a platform `DOMException`, which not every runtime
+ * the SDK targets exposes as an `Error`).
+ */
+function abortReason(signal: AbortSignal): unknown {
+    const { reason } = signal as AbortSignal & { reason?: unknown };
+    if (reason instanceof Error) return reason;
+    return new AbortError(typeof reason === "string" ? reason : undefined);
+}
+
+/**
+ * Wait for incoming funds to the wallet.
+ *
+ * This opens live network watchers (an onchain address subscription plus the
+ * wallet's indexer stream) and keeps them open until it settles. **Cancel it
+ * if you are not going to await it to completion** — pass a `signal` or a
+ * `timeoutMs`. Racing an uncancelled call against a timer (`Promise.race`)
+ * abandons the loser without stopping its watchers, and repeating that in a
+ * loop stacks subscriptions until the process exits.
+ *
+ * @param wallet - The wallet to wait for incoming funds
+ * @param options - Cancellation options; see {@link WaitForIncomingFundsOptions}
+ * @returns A promise that resolves the next new coins received by the wallet's address
+ * @throws {AbortError} If cancelled via `signal` or `timeoutMs`
+ * @example
+ * ```typescript
+ * // Wake early on a deposit, but give up after 30s and release the watchers.
+ * try {
+ *   const funds = await waitForIncomingFunds(wallet, { timeoutMs: 30_000 })
+ * } catch (e) {
+ *   if ((e as Error).name !== "AbortError") throw e
+ * }
+ * ```
+ */
+export async function waitForIncomingFunds(
+    wallet: Wallet,
+    options?: WaitForIncomingFundsOptions,
+): Promise<IncomingFunds> {
+    const { signal, timeoutMs } = options ?? {};
+
+    // Reject before opening any watcher at all — an already-aborted signal
+    // shouldn't cost a subscription that we immediately tear down.
+    if (signal?.aborted) throw abortReason(signal);
+
     let stopFunc: (() => void) | undefined;
     let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
 
-    return new Promise<IncomingFunds>((resolve) => {
+    return new Promise<IncomingFunds>((resolve, reject) => {
+        // One teardown path for all three exits (funds arrived, cancelled,
+        // subscription failed), so the watcher, the timeout timer and the
+        // abort listener can never outlive the promise.
+        const settle = (deliver: () => void) => {
+            if (settled) return;
+            settled = true;
+
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
+            if (onAbort) signal?.removeEventListener("abort", onAbort);
+            stopFunc?.();
+
+            deliver();
+        };
+
+        const cancel = (reason: unknown) => settle(() => reject(reason));
+
+        if (signal) {
+            onAbort = () => cancel(abortReason(signal));
+            // `settle` removes this on every exit path, so no `{ once: true }`:
+            // one removal mechanism, not two doing the same job.
+            signal.addEventListener("abort", onAbort);
+        }
+
+        if (timeoutMs !== undefined) {
+            timeoutId = setTimeout(
+                () => cancel(new AbortError(`waitForIncomingFunds timed out after ${timeoutMs}ms`)),
+                timeoutMs,
+            );
+        }
+
         wallet
             .notifyIncomingFunds((funds: IncomingFunds) => {
                 // `notifyIncomingFunds` also fires for purely outgoing activity:
@@ -5482,15 +6486,20 @@ export async function waitForIncomingFunds(wallet: Wallet): Promise<IncomingFund
                     funds.type === "utxo" ? funds.coins.length > 0 : funds.newVtxos.length > 0;
                 if (settled || !hasFunds) return;
 
-                settled = true;
-                resolve(funds);
-                stopFunc?.();
+                settle(() => resolve(funds));
             })
             .then((stop) => {
                 stopFunc = stop;
-                // The callback may have already resolved before the subscription
-                // handle was available; tear it down now so we don't leak it.
+                // The callback (or a cancellation) may have already settled
+                // before the subscription handle was available; tear it down
+                // now so we don't leak it.
                 if (settled) stop();
+            })
+            .catch((error) => {
+                // Without this the promise never settles *and* the rejection is
+                // unhandled: a caller awaiting a wallet whose providers are down
+                // would hang for the lifetime of the process. No-op once settled.
+                cancel(error);
             });
     });
 }

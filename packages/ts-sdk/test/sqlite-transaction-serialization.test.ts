@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createNodeSQLExecutor } from "./helpers/nodeSqlExecutor";
+import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
 import { SQLiteIntentRepository } from "../src/repositories/sqlite/intentRepository";
 import { SQLiteVirtualTxRepository } from "../src/repositories/sqlite/virtualTxRepository";
 import { SQLiteWalletRepository } from "../src/repositories/sqlite/walletRepository";

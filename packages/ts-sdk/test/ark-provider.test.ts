@@ -74,3 +74,150 @@ describe("RestArkProvider.getEventStream", () => {
         await pending.catch(() => {});
     });
 });
+
+describe("RestArkProvider.getTransactionsStream", () => {
+    beforeEach(() => {
+        MockEventSource.reset();
+        vi.stubGlobal("EventSource", MockEventSource);
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    const vtxo = (txid: string) => ({
+        outpoint: { txid, vout: 0 },
+        amount: "1000",
+        script: "51200000",
+        createdAt: "1700000000",
+        expiresAt: null,
+        commitmentTxids: [],
+        isPreconfirmed: false,
+        isSwept: false,
+        isUnrolled: false,
+        isSpent: false,
+        spentBy: "",
+    });
+
+    /** Drive one frame through the stream and return whatever it yielded. */
+    const yieldFrame = async (frame: unknown) => {
+        const provider = new RestArkProvider("http://localhost:7070");
+        const ac = new AbortController();
+        const stream = provider.getTransactionsStream(ac.signal);
+        const next = stream.next();
+        await vi.waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+        MockEventSource.instances[0].emitMessage(JSON.stringify(frame));
+        const result = await next;
+        ac.abort();
+        await stream.return?.(undefined);
+        return result.value;
+    };
+
+    it("yields a sweep_tx frame with the outpoints it swept", async () => {
+        const value = await yieldFrame({
+            sweepTx: {
+                txid: "ab".repeat(32),
+                tx: "0200",
+                spentVtxos: [vtxo("cd".repeat(32))],
+                spendableVtxos: [],
+                sweptVtxos: [{ txid: "ef".repeat(32), vout: 1 }],
+            },
+        });
+
+        expect(value).toEqual({
+            sweepTx: expect.objectContaining({
+                txid: "ab".repeat(32),
+                sweptVtxos: [{ txid: "ef".repeat(32), vout: 1 }],
+            }),
+        });
+        expect(value.sweepTx.spentVtxos[0].outpoint.txid).toBe("cd".repeat(32));
+    });
+
+    // proto3 omits an empty repeated field: a sweep that took none of our
+    // outputs still has to answer `sweptVtxos`, or every consumer narrows.
+    it("gives a sweep_tx frame that swept nothing an empty sweptVtxos", async () => {
+        const value = await yieldFrame({
+            sweepTx: {
+                txid: "ab".repeat(32),
+                tx: "0200",
+                spentVtxos: [],
+                spendableVtxos: [],
+            },
+        });
+
+        expect(value.sweepTx.sweptVtxos).toEqual([]);
+    });
+
+    // The two pre-existing arms now run through the same mapper as sweepTx:
+    // assert the whole frame, so a change to the shared mapping cannot quietly
+    // reshape them. `sweptVtxos` is off their type; this guards the runtime.
+    it.each(["commitmentTx", "arkTx"] as const)(
+        "maps a %s frame unchanged, with no sweptVtxos to carry",
+        async (arm) => {
+            const checkpointTxs = { ["12".repeat(32)]: { txid: "12".repeat(32), tx: "0201" } };
+            const value = await yieldFrame({
+                [arm]: {
+                    txid: "ab".repeat(32),
+                    tx: "0200",
+                    spentVtxos: [vtxo("cd".repeat(32))],
+                    spendableVtxos: [vtxo("ef".repeat(32))],
+                    checkpointTxs,
+                },
+            });
+
+            expect(Object.keys(value)).toEqual([arm]);
+            expect(value[arm]).toEqual({
+                txid: "ab".repeat(32),
+                tx: "0200",
+                spentVtxos: [
+                    expect.objectContaining({ outpoint: { txid: "cd".repeat(32), vout: 0 } }),
+                ],
+                spendableVtxos: [
+                    expect.objectContaining({ outpoint: { txid: "ef".repeat(32), vout: 0 } }),
+                ],
+                checkpointTxs,
+            });
+            expect(value[arm]).not.toHaveProperty("sweptVtxos");
+        },
+    );
+});
+
+describe("RestArkProvider.getInfo transaction limits", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    const infoResponse = (body: Record<string, unknown>) => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => ({ ok: true, json: async () => body })),
+        );
+        return new RestArkProvider("http://ark.test").getInfo();
+    };
+
+    it("reads maxTxWeight and maxOpReturnOutputs off the wire", async () => {
+        const info = await infoResponse({ maxTxWeight: "40000", maxOpReturnOutputs: "3" });
+        expect(info.maxTxWeight).toBe(40_000n);
+        expect(info.maxOpReturnOutputs).toBe(3n);
+    });
+
+    it("leaves them undefined when the operator advertises neither", async () => {
+        // 0n would read as a weight budget of nothing and OP_RETURN forbidden,
+        // which an older arkd is not saying.
+        const info = await infoResponse({});
+        expect(info.maxTxWeight).toBeUndefined();
+        expect(info.maxOpReturnOutputs).toBeUndefined();
+    });
+
+    it("reads a server-emitted zero as unadvertised, not as a limit of nothing", async () => {
+        // Both fields are non-optional int64 on GetInfoResponse and the gateway
+        // marshals with EmitUnpopulated, so an arkd that carries them without
+        // configuring them sends "0" rather than omitting them. That is the same
+        // statement as omitting them, and must not surface as 0n.
+        const info = await infoResponse({ maxTxWeight: "0", maxOpReturnOutputs: "0" });
+        expect(info.maxTxWeight).toBeUndefined();
+        expect(info.maxOpReturnOutputs).toBeUndefined();
+    });
+});

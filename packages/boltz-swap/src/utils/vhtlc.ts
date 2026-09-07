@@ -2,18 +2,23 @@ import {
     ArkInfo,
     ArkProvider,
     ArkTxInput,
+    assertSubmittedArkTxid,
+    assertValidServerUnrollScript,
+    resolveCheckpointExitDelayPolicy,
     Batch,
     buildOffchainTx,
     getSequence,
     Identity,
+    matchServerCheckpoints,
     Intent,
     getNetwork,
+    Network,
     networks,
     NetworkName,
+    Recipient,
     VHTLC,
     VtxoScript,
     VtxoTaprootTree,
-    CSVMultisigTapscript,
     combineTapscriptSigs,
     Transaction,
     scriptFromTapLeafScript,
@@ -145,12 +150,35 @@ export const candidateServerPubkeys = (arkInfo: ArkInfo): string[] => {
     return candidates;
 };
 
+/** Resolve `ArkInfo.network` (e.g. `"bitcoin"`, `"regtest"`) to a {@link Network}. */
+const resolveArkNetwork = (networkName: string): Network =>
+    networkName in networks ? networks[networkName as keyof typeof networks] : networks.bitcoin;
+
+/**
+ * Decode and validate `arkInfo.checkpointTapscript` for building checkpoint
+ * outputs. These free functions have no persistent wallet state to pin a
+ * forfeit pubkey against across calls, so — mirroring how
+ * `createVHTLCBatchHandler` already treats `vtxoTreeExpiry` — this checks
+ * self-consistency against this same response's own `forfeitPubkey`; the
+ * exit-delay floor is the primary defense against a malicious operator.
+ */
+const assertValidVHTLCServerUnrollScript = (
+    arkInfo: Pick<ArkInfo, "checkpointTapscript" | "forfeitPubkey" | "network">,
+) =>
+    assertValidServerUnrollScript(
+        arkInfo.checkpointTapscript,
+        resolveCheckpointExitDelayPolicy(resolveArkNetwork(arkInfo.network), {
+            advertisedForfeitPubkey: normalizeToXOnlyKey(arkInfo.forfeitPubkey, "forfeit"),
+        }),
+    );
+
 /**
  * Joins a batch to spend the vtxo via commitment transaction
  * @param identity - The identity to use for signing the forfeit transaction.
  * @param input - The input vtxo.
  * @param output - The output script.
  * @param forfeitPublicKey - The forfeit public key.
+ * @param recipient - The expected destination, validated against the vtxo tree leaves.
  * @returns The commitment transaction ID.
  */
 export const joinBatch = async (
@@ -164,6 +192,7 @@ export const joinBatch = async (
         network,
     }: Pick<ArkInfo, "forfeitPubkey" | "forfeitAddress" | "network">,
     isRecoverable = true,
+    recipient?: Recipient,
 ): Promise<string> => {
     const signerSession = identity.signerSession();
     const signerPublicKey = await signerSession.getPublicKey();
@@ -208,9 +237,8 @@ export const joinBatch = async (
         proof: base64.encode(signedRegisterIntent.toPSBT()),
     });
 
-    const decodedAddress = Address(
-        network in networks ? networks[network as keyof typeof networks] : networks.bitcoin,
-    ).decode(forfeitAddress);
+    const btcNetwork = resolveArkNetwork(network);
+    const decodedAddress = Address(btcNetwork).decode(forfeitAddress);
 
     try {
         const handler = createVHTLCBatchHandler(
@@ -220,6 +248,8 @@ export const joinBatch = async (
             identity,
             signerSession,
             normalizeToXOnlyKey(forfeitPubkey, "forfeit"),
+            btcNetwork,
+            recipient,
             isRecoverable ? undefined : OutScript.encode(decodedAddress),
         );
 
@@ -246,11 +276,11 @@ export const joinBatch = async (
 };
 
 /**
- * Claims a VHTLC using an offchain transaction.
+ * Claims one or more VTXOs at a VHTLC using a single offchain transaction.
  * @param identity
  * @param vhtlcScript
  * @param serverXOnlyPublicKey
- * @param input
+ * @param inputs - VTXOs at the VHTLC script, all spent through the claim leaf.
  * @param output
  * @param arkInfo
  * @param arkProvider
@@ -260,17 +290,16 @@ export const claimVHTLCwithOffchainTx = async (
     identity: Identity,
     vhtlcScript: VHTLC.Script,
     serverXOnlyPublicKey: Uint8Array,
-    input: ArkTxInput,
+    inputs: ArkTxInput[],
     output: TransactionOutput,
     arkInfo: ArkInfo,
     arkProvider: ArkProvider,
 ): Promise<string> => {
     // create the server unroll script for checkpoint transactions
-    const rawCheckpointTapscript = hex.decode(arkInfo.checkpointTapscript);
-    const serverUnrollScript = CSVMultisigTapscript.decode(rawCheckpointTapscript);
+    const serverUnrollScript = assertValidVHTLCServerUnrollScript(arkInfo);
 
     // create the offchain transaction to claim the VHTLC
-    const { arkTx, checkpoints } = buildOffchainTx([input], [output], serverUnrollScript);
+    const { arkTx, checkpoints } = buildOffchainTx(inputs, [output], serverUnrollScript);
 
     // sign and submit the virtual transaction
     const signedArkTx = await identity.sign(arkTx);
@@ -278,6 +307,9 @@ export const claimVHTLCwithOffchainTx = async (
         base64.encode(signedArkTx.toPSBT()),
         checkpoints.map((c) => base64.encode(c.toPSBT())),
     );
+    // The returned arkTxid keys finalizeTx and is what this function returns;
+    // reject a response that does not refer to the tx just submitted.
+    assertSubmittedArkTxid({ arkTxid, finalArkTx }, signedArkTx, "submitTx");
 
     // verify the server signed the transaction with correct key on the claim leaf
     const finalTx = Transaction.fromPSBT(base64.decode(finalArkTx));
@@ -289,18 +321,21 @@ export const claimVHTLCwithOffchainTx = async (
         }
     }
 
-    // verify and sign the checkpoint transactions pre signed by the server
+    // Reconcile each returned checkpoint with the one submitted before
+    // co-signing it: the signature check below confirms who signed, the txid
+    // match confirms which transaction.
     const finalCheckpoints = await Promise.all(
-        signedCheckpointTxs.map(async (c, idx) => {
-            const tx = Transaction.fromPSBT(base64.decode(c));
-            const checkpointLeaf = checkpoints[idx].getInput(0).tapLeafScript![0];
-            const cpLeafHash = tapLeafHash(scriptFromTapLeafScript(checkpointLeaf));
-            if (!verifySignatures(tx, 0, [serverPubkeyHex], cpLeafHash)) {
-                throw new Error("Invalid server signature in checkpoint transaction");
-            }
-            const signedCheckpoint = await identity.sign(tx, [0]);
-            return base64.encode(signedCheckpoint.toPSBT());
-        }),
+        matchServerCheckpoints(signedCheckpointTxs, checkpoints, "submitTx").map(
+            async ({ server, local }) => {
+                const checkpointLeaf = local.getInput(0).tapLeafScript![0];
+                const cpLeafHash = tapLeafHash(scriptFromTapLeafScript(checkpointLeaf));
+                if (!verifySignatures(server, 0, [serverPubkeyHex], cpLeafHash)) {
+                    throw new Error("Invalid server signature in checkpoint transaction");
+                }
+                const signedCheckpoint = await identity.sign(server, [0]);
+                return base64.encode(signedCheckpoint.toPSBT());
+            },
+        ),
     );
 
     // submit the final transaction to the Ark provider
@@ -340,8 +375,7 @@ export const refundWithoutReceiverVHTLCwithOffchainTx = async (
     arkProvider: ArkProvider,
 ): Promise<string> => {
     // create the server unroll script for checkpoint transactions
-    const rawCheckpointTapscript = hex.decode(arkInfo.checkpointTapscript);
-    const serverUnrollScript = CSVMultisigTapscript.decode(rawCheckpointTapscript);
+    const serverUnrollScript = assertValidVHTLCServerUnrollScript(arkInfo);
 
     // create the offchain transaction to refund the VHTLC
     const { arkTx, checkpoints } = buildOffchainTx([input], [output], serverUnrollScript);
@@ -352,6 +386,9 @@ export const refundWithoutReceiverVHTLCwithOffchainTx = async (
         base64.encode(signedArkTx.toPSBT()),
         checkpoints.map((c) => base64.encode(c.toPSBT())),
     );
+    // The returned arkTxid keys finalizeTx and is what this function returns;
+    // reject a response that does not refer to the tx just submitted.
+    assertSubmittedArkTxid({ arkTxid, finalArkTx }, signedArkTx, "submitTx");
 
     // verify the server signed the transaction with correct key on the refundWithoutReceiver leaf
     const finalTx = Transaction.fromPSBT(base64.decode(finalArkTx));
@@ -365,18 +402,20 @@ export const refundWithoutReceiverVHTLCwithOffchainTx = async (
         }
     }
 
-    // verify and sign the checkpoint transactions pre signed by the server
+    // Same as the claim path: reconcile each returned checkpoint with the one
+    // submitted before adding our share.
     const finalCheckpoints = await Promise.all(
-        signedCheckpointTxs.map(async (c, idx) => {
-            const tx = Transaction.fromPSBT(base64.decode(c));
-            const checkpointLeaf = checkpoints[idx].getInput(0).tapLeafScript![0];
-            const cpLeafHash = tapLeafHash(scriptFromTapLeafScript(checkpointLeaf));
-            if (!verifySignatures(tx, 0, [serverPubkeyHex], cpLeafHash)) {
-                throw new Error("Invalid server signature in checkpoint transaction");
-            }
-            const signedCheckpoint = await identity.sign(tx, [0]);
-            return base64.encode(signedCheckpoint.toPSBT());
-        }),
+        matchServerCheckpoints(signedCheckpointTxs, checkpoints, "submitTx").map(
+            async ({ server, local }) => {
+                const checkpointLeaf = local.getInput(0).tapLeafScript![0];
+                const cpLeafHash = tapLeafHash(scriptFromTapLeafScript(checkpointLeaf));
+                if (!verifySignatures(server, 0, [serverPubkeyHex], cpLeafHash)) {
+                    throw new Error("Invalid server signature in checkpoint transaction");
+                }
+                const signedCheckpoint = await identity.sign(server, [0]);
+                return base64.encode(signedCheckpoint.toPSBT());
+            },
+        ),
     );
 
     // submit the final transaction to the Ark provider
@@ -418,8 +457,7 @@ export const refundVHTLCwithOffchainTx = async (
     }>,
 ): Promise<void> => {
     // create the server unroll script for checkpoint transactions
-    const rawCheckpointTapscript = hex.decode(arkInfo.checkpointTapscript);
-    const serverUnrollScript = CSVMultisigTapscript.decode(rawCheckpointTapscript);
+    const serverUnrollScript = assertValidVHTLCServerUnrollScript(arkInfo);
 
     // create the virtual transaction to claim the VHTLC
     const { arkTx: unsignedRefundTx, checkpoints: checkpointPtxs } = buildOffchainTx(
@@ -475,6 +513,9 @@ export const refundVHTLCwithOffchainTx = async (
         base64.encode(combinedSignedRefundTx.toPSBT()),
         [base64.encode(unsignedCheckpointTx.toPSBT())],
     );
+    // The returned arkTxid keys finalizeTx; reject a response that does not
+    // refer to the tx just submitted.
+    assertSubmittedArkTxid({ arkTxid, finalArkTx }, combinedSignedRefundTx, "submitTx");
 
     // verify the final tx is properly signed
     const tx = Transaction.fromPSBT(base64.decode(finalArkTx));
@@ -489,15 +530,15 @@ export const refundVHTLCwithOffchainTx = async (
         throw new Error("Invalid refund transaction");
     }
 
-    // validate we received exactly one checkpoint transaction
-    if (signedCheckpointTxs.length !== 1) {
-        throw new Error(
-            `Expected one signed checkpoint transaction, got ${signedCheckpointTxs.length}`,
-        );
-    }
-
-    // verify and combine the checkpoint signatures
-    const serverSignedCheckpointTx = Transaction.fromPSBT(base64.decode(signedCheckpointTxs[0]));
+    // Reconcile the returned checkpoint with the one submitted. The merge below
+    // grafts signatures computed over our own checkpoint's sighash, so a
+    // divergence would surface later as an unusable transaction; state the
+    // requirement here instead of relying on that.
+    const [{ server: serverSignedCheckpointTx }] = matchServerCheckpoints(
+        signedCheckpointTxs,
+        [unsignedCheckpointTx],
+        "submitTx",
+    );
     const serverPubkeyHex = hex.encode(serverXOnlyPublicKey);
     if (!verifySignatures(serverSignedCheckpointTx, 0, [serverPubkeyHex], checkpointLeafHash)) {
         throw new Error("Invalid server signature in checkpoint transaction");

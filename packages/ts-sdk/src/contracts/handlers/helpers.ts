@@ -129,12 +129,106 @@ const CLTV_HEIGHT_THRESHOLD = 500_000_000n;
  * Returns false if the relevant context field is missing.
  */
 export function isCltvSatisfied(context: PathContext, locktime: bigint): boolean {
+    // Deliberately the same clock `cltvMaturity` reads. Offering a path and
+    // refusing one are two answers to one question, and sourcing them from
+    // different clocks lets a wallet offer a leaf its own guard would reject.
+    return cltvMaturity(context, locktime) === "satisfied";
+}
+
+/**
+ * How an absolute (CLTV) locktime stands against `context`, keeping "not yet"
+ * and "cannot tell" apart.
+ *
+ * {@link isCltvSatisfied} folds both into `false`, which is the right answer
+ * for OFFERING a path — an unknown maturity is not an invitation to spend. It
+ * is the wrong answer for REFUSING one: a height-typed locktime with no
+ * `blockHeight` in context is unreadable, not immature, and turning that into a
+ * refusal would reject spends that are perfectly valid. Anything that fails a
+ * caller rather than merely withholding an option must ask this instead.
+ *
+ * - `satisfied` — matured; the leaf behind it is spendable now.
+ * - `pending`   — definitively not matured yet, with a maturity to quote.
+ * - `unknown`   — height-typed with no chain tip supplied. Say nothing.
+ */
+export type CltvMaturity = "satisfied" | "pending" | "unknown";
+
+export function cltvMaturity(context: PathContext, locktime: bigint): CltvMaturity {
     if (locktime < CLTV_HEIGHT_THRESHOLD) {
-        if (context.blockHeight === undefined) return false;
-        return BigInt(context.blockHeight) >= locktime;
+        if (context.blockHeight === undefined) return "unknown";
+        return BigInt(context.blockHeight) >= locktime ? "satisfied" : "pending";
     }
-    const currentTimeSec = BigInt(Math.floor(context.currentTime / 1000));
-    return currentTimeSec >= locktime;
+    // Chain time where we have it. The wall-clock fallback is a decent estimate
+    // and a poor authority: the server matures this against median-time-past,
+    // which trails wall clock, so a drifting host reads the boundary wrong in
+    // whichever direction it drifted — including "not yet" for something the
+    // chain already accepts.
+    return nowSeconds(context) >= locktime ? "satisfied" : "pending";
+}
+
+/** Chain time if the context carries it, else the local clock. Seconds. */
+function nowSeconds(context: PathContext): bigint {
+    return BigInt(Math.floor(context.chainTime ?? context.currentTime / 1000));
+}
+
+/** Whether `locktime` is height-typed (BIP65), for phrasing a maturity. */
+export function isHeightLocktime(locktime: bigint): boolean {
+    return locktime < CLTV_HEIGHT_THRESHOLD;
+}
+
+/**
+ * The VHTLC spendability refusal, shared by the v1 and v2 handlers.
+ *
+ * Both versions gate the sender's only collaborative leaf —
+ * `refundWithoutReceiver` — on `refundLocktime`. Before it matures the sender
+ * has nothing collaborative to spend: `claim` belongs to the receiver and needs
+ * a preimage, and `refund` / `nonInteractiveRefund` need the receiver's
+ * signature, which is precisely what a refunding sender cannot get. So an
+ * explicit `settle({ inputs })` naming that lockup is refusable with certainty
+ * rather than guessed at.
+ *
+ * Lives here rather than in either handler because v1 and v2 differ only in
+ * which preimage fragment their claim leaves are built from; a rule applied to
+ * one and not the other is the realistic drift, and the same reasoning already
+ * keeps their path selection in step.
+ *
+ * Silent in every case that is not a certainty:
+ * - not collaborative — a unilateral spend answers to its CSV, not this
+ * - not the sender — the receiver's claim turns on a preimage this cannot see
+ * - maturity `unknown` — height-typed with no chain tip; unreadable, not immature
+ */
+export function assertVhtlcSpendableNow(contract: Contract, context: PathContext): void {
+    if (!context.collaborative) return;
+    if (resolveRole(contract, context) !== "sender") return;
+
+    const raw = contract.params?.refundLocktime;
+    if (raw === undefined) return;
+    let refundLocktime: bigint;
+    try {
+        refundLocktime = BigInt(raw);
+    } catch {
+        // Unparseable params are someone else's error to report, not ours to
+        // guess at — createScript already refuses them with a better message.
+        return;
+    }
+
+    if (cltvMaturity(context, refundLocktime) !== "pending") return;
+
+    const [matures, now] = isHeightLocktime(refundLocktime)
+        ? [`block ${refundLocktime}`, `${context.blockHeight}`]
+        : [
+              `${new Date(Number(refundLocktime) * 1000).toISOString()}`,
+              new Date(context.currentTime).toISOString(),
+          ];
+    // Addressed to the sender — the only role that reaches here. Do not offer
+    // them the preimage claim: that is the receiver's leaf and the receiver's
+    // secret, and suggesting it sends the reader looking for a key they will
+    // never hold.
+    throw new Error(
+        `vhtlc ${contract.script} cannot be spent yet: its refund path opens at ${matures}, ` +
+            `now ${now}. Until then the lockup is the receiver's to claim, and the server ` +
+            `rejects a spend of it. Retry after ${matures}, or wait for the receiver to ` +
+            `claim it with the preimage.`,
+    );
 }
 
 /**
@@ -153,9 +247,12 @@ export function isCsvSpendable(context: PathContext, sequence?: number): boolean
     }
 
     if (timelock.type === "seconds") {
+        // The input's own confirmation time is the CSV's origin — a relative
+        // timelock is measured from when THIS coin confirmed, not from now.
+        // Absent, the age is unknowable and the answer is no.
         const blockTime = context.vtxo.status.block_time;
         if (blockTime === undefined) return false;
-        return context.currentTime / 1000 - blockTime >= Number(timelock.value);
+        return Number(nowSeconds(context)) - blockTime >= Number(timelock.value);
     }
 
     return false;

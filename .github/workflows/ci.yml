@@ -42,6 +42,9 @@ jobs:
       - name: Type-check boltz-swap
         run: pnpm -C packages/boltz-swap run typecheck
 
+      - name: Type-check swap
+        run: pnpm -C packages/swap run typecheck
+
       - name: Smoke-test ts-sdk dist
         run: pnpm -C packages/ts-sdk run smoke:dist
 
@@ -53,6 +56,12 @@ jobs:
 
       - name: Verify boltz-swap publish shape
         run: cd packages/boltz-swap && npm pack --dry-run --ignore-scripts
+
+      - name: Smoke-test swap dist
+        run: pnpm -C packages/swap run smoke:dist
+
+      - name: Verify swap publish shape
+        run: cd packages/swap && npm pack --dry-run --ignore-scripts
 
       - name: Unit tests
         run: pnpm run test:unit
@@ -72,6 +81,7 @@ jobs:
             group: arkade-assets
             test_files: >-
               test/e2e/asset.test.ts
+              test/e2e/asset-covenant.test.ts
               test/e2e/arkadeCash.test.ts
               test/e2e/liquidation.test.ts
           - package: ts-sdk
@@ -92,12 +102,21 @@ jobs:
               test/e2e/exitDataCapture.test.ts
               test/e2e/vhtlc.test.ts
               test/e2e/non-interactive-htlc.test.ts
+              test/e2e/non-interactive-refund-without-receiver.test.ts
               test/e2e/indexer.test.ts
               test/e2e/electrum.test.ts
               test/e2e/onchain.test.ts
               test/e2e/deprecatedSignerMigration.test.ts
               test/e2e/digestMismatch.test.ts
-          - package: boltz-swap
+          # boltz-swap is deprecated: no integration stack is spun up for it.
+          # The check job still type-checks, builds and smoke-tests it, since
+          # release.yml can still publish the package.
+          - package: swap
+            group: all
+            test_files: ""
+          # Same package, second stack: the RFQ corridor needs seconds-typed
+          # arkd timelocks and the offer corridor needs block-typed ones.
+          - package: swap-rfq
             group: all
             test_files: ""
 

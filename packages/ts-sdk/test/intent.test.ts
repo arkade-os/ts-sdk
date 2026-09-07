@@ -1,6 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { Intent } from "../src/intent";
 import { Transaction } from "../src/utils/transaction";
+import { hex } from "@scure/base";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import {
+    getArkPsbtFields,
+    MultisigTapscript,
+    PrevArkTxField,
+    VtxoScript,
+    type IntentCoin,
+} from "../src";
 
 const PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE = 0x09;
 
@@ -87,6 +96,58 @@ describe("Intent", () => {
             const proof = Intent.create("msg", inputs);
 
             expect(proof.lockTime).toBe(0);
+        });
+    });
+
+    describe("prevTx (emulator v0.0.7+)", () => {
+        function vtxoCoin(seed: number, prevTx?: Uint8Array) {
+            const vs = new VtxoScript([
+                MultisigTapscript.encode({
+                    pubkeys: [
+                        schnorr.getPublicKey(new Uint8Array(32).fill(seed)),
+                        schnorr.getPublicKey(new Uint8Array(32).fill(seed + 1)),
+                    ],
+                }).script,
+            ]);
+            return {
+                txid: hex.encode(new Uint8Array(32).fill(seed)),
+                vout: 0,
+                value: 1000,
+                tapTree: vs.encode(),
+                forfeitTapLeafScript: vs.leaves[0],
+                intentTapLeafScript: vs.leaves[0],
+                prevTx,
+            } as unknown as IntentCoin;
+        }
+
+        it("puts the field on the coin's proof input, never on the synthetic input 0", () => {
+            const prevTx = new Uint8Array(40).fill(3);
+
+            const proof = Intent.create("msg", [vtxoCoin(1, prevTx)]);
+
+            expect(getArkPsbtFields(proof, 0, PrevArkTxField)).toHaveLength(0);
+            const onCoin = getArkPsbtFields(proof, 1, PrevArkTxField);
+            expect(onCoin).toHaveLength(1);
+            expect(hex.encode(onCoin[0])).toBe(hex.encode(prevTx));
+        });
+
+        it("keeps input 0's witnessUtxo at the first coin's script with a zero amount", () => {
+            // The emulator synthesises a one-output tx for input 0 from exactly
+            // these two values, so they are part of the wire contract.
+            const coin = vtxoCoin(5, new Uint8Array(40).fill(3));
+
+            const proof = Intent.create("msg", [coin]);
+
+            expect(proof.getInput(0).witnessUtxo!.amount).toBe(0n);
+            expect(hex.encode(proof.getInput(0).witnessUtxo!.script)).toBe(
+                hex.encode(proof.getInput(1).witnessUtxo!.script),
+            );
+        });
+
+        it("attaches nothing when the coin carries no prevTx", () => {
+            const proof = Intent.create("msg", [vtxoCoin(9)]);
+
+            expect(getArkPsbtFields(proof, 1, PrevArkTxField)).toHaveLength(0);
         });
     });
 

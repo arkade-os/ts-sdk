@@ -1,7 +1,12 @@
 {
     "name": "@arkade-os/sdk",
-    "version": "0.4.54",
+    "version": "0.4.69",
     "description": "TypeScript SDK for building Bitcoin wallets using the Arkade protocol",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/arkade-os/ts-sdk.git",
+        "directory": "packages/ts-sdk"
+    },
     "type": "module",
     "main": "./dist/index.cjs",
     "module": "./dist/index.js",
@@ -134,7 +139,7 @@
         "registry": "https://registry.npmjs.org/"
     },
     "engines": {
-        "node": ">=22.12.0 <25"
+        "node": ">=22.12.0 <27"
     },
     "scripts": {
         "build": "tsup",
@@ -156,8 +161,8 @@
         "test:integration-docker": "ARK_ENV=docker vitest run test/e2e/**",
         "test:watch": "vitest",
         "test:coverage": "vitest run --coverage",
-        "format": "prettier --write src test examples",
-        "lint": "prettier --check src test examples && pnpm run check:vtxo",
+        "format": "biome format --write src test examples",
+        "lint": "biome format src test examples && pnpm run check:vtxo",
         "audit": "pnpm audit",
         "prepack": "pnpm run build",
         "prepublishOnly": "pnpm run build"
@@ -177,7 +182,9 @@
         "@types/better-sqlite3": "7.6.13",
         "@vitest/coverage-v8": "3.2.7",
         "better-sqlite3": "12.6.2",
-        "typedoc": "^0.28.19"
+        "tsup": "^8.5.0",
+        "typedoc": "^0.28.19",
+        "typescript": "5.9.2"
     },
     "peerDependencies": {
         "@react-native-async-storage/async-storage": ">=1.0.0",

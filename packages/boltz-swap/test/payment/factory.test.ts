@@ -36,6 +36,20 @@ const wallet = () =>
     }) as any;
 
 describe("createDefaultPaymentRouter(wallet, swaps)", () => {
+    it("routes an Arkade asset payment, which this factory used to have no rail for", async () => {
+        // `ark-asset` is registered here as well as in core: a Lightning-capable
+        // app choosing this factory must not silently lose asset payments. It
+        // never competes with `ark` — the amount decides which is available —
+        // so none of the BTC rankings in this file change.
+        const arkAddr =
+            "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
+        const req = { raw: arkAddr, assets: [{ assetId: "aa".repeat(34), amount: 500n }] };
+        const router = createDefaultPaymentRouter(wallet(), swaps());
+
+        expect((await router.options(req)).map((o) => o.railId)).toEqual(["ark-asset"]);
+        expect((await router.route(req)).assets?.delivered.amount).toBe(500n);
+    });
+
     it("fans a unified BIP21 URI out across all four rails, ranked by priority", async () => {
         const router = createDefaultPaymentRouter(wallet(), swaps());
         const opts = await router.options({

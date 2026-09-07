@@ -9,14 +9,63 @@ import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 
 /**
- * Contract lifecycle state. Both states stay monitored — the watcher
- * subscribes and sweeps every registered contract regardless
- * (see {@link ContractWatcher.getWatchedContracts}), because a retired
- * receive address can still be paid. `inactive` only demotes a contract
- * out of receive-address selection; it does **not** unsubscribe it.
- * Use {@link IContractManager.deleteContract} to stop watching.
+ * Contract lifecycle state. Neither state affects coverage: the watcher
+ * subscribes and sweeps a contract according to {@link Contract.watch}
+ * alone, because a retired receive address can still be paid. `inactive`
+ * only demotes a contract out of receive-address selection; it does
+ * **not** unsubscribe it. To stop watching but keep the row, set
+ * {@link ContractWatchState} to `retained`; to drop both, use
+ * {@link IContractManager.deleteContract}.
  */
 export type ContractState = "active" | "inactive";
+
+/**
+ * Whether a contract is covered by background monitoring — the
+ * subscription and the failsafe/indexer sweep
+ * ({@link ContractWatcher.getWatchedContracts}).
+ *
+ * Orthogonal to {@link ContractState}, which governs receive-address
+ * selection only. A contract can be the wallet's display address and
+ * watched, or terminal and retained; the two questions never answer each
+ * other.
+ *
+ * NArk calls this `ContractActivityState` (`Active` / `Inactive` /
+ * `AwaitingFundsBeforeDeactivate`). The concept is the same; the names
+ * differ because TS already spends `active`/`inactive` on
+ * {@link ContractState}, and a row reading `state: "active",
+ * activityState: "inactive"` would be unreadable.
+ */
+export type ContractWatchState =
+    /** Subscribed and polled. */
+    | "watched"
+    /**
+     * Watched until the first VTXO lands at the script, then
+     * automatically demoted to `retained` by the contract manager.
+     * For one-shot destinations — a refund address, a swap lockup —
+     * that only need coverage until they are funded.
+     */
+    | "awaiting-funds"
+    /**
+     * Kept for history, restore and classification, but absent from
+     * every background channel. The row still resolves in
+     * `getContracts`, still annotates its VTXOs, and still feeds
+     * transaction history; nothing subscribes or polls it.
+     */
+    | "retained";
+
+/**
+ * A contract's watch state, defaulting rows written before the field
+ * existed — including retired (`inactive`) receive addresses — to
+ * `watched`, which is the coverage they have today.
+ */
+export function watchStateOf(contract: Pick<Contract, "watch">): ContractWatchState {
+    return contract.watch ?? "watched";
+}
+
+/** Whether a contract belongs in the subscription and sweep scope. */
+export function isWatchedContract(contract: Pick<Contract, "watch">): boolean {
+    return watchStateOf(contract) !== "retained";
+}
 
 /**
  * Represents a contract that can receive and manage virtual outputs.
@@ -73,6 +122,12 @@ export interface Contract {
 
     /** Current state of the contract. */
     state: ContractState;
+
+    /**
+     * Background-monitoring scope. Absent means `watched`.
+     * @see ContractWatchState
+     */
+    watch?: ContractWatchState;
 
     /** Unix timestamp in milliseconds when this contract was created. */
     createdAt: number;
@@ -162,6 +217,18 @@ export interface PathContext {
      */
     role?: string;
 
+    /**
+     * Chain tip timestamp in SECONDS, when known.
+     *
+     * Timelocks mature against chain time, not the machine's clock, so any
+     * seconds-typed comparison should prefer this and fall back to
+     * {@link currentTime} only when it is absent. The two differ by more than
+     * pedantry: the server matures absolute locktimes against median-time-past,
+     * which trails wall clock, and a host whose clock drifts turns a local
+     * decision into a wrong one in whichever direction it drifted.
+     */
+    chainTime?: number;
+
     /** The specific virtual output being evaluated. */
     vtxo?: VirtualCoin;
 }
@@ -240,6 +307,52 @@ export interface ContractHandler<P = Record<string, unknown>, S extends VtxoScri
      * Returns empty array if no paths are available.
      */
     getSpendablePaths(script: S, contract: Contract, context: PathContext): PathSelection[];
+
+    /**
+     * Whether this contract's VTXOs may be picked by *generic* wallet spending —
+     * send, settle, renewal, asset operations, offboard, `available` balance.
+     * Explicit-input APIs (`settle({ inputs })`, `sendBitcoin({ selectedVtxos })`,
+     * …) stay open regardless: naming an outpoint is the intent this gate protects.
+     *
+     * Pure, synchronous and offline — it runs inside the service worker, so no
+     * chain tip, no network, no live plugin object. Absent or `false` ⇒ NOT
+     * spendable: a type core cannot reason about must not leak by omission.
+     *
+     * No `script` parameter: deriving it costs a taproot tree per contract on a
+     * read path (#521) and no shipped handler needs it. A handler that does can
+     * call its own `createScript(contract.params)`.
+     */
+    isGenericallySpendable?(contract: Contract): boolean;
+
+    /**
+     * Refuse a spend this contract definitively cannot make right now, with a
+     * reason the caller can act on. Called before anything is signed or
+     * submitted, for inputs the caller named explicitly.
+     *
+     * This is the counterpart to {@link isGenericallySpendable}, not a
+     * duplicate of it. That gate keeps escrow out of GENERIC selection and
+     * deliberately leaves explicit-input APIs open, because naming an outpoint
+     * is the intent it protects. Naming one too early is still a mistake
+     * though, and without this it is a mistake the server reports — as a
+     * protocol-level rejection, after the round trip, in terms that do not name
+     * the timelock that was not yet mature.
+     *
+     * **Throw only on a definite no.** Absent, silent, or unsure all mean "no
+     * opinion" and the spend proceeds. A handler must not refuse merely because
+     * it found no path: `getSpendablePaths` legitimately returns empty for
+     * spendable contracts — `arkade`'s skips every covenant leaf, so a program
+     * spendable only through its emulator-signed leaf reports nothing — and an
+     * unreadable timelock (height-typed with no chain tip) is unknown, not
+     * immature. @see cltvMaturity, which keeps those apart.
+     *
+     * Returning a promise is allowed so a handler needing I/O is not forced to
+     * throw synchronously — callers await the result. Prefer synchronous where
+     * possible: this runs on the path between a caller's decision to spend and
+     * the spend itself.
+     *
+     * @throws Error when the contract provably cannot be spent at `context`
+     */
+    assertSpendableNow?(script: S, contract: Contract, context: PathContext): void | Promise<void>;
 }
 
 /**
