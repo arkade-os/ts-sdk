@@ -49,10 +49,17 @@ const FAUCET_SATS = 30_000;
 const LOCKUP_SATS = 1_000;
 const INVOICE_SATS = 990;
 
-/** The card's ceiling, and the two sizes either side of it. */
-const MAX_BASE_SATS = 50_000;
-const OVER_CEILING_SATS = MAX_BASE_SATS * 10;
+/**
+ * The onchain card's window, and the three sizes around it. Its floor is well
+ * clear of `ONCHAIN_DUST_SATS` plus the claim fee the rail grosses up by, so
+ * `UNDER_FLOOR_SATS` is refused by the CARD rather than by the rail's own dust
+ * check — otherwise that case would pass for the wrong reason.
+ */
+const MIN_ONCHAIN_SATS = 5_000;
+const MAX_ONCHAIN_SATS = 50_000;
+const OVER_CEILING_SATS = MAX_ONCHAIN_SATS * 10;
 const IN_RANGE_SATS = 20_000;
+const UNDER_FLOOR_SATS = 1_000;
 
 /** Somewhere for the exit to pay; the regtest node's own is not needed. */
 const BCRT1 = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
@@ -96,7 +103,11 @@ const PREIMAGE = new Uint8Array(32).fill(11);
 const PAYMENT_HASH = hex.encode(sha256(PREIMAGE));
 const DISCOVERY_KEY = hex.encode(schnorr.getPublicKey(new Uint8Array(32).fill(4)));
 
-const cardOn = (quoteCorridor: "lightning" | "onchain"): DiscoveredMarket =>
+const cardOn = (
+    quoteCorridor: "lightning" | "onchain",
+    min: number,
+    max: number,
+): DiscoveredMarket =>
     ({
         pair: `BTC/${quoteCorridor}:BTC`,
         base_asset: { id: "btc", name: "Bitcoin", ticker: "BTC", decimals: 8 },
@@ -104,10 +115,10 @@ const cardOn = (quoteCorridor: "lightning" | "onchain"): DiscoveredMarket =>
         base_corridor: "arkade",
         quote_corridor: quoteCorridor,
         fee_bps: 0,
-        min_base_amount: "100",
-        max_base_amount: String(MAX_BASE_SATS),
-        min_quote_amount: "100",
-        max_quote_amount: String(MAX_BASE_SATS),
+        min_base_amount: String(min),
+        max_base_amount: String(max),
+        min_quote_amount: String(min),
+        max_quote_amount: String(max),
         solver: "stub",
         source: "https://registry.example/regtest.json",
         sourceType: "registry",
@@ -115,7 +126,11 @@ const cardOn = (quoteCorridor: "lightning" | "onchain"): DiscoveredMarket =>
         transports: { nostr: { relays: ["wss://relay.invalid"] } },
     }) as unknown as DiscoveredMarket;
 
-const CARDS = [cardOn("lightning"), cardOn("onchain")];
+// The lightning card keeps a low floor: the expiry case quotes a 990 sat invoice.
+const CARDS = [
+    cardOn("lightning", 100, MAX_ONCHAIN_SATS),
+    cardOn("onchain", MIN_ONCHAIN_SATS, MAX_ONCHAIN_SATS),
+];
 
 const invoice = (): string =>
     encodeInvoice({
@@ -242,9 +257,16 @@ describe("a rail that refuses (regtest)", () => {
         const client = clientOn();
         const router = createSwapPaymentRouter(wallet, client, { claimFeeRateSatVb: 2 });
 
-        // Over the claim's dust floor, so it is the CARD refusing, not the rail.
-        const options = await router.options({ raw: BCRT1, amount: 400 });
+        // Clear of the rail's own dust check even after the claim-fee gross-up,
+        // so it is the CARD refusing this size and not the rail.
+        const resolution = await client.resolve({
+            to: BCRT1,
+            amount: BigInt(UNDER_FLOOR_SATS),
+            amountOn: "take",
+        });
+        expect(resolution.eligible).toBe(0);
 
+        const options = await router.options({ raw: BCRT1, amount: UNDER_FLOOR_SATS });
         expect(options.map((o) => o.railId)).toEqual(["onchain"]);
         await client[Symbol.asyncDispose]();
     }, 120_000);
