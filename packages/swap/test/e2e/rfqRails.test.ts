@@ -290,7 +290,11 @@ describe("a quote that expires (regtest)", () => {
         const seen: { status: string; error?: unknown }[] = [];
         handle.subscribe((u) => seen.push({ status: u.status, error: u.error }));
 
-        await expect(handle.settled()).rejects.toMatchObject({ name: "QuoteExpired" });
+        // Bounded: a refusal is immediate, so a client that funds instead fails
+        // here by name rather than by running the whole case out of time.
+        await expect(handle.settled({ timeoutMs: 30_000 })).rejects.toMatchObject({
+            name: "QuoteExpired",
+        });
         expect(seen.at(-1)).toMatchObject({ status: "failed" });
         expect((seen.at(-1)?.error as Error).name).toBe("QuoteExpired");
         // The refusal came before persistence, which is the whole point of it.
