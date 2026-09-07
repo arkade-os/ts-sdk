@@ -40,9 +40,13 @@ const quote = await client.quote({
 const outcome = await client.accept(quote);
 ```
 
-`quote` is network-free terms and persists nothing; `accept` writes the record
-before funding. Most applications skip both and use a verb — `pay`, `receive`
-or `exchange` — which run `quote` → fee ceiling → `accept` as one call:
+`quote` writes nothing durable, but it is not network-free: it loads the market
+index and runs one RFQ round trip to a solver, disclosing the destination's
+amount and pairing to get binding, verified terms. The offline pre-disclosure
+read is `resolve` — it answers what the active snapshot would serve without a
+round trip. `accept` writes the record before funding. Most applications skip
+all three and use a verb — `pay`, `receive` or `exchange` — which run `quote` →
+fee ceiling → `accept` as one call:
 
 ```ts
 const result = await client.pay(destination, { amount: 50_000n });
@@ -133,10 +137,13 @@ refund path end to end.
 
 ## Destination Claiming
 
-The corridor registry is the current source-level API for parsing a destination
-string:
+The corridor registry is the source-level API for parsing a destination
+string, exported from `@arkade-os/swap/advanced` (the orchestration subpath —
+the verbs claim destinations themselves, so the root does not carry it):
 
 ```ts
+import { corridorSet, resolveCorridorBase } from "@arkade-os/swap/advanced";
+
 const broadcaster = await wallet.getArkadeBroadcaster();
 const operator = {
     getInfo: () => wallet.getArkadeInfo({ requireLive: true }),

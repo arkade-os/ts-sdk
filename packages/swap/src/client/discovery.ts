@@ -47,18 +47,38 @@ import { CORRIDORS } from "./corridor";
 import { DiscoverySnapshotUnavailable } from "./errors";
 import type { SnapshotRef } from "./quote";
 
-/** Where the client's market data comes from. Every field is optional: a
- * client with none of it resolves against nothing and says so. */
+/**
+ * The default solver registry index per network, derived the way
+ * `ESPLORA_URL[network]` is for the onchain chain source: the wallet reports a
+ * network, and the client asks the reference registry's index for it.
+ *
+ * Every indexed network has an entry — the registry's CI publishes a per-network
+ * index (possibly an empty one) for each, so a caller with nothing but `wallet`
+ * and `repository` discovers against the same curation the ecosystem reads. An
+ * explicit `registryUrl` overrides the default; `null` opts out of a registry
+ * entirely.
+ */
+export const REGISTRY_URL: Record<IndexedNetwork, string> = {
+    bitcoin: "https://arkade-os.github.io/solver-registry/bitcoin.json",
+    signet: "https://arkade-os.github.io/solver-registry/signet.json",
+    mutinynet: "https://arkade-os.github.io/solver-registry/mutinynet.json",
+    regtest: "https://arkade-os.github.io/solver-registry/regtest.json",
+};
+
+/** Where the client's market data comes from. Every field is optional: absent
+ * registry config falls back to {@link REGISTRY_URL} for the wallet's network,
+ * and an injected snapshot needs no registry at all. */
 export interface DiscoveryConfig {
     /**
      * The network's solver registry index URL.
      *
-     * Config rather than an inference: nothing in the wallet, the operator info
-     * or this package names a registry, so "inferred from the wallet" reaches
-     * only as far as the network. Absent means no source at all, which is the
-     * unavailable case and not an empty market set.
+     * Absent means the network default ({@link REGISTRY_URL}), which an explicit
+     * URL overrides — a self-hosted registry, a fixture, or a pinned fork.
+     * `null` is the deliberate opt-out: no registry is asked for anything,
+     * which — without an injected snapshot — is the unavailable case and not an
+     * empty market set.
      */
-    readonly registryUrl?: string;
+    readonly registryUrl?: string | null;
     /** Locally pinned solver cards, merged with the registry's. */
     readonly localCards?: readonly LocalCardInput[];
     /**
@@ -186,7 +206,15 @@ export interface DiscoveryIndexInput {
 export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
     const config = input.config ?? {};
     const network = config.network ?? input.network;
-    const registry = config.registryUrl;
+    // Explicit config wins, `null` disables, and absent falls back to the
+    // network's default registry — the same shape as `ESPLORA_URL[network]`
+    // for the onchain chain source.
+    const registry =
+        config.registryUrl === undefined
+            ? isIndexedNetwork(network)
+                ? REGISTRY_URL[network]
+                : undefined
+            : (config.registryUrl ?? undefined);
 
     const injected: DiscoverySnapshot | undefined = config.snapshot && {
         markets: config.snapshot,
@@ -210,7 +238,8 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
 
     const whyUnavailable = (): string => {
         if (!isIndexedNetwork(network)) return `no market index is published for ${network}`;
-        if (!registry) return "no registry URL is configured, and no snapshot was injected";
+        if (!registry)
+            return "the registry was disabled and no snapshot was injected (registryUrl: null)";
         return `the registry ${registry} could not be reached and nothing is cached`;
     };
 

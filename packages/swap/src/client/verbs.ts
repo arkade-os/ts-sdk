@@ -25,7 +25,7 @@ import { MaxFeeExceeded } from "./errors";
 import type { AmountOn } from "./rfqAmount";
 import type { AssetRef, Quote, QuoteInput } from "./quote";
 import type { Swap } from "./record";
-import type { Artifact } from "./route";
+import type { DepositArtifact } from "./route";
 import { satsOf } from "./sats";
 
 /**
@@ -95,6 +95,28 @@ export interface ExchangeOptions {
 }
 
 /**
+ * The artifact a receive over corridor `C` comes back with.
+ *
+ * Corridor determines kind, not just shape: only `lightning` mints an invoice —
+ * that corridor is the hand-off of a bolt11 the solver created, so the artifact
+ * *is* the request's payload — and every other implemented receive is a deposit
+ * the payer sends to. Without the conditional the return is the full
+ * `Artifact` union, and `receive({ via: "lightning" }).artifact.bolt11` — the
+ * exact thing the quickstart does — does not compile without a manual `kind`
+ * check. Typed here, beside the verb, because the invoice choice is `receive`'s
+ * promise rather than a fact about `Artifact` itself.
+ *
+ * Distributed over `C` for the reason {@link DepositArtifact} is: the default
+ * `CorridorId` lands on the full union rather than on one member's fields
+ * widened over every corridor's.
+ */
+export type ReceiveArtifact<C extends CorridorId = CorridorId> = C extends CorridorId
+    ? C extends "lightning"
+        ? { kind: "invoice"; bolt11: string }
+        : DepositArtifact<C>
+    : never;
+
+/**
  * What `receive` answers with: a {@link Swap} whose artifact is a guarantee
  * rather than a maybe.
  *
@@ -104,7 +126,9 @@ export interface ExchangeOptions {
  * always has one. Narrowing the field on the base type is not open to an
  * intersection, so this is the shape that says it.
  */
-export type ReceiveRequest = Swap & { readonly artifact: Artifact };
+export type ReceiveRequest<C extends CorridorId = CorridorId> = Swap & {
+    readonly artifact: ReceiveArtifact<C>;
+};
 
 /**
  * What `pay` answers with.
@@ -227,7 +251,10 @@ export const pay = async (
  * is real: a receive route has one by construction, and a client that answered
  * without one has failed rather than answered.
  */
-export const receive = async (deps: VerbDeps, options: ReceiveOptions): Promise<ReceiveRequest> => {
+export const receive = async <C extends CorridorId = CorridorId>(
+    deps: VerbDeps,
+    options: ReceiveOptions & { readonly via: C },
+): Promise<ReceiveRequest<C>> => {
     const swap = await settle(
         deps,
         {
@@ -245,7 +272,11 @@ export const receive = async (deps: VerbDeps, options: ReceiveOptions): Promise<
             `receive over ${options.via} returned no artifact — there is nothing to show a payer`,
         );
     }
-    return swap as ReceiveRequest;
+    // Widening rather than checking: the artifact's kind is pinned by
+    // `options.via` four layers down (the route the corridor resolves to is
+    // what mints it), a correspondence the quote pipeline has no type to say
+    // it in — `Quote.artifact` is the untied `Artifact`. The cast states it.
+    return swap as ReceiveRequest<C>;
 };
 
 /** Swap one Arkade asset for another. */

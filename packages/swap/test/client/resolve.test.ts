@@ -109,7 +109,7 @@ describe("the destination, parsed once", () => {
             instrument: { kind: "invoice", amount: 5_000n },
         });
         // The invoice pins the take leg by existing.
-        expect(resolution.amount).toEqual({ value: 5_000n, on: "take", source: "invoice" });
+        expect(resolution.amount).toEqual({ value: 5_000n, on: "take", source: "destination" });
         expect(resolution.eligible).toBe(1);
         expect(resolution.market?.kind === "card" && resolution.market.backend).toBe("rfq");
     });

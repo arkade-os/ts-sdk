@@ -24,6 +24,7 @@ import {
     type CorridorOverrides,
 } from "../../../src/client/corridors/deps";
 import { MissingCorridorDep, OperatorUnreachable } from "../../../src/client/errors";
+import { ONCHAIN_CLAIM_VSIZE } from "../../../src/onchainHtlc";
 import type { AssetSwapRepository } from "../../../src/repository";
 import type { SwapOperator } from "../../../src/refund";
 import { OPERATOR_SIGNER, corridorBaseFor } from "./fixtures";
@@ -134,6 +135,74 @@ describe("resolveCorridorDeps", () => {
                     corridorBaseFor("regtest"),
                 ),
             ).toThrow(/the onchain corridor has no chain source/);
+        });
+    });
+
+    describe("the onchain claim fee policy", () => {
+        it("defaults to the network floor and the vsize constant", () => {
+            const deps = resolveCorridorDeps("onchain", undefined, corridorBaseFor("regtest"));
+            expect(deps.claimFeeRateSatVb).toBe(1);
+            expect(deps.claimVsize).toBe(ONCHAIN_CLAIM_VSIZE);
+        });
+
+        it("takes explicit overrides verbatim", () => {
+            const deps = resolveCorridorDeps(
+                "onchain",
+                { onchain: { claimFeeRateSatVb: 3, claimVsize: 200 } },
+                corridorBaseFor("regtest"),
+            );
+            expect(deps.claimFeeRateSatVb).toBe(3);
+            expect(deps.claimVsize).toBe(200);
+        });
+
+        it("keeps `null` as manual mode and as no vsize override", () => {
+            // `null` on the rate opts out of the floor table; `null` on the
+            // vsize is "no override given", like `undefined`.
+            const deps = resolveCorridorDeps(
+                "onchain",
+                { onchain: { claimFeeRateSatVb: null, claimVsize: null } },
+                corridorBaseFor("regtest"),
+            );
+            expect(deps.claimFeeRateSatVb).toBe(undefined);
+            expect(deps.claimVsize).toBe(ONCHAIN_CLAIM_VSIZE);
+        });
+
+        it("refuses a non-positive or non-finite fee rate at resolution", () => {
+            for (const claimFeeRateSatVb of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+                expect(() =>
+                    resolveCorridorDeps(
+                        "onchain",
+                        { onchain: { claimFeeRateSatVb } },
+                        corridorBaseFor("regtest"),
+                    ),
+                ).toThrow(MissingCorridorDep);
+                expect(() =>
+                    resolveCorridorDeps(
+                        "onchain",
+                        { onchain: { claimFeeRateSatVb } },
+                        corridorBaseFor("regtest"),
+                    ),
+                ).toThrow(/the onchain corridor has no L1 claim fee rate/);
+            }
+        });
+
+        it("refuses a non-positive or non-finite vsize at resolution", () => {
+            for (const claimVsize of [0, -152, Number.NaN, Number.POSITIVE_INFINITY]) {
+                expect(() =>
+                    resolveCorridorDeps(
+                        "onchain",
+                        { onchain: { claimVsize } },
+                        corridorBaseFor("regtest"),
+                    ),
+                ).toThrow(MissingCorridorDep);
+                expect(() =>
+                    resolveCorridorDeps(
+                        "onchain",
+                        { onchain: { claimVsize } },
+                        corridorBaseFor("regtest"),
+                    ),
+                ).toThrow(/the onchain corridor has no L1 claim vsize/);
+            }
         });
     });
 

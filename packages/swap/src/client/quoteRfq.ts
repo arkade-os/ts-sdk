@@ -32,7 +32,13 @@ import {
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { sealClaimPacket } from "../claimPacket";
 import { l1ScriptForAddress } from "../onchainHtlc";
-import type { OnchainHtlc, OnchainHtlcParams, OnchainNetwork } from "../onchainHtlc";
+import {
+    ONCHAIN_DUST_SATS,
+    type OnchainHtlc,
+    type OnchainHtlcParams,
+    type OnchainNetwork,
+} from "../onchainHtlc";
+import { claimFeeSats } from "../payment/onchainSwap";
 import {
     deriveLightningReceive,
     deriveLightningSend,
@@ -472,6 +478,40 @@ const quoteOnchainSend = async (
     const pair = rfqPairFor(input.legs.give, input.legs.take);
     const rfqId = newRfqId();
 
+    // **The claim fee is this leg's whole subtlety, and the take pin is
+    // recipient-EXACT.** `claimOnchainFill` pays the claim's miner fee out of
+    // the HTLC output (`payout = utxo.amount - fee`), so the solver locking
+    // `pinned.value` would deliver `pinned.value - fee` to the recipient —
+    // this quote would be reporting a fee it does not charge and short-paying
+    // by a number the caller never saw. What the recipient pinned is what the
+    // recipient must NET, so when the take side is pinned and the corridor can
+    // price the claim ({@link OnchainCorridorDeps.claimFeeRateSatVb}), the
+    // solver is asked for `pinned.value + claimFee` instead — the same
+    // arithmetic the `onchain-swap` payment rail runs (`inputFor`), against
+    // the same rate the default claim will spend. With no rate resolvable the
+    // exchange stays verbatim: no gross-up, no default claim, and no fee this
+    // side invents for the caller. The give-pinned case is untouched: it pins
+    // what WE fund, and the take leg is the solver's to size.
+    const onchain = input.corridors.get("onchain").deps;
+    const claimFee =
+        pinned.on === "take" && onchain.claimFeeRateSatVb !== undefined
+            ? claimFeeSats({
+                  claimFeeRateSatVb: onchain.claimFeeRateSatVb,
+                  claimVsize: onchain.claimVsize,
+              })
+            : undefined;
+    // What the SOLVER is shown, and what the reply is verified against. The
+    // gross-up is OUR side of the deal, so it rides inside the pin both on
+    // the wire and in `verifyQuotedAmount` — a solver answering the grossed
+    // request verbatim passes, and one repricing either fails that check or,
+    // in the degenerate end, the dust floor below. The recipient's own number
+    // never reaches the wire: with it would come a solver who knows what to
+    // short us by.
+    const quoted: PinnedAmount =
+        claimFee === undefined
+            ? pinned
+            : { on: pinned.on, value: pinned.value + claimFee, source: pinned.source };
+
     // Two keys, both the wallet's: the claim secret carries P and the covenant's
     // sender role, and the L1 HTLC's claim leaf binds a key the wallet can sign
     // with later. Asking twice is what keeps them distinct on a wallet that
@@ -492,12 +532,36 @@ const quoteOnchainSend = async (
                 amount: 0,
                 amountSide: toRfqAmountSide(pinned.on),
             }),
-            pinned.value,
+            // The grossed pin, when one is active — see above. The solver's
+            // obligation is the HTLC amount; the recipient's own amount is
+            // that minus the claim's fee.
+            quoted.value,
         ),
     );
     verifyPair(wire.pair, pair);
     const parsed = parseRfqQuote(wire);
-    verifyQuotedAmount({ pair, pinned, give: parsed.give, take: parsed.take });
+    // Verified against the pin the solver was SHOWN. On a take-pinned quote
+    // with a fee rate active that is the grossed value: the take leg must be
+    // `pinned + claimFee` exactly, and the negative-spread guard still
+    // compares the two wire legs against each other, unchanged.
+    verifyQuotedAmount({ pair, pinned: quoted, give: parsed.give, take: parsed.take });
+
+    if (claimFee !== undefined) {
+        // What the recipient NETS: the HTLC the solver locks, minus the claim
+        // this wallet will broadcast to take it. With a cooperative solver
+        // this is exactly `pinned.value` — the check below is for the rest.
+        // `buildHtlcClaim` applies this same floor at claim time, with the
+        // lockup funded and the only way out a refund; applied here it is a
+        // refusal before anything moves (the rail's `quote()` does the same).
+        const payout = parsed.take - claimFee;
+        if (payout < ONCHAIN_DUST_SATS) {
+            throw new Error(
+                `arkade -> onchain: the take leg of ${parsed.take} sat leaves ${payout} sat ` +
+                    `after the ${claimFee} sat claim fee, under the ${ONCHAIN_DUST_SATS} sat ` +
+                    "dust limit the claim is built against — refusing before anything is funded",
+            );
+        }
+    }
 
     const covenant = covenantInputs(input);
     const derived = verifyingDerivation(() =>
@@ -531,6 +595,19 @@ const quoteOnchainSend = async (
         floorSeconds: input.policy?.quoteTtlFloorSeconds,
     });
 
+    // The recipient-exact restatement, mirroring the `onchain-swap` rail's
+    // `receiverExact`: when a claim fee is active the take leg the QUOTE
+    // reports is the HTLC minus it — what the recipient actually nets — and
+    // `fee` carries both halves of the cost, the solver's spread and the
+    // claim the trader pays out of the payout. The invariant `give = take +
+    // fee` holds on both arms of the conditional, which is why the wire's
+    // grossed take leg never reaches the record: `parsed.take - claimFee`
+    // plus `spread + claimFee` sums to `parsed.give` exactly. With no fee
+    // rate the two collapse to the verbatim legs they always were.
+    const reportedTake = claimFee === undefined ? parsed.take : parsed.take - claimFee;
+    const reportedFee =
+        claimFee === undefined ? parsed.give - parsed.take : parsed.give - parsed.take + claimFee;
+
     return {
         quote: {
             id: input.quoteId,
@@ -539,7 +616,7 @@ const quoteOnchainSend = async (
                 { ...input.endpoints.take, instrument: destination },
             ),
             give: { asset: input.endpoints.give.asset, amount: parsed.give },
-            take: { asset: input.endpoints.take.asset, amount: parsed.take },
+            take: { asset: input.endpoints.take.asset, amount: reportedTake },
             lock: { hash: paymentHash },
             market: input.market,
             solver: parsed.solver,
@@ -548,7 +625,7 @@ const quoteOnchainSend = async (
             // optional there, a solver may carry it in the profile instead, and
             // the derivation is what settles which one this covenant used.
             refundLocktime: derived.refundLocktime,
-            fee: { amount: parsed.give - parsed.take, asset: input.endpoints.give.asset },
+            fee: { amount: reportedFee, asset: input.endpoints.give.asset },
         },
         preparation: {
             backend: "rfq",

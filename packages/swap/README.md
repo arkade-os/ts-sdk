@@ -15,6 +15,12 @@ const client = createSwapClient({ wallet, repository: new IndexedDbAssetSwapRepo
 Construction is synchronous and inert: no network, no wallet read, no repository open. The first
 call that needs one does it.
 
+Market discovery needs no configuration either: the client defaults to the reference solver
+registry's index for the wallet's network (`REGISTRY_URL[network]`, exported). Follow your own
+registry instead with `discovery: { registryUrl }`, or opt out of registries entirely with
+`discovery: { registryUrl: null }` — `discovery: { snapshot }` resolves against a fixed market
+list without touching the network.
+
 ## The four routes
 
 Each is one `quote` → `accept` chain. `quote` returns binding, verified terms and touches nothing
@@ -50,6 +56,17 @@ ordering from the caller.
 
 `onchain -> arkade` is not in the union. It resolves and quotes to `UnsupportedRoute` until the
 client owns the trader's L1 refund path end to end.
+
+An `arkade -> onchain` withdrawal claims the solver's L1 HTLC itself, and that claim's miner fee
+comes out of the HTLC output — so the client grosses the take leg up by the claim's cost and the
+recipient nets exactly the `amount` written, with the estimate folded into the reported `fee`. The
+claim is built and broadcast by the client itself once the fill is claimable, signed by the
+wallet's payout key and priced off a per-network fee-rate floor
+(`discovery`/corridor overrides aside, that floor is the only environment-specific input). A
+routing UI should raise it in congestion — the claim has a consensus deadline — via
+`corridors: { onchain: { claimFeeRateSatVb } }`; set it to `null` to take the claim over manually
+(the drive then reports the L1 half as your job rather than blocking it). Wire your own builder
+with `corridors: { onchain: { claim } }` and it wins over the default.
 
 ### One call instead of two
 
@@ -177,10 +194,17 @@ from the wallet, which is the single place that knows which operator it speaks t
 | Subpath                            | What it is                                                        |
 | ---------------------------------- | ----------------------------------------------------------------- |
 | `@arkade-os/swap`                  | the client, the verbs, the vocabulary, the error taxonomy          |
+| `@arkade-os/swap/advanced`         | the orchestration below the verbs: the drive, corridors, RFQ wire  |
 | `@arkade-os/swap/node`             | the Node storage default                                          |
 | `@arkade-os/swap/repositories/*`   | the React Native backends                                         |
 | `@arkade-os/swap/nostr`            | the Nostr RFQ transport, for hand-building one                     |
 | `@arkade-os/swap/protocol`         | the v1 building blocks, deprecated                                 |
+
+The root is a curated surface — if a name the client's modules define is not on it, it is on
+`./advanced` (manual driving with `createSwapDrive`, destination claiming with `corridorSet`,
+custom quote flows with `acceptQuote`/`quoteViaRfq`, record reading with `recordLeg`/`swapOf`).
+"Advanced" is a deliberate deep subpath, not a second compatibility promise: those names move
+with the client's internals across minor versions; the root is what stays put.
 
 `./nostr` is a floor and not a deprecation: the client opens the card's rendezvous itself, and the
 subpath is what keeps that an escape hatch rather than a wall. It is a separate entry point

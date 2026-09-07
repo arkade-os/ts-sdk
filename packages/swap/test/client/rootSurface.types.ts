@@ -86,3 +86,82 @@ export { assertFundable as protocolAssertFundable } from "../../src/protocol";
 export { requestLightningSend } from "../../src/protocol";
 // @ts-expect-error — P lives on `/protocol` and nowhere else.
 export { requestLightningSend as rootRequestLightningSend } from "../../src";
+
+/**
+ * The curated boundary, at the type level.
+ *
+ * `test/exports.test.ts` diffs the root's names against the curated list; this
+ * is the compile-time half for the two directions a name diff states in the
+ * abstract — the orchestration internals are NOT importable from the root, and
+ * they ARE importable from `@arkade-os/swap/advanced`. The names are the ones
+ * the curation review called out, so a regression names its victim.
+ */
+// @ts-expect-error — the drive is manual-driving orchestration: `./advanced`.
+export { createSwapDrive } from "../../src";
+// @ts-expect-error — custom quote flows import from `./advanced`.
+export { acceptQuote } from "../../src";
+// @ts-expect-error — destination claiming is `./advanced`, per V2_API.md.
+export { corridorSet } from "../../src";
+// @ts-expect-error — the RFQ quote path is `./advanced`.
+export { quoteViaRfq } from "../../src";
+// @ts-expect-error — the drive's record store is `./advanced`.
+export { walletLockupIndexer } from "../../src";
+// @ts-expect-error — the verbs' ceiling is their own plumbing: `./advanced`.
+export { enforceFeeCeiling } from "../../src";
+// @ts-expect-error — preparation is `./advanced`; `client.preparationOf()` answers it.
+export type { QuotePreparation } from "../../src";
+
+export {
+    acceptQuote as advancedAcceptQuote,
+    corridorSet as advancedCorridorSet,
+    createSwapDrive as advancedCreateSwapDrive,
+    quoteViaRfq as advancedQuoteViaRfq,
+    walletLockupIndexer as advancedWalletLockupIndexer,
+    type QuotePreparation as AdvancedQuotePreparation,
+} from "../../src/advanced";
+
+/**
+ * S — v1-declared names the v2 surface references, reachable from the root.
+ *
+ * If a root-exported declaration names a type, a consumer has to be able to
+ * name it too: `CorridorOverrides` authors `InvoiceFacts` and `ChainSource`,
+ * `SwapDriveConfig` authors `LockupSpendIndexer` and `SwapContractRegistry`,
+ * `AssetSwapRepository` is implemented over `AssetSwap`,
+ * `CorridorSwapRecord.state` reads `RfqSwapState`, and `client.accept()`
+ * throws `LockupRegistrationFailed`. Each import below fails the build if its
+ * name leaves the root again.
+ */
+import type {
+    AssetSwap,
+    ChainSource,
+    CorridorSwapRecord,
+    InvoiceFacts,
+    LockupSpendIndexer,
+    RfqSwapState,
+    SwapContractRegistry,
+} from "../../src";
+import { isRfqSwapTerminal, LockupRegistrationFailed } from "../../src";
+
+export const rootReferencedNames: {
+    decode: (bolt11: string) => InvoiceFacts;
+    chain: ChainSource;
+    row: AssetSwap;
+    indexer: LockupSpendIndexer;
+    contracts: SwapContractRegistry;
+    state: RfqSwapState;
+    terminal: (state: RfqSwapState) => boolean;
+    failure: typeof LockupRegistrationFailed;
+    record: CorridorSwapRecord;
+} = {
+    decode: () => {
+        throw new Error("type-level only");
+    },
+    chain: undefined as never,
+    row: undefined as never,
+    indexer: undefined as never,
+    contracts: undefined as never,
+    state: "pending",
+    terminal: isRfqSwapTerminal,
+    failure: LockupRegistrationFailed,
+    record: undefined as never,
+};

@@ -1,23 +1,32 @@
 /**
- * The disposition diff: `scripts/dispositions.json` against the barrels as they
- * actually are.
+ * The root boundary, asserted in both directions — and, beside it, the
+ * M8 disposition diff.
  *
- * M8's premise is that a hand-kept inventory of this surface cannot stay true —
- * the one it replaced was wrong in every count by the time it was read, and not
- * from drift: the branch moved under it. So the record is diffed against a
- * re-derivation of `src/index.ts` and `src/protocol.ts` on every run, and a name
- * in one and not the other fails here rather than at a consumer's first import.
+ * Until the curation, `src/index.ts` was `export * from "./client"`, ~160
+ * value exports on the root, and this file's last assertion PERMITTED all of
+ * them: any name the client barrel carried counted as disposed. That made the
+ * test a description of the barrel rather than a guard on the boundary — a
+ * new internal landing in a client module silently became public API here.
  *
- * What it is NOT is a snapshot of the v2 surface. `export * from "./client"`
- * puts 270 names on the root that no disposition covers, because they were never
- * v1's to dispose of; the rule is that a root export is either a v2 name or a
- * name with a recorded disposition, which is what catches a v1 building block
- * quietly coming back.
+ * The rule now is exact membership. `CURATED_ROOT` is the whole public
+ * surface — the client factory, the three verbs, the route/amount/asset
+ * vocabulary, the sixteen-member error taxonomy, the durable record, the
+ * storage backends and the payment rails — and the root inventory must equal
+ * it: a name missing is a broken consumer, a name added is a support promise
+ * nobody made. Everything else the client modules define lives at
+ * `@arkade-os/swap/advanced`, and the last block diffs THAT boundary the same
+ * way: internals must be present there and absent here.
+ *
+ * The disposition record half is unchanged: every name M8 ruled on is either
+ * on the root (S, and the renamed R pair), on the `/protocol` floor (P), or
+ * gone (I, D), and `scripts/dispositions.json` drifting from the barrels fails
+ * here rather than at a consumer's first import.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+    ADVANCED_ENTRY,
     CLIENT_ENTRY,
     PROTOCOL_ENTRY,
     ROOT_ENTRY,
@@ -37,6 +46,389 @@ const moduleOf = (entry: string) =>
 const root = namesOf(ROOT_ENTRY);
 const client = namesOf(CLIENT_ENTRY);
 const protocol = namesOf(PROTOCOL_ENTRY);
+const advanced = namesOf(ADVANCED_ENTRY);
+
+/**
+ * The root, by exact membership. Grouped the way `src/index.ts` is, so a name
+ * moving between groups reads as the curation changing, not as noise.
+ */
+const CURATED_ROOT: readonly string[] = [
+    // The client: factory, object, config, and the config's field types.
+    "createSwapClient",
+    "SwapClient",
+    "SwapClientConfig",
+    "SwapFilter",
+    "DiscoveryConfig",
+    "DiscoverySnapshot",
+    "REGISTRY_URL",
+    "CorridorOverrides",
+    "DriveMode",
+    "RfqAuctionPolicy",
+    "SwapPolicy",
+    "RfqTransportFactory",
+    // The verbs and their option/return vocabulary.
+    "pay",
+    "receive",
+    "exchange",
+    "PayOptions",
+    "PayResult",
+    "ReceiveOptions",
+    "ReceiveRequest",
+    "ReceiveArtifact",
+    "ExchangeOptions",
+    "FeeCeiling",
+    "VerbDeps",
+    // The route vocabulary: the closed union and the quoted terms.
+    "Route",
+    "AssetOn",
+    "Endpoint",
+    "Ep",
+    "Instrument",
+    "Artifact",
+    "DepositArtifact",
+    "CorridorId",
+    "Quote",
+    "QuoteInput",
+    "QuoteId",
+    "QuoteLeg",
+    "AssetRef",
+    "PinnedAmount",
+    "MarketRef",
+    "CardMarketRef",
+    "AuctionMarketRef",
+    "AuctionProvenance",
+    "MarketBackend",
+    "Market",
+    "RankedBid",
+    "ResolvedEndpoint",
+    "RouteResolution",
+    "SnapshotRef",
+    // Asset ids and the alias layer.
+    "AssetId",
+    "ParsedAssetId",
+    "AssetPart",
+    "AssetNamespace",
+    "Rail",
+    "BitcoinRail",
+    "NetworkRef",
+    "AssetIdError",
+    "AssetIdRefusal",
+    "RAILS",
+    "BITCOIN_RAILS",
+    "BTC_ASSET_PART",
+    "ARKADE_ASSET_NAMESPACE",
+    "btcOn",
+    "arkadeAsset",
+    "canonicalAssetId",
+    "parseAssetId",
+    "formatAssetId",
+    "isAssetId",
+    "isNetworkRef",
+    "sameAsset",
+    "assetPartOf",
+    "railOf",
+    "issuanceOf",
+    "bitcoinNetworkOf",
+    "AssetAliasTable",
+    "RegisteredAsset",
+    // Amounts.
+    "Amount",
+    "AmountFormatError",
+    "AtomicDecimal",
+    "DisplayDecimal",
+    "AssetScale",
+    "AmountRefusal",
+    "isAtomicDecimal",
+    "toAtomicDecimal",
+    "fromAtomicDecimal",
+    // The sixteen-member error taxonomy, its base, list and guard — and the
+    // one drive error the public client throws off the taxonomy.
+    "AcceptConflict",
+    "AmbiguousDestination",
+    "AmountEncodingUnsupported",
+    "AmountMismatch",
+    "ClientDisposed",
+    "DiscoverySnapshotUnavailable",
+    "InconsistentRoute",
+    "InsufficientFunds",
+    "MaxFeeExceeded",
+    "MissingCorridorDep",
+    "NotCancellable",
+    "OperatorUnreachable",
+    "QuoteExpired",
+    "QuoteVerificationFailed",
+    "SwapRefusal",
+    "UnsupportedRoute",
+    "isSwapError",
+    "SWAP_ERROR_NAMES",
+    "SwapError",
+    "SwapErrorName",
+    "QuoteCheck",
+    "SwapDriveRefusedError",
+    // The durable record, its ids, and the outcome vocabulary.
+    "Swap",
+    "SwapRecord",
+    "SwapRecordCommon",
+    "OfferSwapRecord",
+    "CorridorSwapRecord",
+    "SwapFamily",
+    "AssetSwapId",
+    "RecordedLeg",
+    "RecordedEndpoint",
+    "RecordedInstrument",
+    "RecordedArtifact",
+    "assetSwapIdOf",
+    "quoteIdOfSwapId",
+    "familyOfSwapId",
+    "Outcome",
+    "CorridorKind",
+    "RawState",
+    "SwapUpdate",
+    "Unsubscribe",
+    "CancelOutcome",
+    "RecoveryResult",
+    // Storage: the interface and the two root backends.
+    "AssetSwapRepository",
+    "MarketsCacheEntry",
+    "InMemoryAssetSwapRepository",
+    "IndexedDbAssetSwapRepository",
+    // The operator slice for `SwapClientConfig.operator`.
+    "SwapOperator",
+    // Names v1 declared that the v2 surface references — in something the
+    // caller authors, implements, reads, or catches — so v2 names whatever
+    // their origin. Same order as `src/index.ts`.
+    "AssetSwap",
+    "InvoiceFacts",
+    "ChainSource",
+    "LockupRegistrationFailed",
+    "LockupSpendIndexer",
+    "SwapContractRegistry",
+    "RfqSwapState",
+    "isRfqSwapTerminal",
+    // The payment rails.
+    "LIGHTNING_RAIL",
+    "lightningRail",
+    "ONCHAIN_SWAP_RAIL",
+    "onchainSwapRail",
+    "claimFeeSats",
+    "OnchainSwapRailDeps",
+    "SWAP_ROUTER_PRIORITY",
+    "createSwapPaymentRouter",
+    "SwapPaymentRouterConfig",
+    "PAYMENT_STATUS",
+    "isTerminalStatus",
+    "paymentStatusOf",
+    "SwapPaymentFailedError",
+    "railAvailable",
+    "receiverExact",
+    "swapHandle",
+    "SwapRailClient",
+];
+
+/**
+ * Orchestration below the verbs, spot-checked rather than enumerated: this is
+ * the list the curation review named, plus the seams `V2_API.md` calls
+ * source-level API. Each must be off the root and on `./advanced`. The exact
+ * membership assertion above is what catches anything NOT named here leaking
+ * back; this list exists so the boundary's intent is greppable.
+ */
+const ADVANCED_ONLY: readonly string[] = [
+    // accept / preparation
+    "acceptQuote",
+    "QuotePreparation",
+    "AcceptInput",
+    "conflictingFields",
+    "swapRecordOf",
+    // the drive, for an app that drives swaps manually
+    "createSwapDrive",
+    "SwapDrive",
+    "SwapDriveConfig",
+    "DriveRefusal",
+    "readableRecord",
+    "corridorRecordStore",
+    "CorridorRecordStore",
+    "RecordSink",
+    "walletLockupIndexer",
+    "offerFactsOf",
+    "offerRecordSource",
+    "rfqRecordOf",
+    "splitRecords",
+    "applyOfferSpend",
+    "withOfferStatus",
+    "withRfqState",
+    // cancel plumbing
+    "cancelSwap",
+    "CancelInput",
+    // corridors and destination claiming
+    "corridorSet",
+    "CorridorSet",
+    "ClaimedDestination",
+    "CORRIDOR_FACTORIES",
+    "resolveCorridorBase",
+    "resolveCorridorDeps",
+    "liveArkadeInfo",
+    "CorridorBase",
+    "CorridorDeps",
+    "CorridorDepsByCorridor",
+    "ArkadeCorridorDeps",
+    "LightningCorridorDeps",
+    "OnchainCorridorDeps",
+    "OnchainClaim",
+    "arkadeCorridor",
+    "lightningCorridor",
+    "onchainCorridor",
+    "decodeBolt11",
+    "DEFAULT_INVOICE_EXPIRY_SECONDS",
+    "INVOICE_HRPS",
+    "networksOfInvoiceHrp",
+    "esploraChainSource",
+    "esploraTip",
+    "chainSourceOver",
+    "CORRIDORS",
+    "corridorOfRail",
+    "railOfCorridor",
+    "Corridor",
+    "RailOf",
+    // market picking
+    "chooseMarket",
+    "eligibleMarkets",
+    "usableMarkets",
+    "marketKeyOf",
+    "marketRefOf",
+    "cardMarketOf",
+    "marketBackendOf",
+    "isAddressable",
+    "isCardMarket",
+    "MarketCandidate",
+    // quoting below the client
+    "quoteViaRfq",
+    "RfqPreparation",
+    "RfqQuoteInput",
+    "quoteFromFeed",
+    "feedFetch",
+    "FeedFetch",
+    "FeedQuoteInput",
+    "OfferPreparation",
+    "FEED_TTL_MS",
+    "resolveRoute",
+    "assembleRoute",
+    "ResolvedRoute",
+    "ResolveDeps",
+    // the RFQ wire
+    "rfqLeg",
+    "rfqPairFor",
+    "parseRfqQuote",
+    "ParsedRfqQuote",
+    "withCanonicalAmount",
+    "encodeRfqAmount",
+    "decodeRfqAmount",
+    "toRfqAmountSide",
+    "fromRfqAmountSide",
+    "toSafeNumber",
+    "RfqAmountSide",
+    "AmountOn",
+    "attesting",
+    "nostrTransportFactory",
+    "AttestingRfqTransport",
+    "RfqRendezvous",
+    // verification
+    "verifyPair",
+    "verifyQuotedAmount",
+    "verifyQuoteTtl",
+    "verifyReceiveInvoiceFacts",
+    "verifyReceiveWindow",
+    "verifyResponder",
+    "verifySendInvoice",
+    "verifySendWindow",
+    "verifyingDerivation",
+    // the verbs' own plumbing
+    "enforceFeeCeiling",
+    // record and outcome derivations
+    "swapOf",
+    "legOf",
+    "instrumentOf",
+    "artifactOf",
+    "recordLeg",
+    "recordEndpoint",
+    "recordInstrument",
+    "recordArtifact",
+    "fundsFromWallet",
+    "OFFER_SWAP_ID_PREFIX",
+    "RFQ_SWAP_ID_PREFIX",
+    "corridorOutcome",
+    "offerOutcome",
+    "recordOutcome",
+    "readsChain",
+    "ACTIVITY_TOKEN",
+    "CORRIDOR_PASS",
+    "LOCKUP_OWNER",
+    // discovery, aliases and the rest of the vocabulary internals
+    "discoveryIndex",
+    "DiscoveryIndex",
+    "DiscoveryIndexInput",
+    "isUsableCard",
+    "aliasTableFrom",
+    "publicAssetId",
+    "scopedToRail",
+    "toDiscoveryLeg",
+    "DiscoveryLeg",
+    "INDEXED_NETWORKS",
+    "isIndexedNetwork",
+    "satsOf",
+    "Hex",
+    "Pubkey",
+    // the corridor contract vocabulary
+    "CorridorModule",
+    "CorridorFactory",
+    "CorridorClaim",
+    "CorridorCovenant",
+    "CorridorDeadline",
+    "CorridorDrive",
+    "CorridorLockup",
+    "CorridorPass",
+    "LockupOwner",
+    "ObservationSeam",
+    "RouteSide",
+    "ChainSourceBackend",
+    "AddressParams",
+    "L1Tip",
+];
+
+describe("the curated root boundary", () => {
+    it("holds exactly the curated surface — no more, no less", () => {
+        // Exact membership, both directions at once: a name on the root that
+        // is not curated is a support promise nobody made (the review's hole:
+        // `export * from "./client"` advertised ~160 such names), and a curated
+        // name missing is a consumer's first broken import.
+        expect([...root].sort()).toEqual([...CURATED_ROOT].sort());
+    });
+
+    it("keeps the orchestration internals OFF the root", () => {
+        // The review's named offenders and their kin. Caught by membership
+        // above as well; listed here so a regression names its victim.
+        expect(ADVANCED_ONLY.filter((n) => root.has(n))).toEqual([]);
+    });
+
+    it("puts the orchestration internals on ./advanced", () => {
+        expect(ADVANCED_ONLY.filter((n) => !advanced.has(n))).toEqual([]);
+    });
+
+    it("keeps ./advanced a superset of the root's client vocabulary", () => {
+        // One specifier per flow: an advanced consumer imports the drive and
+        // the verbs from the same subpath.
+        const missing = [...root].filter(
+            (n) => !advanced.has(n) && moduleOf(ROOT_ENTRY).get(n)?.startsWith("src/client/"),
+        );
+        expect(missing).toEqual([]);
+    });
+
+    it("gives every name in the boundary lists exactly one entry", () => {
+        expect(CURATED_ROOT.length).toBe(new Set(CURATED_ROOT).size);
+        expect(ADVANCED_ONLY.length).toBe(new Set(ADVANCED_ONLY).size);
+        const overlap = CURATED_ROOT.filter((n) => ADVANCED_ONLY.includes(n));
+        expect(overlap).toEqual([]);
+    });
+});
 
 describe("the M8 disposition record", () => {
     it("gives every name exactly one disposition", () => {
@@ -63,7 +455,9 @@ describe("the M8 disposition record", () => {
 
     it("keeps every I and D name off both barrels", () => {
         const gone = [...I, ...D];
-        expect(gone.filter((n: string) => root.has(n) || protocol.has(n))).toEqual([]);
+        expect(
+            gone.filter((n: string) => root.has(n) || protocol.has(n) || advanced.has(n)),
+        ).toEqual([]);
     });
 
     it("binds each R name to the v2 declaration, not the facade it replaced", () => {
@@ -73,18 +467,9 @@ describe("the M8 disposition record", () => {
         // replaced it.
         const declaredIn = moduleOf(ROOT_ENTRY);
         for (const name of R) {
-            expect(client.has(name)).toBe(true);
+            expect(root.has(name)).toBe(true);
             expect(declaredIn.get(name)).toMatch(/^src\/client\//);
         }
-    });
-
-    it("leaves no root export undisposed", () => {
-        // A new name landing on the root without a ruling fails here. v2 names
-        // are covered by being on `./client`; a v1 name coming back is caught
-        // one assertion up, since P is no longer a legal reason to be here.
-        const disposed = new Set<string>([...S, ...R]);
-        const undisposed = [...root].filter((n) => !disposed.has(n) && !client.has(n));
-        expect(undisposed).toEqual([]);
     });
 });
 
