@@ -88,7 +88,14 @@ describe("the built-in resolvers, against a real history (regtest)", () => {
         try {
             const activities = await alice.wallet.getActivityHistory();
             expect(activities.some((a) => a.id === `boarding:${boardingTxid}`)).toBe(false);
-            const plain = activities.find((a) => a.id === boardingTxid);
+            // Found by its member rather than by a predicted id: the natural key
+            // is `arkTxid || commitmentTxid || boardingTxid`, so once the settle's
+            // commitment lands on the row the bucket is no longer the boarding
+            // txid. The claim here is that the row survives ungrouped, not which
+            // of the three it buckets under.
+            const plain = activities.find((a) =>
+                a.txs.some((tx) => tx.key.boardingTxid === boardingTxid),
+            );
             expect(plain).toBeDefined();
             expect(plain?.intent).toBeUndefined();
         } finally {
