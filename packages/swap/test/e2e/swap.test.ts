@@ -742,7 +742,10 @@ describe("the swap, against solverd (regtest)", () => {
     it("RGT -> BTC at the WRONG price stays pending, and cancels", async () => {
         await ensureSats(Number(dust));
         const held = await rgtHeld(maker);
-        const plan = rgtToBtc(BigInt(1_000));
+        // a deposit whose doubled want (2_200) is no earlier offer's want, so
+        // the covenant script is this case's alone — identical offers share an
+        // address, and a reused script would tangle these deposits together
+        const plan = rgtToBtc(BigInt(1_100));
         // wanting twice the fair sats: the solver looks, declines, and the
         // deposit stays where the maker put it
         const { fundingTxid, script, swap } = await publish(
@@ -767,7 +770,9 @@ describe("the swap, against solverd (regtest)", () => {
     it("RGT -> BTC at the WRONG price, restored from the key alone, then cancelled from the restored wallet", async () => {
         await ensureSats(Number(dust));
         const held = await rgtHeld(maker);
-        const plan = rgtToBtc(BigInt(1_000));
+        // want 2_600, distinct from every other case's, so this deposit has
+        // its own covenant script
+        const plan = rgtToBtc(BigInt(1_300));
         const untaken = await publish(maker, plan, makerRepository, wrongPrice(plan));
         await stillPending(makerRepository, untaken.script, untaken.fundingTxid);
 
@@ -784,6 +789,16 @@ describe("the swap, against solverd (regtest)", () => {
                 toAmount: wrongPrice(plan).toString(),
                 offerHex: untaken.swap.offerHex,
             });
+
+            // the escrowed deposit is the restored wallet's asset: a wallet
+            // that re-registered the covenant owns it — gated, not spendable,
+            // but still counted in the total the user sees. On master nothing
+            // re-covers the covenant after a restore, so the restored wallet
+            // cannot see the escrowed asset at all: it reads as vanished until
+            // the cancel brings it back. That gap is what this case shows —
+            // the live maker, which never lost the registration, still owns it
+            const makerOwned = assetAmount((await maker.getBalance()).assets, rgt);
+            expect(assetAmount((await restored.wallet.getBalance()).assets, rgt)).toBe(makerOwned);
 
             // deleted from the restored wallet, with what a restored record
             // has: the offer bytes and the funding txid, no address
@@ -922,7 +937,15 @@ describe("the swap, against solverd (regtest)", () => {
                 balance.available >= satsBefore - Number(dust) + Number(plan.receive.atomic)
             );
         });
-        expect(assetAmount((await maker.getBalance()).assets, rgt)).toBe(BigInt(0));
+        // every spendable unit went and the sats came back. `assets` (total)
+        // can still hold RGT stranded in an earlier case's un-cancellable
+        // escrow — that is those cases' defect, not this one's, so this reads
+        // the spendable balance, which is what "swap all" moves
+        const balance = await maker.getBalance();
+        expect(assetAmount(balance.availableAssets, rgt)).toBe(BigInt(0));
+        expect(balance.available).toBeGreaterThanOrEqual(
+            satsBefore - Number(dust) + Number(plan.receive.atomic),
+        );
     }, 180_000);
 
     it("reload on the same storage: a fill that landed while nothing watched is picked up, a pending offer still cancels", async () => {
