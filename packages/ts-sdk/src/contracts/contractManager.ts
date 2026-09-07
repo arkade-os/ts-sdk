@@ -18,6 +18,7 @@ import {
     PathContext,
     PathSelection,
     ExtendedContractVtxo,
+    WatchedScript,
     hasCandidates,
     isDiscoverable,
     watchStateOf,
@@ -548,6 +549,35 @@ export interface IContractManager extends Disposable {
      *   `handlerErrors` *after* the inline VTXO pull.
      */
     scanContracts(opts: ScanContractsOptions): Promise<ScanResult>;
+
+    /**
+     * Report VTXO activity at `script` without registering it as a contract,
+     * and without the wallet owning it. Activity arrives as
+     * {@link ContractEvent} `script_vtxo_received` / `script_vtxo_spent`;
+     * nothing is persisted and the outputs never enter the wallet's balance,
+     * renewal or recovery paths.
+     *
+     * At-least-once, and re-announces on restart — the registration is
+     * in-memory, so there is no baseline to diff a restart against.
+     * Deduplicate by outpoint.
+     *
+     * Reports **spendable** outputs: a preconfirmed one counts, so a fresh
+     * funding is not missed, but one already recoverable or swept is not
+     * reported.
+     *
+     * Optional so adding it does not break an embedder with its own
+     * `IContractManager`; both shipped implementations provide it for real.
+     */
+    watchScript?(script: string, options?: { label?: string }): Promise<void>;
+
+    /** Stop watching a script registered via {@link watchScript}. */
+    unwatchScript?(script: string): Promise<void>;
+
+    /**
+     * Every script registered via {@link watchScript}. Async for the same
+     * reason {@link isWatching} is: a service worker answers over the bus.
+     */
+    getWatchedScripts?(): Promise<WatchedScript[]>;
 
     /**
      * Whether the underlying watcher is currently active.
@@ -2092,6 +2122,21 @@ export class ContractManager implements IContractManager {
      */
     async isWatching(): Promise<boolean> {
         return this.watcher.isCurrentlyWatching();
+    }
+
+    /** @see IContractManager.watchScript */
+    async watchScript(script: string, options?: { label?: string }): Promise<void> {
+        await this.watcher.addWatchedScript(script, options);
+    }
+
+    /** @see IContractManager.unwatchScript */
+    async unwatchScript(script: string): Promise<void> {
+        await this.watcher.removeWatchedScript(script);
+    }
+
+    /** @see IContractManager.getWatchedScripts */
+    async getWatchedScripts(): Promise<WatchedScript[]> {
+        return this.watcher.getWatchedScripts();
     }
 
     /**

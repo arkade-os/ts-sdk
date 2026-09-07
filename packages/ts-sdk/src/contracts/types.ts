@@ -522,8 +522,20 @@ export function isTapscriptDeriving(
     );
 }
 
+/** A script the watcher reports on without the wallet owning it. */
+export interface WatchedScript {
+    script: string;
+
+    /** Free-form tag echoed back by `getWatchedScripts`; never sent anywhere. */
+    label?: string;
+}
+
 /**
  * Event emitted when contract-related changes occur.
+ *
+ * The `script_`-prefixed variants report a watch-only script. They carry no
+ * `contract` and no tapscript annotation: the wallet does not own the script,
+ * so it cannot derive the forfeit leaves annotation stamps.
  */
 export type ContractEvent =
     | {
@@ -538,6 +550,18 @@ export type ContractEvent =
           contractScript: string;
           vtxos: ContractVtxo[];
           contract: Contract;
+          timestamp: number;
+      }
+    | {
+          type: "script_vtxo_received";
+          script: string;
+          vtxos: VirtualCoin[];
+          timestamp: number;
+      }
+    | {
+          type: "script_vtxo_spent";
+          script: string;
+          vtxos: VirtualCoin[];
           timestamp: number;
       }
     | { type: "connection_reset"; timestamp: number };

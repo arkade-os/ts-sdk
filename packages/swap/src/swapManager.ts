@@ -1280,6 +1280,9 @@ export class RfqSwapManager {
                 void this.poll().catch(() => {});
                 return;
             }
+            // Contract-borne events only. Watch-only script events carry no
+            // contract, and this manager registers every lockup it tracks.
+            if (event.type !== "vtxo_received" && event.type !== "vtxo_spent") return;
             const swap = this.byLockupScript.get(event.contractScript);
             // Not one of ours — a wallet's other contracts share this stream.
             if (!swap) return;

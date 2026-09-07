@@ -53,6 +53,9 @@ import {
     RequestAnnotateVtxos,
     RequestGetContracts,
     RequestGetContractsWithVtxos,
+    RequestWatchScript,
+    RequestUnwatchScript,
+    RequestGetWatchedScripts,
     RequestGetContractSyncState,
     RequestGetStatus,
     RequestGetSpendablePaths,
@@ -76,6 +79,7 @@ import {
     ResponseGetBoardingUtxos,
     ResponseGetContracts,
     ResponseGetContractsWithVtxos,
+    ResponseGetWatchedScripts,
     ResponseGetContractSyncState,
     ResponseGetStatus,
     ResponseGetSpendablePaths,
@@ -147,6 +151,7 @@ import type {
     ContractWithVtxos,
     GetContractsFilter,
     PathSelection,
+    WatchedScript,
 } from "../../contracts";
 import type {
     ContractSyncState,
@@ -220,6 +225,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     GET_TRANSACTION_HISTORY: 20_000,
     GET_CONTRACTS: 20_000,
     GET_CONTRACTS_WITH_VTXOS: 20_000,
+    GET_WATCHED_SCRIPTS: 10_000,
     ANNOTATE_VTXOS: 20_000,
     GET_SPENDABLE_PATHS: 20_000,
     GET_ALL_SPENDING_PATHS: 20_000,
@@ -258,6 +264,10 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     SIGN_TRANSACTION: 30_000,
     CREATE_CONTRACT: 30_000,
     UPDATE_CONTRACT: 30_000,
+    // Registering a watch is an in-memory map write plus one subscription
+    // update — no indexer round trip on the request path.
+    WATCH_SCRIPT: 10_000,
+    UNWATCH_SCRIPT: 10_000,
     DELETE_CONTRACT: 10_000,
     REFRESH_VTXOS: 30_000,
     REFRESH_OUTPOINTS: 30_000,
@@ -279,6 +289,7 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_SPENDABLE_VTXOS",
     "GET_CONTRACTS",
     "GET_CONTRACTS_WITH_VTXOS",
+    "GET_WATCHED_SCRIPTS",
     "ANNOTATE_VTXOS",
     "GET_SPENDABLE_PATHS",
     "GET_ALL_SPENDING_PATHS",
@@ -1295,6 +1306,49 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     return (response as ResponseGetContractsWithVtxos).payload.contracts;
                 } catch (e) {
                     throw new Error("Failed to get contracts with vtxos");
+                }
+            },
+
+            async watchScript(script: string, options?: { label?: string }): Promise<void> {
+                const message: RequestWatchScript = {
+                    type: "WATCH_SCRIPT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script, label: options?.label },
+                };
+                try {
+                    await sendContractMessage(message);
+                } catch (e) {
+                    throw new Error("Failed to watch script");
+                }
+            },
+
+            async unwatchScript(script: string): Promise<void> {
+                const message: RequestUnwatchScript = {
+                    type: "UNWATCH_SCRIPT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script },
+                };
+                try {
+                    await sendContractMessage(message);
+                } catch (e) {
+                    throw new Error("Failed to unwatch script");
+                }
+            },
+
+            async getWatchedScripts(): Promise<WatchedScript[]> {
+                const message: RequestGetWatchedScripts = {
+                    type: "GET_WATCHED_SCRIPTS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: {},
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetWatchedScripts).payload.scripts;
+                } catch (e) {
+                    throw new Error("Failed to get watched scripts");
                 }
             },
 
