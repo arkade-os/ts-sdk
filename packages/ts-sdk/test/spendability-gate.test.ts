@@ -551,14 +551,29 @@ describe("getBalance", () => {
 });
 
 describe("gated reads stay ungated (D1b/D1d)", () => {
-    it("keeps escrowed funds in the recovery and history reads", async () => {
+    it("keeps escrowed funds in the recovery read", async () => {
         const { wallet } = await seededWallet();
 
         expect(scriptsOf(await wallet.getVtxos({ withRecoverable: true }))).toContain(
             ESCROW_SCRIPT,
         );
+    });
+
+    // History is not a gated read: it answers "what moved in and out of the
+    // wallet", and an escrowed coin is committed to a covenant, not the
+    // wallet's own — the same line the balance draws. Funding the escrow is
+    // the row; the coin sitting in it is not. @see historyVtxos
+    it("reads escrowed coins as outside the wallet in history", async () => {
+        const { wallet, defaultScript } = await seededWallet();
+        const txidOf = (script: string) => script.slice(-2).repeat(32);
+
         const history = await wallet.getTransactionHistory();
-        expect(history.length).toBeGreaterThan(0);
+        const arkTxids = history.map((tx) => tx.key.arkTxid);
+
+        expect(arkTxids).toContain(txidOf(defaultScript));
+        expect(arkTxids).toContain(txidOf(MARKED_SCRIPT));
+        expect(arkTxids).not.toContain(txidOf(ESCROW_SCRIPT));
+        expect(arkTxids).not.toContain(txidOf(UNKNOWN_SCRIPT));
     });
 
     it("settles a gated VTXO when it is named explicitly (D1d)", async () => {

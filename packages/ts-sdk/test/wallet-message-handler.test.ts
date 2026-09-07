@@ -1969,6 +1969,45 @@ describe("WalletMessageHandler repo-backed reads", () => {
         });
     });
 
+    it("GET_TRANSACTION_HISTORY reads a gated contract's output as sent, not as change", async () => {
+        // An unmarked `arkade` row is closed by the gate: an escrow, a swap offer covenant.
+        setupHandler([{ address: "escrow", script: "s-escrow", type: "arkade" }]);
+        const fundingTxid = "ff".repeat(32);
+        const funded = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "settled" },
+            createdAt: new Date(1_700_000_000_000),
+            isSpent: true,
+            spentBy: fundingTxid,
+            arkTxId: fundingTxid,
+        });
+        const escrowed = createMockExtendedVtxo({
+            txid: fundingTxid,
+            value: 50000,
+            script: "s-escrow",
+            virtualStatus: { state: "preconfirmed" },
+            createdAt: new Date(1_700_000_060_000),
+        });
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [funded]);
+        await walletRepo.saveVtxos("escrow", [escrowed]);
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_TRANSACTION_HISTORY",
+        } as any);
+
+        const sent = (response as any).payload.transactions.filter((tx: any) => tx.type === "SENT");
+        // Without the gate the escrow output counted as change and the funding
+        // netted to zero: no sent row at all.
+        expect(sent).toEqual([
+            expect.objectContaining({
+                amount: 50000,
+                key: expect.objectContaining({ arkTxid: fundingTxid }),
+            }),
+        ]);
+    });
+
     it("GET_VTXOS aggregates across contract addresses", async () => {
         const contracts = [
             { address: "contract-1", script: "s1", type: "default" },

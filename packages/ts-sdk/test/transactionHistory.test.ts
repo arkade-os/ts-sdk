@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import transactionHistory from "./fixtures/transaction_history.json";
 import { VirtualCoin, TxType, ArkTransaction } from "../src/wallet";
-import { buildTransactionHistory } from "../src/utils/transactionHistory";
+import type { Contract } from "../src/contracts/types";
+import { buildTransactionHistory, historyVtxos } from "../src/utils/transactionHistory";
+import { createDefaultContractParams } from "./contracts/helpers";
 
 describe("buildTransactionHistory", () => {
     // TODO FIX THIS!
@@ -1141,5 +1143,129 @@ describe("buildTransactionHistory", () => {
                 });
             },
         );
+    });
+});
+
+/**
+ * A swap offer: the wallet funds a covenant it registered (gated: an unmarked
+ * `arkade` row), the solver fills it or the wallet cancels it. With the
+ * covenant's coin counted as the wallet's, the funding netted to zero and
+ * produced no row, the cancel netted to zero too, and the fill read as a send
+ * of the escrowed amount. Read through `historyVtxos` the three movements are
+ * what they are: sent, received, received.
+ */
+describe("history of a gated contract", () => {
+    const WALLET_SCRIPT = "5120" + "aa".repeat(32);
+    const OFFER_SCRIPT = "5120" + "bb".repeat(32);
+    const ASSET_ID = "cc".repeat(32);
+    const FUNDING = "f0".repeat(32);
+    const FILL = "f1".repeat(32);
+    const CANCEL = "f2".repeat(32);
+
+    const contract = (script: string, type: string, metadata?: Record<string, unknown>) =>
+        ({
+            type,
+            params: type === "default" ? createDefaultContractParams() : {},
+            script,
+            address: `addr-${script.slice(-2)}`,
+            state: "active",
+            createdAt: 1,
+            ...(metadata ? { metadata } : {}),
+        }) as Contract;
+    const contracts = [contract(WALLET_SCRIPT, "default"), contract(OFFER_SCRIPT, "arkade")];
+
+    const at = (minute: number) => new Date(1_700_000_000_000 + minute * 60_000);
+    const coin = (
+        over: Partial<VirtualCoin> & Pick<VirtualCoin, "txid" | "value">,
+    ): VirtualCoin => ({
+        vout: 0,
+        script: WALLET_SCRIPT,
+        status: { confirmed: false },
+        virtualStatus: { state: "preconfirmed" },
+        createdAt: at(0),
+        isUnrolled: false,
+        isSpent: false,
+        ...over,
+    });
+
+    // 10 000 sats the wallet held, spent into the covenant by the funding tx.
+    const deposit = coin({
+        txid: "a0".repeat(32),
+        value: 10_000,
+        isSpent: true,
+        arkTxId: FUNDING,
+        spentBy: FUNDING,
+    });
+    const covenant = coin({ txid: FUNDING, value: 10_000, script: OFFER_SCRIPT, createdAt: at(1) });
+
+    const history = (vtxos: VirtualCoin[]) =>
+        buildTransactionHistory(historyVtxos(contracts, vtxos), [], new Set());
+    const sentRows = (txs: ArkTransaction[]) => txs.filter((tx) => tx.type === TxType.TxSent);
+    const receivedByTxid = (txs: ArkTransaction[], arkTxid: string) =>
+        txs.find((tx) => tx.type === TxType.TxReceived && tx.key.arkTxid === arkTxid);
+
+    it("keeps every coin outside a gated contract, script or no script", () => {
+        const marked = contract("5120" + "dd".repeat(32), "arkade", { genericallySpendable: true });
+        const scriptless = {
+            ...coin({ txid: "e0".repeat(32), value: 1 }),
+            script: undefined,
+        } as VirtualCoin;
+        const kept = historyVtxos(
+            [...contracts, marked],
+            [
+                deposit,
+                covenant,
+                coin({ txid: "e1".repeat(32), value: 1, script: marked.script }),
+                scriptless,
+            ],
+        );
+
+        expect(kept.map((v) => v.txid)).toEqual([deposit.txid, "e1".repeat(32), "e0".repeat(32)]);
+    });
+
+    it("reads the funding as a send of the full deposit while the offer is open", async () => {
+        const txs = await history([deposit, covenant]);
+
+        expect(sentRows(txs)).toEqual([
+            expect.objectContaining({
+                amount: 10_000,
+                key: expect.objectContaining({ arkTxid: FUNDING }),
+            }),
+        ]);
+        expect(receivedByTxid(txs, FUNDING)).toBeUndefined();
+    });
+
+    it("reads the fill as a receive of the asset, not a send of the covenant", async () => {
+        const filled = { ...covenant, isSpent: true, arkTxId: FILL, spentBy: FILL };
+        const payout = coin({
+            txid: FILL,
+            value: 330,
+            createdAt: at(2),
+            assets: [{ assetId: ASSET_ID, amount: 500n }],
+        });
+        const txs = await history([deposit, filled, payout]);
+
+        expect(sentRows(txs).map((tx) => tx.key.arkTxid)).toEqual([FUNDING]);
+        expect(receivedByTxid(txs, FILL)).toMatchObject({
+            amount: 330,
+            assets: [{ assetId: ASSET_ID, amount: 500n }],
+        });
+    });
+
+    it("reads the cancel as the deposit coming back", async () => {
+        const cancelled = { ...covenant, isSpent: true, arkTxId: CANCEL, spentBy: CANCEL };
+        const refund = coin({ txid: CANCEL, value: 10_000, createdAt: at(2) });
+        const txs = await history([deposit, cancelled, refund]);
+
+        expect(sentRows(txs).map((tx) => tx.key.arkTxid)).toEqual([FUNDING]);
+        expect(receivedByTxid(txs, CANCEL)).toMatchObject({ amount: 10_000 });
+    });
+
+    // The defect this guards against, kept as a control: with the covenant's coin
+    // in the wallet's set the funding output is change, and nothing is sent.
+    it("nets the funding to nothing when the covenant's coin counts as the wallet's", async () => {
+        const txs = await buildTransactionHistory([deposit, covenant], [], new Set());
+
+        expect(sentRows(txs)).toEqual([]);
     });
 });
