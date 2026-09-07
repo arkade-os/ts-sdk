@@ -288,6 +288,17 @@ export class ContractWatcher {
     }
 
     /**
+     * Every script the subscription must carry.
+     *
+     * Deliberately wider than {@link getWatchedContracts}, which stays the
+     * sync scope: it is what decides whose VTXOs get fetched, persisted and
+     * counted as the wallet's. Only the subscription reads this.
+     */
+    private getSubscribedScripts(): string[] {
+        return this.getWatchedContracts().map((c) => c.script);
+    }
+
+    /**
      * Get virtual outputs for contracts, grouped by contract script.
      * @see WalletRepository for `repo`
      */
@@ -666,10 +677,10 @@ export class ContractWatcher {
     /**
      * Update the subscription with scripts that should be watched.
      *
-     * @see getWatchedContracts
+     * @see getSubscribedScripts
      */
     private async updateSubscription(): Promise<void> {
-        const scriptsToWatch = this.getWatchedContracts().map((c) => c.script);
+        const scriptsToWatch = this.getSubscribedScripts();
 
         if (scriptsToWatch.length === 0) {
             if (this.subscriptionId) {
