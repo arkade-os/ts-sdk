@@ -374,14 +374,38 @@ export function resolveCorridorDeps(
             // rather than `??`, since `null` must NOT fall through to the
             // table that a mere `undefined` falls through to.
             const feeRateOverride = overrides?.onchain?.claimFeeRateSatVb;
+            // A non-positive or non-finite rate prices BOTH fee-paid halves
+            // off a lie: the gross-up understates the take and the claim
+            // build underpays the broadcast — or NaN poisons every amount
+            // downstream. Refused here, at resolution, the way every
+            // malformed onchain dep is, rather than at funding or claim time.
+            // `null` is not malformed: it is manual mode (no default claim).
+            if (
+                feeRateOverride !== undefined &&
+                feeRateOverride !== null &&
+                !(Number.isFinite(feeRateOverride) && feeRateOverride > 0)
+            ) {
+                throw new MissingCorridorDep("onchain", "L1 claim fee rate");
+            }
             const claimFeeRateSatVb =
                 feeRateOverride === null
                     ? undefined
                     : (feeRateOverride ?? ONCHAIN_CLAIM_FEE_RATE_SATVB[base.networkName]);
+            // Same rule for the vsize the gross-up prices against: `null`
+            // means "no override given" and reads the constant, like
+            // `undefined` — only a non-positive or non-finite number refuses.
+            const vsizeOverride = overrides?.onchain?.claimVsize;
+            if (
+                vsizeOverride !== undefined &&
+                vsizeOverride !== null &&
+                !(Number.isFinite(vsizeOverride) && vsizeOverride > 0)
+            ) {
+                throw new MissingCorridorDep("onchain", "L1 claim vsize");
+            }
             const claimVsize =
-                overrides?.onchain?.claimVsize === null
+                vsizeOverride === null
                     ? ONCHAIN_CLAIM_VSIZE
-                    : (overrides?.onchain?.claimVsize ?? ONCHAIN_CLAIM_VSIZE);
+                    : (vsizeOverride ?? ONCHAIN_CLAIM_VSIZE);
             return {
                 networkName: base.networkName,
                 chain: esploraChainSource({
