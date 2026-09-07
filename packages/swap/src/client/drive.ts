@@ -24,9 +24,16 @@
  * solver's word: there is no `RfqTransport` here, exactly as there is none in
  * the manager.
  */
-import { ArkAddress, contractSigner, type IWallet, type SettlementEvent } from "@arkade-os/sdk";
+import {
+    ArkAddress,
+    contractSigner,
+    identityDescriptor,
+    type IWallet,
+    type SettlementEvent,
+} from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { pushClaim } from "../claim";
+import { claimOnchainFill } from "../onchainHtlc";
 import { RETIRABLE, retireSettledOfferContracts } from "../coverage";
 import { lockupContractParams } from "../lockupContract";
 import { arkadeRefunder } from "../arkadeRefunder";
@@ -533,11 +540,108 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         | { chain: RfqSwapManagerDeps["chain"]; claim?: RfqSwapManagerCallbacks["claimOnchain"] }
         | null
         | undefined;
+
+    /**
+     * The wallet-backed default L1 claim, synthesized when the caller wired
+     * none and the corridor can price one.
+     *
+     * Every input is already the corridor's own: the chain source is the dep
+     * the same resolution just built, the HTLC and the payout script arrive
+     * ON the swap the manager hands back (rebuilt from the record, so they
+     * are the store's word rather than this process's memory), the preimage
+     * comes off the record through the same readers the lightning claim uses,
+     * and the signer is the wallet's payout key — provisioned at quote time
+     * by `provisionRefundKey`, which binds the identity key, so
+     * {@link identityDescriptor} is the descriptor that recovers it. No dep is
+     * invented here: the sole environment input, the fee rate, arrived
+     * resolved (or absent) on the dep record.
+     *
+     * It lives in the drive rather than in `resolveCorridorDeps` because that
+     * is the seam holding wallet, chain and record access together; dep
+     * resolution stays pure, and a synthesized callback belongs beside the
+     * other money-moving callbacks this module wires.
+     */
+    const defaultOnchainClaim = (
+        chain: NonNullable<RfqSwapManagerDeps["chain"]>,
+        feeRateSatVb: number,
+    ): RfqSwapManagerCallbacks["claimOnchain"] => {
+        return async (swap, utxo) => {
+            const record = await corridorStore().getRfqSwap(swap.rfqId);
+            if (!record) {
+                throw new Error(`rfq swap ${swap.rfqId} has no stored record to claim from`);
+            }
+            // The preimage, through the exact composition the lightning claim
+            // runs: the corridor-owned reader validates the stored hashlock,
+            // and `preimageForSwapRecord` re-derives P against it and checks
+            // the hash — one answer for "this wallet cannot produce P" on
+            // both corridors.
+            const secret = rfqClaimSecretOf(record);
+            if (!secret) throw new Error(`rfq swap ${swap.rfqId} carries no claim secret`);
+            const preimage = await preimageForSwapRecord(wallet, secret);
+
+            // The payout key signs the HTLC's claim leaf. Quote time binds it
+            // through `provisionRefundKey` — the identity key, by that
+            // function's own contract — so the wallet resolves it back the
+            // same way. The record stored the pubkey (`profile.claimKey`) but
+            // never the descriptor, which is exactly what makes this coupling
+            // honest: identity-key provisioning is a stated invariant, and
+            // the equality check below is what turns a drift in it into a
+            // loud refusal instead of a signature the script rejects.
+            const signer = await contractSigner(wallet, await identityDescriptor(wallet.identity));
+            const claimKey = record.profile.claimKey as string | undefined;
+            if (typeof claimKey === "string") {
+                const held = hex.encode(await signer.xOnlyPublicKey());
+                if (held !== claimKey) {
+                    throw new Error(
+                        `this wallet's identity key ${held} is not the payout key ` +
+                            `${claimKey} rfq swap ${swap.rfqId} was quoted against — ` +
+                            "a wrong seed, or key provisioning has drifted from the identity key",
+                    );
+                }
+            }
+            if (!swap.payoutPkScript) {
+                // Optional on the live swap only so records predating its
+                // profile slot still restore; the claim cannot be built
+                // without it and those records predate this callback too.
+                throw new Error(`rfq swap ${swap.rfqId} carries no claim payout script`);
+            }
+            // `now` is left to its wall-clock default: the manager decided
+            // WHEN to act, and the claim's own deadline check decides whether
+            // acting is still safe — two clocks, each answering its own
+            // question (the injected `now` is for the drive's windows, not
+            // for a consensus-margin probe that must hold under a test clock
+            // too).
+            // Tracked, like the refund push beside it: the broadcast is a
+            // money-moving promise the manager does not own, so `idle()` and
+            // `dispose()` must drain it rather than release the caller while
+            // it is still going out. `track` adds before the await suspends.
+            const { txid } = await track(
+                claimOnchainFill(chain, {
+                    htlc: swap.htlc,
+                    utxo,
+                    preimage,
+                    payoutPkScript: swap.payoutPkScript,
+                    feeRateSatVb,
+                    sign: (sighash) => signer.signMessage(sighash, "schnorr"),
+                }),
+            );
+            return { txid };
+        };
+    };
+
     const resolveOnchain = async (): Promise<boolean> => {
         if (onchainSeams !== undefined) return onchainSeams !== null;
         try {
             const deps = (await corridors()).get("onchain").deps;
-            onchainSeams = { chain: deps.chain, ...(deps.claim ? { claim: deps.claim } : {}) };
+            // The caller's callback wins; the default needs only the fee rate
+            // — a `claimFeeRateSatVb: null` override, or a network the floor
+            // table does not name, leaves manual mode on purpose.
+            const claim =
+                deps.claim ??
+                (deps.claimFeeRateSatVb === undefined
+                    ? undefined
+                    : defaultOnchainClaim(deps.chain, deps.claimFeeRateSatVb));
+            onchainSeams = { chain: deps.chain, ...(claim ? { claim } : {}) };
             managerDeps.chain = deps.chain;
             return true;
         } catch (error) {
@@ -824,22 +928,37 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         for (const record of liveCorridor) store.index(record);
 
         if (liveCorridor.length > 0) {
-            await contractsOf();
-            for (const record of liveCorridor) {
-                if (!(await drivable(record))) undrivable.add(record.id);
-            }
-            managerDeps.repository = store;
-            // Per-record failures — a covenant that will not derive, a lockup
-            // with no contract row — come back in `failed` and are reported. A
-            // record that cannot be rebuilt still has an outcome: the drive
-            // holds no live swap for it, so it reads off the record.
-            const result = await manager.restoreFromRepository();
-            for (const swap of result.restored) {
-                const id = store.quoteIdOf(swap.rfqId);
-                if (id !== undefined) live.set(id, swap);
-            }
-            for (const failure of result.failed) {
-                console.warn(`[swap] could not restore rfq swap ${failure.rfqId}`, failure.error);
+            // Driving is what reaches the wallet's contract manager and it is
+            // not the repository: a failure there — the wallet cannot hand
+            // over its manager, the registry will not rebuild — skips driving
+            // and is logged, never propagated. The records are readable and
+            // indexed above, so `swaps()` and `list()` keep working and the
+            // next `arm()` retries the same seams. As with arming below,
+            // `ready` rejects on ONE thing: a repository it cannot read.
+            try {
+                await contractsOf();
+                for (const record of liveCorridor) {
+                    if (!(await drivable(record))) undrivable.add(record.id);
+                }
+                managerDeps.repository = store;
+                // Per-record failures — a covenant that will not derive, a
+                // lockup with no contract row — come back in `failed` and are
+                // reported. A record that cannot be rebuilt still has an
+                // outcome: the drive holds no live swap for it, so it reads
+                // off the record.
+                const result = await manager.restoreFromRepository();
+                for (const swap of result.restored) {
+                    const id = store.quoteIdOf(swap.rfqId);
+                    if (id !== undefined) live.set(id, swap);
+                }
+                for (const failure of result.failed) {
+                    console.warn(
+                        `[swap] could not restore rfq swap ${failure.rfqId}`,
+                        failure.error,
+                    );
+                }
+            } catch (error) {
+                console.warn("[swap] the corridor restore could not drive", error);
             }
         }
 

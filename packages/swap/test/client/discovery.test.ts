@@ -25,10 +25,41 @@ const failing = () =>
     }) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
 
 describe("with nothing to resolve against", () => {
-    it("refuses to resolve when no registry is configured", async () => {
-        const index = discoveryIndex({ network: "regtest" });
+    it("refuses to resolve when the registry is deliberately disabled", async () => {
+        const fetchImpl = serving([]);
+        const index = discoveryIndex({
+            network: "regtest",
+            config: { registryUrl: null, fetchImpl },
+        });
         await expect(index.peek()).rejects.toThrow(DiscoverySnapshotUnavailable);
-        await expect(index.load()).rejects.toThrow(/no registry URL is configured/);
+        await expect(index.load()).rejects.toThrow(/registry was disabled/);
+        expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it("asks the network's default registry when none is configured", async () => {
+        const fetchImpl = serving([lightningCard]);
+        const index = discoveryIndex({ network: "regtest", config: { fetchImpl } });
+        const snapshot = await index.load();
+        expect(snapshot.markets).toHaveLength(1);
+        expect(snapshot.ref).toMatchObject({
+            live: true,
+            source: "live",
+            registry: "https://arkade-os.github.io/solver-registry/regtest.json",
+        });
+        expect(fetchImpl).toHaveBeenCalledWith(
+            "https://arkade-os.github.io/solver-registry/regtest.json",
+        );
+    });
+
+    it("prefers an explicit registry over the network default", async () => {
+        const fetchImpl = serving([lightningCard]);
+        const index = discoveryIndex({
+            network: "regtest",
+            config: { registryUrl: REGISTRY, fetchImpl },
+        });
+        const snapshot = await index.load();
+        expect(snapshot.ref).toMatchObject({ registry: REGISTRY });
+        expect(fetchImpl).toHaveBeenCalledWith(REGISTRY);
     });
 
     it("names the network when no index is published for it", async () => {

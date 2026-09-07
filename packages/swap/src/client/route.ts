@@ -31,7 +31,21 @@ import type { Hex } from "./primitives";
  */
 export type Instrument =
     | { kind: "wallet" }
-    | { kind: "address"; address: string }
+    | {
+          kind: "address";
+          address: string;
+          /**
+           * The amount a BIP21 URI pinned beside the address, when one did.
+           *
+           * An address on its own pins no amount, but `bitcoin:…?amount=` does —
+           * and that number is the destination's own statement of what the
+           * recipient expects, the same way an amount-bearing bolt11 is. It is
+           * carried here rather than folded into the route resolution so a
+           * caller passing `amount` beside it trips `AmountMismatch` on the
+           * destination's pin, exactly as it would on an invoice's.
+           */
+          amount?: bigint;
+      }
     | {
           kind: "invoice";
           bolt11: string;

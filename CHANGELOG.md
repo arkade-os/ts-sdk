@@ -20,10 +20,15 @@ style and have not been backfilled.
   and `client.manager` is gone. `quote`'s arity change fails loudly;
   `SwapQuoteInput.give: "base" | "quote"` is the quiet one, since `AssetId` is
   a string alias — it still compiles and is refused at runtime with
-  `UnsupportedRoute`, so grep for `give: "base"` before upgrading. 200 further
+  `UnsupportedRoute`, so grep for `give: "base"` before upgrading. 192 further
   names — requests, covenants, records, the RFQ manager, the restore scan, the
   v1 solver rails — move to `@arkade-os/swap/protocol`, one specifier edit
-  each, under `@deprecated` pointers naming their v2 replacement. There is
+  each, under `@deprecated` pointers naming their v2 replacement. Eight v1
+  names the v2 surface references stay on the root instead — `InvoiceFacts`,
+  `ChainSource`, `AssetSwap`, `LockupSpendIndexer`, `SwapContractRegistry`,
+  `LockupRegistrationFailed`, `RfqSwapState`, `isRfqSwapTerminal` — because a
+  root-exported declaration its consumer cannot name is unusable without the
+  deprecated barrel. There is
   deliberately **no window** in which both spellings work: this release breaks
   regardless, so re-exporting them from the root would split one migration into
   two and leave 200 v1 names on a root whose claim is to be the v2 surface. The

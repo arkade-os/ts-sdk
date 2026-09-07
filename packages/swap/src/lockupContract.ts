@@ -84,7 +84,8 @@ export class LockupContractMissing extends Error {
  * instead of re-quoting. It is NOT enough to resume a request that threw here:
  * that caller never received the invoice or `secrets`.
  *
- * @deprecated Lockup registration is internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
+ * A root export because `client.accept()` throws it: a caller catching that
+ * refusal names this class.
  */
 export class LockupRegistrationFailed extends Error {
     /** The lockup address that was never registered — never fund it: nothing

@@ -139,6 +139,7 @@ export const inventory = (entry) =>
 export const ROOT_ENTRY = "src/index.ts";
 export const CLIENT_ENTRY = "src/client/index.ts";
 export const PROTOCOL_ENTRY = "src/protocol.ts";
+export const ADVANCED_ENTRY = "src/advanced.ts";
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const entry = process.argv[2] ?? ROOT_ENTRY;
