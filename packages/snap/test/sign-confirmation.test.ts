@@ -87,9 +87,9 @@ describe("signPsbt user confirmation", () => {
             // is what this test asserts.
         });
 
-        expect(seen.indexOf("snap_dialog")).toBeGreaterThanOrEqual(0);
-        if (seen.includes("snap_getEntropy")) {
-            expect(seen.indexOf("snap_dialog")).toBeLessThan(seen.indexOf("snap_getEntropy"));
-        }
+        // An `if (seen.includes(...))` guard stops checking on the regression.
+        expect(seen).toContain("snap_dialog");
+        expect(seen).toContain("snap_getEntropy");
+        expect(seen.indexOf("snap_dialog")).toBeLessThan(seen.indexOf("snap_getEntropy"));
     });
 });

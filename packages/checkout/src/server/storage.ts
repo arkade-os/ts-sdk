@@ -39,8 +39,16 @@ export async function setCheckout(id: string, data: any): Promise<void> {
     }
 }
 
-export async function updateCheckout(id: string, updates: any): Promise<void> {
-    debug("[storage] Updating checkout:", id, "with:", updates);
+const LOCKS_KEY = "__checkout_locks__";
+
+function getLocks(): Map<string, Promise<void>> {
+    if (!(globalThis as any)[LOCKS_KEY]) {
+        (globalThis as any)[LOCKS_KEY] = new Map<string, Promise<void>>();
+    }
+    return (globalThis as any)[LOCKS_KEY];
+}
+
+async function applyUpdate(id: string, updates: any): Promise<void> {
     const checkout = await getCheckout(id);
     if (!checkout) {
         console.error("[storage] Cannot update, checkout not found:", id);
@@ -53,4 +61,27 @@ export async function updateCheckout(id: string, updates: any): Promise<void> {
     const updated = { ...checkout, ...updates };
     await setCheckout(id, updated);
     debug("[storage] Updated checkout:", id, "new status:", updated.status);
+}
+
+/**
+ * Read-modify-write, serialized per checkout id: `status`, `claim` and
+ * `webhook` update one record at once, and unserialized the later write erases
+ * the earlier field. Per-PROCESS only — total for the process-local in-memory
+ * store, but `@vercel/kv` has no CAS here, so two instances can still race.
+ */
+export async function updateCheckout(id: string, updates: any): Promise<void> {
+    debug("[storage] Updating checkout:", id, "with:", updates);
+    const locks = getLocks();
+    const run = (locks.get(id) ?? Promise.resolve()).then(() => applyUpdate(id, updates));
+    // The QUEUED promise swallows; the returned one does not.
+    const tail = run.then(
+        () => {},
+        () => {},
+    );
+    locks.set(id, tail);
+    try {
+        await run;
+    } finally {
+        if (locks.get(id) === tail) locks.delete(id);
+    }
 }

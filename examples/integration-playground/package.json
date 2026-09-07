@@ -8,7 +8,8 @@
         "build": "next build",
         "start": "next start",
         "typecheck": "tsc --noEmit",
-        "lint": "prettier --check app components"
+        "lint": "biome format app components",
+        "format": "biome format --write app components"
     },
     "dependencies": {
         "@arkade-os/checkout": "workspace:^",

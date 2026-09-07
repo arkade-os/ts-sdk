@@ -13,7 +13,8 @@
     "scripts": {
         "build": "mm-snap build",
         "typecheck": "tsc --noEmit",
-        "lint": "prettier --check src test",
+        "lint": "biome format src test",
+        "format": "biome format --write src test",
         "test": "vitest run",
         "test:unit": "vitest run --exclude test/e2e",
         "serve": "mm-snap serve",
@@ -28,7 +29,8 @@
         "@scure/btc-signer": "^2.0.1"
     },
     "devDependencies": {
-        "@metamask/snaps-cli": "^6.0.0"
+        "@metamask/snaps-cli": "^6.0.0",
+        "prettier": "3.6.2"
     },
     "repository": {
         "type": "git",
