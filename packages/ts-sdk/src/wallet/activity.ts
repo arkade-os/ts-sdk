@@ -1,4 +1,6 @@
+import { hex } from "@scure/base";
 import { TxType, type ArkTransaction } from "./index";
+import { AssetId } from "../extension/asset/assetId";
 
 /** One transaction's participation in one logical action. */
 export interface GroupMembership {
@@ -13,6 +15,13 @@ export interface GroupMembership {
     label?: string;
     /** App category for icon/filtering, e.g. "game". */
     kind?: string;
+    /**
+     * Outcome of the action this membership belongs to, e.g. "failed",
+     * "refunded" — an opaque machine token for the app to map to its own
+     * copy or icon, not display text. Merged first-writer-wins across
+     * resolvers sharing a `groupId`, like `label` and `kind`.
+     */
+    outcome?: string;
     /**
      * Free-form row data. Same-group metadata is shallow-merged with
      * earlier-resolver keys winning.
@@ -51,6 +60,12 @@ export interface ActivityIntent {
     label?: string;
     /** App category for icon/filtering, e.g. "game". */
     kind?: string;
+    /**
+     * Resolver-declared outcome for the group, e.g. "failed", "refunded" — an
+     * opaque machine token for the app to map to its own copy or icon, not
+     * display text.
+     */
+    outcome?: string;
     /** Free-form row data, shallow-merged across the group's resolvers (first-writer-wins). */
     metadata?: Record<string, unknown>;
 }
@@ -108,6 +123,7 @@ export async function buildActivities(
         groupId: a.groupId,
         label: a.label ?? b.label,
         kind: a.kind ?? b.kind,
+        outcome: a.outcome ?? b.outcome,
         metadata: { ...b.metadata, ...a.metadata },
         amount: a.amount ?? b.amount,
     });
@@ -154,6 +170,7 @@ export async function buildActivities(
             b.intent = {
                 label: b.intent?.label ?? m.label,
                 kind: b.intent?.kind ?? m.kind,
+                outcome: b.intent?.outcome ?? m.outcome,
                 metadata: { ...m.metadata, ...b.intent?.metadata },
             };
             b.members.push({ tx, amount: signedAmount(tx, m.amount ?? tx.amount) });
@@ -224,9 +241,71 @@ export function boardingResolver(): ActivityResolver {
     };
 }
 
-/** Default registry with SDK built-ins. */
+/** Built-in resolver: labels collaborative exits (VTXOs forfeited to chain in a batch). */
+export function collabExitResolver(): ActivityResolver {
+    return {
+        id: "collab-exit",
+        resolve(tx) {
+            if (tx.tag !== "exit" || !tx.key.commitmentTxid) return undefined;
+            return [
+                {
+                    groupId: `exit:${tx.key.commitmentTxid}`,
+                    label: "Collaborative exit",
+                    kind: "exit",
+                },
+            ];
+        },
+    };
+}
+
+/**
+ * Built-in resolver: labels the genesis transaction of a minted asset — "Asset
+ * mint" on the issuer's sent tx, "Asset receive" when the fresh supply arrives
+ * in the genesis tx itself. An asset id encodes its genesis txid; reissues and
+ * transfers carry the asset under a different `arkTxid`, so they are left plain.
+ *
+ * `metadata.amount` is the decimal string of the asset's `bigint` amount, kept
+ * as a string so large supplies survive JSON round-trips without truncation.
+ * Recover the value with `BigInt(metadata.amount as string)` — using it
+ * directly in arithmetic coerces (`"10" + 1` is `"101"`, not `11`) and loses
+ * precision past `Number.MAX_SAFE_INTEGER`.
+ */
+export function assetMintResolver(): ActivityResolver {
+    return {
+        id: "asset-mint",
+        resolve(tx) {
+            if (!tx.assets?.length || !tx.key.arkTxid) return undefined;
+            const minted = tx.assets.filter((a) => {
+                try {
+                    return hex.encode(AssetId.fromString(a.assetId).txid) === tx.key.arkTxid;
+                } catch {
+                    return false;
+                }
+            });
+            if (minted.length === 0) return undefined;
+            const received = tx.type === TxType.TxReceived;
+            return minted.map((a) => ({
+                groupId: `mint:${a.assetId}`,
+                label: received ? "Asset receive" : "Asset mint",
+                kind: received ? "asset-receive" : "asset-mint",
+                metadata: { assetId: a.assetId, amount: a.amount.toString() },
+            }));
+        },
+    };
+}
+
+/**
+ * A registry pre-populated with the SDK's built-in resolvers: `boarding`,
+ * `collab-exit`, and `asset-mint`.
+ */
 export function createDefaultActivityRegistry(): ActivityRegistry {
+    // Registration order is precedence, but only between resolvers that emit the
+    // same groupId (first one wins label/kind and metadata keys). The built-ins
+    // namespace their ids — `boarding:`, `exit:`, `mint:` — so they never
+    // collide and their relative order carries no meaning.
     const registry = new ActivityRegistry();
     registry.use(boardingResolver());
+    registry.use(collabExitResolver());
+    registry.use(assetMintResolver());
     return registry;
 }

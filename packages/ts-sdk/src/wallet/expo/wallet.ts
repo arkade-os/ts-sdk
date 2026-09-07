@@ -1,7 +1,6 @@
 import { hex } from "@scure/base";
-import { Wallet, type ProviderConnectionState } from "../wallet";
+import { Wallet, extractArkProviderUrl, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
-import { RestArkProvider } from "../../providers/ark";
 import type {
     IWallet,
     IAssetManager,
@@ -10,12 +9,20 @@ import type {
     SendBitcoinParams,
     SettleParams,
     GetVtxosFilter,
+    GetNewAddressesOptions,
+    NewAddress,
     ArkTransaction,
     ExtendedCoin,
     Recipient,
+    SendParams,
 } from "..";
 import type { SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
+import type {
+    AddressAllocationCapable,
+    HDAllocationCapable,
+    HDWalletCapable,
+} from "../hdWalletCapable";
 import type { IContractManager } from "../../contracts/contractManager";
 import type { IDelegateManager } from "../delegate";
 import type { TaskQueue, TaskItem } from "../../worker/expo/taskQueue";
@@ -113,7 +120,9 @@ export function warnOnRemovedBackgroundFields(bg: unknown): void {
  * const balance = await wallet.getBalance();
  * ```
  */
-export class ExpoWallet implements IWallet {
+export class ExpoWallet
+    implements IWallet, HDWalletCapable, HDAllocationCapable, AddressAllocationCapable
+{
     readonly identity: Identity;
     readonly arkProvider: Wallet["arkProvider"];
     readonly indexerProvider: Wallet["indexerProvider"];
@@ -171,11 +180,7 @@ export class ExpoWallet implements IWallet {
         // Persist wallet params so the background handler can rehydrate
         // without a network call. Only works with AsyncStorageTaskQueue.
         if ("persistConfig" in taskQueue) {
-            const arkServerUrl =
-                config.arkServerUrl ||
-                (wallet.arkProvider instanceof RestArkProvider
-                    ? wallet.arkProvider.serverUrl
-                    : undefined);
+            const arkServerUrl = config.arkServerUrl || extractArkProviderUrl(wallet.arkProvider);
 
             if (arkServerUrl) {
                 const timelock = wallet.offchainTapscript.options.csvTimelock;
@@ -308,6 +313,10 @@ export class ExpoWallet implements IWallet {
         return this.wallet.getVtxos(filter);
     }
 
+    getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+        return this.wallet.getSpendableVtxos(filter);
+    }
+
     getBoardingUtxos(): Promise<ExtendedCoin[]> {
         return this.wallet.getBoardingUtxos();
     }
@@ -326,6 +335,37 @@ export class ExpoWallet implements IWallet {
 
     getContractManager(): Promise<IContractManager> {
         return this.wallet.getContractManager();
+    }
+
+    // Descriptor surface, delegated like everything else here. Without these
+    // the structural probes see a wallet with no HD state, so an Expo wallet
+    // running `walletMode: 'hd'` would bind every artifact to its baseline
+    // identity key — reusing one key across swaps while its receive addresses
+    // rotate, and never allocating the indices a restore scan looks for.
+
+    getCurrentSigningDescriptor(): Promise<string | undefined> {
+        return this.wallet.getCurrentSigningDescriptor();
+    }
+
+    getNextSigningDescriptor(): Promise<string | undefined> {
+        return this.wallet.getNextSigningDescriptor();
+    }
+
+    /** @see Wallet.getNewAddresses */
+    getNewAddresses(opts?: GetNewAddressesOptions): Promise<NewAddress[]> {
+        return this.wallet.getNewAddresses(opts);
+    }
+
+    getUsedSigningDescriptors(opts?: { lookAhead?: number }): Promise<string[]> {
+        return this.wallet.getUsedSigningDescriptors(opts);
+    }
+
+    advanceSigningDescriptorWatermark(descriptor: string): Promise<void> {
+        return this.wallet.advanceSigningDescriptorWatermark(descriptor);
+    }
+
+    signerForDescriptor(descriptor: string): Promise<Identity> {
+        return this.wallet.signerForDescriptor(descriptor);
     }
 
     /**
@@ -358,8 +398,8 @@ export class ExpoWallet implements IWallet {
         return this.wallet.settle(params, eventCallback);
     }
 
-    send(...recipients: [Recipient, ...Recipient[]]): Promise<string> {
-        return this.wallet.send(...recipients);
+    send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
+        return this.wallet.send(...args);
     }
 
     get assetManager(): IAssetManager {

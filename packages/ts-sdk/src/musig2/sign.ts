@@ -1,4 +1,5 @@
 import * as musig from "@scure/btc-signer/musig2.js";
+import { hex } from "@scure/base";
 import { bytesToNumberBE } from "@noble/curves/utils.js";
 import { Point } from "@noble/secp256k1";
 import { aggregateKeys } from "./keys";
@@ -62,6 +63,39 @@ export class PartialSig {
     }
 }
 
+function createSession(
+    combinedNonce: Uint8Array,
+    publicKeys: Uint8Array[],
+    message: Uint8Array,
+    options?: SignOptions,
+): musig.Session {
+    // sortKeys sorts in place; copy so the caller's key order (and anything
+    // aligned with it, such as per-signer nonces) survives.
+    const keys = options?.sortKeys ? musig.sortKeys([...publicKeys]) : publicKeys;
+
+    let tweakBytes: Uint8Array | undefined;
+
+    if (options?.taprootTweak !== undefined) {
+        // `keys` is already in the session's final order; the tweak must
+        // commit to that same order, so don't re-sort here.
+        const { preTweakedKey } = aggregateKeys(keys, false);
+
+        tweakBytes = schnorr.utils.taggedHash(
+            "TapTweak",
+            preTweakedKey.subarray(1),
+            options.taprootTweak,
+        );
+    }
+
+    return new musig.Session(
+        combinedNonce,
+        keys,
+        message,
+        tweakBytes ? [tweakBytes] : undefined,
+        tweakBytes ? [true] : undefined,
+    );
+}
+
 /**
  * Generates a MuSig2 partial signature
  */
@@ -73,28 +107,65 @@ export function sign(
     message: Uint8Array,
     options?: SignOptions,
 ): PartialSig {
-    let tweakBytes: Uint8Array | undefined;
+    const session = createSession(combinedNonce, publicKeys, message, options);
+    const partialSig = session.sign(secNonce, privateKey);
+    return PartialSig.decode(partialSig);
+}
 
-    if (options?.taprootTweak !== undefined) {
-        const { preTweakedKey } = aggregateKeys(
-            options?.sortKeys ? musig.sortKeys(publicKeys) : publicKeys,
-            true,
-        );
+/**
+ * Verifies a single signer's MuSig2 partial signature.
+ *
+ * @param partialSig - The share to verify
+ * @param signerPublicKey - Public key of the signer that produced it
+ * @param pubNonces - Public nonce of every signer, parallel to `publicKeys`
+ * @param combinedNonce - The aggregated nonce the share was produced under
+ * @param publicKeys - Public keys of every signer
+ * @param message - The signed message
+ * @param options - Must match the options the share was produced with
+ * @throws PartialSignatureError if the inputs do not describe a coherent session
+ */
+export function partialSigVerify(
+    partialSig: PartialSig,
+    signerPublicKey: Uint8Array,
+    pubNonces: Uint8Array[],
+    combinedNonce: Uint8Array,
+    publicKeys: Uint8Array[],
+    message: Uint8Array,
+    options?: SignOptions,
+): boolean {
+    if (pubNonces.length !== publicKeys.length) {
+        throw new PartialSignatureError("pubNonces and publicKeys must have the same length");
+    }
 
-        tweakBytes = schnorr.utils.taggedHash(
-            "TapTweak",
-            preTweakedKey.subarray(1),
-            options.taprootTweak,
+    // The signer index addresses both arrays, so nonces must follow the key
+    // order the session uses — sort the pairs together rather than the keys alone.
+    const signers = publicKeys.map((publicKey, i) => ({
+        publicKey,
+        publicKeyHex: hex.encode(publicKey),
+        pubNonce: pubNonces[i],
+    }));
+
+    if (options?.sortKeys) {
+        signers.sort((a, b) =>
+            a.publicKeyHex < b.publicKeyHex ? -1 : a.publicKeyHex > b.publicKeyHex ? 1 : 0,
         );
     }
 
-    const session = new musig.Session(
+    const signerIndex = signers.findIndex((s) => s.publicKeyHex === hex.encode(signerPublicKey));
+    if (signerIndex === -1) {
+        throw new PartialSignatureError("signer public key is not part of the session");
+    }
+
+    const session = createSession(
         combinedNonce,
-        options?.sortKeys ? musig.sortKeys(publicKeys) : publicKeys,
+        signers.map((s) => s.publicKey),
         message,
-        tweakBytes ? [tweakBytes] : undefined,
-        tweakBytes ? [true] : undefined,
+        { ...options, sortKeys: false },
     );
-    const partialSig = session.sign(secNonce, privateKey);
-    return PartialSig.decode(partialSig);
+
+    return session.partialSigVerify(
+        partialSig.encode(),
+        signers.map((s) => s.pubNonce),
+        signerIndex,
+    );
 }

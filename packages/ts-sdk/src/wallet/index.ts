@@ -15,6 +15,7 @@ import {
     VirtualTxRepository,
 } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
+import type { Contract } from "../contracts/types";
 import { IDelegateManager } from "./delegate";
 import type { Activity, ActivityRegistry } from "./activity";
 import type { ExitCaptureMode } from "./exit/capture";
@@ -22,6 +23,8 @@ import type { ExitDataSource } from "./exit/resolver";
 export {
     ActivityRegistry,
     boardingResolver,
+    collabExitResolver,
+    assetMintResolver,
     createDefaultActivityRegistry,
     type Activity,
     type ActivityIntent,
@@ -54,6 +57,62 @@ import { DelegateProvider } from "../providers/delegate";
  *   provider.
  */
 export type WalletMode = "auto" | "static" | "hd" | DescriptorProvider;
+
+/**
+ * Address flavours {@link Wallet.getNewAddresses} can mint. Both derive from
+ * the same HD index within one call — `default` is the offchain Arkade
+ * receive script, `boarding` the onchain deposit script.
+ */
+export type NewAddressType = "default" | "boarding";
+
+/** Options for {@link Wallet.getNewAddresses}. */
+export interface GetNewAddressesOptions {
+    /**
+     * Flavours to mint, in the order they are returned.
+     *
+     * @defaultValue `["default"]`
+     */
+    types?: readonly NewAddressType[];
+    /**
+     * Require a genuinely fresh index. A wallet with no HD stream to advance
+     * (`walletMode: 'static'` / `'auto'`, or a provider that declines to
+     * allocate) throws {@link WalletCannotAllocateAddressError} rather than
+     * silently handing back the address it already gave you — which, for a
+     * caller issuing one address per counterparty, surfaces only as two
+     * people paying the same script.
+     *
+     * @defaultValue `false`
+     */
+    forceNew?: boolean;
+}
+
+/** One minted address and the contract row backing it. */
+export interface NewAddress {
+    /**
+     * The address to hand out: the onchain address for `boarding`, the Arkade
+     * address for `default`.
+     *
+     * Not always `contract.address`. A boarding row persists the *ark*
+     * encoding of its script, so reading `contract.address` on a boarding
+     * entry yields an address no onchain sender can pay.
+     */
+    address: string;
+    /**
+     * The descriptor this address was derived from — hand it to
+     * `signerForDescriptor` to recover the key later. Every entry from a
+     * single call carries the same one, because they share an index.
+     *
+     * Also present on `contract.metadata.signingDescriptor`, but surfaced here
+     * typed: `Contract.metadata` is `Record<string, unknown>`, so reading it
+     * there costs the caller an `as string` on the one field they are most
+     * likely to persist beside an invoice.
+     */
+    signingDescriptor: string;
+    /**
+     * The persisted, watched contract row — script, type, state and metadata.
+     */
+    contract: Contract;
+}
 
 /**
  * Base configuration options shared by all wallet types.
@@ -105,6 +164,21 @@ export interface BaseWalletConfig {
     boardingTimelock?: RelativeTimelock;
     /** Relative timelock applied to unilateral exit paths. */
     exitTimelock?: RelativeTimelock;
+    /**
+     * Minimum accepted `BatchStartedEvent.batchExpiry`, as wall-clock seconds.
+     * Defaults per network — see `defaultBatchExpiryPolicy`. Lowering it below
+     * the default relaxes a fund-safety bound; intended for local testing.
+     */
+    minBatchExpirySeconds?: bigint;
+    /**
+     * Minimum accepted checkpoint exit delay decoded from `ArkInfo.checkpointTapscript`,
+     * as wall-clock seconds. Defaults per network — see
+     * `defaultCheckpointExitDelayPolicy`, which already carries the value the
+     * hosted signet and mutinynet Arkade Services advertise, so neither needs
+     * this set. Lowering it below the default relaxes a fund-safety bound;
+     * intended for local testing.
+     */
+    minCheckpointExitDelaySeconds?: bigint;
     /**
      * Repository-backed storage configuration overrides.
      * Defaults to IndexedDB if unset.
@@ -313,17 +387,52 @@ export interface WalletBalance {
         /** Combined boarding balance (`confirmed` + `unconfirmed`) */
         total: number;
     };
-    /** Spendable settled (finalized) balance. */
+    /** Settled (finalized) balance the wallet owns, including gated and intent-locked funds. */
     settled: number;
-    /** Spendable preconfirmed (unfinalized) balance. */
+    /** Preconfirmed (unfinalized) balance the wallet owns, on the same owned rule as {@link settled}. */
     preconfirmed: number;
     /**
-     * Immediately spendable offchain balance: the `settled + preconfirmed`
-     * rule applied only to VTXOs not locked by an in-flight (non-terminal)
-     * intent. Equals `settled + preconfirmed` when nothing is intent-locked.
+     * Immediately spendable offchain balance — what generic selection would
+     * pick, so nothing counted here can be refused by `send`:
+     * `settled + preconfirmed - gated - intentLocked`.
      */
     available: number;
-    /** Recoverable balance from subdust or expired (swept) virtual outputs. */
+    /**
+     * Spendable-but-for-the-gate funds: VTXOs under a contract the
+     * generic-spending gate refuses — a VHTLC lockup, an unmarked `arkade`
+     * program, or a type whose handler this runtime never registered. Counted in
+     * `settled`/`preconfirmed` and `total`, never in `available`.
+     *
+     * Tested before {@link intentLocked}: the gate is a durable property of the
+     * contract while an intent lock clears on its own, so a VTXO that is both is
+     * reported here — it does not become available when the batch settles.
+     *
+     * Covers this bucket only: {@link recoverable} has the same owned-versus-
+     * obtainable split under a different predicate and is not counted here.
+     *
+     * Subtract this from `settled + preconfirmed`, never from `total`. `total`
+     * also carries {@link boarding}, {@link recoverable}, {@link pendingRecovery}
+     * and {@link unrolled}, which are still the user's funds — netting a bucket
+     * out of it drops them from the figure with no signal.
+     */
+    gated: number;
+    /**
+     * Funds committed to an in-flight (non-terminal) intent, and not already
+     * counted in {@link gated}. Unlike `gated`, these return to `available` when
+     * the intent reaches a terminal state.
+     *
+     * Reported as zero where the wallet cannot answer the question — no intent
+     * repository, or a repository read that fails — so this under-reports into
+     * `available` rather than misattributing.
+     */
+    intentLocked: number;
+    /**
+     * Recoverable balance from subdust or expired (swept) virtual outputs —
+     * recoverable in principle, so a lockup whose contract refuses a spend right
+     * now is still counted and `total` does not lose it.
+     * `VtxoManager.getRecoverableBalance()` answers the narrower question of
+     * what a batch would hand back today, and excludes it.
+     */
     recoverable: number;
 
     /**
@@ -334,11 +443,39 @@ export interface WalletBalance {
      */
     pendingRecovery: number;
 
-    /** Total balance across offchain, recoverable, pending-recovery, and boarding funds. */
+    /**
+     * Funds whose unilateral exit already happened — the output is onchain
+     * behind its CSV timelock, so `Unroll.completeUnroll` is the only thing
+     * that moves it. Excluded from `available`/`settled`/`preconfirmed`, from
+     * `recoverable` (no batch can lift an onchain output), and from coin
+     * selection — but still the wallet's funds, so counted in `total`.
+     */
+    unrolled: number;
+
+    /**
+     * Total balance across offchain, recoverable, pending-recovery, unrolled,
+     * and boarding funds.
+     *
+     * One known main-thread-only wedge: while a spend is in flight — `send`,
+     * `sendBitcoin` or `settle` — its VTXO inputs are withheld from every bucket,
+     * including this one. Boarding inputs are not: only virtual coins enter the
+     * set. That state lives on the `Wallet` instance driving the spend, so a
+     * service-worker client reading the same repository still counts them until
+     * the spend settles. Both sides converge when it does.
+     */
     total: number;
 
-    /** Asset balance entries (`assetId` & `amount`) */
+    /** Asset balance entries (`assetId` & `amount`) the wallet owns. */
     assets: Asset[];
+
+    /**
+     * The subset of {@link assets} generic spending will accept, i.e. the asset
+     * analogue of {@link available}. `assets - availableAssets` is what is held
+     * but not selectable, for the {@link gated} and {@link intentLocked} causes
+     * plus recovery and {@link unrolled} — assets have no per-cause split of
+     * their own.
+     */
+    availableAssets: Asset[];
 }
 
 /**
@@ -366,7 +503,13 @@ export interface SendBitcoinParams {
      */
     memo?: string;
 
-    /** Optional explicit virtual output selection used by `Wallet.sendBitcoin`. */
+    /**
+     * Optional explicit virtual output selection used by `Wallet.sendBitcoin`.
+     * Ungated, like `settle({ inputs })`: whatever is named here is spent, even
+     * if generic selection would skip it.
+     *
+     * @see IReadonlyWallet.getSpendableVtxos
+     */
     selectedVtxos?: ExtendedVirtualCoin[];
 }
 
@@ -403,6 +546,34 @@ export interface Recipient {
     /** Assets to send to the same recipient (`assetId` & `amount`) */
     assets?: Asset[];
     extensions?: Array<{ type: number; payload: Uint8Array }>; // custom extension packets to embed in the tx
+
+    /**
+     * The recipient contract's tapleaf set (`VtxoScript.encode` form), published
+     * on this output's `PSBT_OUT_TAP_TREE` so its spending paths are recoverable
+     * from the transaction alone — an address commits only to the output key.
+     *
+     * Refused unless it derives the recipient address's taproot key, and it must
+     * come from `VtxoScript.encode()`: leaf depths are ignored on read and the
+     * tree is rebuilt in arkd's canonical shape, so a tree from another encoder
+     * is refused even where it commits to the same address.
+     */
+    tapTree?: Bytes;
+}
+
+/** Object form of `IWallet.send`'s arguments; the variadic form has no slot for options. */
+export interface SendParams {
+    /** One or more recipients — the variadic arguments of the other form. */
+    recipients: [Recipient, ...Recipient[]];
+
+    /**
+     * Spend exactly these virtual outputs instead of letting the wallet choose.
+     * Taken as given, like `settle({ inputs })`: nothing is added, so a shortfall
+     * is an error rather than a top-up. Use when a contract must be funded from
+     * coins outliving its timelock, which generic selection does not know about.
+     *
+     * @see IReadonlyWallet.getVtxos
+     */
+    selectedVtxos?: ExtendedVirtualCoin[];
 }
 
 /**
@@ -707,6 +878,17 @@ export interface TxKey {
     arkTxid: string;
 }
 
+/** The categories the history builder itself assigns. */
+export type BuiltinTxTag = "offchain" | "boarding" | "exit" | "batch";
+
+/**
+ * The category the history builder assigns to a transaction. The `(string & {})`
+ * arm keeps the union open — apps and resolvers can introduce their own
+ * categories without a breaking change — while preserving editor autocomplete
+ * for the built-in four.
+ */
+export type TxTag = BuiltinTxTag | (string & {});
+
 /**
  * Wallet transaction history entry.
  *
@@ -731,6 +913,13 @@ export interface ArkTransaction {
 
     /** Assets sent or received by this transaction, if any. */
     assets?: Asset[];
+
+    /**
+     * The {@link TxTag} category assigned by the history builder. Always set on
+     * transactions returned by the wallet's `getTransactionHistory()`; optional
+     * only because a hand-built `ArkTransaction` may omit it.
+     */
+    tag?: TxTag;
 }
 
 /**
@@ -770,6 +959,7 @@ import type { NormalizedExtendedVirtualCoin } from "./vtxo";
 export {
     canRecoverOnchain,
     canSpendOffchain,
+    canSweepOnchain,
     convertVtxo,
     getAllNormalizedVtxos,
     getNormalizedVtxos,
@@ -810,7 +1000,15 @@ export type GetVtxosFilter = {
     /** Include swept but still unspent virtual outputs. */
     withRecoverable?: boolean;
 
-    /** Include virtual outputs that have been unrolled onchain. */
+    /**
+     * Include virtual outputs that have been unrolled onchain.
+     *
+     * Authoritative on the *location* axis and only that: an exited output is
+     * returned whatever else is true of it, spent ones included. So unlike
+     * {@link withRecoverable}, this flag does not narrow to a capability —
+     * test {@link canSweepOnchain} before acting on what comes back.
+     * `Unroll.prepareUnrollTransaction`, the flag's main consumer, does.
+     */
     withUnrolled?: boolean;
 };
 
@@ -875,7 +1073,16 @@ export interface IAssetManager extends IReadonlyAssetManager {
  * @see IReadonlyWallet
  */
 export interface IWallet extends IReadonlyWallet {
-    /** Signing identity associated with the wallet. */
+    /**
+     * Signing identity associated with the wallet.
+     *
+     * A real signer, not a `ReadonlyIdentity` that structurally fits: contract
+     * corridors need all four members — `sign`, `signMessage`, `signerSession`
+     * and `xOnlyPublicKey` — and `signerSession` is the one a watch-only
+     * identity lacks. `isSigningIdentity` is the check; a wallet that fails it
+     * is refused as `WalletCannotSignError` before anything is funded, rather
+     * than at the push that discovers there is no signer.
+     */
     identity: Identity;
 
     /**
@@ -903,16 +1110,25 @@ export interface IWallet extends IReadonlyWallet {
     ): Promise<string>;
 
     /**
-     * Send bitcoin and/or assets to one or more Arkade recipients.
+     * Send bitcoin and/or assets to one or more Arkade recipients, passed
+     * either as variadic `Recipient`s or as a single `SendParams` object —
+     * the latter also carries the inputs to spend.
      *
-     * @param recipients - One or more recipients
+     * @param args - Recipients, or a `SendParams` object
      * @returns Arkade transaction id
+     * @see SendParams
      * @example
      * ```typescript
      * await wallet.send({ address: 'ark1q...', amount: 1000 })
+     *
+     * // choosing the inputs as well as the outputs
+     * await wallet.send({
+     *     recipients: [{ address: 'ark1q...', amount: 1000 }],
+     *     selectedVtxos: mine,
+     * })
      * ```
      */
-    send(...recipients: [Recipient, ...Recipient[]]): Promise<string>;
+    send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string>;
 
     // TODO: this needs to be async or find a workaround
     /** Asset manager bound to this wallet instance. */
@@ -956,6 +1172,21 @@ export interface IReadonlyWallet {
      * @see GetVtxosFilter
      */
     getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
+
+    /**
+     * The subset of {@link getVtxos} that generic spending may select: the same
+     * filter, minus contracts the generic-spending gate closes, minus funds
+     * awaiting recovery under a past-cutoff signer, minus outpoints locked by an
+     * in-flight intent. Every implicit coin selection in the SDK reads this;
+     * `getVtxos` stays the raw reporting/recovery read.
+     *
+     * Both exclusion sets are derived from one contract snapshot, so they cannot
+     * disagree about which VTXOs exist.
+     *
+     * @param filter - Same flags, same defaults, as {@link getVtxos}
+     * @see GetVtxosFilter
+     */
+    getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
 
     /** @returns Onchain boarding inputs tracked by the wallet. */
     getBoardingUtxos(): Promise<ExtendedCoin[]>;

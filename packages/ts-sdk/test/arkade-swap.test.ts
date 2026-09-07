@@ -111,6 +111,10 @@ describe("non-interactive swap (multi-path contract)", () => {
             emulator,
             indexer,
             network: networks.regtest,
+            // connect() takes the co-signer key from the network, not from the
+            // emulator's own getInfo, so the fixture key comes in as the
+            // override. "02"-prefixed like the server key above.
+            emulatorPubkey: "02" + hex.encode(emulatorKey),
         });
         return ark.contract(swapProgram(), args);
     }

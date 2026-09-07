@@ -33,6 +33,11 @@
  * param must be bound, every `$name` reference must be declared, and bound
  * values are validated against their type at compilation.
  *
+ * A covenant spend needs an `indexer`, not just an `emulator`: the co-signing
+ * service resolves each input's prevout pkScript from the previous ark tx the
+ * PSBT carries, and only the indexer can supply those bytes. Pure tapscript
+ * spends go straight to arkd and need neither.
+ *
  * @example
  * ```typescript
  * const htlcProgram = {
@@ -69,7 +74,7 @@ import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 
 import type { Network } from "../networks";
-import { DEFAULT_NETWORK } from "../networks";
+import { DEFAULT_NETWORK, resolveEmulatorPubkey } from "../networks";
 import type { ArkProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
@@ -78,8 +83,15 @@ import type { VirtualCoin } from "../wallet";
 import { getNormalizedVtxos, hasTerminalSpend } from "../wallet";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
-import { buildOffchainTx, type ArkTxInput } from "../utils/arkTransaction";
+import { toXOnly } from "../utils/keys";
+import {
+    assertSubmittedArkTxid,
+    buildOffchainTx,
+    matchServerCheckpoints,
+    type ArkTxInput,
+} from "../utils/arkTransaction";
 import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
+import { attachPrevArkTxs, PrevTxUnavailableError } from "../utils/prevoutTx";
 import { Transaction } from "../utils/transaction";
 import { ANCHOR_PKSCRIPT } from "../utils/anchor";
 import { Extension } from "../extension";
@@ -176,10 +188,13 @@ export interface Utxo {
     vout: number;
     value: number;
     /**
-     * The ark transaction that created this VTXO. Required only by continuation
-     * /recursive covenants that inspect the input's provenance; when set, the SDK
-     * attaches it as the PrevArkTx field.
+     * Raw wire bytes of the ark transaction that created this VTXO, attached as
+     * the PrevArkTx field on input 0.
      *
+     * An override, not the only channel: covenant spends resolve the previous
+     * tx of every input through the client's indexer. Supply it when the tx is
+     * not yet indexable — a recursive covenant spending the output of an ark tx
+     * the caller just built — and the resolved value is suppressed for input 0.
      */
     sourceTx?: Uint8Array;
 }
@@ -225,12 +240,28 @@ export interface ArkadeConnectOptions {
      * tapscript contracts (multisig/timelock/hashlock) don't need it.
      */
     emulator?: EmulatorProvider;
-    /** Indexer — enables `getUtxos`/`getBalance` and coin auto-selection. */
-    indexer?: Pick<IndexerProvider, "getVtxos">;
+    /**
+     * Indexer — enables `getUtxos`/`getBalance` and coin auto-selection, and
+     * resolves the previous ark txs a covenant spend must carry (see
+     * {@link attachPrevArkTxs}). Required for covenant spends.
+     */
+    indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
     /** Signer for paths that require a user signature; optional for watch-only. */
     identity?: Identity;
     /** Network for address derivation; defaults to the SDK default. */
     network?: Network;
+    /**
+     * Co-sign with this emulator key (33-byte compressed hex) instead of the
+     * one pinned for `network`.
+     *
+     * Needed when a network's emulator key has rotated ahead of this SDK, for a
+     * self-hosted emulator, or on a network with no pinned key at all (signet,
+     * testnet, a hand-built `Network` — those throw without it). Setting it
+     * means trusting that operator as co-signer in place of the network's.
+     *
+     * @see resolveEmulatorPubkey
+     */
+    emulatorPubkey?: string;
     /**
      * The wallet's contract manager. When set, contracts created from this
      * client can {@link ArkadeContract.register} themselves into the standard
@@ -253,10 +284,19 @@ export class Arkade {
     readonly emulator: EmulatorProvider | undefined;
     readonly network: Network;
     readonly serverKey: Uint8Array;
-    /** The co-signer's x-only key, present only when an emulator is configured. */
+    /**
+     * The co-signer key covenants are built against (33-byte compressed),
+     * present only when an emulator is configured.
+     *
+     * Resolved from the network — or from `emulatorPubkey` — never from the
+     * emulator's own report. When a claim is refused because the co-signer
+     * disagrees, compare `hex.encode(arkade.emulatorKey)` against the
+     * `signerPubkey` your emulator serves on `/v1/info`: if they differ, the
+     * network rotated and this SDK's pin is stale.
+     */
     readonly emulatorKey: Uint8Array | undefined;
     readonly checkpoint: CSVMultisigTapscript.Type;
-    readonly indexer?: Pick<IndexerProvider, "getVtxos">;
+    readonly indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
     readonly identity?: Identity;
     /** The signing identity's x-only public key, resolved at connect — identifies which inputs the wallet signs. */
     readonly userKey?: Uint8Array;
@@ -270,7 +310,7 @@ export class Arkade {
         serverKey: Uint8Array;
         emulatorKey: Uint8Array | undefined;
         checkpoint: CSVMultisigTapscript.Type;
-        indexer?: Pick<IndexerProvider, "getVtxos">;
+        indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
         identity?: Identity;
         userKey?: Uint8Array;
         contractManager?: IContractManager;
@@ -290,28 +330,35 @@ export class Arkade {
     /** Connect and resolve the server key, checkpoint closure and (if present) the co-signer key. */
     static async connect(opts: ArkadeConnectOptions): Promise<Arkade> {
         const info = await opts.arkade.getInfo();
-        const serverKey = hex.decode(info.signerPubkey).slice(1);
+        const serverKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
         const checkpoint = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
+        const network = opts.network ?? DEFAULT_NETWORK;
 
         // The emulator is optional — only covenant contracts need it.
+        //
+        // The key comes from the network, NOT from the emulator's own /v1/info:
+        // asking the co-signer to name itself lets whatever is answering that
+        // URL pick the key its covenants commit to. The tradeoff is that a
+        // rotated network key is invisible here until the pinned constant ships
+        // — `emulatorPubkey` is the escape hatch for that window. `emulatorKey`
+        // below is public so an operator debugging a refused claim can diff
+        // what was pinned against what their emulator reports.
         let emulatorKey: Uint8Array | undefined;
         if (opts.emulator) {
-            const eInfo = await opts.emulator.getInfo();
-            emulatorKey = hex.decode(eInfo.signerPubkey);
+            emulatorKey = hex.decode(resolveEmulatorPubkey(network, opts.emulatorPubkey));
         }
 
         // Resolve the user key up-front so contract instantiation stays synchronous
         // and the builder can identify which inputs the wallet signs.
         let userKey: Uint8Array | undefined;
         if (opts.identity) {
-            const pub = await opts.identity.xOnlyPublicKey();
-            userKey = pub.length === 33 ? pub.slice(1) : pub;
+            userKey = toXOnly(await opts.identity.xOnlyPublicKey(), "identity key");
         }
 
         return new Arkade({
             arkProvider: opts.arkade,
             emulator: opts.emulator,
-            network: opts.network ?? DEFAULT_NETWORK,
+            network,
             serverKey,
             emulatorKey,
             checkpoint,
@@ -483,6 +530,10 @@ export class ArkadeContract<P extends Program = Program> {
      * When a `contractManager` is configured and this contract is registered,
      * reads the repository-backed state (offline-first, kept fresh by the
      * contract watcher). Otherwise falls back to a direct indexer query.
+     *
+     * Both branches refuse a spent or unilaterally exited output. They are not
+     * otherwise interchangeable: the fallback asks `spendableOnly`, which also
+     * drops swept coins — the manager branch keeps those.
      */
     async getUtxos(): Promise<VirtualCoin[]> {
         const manager = this.client.contractManager;
@@ -491,7 +542,12 @@ export class ArkadeContract<P extends Program = Program> {
             const [registered] = await manager.getContracts({ script: scriptHex });
             if (registered) {
                 const [withVtxos] = await manager.getContractsWithVtxos({ script: scriptHex });
-                return (withVtxos?.vtxos ?? []).filter((v) => !hasTerminalSpend(v));
+                // Not `canSpendOffchain`: that would also drop swept coins,
+                // which this accessor has always returned. Only the exited ones
+                // are new, and they are spendable by nothing offchain.
+                return (withVtxos?.vtxos ?? []).filter(
+                    (v) => !hasTerminalSpend(v) && !v.isUnrolled,
+                );
             }
         }
         if (!this.client.indexer) {
@@ -501,7 +557,10 @@ export class ArkadeContract<P extends Program = Program> {
             scripts: [scriptHex],
             spendableOnly: true,
         });
-        return vtxos;
+        // Same guard as the manager branch above, kept alongside the server-side
+        // ask rather than instead of it: what the server calls spendable is its
+        // answer, not a fact this accessor may lean on.
+        return vtxos.filter((v) => !hasTerminalSpend(v) && !v.isUnrolled);
     }
 
     /** Total spendable balance (requires an indexer). */
@@ -624,9 +683,30 @@ export class ArkadeTransactionBuilder {
         );
 
         // Continuation context for recursive covenants — the parent ark tx that
-        // created the spent coin.
+        // created the spent coin. An explicit `sourceTx` overrides the resolved
+        // value below, which skips inputs that already carry the field (the
+        // emulator refuses an input bearing two).
         if (coin.sourceTx) {
             setArkPsbtField(arkTx, 0, PrevArkTxField, coin.sourceTx);
+        }
+
+        // Emulator v0.0.7+ requires PrevArkTx on every input of a submitted ark
+        // tx. Ark tx input i spends checkpoint i, which spends inputs[i] — so
+        // the tx to carry is the coin's own creating tx, not the checkpoint.
+        // Only the covenant path goes through the emulator; arkd-direct spends
+        // stay byte-identical.
+        if (this.fn.arkadeScript) {
+            const indexer = this.contract.client.indexer;
+            if (!indexer) {
+                throw new PrevTxUnavailableError(
+                    "covenant spends require an `indexer` on the Arkade client to resolve the previous ark tx of each input",
+                );
+            }
+            await attachPrevArkTxs(
+                arkTx,
+                [coin.txid, ...this.fundingCoins.map((c) => c.txid)],
+                indexer,
+            );
         }
 
         const condition = (def.tapscript.witness ?? []).map((w) => this.witnessBytes(w));
@@ -706,13 +786,11 @@ export class ArkadeTransactionBuilder {
             base64.encode(signedArk.toPSBT()),
             checkpoints.map((c) => base64.encode(c.toPSBT())),
         );
+        assertSubmittedArkTxid(res, signedArk, "submitTx");
+        const matched = matchServerCheckpoints(res.signedCheckpointTxs, checkpoints, "submitTx");
         const finalCps = await Promise.all(
-            res.signedCheckpointTxs.map(async (b) =>
-                base64.encode(
-                    (
-                        await client.identity!.sign(Transaction.fromPSBT(base64.decode(b)), [0])
-                    ).toPSBT(),
-                ),
+            matched.map(async ({ server }) =>
+                base64.encode((await client.identity!.sign(server, [0])).toPSBT()),
             ),
         );
         await client.arkProvider.finalizeTx(res.arkTxid, finalCps);

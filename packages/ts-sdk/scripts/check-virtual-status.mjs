@@ -39,8 +39,8 @@ function* walk(dir) {
 
 const findings = [];
 for (const file of walk(srcRoot)) {
-    // Normalize to POSIX separators: `relative()` yields backslashes on Windows, which would
-    // never match the forward-slash ALLOWLIST and flag every exempt file.
+    // ALLOWLIST is written with forward slashes; relative() yields the platform
+    // separator, so on Windows every allowlisted file would otherwise be reported.
     const rel = relative(pkgRoot, file).split(sep).join("/");
     if (ALLOWLIST.includes(rel)) continue;
     const lines = readFileSync(file, "utf8").split("\n");

@@ -1,3 +1,4 @@
+import { DEFAULT_SEQUENCE } from "@scure/btc-signer";
 import { Transaction } from "@scure/btc-signer/transaction.js";
 import { base64 } from "@scure/base";
 import { hex } from "@scure/base";
@@ -109,6 +110,17 @@ export class TxTree {
 
         if (nbOfInputs !== 1) {
             throw new Error(`unexpected number of inputs: ${nbOfInputs}, expected 1`);
+        }
+
+        // a node that is not final is not broadcastable at the moment the exit
+        // path is needed, however well it is signed
+        if (this.root.lockTime !== 0) {
+            throw new Error(`unexpected locktime: ${this.root.lockTime}, expected 0`);
+        }
+
+        const sequence = this.root.getInput(0).sequence;
+        if (sequence !== undefined && sequence !== DEFAULT_SEQUENCE) {
+            throw new Error(`unexpected sequence: ${sequence}, expected ${DEFAULT_SEQUENCE}`);
         }
 
         // the children map can't be bigger than the number of outputs (excluding the P2A)

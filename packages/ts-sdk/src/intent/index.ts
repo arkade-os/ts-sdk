@@ -3,10 +3,19 @@ import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { Transaction } from "../utils/transaction";
-import { ConditionWitness, VtxoTaprootTree } from "../utils/unknownFields";
+import { ConditionWitness, PrevArkTxField, VtxoTaprootTree } from "../utils/unknownFields";
 import { hex } from "@scure/base";
 import { getSequence, VtxoScript } from "../script/base";
 import { ExtendedCoin } from "../wallet";
+import type { WithPrevTx } from "../utils/prevoutTx";
+
+/**
+ * A coin an intent proof proves ownership of. `prevTx` carries the raw wire
+ * bytes of the transaction that created it — required by emulator v0.0.7+ on
+ * every real input of a submitted proof. {@link Intent.create} is synchronous,
+ * so the bytes are supplied rather than fetched; `withPrevTxs` fills them in.
+ */
+export type IntentCoin = WithPrevTx<ExtendedCoin>;
 
 /**
  * Intent proof implementation for Bitcoin message signing.
@@ -51,7 +60,7 @@ export namespace Intent {
      */
     export function create(
         message: string | Message,
-        ins: (TransactionInput | ExtendedCoin)[],
+        ins: (TransactionInput | IntentCoin)[],
         outputs: TransactionOutput[] = [],
     ): Proof {
         if (typeof message !== "string") {
@@ -336,7 +345,7 @@ function hashMessage(message: string, tag: string = TAG_INTENT_PROOF): Uint8Arra
     return schnorr.utils.taggedHash(tag, new TextEncoder().encode(message));
 }
 
-function prepareCoinAsIntentProofInput(coin: ExtendedCoin | TransactionInput): TransactionInput {
+function prepareCoinAsIntentProofInput(coin: IntentCoin | TransactionInput): TransactionInput {
     if (!("tapTree" in coin)) {
         return coin;
     }
@@ -346,6 +355,11 @@ function prepareCoinAsIntentProofInput(coin: ExtendedCoin | TransactionInput): T
     const unknown = [VtxoTaprootTree.encode(coin.tapTree)];
     if (coin.extraWitness) {
         unknown.push(ConditionWitness.encode(coin.extraWitness));
+    }
+    // Lands on proof input i+1 via craftToSignTx; the synthetic input 0 needs
+    // no prevout tx, the emulator synthesises one for it.
+    if (coin.prevTx) {
+        unknown.push(PrevArkTxField.encode(coin.prevTx));
     }
 
     return {

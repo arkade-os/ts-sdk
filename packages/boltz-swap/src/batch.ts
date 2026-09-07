@@ -3,6 +3,8 @@ import {
     BatchFinalizationEvent,
     BatchStartedEvent,
     CSVMultisigTapscript,
+    Network,
+    Recipient,
     SignerSession,
     Transaction,
     TreeNoncesEvent,
@@ -10,11 +12,16 @@ import {
     TxTree,
     validateVtxoTxGraph,
     validateConnectorsTxGraph,
+    validateBatchRecipients,
+    assertFinalCommitmentMatchesValidated,
     Identity,
     VtxoScript,
     buildForfeitTx,
     ArkTxInput,
     getSequence,
+    assertValidBatchExpiry,
+    resolveBatchExpiryPolicy,
+    type BatchExpiryPolicy,
 } from "@arkade-os/sdk";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { base64, hex } from "@scure/base";
@@ -29,39 +36,48 @@ export function createVHTLCBatchHandler(
     identity: Identity,
     session: SignerSession,
     sweepPublicKey: Uint8Array,
+    network: Network,
+    recipient?: Recipient,
     forfeitOutputScript?: Bytes, // undefined if recoverable
     connectorIndex: number = 0,
+    /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
+    batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
 ) {
     const utf8IntentId = new TextEncoder().encode(intentId);
     const intentIdHash = sha256(utf8IntentId);
     const intentIdHashStr = hex.encode(intentIdHash);
 
     let sweepTapTreeRoot: Uint8Array | undefined;
+    let validatedCommitmentTxid: string | undefined;
 
     return {
         onBatchStarted: async (event: BatchStartedEvent): Promise<{ skip: boolean }> => {
-            let skip = true;
-
             // check if our intent ID hash matches any in the event
-            for (const idHash of event.intentIdHashes) {
-                if (idHash === intentIdHashStr) {
-                    if (!arkProvider) {
-                        throw new Error("Ark provider not configured");
-                    }
-                    await arkProvider.confirmRegistration(intentId);
-                    skip = false;
-                }
-            }
+            const skip = !event.intentIdHashes.includes(intentIdHashStr);
 
             if (skip) {
                 return { skip };
             }
 
+            if (!arkProvider) {
+                throw new Error("Ark provider not configured");
+            }
+
+            // Bound the expiry before confirming, so a rejected round is never
+            // confirmed to the operator.
+            const info = await arkProvider.getInfo();
+            const timelock = assertValidBatchExpiry(
+                event.batchExpiry,
+                resolveBatchExpiryPolicy(network, {
+                    advertisedVtxoTreeExpiry: info.vtxoTreeExpiry,
+                    ...batchExpiryPolicy,
+                }),
+            );
+
+            await arkProvider.confirmRegistration(intentId);
+
             const sweepTapscript = CSVMultisigTapscript.encode({
-                timelock: {
-                    value: event.batchExpiry,
-                    type: event.batchExpiry >= 512n ? "seconds" : "blocks",
-                },
+                timelock,
                 pubkeys: [sweepPublicKey],
             }).script;
 
@@ -93,7 +109,11 @@ export function createVHTLCBatchHandler(
             const commitmentTx = Transaction.fromPSBT(base64.decode(event.unsignedCommitmentTx));
             validateVtxoTxGraph(vtxoTree, commitmentTx, sweepTapTreeRoot);
 
-            // TODO check if our registered outputs are in the vtxo tree
+            if (recipient) {
+                validateBatchRecipients(commitmentTx, vtxoTree.leaves(), [recipient], network);
+            }
+            // record only after validation so a rejected tree never pins a txid
+            validatedCommitmentTxid = commitmentTx.id;
 
             const sharedOutput = commitmentTx.getOutput(0);
             if (!sharedOutput?.amount) {
@@ -134,6 +154,19 @@ export function createVHTLCBatchHandler(
                 // no need to create a forfeit transaction, skip
                 return;
             }
+
+            // this handler always cosigns the tree (no skipVtxoTreeSigning path),
+            // so a finalization without a pinned commitment tx is protocol-invalid
+            if (!validatedCommitmentTxid) {
+                throw new Error(
+                    "BatchFinalizationEvent: commitment tx was not validated at tree signing",
+                );
+            }
+            assertFinalCommitmentMatchesValidated(
+                Transaction.fromPSBT(base64.decode(event.commitmentTx)),
+                validatedCommitmentTxid,
+                "vhtlc batch finalization",
+            );
 
             if (!connectorTree) {
                 throw new Error("BatchFinalizationEvent: expected connector tree to be defined");

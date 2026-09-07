@@ -3,6 +3,12 @@ import { AssetDetails, AssetMetadata, Outpoint, VirtualCoin } from "../wallet";
 import { convertVtxo } from "../wallet/vtxo";
 import { isFetchTimeoutError } from "./ark";
 import { eventSourceIterator, isEventSourceError } from "./utils";
+import {
+    isEventSourceUnavailableError,
+    resolveEventSource,
+    type EventSourceCapable,
+    type EventSourceFactory,
+} from "./eventSource";
 import { MetadataList } from "../extension/asset";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 import { baseFetch } from "../utils/fetch";
@@ -96,6 +102,12 @@ export type PaginationOptions = {
     pageIndex?: number;
     pageSize?: number;
 };
+
+/**
+ * Page size {@link RestIndexerProvider.getVtxos} uses when the caller named no
+ * pagination of its own and it pages the query out itself.
+ */
+export const DEFAULT_VTXO_PAGE_SIZE = 500;
 
 export enum IndexerTxType {
     INDEXER_TX_TYPE_UNSPECIFIED = 0,
@@ -386,7 +398,15 @@ export interface IndexerProvider {
  * ```
  */
 export class RestIndexerProvider implements IndexerProvider {
-    constructor(public serverUrl: string = DEFAULT_ARKADE_SERVER_URL) {}
+    /** Overrides {@link configureEventSource} for this provider's subscription. */
+    protected readonly eventSource?: EventSourceFactory;
+
+    constructor(
+        public serverUrl: string = DEFAULT_ARKADE_SERVER_URL,
+        options: EventSourceCapable = {},
+    ) {
+        this.eventSource = options.eventSource;
+    }
 
     async getVtxoTree(
         batchOutpoint: Outpoint,
@@ -532,6 +552,10 @@ export class RestIndexerProvider implements IndexerProvider {
         abortSignal: AbortSignal,
     ): AsyncIterableIterator<SubscriptionResponse> {
         const url = `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`;
+        // Captured, not resolved, here: resolution has to happen per connection
+        // attempt inside the generator, so a caller that abandons the iterator
+        // never triggers it and a late `configureEventSource` is still seen.
+        const override = this.eventSource;
         let iterator: ReturnType<typeof eventSourceIterator> | null = null;
         const closeIterator = () => iterator?.close();
 
@@ -542,7 +566,9 @@ export class RestIndexerProvider implements IndexerProvider {
             try {
                 while (!abortSignal?.aborted) {
                     try {
-                        const currentIterator = eventSourceIterator(new EventSource(url));
+                        const currentIterator = eventSourceIterator(
+                            resolveEventSource(override)(url),
+                        );
                         iterator = currentIterator;
 
                         for await (const event of currentIterator) {
@@ -583,6 +609,12 @@ export class RestIndexerProvider implements IndexerProvider {
                         if (isEventSourceError(error)) {
                             throw error;
                         }
+
+                        // A missing EventSource is an environment fact, not a
+                        // stream failure: the caller reports it once (see
+                        // ContractWatcher), where this loop would log it on
+                        // every reconnect attempt.
+                        if (isEventSourceUnavailableError(error)) throw error;
 
                         console.error("Subscription error:", error);
                         throw error;
@@ -690,19 +722,60 @@ export class RestIndexerProvider implements IndexerProvider {
             throw new Error("before must be greater than after");
         }
 
+        // A caller that named no page is asking for the whole answer, but the
+        // server answers with one page of its own choosing, so returning it
+        // verbatim hands back a silent prefix. Page it out here instead: the
+        // result is complete, and `page` is dropped because nothing is left to
+        // ask for.
+        if (opts?.pageIndex === undefined && opts?.pageSize === undefined) {
+            const all: VirtualCoin[] = [];
+            // Follow the server's cursor rather than a local counter: the
+            // server clamps page.index=0 to page 1 and echoes the 1-based
+            // page in `current`, so only `next` says where to go and
+            // `current >= total` says when to stop (both reference clients
+            // drive the loop exactly this way).
+            let pageIndex = 0;
+            for (;;) {
+                const { vtxos, page } = await this.fetchVtxosPage({
+                    ...(opts as GetVtxosOptions),
+                    pageIndex,
+                    pageSize: DEFAULT_VTXO_PAGE_SIZE,
+                });
+                all.push(...vtxos);
+                // A provider that omits `page` entirely never paged in the
+                // first place; a short page can only be the last one.
+                if (!page || page.current >= page.total || vtxos.length < DEFAULT_VTXO_PAGE_SIZE) {
+                    break;
+                }
+                pageIndex = page.next;
+            }
+            return { vtxos: all };
+        }
+
+        return this.fetchVtxosPage(opts);
+    }
+
+    /**
+     * Fetch a single page of vtxos. Callers paging to exhaustion get no
+     * deliberate inter-page backoff here: `indexerFetch` already enforces
+     * politeness through the rate gate, so don't add a redundant sleep.
+     */
+    private async fetchVtxosPage(
+        opts?: GetVtxosOptions,
+    ): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }> {
         let url = `${this.serverUrl}/v1/indexer/vtxos`;
         const params = new URLSearchParams();
 
         // Handle scripts with multi collection format
-        if (hasScripts) {
-            opts!.scripts!.forEach((script) => {
+        if (opts?.scripts?.length) {
+            opts.scripts.forEach((script) => {
                 params.append("scripts", script);
             });
         }
 
         // Handle outpoints with multi collection format
-        if (hasOutpoints) {
-            opts!.outpoints!.forEach((outpoint) => {
+        if (opts?.outpoints?.length) {
+            opts.outpoints.forEach((outpoint) => {
                 params.append("outpoints", `${outpoint.txid}:${outpoint.vout}`);
             });
         }

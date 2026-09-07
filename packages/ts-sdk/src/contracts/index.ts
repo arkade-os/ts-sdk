@@ -9,8 +9,22 @@ export { DelegateContractHandler } from "./handlers";
 export type { DelegateContractParams } from "./handlers";
 export { VHTLCContractHandler } from "./handlers";
 export type { VHTLCContractParams } from "./handlers";
+export { VHTLCV2ContractHandler } from "./handlers";
+export type { VHTLCV2ContractParams } from "./handlers";
 export { BoardingContractHandler } from "./handlers";
 export type { BoardingContractParams } from "./handlers";
+
+// Generic-spending gate
+export {
+    isContractGenericallySpendable,
+    gatedContracts,
+    gateExclusion,
+    outpointExclusion,
+    outpointReasons,
+    logExcludedVtxos,
+    UnannotatableInputError,
+} from "./spendability";
+export type { ExcludableVtxo, VtxoExclusion } from "./spendability";
 
 // arkcontract string codec
 export {

@@ -208,6 +208,45 @@ describe("ServiceWorkerReadonlyWallet", () => {
         await expect(wallet.getBoardingUtxos()).resolves.toEqual(utxos);
     });
 
+    it("asks the worker for the gated set over its own message", async () => {
+        // The gate reads contract-row metadata, which exists only inside the
+        // worker — so this cannot be a main-thread filter over GET_VTXOS.
+        const vtxos = [{ txid: "tx", vout: 0, value: 1, virtualStatus: { state: "settled" } }];
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.type === "GET_SPENDABLE_VTXOS"
+                ? {
+                      id: message.id,
+                      tag: messageTag,
+                      type: "SPENDABLE_VTXOS",
+                      payload: { vtxos },
+                  }
+                : null,
+        );
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await expect(wallet.getSpendableVtxos()).resolves.toMatchObject([{ txid: "tx" }]);
+    });
+
+    it("fails closed against a worker that predates the message", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.type === "GET_SPENDABLE_VTXOS"
+                ? { id: message.id, tag: messageTag, error: new Error("Unknown message") }
+                : null,
+        );
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await expect(wallet.getSpendableVtxos()).rejects.toThrow("Unknown message");
+        // No GET_VTXOS fallback: degrading to the ungated read would make the
+        // gate advisory for the whole worker-activation window of every deploy.
+        expect(serviceWorker.postMessage).not.toHaveBeenCalledWith(
+            expect.objectContaining({ type: "GET_VTXOS" }),
+        );
+    });
+
     it("rejects when the response contains an error", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
             id: message.id,
@@ -1485,6 +1524,46 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         });
 
         expect(getInitializeMessage(serviceWorker).config.walletMode).toBe("hd");
+    });
+
+    // Structured clone carries the bigints through postMessage untouched, so the
+    // worker hands `Wallet.create` the same floors the page asked for.
+    it("ServiceWorkerWallet.create forwards the timelock floor overrides to the worker init config", async () => {
+        const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+        });
+        const { serviceWorker } = await setup(identity);
+
+        await ServiceWorkerWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            minBatchExpirySeconds: 3_600n,
+            minCheckpointExitDelaySeconds: 2_048n,
+            storage: storage(),
+        });
+
+        const { config } = getInitializeMessage(serviceWorker);
+        expect(config.minBatchExpirySeconds).toBe(3_600n);
+        expect(config.minCheckpointExitDelaySeconds).toBe(2_048n);
+    });
+
+    it("ServiceWorkerWallet.create omits the timelock floor overrides when unset", async () => {
+        const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+        });
+        const { serviceWorker } = await setup(identity);
+
+        await ServiceWorkerWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            storage: storage(),
+        });
+
+        const { config } = getInitializeMessage(serviceWorker);
+        expect(config.minBatchExpirySeconds).toBeUndefined();
+        expect(config.minCheckpointExitDelaySeconds).toBeUndefined();
     });
 
     it("ServiceWorkerReadonlyWallet.create uses the default Arkade server URL when omitted", async () => {

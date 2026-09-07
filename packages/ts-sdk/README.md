@@ -215,6 +215,29 @@ await wallet.send({ address: 'ark1q...', amount: 1000 })
 
 Identities without `signMultiple` continue to work unchanged — each checkpoint is signed individually via `sign()`.
 
+### Ark Provider Caching
+
+`RestArkProvider.getInfo()` fetches current Arkade server parameters on every call. Wrap it
+with `CachingArkProvider` when you reuse that response for fee, signer, or limit lookups:
+
+```typescript
+import { CachingArkProvider, RestArkProvider, Wallet } from '@arkade-os/sdk'
+
+const arkProvider = new CachingArkProvider(
+  new RestArkProvider('https://arkade.computer'),
+  60_000, // optional TTL in milliseconds; defaults to 60 seconds
+)
+
+const wallet = await Wallet.create({ identity, arkProvider })
+```
+
+Only `getInfo()` is cached; all other Ark provider methods pass through. The cache expires
+after the TTL and updates when the inner provider reports server-info changes, including
+signer rotation. Wrapping `RestArkProvider` preserves its `serverUrl`, so `Wallet.create`
+can still derive the default indexer URL. Expired refresh failures propagate;
+wallet boot fallback lives in the persisted ArkInfo snapshot. Call `dispose()` if the
+inner provider outlives the wrapper, to drop its server-info subscription.
+
 ### Onchain Providers
 
 Wallets read onchain state (UTXOs, transactions, fee rates, chain tip) through an `OnchainProvider`. The SDK ships with two implementations and a single transport-agnostic interface so you can swap them without touching wallet code.
@@ -225,6 +248,8 @@ Wallets read onchain state (UTXOs, transactions, fee rates, chain tip) through a
 | `ElectrumOnchainProvider` | WebSocket (Electrum protocol) | Self-hosted nodes (Fulcrum, electrs), low-latency subscriptions, environments where you control the backend. Required if you need to talk to an Electrum server directly. |
 
 If you don't pass a provider explicitly, `OnchainWallet` and `Wallet.create({ ... })` both default to `EsploraProvider` pointing at the URL in `ESPLORA_URL[networkName]`.
+
+> **New:** the interface also requires `getRawTransaction(txid): Promise<Uint8Array>`, the raw wire bytes of a transaction. Emulator v0.0.7+ demands the previous transaction of every input a covenant spend or intent proof carries, and a boarding or commitment parent has no off-chain source. Both shipped providers implement it; a custom `OnchainProvider` has to add it.
 
 #### Default URLs
 
@@ -321,6 +346,39 @@ if (incomingFunds.type === "vtxo") {
 }
 ```
 
+#### Cancelling a wait
+
+`waitForIncomingFunds` is **a live subscription, not a one-shot query**. It opens an onchain address watcher plus an indexer stream and holds them until it settles. Cancel it whenever you might not await it to completion — pass a `timeoutMs`, or an `AbortSignal`:
+
+```typescript
+const controller = new AbortController()
+
+try {
+  const funds = await waitForIncomingFunds(wallet, { signal: controller.signal })
+} catch (error) {
+  if ((error as Error).name !== "AbortError") throw error
+  // cancelled — watchers already released
+}
+
+// or bound the wait directly
+await waitForIncomingFunds(wallet, { timeoutMs: 30_000 })
+```
+
+Do **not** `Promise.race` an uncancelled call against a timer:
+
+```typescript
+// WRONG: race abandons the loser without stopping it. Repeat this on a
+// polling loop and the subscriptions stack until the process exits.
+await Promise.race([sleep(15_000), waitForIncomingFunds(wallet)])
+
+// Right: the signal tears the watcher down when the timer wins.
+await waitForIncomingFunds(wallet, { timeoutMs: 15_000 }).catch(() => null)
+```
+
+If you want a plain polling loop, use your own timer plus `wallet.getBalance()` — it observes new funds on the next cycle. If you want to keep a watcher across many iterations, call `wallet.notifyIncomingFunds(cb)` **once** and hold its `stop()` function, rather than resubscribing per tick.
+
+Concurrent watchers over the same address set share a single Esplora subscription, so a duplicated or leaked watcher no longer multiplies explorer traffic. That is a safety net, not a licence to skip `stop()`.
+
 ### Onboarding
 
 Onboarding allows you to swap onchain funds into virtual outputs:
@@ -341,7 +399,33 @@ console.log('Boarding Total:', balance.boarding.total)
 console.log('Offchain Available:', balance.available)
 console.log('Offchain Settled:', balance.settled)
 console.log('Offchain Preconfirmed:', balance.preconfirmed)
+console.log('Gated by a contract:', balance.gated) // swap escrow, chiefly
+console.log('Locked by an in-flight intent:', balance.intentLocked)
 console.log('Recoverable:', balance.recoverable)
+console.log('Awaiting recovery:', balance.pendingRecovery)
+console.log('Unilaterally exited:', balance.unrolled)
+```
+
+`settled` and `preconfirmed` are the owned offchain buckets this relationship is
+about — `recoverable`, `pendingRecovery` and `unrolled` are the wallet's funds
+too, just held under a different predicate. `available` is what generic spending
+will actually pick, and the difference between the two is accounted for exactly:
+
+```text
+settled + preconfirmed === available + gated + intentLocked
+```
+
+`unrolled` holds virtual outputs whose unilateral exit already happened: they sit
+onchain behind their CSV timelock, so nothing offchain can move them and
+`Unroll.completeUnroll` is the only thing that will. They are never `available` and
+never `recoverable` — but they are still your money, so they still count in `total`.
+
+To show "your money, minus what is tied up", subtract from `settled + preconfirmed`
+— **not from `total`**, which also contains `boarding.total`, `recoverable`,
+`pendingRecovery` and `unrolled`. Those are still your funds, so subtracting a bucket
+from `total` silently drops them from the figure.
+
+```typescript
 
 // Get virtual outputs (available for offchain spending)
 const vtxos = await wallet.getVtxos()
@@ -522,6 +606,11 @@ const expiringVtxos = await manager.getExpiringVtxos()
 // Override thresholdMs (e.g., get virtual outputs expiring in the next 60 seconds)
 const urgentlyExpiring = await manager.getExpiringVtxos(60_000)
 ```
+
+A virtual output whose unilateral exit already happened is never offered for renewal, and the
+exported `isVtxoExpiringSoon` answers `false` for it regardless of its batch expiry: "expiring
+soon" is a renewal signal, and no batch can take an output that already lives onchain. Its remedy
+is `Unroll.completeUnroll`, and its value shows up in `balance.unrolled`.
 
 #### Boarding Input Sweep
 
@@ -727,12 +816,7 @@ const onchainWallet = await OnchainWallet.create(onchainIdentity, 'regtest');
 
 // Unroll a specific virtual output
 const vtxo = { txid: 'your_vtxo_txid', vout: 0 };
-const session = await Unroll.Session.create(
-  vtxo,
-  onchainWallet,
-  onchainWallet.provider,
-  wallet.indexerProvider
-);
+const session = await Unroll.sessionFor(wallet, vtxo, onchainWallet);
 
 // Iterate through the unrolling steps
 for await (const step of session) {
@@ -749,6 +833,24 @@ for await (const step of session) {
   }
 }
 ```
+
+`Unroll.sessionFor` is `Session.create` with the wallet's explorer, indexer and
+virtual-tx cache filled in, plus the exit observer wired: at `StepType.DONE` it re-reads
+the outpoint from the indexer, so the value moves into the `unrolled` balance bucket
+without waiting for a sync that would never bring it. Nothing else would tell the wallet
+— delta sync filters on creation time, so it never sees a status change on an older
+virtual output.
+
+That re-read is a prompt rather than a guarantee: `StepType.DONE` means your Esplora
+endpoint saw the exit confirm, and the Arkade indexer may not have marked the output
+`isUnrolled` yet. The session fires once, so a re-read that lands early simply leaves the
+wallet where it would have been anyway, and the next thing to refresh that outpoint picks
+the exit up. `UnilateralExit` fires twice per virtual output — branch-confirmed and
+sweep-confirmed — and by the sweep the exit has been onchain for at least the CSV delay.
+
+If you hold no `Wallet` — driving an exit from providers alone — build the session with
+the lower-level `Unroll.Session.create(vtxo, bumper, explorer, indexer,
+virtualTxRepository?, onExitObserved?)`, whose last two parameters are optional.
 
 The unrolling process works by:
 
@@ -799,9 +901,10 @@ await Unroll.completeUnroll(
 
 ### Unilateral Exit Packages (pre-signed)
 
-`Unroll.Session` requires the wallet (keys + indexer access) to stay online for the whole
-multi-day exit. `UnilateralExit` removes that requirement: it pre-signs **every** transaction
-needed to unroll a VTXO's offchain transaction chain onchain **and** sweep each matured output
+`Unroll.sessionFor` (and the `Unroll.Session` it builds) requires the wallet — keys plus
+indexer access — to stay online for the whole multi-day exit. `UnilateralExit` removes that
+requirement: it pre-signs **every** transaction needed to unroll a VTXO's offchain
+transaction chain onchain **and** sweep each matured output
 to an address you solely control, then emits a versioned JSON package that anything with an
 Esplora-compatible endpoint can execute — no keys, no Arkade infrastructure.
 
@@ -837,6 +940,12 @@ for await (const event of executor) {
   console.log(event.stepIndex, event.kind, event.status)
 }
 ```
+
+Where the executing machine does hold the `Wallet`, `UnilateralExit.execute(wallet, pkg, opts?)`
+returns the same executor with the exit observer already wired, so the repository re-reads each
+branch as it confirms and again as its sweep does — picking the exit up as it lands, indexer lag
+permitting. The same prompt-not-guarantee caveat as `Unroll.sessionFor` above applies, with the
+sweep-confirm re-read as its own retry.
 
 Every exit terminates in a **sweep**. Unrolling only lands a VTXO back onchain still encumbered
 by its Arkade script; the funds become yours unilaterally only once a sweep spends that output
@@ -914,6 +1023,7 @@ import {
   WalletMessageHandler,
   IndexedDBWalletRepository,
   IndexedDBContractRepository,
+  IndexedDBIntentRepository,
 } from '@arkade-os/sdk'
 
 const walletRepo = new IndexedDBWalletRepository()
@@ -922,6 +1032,10 @@ const contractRepo = new IndexedDBContractRepository()
 const bus = new MessageBus(walletRepo, contractRepo, {
   messageHandlers: [new WalletMessageHandler()],
   tickIntervalMs: 10_000, // default 10s
+  // Optional, same opt-in as `storage.intentRepository` on a main-thread
+  // wallet. Omit it and the worker persists no settlement intent, reconciles
+  // none on restart, and counts intent-locked VTXOs as available.
+  intentRepository: new IndexedDBIntentRepository(),
 })
 
 bus.start()
@@ -1141,7 +1255,7 @@ const wallet = await Wallet.create({
 
 ### Using with Node.js
 
-Node.js does not provide a global `EventSource` implementation. The SDK relies on `EventSource` for Server-Sent Events during settlement (onboarding/offboarding) and contract watching. You must polyfill it before using the SDK:
+Node.js does not provide a global `EventSource` implementation (24.x has one behind `--experimental-eventsource`). The SDK relies on `EventSource` for Server-Sent Events during settlement (onboarding/offboarding) and contract watching, so tell it which one to use:
 
 ```bash
 npm install eventsource
@@ -1149,11 +1263,14 @@ npm install eventsource
 
 ```typescript
 import { EventSource } from "eventsource";
-(globalThis as any).EventSource = EventSource;
+import { configureEventSource, Wallet } from "@arkade-os/sdk";
 
-// Use dynamic import so the polyfill is set before the SDK evaluates
-const { Wallet } = await import("@arkade-os/sdk");
+configureEventSource((url) => new EventSource(url));
 ```
+
+Order does not matter: the factory is resolved when a stream opens, not when the SDK is imported, so no dynamic-import dance is needed. A single provider can override it — `new RestIndexerProvider(url, { eventSource })` — for a process that needs different transports per connection.
+
+Assigning `globalThis.EventSource` still works and is still the last resort in the resolution order (per-provider option → `configureEventSource` → global).
 
 If you also need IndexedDB persistence (e.g. for `WalletRepository`), set up the shim before any SDK import:
 
@@ -1168,8 +1285,10 @@ setGlobalVars(null, { checkOrigin: false });
 ```
 
 > **Note:** `eventsource` and `indexeddbshim` are optional peer dependencies.
-> Without the `EventSource` polyfill, settlement operations will fail with
-> `ReferenceError: EventSource is not defined`.
+> With no `EventSource` available, settlement fails with a typed
+> `EventSourceUnavailableError` naming the remedy, and contract watching warns
+> once and falls back to its failsafe polling — it does not retry a missing
+> global, and it does not go quiet either.
 
 See [`examples/node/multiple-wallets.ts`](examples/node/multiple-wallets.ts) for a complete working example.
 
@@ -1350,6 +1469,24 @@ Contract freshness behavior:
 - **Immediate sync** on manager initialization, subscription reconnect, and contract events
 - **Failsafe polling** every 20 seconds by default to catch missed events, configurable via `watcherConfig.failsafePollIntervalMs`
 - **Manual refresh** through `manager.refreshVtxos()`; pass `{ includeInactive: true }` to sweep every repository contract
+
+Which contracts get that coverage is `contract.watch`, and it is independent of
+`contract.state` (which only governs receive-address selection — a retired
+receive address stays watched, because it can still be paid):
+
+```typescript
+// Watch a one-shot destination only until it is funded; the manager
+// demotes it to `retained` itself once a VTXO lands.
+await manager.createContract({ ...params, watch: 'awaiting-funds' })
+
+// A finished contract — a settled swap lockup, say. The row stays for
+// history, annotation and restore; it just leaves the subscription and
+// the poll. Unlike `deleteContract`, nothing is lost.
+await manager.setContractWatchState(script, 'retained')
+```
+
+A row with no `watch` value is `watched`, so contracts written by earlier SDK
+versions keep the coverage they have today.
 
 ### Repository Pattern
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import {
+    ArkAddress,
     Wallet,
     SingleKey,
     OnchainWallet,
@@ -147,7 +148,7 @@ describe("Wallet", () => {
                             network: "mutinynet",
                             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
                             checkpointTapscript:
-                                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
                         }),
                 })
                 .mockResolvedValueOnce({
@@ -509,7 +510,7 @@ describe("Wallet", () => {
             dust: BigInt(1000),
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
-                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
             fees: {
                 intentFee: {
                     onchainInput: "200.0",
@@ -526,7 +527,7 @@ describe("Wallet", () => {
                 json: () =>
                     Promise.resolve({
                         ...mockArkInfo,
-                        vtxoTreeExpiry: mockArkInfo.batchExpiry, // Server response uses vtxoTreeExpiry
+                        vtxoTreeExpiry: mockArkInfo.batchExpiry,
                     }),
             });
 
@@ -568,7 +569,7 @@ describe("Wallet", () => {
             dust: BigInt(1000),
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
-                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
         };
 
         beforeEach(() => {
@@ -711,7 +712,7 @@ describe("Wallet", () => {
             dust: BigInt(1000),
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
-                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
         };
         const mockBatchExpiry = 1767225600000;
 
@@ -940,7 +941,7 @@ describe("Wallet", () => {
             dust: BigInt(1000),
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
-                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
         };
 
         function createMockVtxo(script: string): VirtualCoin {
@@ -1029,7 +1030,7 @@ describe("Wallet", () => {
             dust: BigInt(1000),
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
-                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
         };
 
         it("opens exactly one getSubscription stream after notifyIncomingFunds", async () => {
@@ -1104,7 +1105,7 @@ describe("Wallet", () => {
             dust: BigInt(1000),
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
-                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
         };
 
         function createMockVtxo(script: string, txid: string): VirtualCoin {
@@ -1261,7 +1262,7 @@ describe("Wallet", () => {
                     ? "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
                     : "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
-                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
         });
 
         function sequence(value: bigint, type: "blocks" | "seconds") {
@@ -1551,7 +1552,7 @@ describe("ReadonlyWallet", () => {
         dust: BigInt(1000),
         forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
         checkpointTapscript:
-            "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+            "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
     };
 
     beforeEach(() => {
@@ -1854,6 +1855,10 @@ describe("Wallet._settleImpl", () => {
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue({
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+            }),
             safeRegisterIntent,
             createBatchHandler,
             updateDbAfterSettle,
@@ -1925,6 +1930,10 @@ describe("Wallet._settleImpl", () => {
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue({
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+            }),
             safeRegisterIntent: vi.fn(async () => {
                 callOrder.push("safeRegisterIntent");
                 throw registerError;
@@ -1980,6 +1989,10 @@ describe("Wallet._settleImpl", () => {
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue({
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+            }),
             safeRegisterIntent: vi.fn().mockResolvedValue("intent-id"),
             createBatchHandler: vi.fn().mockReturnValue({} as Batch.Handler),
             updateDbAfterSettle: vi.fn().mockRejectedValue(new Error("db write failed")),
@@ -2008,7 +2021,7 @@ describe("Wallet._settleImpl", () => {
             }).script,
         );
 
-        const makeVtxo = (value: number, i: number): ExtendedVirtualCoin =>
+        const makeVtxo = (value: number, i: number | string): ExtendedVirtualCoin =>
             ({
                 txid: `vtxo-${value}-${i}`,
                 vout: 0,
@@ -2042,6 +2055,9 @@ describe("Wallet._settleImpl", () => {
                 },
             }) as ExtendedCoin;
 
+        // A gated (e.g. escrowed) coin: reported by getVtxos, withheld by getSpendableVtxos.
+        const gatedVtxo = makeVtxo(1_000_000, "gated");
+
         // Build a `this` for _settleImpl that runs the auto-select branch and
         // short-circuits at makeRegisterIntentSignature, capturing the final
         // selected inputs (which is what gets registered with the server).
@@ -2055,6 +2071,13 @@ describe("Wallet._settleImpl", () => {
             const thisArg: any = {
                 network: "mutinynet",
                 dustAmount: 330n,
+                recipientAddressContext: () => ({
+                    hrp: "tark",
+                    signerSet: {
+                        active: hex.encode(ArkAddress.decode(walletAddress).serverPubKey),
+                        deprecated: new Map(),
+                    },
+                }),
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue({ fees: { intentFee } }),
                 },
@@ -2063,7 +2086,11 @@ describe("Wallet._settleImpl", () => {
                 },
                 boardingTapscript: { exitScript: exitScriptHex },
                 getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
-                getVtxos: vi.fn().mockResolvedValue(vtxos),
+                // The gate lives in getSpendableVtxos: the raw read carries a coin
+                // auto-selection must never reach for (and, at this value, would
+                // sort to the front of the batch if it did).
+                getVtxos: vi.fn().mockResolvedValue([...vtxos, gatedVtxo]),
+                getSpendableVtxos: vi.fn().mockResolvedValue(vtxos),
                 getAddress: vi.fn().mockResolvedValue(walletAddress),
                 identity: {
                     signerSession: () => ({
@@ -2082,6 +2109,18 @@ describe("Wallet._settleImpl", () => {
             };
             return { thisArg, sentinel, getCaptured: () => capturedInputs };
         };
+
+        it("auto-selects from the gated read", async () => {
+            const vtxos = [makeVtxo(5_000, 0), makeVtxo(7_000, 1)];
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {});
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(getCaptured()!.map((v: any) => v.txid)).toEqual(["vtxo-7000-1", "vtxo-5000-0"]);
+            expect(thisArg.getSpendableVtxos).toHaveBeenCalled();
+        });
 
         it("caps the number of auto-selected VTXOs at MAX_VTXOS_PER_SETTLEMENT", async () => {
             const value = 5_000;

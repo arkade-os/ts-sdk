@@ -248,6 +248,9 @@ describe("Worker", () => {
                 readonlyWallet: {},
             },
             { walletRepository },
+            // What the channel *does* is messageBus.test.ts's; here it only has
+            // to reach the handler.
+            { broadcast: expect.any(Function) },
         );
     });
 
@@ -321,45 +324,6 @@ describe("Worker", () => {
         expect(updaterB.handleMessage).toHaveBeenCalledWith(payload);
         expect(source.postMessage).toHaveBeenCalledWith({ tag: "a", id: "1" });
         expect(source.postMessage).toHaveBeenCalledWith({ tag: "b", id: "1" });
-    });
-
-    it("broadcasts tick responses to all clients", async () => {
-        const clientA = { postMessage: vi.fn() };
-        const clientB = { postMessage: vi.fn() };
-        selfMock.clients.matchAll.mockResolvedValue([clientA, clientB]);
-
-        const updater: TestUpdater = {
-            messageTag: "wallet",
-            start: vi.fn().mockResolvedValue(undefined),
-            stop: vi.fn().mockResolvedValue(undefined),
-            tick: vi.fn().mockResolvedValue([{ tag: "wallet", id: "broadcast", broadcast: true }]),
-            handleMessage: vi.fn().mockResolvedValue(null),
-        };
-
-        const sw = new MessageBus(
-            new InMemoryWalletRepository(),
-            new InMemoryContractRepository(),
-            {
-                messageHandlers: [updater],
-            },
-        );
-        await sw.start();
-        await (sw as any).runTick();
-
-        expect(selfMock.clients.matchAll).toHaveBeenCalledWith({
-            includeUncontrolled: true,
-            type: "window",
-        });
-        expect(clientA.postMessage).toHaveBeenCalledWith({
-            tag: "wallet",
-            id: "broadcast",
-            broadcast: true,
-        });
-        expect(clientB.postMessage).toHaveBeenCalledWith({
-            tag: "wallet",
-            id: "broadcast",
-            broadcast: true,
-        });
     });
 });
 

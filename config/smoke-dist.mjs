@@ -20,9 +20,7 @@ const distRoot = join(repoRoot, "dist");
 const manifestPath = join(repoRoot, "package.json");
 
 if (!existsSync(manifestPath)) {
-    console.error(
-        `smoke-dist: no package.json at ${repoRoot}. Run this from a package directory.`,
-    );
+    console.error(`smoke-dist: no package.json at ${repoRoot}. Run this from a package directory.`);
     process.exit(1);
 }
 

@@ -1,5 +1,31 @@
 import { OnchainProvider } from "../../providers/onchain";
+import { notifyExitObserved, type OnExitObserved } from "../exitObserver";
 import { ExitPackage, ExitStep, SweepStep } from "./types";
+
+/**
+ * Resolve the value to throw for an aborted signal.
+ *
+ * `signal.reason` is forwarded verbatim, matching the platform: both
+ * `AbortSignal.prototype.throwIfAborted` and `fetch` throw a custom reason
+ * as-is — including non-`Error` values — so a consumer that calls
+ * `abort(new MyError())` catches `MyError` rather than something wrapping it.
+ * With a no-argument `abort()` a spec-compliant engine supplies a
+ * `DOMException` named `"AbortError"`.
+ *
+ * The fallback exists because `throwIfAborted` is not reliably present on
+ * Hermes / React Native, and this SDK ships Expo providers; there `reason` may
+ * be `undefined`, so an `Error` carrying the same `name` is constructed.
+ */
+function abortErrorFor(signal: AbortSignal): unknown {
+    if (signal.reason !== undefined) return signal.reason;
+    const e = new Error("The operation was aborted");
+    e.name = "AbortError";
+    return e;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+    if (signal?.aborted) throw abortErrorFor(signal);
+}
 
 export type ExecutorEvent = {
     stepIndex: number;
@@ -26,6 +52,33 @@ export interface ExitFeeWallet {
 
 type TxStatus = { confirmed: boolean; blockHeight?: number; blockTime?: number };
 
+export interface ExecutorOptions {
+    pollIntervalMs?: number;
+    feeWallet?: ExitFeeWallet;
+    /** Abort to stop execution.
+     *
+     * Iteration then rejects with `signal.reason`. Calling `abort()`
+     * with no argument yields an error whose `name` is `"AbortError"`;
+     * a custom reason is forwarded as-is, matching `fetch` and
+     * `AbortSignal.prototype.throwIfAborted`.
+     *
+     * Already-broadcast transactions are not recalled; the executor is
+     * idempotent, so a later run resumes from the chain. */
+    signal?: AbortSignal;
+    /**
+     * Fired per VTXO once every step serving its branch is onchain, and again
+     * once its sweep confirms — the two moments an exit becomes observable.
+     * Two fires rather than one is what makes an observer reading a lagging
+     * indexer recoverable here: by the sweep the exit has been onchain for at
+     * least the CSV delay.
+     *
+     * Best-effort: a rejection never reaches the exit, which is the whole point
+     * of a keyless disaster-recovery path. `UnilateralExit.execute` wires it
+     * from a wallet; passing it here keeps the bare executor provider-only.
+     */
+    onExitObserved?: OnExitObserved;
+}
+
 /**
  * Keyless, stateless executor for a pre-signed exit package.
  *
@@ -38,17 +91,64 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
 
     private readonly feeWallet?: ExitFeeWallet;
 
+    private readonly signal?: AbortSignal;
+
+    private readonly onExitObserved?: OnExitObserved;
+
     constructor(
         readonly pkg: ExitPackage,
         readonly provider: OnchainProvider,
-        opts?: { pollIntervalMs?: number; feeWallet?: ExitFeeWallet },
+        opts?: ExecutorOptions,
     ) {
         this.pollIntervalMs = opts?.pollIntervalMs ?? 5_000;
         this.feeWallet = opts?.feeWallet;
+        this.signal = opts?.signal;
+        this.onExitObserved = opts?.onExitObserved;
     }
 
+    /**
+     * Per-VTXO branch progress, which the executor otherwise does not track:
+     * `dead` / `done` are per-step, and a VTXO is only onchain once EVERY
+     * `package`/`bump` step naming it has confirmed. (`broadcast` — the funding
+     * splitter — carries no `forVtxos` and serves no single VTXO.)
+     */
+    private branchSteps(): Map<string, Set<number>> {
+        const byVtxo = new Map<string, Set<number>>();
+        this.pkg.steps.forEach((step, i) => {
+            if (step.kind !== "package" && step.kind !== "bump") return;
+            for (const vtxo of step.forVtxos) {
+                let steps = byVtxo.get(vtxo);
+                if (!steps) byVtxo.set(vtxo, (steps = new Set()));
+                steps.add(i);
+            }
+        });
+        return byVtxo;
+    }
+
+    /**
+     * Poll delay. Nearly all wall-clock time is spent here, so it must be the
+     * thing that reacts to abort — checking only between polls would leave
+     * cancellation up to a full interval late and the timer still pending.
+     */
     private sleep(): Promise<void> {
-        return new Promise((r) => setTimeout(r, this.pollIntervalMs));
+        const signal = this.signal;
+        if (!signal) return new Promise((r) => setTimeout(r, this.pollIntervalMs));
+        return new Promise((resolve, reject) => {
+            if (signal.aborted) return reject(abortErrorFor(signal));
+            const onAbort = () => {
+                clearTimeout(timer);
+                reject(abortErrorFor(signal));
+            };
+            // `{ once: true }` releases the listener on the abort path; the
+            // explicit removal covers the timeout path. A long exit sleeps
+            // hundreds of times, so an unreleased listener would just trade a
+            // polling leak for a listener leak.
+            const timer = setTimeout(() => {
+                signal.removeEventListener("abort", onAbort);
+                resolve();
+            }, this.pollIntervalMs);
+            signal.addEventListener("abort", onAbort, { once: true });
+        });
     }
 
     private async status(txid: string): Promise<TxStatus | undefined> {
@@ -63,12 +163,33 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
         for (;;) {
             const s = await this.status(txid);
             if (s?.confirmed) return s;
+            // Checked here as well as inside sleep() so an abort that lands
+            // during the status read doesn't cost one more network poll.
+            throwIfAborted(this.signal);
             await this.sleep();
         }
     }
 
     async *[Symbol.asyncIterator](): AsyncIterator<ExecutorEvent> {
+        throwIfAborted(this.signal); // before anything is broadcast
         const dead = new Set<string>(); // outpoints whose branch failed
+
+        const branchSteps = this.branchSteps();
+        const onchainSteps = new Set<number>();
+        const branchObserved = new Set<string>();
+        // Fired BEFORE the matching yield: a consumer that `break`s out of the
+        // loop leaves the generator suspended forever, and the repository write
+        // must not be the thing that gets stranded.
+        const observeBranch = async (stepIndex: number, forVtxos?: string[]) => {
+            onchainSteps.add(stepIndex);
+            for (const vtxo of forVtxos ?? []) {
+                if (branchObserved.has(vtxo)) continue;
+                const steps = branchSteps.get(vtxo);
+                if (!steps || ![...steps].every((i) => onchainSteps.has(i))) continue;
+                branchObserved.add(vtxo);
+                await this.observe(vtxo);
+            }
+        };
 
         if (this.pkg.validUntil && Date.now() / 1000 > this.pkg.validUntil) {
             yield {
@@ -107,6 +228,7 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
                 step.kind === "package" || step.kind === "bump" ? step.parentTxid : step.txid;
             const existing = await this.status(anchorTxid);
             if (existing?.confirmed) {
+                await observeBranch(i, forVtxos);
                 yield {
                     stepIndex: i,
                     kind: step.kind,
@@ -165,6 +287,7 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
                 }
             }
             await this.waitConfirmed(anchorTxid);
+            await observeBranch(i, forVtxos);
             yield {
                 stepIndex: i,
                 kind: step.kind,
@@ -195,10 +318,15 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
         while (done.size < pending.length) {
             for (const { index, step } of pending) {
                 if (done.has(index)) continue;
+                throwIfAborted(this.signal);
 
                 const swept = await this.status(step.txid);
                 if (swept?.confirmed) {
                     done.add(index);
+                    // Second observation for this VTXO: its exit output is
+                    // spent now, which is a further state change worth
+                    // persisting. `refreshOutpoints` is idempotent.
+                    await this.observe(step.vtxo);
                     yield {
                         stepIndex: index,
                         kind: "sweep",
@@ -214,6 +342,10 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
                 if (!dep?.confirmed) continue; // leaf not confirmed yet
 
                 const tip = await this.provider.getChainTip();
+                // Mixed bases, deliberately: `tip.time` is MTP (what consensus
+                // checks a spend against), `dep.blockTime` the header's `nTime`
+                // where BIP-68 takes the MTP of the block before it. A header's
+                // `nTime` exceeds that MTP, so this waits late, never fires early.
                 const mature =
                     step.delay.type === "blocks"
                         ? tip.height >= (dep.blockHeight ?? 0) + step.delay.value
@@ -266,5 +398,17 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
             }
             if (done.size < pending.length) await this.sleep();
         }
+    }
+
+    /** `"txid:vout"` -> outpoint, then hand it to the hook. A malformed entry is skipped. */
+    private async observe(outpoint: string): Promise<void> {
+        if (!this.onExitObserved) return;
+        const sep = outpoint.lastIndexOf(":");
+        // `Number("")` is 0, so the empty test is what stops `"txid:"` being
+        // observed as vout 0 — a different outpoint than the package named.
+        const rest = outpoint.slice(sep + 1);
+        const vout = Number(rest);
+        if (sep <= 0 || rest === "" || !Number.isInteger(vout)) return;
+        await notifyExitObserved(this.onExitObserved, { txid: outpoint.slice(0, sep), vout });
     }
 }

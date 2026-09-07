@@ -7,3 +7,6 @@ export { AssetOutput, AssetOutputs } from "./assetOutput";
 export { Metadata, MetadataList } from "./metadata";
 export { AssetGroup } from "./assetGroup";
 export { Packet } from "./packet";
+
+export { ASSET_ID_VECTORS } from "./assetIdVectors";
+export type { AssetIdVectors } from "./assetIdVectors";

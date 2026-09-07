@@ -55,7 +55,9 @@ export function isArkError(error: unknown, name?: ArkErrorName): error is ArkErr
  * {@link ProviderUnavailableError} message and the wallet's
  * `ProviderConnectionState`; it is deliberately *not* carried as a structured
  * field on the error, since custom `Error` own-properties do not survive the
- * service-worker `postMessage` boundary (only `name`/`message`/`cause` do).
+ * service-worker `postMessage` boundary. Structured clone keeps `message`,
+ * `stack` and `cause`, drops own-properties, and normalizes a custom `name` to
+ * `"Error"` — only the built-in error names survive it.
  */
 export type ProviderKind = "arkade" | "indexer";
 
@@ -74,6 +76,27 @@ export class ProviderUnavailableError extends Error {
     constructor(message: string, options?: { cause?: unknown }) {
         super(message, { cause: options?.cause });
         this.name = "ProviderUnavailableError";
+    }
+}
+
+/**
+ * A response does not reconcile with what the SDK submitted or already
+ * validated — a checkpoint tx whose txid is not among those submitted, a
+ * commitment tx that differs from the one validated at tree signing. Terminal
+ * rather than retryable: the two are equal by construction in a well-formed
+ * exchange, so the same request would produce the same outcome.
+ *
+ * Neither own-properties nor a custom `name` cross the service-worker
+ * `postMessage` boundary (see {@link ProviderKind}), so `retryable` and `name`
+ * are in-process conveniences and every distinguishing detail belongs in
+ * `message` — the one field a consumer past the boundary can still branch on.
+ */
+export class ServerResponseMismatchError extends Error {
+    readonly retryable = false;
+
+    constructor(message: string, options?: { cause?: unknown }) {
+        super(message, { cause: options?.cause });
+        this.name = "ServerResponseMismatchError";
     }
 }
 

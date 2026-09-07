@@ -10,7 +10,8 @@ import { hex } from "@scure/base";
  * @param inputIndex - The index of the input to check.
  * @param requiredSigners - Hex-encoded x-only public keys of all required signers.
  * @param expectedLeafHash - The tapscript leaf hash that signatures must commit to.
- * @returns `true` if all required signers have valid signatures on the expected leaf, `false` otherwise.
+ * @returns `true` if every signature on the input commits to the expected leaf and all
+ * required signers are present, `false` otherwise.
  */
 export const verifySignatures = (
     tx: Transaction,
@@ -19,18 +20,15 @@ export const verifySignatures = (
     expectedLeafHash: Uint8Array,
 ): boolean => {
     try {
-        // signatures should be valid
-        verifyTapscriptSignatures(tx, inputIndex, requiredSigners);
-
-        // signatures should sign the expected tapscript leaf
-        const input = tx.getInput(inputIndex);
-        const expectedHex = hex.encode(expectedLeafHash);
-        return requiredSigners.every((signer) =>
-            input.tapScriptSig?.some(
-                ([{ pubKey, leafHash }]) =>
-                    hex.encode(pubKey) === signer && hex.encode(leafHash) === expectedHex,
-            ),
+        verifyTapscriptSignatures(
+            tx,
+            inputIndex,
+            requiredSigners,
+            undefined,
+            undefined,
+            expectedLeafHash,
         );
+        return true;
     } catch (_) {
         return false;
     }

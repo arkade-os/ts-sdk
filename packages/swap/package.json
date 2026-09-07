@@ -1,0 +1,104 @@
+{
+    "name": "@arkade-os/swap",
+    "version": "0.0.12",
+    "type": "module",
+    "description": "Client-side Arkade Intents asset swaps: discover markets, quote, create/track/cancel offers, restore from chain.",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/arkade-os/ts-sdk.git",
+        "directory": "packages/swap"
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            },
+            "require": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.cjs"
+            }
+        },
+        "./nostr": {
+            "import": {
+                "types": "./dist/nostr.d.ts",
+                "default": "./dist/nostr.js"
+            },
+            "require": {
+                "types": "./dist/nostr.d.ts",
+                "default": "./dist/nostr.cjs"
+            }
+        },
+        "./repositories/sqlite": {
+            "import": {
+                "types": "./dist/repositories/sqlite/index.d.ts",
+                "default": "./dist/repositories/sqlite/index.js"
+            },
+            "require": {
+                "types": "./dist/repositories/sqlite/index.d.ts",
+                "default": "./dist/repositories/sqlite/index.cjs"
+            }
+        },
+        "./repositories/realm": {
+            "import": {
+                "types": "./dist/repositories/realm/index.d.ts",
+                "default": "./dist/repositories/realm/index.js"
+            },
+            "require": {
+                "types": "./dist/repositories/realm/index.d.ts",
+                "default": "./dist/repositories/realm/index.cjs"
+            }
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsup src/index.ts src/nostr.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
+        "typecheck": "tsc --noEmit",
+        "format": "biome format --write src test",
+        "lint": "biome format src test",
+        "prepack": "pnpm run build",
+        "test": "vitest run --exclude test/e2e",
+        "test:unit": "vitest run --exclude test/e2e",
+        "test:integration": "vitest run test/e2e/** --exclude test/e2e/rfq*.test.ts",
+        "test:integration:rfq": "vitest run test/e2e/rfq*.test.ts",
+        "smoke:dist": "node scripts/smoke-dist.mjs"
+    },
+    "keywords": [
+        "arkade",
+        "swap",
+        "intents",
+        "bitcoin"
+    ],
+    "author": "Arkade-OS",
+    "license": "MIT",
+    "dependencies": {
+        "@arkade-os/sdk": "workspace:*",
+        "@arkade-os/solver-discovery": "0.2.3",
+        "@noble/ciphers": "2.1.1",
+        "@noble/curves": "2.0.1",
+        "@noble/hashes": "2.0.1",
+        "@scure/base": "2.0.0",
+        "@scure/btc-signer": "2.0.1"
+    },
+    "peerDependencies": {
+        "nostr-tools": "^2.12.0"
+    },
+    "peerDependenciesMeta": {
+        "nostr-tools": {
+            "optional": true
+        }
+    },
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://registry.npmjs.org/"
+    },
+    "packageManager": "pnpm@10.25.0",
+    "devDependencies": {
+        "fake-indexeddb": "6.2.5",
+        "nostr-tools": "^2.12.0"
+    }
+}

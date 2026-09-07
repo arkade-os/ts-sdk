@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { base64, hex } from "@scure/base";
 import { sha256 } from "@scure/btc-signer/utils.js";
+import { Address, OutScript } from "@scure/btc-signer";
 
 // The handler must delegate graph/recipient validation to the shared
 // validators; mock both so the test drives only the wiring.
@@ -8,12 +9,14 @@ vi.mock("../src/tree/validation", () => ({
     validateVtxoTxGraph: vi.fn(),
     validateConnectorsTxGraph: vi.fn(),
 }));
-vi.mock("../src/wallet/validation", () => ({
+// The commitment-equality assertion stays real: it is under test below.
+vi.mock("../src/wallet/validation", async (importActual) => ({
+    ...(await importActual<typeof import("../src/wallet/validation")>()),
     validateBatchRecipients: vi.fn(),
 }));
 
 import { createArkadeBatchHandler } from "../src/arkade/batch";
-import { validateBatchRecipients } from "../src/wallet/validation";
+import { validateBatchRecipients, ErrOffchainOutputNotFound } from "../src/wallet/validation";
 import { validateVtxoTxGraph } from "../src/tree/validation";
 import { Transaction } from "../src/utils/transaction";
 import { networks } from "../src/networks";
@@ -38,14 +41,36 @@ function makeSession() {
     } as unknown as SignerSession;
 }
 
+const FORFEIT_ADDRESS = Address(networks.regtest).encode({
+    type: "tr",
+    pubkey: hex.decode("22".repeat(32)),
+});
+
 function makeArkProvider() {
     return {
         confirmRegistration: vi.fn(async () => {}),
-        getInfo: vi.fn(async () => ({ forfeitPubkey: "02" + "22".repeat(32) })),
+        getInfo: vi.fn(async () => ({
+            forfeitPubkey: "02" + "22".repeat(32),
+            forfeitAddress: FORFEIT_ADDRESS,
+            dust: 1000,
+        })),
         submitTreeNonces: vi.fn(async () => {}),
         submitTreeSignatures: vi.fn(async () => {}),
         submitSignedForfeitTxs: vi.fn(async () => {}),
     } as unknown as ArkProvider;
+}
+
+function makeEmulator() {
+    return {
+        submitFinalization: vi.fn(async () => ({ signedForfeits: [], signedCommitmentTx: null })),
+    } as unknown as EmulatorProvider;
+}
+
+/** A commitment tx PSBT; `amount` makes distinct fixtures distinguishable. */
+function commitment(amount: bigint): string {
+    const tx = new Transaction({ allowUnknownOutputs: true });
+    tx.addOutput({ script: new Uint8Array([0x51]), amount });
+    return base64.encode(tx.toPSBT());
 }
 
 function makeEvents() {
@@ -69,7 +94,12 @@ function makeEvents() {
     return { batchStarted, treeSigningStarted, vtxoTree };
 }
 
-function makeHandler(session: SignerSession, arkProvider: ArkProvider, recipients?: Recipient[]) {
+function makeHandler(
+    session: SignerSession,
+    arkProvider: ArkProvider,
+    recipients?: Recipient[],
+    emulator: EmulatorProvider = {} as unknown as EmulatorProvider,
+) {
     return createArkadeBatchHandler(
         INTENT_ID,
         [],
@@ -78,7 +108,7 @@ function makeHandler(session: SignerSession, arkProvider: ArkProvider, recipient
         {} as unknown as Intent.RegisterMessage,
         session,
         arkProvider,
-        {} as unknown as EmulatorProvider,
+        emulator,
         networks.regtest,
         recipients,
     );
@@ -113,7 +143,7 @@ describe("createArkadeBatchHandler recipient validation", () => {
     it("aborts signing when a recipient is missing from the tree", async () => {
         const session = makeSession();
         vi.mocked(validateBatchRecipients).mockImplementation(() => {
-            throw new Error("offchain send output not found: ark1qexample");
+            throw ErrOffchainOutputNotFound("ark1qexample");
         });
         const handler = makeHandler(session, makeArkProvider(), [
             { address: "ark1qexample", amount: 1000 },
@@ -137,5 +167,129 @@ describe("createArkadeBatchHandler recipient validation", () => {
 
         expect(skip).toBe(false);
         expect(validateBatchRecipients).not.toHaveBeenCalled();
+    });
+});
+
+describe("createArkadeBatchHandler commitment tx equality", () => {
+    beforeEach(() => {
+        vi.mocked(validateBatchRecipients).mockReset();
+        vi.mocked(validateVtxoTxGraph).mockReset();
+    });
+
+    async function runUntilFinalization(finalCommitmentTx: string) {
+        const arkProvider = makeArkProvider();
+        const emulator = makeEmulator();
+        const handler = makeHandler(makeSession(), arkProvider, undefined, emulator);
+        const { batchStarted, treeSigningStarted, vtxoTree } = makeEvents();
+
+        await handler.onBatchStarted(batchStarted);
+        await handler.onTreeSigningStarted(treeSigningStarted, vtxoTree);
+
+        return {
+            arkProvider,
+            finalize: handler.onBatchFinalization({ commitmentTx: finalCommitmentTx } as never),
+        };
+    }
+
+    it("rejects a finalization commitment tx that differs from the validated one", async () => {
+        const { arkProvider, finalize } = await runUntilFinalization(commitment(9999n));
+
+        await expect(finalize).rejects.toThrow(
+            /finalization commitment tx .* differs from the validated commitment tx/,
+        );
+        expect(arkProvider.submitSignedForfeitTxs).not.toHaveBeenCalled();
+    });
+
+    it("accepts the validated commitment tx at finalization", async () => {
+        // Same 5000n output as makeEvents' tree-signing commitment.
+        const { arkProvider, finalize } = await runUntilFinalization(commitment(5000n));
+
+        await finalize;
+        expect(arkProvider.submitSignedForfeitTxs).toHaveBeenCalledTimes(1);
+    });
+});
+
+// A batch that never signs the tree (onchain-only outputs) reaches finalization
+// with no validated commitment txid, so recipients have not been checked yet.
+describe("createArkadeBatchHandler finalization without tree signing", () => {
+    beforeEach(() => {
+        vi.mocked(validateBatchRecipients).mockReset();
+        vi.mocked(validateVtxoTxGraph).mockReset();
+    });
+
+    const ONCHAIN_ADDRESS = Address(networks.regtest).encode({
+        type: "tr",
+        pubkey: hex.decode("33".repeat(32)),
+    });
+
+    /** A commitment tx paying `amount` to `ONCHAIN_ADDRESS`. */
+    function onchainCommitment(amount: bigint): string {
+        const tx = new Transaction({ allowUnknownOutputs: true });
+        tx.addOutput({
+            script: OutScript.encode(Address(networks.regtest).decode(ONCHAIN_ADDRESS)),
+            amount,
+        });
+        return base64.encode(tx.toPSBT());
+    }
+
+    async function finalizeWithout(commitmentTx: string, recipients?: Recipient[]) {
+        const arkProvider = makeArkProvider();
+        const emulator = makeEmulator();
+        const handler = makeHandler(makeSession(), arkProvider, recipients, emulator);
+
+        await handler.onBatchStarted(makeEvents().batchStarted);
+
+        return {
+            arkProvider,
+            emulator,
+            finalize: handler.onBatchFinalization({ commitmentTx } as never),
+        };
+    }
+
+    it("rejects a commitment tx that does not pay the requested recipient", async () => {
+        const { arkProvider, emulator, finalize } = await finalizeWithout(onchainCommitment(900n), [
+            { address: ONCHAIN_ADDRESS, amount: 1000 },
+        ]);
+
+        await expect(finalize).rejects.toThrow(/onchain output not found/);
+        expect(emulator.submitFinalization).not.toHaveBeenCalled();
+        expect(arkProvider.submitSignedForfeitTxs).not.toHaveBeenCalled();
+    });
+
+    it("accepts a commitment tx paying the requested recipient exactly", async () => {
+        const { arkProvider, finalize } = await finalizeWithout(onchainCommitment(1000n), [
+            { address: ONCHAIN_ADDRESS, amount: 1000 },
+        ]);
+
+        await finalize;
+        expect(arkProvider.submitSignedForfeitTxs).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not re-check recipients when tree signing already validated them", async () => {
+        const arkProvider = makeArkProvider();
+        const handler = makeHandler(
+            makeSession(),
+            arkProvider,
+            [{ address: ONCHAIN_ADDRESS, amount: 1000 }],
+            makeEmulator(),
+        );
+        const { batchStarted, treeSigningStarted, vtxoTree } = makeEvents();
+
+        await handler.onBatchStarted(batchStarted);
+        await handler.onTreeSigningStarted(treeSigningStarted, vtxoTree);
+
+        // makeEvents' commitment pays no one; only the finalization-time guard
+        // would object, and it must stay disarmed here.
+        await handler.onBatchFinalization({ commitmentTx: commitment(5000n) } as never);
+
+        expect(validateBatchRecipients).toHaveBeenCalledTimes(1);
+        expect(arkProvider.submitSignedForfeitTxs).toHaveBeenCalledTimes(1);
+    });
+
+    it("stays permissive when no recipients are provided (compat)", async () => {
+        const { arkProvider, finalize } = await finalizeWithout(onchainCommitment(900n));
+
+        await finalize;
+        expect(arkProvider.submitSignedForfeitTxs).toHaveBeenCalledTimes(1);
     });
 });

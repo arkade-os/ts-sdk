@@ -119,110 +119,108 @@ describe("server-info digest mismatch across a real signer rotation", () => {
     beforeEach(resetToBaselineSigner, 120_000);
     beforeEach(beforeEachFaucet, 20_000);
 
-    it(
-        "stale X-Digest after rotation → DIGEST_MISMATCH → refresh + wallet re-derives onto the new signer, throws (no silent retry), and a rebuilt request recovers",
-        { timeout: 240_000 },
-        async () => {
-            const fromX = await xonly(A_SEC);
-            const toX = await xonly(B_SEC);
+    it("stale X-Digest after rotation → DIGEST_MISMATCH → refresh + wallet re-derives onto the new signer, throws (no silent retry), and a rebuilt request recovers", {
+        timeout: 240_000,
+    }, async () => {
+        const fromX = await xonly(A_SEC);
+        const toX = await xonly(B_SEC);
 
-            const wallet = await makeWallet();
+        const wallet = await makeWallet();
+        try {
+            // The wallet derived its server key from the baseline (A) signer,
+            // and `Wallet.create`'s getInfo cached A's server-info digest.
+            expect(hex.encode(wallet.arkServerPublicKey)).toBe(fromX);
+            const probe = wallet.arkProvider as unknown as DigestProbe;
+            const digestA = probe._digest;
+            expect(digestA).not.toBe("");
+
+            // Record every refreshed info the provider emits on a mismatch.
+            const emitted: ArkInfo[] = [];
+            probe.onServerInfoChanged((info) => emitted.push(info));
+
+            // Fund a real VTXO under A (the ark CLI faucet only funds while
+            // the server is on its home signer A) — the input the mutating
+            // settle below registers.
+            const amount = 10_000;
+            faucetOffchain(await wallet.getAddress(), amount);
+            const vtxos = await poll(async () => {
+                const v = await wallet.getVtxos();
+                return v.length > 0 ? v : null;
+            });
+            expect(vtxos).toHaveLength(1);
+            expect(vtxos[0].value).toBe(amount);
+
+            // Rotate the server A→B (A advertised deprecated so arkd retains
+            // the key). This rotates arkd's server-info digest. Nothing
+            // refreshes the client's cached digest across the rotation:
+            // settlementConfig is off (no poll loop) and no getInfo runs
+            // between here and the settle below — so the provider still holds
+            // A's now-stale digest.
+            const after = await rotateArkdSigner({
+                activeSignerPriv: B_SEC,
+                deprecatedSigners: [A_SEC],
+            });
+            expect(norm(after.signerPubkey)).toBe(toX);
+            // Precondition for the mismatch: the cached digest is unchanged.
+            expect(probe._digest).toBe(digestA);
+
+            // The next MUTATING request carries the stale `X-Digest`. settle()
+            // with explicit params reaches registerIntent through authedFetch
+            // WITHOUT a getInfo first (only the no-params settle path refreshes
+            // info), so arkd sees the stale digest and rejects with a
+            // structured DIGEST_MISMATCH. authedFetch then clears + refetches
+            // info, fires onServerInfoChanged, and THROWS DigestMismatchError —
+            // it never silently retries. The throw simultaneously proves the
+            // client SENT X-Digest (no header ⇒ no mismatch) and that arkd
+            // round-tripped the structured error over its REST gateway.
+            const address = await wallet.getAddress();
+            let caught: unknown;
             try {
-                // The wallet derived its server key from the baseline (A) signer,
-                // and `Wallet.create`'s getInfo cached A's server-info digest.
-                expect(hex.encode(wallet.arkServerPublicKey)).toBe(fromX);
-                const probe = wallet.arkProvider as unknown as DigestProbe;
-                const digestA = probe._digest;
-                expect(digestA).not.toBe("");
-
-                // Record every refreshed info the provider emits on a mismatch.
-                const emitted: ArkInfo[] = [];
-                probe.onServerInfoChanged((info) => emitted.push(info));
-
-                // Fund a real VTXO under A (the ark CLI faucet only funds while
-                // the server is on its home signer A) — the input the mutating
-                // settle below registers.
-                const amount = 10_000;
-                faucetOffchain(await wallet.getAddress(), amount);
-                const vtxos = await poll(async () => {
-                    const v = await wallet.getVtxos();
-                    return v.length > 0 ? v : null;
+                await wallet.settle({
+                    inputs: vtxos,
+                    outputs: [{ address, amount: BigInt(vtxos[0].value) }],
                 });
-                expect(vtxos).toHaveLength(1);
-                expect(vtxos[0].value).toBe(amount);
-
-                // Rotate the server A→B (A advertised deprecated so arkd retains
-                // the key). This rotates arkd's server-info digest. Nothing
-                // refreshes the client's cached digest across the rotation:
-                // settlementConfig is off (no poll loop) and no getInfo runs
-                // between here and the settle below — so the provider still holds
-                // A's now-stale digest.
-                const after = await rotateArkdSigner({
-                    activeSignerPriv: B_SEC,
-                    deprecatedSigners: [A_SEC],
-                });
-                expect(norm(after.signerPubkey)).toBe(toX);
-                // Precondition for the mismatch: the cached digest is unchanged.
-                expect(probe._digest).toBe(digestA);
-
-                // The next MUTATING request carries the stale `X-Digest`. settle()
-                // with explicit params reaches registerIntent through authedFetch
-                // WITHOUT a getInfo first (only the no-params settle path refreshes
-                // info), so arkd sees the stale digest and rejects with a
-                // structured DIGEST_MISMATCH. authedFetch then clears + refetches
-                // info, fires onServerInfoChanged, and THROWS DigestMismatchError —
-                // it never silently retries. The throw simultaneously proves the
-                // client SENT X-Digest (no header ⇒ no mismatch) and that arkd
-                // round-tripped the structured error over its REST gateway.
-                const address = await wallet.getAddress();
-                let caught: unknown;
-                try {
-                    await wallet.settle({
-                        inputs: vtxos,
-                        outputs: [{ address, amount: BigInt(vtxos[0].value) }],
-                    });
-                } catch (e) {
-                    caught = e;
-                }
-                expect(caught).toBeInstanceOf(DigestMismatchError);
-
-                // The SDK refreshed its info exactly once: it emitted the new (B)
-                // signer info, and the cached digest advanced off the stale A value
-                // to the fresh one carried by that refreshed info.
-                expect(emitted).toHaveLength(1);
-                const refreshed = emitted[0];
-                expect(norm(refreshed.signerPubkey)).toBe(toX);
-                expect(probe._digest).not.toBe(digestA);
-                expect(probe._digest).toBe(refreshed.digest);
-
-                // The wallet's serialized onServerInfoChanged handler re-derived
-                // onto B (refreshDeprecatedSigners + rotateServerSigner). It runs
-                // async off the emit, so poll for the flip.
-                await waitFor(async () => hex.encode(wallet.arkServerPublicKey) === toX, {
-                    timeout: 30_000,
-                    interval: 500,
-                });
-                expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
-
-                // Recovery: the digest is now fresh, so a rebuilt mutating request
-                // no longer DIGEST_MISMATCHes. It may still fail for an unrelated
-                // reason (the VTXO now sits under the deprecated A signer) or even
-                // succeed — assert only that it is NOT another DigestMismatchError.
-                let recovered: unknown;
-                try {
-                    await wallet.settle({
-                        inputs: vtxos,
-                        outputs: [
-                            { address: await wallet.getAddress(), amount: BigInt(vtxos[0].value) },
-                        ],
-                    });
-                } catch (e) {
-                    recovered = e;
-                }
-                expect(recovered).not.toBeInstanceOf(DigestMismatchError);
-            } finally {
-                await wallet.dispose();
+            } catch (e) {
+                caught = e;
             }
-        },
-    );
+            expect(caught).toBeInstanceOf(DigestMismatchError);
+
+            // The SDK refreshed its info exactly once: it emitted the new (B)
+            // signer info, and the cached digest advanced off the stale A value
+            // to the fresh one carried by that refreshed info.
+            expect(emitted).toHaveLength(1);
+            const refreshed = emitted[0];
+            expect(norm(refreshed.signerPubkey)).toBe(toX);
+            expect(probe._digest).not.toBe(digestA);
+            expect(probe._digest).toBe(refreshed.digest);
+
+            // The wallet's serialized onServerInfoChanged handler re-derived
+            // onto B (refreshDeprecatedSigners + rotateServerSigner). It runs
+            // async off the emit, so poll for the flip.
+            await waitFor(async () => hex.encode(wallet.arkServerPublicKey) === toX, {
+                timeout: 30_000,
+                interval: 500,
+            });
+            expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
+
+            // Recovery: the digest is now fresh, so a rebuilt mutating request
+            // no longer DIGEST_MISMATCHes. It may still fail for an unrelated
+            // reason (the VTXO now sits under the deprecated A signer) or even
+            // succeed — assert only that it is NOT another DigestMismatchError.
+            let recovered: unknown;
+            try {
+                await wallet.settle({
+                    inputs: vtxos,
+                    outputs: [
+                        { address: await wallet.getAddress(), amount: BigInt(vtxos[0].value) },
+                    ],
+                });
+            } catch (e) {
+                recovered = e;
+            }
+            expect(recovered).not.toBeInstanceOf(DigestMismatchError);
+        } finally {
+            await wallet.dispose();
+        }
+    });
 });

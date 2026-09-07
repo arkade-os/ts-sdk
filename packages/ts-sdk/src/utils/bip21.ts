@@ -86,6 +86,23 @@ export class BIP21 {
     }
 
     /**
+     * Integer-sats amount encoded in a BIP21 URI (`amount=` is BTC), or
+     * `undefined` when absent or the URI is unparseable. Shared by the payment
+     * rails, which accept either a bare address or a BIP21 URI.
+     *
+     * @param uri - BIP21 URI (or bare address) to read the amount from
+     * @returns The amount in satoshis, or `undefined`
+     */
+    static amountSats(uri: string): number | undefined {
+        try {
+            const btc = BIP21.parse(uri).params.amount;
+            return typeof btc === "number" ? Math.round(btc * 1e8) : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+
+    /**
      * Parse a BIP21 URI and return its decoded parameters.
      *
      * @param uri - BIP21 URI to parse

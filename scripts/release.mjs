@@ -11,6 +11,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, "..");
 
+// `dependsOnSdk` marks a package that consumes @arkade-os/sdk via workspace:*.
+// pnpm rewrites that to an exact version on pack/publish, so such a package
+// pins whatever SDK version was current when IT was published — which is why
+// releasing the SDK implies a dependent release for each of them, and why each
+// gets a `--<key>-bump` override to size that dependent bump.
 const PACKAGES = [
     {
         key: "sdk",
@@ -27,6 +32,22 @@ const PACKAGES = [
         pkgJson: path.join(ROOT_DIR, "packages/boltz-swap/package.json"),
         tagPrefix: "@arkade-os/boltz-swap/",
         order: 2,
+        dependsOnSdk: true,
+        bumpFlag: "--boltz-bump",
+        // Not part of bulk `all` releases for now; still releasable directly
+        // (`release.mjs boltz-swap <bump>`) and still dragged along as a
+        // dependent when `sdk` is released.
+        excludeFromAll: true,
+    },
+    {
+        key: "swap",
+        name: "@arkade-os/swap",
+        dir: path.join(ROOT_DIR, "packages/swap"),
+        pkgJson: path.join(ROOT_DIR, "packages/swap/package.json"),
+        tagPrefix: "@arkade-os/swap/",
+        order: 3,
+        dependsOnSdk: true,
+        bumpFlag: "--swap-bump",
     },
     // Ported web packages. Unlike boltz-swap these are NOT fan-out dependents of
     // the SDK: they declare it as a peer range or via workspace:^, both of which
@@ -79,7 +100,13 @@ const PACKAGES = [
 ];
 
 const PACKAGE_BY_KEY = Object.fromEntries(PACKAGES.map((p) => [p.key, p]));
-const VALID_TARGETS = new Set([...PACKAGES.map((p) => p.key), "all"]);
+const ACTIVE_PACKAGES = PACKAGES.filter((p) => !p.excludedFromRelease);
+const ALL_KEYS = ACTIVE_PACKAGES.map((p) => p.key);
+const DEPENDENT_PACKAGES = ACTIVE_PACKAGES.filter((p) => p.dependsOnSdk);
+const PACKAGE_BY_BUMP_FLAG = Object.fromEntries(
+    DEPENDENT_PACKAGES.map((p) => [p.bumpFlag, p.key]),
+);
+const VALID_TARGETS = new Set([...ALL_KEYS, "all"]);
 const BUMP_TYPES = new Set([
     "patch",
     "minor",
@@ -245,8 +272,7 @@ function showHelp() {
        scripts/release.mjs --cleanup [target]
 
 Targets:
-  sdk | boltz-swap | wallet-providers | sats-connect | sats-connect-react |
-  checkout | snap | all
+  ${[...ALL_KEYS, "all"].join(" | ")}
 
 Bump or version:
   patch | minor | major | prepatch | preminor | premajor | prerelease |
@@ -255,19 +281,26 @@ Bump or version:
 Options:
   --dry-run                Print the release plan without changing files
   --preid <id>             Pre-release identifier: alpha, beta, rc, or next
-  --boltz-bump <bump|ver>  Override the dependent boltz-swap bump when SDK is
+${DEPENDENT_PACKAGES.map(
+    (p) =>
+        `  ${`${p.bumpFlag} <bump|ver>`.padEnd(24)} Override the dependent ${p.key} bump when SDK is
                            released. Defaults to 'patch' for stable SDK
                            releases and to a prerelease bump matching the SDK
                            target preid for prerelease SDK releases (including
-                           literal versions like 0.5.0-beta.0).
+                           literal versions like 0.5.0-beta.0).`,
+).join("\n")}
   --cleanup [target]       Restore local manifests and delete local
                            package-scoped tags. With no target, auto-detect
                            from release state or dirty manifests.
+  --allow-any-branch       Escape hatch: publish a stable version from a
+                           non-${RELEASE_BRANCH} branch. The release commit and tag
+                           land on the current branch, so only use this when
+                           the branch is the intended source of the release.
   --help                   Show this message
 
-Releasing SDK implies a dependent boltz-swap release because boltz-swap
-depends on SDK via workspace:* (pnpm rewrites this to an exact version on
-pack/publish).
+Releasing SDK implies a dependent release of ${DEPENDENT_PACKAGES.map((p) => p.name).join(" and ")}
+because they depend on SDK via workspace:* (pnpm rewrites this to an exact
+version on pack/publish).
 
 boltz-swap is the ONLY fan-out dependent. wallet-providers, sats-connect,
 sats-connect-react, checkout and snap depend on the SDK via peer ranges or
@@ -283,9 +316,10 @@ bundle and manifest disagree. Note that snap 0.1.2 as published to npm no
 longer matches this source tree, so snap releases must always move forward.
 
 Stable releases (patch/minor/major or a literal non-prerelease version) must
-be run from master. Prerelease releases (prepatch/preminor/premajor/
-prerelease, or a literal -alpha/-beta/-rc/-next version) may be run from any
-branch and publish under a matching npm dist-tag, never 'latest'.
+be run from master, unless --allow-any-branch is passed. Prerelease releases
+(prepatch/preminor/premajor/prerelease, or a literal -alpha/-beta/-rc/-next
+version) may be run from any branch and publish under a matching npm
+dist-tag, never 'latest'.
 `,
     );
 }
@@ -295,9 +329,11 @@ function parseArgs(argv) {
         target: null,
         bump: null,
         preid: null,
-        boltzBump: null,
+        /** Per-dependent-package bump overrides, keyed by package key. */
+        dependentBumps: {},
         dryRun: false,
         cleanup: false,
+        allowAnyBranch: false,
         help: false,
     };
     const positional = [];
@@ -314,22 +350,28 @@ function parseArgs(argv) {
             case "--cleanup":
                 args.cleanup = true;
                 break;
+            case "--allow-any-branch":
+                args.allowAnyBranch = true;
+                break;
             case "--preid":
                 if (i + 1 >= argv.length) die("--preid requires a value");
                 args.preid = argv[++i];
-                break;
-            case "--boltz-bump":
-                if (i + 1 >= argv.length) die("--boltz-bump requires a value");
-                args.boltzBump = argv[++i];
                 break;
             case "--":
                 // pnpm forwards a literal "--" separator before script args; ignore it
                 // rather than treating the remainder as positional (that would swallow
                 // subsequent options like --preid).
                 break;
-            default:
+            default: {
+                const dependentKey = PACKAGE_BY_BUMP_FLAG[arg];
+                if (dependentKey) {
+                    if (i + 1 >= argv.length) die(`${arg} requires a value`);
+                    args.dependentBumps[dependentKey] = argv[++i];
+                    break;
+                }
                 if (arg.startsWith("--")) die(`Unknown option: ${arg}`);
                 positional.push(arg);
+            }
         }
     }
     if (positional.length > 2) {
@@ -342,7 +384,11 @@ function parseArgs(argv) {
 
 function validateTarget(target) {
     if (!VALID_TARGETS.has(target)) {
-        die(`Invalid target: ${target}. Use one of: ${[...VALID_TARGETS].join(", ")}.`);
+        const excluded = PACKAGES.find((p) => p.key === target && p.excludedFromRelease);
+        if (excluded) {
+            die(`${excluded.name} is excluded from the release cycle until further notice.`);
+        }
+        die(`Invalid target: ${target}. Use ${[...ALL_KEYS, "all"].join(", ")}.`);
     }
 }
 
@@ -359,19 +405,22 @@ function validatePreid(preid) {
 }
 
 function primarySelection(target) {
-    // 'sdk' pulls in boltz-swap because it pins the SDK via workspace:*, which
-    // pnpm rewrites to an exact version on publish. No other package does that,
-    // so none of them are fan-out dependents.
-    //
-    // 'all' means every package. It meant sdk + boltz-swap when those were the
-    // only two; keeping that after the port would have made the name a lie.
-    if (target === "all") return PACKAGES.map((p) => p.key);
-    if (target === "sdk") return ["sdk", "boltz-swap"];
+    // Releasing the SDK drags every `workspace:*` dependent along, because each
+    // would otherwise stay published against the previous SDK version. The web
+    // packages consume the SDK through peer ranges or `workspace:^`, which
+    // publish as caret ranges and stay satisfied across a patch or minor — so
+    // they are NOT dependents here. `ALL_KEYS` was equivalent while sdk's only
+    // dependents were the only other packages; it stopped being once the ported
+    // packages joined.
+    if (target === "sdk") return ["sdk", ...DEPENDENT_PACKAGES.map((p) => p.key)];
+    // `all` is a bulk convenience, not an implication of the SDK bump; packages
+    // marked `excludeFromAll` opt out of it but remain releasable directly.
+    if (target === "all") return ALL_KEYS.filter((k) => !PACKAGE_BY_KEY[k].excludeFromAll);
     if (PACKAGE_BY_KEY[target]) return [target];
     die(`Invalid target: ${target}`);
 }
 
-function computeTargetVersions({ target, bump, preid, boltzBump }) {
+function computeTargetVersions({ target, bump, preid, dependentBumps = {} }) {
     validateTarget(target);
     validateBump(bump);
     if (preid !== null) validatePreid(preid);
@@ -390,17 +439,18 @@ function computeTargetVersions({ target, bump, preid, boltzBump }) {
 
         if (isPrimary) {
             next = isLiteralVersion(bump) ? bump : incrementVersion(current, bump, preid);
-        } else if (pkg.key === "boltz-swap" && target === "sdk") {
-            if (boltzBump !== null) {
-                if (isLiteralVersion(boltzBump)) {
-                    next = boltzBump;
-                } else if (isPrereleaseBump(boltzBump)) {
-                    if (!preid) die(`--boltz-bump '${boltzBump}' requires --preid`);
-                    next = incrementVersion(current, boltzBump, preid);
-                } else if (isBumpType(boltzBump)) {
-                    next = incrementVersion(current, boltzBump, null);
+        } else if (pkg.dependsOnSdk && target === "sdk") {
+            const override = dependentBumps[pkg.key] ?? null;
+            if (override !== null) {
+                if (isLiteralVersion(override)) {
+                    next = override;
+                } else if (isPrereleaseBump(override)) {
+                    if (!preid) die(`${pkg.bumpFlag} '${override}' requires --preid`);
+                    next = incrementVersion(current, override, preid);
+                } else if (isBumpType(override)) {
+                    next = incrementVersion(current, override, null);
                 } else {
-                    die(`Invalid --boltz-bump value: ${boltzBump}`);
+                    die(`Invalid ${pkg.bumpFlag} value: ${override}`);
                 }
             } else if (isPrereleaseBump(bump)) {
                 next = incrementVersion(current, bump, preid);
@@ -411,9 +461,9 @@ function computeTargetVersions({ target, bump, preid, boltzBump }) {
                     const sdkPreid = sdkPre.split(".")[0];
                     if (!VALID_PREIDS.has(sdkPreid)) {
                         die(
-                            `Cannot derive dependent boltz-swap bump from SDK literal ${sdkNext} ` +
+                            `Cannot derive dependent ${pkg.key} bump from SDK literal ${sdkNext} ` +
                                 `(unrecognized prerelease id '${sdkPreid}'). ` +
-                                `Pass --boltz-bump explicitly.`,
+                                `Pass ${pkg.bumpFlag} explicitly.`,
                         );
                     }
                     next = incrementVersion(current, "prepatch", sdkPreid);
@@ -440,12 +490,20 @@ function selectedInDependencyOrder(plan) {
         .map((p) => p.key);
 }
 
-function summarizePlan({ target, bump, preid, boltzBump, plan }) {
+function summarizePlan({ target, bump, preid, dependentBumps = {}, allowAnyBranch, plan }) {
     console.log("Release plan:");
     console.log(`  target: ${target}`);
+    console.log(
+        `  branch: ${gitCurrentBranch() || "detached HEAD"}${
+            allowAnyBranch ? " (--allow-any-branch: branch check bypassed)" : ""
+        }`,
+    );
     const opts = [bump];
     if (preid) opts.push(`--preid ${preid}`);
-    if (boltzBump) opts.push(`--boltz-bump ${boltzBump}`);
+    for (const pkg of DEPENDENT_PACKAGES) {
+        const override = dependentBumps[pkg.key];
+        if (override) opts.push(`${pkg.bumpFlag} ${override}`);
+    }
     console.log(`  bump: ${opts.join(" ")}`);
     console.log("  selected packages:");
     for (const key of selectedInDependencyOrder(plan)) {
@@ -459,13 +517,14 @@ function summarizePlan({ target, bump, preid, boltzBump, plan }) {
         .map((k) => PACKAGE_BY_KEY[k].name)
         .join(", ");
     console.log(`  publish order: ${order}`);
-    if (plan.has("boltz-swap")) {
-        const sdkChanges = plan.has("sdk");
-        const sdkVersion = sdkChanges
-            ? plan.get("sdk").next
-            : readPackageVersion(PACKAGE_BY_KEY.sdk.pkgJson);
+    const sdkChanges = plan.has("sdk");
+    const sdkVersion = sdkChanges
+        ? plan.get("sdk").next
+        : readPackageVersion(PACKAGE_BY_KEY.sdk.pkgJson);
+    for (const pkg of DEPENDENT_PACKAGES) {
+        if (!plan.has(pkg.key)) continue;
         console.log(
-            `  boltz-swap pinned @arkade-os/sdk: ${sdkVersion} (changes: ${
+            `  ${pkg.key} pinned @arkade-os/sdk: ${sdkVersion} (changes: ${
                 sdkChanges ? "yes" : "no"
             })`,
         );
@@ -479,17 +538,27 @@ function gitCurrentBranch() {
     }).trim();
 }
 
-function assertReleaseBranch(plan) {
+function assertReleaseBranch(plan, allowAnyBranch = false) {
     const hasStableVersion = [...plan.values()].some((v) => !parseVersion(v.next).pre);
     if (!hasStableVersion) return;
 
     const branch = gitCurrentBranch();
-    if (branch !== RELEASE_BRANCH) {
-        die(
-            `Stable releases must be run from ${RELEASE_BRANCH}; current branch is ${branch || "detached HEAD"}. ` +
-                `Prerelease versions (prepatch/preminor/premajor/prerelease, or a literal -alpha/-beta/-rc/-next version) may be run from any branch.`,
+    if (branch === RELEASE_BRANCH) return;
+
+    if (allowAnyBranch) {
+        console.warn(
+            `Warning: --allow-any-branch is set; releasing a stable version from ` +
+                `${branch || "detached HEAD"} instead of ${RELEASE_BRANCH}. ` +
+                `The release commit and tag will land on this branch.`,
         );
+        return;
     }
+
+    die(
+        `Stable releases must be run from ${RELEASE_BRANCH}; current branch is ${branch || "detached HEAD"}. ` +
+            `Prerelease versions (prepatch/preminor/premajor/prerelease, or a literal -alpha/-beta/-rc/-next version) may be run from any branch. ` +
+            `Pass --allow-any-branch to release a stable version from this branch anyway.`,
+    );
 }
 
 function gitClean() {
@@ -582,17 +651,16 @@ function packAndReadManifest(pkg) {
     }
 }
 
-function validateBoltzPackedDep(expectedSdkVersion) {
-    const boltz = PACKAGE_BY_KEY["boltz-swap"];
-    console.log(`Packing ${boltz.name} to verify pinned @arkade-os/sdk dependency...`);
-    const manifest = packAndReadManifest(boltz);
+function validateDependentPackedDep(pkg, expectedSdkVersion) {
+    console.log(`Packing ${pkg.name} to verify pinned @arkade-os/sdk dependency...`);
+    const manifest = packAndReadManifest(pkg);
     const actual = manifest.dependencies?.["@arkade-os/sdk"];
     if (actual !== expectedSdkVersion) {
         die(
-            `${boltz.name} packed manifest pins @arkade-os/sdk@${actual} but expected ${expectedSdkVersion}`,
+            `${pkg.name} packed manifest pins @arkade-os/sdk@${actual} but expected ${expectedSdkVersion}`,
         );
     }
-    console.log(`Verified ${boltz.name} pins @arkade-os/sdk@${expectedSdkVersion}`);
+    console.log(`Verified ${pkg.name} pins @arkade-os/sdk@${expectedSdkVersion}`);
 }
 
 function detectCleanupCandidates() {
@@ -615,7 +683,7 @@ function cleanup({ target }) {
 
     if (target) {
         validateTarget(target);
-        keys = target === "all" ? ["sdk", "boltz-swap"] : [target];
+        keys = target === "all" ? [...ALL_KEYS] : [target];
         state = readState();
     } else {
         const detected = detectCleanupCandidates();
@@ -668,7 +736,7 @@ function dryRun(args) {
 
 function release(args) {
     const plan = computeTargetVersions(args);
-    assertReleaseBranch(plan);
+    assertReleaseBranch(plan, args.allowAnyBranch);
     summarizePlan({ ...args, plan });
 
     if (!gitClean()) {
@@ -760,11 +828,11 @@ function release(args) {
             const pkg = PACKAGE_BY_KEY[key];
             const version = plan.get(key).next;
 
-            if (key === "boltz-swap") {
+            if (pkg.dependsOnSdk) {
                 const expectedSdk = plan.has("sdk")
                     ? plan.get("sdk").next
                     : readPackageVersion(PACKAGE_BY_KEY.sdk.pkgJson);
-                validateBoltzPackedDep(expectedSdk);
+                validateDependentPackedDep(pkg, expectedSdk);
             }
 
             const published = spawnSync("npm", ["view", `${pkg.name}@${version}`, "version"], {

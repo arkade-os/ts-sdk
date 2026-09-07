@@ -577,8 +577,10 @@ export function enforcePayTo(pkScript: Uint8Array, amount: bigint): Uint8Array {
  */
 export function enforceSelfSend(): Uint8Array {
     return arkade.ArkadeScript.encode([
+        // Emulator v0.0.7 pushes the version as a minimally-encoded script
+        // number; v0.0.5 pushed a fixed 4-byte LE word.
         "INSPECTVERSION",
-        new Uint8Array([0x02, 0x00, 0x00, 0x00]),
+        2,
         "EQUALVERIFY",
         // output[0].scriptPubKey
         0,

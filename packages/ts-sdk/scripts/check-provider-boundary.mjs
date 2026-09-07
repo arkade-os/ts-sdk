@@ -29,8 +29,9 @@ const findings = [];
 
 for (const sourceFile of program.getSourceFiles()) {
     if (sourceFile.isDeclarationFile) continue;
-    // Normalize to POSIX separators: `relative()` yields backslashes on Windows, where the
-    // "src/" prefix test would then skip every file and the guard would pass having checked none.
+    // Both the "src/" prefix test and ALLOWLIST use forward slashes; relative()
+    // yields the platform separator, so without this the guard skips every file
+    // on Windows and passes vacuously.
     const rel = relative(pkgRoot, sourceFile.fileName).split(sep).join("/");
     if (!rel.startsWith("src/")) continue;
     if (ALLOWLIST.includes(rel)) continue;

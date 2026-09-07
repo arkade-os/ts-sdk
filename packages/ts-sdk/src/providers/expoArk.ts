@@ -1,5 +1,5 @@
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
-import { RestArkProvider, SettlementEvent, TxNotification, isFetchTimeoutError } from "./ark";
+import { RestArkProvider, SettlementEvent, TxNotificationEvent, isFetchTimeoutError } from "./ark";
 import { getExpoFetch, sseStreamIterator } from "./expoUtils";
 
 /**
@@ -63,10 +63,9 @@ export class ExpoArkProvider extends RestArkProvider {
         }
     }
 
-    override async *getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
-        commitmentTx?: TxNotification;
-        arkTx?: TxNotification;
-    }> {
+    override async *getTransactionsStream(
+        signal: AbortSignal,
+    ): AsyncIterableIterator<TxNotificationEvent> {
         const expoFetch = await getExpoFetch();
         const url = `${this.serverUrl}/v1/txs`;
 

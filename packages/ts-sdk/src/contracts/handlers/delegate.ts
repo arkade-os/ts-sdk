@@ -90,6 +90,9 @@ export const DelegateContractHandler: ContractHandler<DelegateContractParams, De
         return forfeitExitSpendablePaths(script, contract, context);
     },
 
+    /** The wallet's own money, delegated signing. */
+    isGenericallySpendable: () => true,
+
     discoverAt: discoverAtViaRange(discoverDelegateRange),
 
     discoverRange: discoverDelegateRange,
