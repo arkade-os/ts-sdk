@@ -32,7 +32,9 @@ const { S, P, I, D, R } = dispositions;
 
 const namesOf = (entry: string) => new Set(inventory(entry).map((e) => e.name));
 const moduleOf = (entry: string) =>
-    new Map(inventory(entry).map((e) => [e.name, e.module] as const));
+    // Posix separators: the module path is asserted against a `src/...` pattern,
+    // which a Windows checkout would otherwise spell with backslashes.
+    new Map(inventory(entry).map((e) => [e.name, e.module.replaceAll("\\", "/")] as const));
 
 const root = namesOf(ROOT_ENTRY);
 const client = namesOf(CLIENT_ENTRY);
