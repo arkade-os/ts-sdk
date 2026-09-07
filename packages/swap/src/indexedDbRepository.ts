@@ -64,8 +64,18 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         return this.connection.get();
     }
 
-    private async readStore(name: string): Promise<IDBObjectStore> {
-        return (await this.ensureDb()).transaction([name], "readonly").objectStore(name);
+    /** Every read in one place, mirroring `write`: the transaction is created
+     * and its request issued in the same tick. WebKit deactivates a transaction
+     * as soon as the script that created it yields — before the microtask queue
+     * drains, where Chrome and Firefox keep it active to the end of the
+     * checkpoint — so a request issued after `await`ing the store throws
+     * `TransactionInactiveError` in Safari, and every read here used to. */
+    private async read<T>(
+        name: string,
+        request: (store: IDBObjectStore) => IDBRequest<T>,
+    ): Promise<T> {
+        const db = await this.ensureDb();
+        return promisifyRequest(request(db.transaction([name], "readonly").objectStore(name)));
     }
 
     /** Every write in one place, so none of them can forget to await the
@@ -84,8 +94,8 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         });
     }
 
-    async getAllSwaps(): Promise<AssetSwap[]> {
-        return promisifyRequest((await this.readStore(STORE_SWAPS)).getAll());
+    getAllSwaps(): Promise<AssetSwap[]> {
+        return this.read(STORE_SWAPS, (store) => store.getAll() as IDBRequest<AssetSwap[]>);
     }
 
     async saveRfqSwap(record: RfqSwapRecord): Promise<void> {
@@ -94,12 +104,15 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         });
     }
 
-    async getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined> {
-        return promisifyRequest((await this.readStore(STORE_RFQ_SWAPS)).get(rfqId));
+    getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined> {
+        return this.read(
+            STORE_RFQ_SWAPS,
+            (store) => store.get(rfqId) as IDBRequest<RfqSwapRecord | undefined>,
+        );
     }
 
-    async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
-        return promisifyRequest((await this.readStore(STORE_RFQ_SWAPS)).getAll());
+    getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
+        return this.read(STORE_RFQ_SWAPS, (store) => store.getAll() as IDBRequest<RfqSwapRecord[]>);
     }
 
     async removeRfqSwap(rfqId: string): Promise<void> {
@@ -109,8 +122,11 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     }
 
     async getScannedTxids(): Promise<Set<string>> {
-        const keys = await promisifyRequest((await this.readStore(STORE_SCANNED)).getAllKeys());
-        return new Set(keys as string[]);
+        const keys = await this.read(
+            STORE_SCANNED,
+            (store) => store.getAllKeys() as IDBRequest<string[]>,
+        );
+        return new Set(keys);
     }
 
     async markTxidsScanned(txids: Iterable<string>): Promise<void> {
@@ -119,12 +135,14 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         });
     }
 
-    async getCachedMarkets(
-        network: string,
-        registry: string,
-    ): Promise<MarketsCacheEntry | undefined> {
-        const store = await this.readStore(STORE_MARKETS);
-        return promisifyRequest(store.get(marketsCacheKey(network, registry)));
+    getCachedMarkets(network: string, registry: string): Promise<MarketsCacheEntry | undefined> {
+        return this.read(
+            STORE_MARKETS,
+            (store) =>
+                store.get(marketsCacheKey(network, registry)) as IDBRequest<
+                    MarketsCacheEntry | undefined
+                >,
+        );
     }
 
     async saveCachedMarkets(
