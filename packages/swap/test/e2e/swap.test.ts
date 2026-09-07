@@ -513,6 +513,24 @@ describe("the swap, against solverd (regtest)", () => {
     };
 
     /**
+     * RGT for the next asset deposit. The maker's asset balance is shared
+     * across these cases, and a restore case runs a second wallet on the same
+     * key that can spend or strand the shared coins, so a case that needs RGT
+     * buys it fresh here with a fair BTC -> RGT swap rather than counting on a
+     * carry-over. Buying at a price the solver takes, this never hits the
+     * swap-all hazard: the deposit is a bounded BTC amount, not the balance.
+     */
+    const ensureRgt = async (minUnits: number) => {
+        if ((await rgtHeld(maker)) >= BigInt(minUnits)) return;
+        const give = minUnits * 2;
+        await ensureSats(give + 4 * Number(dust));
+        const plan = btcToRgt(give);
+        const { fundingTxid, script } = await publish(maker, plan, makerRepository);
+        await untilStatus(makerWatcher, makerRepository, fundingTxid, script, "fulfilled");
+        await waitFor(async () => (await rgtHeld(maker)) >= BigInt(minUnits));
+    };
+
+    /**
      * What arkade.money's `createSwap` does with a plan: derive the offer
      * keyed on the receive side, fund it with the deposit side (sats, or the
      * asset on a dust carrier), and record it by its funding txid.
@@ -802,6 +820,10 @@ describe("the swap, against solverd (regtest)", () => {
         // stream that replays nothing — so the restored wallet is brought up
         // and synced BEFORE the pause, and the paused window holds only the
         // funding and the incremental sync that follows it.
+        //
+        // The RGT is bought before the pause: the top-up itself is a swap, and
+        // the solver has to be running to take it.
+        await ensureRgt(1_500);
         await ensureSats(Number(dust));
         const plan = rgtToBtc(BigInt(1_500));
         const restoredRepository = new InMemoryAssetSwapRepository();
@@ -879,6 +901,9 @@ describe("the swap, against solverd (regtest)", () => {
     }, 240_000);
 
     it("swap ALL RGT -> BTC: the whole asset balance goes, and the solver pays sats", async () => {
+        // sending the whole asset frees the carriers it rode on, so this
+        // direction has no swap-all hazard and is expected to go through
+        await ensureRgt(4_000);
         await ensureSats(Number(dust));
         const held = await rgtHeld(maker);
         expect(held).toBeGreaterThan(BigInt(0));
