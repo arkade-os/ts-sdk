@@ -924,12 +924,9 @@ export class ContractWatcher {
             // poll would return, or the next tick reads the difference as a
             // spend and emits `script_vtxo_spent` for an output nobody spent.
             // Spend notifications stay unfiltered.
-            if (
-                target === byWatchedScript &&
-                eventType === "vtxo_received" &&
-                (hasTerminalSpend(vtxo) || normalizeVtxo(vtxo).isSwept)
-            ) {
-                continue;
+            if (target === byWatchedScript && eventType === "vtxo_received") {
+                const n = normalizeVtxo(vtxo);
+                if (hasTerminalSpend(n) || n.isSwept) continue;
             }
             let bucket = target.get(vtxo.script);
             if (!bucket) {
