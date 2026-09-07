@@ -1493,6 +1493,10 @@ describe("buildTransactionHistory", () => {
             });
 
             it("keeps a VTXO with no script in history", async () => {
+                // `script` is required on `VirtualCoin`, so the cast is the
+                // point rather than a shortcut: it models the shape a legacy
+                // repository row actually arrives in, which is why
+                // `isVtxoForScript` and the gate both guard on its absence.
                 const scriptless = (
                     over: Partial<VirtualCoin> & Pick<VirtualCoin, "txid" | "value">,
                 ) => {
