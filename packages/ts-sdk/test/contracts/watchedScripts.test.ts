@@ -94,7 +94,6 @@ describe("ContractWatcher watch-only scripts", () => {
     it("serves a watch-only script from the failsafe poll while the subscription is down", async () => {
         vi.useFakeTimers();
 
-        // The default mock subscription never yields, so only the poll can fire.
         const vtxo = createMockVtxo({ script: FOREIGN_SCRIPT, value: 777 });
         (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [vtxo] });
 
@@ -125,6 +124,8 @@ describe("ContractWatcher watch-only scripts", () => {
             }),
         }));
 
+        // An owned contract too, so the resubscribe happens either way.
+        await watcher.addContract(activeContract());
         await watcher.addWatchedScript(FOREIGN_SCRIPT);
         await watcher.startWatching(() => {});
 
@@ -235,6 +236,40 @@ describe("ContractWatcher watch-only scripts", () => {
         }
 
         await watcher.stopWatching();
+    });
+
+    // `handleContractEvent` has no case for the script_ variants, so the event
+    // is forwarded without reaching syncContracts/saveVtxosForContract.
+    it("forwards a watch-only event through the manager without syncing it", async () => {
+        const walletRepository = new InMemoryWalletRepository();
+        const indexer = createMockIndexerProvider();
+        (indexer.getSubscription as any).mockImplementation(
+            subscriptionYielding([
+                {
+                    scripts: [FOREIGN_SCRIPT],
+                    newVtxos: [createMockVtxo({ script: FOREIGN_SCRIPT, value: 8080 })],
+                    spentVtxos: [],
+                    sweptVtxos: [],
+                },
+            ]),
+        );
+
+        const manager = await ContractManager.create({
+            indexerProvider: indexer,
+            contractRepository: new InMemoryContractRepository(),
+            walletRepository,
+        });
+
+        const seen: ContractEvent[] = [];
+        manager.onContractEvent((e) => seen.push(e));
+        await manager.watchScript!(FOREIGN_SCRIPT);
+
+        // Either name: `handleContractEvent` awaits its sync before forwarding.
+        await vi.waitFor(() => expect(seen.some((e) => e.type !== "connection_reset")).toBe(true));
+        expect(await walletRepository.getVtxosForScript!(FOREIGN_SCRIPT)).toEqual([]);
+        expect(seen.map((e) => e.type)).toContain("script_vtxo_received");
+
+        manager.dispose();
     });
 });
 
