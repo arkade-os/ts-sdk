@@ -39,13 +39,13 @@ import {
 } from "../../src/protocol";
 import {
     createSwapClient,
-    type AttestingRfqTransport,
     type CorridorSwapRecord,
     InMemoryAssetSwapRepository,
     type SwapClient,
     type SwapUpdate,
     quoteIdOfSwapId,
 } from "../../src";
+import type { AttestingRfqTransport } from "../../src/client/transport";
 import { encodeInvoice } from "../helpers/bolt11";
 
 const OPERATOR_URL = "http://localhost:7070";

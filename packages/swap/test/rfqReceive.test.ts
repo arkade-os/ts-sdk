@@ -1215,7 +1215,7 @@ describe("a receive with no covclaimd to seal to", () => {
     it("sends no claim_packet on the lightning leg", async () => {
         const wallet = await hdWallet();
         const profile = await capturedProfile((transport) =>
-            requestLightningReceive(wallet, "http://ark", transport, {
+            requestLightningReceive(wallet, transport, {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 5_000,
                 amountSide: "from",
@@ -1228,7 +1228,7 @@ describe("a receive with no covclaimd to seal to", () => {
     it("sends no claim_packet on the onchain leg", async () => {
         const wallet = await hdWallet();
         const profile = await capturedProfile((transport) =>
-            requestOnchainReceive(wallet, "http://ark", transport, {
+            requestOnchainReceive(wallet, transport, {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 100_000,
                 amountSide: "from",
@@ -1241,7 +1241,7 @@ describe("a receive with no covclaimd to seal to", () => {
     it("still seals on both legs when covclaimd IS configured", async () => {
         const wallet = await hdWallet();
         const lightning = await capturedProfile((transport) =>
-            requestLightningReceive(wallet, "http://ark", transport, {
+            requestLightningReceive(wallet, transport, {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 5_000,
                 amountSide: "from",
@@ -1253,7 +1253,7 @@ describe("a receive with no covclaimd to seal to", () => {
         expect(lightning.claim_packet).not.toBe("");
 
         const onchain = await capturedProfile((transport) =>
-            requestOnchainReceive(wallet, "http://ark", transport, {
+            requestOnchainReceive(wallet, transport, {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 100_000,
                 amountSide: "from",

@@ -22,7 +22,7 @@ import {
     SingleKey,
     Wallet,
 } from "@arkade-os/sdk";
-import { InMemoryAssetSwapRepository } from "../../src";
+import { type AssetSwap, InMemoryAssetSwapRepository } from "../../src";
 import {
     addAssetSwap,
     cancelOffer,
@@ -31,7 +31,6 @@ import {
     getAssetSwaps,
     restoreAssetSwaps,
     watchOfferSwaps,
-    type AssetSwap,
     type Tx,
 } from "../../src/protocol";
 

@@ -22,6 +22,7 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    RestIndexerProvider,
     SingleKey,
     Wallet,
 } from "@arkade-os/sdk";
@@ -33,7 +34,12 @@ import {
     type SwapClient,
     quoteIdOfSwapId,
 } from "../../src";
-import { OfferCovenantMismatchError } from "../../src/protocol";
+import {
+    cancelOffer,
+    OfferCovenantMismatchError,
+    restoreAssetSwaps,
+    type Tx,
+} from "../../src/protocol";
 
 const OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";
@@ -217,4 +223,131 @@ describe("the v2 cancel (regtest)", () => {
         await expect(client.cancel(swap.id)).resolves.toEqual({ outcome: "cancelled" });
         await client[Symbol.asyncDispose]();
     }, 180_000);
+    it("funds an offer with the whole available balance", async () => {
+        // "Swap everything I have." It funds, and the two reasons are worth
+        // pinning because neither is general: an asset swap denominates its fee
+        // on the TAKE leg, so the give side needs no headroom held back, and a
+        // deposit that consumes every coin leaves no change output to fall
+        // under dust. A corridor route puts the fee on the give leg instead,
+        // which is why the same drain is refused there — see `rfqVerbs.test.ts`.
+        const store = new InMemoryAssetSwapRepository();
+        const client = clientOn({ repository: store });
+        // Every test above cancels its deposit back, so the faucet amount is
+        // what the wallet settles at — waited for rather than read, because a
+        // preceding cancel may still be landing and a drain that races one
+        // leaves a balance this test would misread as its own doing.
+        await waitFor(async () => (await wallet.getBalance()).available === FAUCET_SATS);
+        const { available, gated: gatedBefore } = await wallet.getBalance();
+
+        const quote = await client.quote({
+            give: "BTC",
+            take: "USD",
+            amount: BigInt(available),
+            amountOn: "give",
+        });
+        // The whole balance is the give leg, and the fee is not denominated in
+        // it — so nothing has to be left over to pay one.
+        expect(quote.give.amount).toBe(BigInt(available));
+        expect(quote.fee.asset).toBe(quote.take.asset);
+
+        const swap = await client.accept(quote);
+        const record = (await store.getSwapRecord(quoteIdOfSwapId(swap.id))) as OfferSwapRecord;
+        await waitFor(async () => {
+            const reader = await wallet.getArkadeReader();
+            const { vtxos } = await reader.getVtxos({ scripts: [record.swapPkScript] });
+            return vtxos.some((v) => v.txid === record.fundingTxid && v.value === available);
+        });
+
+        // Every sat is escrowed now: still owned, and out of generic reach.
+        const after = await wallet.getBalance();
+        expect(after.available).toBe(0);
+        expect(after.gated).toBe(gatedBefore + available);
+
+        // And a zero available balance does not strand it. Cancel names its
+        // input outpoint, so it needs no coin of its own to spend with — a
+        // drain that could not be undone would be the whole hazard here.
+        await expect(client.cancel(swap.id)).resolves.toEqual({ outcome: "cancelled" });
+        await waitFor(async () => (await wallet.getBalance()).available === available);
+        await client[Symbol.asyncDispose]();
+    }, 240_000);
+
+    it("loses a funded offer to a wiped store, and takes the chain scan to get it back", async () => {
+        // A wallet restored onto a second device: same seed, same VTXOs, empty
+        // swap store. The v2 construction restore reads records and nothing
+        // else, so the offer is invisible to the client — while the deposit
+        // stays escrowed, so generic spending cannot reach it either. Both
+        // halves are asserted because either one alone is survivable and
+        // together they are a deposit with no route out through this API.
+        //
+        // `restoreAssetSwaps` is the route out, and it has no call site in this
+        // package by design — a consumer runs it on their own schedule. That is
+        // the contract this test pins; a drive that ever learns to scan for
+        // itself should fail here and be rewritten, not deleted.
+        const store = new InMemoryAssetSwapRepository();
+        const client = clientOn({ repository: store });
+        const quote = await client.quote({
+            give: "BTC",
+            take: "USD",
+            amount: BigInt(DEPOSIT_SATS),
+            amountOn: "give",
+        });
+        const swap = await client.accept(quote);
+        const record = (await store.getSwapRecord(quoteIdOfSwapId(swap.id))) as OfferSwapRecord;
+        await waitFor(async () => {
+            const reader = await wallet.getArkadeReader();
+            const { vtxos } = await reader.getVtxos({ scripts: [record.swapPkScript] });
+            return vtxos.some((v) => v.txid === record.fundingTxid);
+        });
+        await client[Symbol.asyncDispose]();
+
+        const wiped = clientOn({ repository: new InMemoryAssetSwapRepository() });
+        await wiped.ready;
+        expect(await wiped.swaps()).toEqual([]);
+        await expect(wiped.cancel(swap.id)).rejects.toBeInstanceOf(NotCancellable);
+        expect((await wallet.getBalance()).gated).toBeGreaterThanOrEqual(DEPOSIT_SATS);
+        await wiped[Symbol.asyncDispose]();
+
+        // The scan rebuilds the offer from the funding transaction alone, and
+        // the bytes it hands back are the ones the covenant was funded against.
+        //
+        // The txid is named here rather than read from `getTransactionHistory`,
+        // and that is not a shortcut: `createOffer` registers the covenant as a
+        // contract of this wallet, so the deposit output counts as CHANGE in the
+        // history builder. A BTC-give funding tx therefore nets to zero and is
+        // dropped as a pure self-transfer (`transactionHistory.ts`), and the
+        // wallet's history never carries the one txid this scan needs.
+        const history: Tx[] = [
+            {
+                type: "sent",
+                redeemTxid: record.fundingTxid!,
+                createdAt: Math.floor(Date.now() / 1000),
+            },
+        ];
+        const { restored } = await restoreAssetSwaps(
+            new RestIndexerProvider(OPERATOR_URL),
+            history,
+            new Set(),
+            { operatorPubkey: ArkAddress.decode(await wallet.getAddress()).serverPubKey },
+        );
+        const found = restored.find((s) => s.fundingTxid === record.fundingTxid);
+        expect(found?.offerHex).toBe(record.offerHex);
+        expect(found?.status).toBe("pending");
+
+        // And they are enough to get the deposit back, with no v2 record in
+        // sight — which is what makes the loss above recoverable rather than
+        // terminal.
+        const cancelTxid = await cancelOffer(wallet, found!.offerHex, {
+            repository: new InMemoryAssetSwapRepository(),
+            fundingTxid: record.fundingTxid!,
+            swapAddress: record.swapAddress,
+        });
+        expect(cancelTxid).toBeTruthy();
+        await waitFor(async () => {
+            const reader = await wallet.getArkadeReader();
+            const { vtxos } = await reader.getVtxos({ scripts: [record.swapPkScript] });
+            return vtxos.some(
+                (v) => v.txid === record.fundingTxid && v.virtualStatus.state === "spent",
+            );
+        });
+    }, 300_000);
 });

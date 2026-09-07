@@ -1978,8 +1978,10 @@ export async function requestLightningReceive(
         emulatorPubkey?: string;
         /** covclaimd's 33-byte compressed pubkey (from its own info endpoint)
          * — the claim packet seals to it and only it can ever read `P` early.
-         * Unset where no covclaimd is deployed: nothing is sealed and no packet
-         * is sent. Never substitute a throwaway key — nobody could open it. */
+         * Unset where no covclaimd is deployed: nothing is sealed, no packet is
+         * sent, and claiming the lockup before the quote's `refund_locktime` is
+         * then the caller's own job — miss that window and the fill is lost.
+         * Never substitute a throwaway key — nobody could open it. */
         covclaimdPubkey?: Uint8Array;
         /** The caller's own BOLT11 decoder, applied to the SOLVER's invoice.
          * Required: an optional verifier is one integrators skip, and this is
@@ -2223,7 +2225,8 @@ export async function requestOnchainReceive(
         /** Trader's x-only L1 key for the HTLC's refund leaf. */
         refundPubkey: Uint8Array;
         /** covclaimd's 33-byte compressed pubkey, unset where none is deployed
-         * — see {@link requestLightningReceive}. */
+         * — nothing is sealed and the claim before `refund_locktime` is the
+         * caller's own; see {@link requestLightningReceive}. */
         covclaimdPubkey?: Uint8Array;
         rfqId?: string;
     },

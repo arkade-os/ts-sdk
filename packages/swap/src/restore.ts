@@ -33,7 +33,7 @@ const TXS_PER_REQUEST = 50;
  * record's asset field is a net delta — an asset offer's cancel moves the asset
  * out and back, netting to nothing — so it cannot answer the question.
  *
- * @deprecated The drive restores; `await client.ready`. Moved off the package root to `@arkade-os/swap/protocol`.
+ * @deprecated There is no replacement — `client.ready` restores the records a store still holds and never rediscovers a lost one. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface Tx {
     type: string;
@@ -47,7 +47,7 @@ export interface Tx {
 
 /** The indexer surface the restore scan needs — narrower than a full provider.
  *
- * @deprecated The drive restores; `await client.ready`. Moved off the package root to `@arkade-os/swap/protocol`.
+ * @deprecated There is no replacement — `client.ready` restores the records a store still holds and never rediscovers a lost one. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export type RestoreIndexer = Pick<RestIndexerProvider, "getVirtualTxs" | "getVtxos">;
 
@@ -111,7 +111,7 @@ const unscannedSwapCandidates = (
  * `indeterminate` is not a third outcome — it is the absence of one, and the
  * caller decides whether to retry or accept a default.
  *
- * @deprecated The drive restores; `await client.ready`. Moved off the package root to `@arkade-os/swap/protocol`.
+ * @deprecated There is no replacement — `client.ready` restores the records a store still holds and never rediscovers a lost one. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export type SpendKind = "cancelled" | "fulfilled" | "indeterminate";
 
@@ -155,7 +155,7 @@ export type SpendKind = "cancelled" | "fulfilled" | "indeterminate";
  * `swapPkScript` and this returns `indeterminate` rather than guessing —
  * `cancelOffer` diagnoses the same mismatch the same way.
  *
- * @deprecated The drive restores; `await client.ready`. Moved off the package root to `@arkade-os/swap/protocol`.
+ * @deprecated There is no replacement — `client.ready` restores the records a store still holds and never rediscovers a lost one. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function classifySpend(
     offer: Offer,
@@ -200,7 +200,7 @@ export function classifySpend(
  * The txids that may hold a deposit's spend, in the order worth trying: the
  * checkpoint first, since it is the one carrying the deposit outpoint.
  *
- * @deprecated The drive restores; `await client.ready`. Moved off the package root to `@arkade-os/swap/protocol`.
+ * @deprecated There is no replacement — `client.ready` restores the records a store still holds and never rediscovers a lost one. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const spendTxidsOf = (vtxo: { spentBy?: string; arkTxId?: string }): string[] =>
     [vtxo.spentBy, vtxo.arkTxId].filter((id): id is string => Boolean(id));
@@ -214,7 +214,7 @@ export const spendTxidsOf = (vtxo: { spentBy?: string; arkTxId?: string }): stri
  * settlement they may be the same id. Try each and take the first definite
  * answer, so the classification does not depend on that distinction.
  *
- * @deprecated The drive restores; `await client.ready`. Moved off the package root to `@arkade-os/swap/protocol`.
+ * @deprecated There is no replacement — `client.ready` restores the records a store still holds and never rediscovers a lost one. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function classifyDepositSpend(
     offer: Offer,
@@ -254,7 +254,16 @@ export function classifyDepositSpend(
  * key that has rotated since makes every affected swap unclassifiable rather
  * than misclassified.
  *
- * @deprecated The drive restores; `await client.ready`. Moved off the package root to `@arkade-os/swap/protocol`.
+ * ## `client.ready` is not a substitute for this
+ *
+ * The drive's construction restore reads the repository and nothing else, so it
+ * revives the records a store still holds and rediscovers none that it lost. A
+ * store wiped after a deposit was funded therefore leaves the offer invisible to
+ * the client and the deposit escrowed out of generic coin selection — recovered
+ * only by running this scan, which the package deliberately never calls for you.
+ * Pinned in `test/e2e/offerCancel.test.ts`.
+ *
+ * @deprecated There is no replacement — `client.ready` restores the records a store still holds and never rediscovers a lost one. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function restoreAssetSwaps(
     indexer: RestoreIndexer,
