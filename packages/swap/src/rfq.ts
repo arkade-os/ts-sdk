@@ -972,8 +972,6 @@ export type LightningSendContractParams = Parameters<typeof lightningSendContrac
 
 /** The BOLT11 facts the trader read from its OWN decode — this module takes
  * the facts, not the decoder, so any wallet's existing decoder serves.
- *
- * @deprecated Bolt11 strings at the boundary; `client.quote()` decodes them. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface InvoiceFacts {
     /** The raw BOLT11 — what travels in the request profile. */

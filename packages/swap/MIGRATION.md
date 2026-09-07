@@ -37,7 +37,7 @@ was still occupied, which is exactly what this release resolves.
 
 ### Everything below the client: `@arkade-os/swap/protocol`
 
-200 v1 names moved off the root to a subpath, in this release. Each is one specifier edit:
+194 v1 names moved off the root to a subpath, in this release. Each is one specifier edit:
 
 ```ts
 import { requestLightningSend, RfqSwapManager } from "@arkade-os/swap";           // 0.1.0-rc.1
@@ -60,13 +60,34 @@ this for you now", not "this goes away next release".
 | RFQ requests, pairs, covenants, verification     | `requestLightning*`, `requestOnchain*`, `derive*`, `verify*`, the `*_PAIR` and `*_BTC` constants | `client.quote()` and `client.accept()`          |
 | Offers                                           | `createOffer`, `cancelOffer`, `offerContract`, `encodeOffer`, `decodeOffer`, `swapPrograms` | `client.accept()`; `client.cancel()` for cancel |
 | The RFQ manager and its record types             | `RfqSwapManager`, `RfqSwap*`, `nextOnchainAction`                  | `createSwapClient`, `client.onUpdate()`         |
-| Records and the asset-swap store                 | `AssetSwap`, `addAssetSwap`, `getAssetSwaps`, `updateAssetSwap`, `createRfqSwapRecord`, `rebuildRfqSwap` | `accept()` writes; `client.swaps()` reads       |
+| Records and the asset-swap store                 | `addAssetSwap`, `getAssetSwaps`, `updateAssetSwap`, `createRfqSwapRecord`, `rebuildRfqSwap` | `accept()` writes; `client.swaps()` reads       |
 | Watching, restoring, refunding, claiming         | `watchOfferSwaps`, `restoreAssetSwaps`, `refundIfUnresolved`, `arkadeRefunder`, `pushClaim`, `awaitLockupFunding` | the drive; `await client.ready`, `client.recover()` |
 | Markets and pricing                              | `discoverMarkets`, `findMarket`, `validatePlan`, `QUOTE_OPTIONS`, `makeCachedFeedFetch` | `client.markets()`; pricing is inside `quote()` |
 | The onchain HTLC and its chain source            | `onchainHtlcScript`, `buildHtlcClaim`, `buildHtlcRefund`, `classifyOnchainHtlc`, `chainSourceFrom` | internal to the onchain corridor                |
 | Lockup contracts and secrets profiles            | `lockupContractParams`, `registerLockupContract`, `rfqSecretsProfile`, `rfqClaimSecretOf`, `rfqSignerOf` | internal to `accept()` and the corridor modules |
 | The v1 payment rails                             | `solverLightningRail`, `solverOnchainRail`, `crossAssetRail`, `solverRendezvous` | `lightningRail`, `onchainSwapRail`, `createSwapPaymentRouter` |
-| The dev transports and their types               | `httpTransport`, `relayTransport`, `RfqTransport`, `RelaySocket`, `InvoiceFacts` | `client.quote()` opens the rendezvous; `@arkade-os/swap/nostr` to hand-build one |
+| The dev transports and their types               | `httpTransport`, `relayTransport`, `RfqTransport`, `RelaySocket` | `client.quote()` opens the rendezvous; `@arkade-os/swap/nostr` to hand-build one |
+
+### Six v1 names that stayed on the root
+
+Not everything v1 declared is a v1 building block. If a root-exported declaration NAMES a type,
+a consumer has to be able to name it too — otherwise configuring the v2 client means importing
+from a barrel the client itself tells you is deprecated. These six are in something you author,
+implement, or catch, so they are v2 names whatever their origin, and they never carried a true
+`@deprecated`:
+
+| Name                         | Why it is on the root                                    |
+| ---------------------------- | -------------------------------------------------------- |
+| `InvoiceFacts`               | what `CorridorOverrides.lightning.decode` returns         |
+| `ChainSource`                | what `CorridorOverrides.onchain.chain` takes              |
+| `AssetSwap`                  | the row `AssetSwapRepository` stores — a custom backend is written against it |
+| `LockupSpendIndexer`         | `SwapDriveConfig.indexer`, and what `walletLockupIndexer()` returns |
+| `SwapContractRegistry`       | `SwapDriveConfig.contracts`                               |
+| `LockupRegistrationFailed`   | thrown by `client.accept()`, so a caller has to catch it  |
+
+Their declarations and shapes are unchanged; only the barrel and the tag moved. If you already
+import one from `@arkade-os/swap/protocol`, that stops resolving — change the specifier to
+`@arkade-os/swap`.
 
 `scripts/dispositions.json` in this package is the complete, machine-checked list — every name,
 with its disposition — and `test/exports.test.ts` diffs it against the barrels on every run. It is

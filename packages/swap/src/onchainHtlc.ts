@@ -419,8 +419,6 @@ export interface ChainUtxo extends HtlcUtxo {
 /** The package's whole view of Bitcoin L1. An esplora-backed implementation
  * belongs to the caller (a reference one lives in the test suite); the package
  * itself stays backend-free.
- *
- * @deprecated Internal to the onchain corridor; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface ChainSource {
     /** Confirmed+mempool outputs paying a script; used to detect the fill. */

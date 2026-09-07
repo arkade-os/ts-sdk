@@ -57,7 +57,6 @@ export {
     lockupContractParams,
     type LockupContractReader,
     type LockupContractWriter,
-    LockupRegistrationFailed,
     registerLockupContract,
     SWAP_LOCKUP_CONTRACT_KIND,
     SWAP_LOCKUP_CONTRACT_LABEL,
@@ -88,7 +87,6 @@ export {
     awaitOnchainFill,
     buildHtlcClaim,
     buildHtlcRefund,
-    type ChainSource,
     type ChainUtxo,
     claimOnchainFill,
     classifyOnchainHtlc,
@@ -141,7 +139,6 @@ export {
     type LockupFate,
     LockupNeedsRecoveryError,
     type LockupSpend,
-    type LockupSpendIndexer,
     type LockupVtxo,
     pushRefundWithoutReceiver,
     readLockupFate,
@@ -172,7 +169,6 @@ export {
     deriveOnchainReceive,
     deriveOnchainSend,
     httpTransport,
-    type InvoiceFacts,
     LIGHTNING_BTC,
     LIGHTNING_RECEIVE_PAIR,
     LIGHTNING_SEND_PAIR,
@@ -236,7 +232,6 @@ export {
 } from "./rfqSwapState";
 export {
     addAssetSwap,
-    type AssetSwap,
     type AssetSwapStatus,
     BTC_ASSET_ID,
     getAssetSwaps,
@@ -269,7 +264,6 @@ export {
     RfqSwapOriginRequired,
     type RfqSwapOutcome,
     type RfqSwapRecordStore,
-    type SwapContractRegistry,
 } from "./swapManager";
 export {
     type OfferSwapWatcher,

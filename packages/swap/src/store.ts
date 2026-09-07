@@ -72,7 +72,11 @@ export interface SwapSecretsProjection {
     preimageSaltHex?: string;
 }
 
-/** @deprecated Use `Swap`, projected by `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
+/** The row {@link AssetSwapRepository} stores. A custom storage backend is
+ * written against this, which is why it is a root export rather than a
+ * `/protocol` one — the interface it appears in is part of the v2 surface.
+ * What it is NOT is the v2 client's own record: that is `SwapRecord`, and
+ * `client.swaps()` projects it as `Swap`. */
 export interface AssetSwap extends SwapSecretsProjection {
     /** Funding txid — the swap's identity. */
     id: string;

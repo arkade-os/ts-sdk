@@ -608,8 +608,6 @@ export interface RfqSwapManagerConfig {
  * seam style as {@link LockupSpendIndexer} and `refund.ts`'s
  * `RefundIndexer`, and satisfied structurally by a real
  * `ContractManager` (`await wallet.getContractManager()`).
- *
- * @deprecated Use `createSwapClient` and `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export type SwapContractRegistry = Pick<
     IContractManager,
