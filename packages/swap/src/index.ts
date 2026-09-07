@@ -169,6 +169,15 @@ export {
 } from "./rfq";
 export { sealClaimPacket, type ClaimPacketInput, type SealedClaimPacket } from "./claimPacket";
 export {
+    CovclaimdRevealError,
+    covclaimdClient,
+    revealClaimPacket,
+    revealFieldsFromScript,
+    type CovclaimdClient,
+    type CovclaimdInfo,
+    type RevealParams,
+} from "./reveal";
+export {
     LockupAmountMismatchError,
     awaitLockupFunding,
     claimReceiveLockup,
