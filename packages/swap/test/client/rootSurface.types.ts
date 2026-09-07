@@ -86,3 +86,36 @@ export { assertFundable as protocolAssertFundable } from "../../src/protocol";
 export { requestLightningSend } from "../../src/protocol";
 // @ts-expect-error — P lives on `/protocol` and nowhere else.
 export { requestLightningSend as rootRequestLightningSend } from "../../src";
+
+/**
+ * The curated boundary, at the type level.
+ *
+ * `test/exports.test.ts` diffs the root's names against the curated list; this
+ * is the compile-time half for the two directions a name diff states in the
+ * abstract — the orchestration internals are NOT importable from the root, and
+ * they ARE importable from `@arkade-os/swap/advanced`. The names are the ones
+ * the curation review called out, so a regression names its victim.
+ */
+// @ts-expect-error — the drive is manual-driving orchestration: `./advanced`.
+export { createSwapDrive } from "../../src";
+// @ts-expect-error — custom quote flows import from `./advanced`.
+export { acceptQuote } from "../../src";
+// @ts-expect-error — destination claiming is `./advanced`, per V2_API.md.
+export { corridorSet } from "../../src";
+// @ts-expect-error — the RFQ quote path is `./advanced`.
+export { quoteViaRfq } from "../../src";
+// @ts-expect-error — the drive's record store is `./advanced`.
+export { walletLockupIndexer } from "../../src";
+// @ts-expect-error — the verbs' ceiling is their own plumbing: `./advanced`.
+export { enforceFeeCeiling } from "../../src";
+// @ts-expect-error — preparation is `./advanced`; `client.preparationOf()` answers it.
+export type { QuotePreparation } from "../../src";
+
+export {
+    acceptQuote as advancedAcceptQuote,
+    corridorSet as advancedCorridorSet,
+    createSwapDrive as advancedCreateSwapDrive,
+    quoteViaRfq as advancedQuoteViaRfq,
+    walletLockupIndexer as advancedWalletLockupIndexer,
+    type QuotePreparation as AdvancedQuotePreparation,
+} from "../../src/advanced";
