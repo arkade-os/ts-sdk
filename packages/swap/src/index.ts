@@ -250,6 +250,28 @@ export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
 // server URL is accepted anywhere.
 export { type SwapOperator } from "./refund";
 
+// Names v1 declared that the v2 surface REFERENCES, and which are therefore v2
+// names whatever their origin.
+//
+// The rule is the type system's, not a judgement call: if a root-exported
+// declaration names a type, a consumer has to be able to name it too, or the
+// declaration is unusable without reaching into `/protocol` — and a consumer
+// forced onto a deprecated barrel to configure the client is being told the
+// supported path is the deprecated one. Each of these sits in something the
+// caller AUTHORS (`CorridorOverrides`, `SwapDriveConfig`), IMPLEMENTS
+// (`AssetSwapRepository`, above), READS (`CorridorSwapRecord.state`), or
+// CATCHES (`client.accept()` throws `LockupRegistrationFailed`).
+//
+// They keep their v1 declarations and their v1 shape. What they lose is the
+// `@deprecated` tag, which was never true of them.
+export { type AssetSwap } from "./store";
+export { type InvoiceFacts } from "./rfq";
+export { type ChainSource } from "./onchainHtlc";
+export { LockupRegistrationFailed } from "./lockupContract";
+export { type LockupSpendIndexer } from "./refund";
+export { type SwapContractRegistry } from "./swapManager";
+export { isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
+
 // The payment rails, for an app that routes through core's payment router
 // rather than calling the verbs itself. These are the v2 rails — the `solver-*`
 // ones they replaced are on the protocol floor below.

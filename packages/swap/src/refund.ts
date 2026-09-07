@@ -354,7 +354,8 @@ export async function findLockupVtxos(
  * {@link RefundIndexer} and `restore.ts`'s `RestoreIndexer`, and satisfied by
  * {@link RestIndexerProvider}.
  *
- * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ * A root export because `SwapDriveConfig.indexer` takes it — and because
+ * `walletLockupIndexer()` returns it.
  */
 export type LockupSpendIndexer = Pick<RestIndexerProvider, "getVtxos" | "getVirtualTxs">;
 

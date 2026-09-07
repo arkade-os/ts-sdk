@@ -17,7 +17,9 @@
  * a receive. Only `lightning_send` has neither — there the solver claims the
  * lockup, and the trader's only move is the refund.
  *
- * @deprecated Use `Outcome`, delivered by `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ * A root export because `CorridorSwapRecord.state` is this vocabulary: a
+ * caller reading a record off `client.swaps()` names it. `Outcome`, delivered
+ * by `client.onUpdate()`, is the client-level projection over it.
  */
 export type RfqSwapState =
     /** Live; nothing actionable yet. On a receive leg this covers the whole
@@ -86,6 +88,8 @@ export type RfqSwapState =
  * whose claim is still the thing that ends the swap. */
 export const RFQ_SWAP_TERMINAL_STATES = ["settled", "refunded", "failed"] as const;
 
-/** @deprecated Use `Outcome`, delivered by `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`. */
+/** Whether `CorridorSwapRecord.state` ends the swap — the record reader's
+ * terminal check, beside the `Outcome` projection `client.onUpdate()`
+ * delivers. */
 export const isRfqSwapTerminal = (state: RfqSwapState): boolean =>
     (RFQ_SWAP_TERMINAL_STATES as readonly string[]).includes(state);
