@@ -109,6 +109,40 @@ describe("covclaimdClient", () => {
         expect(calls[0].url).toBe("https://cov.example/v1/preimage/covclaimd-pubkey");
     });
 
+    it("refuses plain http to a remote host: the key served decides where P is sealed", () => {
+        const { impl } = stubFetch([{ body: infoBody }]);
+        expect(() => covclaimdClient("http://cov.example", { fetchImpl: impl })).toThrow(
+            /must be https/,
+        );
+    });
+
+    it("allows plain http to loopback, which covclaimd itself defaults to", async () => {
+        for (const base of [
+            "http://localhost:7271",
+            "http://127.0.0.1:7271",
+            "http://[::1]:7271",
+        ]) {
+            const { impl, calls } = stubFetch([{ body: infoBody }]);
+            await covclaimdClient(base, { fetchImpl: impl }).info();
+            expect(calls[0].url, base).toBe(`${base}/v1/preimage/covclaimd-pubkey`);
+        }
+    });
+
+    it("allows plain http to a remote host only on an explicit opt-out", async () => {
+        const { impl, calls } = stubFetch([{ body: infoBody }]);
+        await covclaimdClient("http://cov.example", {
+            fetchImpl: impl,
+            allowInsecureHttp: true,
+        }).info();
+        expect(calls[0].url).toBe("http://cov.example/v1/preimage/covclaimd-pubkey");
+    });
+
+    it("refuses redirects, which would move the key fetch off the vetted origin", async () => {
+        const { impl, calls } = stubFetch([{ body: infoBody }]);
+        await covclaimdClient("https://cov.example", { fetchImpl: impl }).info();
+        expect(calls[0].init?.redirect).toBe("error");
+    });
+
     it("refuses a pubkey that is not 33-byte compressed", async () => {
         const body = JSON.stringify({
             covclaimd_pub_key: hex.encode(COVCLAIMD_PK.slice(1)),

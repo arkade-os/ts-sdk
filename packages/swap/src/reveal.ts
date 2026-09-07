@@ -70,11 +70,32 @@ const decodeKey = (value: unknown, field: string): Uint8Array => {
     return bytes;
 };
 
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+/** `info()` decides which key `P` is sealed to, so plain HTTP hands the preimage
+ * to whoever can rewrite the response. Loopback is exempt — no network to be on,
+ * and covclaimd's own default is `http://localhost:7271`. */
+const assertTransportSecure = (baseUrl: string, allowInsecureHttp: boolean): void => {
+    const { protocol, hostname } = new URL(baseUrl);
+    if (protocol === "https:" || allowInsecureHttp) return;
+    if (protocol === "http:" && LOOPBACK.has(hostname)) return;
+    throw new Error(
+        `covclaimd URL must be https (got ${protocol}//${hostname}): the key it serves ` +
+            "is the one the preimage gets sealed to. Pass allowInsecureHttp to override.",
+    );
+};
+
 /** `fetchImpl` is injectable, matching `httpTransport` in `rfq.ts`. */
 export const covclaimdClient = (
     baseUrl: string,
-    options: { fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+    options: {
+        fetchImpl?: typeof fetch;
+        timeoutMs?: number;
+        /** Opt out of the TLS requirement — a private network you trust. */
+        allowInsecureHttp?: boolean;
+    } = {},
 ): CovclaimdClient => {
+    assertTransportSecure(baseUrl, options.allowInsecureHttp === true);
     const url = baseUrl.replace(/\/+$/, "");
     const fetchImpl = options.fetchImpl ?? fetch;
     const timeoutMs = options.timeoutMs ?? 30_000;
@@ -84,6 +105,8 @@ export const covclaimdClient = (
         try {
             response = await fetchImpl(`${url}${path}`, {
                 ...init,
+                // a redirect would move the key fetch off the vetted origin
+                redirect: "error",
                 signal: AbortSignal.timeout(timeoutMs),
             });
         } catch (error) {
