@@ -420,7 +420,8 @@ export interface ChainUtxo extends HtlcUtxo {
  * belongs to the caller (a reference one lives in the test suite); the package
  * itself stays backend-free.
  *
- * @deprecated Internal to the onchain corridor; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
+ * A root export because `CorridorOverrides.onchain.chain` takes it: a caller
+ * wiring that override names this type.
  */
 export interface ChainSource {
     /** Confirmed+mempool outputs paying a script; used to detect the fill. */

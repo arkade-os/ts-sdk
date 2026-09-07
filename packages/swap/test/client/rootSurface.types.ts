@@ -119,3 +119,49 @@ export {
     walletLockupIndexer as advancedWalletLockupIndexer,
     type QuotePreparation as AdvancedQuotePreparation,
 } from "../../src/advanced";
+
+/**
+ * S — v1-declared names the v2 surface references, reachable from the root.
+ *
+ * If a root-exported declaration names a type, a consumer has to be able to
+ * name it too: `CorridorOverrides` authors `InvoiceFacts` and `ChainSource`,
+ * `SwapDriveConfig` authors `LockupSpendIndexer` and `SwapContractRegistry`,
+ * `AssetSwapRepository` is implemented over `AssetSwap`,
+ * `CorridorSwapRecord.state` reads `RfqSwapState`, and `client.accept()`
+ * throws `LockupRegistrationFailed`. Each import below fails the build if its
+ * name leaves the root again.
+ */
+import type {
+    AssetSwap,
+    ChainSource,
+    CorridorSwapRecord,
+    InvoiceFacts,
+    LockupSpendIndexer,
+    RfqSwapState,
+    SwapContractRegistry,
+} from "../../src";
+import { isRfqSwapTerminal, LockupRegistrationFailed } from "../../src";
+
+export const rootReferencedNames: {
+    decode: (bolt11: string) => InvoiceFacts;
+    chain: ChainSource;
+    row: AssetSwap;
+    indexer: LockupSpendIndexer;
+    contracts: SwapContractRegistry;
+    state: RfqSwapState;
+    terminal: (state: RfqSwapState) => boolean;
+    failure: typeof LockupRegistrationFailed;
+    record: CorridorSwapRecord;
+} = {
+    decode: () => {
+        throw new Error("type-level only");
+    },
+    chain: undefined as never,
+    row: undefined as never,
+    indexer: undefined as never,
+    contracts: undefined as never,
+    state: "pending",
+    terminal: isRfqSwapTerminal,
+    failure: LockupRegistrationFailed,
+    record: undefined as never,
+};

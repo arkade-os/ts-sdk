@@ -194,6 +194,17 @@ const CURATED_ROOT: readonly string[] = [
     "IndexedDbAssetSwapRepository",
     // The operator slice for `SwapClientConfig.operator`.
     "SwapOperator",
+    // Names v1 declared that the v2 surface references — in something the
+    // caller authors, implements, reads, or catches — so v2 names whatever
+    // their origin. Same order as `src/index.ts`.
+    "AssetSwap",
+    "InvoiceFacts",
+    "ChainSource",
+    "LockupRegistrationFailed",
+    "LockupSpendIndexer",
+    "SwapContractRegistry",
+    "RfqSwapState",
+    "isRfqSwapTerminal",
     // The payment rails.
     "LIGHTNING_RAIL",
     "lightningRail",

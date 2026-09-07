@@ -611,14 +611,20 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             // question (the injected `now` is for the drive's windows, not
             // for a consensus-margin probe that must hold under a test clock
             // too).
-            const { txid } = await claimOnchainFill(chain, {
-                htlc: swap.htlc,
-                utxo,
-                preimage,
-                payoutPkScript: swap.payoutPkScript,
-                feeRateSatVb,
-                sign: (sighash) => signer.signMessage(sighash, "schnorr"),
-            });
+            // Tracked, like the refund push beside it: the broadcast is a
+            // money-moving promise the manager does not own, so `idle()` and
+            // `dispose()` must drain it rather than release the caller while
+            // it is still going out. `track` adds before the await suspends.
+            const { txid } = await track(
+                claimOnchainFill(chain, {
+                    htlc: swap.htlc,
+                    utxo,
+                    preimage,
+                    payoutPkScript: swap.payoutPkScript,
+                    feeRateSatVb,
+                    sign: (sighash) => signer.signMessage(sighash, "schnorr"),
+                }),
+            );
             return { txid };
         };
     };
