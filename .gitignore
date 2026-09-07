@@ -2,6 +2,8 @@ node_modules
 *.log
 .DS_Store
 dist
+.next
+*.tsbuildinfo
 coverage
 .env
 !.env.regtest
