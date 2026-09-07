@@ -118,14 +118,20 @@ describe("a custom resolver over real transactions (regtest)", () => {
 
     it("prepares before it resolves, and can correlate on what prepare loaded", async () => {
         const seen: string[] = [];
+        // The correlation data lands only AFTER an await, so a builder that
+        // called `prepare()` without awaiting it would resolve against an empty
+        // table and fail here rather than pass on the synchronous first line.
+        let loaded: string | undefined;
         const activities = await activitiesWith({
             id: "test:prepared",
             prepare: async () => {
                 seen.push("prepare");
+                await Promise.resolve();
+                loaded = sendTxid;
             },
             resolve: (tx) => {
                 seen.push("resolve");
-                return tx.key.arkTxid === sendTxid
+                return loaded !== undefined && tx.key.arkTxid === loaded
                     ? [{ groupId: "test:prepared-group", label: "Prepared" }]
                     : undefined;
             },
