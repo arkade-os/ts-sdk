@@ -60,6 +60,7 @@ import {
     type Swap,
     type SwapFamily,
 } from "./record";
+import type { CorridorId } from "./corridor";
 import type { SwapPolicy } from "./policy";
 import { feedFetch, quoteFromFeed, type FeedFetch } from "./quoteOffer";
 import { quoteViaRfq } from "./quoteRfq";
@@ -318,9 +319,17 @@ export interface SwapClient {
      * lockup nobody can claim. The artifact is non-optional on the return type
      * for the same reason — a receive has one by construction.
      *
+     * Generic over `via` so the artifact's shape follows the corridor the
+     * caller named — `receive({ via: "lightning" })` answers the invoice arm
+     * and `.artifact.bolt11` needs no `kind` check. See
+     * {@link ReceiveArtifact} for why the tie lives here and not on
+     * `Artifact`.
+     *
      * @throws {MaxFeeExceeded} as {@link pay} does.
      */
-    receive(options: ReceiveOptions): Promise<ReceiveRequest>;
+    receive<C extends CorridorId = CorridorId>(
+        options: ReceiveOptions & { readonly via: C },
+    ): Promise<ReceiveRequest<C>>;
 
     /**
      * Swap one Arkade asset for another.

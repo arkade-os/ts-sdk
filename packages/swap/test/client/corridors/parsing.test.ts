@@ -104,8 +104,19 @@ describe("the parsing matrix", () => {
             });
         });
 
-        it("claims the URI body for the onchain corridor", () => {
+        it("claims the URI body for the onchain corridor, with its pinned amount", () => {
+            // The `amount=` is the destination's own pin: the corridor carries
+            // it on the instrument so a later `amount=` argument trips
+            // `AmountMismatch` and an omitted one is supplied, exactly as an
+            // amount-bearing bolt11's is.
             expect(claimOn("regtest", `bitcoin:${BCRT1}?amount=0.001`)).toEqual({
+                corridor: "onchain",
+                instrument: { kind: "address", address: BCRT1, amount: 100_000n },
+            });
+        });
+
+        it("leaves a bare onchain address amountless", () => {
+            expect(claimOn("regtest", BCRT1)).toEqual({
                 corridor: "onchain",
                 instrument: { kind: "address", address: BCRT1 },
             });

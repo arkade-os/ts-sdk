@@ -4,11 +4,13 @@
  *
  * §6's rules stand as written; what is added here is a shape, because
  * `chain?: ChainSource` cannot tell "absent, use the default" from "disabled,
- * deliberately". Every override field is `T | null`: `undefined` takes the
- * default, `null` is the refusal, and {@link resolveCorridorDeps} throws
+ * deliberately". Almost every override field is `T | null`: `undefined` takes
+ * the default, `null` is the refusal, and {@link resolveCorridorDeps} throws
  * {@link MissingCorridorDep} naming the dep. It cannot reuse the facade's
  * `need()` guard, which tests `value === undefined` and passes a deliberate
- * `null` straight through.
+ * `null` straight through. The one exception is documented where it lives:
+ * the onchain claim fee-rate, whose "disabled" is a working manual mode
+ * rather than a missing dep.
  *
  * Resolution runs when a route first touches a corridor and never at
  * construction — a missing dep for a corridor nobody uses is not an error, which
@@ -34,7 +36,7 @@ import {
     type SignerSet,
 } from "@arkade-os/sdk";
 import type { ChainSource } from "../../onchainHtlc";
-import { L1_NETWORKS } from "../../onchainHtlc";
+import { L1_NETWORKS, ONCHAIN_CLAIM_VSIZE } from "../../onchainHtlc";
 import type { RfqSwapManagerCallbacks } from "../../swapManager";
 import { l1NetworkFromArk, type InvoiceFacts } from "../../rfq";
 import type { SwapOperator } from "../../refund";
@@ -113,10 +115,34 @@ export interface CorridorOverrides {
          * `ChainSource`: there is no wallet-held provider to substitute. */
         chain?: { esploraUrl: string } | null;
         /**
-         * How the trader's L1 claim is built and broadcast. No default: see
-         * {@link OnchainCorridorDeps.claim}.
+         * How the trader's L1 claim is built and broadcast. Default: see
+         * {@link OnchainCorridorDeps.claim} — synthesized from
+         * {@link claimFeeRateSatVb} when one is resolvable, so an explicit
+         * `null` here preserves manual mode.
          */
         claim?: OnchainClaim | null;
+        /**
+         * Sat/vB the trader's L1 claim will be built at — and, on the quote
+         * path, the rate the take leg is grossed up by so the recipient nets
+         * the requested amount after the claim's fee. Default:
+         * {@link ONCHAIN_CLAIM_FEE_RATE_SATVB}, per network. Environment-
+         * sensitive (mempool congestion moves it) and so overridable.
+         *
+         * `null` here is NOT the refusal the other override fields carry: it
+         * is "no default claim", and manual mode is a meaningful state for
+         * this dep rather than a broken one — the corridor still quotes
+         * (forwarding the take leg verbatim) and still drives the lockup,
+         * and the L1 claim is the caller's to make by hand.
+         */
+        claimFeeRateSatVb?: number | null;
+        /**
+         * The vsize the claim is priced at for the recipient-exact gross-up,
+         * when a caller knows better than the constant. Default:
+         * {@link ONCHAIN_CLAIM_VSIZE}; `null` is "no override given", like
+         * `undefined` — the estimate is the constant either way. The claim
+         * build itself measures its own transaction and never reads this.
+         */
+        claimVsize?: number | null;
     };
 }
 
@@ -127,6 +153,33 @@ export interface CorridorOverrides {
  * without a second shape to translate through.
  */
 export type OnchainClaim = RfqSwapManagerCallbacks["claimOnchain"];
+
+/**
+ * The per-network default for the trader's L1 claim fee rate, sat/vB.
+ *
+ * One number for every network, and deliberately the RELAY FLOOR rather than a
+ * market estimate: the rate both builds the claim and prices the
+ * recipient-exact gross-up, so a value invented to look precise would be a lie
+ * in two places at once — and an over-quoted test-network rate would short the
+ * recipient. 1 sat/vB is what every esplora deployment here will relay and,
+ * in practice on the test networks, what confirms in the next block. On
+ * mainnet it is a floor a routing UI should override UPWARD in congestion —
+ * the claim has a consensus deadline (`htlc.refundLocktime`), and a claim that
+ * confirms slowly is a claim that can miss it, so a caller with fee-rate
+ * information should spend it here.
+ *
+ * `Partial` on purpose: a network absent from this table means "no default",
+ * and the corridor resolves to manual mode there rather than to a number
+ * nobody justified. Every network the vocabulary knows is named; the Partial
+ * is for the ones it learns later.
+ */
+export const ONCHAIN_CLAIM_FEE_RATE_SATVB: Partial<Record<NetworkName, number>> = {
+    bitcoin: 1,
+    testnet: 1,
+    signet: 1,
+    mutinynet: 1,
+    regtest: 1,
+};
 
 /** The arkade corridor's deps. Only the repository is overridable. */
 export interface ArkadeCorridorDeps {
@@ -164,13 +217,16 @@ export interface OnchainCorridorDeps {
      * How the trader's L1 claim is built and broadcast, when a caller supplies
      * one.
      *
-     * **Absent by default, and deliberately not defaulted.** `claimOnchainFill`
-     * needs a fee rate and a signer, both of which are environment-specific and
-     * neither of which the wallet answers for an L1 key — so there is nothing
-     * honest to construct here. Without it the drive reports an
-     * `arkade -> onchain` swap's L1 half blocked, with the reason naming the
-     * missing callback rather than a counterparty who has done nothing wrong;
-     * the Arkade lockup keeps being driven and refunded either way.
+     * The caller's callback, verbatim — never a synthesized one. The wallet-
+     * backed DEFAULT claim is built one layer out, in the drive, which is the
+     * seam that has the record store and the wallet in hand; what it needs
+     * from here is {@link claimFeeRateSatVb}, and its absence — an override
+     * `null` on it, or a network with no entry in
+     * {@link ONCHAIN_CLAIM_FEE_RATE_SATVB} — is exactly what keeps manual
+     * mode on. Without any claim the drive reports an `arkade -> onchain`
+     * swap's L1 half blocked, with the reason naming the missing callback
+     * rather than a counterparty who has done nothing wrong; the Arkade
+     * lockup keeps being driven and refunded either way.
      *
      * A dep of the onchain corridor rather than a `SwapClientConfig` field,
      * because that is what it is: a route that never touches this corridor
@@ -178,6 +234,27 @@ export interface OnchainCorridorDeps {
      * as the chain source.
      */
     readonly claim?: OnchainClaim;
+    /**
+     * The fee rate the onchain arm's two fee-paid places share, sat/vB.
+     *
+     * Feeds BOTH halves of the recipient-exact deal, and they must stay on one
+     * number: the quote path grosses the take leg UP by the claim this rate
+     * prices (`claimFeeSats`), and the default claim build prices the actual
+     * claim with it. Quoting against one number and building against another
+     * is how the recipient ends up short anyway.
+     *
+     * Resolved from the network's floor in {@link ONCHAIN_CLAIM_FEE_RATE_SATVB}
+     * with the override winning; `undefined` when the network has no entry —
+     * which is what keeps a deliberate "no default claim" (the override
+     * `null`) and an unknown network on the same honest answer, rather than on
+     * an invented rate.
+     */
+    readonly claimFeeRateSatVb?: number;
+    /**
+     * The vsize the gross-up prices the claim at; the claim build measures its
+     * own transaction and never reads this. Default {@link ONCHAIN_CLAIM_VSIZE}.
+     */
+    readonly claimVsize?: number;
 }
 
 /** Which corridor gets which dep record. */
@@ -288,6 +365,23 @@ export function resolveCorridorDeps(
         case "onchain": {
             const chain = refusedIfNull(overrides?.onchain?.chain, "onchain", "chain source");
             const claim = refusedIfNull(overrides?.onchain?.claim, "onchain", "L1 claim callback");
+            // The fee policy fields break the module's usual `null` rule ON
+            // PURPOSE, because "no default claim" is a working state, not a
+            // disabled dep: `null` spends nothing, it merely opts out of the
+            // floor table, and quoting verbatim plus a caller-handled claim is
+            // exactly what a host who prices its own fees asks for. See the
+            // override's own doc comment for the contract. Said with `===`
+            // rather than `??`, since `null` must NOT fall through to the
+            // table that a mere `undefined` falls through to.
+            const feeRateOverride = overrides?.onchain?.claimFeeRateSatVb;
+            const claimFeeRateSatVb =
+                feeRateOverride === null
+                    ? undefined
+                    : (feeRateOverride ?? ONCHAIN_CLAIM_FEE_RATE_SATVB[base.networkName]);
+            const claimVsize =
+                overrides?.onchain?.claimVsize === null
+                    ? ONCHAIN_CLAIM_VSIZE
+                    : (overrides?.onchain?.claimVsize ?? ONCHAIN_CLAIM_VSIZE);
             return {
                 networkName: base.networkName,
                 chain: esploraChainSource({
@@ -296,6 +390,10 @@ export function resolveCorridorDeps(
                     fetchImpl: base.fetchImpl,
                 }),
                 ...(claim === undefined ? {} : { claim }),
+                // Absent-on-an-unknown-network and explicitly-off read the
+                // same: no default claim path, manual mode.
+                ...(claimFeeRateSatVb === undefined ? {} : { claimFeeRateSatVb }),
+                claimVsize,
             };
         }
     }

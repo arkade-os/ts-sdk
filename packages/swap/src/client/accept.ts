@@ -79,6 +79,52 @@ import {
 /** What a quote derived, kept in memory for the accept that may follow. */
 export type QuotePreparation = RfqPreparation | OfferPreparation;
 
+/**
+ * The per-quote safety lock.
+ *
+ * `accept` is idempotent by quote id, but only *sequentially*: the resume path
+ * reads the record, finds no funding, and funds — so two calls started together
+ * both read "unfunded" before either persists, and both send. A double-click,
+ * a retried request behind a load balancer with one process, or two handlers
+ * racing the same quote therefore fund twice unless the whole
+ * read/reconcile/register/fund sequence is serialized by quote id. This is
+ * that serialization, modeled on the reference implementation's per-swap
+ * safety lock (`NArk.Swaps`' `LockKeyAsync($"swap::{swapId}")`, taken before
+ * stored state is read and acted on).
+ *
+ * A keyed promise chain, not a boolean flag: each `accept` chains onto the
+ * previous one's tail, so at most one body runs per quote id at a time and the
+ * next waits rather than refusing. The entry deletes itself when the chain
+ * drains, so the map holds one promise per *in-flight* quote id, never one per
+ * quote ever accepted.
+ *
+ * Process-local, as the reference's is. Coordination for two *clients sharing a
+ * repository* is the persisted record itself: the second body to run re-reads
+ * under the lock, sees the first's `fundingTxid` (or its record), and returns
+ * it rather than funding again — so the never-fund-twice guarantee rests on
+ * "read after acquiring, not before", which is exactly what callers were
+ * previously free to violate.
+ */
+const acceptLocks = new Map<QuoteId, Promise<void>>();
+
+const runSerialized = <T>(id: QuoteId, body: () => Promise<T>): Promise<T> => {
+    const tail = acceptLocks.get(id) ?? Promise.resolve();
+    const run = tail.then(body);
+    // The map holds a settle-swallowed copy of the chain's tail, so a rejection
+    // in one accept never poisons the tail the next quote chains onto.
+    const marker: Promise<void> = run.then(
+        () => undefined,
+        () => undefined,
+    );
+    acceptLocks.set(id, marker);
+    // Evict only when this run is still the tail: a later accept may already
+    // have chained its own marker, and deleting that would reopen the gate.
+    void marker.then(() => {
+        if (acceptLocks.get(id) === marker) acceptLocks.delete(id);
+    });
+    return run;
+};
+
 export interface AcceptInput {
     readonly quote: Quote;
     readonly preparation?: QuotePreparation;
@@ -361,7 +407,10 @@ const profileOf = (preparation: RfqPreparation, paymentHash: string): Record<str
  * the record when it is not, and refuses as `AcceptConflict` only when the
  * durable evidence contradicts the quote on a material field.
  */
-export const acceptQuote = async (input: AcceptInput): Promise<Swap> => {
+export const acceptQuote = async (input: AcceptInput): Promise<Swap> =>
+    runSerialized(input.quote.id, () => acceptQuoteBody(input));
+
+const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
     const { quote, wallet, now } = input;
     const repository = storageOf(input.repository);
     const answer = (record: SwapRecord): Swap =>
