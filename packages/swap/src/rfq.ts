@@ -1307,8 +1307,10 @@ export const lightningReceiveRequest = (input: {
     payoutAddress: string;
     /** Trader's x-only arkade key — the covenant's `receiver` role. */
     payoutPubkey: Uint8Array;
-    /** `P` sealed to covclaimd, base64 — `sealClaimPacket(...).ciphertext`. */
-    claimPacket: string;
+    /** `P` sealed to covclaimd, base64 — `sealClaimPacket(...).ciphertext`.
+     * Omitted when there is no covclaimd to seal to; the field is then left off
+     * the wire entirely, since the solver refuses an empty packet. */
+    claimPacket?: string;
     amount: number;
     amountSide: "from" | "to";
 }): Record<string, unknown> => ({
@@ -1322,7 +1324,7 @@ export const lightningReceiveRequest = (input: {
         payment_hash: input.paymentHash,
         payout_address: input.payoutAddress,
         payout_pubkey: hex.encode(input.payoutPubkey),
-        claim_packet: input.claimPacket,
+        ...(input.claimPacket === undefined ? {} : { claim_packet: input.claimPacket }),
     },
 });
 
@@ -1343,8 +1345,9 @@ export const onchainReceiveRequest = (input: {
     payoutPubkey: Uint8Array;
     /** Trader's x-only L1 key for the HTLC's refund leaf. */
     refundPubkey: Uint8Array;
-    /** `P` sealed to covclaimd, base64 — `sealClaimPacket(...).ciphertext`. */
-    claimPacket: string;
+    /** `P` sealed to covclaimd, base64. Omitted when there is none to seal to —
+     * see {@link lightningReceiveRequest}. */
+    claimPacket?: string;
     amount: number;
     amountSide: "from" | "to";
 }): Record<string, unknown> => ({
@@ -1356,7 +1359,7 @@ export const onchainReceiveRequest = (input: {
     amount: input.amount,
     profile: {
         payment_hash: input.paymentHash,
-        claim_packet: input.claimPacket,
+        ...(input.claimPacket === undefined ? {} : { claim_packet: input.claimPacket }),
         refund_pubkey: hex.encode(input.refundPubkey),
         payout_address: input.payoutAddress,
         payout_pubkey: hex.encode(input.payoutPubkey),
@@ -1974,8 +1977,10 @@ export async function requestLightningReceive(
          * {@link resolveEmulatorPubkey}. */
         emulatorPubkey?: string;
         /** covclaimd's 33-byte compressed pubkey (from its own info endpoint)
-         * — the claim packet seals to it and only it can ever read `P` early. */
-        covclaimdPubkey: Uint8Array;
+         * — the claim packet seals to it and only it can ever read `P` early.
+         * Unset where no covclaimd is deployed: nothing is sealed and no packet
+         * is sent. Never substitute a throwaway key — nobody could open it. */
+        covclaimdPubkey?: Uint8Array;
         /** The caller's own BOLT11 decoder, applied to the SOLVER's invoice.
          * Required: an optional verifier is one integrators skip, and this is
          * the check whose absence loses the whole payment. */
@@ -2030,10 +2035,12 @@ export async function requestLightningReceive(
         wallet.getArkadeInfo({ requireLive: true }),
         wallet.getAddress(),
     ]);
-    const claimPacket = await sealClaimPacket({
-        preimage,
-        covclaimdPubkey: params.covclaimdPubkey,
-    });
+    const claimPacket = params.covclaimdPubkey
+        ? await sealClaimPacket({
+              preimage,
+              covclaimdPubkey: params.covclaimdPubkey,
+          })
+        : undefined;
 
     const quote = await transport.requestQuote(
         lightningReceiveRequest({
@@ -2041,7 +2048,7 @@ export async function requestLightningReceive(
             paymentHash,
             payoutAddress,
             payoutPubkey,
-            claimPacket: claimPacket.ciphertext,
+            claimPacket: claimPacket?.ciphertext,
             amount: params.amount,
             amountSide: params.amountSide,
         }),
@@ -2215,8 +2222,9 @@ export async function requestOnchainReceive(
         emulatorPubkey?: string;
         /** Trader's x-only L1 key for the HTLC's refund leaf. */
         refundPubkey: Uint8Array;
-        /** covclaimd's 33-byte compressed pubkey — see {@link requestLightningReceive}. */
-        covclaimdPubkey: Uint8Array;
+        /** covclaimd's 33-byte compressed pubkey, unset where none is deployed
+         * — see {@link requestLightningReceive}. */
+        covclaimdPubkey?: Uint8Array;
         rfqId?: string;
     },
 ): Promise<{
@@ -2255,10 +2263,12 @@ export async function requestOnchainReceive(
         wallet.getArkadeInfo({ requireLive: true }),
         wallet.getAddress(),
     ]);
-    const claimPacket = await sealClaimPacket({
-        preimage,
-        covclaimdPubkey: params.covclaimdPubkey,
-    });
+    const claimPacket = params.covclaimdPubkey
+        ? await sealClaimPacket({
+              preimage,
+              covclaimdPubkey: params.covclaimdPubkey,
+          })
+        : undefined;
 
     const quote = await transport.requestQuote(
         onchainReceiveRequest({
@@ -2267,7 +2277,7 @@ export async function requestOnchainReceive(
             payoutAddress,
             payoutPubkey,
             refundPubkey: params.refundPubkey,
-            claimPacket: claimPacket.ciphertext,
+            claimPacket: claimPacket?.ciphertext,
             amount: params.amount,
             amountSide: params.amountSide,
         }),
