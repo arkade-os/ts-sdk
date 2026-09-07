@@ -89,4 +89,14 @@ describe("onchainRail (collaborative exit)", () => {
             /invalid amount/i,
         );
     });
+
+    // Types do not bind JS callers, and a rail that builds without a fee source
+    // would fail mid-payment instead — the router does not re-rank after a throw.
+    it("refuses to build without a usable fee source", () => {
+        expect(() => (onchainRail as any)()).toThrow(/feeInfo source is required/i);
+        expect(() => (onchainRail as any)({})).toThrow(/feeInfo source is required/i);
+        expect(() => (onchainRail as any)({ feeInfo: "nope" })).toThrow(
+            /feeInfo source is required/i,
+        );
+    });
 });

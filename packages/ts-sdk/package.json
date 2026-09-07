@@ -145,6 +145,7 @@
         "build": "tsup",
         "smoke:dist": "node scripts/smoke-dist.mjs",
         "typecheck": "tsc --noEmit",
+        "typecheck:types": "tsc -p tsconfig.typecheck.json --noEmit",
         "check:vtxo": "node scripts/check-virtual-status.mjs && node scripts/check-provider-boundary.mjs",
         "docs:build": "pnpm run typecheck && pnpm typedoc",
         "docs:open": "open ../../docs/index.html",

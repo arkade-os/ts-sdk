@@ -5,7 +5,14 @@ import { makeHandle } from "../handle";
 import { Ramps, offboardDestinationScript } from "../../wallet/ramps";
 import { Estimator } from "../../arkfee";
 import type { FeeInfo } from "../../providers/ark";
+import type { Wallet } from "../../index";
 import { hex } from "@scure/base";
+
+/** The canonical fee source for {@link onchainRail}: the operator's schedule, as
+ *  the wallet already reads it. Keeps the one `arkProvider` reach in one place,
+ *  so an app registering the rail itself need not know where fees live. */
+export const walletFeeSource = (wallet: Wallet) => async (): Promise<FeeInfo> =>
+    (await wallet.arkProvider.getInfo()).fees;
 
 /** Iterations allowed when solving the gross-up fixpoint. A fee schedule charging
  *  less than one sat per extra sat converges in a handful of rounds; the cap only
@@ -62,6 +69,11 @@ function grossUpOffboard(
  * rail on the money path is worse than a wiring error at startup.
  */
 export function onchainRail(deps: { feeInfo: () => Promise<FeeInfo> }): PaymentRail {
+    // Types do not bind JavaScript callers, and the router does not re-rank after
+    // a quote() throws — so refuse at wiring time rather than mid-payment.
+    if (typeof deps?.feeInfo !== "function") {
+        throw new Error("onchain rail: a feeInfo source is required");
+    }
     return {
         id: "onchain",
         match: (req) => btcTarget(req.raw) !== undefined,

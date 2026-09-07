@@ -6,7 +6,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
-import { PaymentRouter, onchainRail, type RouterContext } from "@arkade-os/sdk";
+import { PaymentRouter, onchainRail, type FeeInfo, type RouterContext } from "@arkade-os/sdk";
 import {
     SOLVER_ONCHAIN_RAIL,
     solverOnchainRail,
@@ -253,7 +253,7 @@ describe("solverOnchainRail.available", () => {
 
 describe("the router drops this rail rather than failing the payment", () => {
     /** A request the collaborative-exit rail can price without a live wallet. */
-    const feeInfo = async () => ({}) as never;
+    const feeInfo = async () => ({}) as FeeInfo;
     const routerCtx = (rail: ReturnType<typeof solverOnchainRail>) =>
         new PaymentRouter({
             wallet: {} as never,
