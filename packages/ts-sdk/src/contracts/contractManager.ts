@@ -2224,6 +2224,11 @@ export class ContractManager implements IContractManager {
                     // is monotonic so this never rewinds the cursor. The refill
                     // first, so catch-up-pending window entries retry their
                     // full-history sync without waiting for a restart.
+                    //
+                    // Freshness is dropped before that, not after: it is a claim
+                    // that events were arriving, and a reset says they were not
+                    // for an unknown stretch. The reconcile below re-earns it.
+                    this.syncedAtByScript.clear();
                     await this.scheduleLookAheadDrain();
                     await this.reconcileWatched();
                     this.markSyncOnline();

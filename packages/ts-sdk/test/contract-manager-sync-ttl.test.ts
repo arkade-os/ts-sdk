@@ -3,6 +3,7 @@ import {
     ContractManager,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    ProviderUnavailableError,
     type IndexerProvider,
 } from "../src";
 import type { Contract } from "../src/contracts";
@@ -130,6 +131,38 @@ describe("ContractManager vtxoSyncMaxAgeMs", () => {
         await new Promise((r) => setTimeout(r, 60));
 
         await manager.refreshVtxos();
+        (indexer.getVtxos as any).mockClear();
+
+        await manager.getContractsWithVtxos();
+
+        expect(reads(indexer)).toBe(0);
+    });
+
+    it("a connection reset whose recovery fails leaves nothing fresh", async () => {
+        const { manager, indexer } = await setup(60_000);
+        await manager.getContractsWithVtxos();
+
+        (indexer.getVtxos as any).mockRejectedValue(new ProviderUnavailableError("down"));
+        await (manager as any).handleContractEvent({
+            type: "connection_reset",
+            timestamp: Date.now(),
+        });
+
+        (indexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+        (indexer.getVtxos as any).mockClear();
+        await manager.getContractsWithVtxos();
+
+        expect(reads(indexer)).toBeGreaterThan(0);
+    });
+
+    it("a connection reset that recovers re-earns freshness, so the drop is not a penalty", async () => {
+        const { manager, indexer } = await setup(60_000);
+        await manager.getContractsWithVtxos();
+
+        await (manager as any).handleContractEvent({
+            type: "connection_reset",
+            timestamp: Date.now(),
+        });
         (indexer.getVtxos as any).mockClear();
 
         await manager.getContractsWithVtxos();
