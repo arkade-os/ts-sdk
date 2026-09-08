@@ -397,6 +397,9 @@ describe("restoreAssetSwaps", () => {
         }
     });
 
+    // AI-generated, and to be redone: written by Claude, kept for the coverage
+    // it gives the fix rather than for its shape. Rewrite by hand before
+    // reading it as the specification.
     describe("with `cover`, a live restored deposit is the wallet's to watch again", () => {
         // the wallet seam `ensureOfferContracts` writes through, and the server
         // read it derives the row's address from

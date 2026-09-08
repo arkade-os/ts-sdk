@@ -460,6 +460,9 @@ describe("send with caller-selected vtxos", () => {
  * of every wallet that has ever received an asset, since assets arrive on a
  * dust carrier the balance counts.
  */
+// AI-generated, and to be redone: written by Claude, kept for the coverage it
+// gives the fix rather than for its shape. Rewrite by hand before reading it as
+// the specification.
 describe("send keeps a carrier for asset change", () => {
     const ASSET = "a".repeat(64);
     const ADDR = encodeAddr(SERVER_XONLY, "tark");

@@ -347,6 +347,9 @@ describe("an offer at a script an earlier offer retired", () => {
 
 // ── Re-covering an offer this store did not create ────────────────────────────
 
+// AI-generated, and to be redone: written by Claude, kept for the coverage it
+// gives the fix rather than for its shape. Rewrite by hand before reading it as
+// the specification.
 describe("ensureOfferContracts", () => {
     const serverKey = hex.decode(
         "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",

@@ -512,6 +512,11 @@ describe("watchOfferSwaps", () => {
         vi.restoreAllMocks();
     });
 
+    // ── AI-generated, and to be redone ──────────────────────────────────────
+    // The start-up sweep cases below were written by Claude, not by hand. They
+    // are kept for the coverage they give the fix, not for their shape; rewrite
+    // them by hand before reading them as the specification.
+
     it("registers the covenant of every live record at start, and of no settled one", async () => {
         // The restored-wallet case: records are back, their deposits are on
         // chain, and nothing has told the wallet the scripts are its own. The

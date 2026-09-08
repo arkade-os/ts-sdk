@@ -569,6 +569,9 @@ describe("getBalance", () => {
  * The reserve, isolated from the wallet: which coins count, and what happens
  * when the carriers are all there is.
  */
+// AI-generated, and to be redone: written by Claude, kept for the coverage it
+// gives the fix rather than for its shape. Rewrite by hand before reading it as
+// the specification.
 describe("computeOffchainBalance.maxSendable", () => {
     const OWN = "51200000000000000000000000000000000000000000000000000000000000000010";
     const OTHER = "51200000000000000000000000000000000000000000000000000000000000000011";

@@ -15,6 +15,15 @@
  * market on a mock feed, so an offer priced off the solver's own card is
  * taken within seconds of funding, and one priced away from the feed is
  * looked at and declined — which is how a deposit is made to stay pending.
+ *
+ * ## AI-generated, and to be redone
+ *
+ * This suite was written by Claude, not by hand. It is kept because it runs
+ * green against the real stack and pins the behaviour the fixes in this change
+ * depend on — not because its shape is the one this package wants. Treat it as
+ * scaffolding: the fixtures, the waits and the case split are all expected to
+ * change when it is rewritten. Do not read it as the specification, and do not
+ * extend it by adding another AI-written case to the pile.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execSync } from "child_process";

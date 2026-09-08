@@ -82,6 +82,9 @@ describe("offer contract coverage", () => {
 // A deposit that already landed — a restored record — is covered without the
 // issuance mark: the mark answers "has this address been funded", and here the
 // answer is the record itself, older than any mark set now could be.
+// AI-generated, and to be redone: written by Claude, kept for the coverage it
+// gives the fix rather than for its shape. Rewrite by hand before reading it as
+// the specification.
 describe("coverOfferContract", () => {
     const LANDED = "51" + "bb".repeat(32);
 
