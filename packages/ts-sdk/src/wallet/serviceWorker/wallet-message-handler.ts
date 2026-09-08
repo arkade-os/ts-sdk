@@ -1663,6 +1663,9 @@ export class WalletMessageHandler
         // No chain tip: this is an offline-first read.
         const offchain = computeOffchainBalance(allVtxos, {
             now: { timestamp: new Date() },
+            // Without a wallet `repoSnapshot` is empty, so no reserve ever
+            // applies and the fallback is never read against a real coin.
+            dust: this.readonlyWallet?.dustAmount ?? 0n,
             isPendingRecovery: (vtxo) => pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
             isGenericallySpendable: (vtxo) => !gated.has(vtxo.script),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
@@ -1677,6 +1680,7 @@ export class WalletMessageHandler
             settled: offchain.settled,
             preconfirmed: offchain.preconfirmed,
             available: offchain.available,
+            maxSendable: offchain.maxSendable,
             gated: offchain.gated,
             intentLocked: offchain.intentLocked,
             recoverable: offchain.recoverable,

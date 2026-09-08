@@ -393,10 +393,33 @@ export interface WalletBalance {
     preconfirmed: number;
     /**
      * Immediately spendable offchain balance — what generic selection would
-     * pick, so nothing counted here can be refused by `send`:
-     * `settled + preconfirmed - gated - intentLocked`.
+     * pick: `settled + preconfirmed - gated - intentLocked`.
+     *
+     * Not the ceiling on one `send`: that is {@link maxSendable}. The two
+     * differ by one dust carrier whenever a spendable coin carries an asset.
      */
     available: number;
+
+    /**
+     * The largest amount a single `send` to one recipient is sure to accept
+     * while every asset the wallet holds stays behind — the figure a "send
+     * max" or "swap all" control should prefill, and the balance to validate
+     * such an amount against.
+     *
+     * Equal to {@link available} until the wallet holds an asset on a spendable
+     * coin, then `available` less the dust floor: asset change has to land on a
+     * change output at or above dust, so a send of `available` itself is
+     * refused once the coins it selects carry assets. Assets arrive on a dust
+     * carrier that `available` counts, so after the first asset receive this is
+     * the figure that holds. A ceiling rather than a tight bound — an amount
+     * the plain coins alone cover still goes through above it — and zero when
+     * less than dust could leave, since `send` pads its recipient to dust
+     * before selecting. Several sub-dust recipients pad to dust each, which
+     * this single figure does not model. Sending the assets along with the
+     * sats frees the reserve, which is why {@link availableAssets} stays the
+     * ceiling on the asset side.
+     */
+    maxSendable: number;
     /**
      * Spendable-but-for-the-gate funds: VTXOs under a contract the
      * generic-spending gate refuses — a VHTLC lockup, an unmarked `arkade`

@@ -48,6 +48,8 @@ export interface CrossAssetRailDeps {
      *  `discoverMarkets`, not a bare registry fetch. */
     discover(): Promise<DiscoveredMarket[]>;
     quote(market: DiscoveredMarket, give: Side, wantAmount: bigint): Promise<OfferPlan>;
+    /** The ceiling on the deposit: the wallet's `maxSendable`, not its
+     *  `available` — see {@link validatePlan}. */
     btcBalance(): Promise<bigint>;
     dust(): Promise<bigint>;
     /** Before every irreversible step and once after the last. See

@@ -22,6 +22,8 @@ import {
 } from "../src";
 import type { ArkInfo } from "../src/providers/ark";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
+import { computeOffchainBalance } from "../src/wallet/balance";
+import { normalizeVtxo } from "../src/wallet/vtxo";
 import {
     DEFAULT_MESSAGE_TAG,
     WalletMessageHandler,
@@ -547,6 +549,97 @@ describe("getBalance", () => {
         expect(amount(balance.availableAssets)).toBe(12n); // 7 + 5
         // The escrowed asset amount, without a new balance bucket.
         expect(amount(balance.assets) - amount(balance.availableAssets)).toBe(10n);
+    });
+
+    it("keeps one dust carrier under available in maxSendable while spendable coins carry assets", async () => {
+        // Both spendable coins (own 40k, marked 10k) carry the asset, so a send
+        // of `available` would leave asset change with nothing to ride on. The
+        // reserve is the server's dust (1000 here), once — not per asset, not
+        // per coin.
+        const { wallet } = await seededWallet();
+        const balance = await wallet.getBalance();
+
+        expect(balance.available).toBe(50_000);
+        expect(balance.maxSendable).toBe(49_000);
+        expectSplit(balance);
+    });
+});
+
+/**
+ * The reserve, isolated from the wallet: which coins count, and what happens
+ * when the carriers are all there is.
+ */
+describe("computeOffchainBalance.maxSendable", () => {
+    const OWN = "51200000000000000000000000000000000000000000000000000000000000000010";
+    const OTHER = "51200000000000000000000000000000000000000000000000000000000000000011";
+    const DUST = 1000n;
+
+    const compute = (
+        coins: ReturnType<typeof vtxo>[],
+        caps: Partial<Parameters<typeof computeOffchainBalance>[1]> = {},
+    ) =>
+        computeOffchainBalance(coins.map(normalizeVtxo), {
+            now: { timestamp: new Date() },
+            dust: DUST,
+            isPendingRecovery: () => false,
+            isGenericallySpendable: () => true,
+            isUnlocked: () => true,
+            ...caps,
+        });
+
+    it("equals available while no spendable coin carries an asset", () => {
+        const balance = compute([vtxo(OWN, 40_000), vtxo(OTHER, 2_500)]);
+        expect(balance.available).toBe(42_500);
+        expect(balance.maxSendable).toBe(42_500);
+    });
+
+    it("reserves exactly one dust floor however many assets and carriers there are", () => {
+        // Three carriers, two assets: `send` puts every asset change on its one
+        // change output, so the floor is paid once.
+        const balance = compute([
+            vtxo(OWN, 40_000),
+            vtxo(OTHER, 330, [{ assetId: ASSET_ID, amount: 5n }]),
+            vtxo(OWN.replace(/10$/, "12"), 330, [{ assetId: ASSET_ID, amount: 1n }]),
+            vtxo(OWN.replace(/10$/, "13"), 330, [{ assetId: "bb".repeat(32), amount: 9n }]),
+        ]);
+        expect(balance.available).toBe(40_990);
+        expect(balance.maxSendable).toBe(39_990);
+    });
+
+    it("is zero when the carriers are all the wallet has", () => {
+        const balance = compute([vtxo(OWN, 330, [{ assetId: ASSET_ID, amount: 5n }])]);
+        expect(balance.available).toBe(330);
+        expect(balance.maxSendable).toBe(0);
+    });
+
+    it("is zero when less than dust could leave", () => {
+        // `send` pads its recipient to dust before selecting, so a wallet of
+        // 700 plain sats under a 1000 floor cannot send 700 — or anything
+        expect(compute([vtxo(OWN, 700)]).maxSendable).toBe(0);
+        // and one carrier of 1500 leaves 500 under the reserve: the change
+        // would be short of dust however small the send
+        expect(compute([vtxo(OWN, 1_500, [{ assetId: ASSET_ID, amount: 5n }])]).maxSendable).toBe(
+            0,
+        );
+        // exactly dust left is exactly sendable
+        expect(compute([vtxo(OWN, 2_000, [{ assetId: ASSET_ID, amount: 5n }])]).maxSendable).toBe(
+            1_000,
+        );
+        expect(compute([vtxo(OWN, 1_000)]).maxSendable).toBe(1_000);
+    });
+
+    it("ignores assets that sit only on coins generic selection never picks", () => {
+        // A gated coin and an intent-locked coin both hold the asset; neither
+        // is an input a send could take, so neither produces change to carry.
+        const gated = vtxo(OTHER, 10_000, [{ assetId: ASSET_ID, amount: 5n }]);
+        const locked = vtxo(OWN.replace(/10$/, "14"), 10_000, [{ assetId: ASSET_ID, amount: 5n }]);
+        const balance = compute([vtxo(OWN, 40_000), gated, locked], {
+            isGenericallySpendable: (v) => v.script !== OTHER,
+            isUnlocked: (v) => v.txid !== locked.txid,
+        });
+        expect(balance.available).toBe(40_000);
+        expect(balance.availableAssets).toEqual([]);
+        expect(balance.maxSendable).toBe(40_000);
     });
 });
 

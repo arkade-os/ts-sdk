@@ -397,6 +397,10 @@ const balance = await wallet.getBalance()
 console.log('Total Balance:', balance.total)
 console.log('Boarding Total:', balance.boarding.total)
 console.log('Offchain Available:', balance.available)
+// the most one send can move out while the wallet's assets stay: what a
+// "send max" or "swap all" control prefills. One dust carrier under
+// `available` once any spendable coin carries an asset
+console.log('Max sendable:', balance.maxSendable)
 console.log('Offchain Settled:', balance.settled)
 console.log('Offchain Preconfirmed:', balance.preconfirmed)
 console.log('Gated by a contract:', balance.gated) // swap escrow, chiefly

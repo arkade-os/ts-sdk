@@ -226,7 +226,18 @@ export type PlanError =
     | "above-max"
     | "below-dust";
 
-/** Validate a plan against the user's balance and the server dust limit. */
+/**
+ * Validate a plan against the user's balance and the server dust limit.
+ *
+ * `giveBalance` is the ceiling on the deposit, so pass what a send can move,
+ * not what the wallet owns. For a BTC deposit that is the wallet's
+ * `WalletBalance.maxSendable`, not `available`: the two differ by one dust
+ * carrier once the wallet holds an asset, and a plan validated against
+ * `available` is refused by `send` at the whole-balance edge — the "swap
+ * all" of every wallet that has ever received an asset. For an asset deposit
+ * it is the asset's `availableAssets` entry: an asset can leave whole, since
+ * sending it frees the carrier it rode on.
+ */
 export const validatePlan = (
     plan: OfferPlan,
     giveBalance: bigint,

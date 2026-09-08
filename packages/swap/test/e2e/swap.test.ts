@@ -629,6 +629,10 @@ describe("the swap, against solverd (regtest)", () => {
         const history = await historyWith(wallet, txids);
         const { restored } = await restoreAssetSwaps(indexer, history, new Set(), {
             serverPubkey,
+            // re-cover the deposits still at their covenant, as createOffer
+            // registered them on the live wallet: without this the restored
+            // wallet cannot see its own escrowed assets
+            cover: { wallet, arkServerUrl: ARK_URL },
         });
         for (const swap of restored) await addAssetSwap(repository, swap);
         return { wallet, repository, restored };
@@ -687,22 +691,25 @@ describe("the swap, against solverd (regtest)", () => {
         );
     }, 180_000);
 
-    it("swap ALL BTC -> RGT: the balance the wallet reports available funds the offer, and it fills", async () => {
+    it("swap ALL BTC -> RGT: the balance the wallet reports sendable funds the offer, and it fills", async () => {
         // the case arkade.money's Max button hits: a wallet that has received
-        // an asset offers every sat the wallet says it can spend
+        // an asset offers every sat the wallet says it can send — which is
+        // `maxSendable`, not `available`: the two differ by the dust carrier
+        // the held asset's change must ride on
         const held = await rgtHeld(maker);
         expect(held).toBeGreaterThan(BigInt(0));
-        const { available } = await maker.getBalance();
-        const plan = btcToRgt(available);
-        expect(validatePlan(plan, BigInt(available), dust)).toBeUndefined();
+        const { available, maxSendable } = await maker.getBalance();
+        expect(maxSendable).toBeLessThan(available);
+        const plan = btcToRgt(maxSendable);
+        expect(validatePlan(plan, BigInt(maxSendable), dust)).toBeUndefined();
 
         let published: Awaited<ReturnType<typeof publish>>;
         try {
             published = await publish(maker, plan, makerRepository);
         } catch (err) {
             throw new Error(
-                `funding the offer with the wallet's own available balance (${available} sats, ` +
-                    `${held} RGT held) was refused: ${err instanceof Error ? err.message : err}`,
+                `funding the offer with the wallet's own sendable balance (${maxSendable} sats of ` +
+                    `${available} available, ${held} RGT held) was refused: ${err instanceof Error ? err.message : err}`,
             );
         }
         const { fundingTxid, script } = published;
@@ -790,13 +797,11 @@ describe("the swap, against solverd (regtest)", () => {
                 offerHex: untaken.swap.offerHex,
             });
 
-            // the escrowed deposit is the restored wallet's asset: a wallet
-            // that re-registered the covenant owns it — gated, not spendable,
-            // but still counted in the total the user sees. On master nothing
-            // re-covers the covenant after a restore, so the restored wallet
-            // cannot see the escrowed asset at all: it reads as vanished until
-            // the cancel brings it back. That gap is what this case shows —
-            // the live maker, which never lost the registration, still owns it
+            // the escrowed deposit is the restored wallet's asset: the
+            // restore re-registered the covenant (restoreAssetSwaps' `cover`),
+            // so the deposit is owned — gated, not spendable, but counted in
+            // the total the user sees, exactly as the live maker (which never
+            // lost the registration) owns it
             const makerOwned = assetAmount((await maker.getBalance()).assets, rgt);
             expect(assetAmount((await restored.wallet.getBalance()).assets, rgt)).toBe(makerOwned);
 

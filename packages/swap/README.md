@@ -88,7 +88,8 @@ funds an offer should keep cancelling within reach.
 4. **`restore`** — `restoreAssetSwaps` rebuilds lost records by scanning sent virtual txs for
    offer packets and binding each funding vtxo to its spend. Incremental: answered txids are
    remembered in the repository (`getScannedTxids`/`markTxidsScanned`) so nothing is fetched
-   twice.
+   twice. With `cover`, a restored deposit still at its covenant is registered with the wallet
+   again — see "After a restore" below.
 5. **`watch`** — `watchOfferSwaps` drives swap status from the wallet's own contract events, so a
    fill shows up without re-running a scan. Registration is what makes it possible: only a
    registered covenant is watched. See "Live status" below.
@@ -213,6 +214,28 @@ await wallet.send({
 });
 ```
 
+### Swap all
+
+The deposit a "Max" control prefills has to be an amount `wallet.send` accepts as-is, and for BTC
+that is `WalletBalance.maxSendable`, not `available`. Every asset the wallet receives — a fill's
+payout included — arrives on a dust carrier that `available` counts, and a send of the whole
+balance leaves the asset change with no output at or above dust to ride on, so `send` refuses it.
+`maxSendable` is `available` less one dust carrier whenever a spendable coin carries an asset, and
+equal to it otherwise. Quote with it, validate with it, fund with it:
+
+```ts
+const { maxSendable, availableAssets } = await wallet.getBalance();
+
+// swap all BTC
+const plan = await quoteOffer(market, { give, giveAmount: BigInt(maxSendable), ...QUOTE_OPTIONS });
+validatePlan(plan, BigInt(maxSendable), dust); // undefined = fundable
+await wallet.send({ address: o.address, amount: maxSendable, extensions: [o.extension] });
+
+// swap all of an asset: the whole balance goes, and the carrier it rode on goes with it
+const held = availableAssets.find((a) => a.assetId === assetId)!.amount;
+validatePlan(await quoteOffer(market, { give, giveAmount: held, ...QUOTE_OPTIONS }), held, dust);
+```
+
 The covenant co-signer ("emulator") key defaults to the SDK's per-network pin, resolved from the
 network the Ark server reports — never fetched from the emulator itself. Pass
 `params.emulatorPubkey` (33-byte compressed hex, the same contract as `Arkade.connect`'s option)
@@ -256,6 +279,31 @@ guess: a stored swap is skipped by every later scan, so a guess here would be pe
 
 `onUpdate` is a notification for UI reactivity, not a second store; every write goes through the
 repository.
+
+### After a restore
+
+A record `restoreAssetSwaps` rebuilds has no registration behind it: the deposit is on chain and
+the record is back, but nothing has told the wallet the script is its own. Left that way the
+deposit is neither gated nor counted, and a later fill is never noticed — the watcher only hears
+registered scripts, and the scan never revisits a funding txid it has answered. Two things close
+that gap:
+
+```ts
+// registers the covenant of every restored deposit still at its script, before returning
+const { restored } = await restoreAssetSwaps(indexer, txs, existing, {
+    serverPubkey,
+    cover: { wallet, arkServerUrl: ARK },
+});
+```
+
+and `watchOfferSwaps` itself, which on start registers the covenant of every live record in the
+repository (`pending`, `cancelling`, `recoverable`) — a no-op for offers this wallet created, and
+the missing registration for records restored without `cover` — and then reads each covered
+deposit off the indexer once: a spend that landed while the script was uncovered never becomes an
+event, and that one read is what classifies it. Both registrations are `ensureOfferContracts`,
+exported for a consumer that needs to run it on its own schedule. Registration is idempotent and
+best effort: a record that could not be covered is logged and tried again at the watcher's next
+start — the scan will not come back to it, since its funding txid is already answered.
 
 ## Cancelling: the refund path
 

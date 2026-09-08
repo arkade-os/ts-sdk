@@ -113,6 +113,26 @@ export async function promoteOfferContract(
 }
 
 /**
+ * Put `script` in the watched set for a deposit that has already landed — a
+ * record rebuilt by the restore scan, or one found unwatched at watcher start.
+ *
+ * {@link promoteOfferContract} without the issuance mark: the mark says "an
+ * address is out and waiting for its deposit", and here the deposit is the
+ * record itself. Marking it anyway would pin the script watched for the life
+ * of the process, because no record at the script can ever postdate a mark
+ * set after its funding — `addressOutstanding` would never clear.
+ *
+ * Throws like promotion does: nothing is at stake in the write, and a record
+ * left uncovered is what the caller must know about.
+ */
+export async function coverOfferContract(
+    manager: OfferContractRetirer,
+    script: string,
+): Promise<void> {
+    await serialize(script, () => manager.setContractWatchState(script, "watched"));
+}
+
+/**
  * Drop `script` from the watched set unless something there still needs it.
  * Identical offers share one script, so the check is per script, not per record.
  *

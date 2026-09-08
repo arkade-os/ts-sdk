@@ -40,7 +40,7 @@ import {
 
 import wantAssetProgram from "./swap-want-asset.program.json";
 import wantBtcProgram from "./swap-want-btc.program.json";
-import { promoteOfferContract, retireOfferContract } from "./coverage";
+import { coverOfferContract, promoteOfferContract, retireOfferContract } from "./coverage";
 import type { AssetSwapRepository } from "./repository";
 import { getAssetSwapsOrThrow, updateAssetSwap, updateAssetSwapBestEffort } from "./store";
 
@@ -469,6 +469,13 @@ export const OFFER_CONTRACT_KIND = "asset-swap-offer";
  * this states is the one the corridor needs: an offer address handed to a user
  * is a watched address, and {@link promoteOfferContract} is what keeps a
  * settlement racing this call from taking it back.
+ *
+ * `deposit` says which side of that invariant is being restored. `"issued"`
+ * is `createOffer`: an address is going out and nothing is funded yet, so the
+ * script is promoted with the issuance mark. `"landed"` is a deposit that is
+ * already there — a record the restore scan rebuilt, or one the watcher found
+ * uncovered — and takes {@link coverOfferContract}, which sets no mark: a mark
+ * set after the funding could never be cleared by it.
  */
 async function registerOfferContract(
     wallet: IWallet,
@@ -477,6 +484,7 @@ async function registerOfferContract(
     binding: Omit<Offer, "swapPkScript">,
     serverPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
+    deposit: "issued" | "landed",
 ): Promise<void> {
     const { program, args, keys } = swapProgramBinding(binding, serverPubkey);
     const contractManager = await wallet.getContractManager();
@@ -501,7 +509,83 @@ async function registerOfferContract(
         label: OFFER_CONTRACT_LABEL,
         metadata: { genericallySpendable: false, kind: OFFER_CONTRACT_KIND },
     });
-    await promoteOfferContract(contractManager, hex.encode(expectedPkScript));
+    const script = hex.encode(expectedPkScript);
+    if (deposit === "issued") await promoteOfferContract(contractManager, script);
+    else await coverOfferContract(contractManager, script);
+}
+
+/**
+ * Register and watch the covenants of offers this wallet did not create in
+ * this store: records the restore scan rebuilt, or records found uncovered
+ * when the watcher starts.
+ *
+ * `createOffer` registers before it hands out an address, so an offer made
+ * here is watched from the moment its deposit lands. A restored record has no
+ * such moment: the deposit is on chain, the record is back, and nothing has
+ * told the wallet the script is its own. Left that way the deposit is not
+ * gated, not counted, and — the part a user sees — a fill is never noticed:
+ * {@link watchOfferSwaps} only hears about registered scripts, and the restore
+ * scan skips a funding txid it has already answered. This is the missing
+ * registration, done the way `createOffer` does it (same row, same escrow
+ * marker), minus the issuance mark.
+ *
+ * Idempotent: `createContract` is first-writer-wins and the watch state is a
+ * set. Safe to run on every watcher start.
+ *
+ * `swapAddress`, when the record has one, pins the server key the covenant
+ * was funded against; without it `opts.serverPubkey` is used — the key a
+ * restore scan classified the records with — and failing that the server's
+ * current key. An offer whose covenant rebuilds under none of them (a signer
+ * rotation since funding) is refused by name rather than registered at a
+ * script it never had. The refusal is per offer: the rest are still
+ * registered, and the error names every one that was not.
+ */
+export async function ensureOfferContracts(
+    wallet: IWallet,
+    arkServerUrl: string,
+    offers: readonly { offerHex: string; swapAddress?: string }[],
+    opts: { serverPubkey?: Uint8Array } = {},
+): Promise<void> {
+    if (offers.length === 0) return;
+    const info = await new RestArkProvider(arkServerUrl).getInfo();
+    const currentServerKey = opts.serverPubkey ?? hex.decode(toXOnlySignerHex(info.signerPubkey));
+    const network = info.network as NetworkName;
+
+    const failures: string[] = [];
+    for (const { offerHex, swapAddress } of offers) {
+        try {
+            const { swapPkScript, ...binding } = decodeOffer(hex.decode(offerHex));
+            const serverPubkey = swapAddress
+                ? ArkAddress.decode(swapAddress).serverPubKey
+                : currentServerKey;
+            const rebuilt = offerVtxoScript(binding, serverPubkey).pkScript;
+            if (hex.encode(rebuilt) !== hex.encode(swapPkScript)) {
+                throw new Error(
+                    "rebuilt covenant does not match the offer's swapPkScript — the server " +
+                        "signing key has likely rotated since funding; pass swapAddress (the " +
+                        "funded address) to pin the original key",
+                );
+            }
+            await registerOfferContract(
+                wallet,
+                arkServerUrl,
+                network,
+                binding,
+                serverPubkey,
+                swapPkScript,
+                "landed",
+            );
+        } catch (err) {
+            // the TLV opens with the swap script, so its first bytes are enough
+            // of a handle to find the record this names
+            failures.push(`offer ${offerHex.slice(0, 22)}…: ${(err as Error).message}`);
+        }
+    }
+    if (failures.length > 0) {
+        throw new Error(
+            `could not register ${failures.length} offer covenant(s): ${failures.join("; ")}`,
+        );
+    }
 }
 
 // ── User operations ─────────────────────────────────────────────────────────
@@ -637,6 +721,7 @@ export async function createOffer(
         binding,
         serverPubKey,
         script.pkScript,
+        "issued",
     );
 
     const payload = encodeOffer(offer);

@@ -37,11 +37,10 @@ import {
     RestIndexerProvider,
     Transaction,
     type ContractEvent,
-    type ContractVtxo,
     type IWallet,
 } from "@arkade-os/sdk";
 import { RETIRABLE, retireOfferContract } from "./coverage";
-import { decodeOffer, OFFER_CONTRACT_KIND } from "./offer";
+import { decodeOffer, ensureOfferContracts, OFFER_CONTRACT_KIND } from "./offer";
 import type { AssetSwapRepository } from "./repository";
 import { classifyDepositSpend, spendTxidsOf, type RestoreIndexer, type SpendKind } from "./restore";
 import {
@@ -54,6 +53,15 @@ import {
 /** Statuses a spend cannot move: the swap is already resolved.
  * @see RETIRABLE — a different question, and not the same set. */
 const TERMINAL: readonly AssetSwapStatus[] = ["fulfilled", "cancelled", "recoverable"];
+
+/**
+ * Records whose deposit may still be at the covenant, and whose script this
+ * watcher therefore needs registered: everything a spend could still move,
+ * plus `recoverable`, which keeps its script watched (see `RETIRABLE`).
+ * `cancelling` is in: the cancel may have failed to broadcast, and a record
+ * stuck there is exactly one the watcher has to be able to hear about.
+ */
+const NEEDS_COVERAGE: readonly AssetSwapStatus[] = ["pending", "cancelling", "recoverable"];
 
 /**
  * The record change a classified spend implies, or `undefined` when it implies
@@ -106,6 +114,20 @@ export interface WatchOfferSwapsParams {
  * This depends on the wallet's contract event transport. In Node, callers must
  * provide an `EventSource` implementation or use a runtime where it is enabled;
  * otherwise live updates do not arrive and restore remains the fallback.
+ *
+ * **Starting the watcher re-covers what it is asked to watch, and reconciles
+ * it.** Every record in the repository whose deposit may still be at its
+ * covenant gets that covenant registered ({@link ensureOfferContracts}) — a
+ * no-op for offers this wallet created, and the missing registration for
+ * records the restore scan rebuilt on a wallet that never made them. Only a
+ * registered script produces the events this watcher runs on. Registration
+ * alone is not enough, though: a deposit spent *before* its script was
+ * covered produces no event — the manager hydrates it already spent and the
+ * watch baseline starts past it — so each covered record is then read off the
+ * indexer once and a spend found there is classified exactly as an event
+ * would be. The sweep is best effort and runs after the subscription is in
+ * place, so a spend landing mid-sweep is still delivered; a record it could
+ * not cover is logged and is tried again at the next start.
  */
 export async function watchOfferSwaps({
     wallet,
@@ -130,7 +152,10 @@ export async function watchOfferSwaps({
         });
     };
 
-    const classify = async (swap: AssetSwap, vtxo: ContractVtxo, spentTxid: string) => {
+    /** The two halves of a spend, as an event or the indexer reports them. */
+    type SpentDeposit = { txid: string; vout: number; arkTxId?: string; spentBy?: string };
+
+    const classify = async (swap: AssetSwap, vtxo: SpentDeposit, spentTxid: string) => {
         // the exact answer: only the user can cancel, and cancelOffer records
         // the txid it submitted
         if (swap.spentTxid === spentTxid && swap.status === "cancelling") return "cancelled";
@@ -151,6 +176,36 @@ export async function watchOfferSwaps({
         }
     };
 
+    /**
+     * What a classified spend does to its record: written, announced, and the
+     * script retired once nothing live is left at it. One path for a spend an
+     * event delivers and for one the start-up reconcile finds on the indexer.
+     */
+    const resolveSpend = async (
+        swap: AssetSwap,
+        vtxo: SpentDeposit,
+        spentTxid: string,
+        at?: number,
+    ) => {
+        const kind: SpendKind = await classify(swap, vtxo, spentTxid);
+        const changes = spendUpdate(swap, { txid: spentTxid, kind, at });
+        if (!changes) return;
+
+        // notify only on a write that landed: `onUpdate` is documented as
+        // firing after the change is persisted, and a consumer that caches
+        // from it would otherwise run ahead of the store
+        const { persisted, swaps } = await updateAssetSwapBestEffort(repository, swap.id, changes);
+        // a lost write must not retire: the next restore scan still
+        // believes this deposit is live
+        if (!persisted) return;
+        onUpdate?.({ ...swap, ...changes });
+        // `swaps` is the post-update view, so the liveness check sees this
+        // record's new status without a third read
+        if (changes.status && RETIRABLE.includes(changes.status)) {
+            await retireOfferContract(manager, swaps, swap.swapPkScript);
+        }
+    };
+
     const handleSpend = async (event: Extract<ContractEvent, { type: "vtxo_spent" }>) => {
         if (event.contract.metadata?.kind !== OFFER_CONTRACT_KIND) return;
 
@@ -165,34 +220,83 @@ export async function watchOfferSwaps({
                 (s) => s.fundingTxid === vtxo.txid && s.swapPkScript === event.contractScript,
             );
             if (!swap) continue;
-
-            const kind: SpendKind = await classify(swap, vtxo, spentTxid);
-            const changes = spendUpdate(swap, { txid: spentTxid, kind, at: event.timestamp });
-            if (!changes) continue;
-
-            // notify only on a write that landed: `onUpdate` is documented as
-            // firing after the change is persisted, and a consumer that caches
-            // from it would otherwise run ahead of the store
-            const { persisted, swaps } = await updateAssetSwapBestEffort(
-                repository,
-                swap.id,
-                changes,
-            );
-            // a lost write must not retire: the next restore scan still
-            // believes this deposit is live
-            if (!persisted) continue;
-            onUpdate?.({ ...swap, ...changes });
-            // `swaps` is the post-update view, so the liveness check sees this
-            // record's new status without a third read
-            if (changes.status && RETIRABLE.includes(changes.status)) {
-                await retireOfferContract(manager, swaps, event.contractScript);
-            }
+            await resolveSpend(swap, vtxo, spentTxid, event.timestamp);
         }
+    };
+
+    /**
+     * The fate of a deposit the sweep just covered, read off the indexer. A
+     * spend that happened while the script was uncovered never becomes an
+     * event: this is the one read that catches it. A deposit not indexed yet
+     * is left alone — its event will come, or the next start will look again.
+     */
+    const reconcile = async (swap: AssetSwap) => {
+        const { vtxos } = await indexer.getVtxos({ scripts: [swap.swapPkScript] });
+        const vtxo = vtxos.find((v) => v.txid === swap.fundingTxid);
+        if (!vtxo) return;
+        if (vtxo.virtualStatus.state === "swept") {
+            // mirrors restore.ts: a swept deposit is still the user's money at
+            // that script, so it keeps its script watched and is never retired
+            if (swap.status === "recoverable") return;
+            const changes = { status: "recoverable" as const };
+            const { persisted } = await updateAssetSwapBestEffort(repository, swap.id, changes);
+            if (persisted) onUpdate?.({ ...swap, ...changes });
+            return;
+        }
+        if (vtxo.virtualStatus.state !== "spent") return;
+        const spentTxid = vtxo.arkTxId || vtxo.spentBy;
+        if (!spentTxid) return;
+        await resolveSpend(swap, vtxo, spentTxid);
     };
 
     const unsubscribe = manager.onContractEvent((event) => {
         if (event.type !== "vtxo_spent") return;
         enqueue(() => handleSpend(event));
+    });
+
+    // After subscribing, never before: registration is what starts the
+    // manager's own watch on a script, and an event it delivers during the
+    // sweep must find a handler already attached.
+    const uncovered = (await getAssetSwaps(repository)).filter(
+        (swap) => typeof swap.offerHex === "string" && NEEDS_COVERAGE.includes(swap.status),
+    );
+    try {
+        await ensureOfferContracts(
+            wallet,
+            arkServerUrl,
+            uncovered.map((swap) => ({
+                offerHex: swap.offerHex,
+                ...(swap.swapAddress ? { swapAddress: swap.swapAddress } : {}),
+            })),
+        );
+    } catch (err) {
+        console.warn("[swap] could not re-register every live offer covenant", err);
+    }
+    // Through the queue, like an event: a spend delivered mid-sweep and the
+    // reconcile of the same deposit must not write over each other. Not
+    // awaited — `idle()` is how a caller waits for it — so a slow indexer
+    // delays the reconcile, never the watcher.
+    for (const swap of uncovered) {
+        enqueue(async () => {
+            try {
+                await reconcile(swap);
+            } catch (err) {
+                console.warn(`[swap] could not reconcile offer ${swap.id} after covering it`, err);
+            }
+        });
+    }
+    // A settlement that landed mid-sweep retired its script before the sweep
+    // put it back in the watched set, and nothing would retire it again:
+    // re-derive liveness from the records as they stand now, for the scripts
+    // the sweep touched and left watched. `retireOfferContract` leaves a live
+    // script alone; a row the reconcile already retired is not written twice.
+    enqueue(async () => {
+        const swaps = await getAssetSwaps(repository);
+        for (const script of new Set(uncovered.map((swap) => swap.swapPkScript))) {
+            const [row] = await manager.getContracts({ script });
+            if (row?.watch === "retained") continue;
+            await retireOfferContract(manager, swaps, script);
+        }
     });
 
     return {

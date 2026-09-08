@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { promoteOfferContract, retireOfferContract } from "../src/coverage";
+import { coverOfferContract, promoteOfferContract, retireOfferContract } from "../src/coverage";
 import type { AssetSwap } from "../src/store";
 
 const SCRIPT = "51" + "aa".repeat(32);
@@ -76,5 +76,36 @@ describe("offer contract coverage", () => {
         await Promise.all([retire, promote]);
 
         expect(row).toBe("watched");
+    });
+});
+
+// A deposit that already landed — a restored record — is covered without the
+// issuance mark: the mark answers "has this address been funded", and here the
+// answer is the record itself, older than any mark set now could be.
+describe("coverOfferContract", () => {
+    const LANDED = "51" + "bb".repeat(32);
+
+    it("watches the script and lets a settled record retire it at once", async () => {
+        const { setContractWatchState } = manager();
+        await coverOfferContract({ setContractWatchState }, LANDED);
+        // predates any mark: with one set, this record would never clear it
+        await retireOfferContract(
+            { setContractWatchState },
+            [swap({ swapPkScript: LANDED, createdAt: 0 })],
+            LANDED,
+        );
+
+        expect(setContractWatchState.mock.calls).toEqual([
+            [LANDED, "watched"],
+            [LANDED, "retained"],
+        ]);
+    });
+
+    it("surfaces a failed write, like promotion does", async () => {
+        const { setContractWatchState } = manager();
+        setContractWatchState.mockRejectedValueOnce(new Error("repository unavailable"));
+        await expect(coverOfferContract({ setContractWatchState }, LANDED)).rejects.toThrow(
+            "repository unavailable",
+        );
     });
 });

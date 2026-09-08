@@ -18,8 +18,15 @@ import {
     RestIndexerProvider,
     Transaction,
     scriptFromTapLeafScript,
+    type IWallet,
 } from "@arkade-os/sdk";
-import { decodeOffer, Offer, OFFER_PACKET_TYPE, offerVtxoScript } from "./offer";
+import {
+    decodeOffer,
+    ensureOfferContracts,
+    Offer,
+    OFFER_PACKET_TYPE,
+    offerVtxoScript,
+} from "./offer";
 import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "./store";
 
 // ponytail: fixed request size; tune only if histories outgrow it
@@ -240,14 +247,35 @@ export function classifyDepositSpend(
  * `serverPubkey` must be the server key the covenants were funded against; a
  * key that has rotated since makes every affected swap unclassifiable rather
  * than misclassified.
+ *
+ * ## A restored deposit is the wallet's to watch again
+ *
+ * Pass `cover` and every record restored with its deposit still at the
+ * covenant — `pending`, or `recoverable` — has that covenant registered with
+ * the wallet before it is returned, exactly as `createOffer` registers it
+ * ({@link ensureOfferContracts}). Without it the record is back but the
+ * deposit is not: not gated, not counted, and a later fill goes unnoticed,
+ * because {@link watchOfferSwaps} only hears about registered scripts and this
+ * scan never revisits a funding txid it has answered. The scan itself does not
+ * need a wallet, which is why this is an option rather than a parameter.
+ *
+ * Best effort, and never a reason to lose the record: a registration that
+ * fails is logged and the record is still returned — the scan will not come
+ * back to it (its txid is answered), but {@link watchOfferSwaps} covers every
+ * live record at its next start and reconciles it against the chain then.
  */
 export async function restoreAssetSwaps(
     indexer: RestoreIndexer,
     txs: Tx[],
     existingIds: ReadonlySet<string>,
-    opts: { serverPubkey: Uint8Array; scanned?: ReadonlySet<string> },
+    opts: {
+        serverPubkey: Uint8Array;
+        scanned?: ReadonlySet<string>;
+        /** The wallet to register live restored covenants with. */
+        cover?: { wallet: IWallet; arkServerUrl: string };
+    },
 ): Promise<{ restored: AssetSwap[]; scannedTxids: string[] }> {
-    const { serverPubkey, scanned = new Set<string>() } = opts;
+    const { serverPubkey, scanned = new Set<string>(), cover } = opts;
     const candidates = unscannedSwapCandidates(txs, existingIds, scanned);
     if (candidates.length === 0) return { restored: [], scannedTxids: [] };
 
@@ -397,5 +425,23 @@ export async function restoreAssetSwaps(
                 : {}),
         });
     }
+    if (cover) {
+        const live = restored.filter((swap) => LIVE_DEPOSIT.includes(swap.status));
+        try {
+            // the key the records were classified with: a restored record has
+            // no swapAddress to pin it, and the current key is wrong after a
+            // rotation
+            await ensureOfferContracts(cover.wallet, cover.arkServerUrl, live, { serverPubkey });
+        } catch (err) {
+            console.warn("[swap] could not re-register every restored offer covenant", err);
+        }
+    }
     return { restored, scannedTxids: fetchedTxids.filter((id) => !unresolved.has(id)) };
 }
+
+/**
+ * Statuses under which a restored deposit still sits at its covenant, and so
+ * is the wallet's to watch. `recoverable` too: a swept deposit is still the
+ * user's money at that script (see `RETIRABLE` in coverage.ts).
+ */
+const LIVE_DEPOSIT: readonly AssetSwapStatus[] = ["pending", "recoverable"];

@@ -9,6 +9,7 @@ import {
     validateRecipients,
     type RecipientAddressContext,
 } from "../src/wallet/utils";
+import { createMockExtendedVtxo } from "./contracts/helpers";
 
 // Mock fetch
 const { mockFetch } = vi.hoisted(() => ({
@@ -448,6 +449,98 @@ describe("send with caller-selected vtxos", () => {
                 selectedVtxos: [coin(2000, [{ assetId: ASSET_A, amount: 100n }])],
             }),
         ).rejects.toThrow(/cannot carry 1 asset change\(s\), needs 1000/);
+    });
+});
+
+/**
+ * Generic selection with a wallet that holds assets: the balance figure and
+ * the send path agree. `maxSendable` goes through; `available` is refused —
+ * and refused with the ceiling named, not as "Insufficient funds" against a
+ * balance that plainly covers the amount. This is the "swap all" / "send max"
+ * of every wallet that has ever received an asset, since assets arrive on a
+ * dust carrier the balance counts.
+ */
+describe("send keeps a carrier for asset change", () => {
+    const ASSET = "a".repeat(64);
+    const ADDR = encodeAddr(SERVER_XONLY, "tark");
+    const mockIdentity = SingleKey.fromHex(
+        "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
+    );
+    const mockArkInfo = {
+        signerPubkey: SERVER_KEY_HEX,
+        forfeitPubkey: SERVER_KEY_HEX,
+        batchExpiry: BigInt(144),
+        unilateralExitDelay: BigInt(144),
+        boardingExitDelay: BigInt(144),
+        roundInterval: BigInt(144),
+        network: "mutinynet",
+        dust: BigInt(1000),
+        forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+        checkpointTapscript:
+            "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+    };
+
+    // 40k on a plain coin, 700 on a carrier an asset arrived on. Selection is
+    // expiry-then-amount, so the plain coin goes first and the carrier is
+    // reached only when the amount outgrows it.
+    const coins = () => [
+        createMockExtendedVtxo({
+            txid: "1".repeat(64),
+            vout: 0,
+            value: 40_000,
+            virtualStatus: { state: "settled" },
+        }),
+        createMockExtendedVtxo({
+            txid: "2".repeat(64),
+            vout: 0,
+            value: 700,
+            virtualStatus: { state: "settled" },
+            assets: [{ assetId: ASSET, amount: 5n }],
+        }),
+    ];
+
+    const makeWallet = async () => {
+        const wallet = await Wallet.create({
+            identity: mockIdentity,
+            arkServerUrl: "http://localhost:7070",
+        });
+        vi.spyOn(wallet, "getSpendableVtxos").mockResolvedValue(coins() as never);
+        return wallet;
+    };
+
+    beforeEach(() => {
+        mockFetch.mockReset();
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(mockArkInfo),
+        });
+    });
+
+    it("refuses a send of the whole balance and names the ceiling", async () => {
+        const wallet = await makeWallet();
+        // 40_700 is `available`; every sat is an input, so the asset change
+        // has nothing left to ride on. The ceiling is `available - dust`.
+        await expect(wallet.send({ address: ADDR, amount: 40_700 })).rejects.toThrow(
+            /0 sats of change cannot carry 1 asset change\(s\), needs 1000 — send at most 39700 sats \(WalletBalance\.maxSendable\)/,
+        );
+    });
+
+    it("names the ceiling when the change is short of dust, not only when it is zero", async () => {
+        const wallet = await makeWallet();
+        // 40_500 outgrows the plain coin, so the carrier is picked too: 200 of
+        // change under a 1000 floor, and no spare coin to top it up.
+        await expect(wallet.send({ address: ADDR, amount: 40_500 })).rejects.toThrow(
+            /200 sats of change cannot carry 1 asset change\(s\), needs 1000 — send at most 39700 sats/,
+        );
+    });
+
+    it("lets a send of `maxSendable` through the accounting", async () => {
+        const wallet = await makeWallet();
+        const err = await wallet.send({ address: ADDR, amount: 39_700 }).catch((e: unknown) => e);
+        // It fails later, at the submit this mock cannot serve. What matters is
+        // that the carrier was found and the send got past coin selection.
+        expect(String(err)).not.toMatch(/cannot carry/);
+        expect(String(err)).not.toMatch(/Insufficient funds/);
     });
 });
 

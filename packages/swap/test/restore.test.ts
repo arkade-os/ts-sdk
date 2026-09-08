@@ -1,7 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { asset, Extension, Transaction, UnknownPacket } from "@arkade-os/sdk";
+import {
+    asset,
+    CSVMultisigTapscript,
+    Extension,
+    RestArkProvider,
+    Transaction,
+    UnknownPacket,
+} from "@arkade-os/sdk";
 import { encodeOffer, offerVtxoScript, Offer, OFFER_PACKET_TYPE } from "../src/offer";
 import {
     classifyDepositSpend,
@@ -388,6 +395,163 @@ describe("restoreAssetSwaps", () => {
             expect(restored.status).toBe(status);
             expect(restored.spentTxid).toBeUndefined();
         }
+    });
+
+    describe("with `cover`, a live restored deposit is the wallet's to watch again", () => {
+        // the wallet seam `ensureOfferContracts` writes through, and the server
+        // read it derives the row's address from
+        const coverage = () => {
+            const createContract = vi.fn(async (params: Record<string, unknown>) => ({
+                ...params,
+                state: "active",
+                createdAt: 0,
+            }));
+            const setContractWatchState = vi.fn(async (_s: string, _w: string) => {});
+            const wallet = {
+                getContractManager: async () => ({ createContract, setContractWatchState }),
+            } as any;
+            const info = vi.spyOn(RestArkProvider.prototype, "getInfo").mockResolvedValue({
+                signerPubkey: "02" + hex.encode(SERVER_KEY),
+                checkpointTapscript: hex.encode(
+                    CSVMultisigTapscript.encode({
+                        timelock: { type: "blocks", value: 10n },
+                        pubkeys: [SERVER_KEY],
+                    }).script,
+                ),
+                network: "regtest",
+            } as any);
+            return { wallet, createContract, setContractWatchState, info };
+        };
+
+        it("registers the covenant of a pending deposit, and not of a filled one", async () => {
+            const pending = makeOffer("want-asset", BigInt(992));
+            const filled = makeOffer("want-asset", BigInt(993));
+            const fundingPending = fundingPsbt(pending);
+            const fundingFilled = fundingPsbt(filled);
+            const fill = spendPsbt([
+                { offer: filled, deposit: { txid: fundingFilled.txid, vout: 0 }, via: "fulfill" },
+            ]);
+            const indexer = makeIndexer(
+                [fundingPending, fundingFilled, fill],
+                [
+                    depositVtxo(pending, fundingPending.txid),
+                    spentVtxo(filled, fundingFilled.txid, fill.txid),
+                ],
+            );
+            const { wallet, createContract, setContractWatchState, info } = coverage();
+            try {
+                const { restored } = await restoreAssetSwaps(
+                    indexer,
+                    [walletTx(fundingPending.txid, "sent"), walletTx(fundingFilled.txid, "sent")],
+                    new Set(),
+                    { serverPubkey: SERVER_KEY, cover: { wallet, arkServerUrl: "http://ark" } },
+                );
+                expect(restored.map((s) => s.status).sort()).toEqual(["fulfilled", "pending"]);
+
+                // the same row createOffer writes: script-keyed, escrowed
+                expect(createContract).toHaveBeenCalledTimes(1);
+                expect(createContract.mock.calls[0][0]).toMatchObject({
+                    type: "arkade",
+                    script: scriptOf(pending),
+                    metadata: { genericallySpendable: false, kind: "asset-swap-offer" },
+                });
+                expect(setContractWatchState.mock.calls).toEqual([[scriptOf(pending), "watched"]]);
+            } finally {
+                info.mockRestore();
+            }
+        });
+
+        it("hands the registration the key it classified with, not the server's current one", async () => {
+            // after a signer rotation the caller passes the funding-time key;
+            // a restored record has no swapAddress to pin it, so without the
+            // hand-off the rebuild under today's key refuses every record
+            const offer = makeOffer("want-asset", BigInt(992));
+            const funding = fundingPsbt(offer);
+            const { wallet, createContract, info } = coverage();
+            info.mockResolvedValue({
+                signerPubkey: "02" + hex.encode(key("44")),
+                checkpointTapscript: hex.encode(
+                    CSVMultisigTapscript.encode({
+                        timelock: { type: "blocks", value: 10n },
+                        pubkeys: [key("44")],
+                    }).script,
+                ),
+                network: "regtest",
+            } as any);
+            try {
+                await restoreAssetSwaps(
+                    makeIndexer([funding], [depositVtxo(offer, funding.txid)]),
+                    [walletTx(funding.txid, "sent")],
+                    new Set(),
+                    { serverPubkey: SERVER_KEY, cover: { wallet, arkServerUrl: "http://ark" } },
+                );
+                expect(createContract).toHaveBeenCalledTimes(1);
+                expect(createContract.mock.calls[0][0]).toMatchObject({ script: scriptOf(offer) });
+            } finally {
+                info.mockRestore();
+            }
+        });
+
+        it("covers a swept deposit too — still the user's money at that script", async () => {
+            const offer = makeOffer("want-asset", BigInt(992));
+            const funding = fundingPsbt(offer);
+            const vtxo = depositVtxo(offer, funding.txid, { virtualStatus: { state: "swept" } });
+            const { wallet, createContract, info } = coverage();
+            try {
+                const { restored } = await restoreAssetSwaps(
+                    makeIndexer([funding], [vtxo]),
+                    [walletTx(funding.txid, "sent")],
+                    new Set(),
+                    { serverPubkey: SERVER_KEY, cover: { wallet, arkServerUrl: "http://ark" } },
+                );
+                expect(restored[0].status).toBe("recoverable");
+                expect(createContract).toHaveBeenCalledTimes(1);
+            } finally {
+                info.mockRestore();
+            }
+        });
+
+        it("returns the record and marks the txid scanned when the registration fails", async () => {
+            // best effort: the record is the user's way to cancel; losing it to
+            // an offline server would be worse than a deposit unwatched until
+            // the watcher's next start covers it
+            const offer = makeOffer("want-asset", BigInt(992));
+            const funding = fundingPsbt(offer);
+            const { wallet, info } = coverage();
+            info.mockRejectedValue(new Error("server down"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+            try {
+                const { restored, scannedTxids } = await restoreAssetSwaps(
+                    makeIndexer([funding], [depositVtxo(offer, funding.txid)]),
+                    [walletTx(funding.txid, "sent")],
+                    new Set(),
+                    { serverPubkey: SERVER_KEY, cover: { wallet, arkServerUrl: "http://ark" } },
+                );
+                expect(restored).toHaveLength(1);
+                expect(scannedTxids).toEqual([funding.txid]);
+                expect(warn).toHaveBeenCalledWith(
+                    expect.stringContaining("could not re-register"),
+                    expect.anything(),
+                );
+            } finally {
+                info.mockRestore();
+                warn.mockRestore();
+            }
+        });
+
+        it("touches no wallet without it", async () => {
+            const offer = makeOffer("want-asset", BigInt(992));
+            const funding = fundingPsbt(offer);
+            const { info } = coverage();
+            try {
+                await scan(makeIndexer([funding], [depositVtxo(offer, funding.txid)]), [
+                    walletTx(funding.txid, "sent"),
+                ]);
+                expect(info).not.toHaveBeenCalled();
+            } finally {
+                info.mockRestore();
+            }
+        });
     });
 
     it("leaves a spend it cannot classify unscanned, rather than guessing", async () => {
