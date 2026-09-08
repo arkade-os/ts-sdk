@@ -224,7 +224,7 @@ describe("assertValidServerUnrollScript", () => {
 });
 
 describe("hosted networks that advertise below the generic floor", () => {
-    // Verbatim `ArkInfo.checkpointTapscript` as served by each hosted Arkade
+    // Verbatim `ArkadeInfo.checkpointTapscript` as served by each hosted Arkade
     // Service. Held as raw wire strings rather than re-encoded from the
     // constants, so a constant that drifts from what the operator actually
     // serves fails here instead of passing against itself.

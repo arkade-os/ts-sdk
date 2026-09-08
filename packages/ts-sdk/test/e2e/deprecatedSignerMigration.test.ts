@@ -4,6 +4,7 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    RestArkProvider,
     SingleKey,
     Wallet,
 } from "../../src";
@@ -108,7 +109,7 @@ describe("deprecated-signer migration (real rotation)", () => {
     const makeWallet = async (useMnemonic = false): Promise<Wallet> =>
         Wallet.create({
             identity: createTestIdentity(useMnemonic),
-            arkServerUrl: arkUrl,
+            arkProvider: new RestArkProvider(arkUrl),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,

@@ -106,13 +106,20 @@ export async function resolveDescriptorSigner(
     provider?: DescriptorOwner,
 ): Promise<Identity> {
     // Whoever owns the derivation signs it: the wallet's descriptor provider,
-    // or — on a wallet configured without one — a seed-backed identity that
-    // owns the descriptor itself.
-    const owner = provider?.isOurs(descriptor)
-        ? provider
-        : isHDCapableIdentity(identity) && identity.isOurs(descriptor)
-          ? identity
-          : undefined;
+    // or a seed-backed identity that owns the descriptor itself.
+    const providerOwner = provider?.isOurs(descriptor) ? provider : undefined;
+    const identityOwner =
+        !providerOwner && isHDCapableIdentity(identity) && identity.ownsDescriptor(descriptor)
+            ? ({
+                  signWithDescriptor: (requests) => identity.signDescriptorTransactions(requests),
+                  signMessageWithDescriptor: (ownedDescriptor, message, signatureType) =>
+                      identity.signDescriptorMessage(ownedDescriptor, message, signatureType),
+              } satisfies Pick<
+                  DescriptorProvider,
+                  "signWithDescriptor" | "signMessageWithDescriptor"
+              >)
+            : undefined;
+    const owner = providerOwner ?? identityOwner;
     // Only a descriptor carrying a derivation path has anything to derive.
     // It wins over the identity even when its leaf key aliases the identity
     // key (a fresh HD wallet's index 0), because the identity cannot sign

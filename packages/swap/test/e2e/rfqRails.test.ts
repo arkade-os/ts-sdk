@@ -20,6 +20,7 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     REGTEST_EMULATOR_PUBKEY,
+    RestArkProvider,
     SingleKey,
     Wallet,
 } from "@arkade-os/sdk";
@@ -193,7 +194,7 @@ const clientOn = (validForSeconds = 3_600): SwapClient =>
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: OPERATOR_URL,
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,

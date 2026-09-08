@@ -40,46 +40,6 @@
                 "default": "./dist/adapters/expo.cjs"
             }
         },
-        "./adapters/localStorage": {
-            "import": {
-                "types": "./dist/adapters/localStorage.d.ts",
-                "default": "./dist/adapters/localStorage.js"
-            },
-            "require": {
-                "types": "./dist/adapters/localStorage.d.cts",
-                "default": "./dist/adapters/localStorage.cjs"
-            }
-        },
-        "./adapters/fileSystem": {
-            "import": {
-                "types": "./dist/adapters/fileSystem.d.ts",
-                "default": "./dist/adapters/fileSystem.js"
-            },
-            "require": {
-                "types": "./dist/adapters/fileSystem.d.cts",
-                "default": "./dist/adapters/fileSystem.cjs"
-            }
-        },
-        "./adapters/indexedDB": {
-            "import": {
-                "types": "./dist/adapters/indexedDB.d.ts",
-                "default": "./dist/adapters/indexedDB.js"
-            },
-            "require": {
-                "types": "./dist/adapters/indexedDB.d.cts",
-                "default": "./dist/adapters/indexedDB.cjs"
-            }
-        },
-        "./adapters/asyncStorage": {
-            "import": {
-                "types": "./dist/adapters/asyncStorage.d.ts",
-                "default": "./dist/adapters/asyncStorage.js"
-            },
-            "require": {
-                "types": "./dist/adapters/asyncStorage.d.cts",
-                "default": "./dist/adapters/asyncStorage.cjs"
-            }
-        },
         "./repositories/sqlite": {
             "import": {
                 "types": "./dist/repositories/sqlite/index.d.ts",
@@ -145,6 +105,7 @@
         "build": "tsup",
         "smoke:dist": "node scripts/smoke-dist.mjs",
         "typecheck": "tsc --noEmit",
+        "typecheck:tests": "tsc -p tsconfig.tests.json --noEmit",
         "check:vtxo": "node scripts/check-virtual-status.mjs && node scripts/check-provider-boundary.mjs",
         "check:e2e-groups": "node ../../scripts/e2e-groups.mjs --check",
         "docs:build": "pnpm run typecheck && pnpm typedoc",
@@ -163,7 +124,7 @@
         "test:watch": "vitest",
         "test:coverage": "vitest run --coverage",
         "format": "biome format --write src test examples",
-        "lint": "biome format src test examples && pnpm run check:vtxo && pnpm run check:e2e-groups",
+        "lint": "biome format src test examples && pnpm run typecheck:tests && pnpm run check:vtxo && pnpm run check:e2e-groups",
         "audit": "pnpm audit",
         "prepack": "pnpm run build",
         "prepublishOnly": "pnpm run build"

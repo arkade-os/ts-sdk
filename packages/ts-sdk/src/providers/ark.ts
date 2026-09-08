@@ -238,9 +238,6 @@ export interface ArkadeInfo {
     vtxoMinAmount: bigint;
 }
 
-/** @deprecated alias for @see ArkadeInfo */
-export type ArkInfo = ArkadeInfo;
-
 /** Signed intent payload sent to the Arkade server. */
 export interface SignedIntent<T extends Intent.Message> {
     /** Base64-encoded signed proof transaction. */

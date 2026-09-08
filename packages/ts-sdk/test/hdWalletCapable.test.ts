@@ -6,6 +6,7 @@ import {
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    RestArkProvider,
     MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
     isHDWalletCapable,
     isHDAllocationCapable,
@@ -72,7 +73,7 @@ function makeWallet(opts: { hd: boolean; contractRepo?: InMemoryContractReposito
             ? MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false })
             : SingleKey.fromHex("ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2"),
         walletMode: opts.hd ? "hd" : "static",
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider("http://localhost:7070"),
         storage: {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: opts.contractRepo ?? new InMemoryContractRepository(),

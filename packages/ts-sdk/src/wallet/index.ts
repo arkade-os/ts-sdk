@@ -4,7 +4,7 @@ import { Identity, ReadonlyIdentity } from "../identity";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
-import { RenewalConfig, SettlementConfig } from "./vtxo-manager";
+import { SettlementConfig } from "./vtxo-manager";
 import { GetVtxosOptions, IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
@@ -117,47 +117,15 @@ export interface NewAddress {
 /**
  * Base configuration options shared by all wallet types.
  *
- * Supports URL-based and provider-based configuration.
- *
- * @deprecated URL-based configuration starts from `arkServerUrl` and can optionally override
- * derived service URLs such as `indexerUrl` and `esploraUrl`.
- *
- * Provider-based configuration supplies concrete provider instances directly,
- * including the ArkProvider, IndexerProvider, OnchainProvider, and DelegateProvider.
- *
- * The wallet will use provided URLs to create default providers if custom provider
- * instances are not supplied. If optional parameters are not provided, the wallet
- * will fetch configuration from the Arkade server.
- *
- * @remarks
- * URL-based and provider-based configuration can be mixed, but provider instances
- * always take precedence over URLs for the corresponding service.
+ * Provider instances are the supported way to connect a wallet to Arkade,
+ * indexer, onchain, and delegation services. If a provider is omitted, the
+ * wallet constructs the default implementation for that service.
  *
  * @see WalletConfig
  * @see ReadonlyWalletConfig
  * @see StorageConfig
  */
 export interface BaseWalletConfig {
-    /**
-     * Base URL of the Arkade server.
-     *
-     * @deprecated Pass an explicit `arkProvider` instance instead. URL-based
-     * configuration will be removed in a future major version.
-     */
-    arkServerUrl?: string;
-    /**
-     * Optional override for the indexer URL.
-     *
-     * @deprecated Pass an explicit `indexerProvider` instance instead.
-     */
-    indexerUrl?: string;
-    /**
-     * Optional override for the Esplora API URL.
-     *
-     * @deprecated Pass an explicit `onchainProvider` instance instead.
-     */
-    esploraUrl?: string;
-
     /** Optional Arkade server public key used to construct and validate Arkade addresses. */
     arkServerPublicKey?: string;
     /** Relative timelock applied to boarding scripts. */
@@ -192,8 +160,6 @@ export interface BaseWalletConfig {
     onchainProvider?: OnchainProvider;
     /** Optional delegation service instance. */
     delegateProvider?: DelegateProvider;
-    /** @deprecated alias for @see BaseWalletConfig.delegateProvider */
-    delegatorProvider?: DelegateProvider;
 }
 
 /**
@@ -265,16 +231,6 @@ export interface WalletConfig extends ReadonlyWalletConfig {
     /** Signing identity used to authorize transactions. */
     identity: Identity;
 
-    /**
-     * Legacy renewal configuration.
-     *
-     * @remarks
-     * This field is still accepted for backwards compatibility, but `settlementConfig`
-     * is the source of truth for new code.
-     *
-     * @deprecated Use `settlementConfig` instead.
-     */
-    renewalConfig?: RenewalConfig;
     /**
      * Configuration for automatic settlement and renewal.
      * `false` = explicitly disabled, `undefined` or `{}` = enabled with defaults.
@@ -482,9 +438,6 @@ export interface WalletBalance {
  * Parameters accepted by `OnchainWallet.send`.
  *
  * @remarks
- * This shape was also used by the deprecated `Wallet.sendBitcoin` method.
- * New wallet sends should use `Recipient` via `IWallet.send`.
- *
  * @see Recipient
  */
 export interface SendBitcoinParams {
@@ -498,13 +451,7 @@ export interface SendBitcoinParams {
     feeRate?: number;
 
     /**
-     * Optional memo associated with the transaction.
-     * @deprecated Does not appear to have ever been used.
-     */
-    memo?: string;
-
-    /**
-     * Optional explicit virtual output selection used by `Wallet.sendBitcoin`.
+     * Optional explicit virtual output selection.
      * Ungated, like `settle({ inputs })`: whatever is named here is spent, even
      * if generic selection would skip it.
      *
@@ -729,48 +676,6 @@ export interface Status {
     block_time?: number;
 }
 
-/**
- * Virtual output status.
- *
- * @deprecated Use the canonical facts on {@link VirtualCoin} — `isSwept`, `isPreconfirmed`,
- * `isSpent`, `expiresAt`, `expiresAtHeight`, `commitmentTxIds`, `spentBy`, `settledBy` — and the
- * capability predicates {@link canSpendOffchain}, {@link canRecoverOnchain},
- * {@link hasTerminalSpend}, {@link isPastExpiry}. `state` collapses independent facts into one
- * lossy label; this object is retained only as a backward-compatible projection.
- */
-export interface VirtualStatus {
-    /**
-     * Extended output status.
-     *
-     * - `preconfirmed`: not yet finalized in a batch
-     * - `settled`: finalized in a batch
-     * - `swept`: expired/swept and recoverable in a new batch
-     * - `spent`: destroyed by a later transaction
-     *
-     * @deprecated Lossy: the states are not orthogonal and collapse with precedence
-     * `spent` > `swept` > `preconfirmed` > `settled`, so a spent VTXO that was also swept reports
-     * only `spent`. Read `isSpent`/`isSwept`/`isPreconfirmed` instead, or a capability predicate.
-     */
-    state: "preconfirmed" | "settled" | "swept" | "spent";
-
-    /**
-     * Which batch commitment transaction(s) this virtual output depends on.
-     *
-     * @deprecated Use {@link VirtualCoin.commitmentTxIds}.
-     */
-    commitmentTxIds?: string[];
-
-    /**
-     * The earliest point at which this virtual output stops being safely preconfirmed,
-     * in milliseconds.
-     *
-     * @deprecated Unit-ambiguous: the server returns a single scalar that is either unix seconds or
-     * a block height, and both land here multiplied by 1000. Use {@link VirtualCoin.expiresAt} and
-     * {@link VirtualCoin.expiresAtHeight}, which disambiguate the two.
-     */
-    batchExpiry?: number;
-}
-
 /** Onchain output location data. */
 export interface Outpoint {
     /** Transaction ID where the output was created */
@@ -846,12 +751,6 @@ export interface VirtualCoin extends Coin {
      * deployments). Evaluating it needs a chain tip — see {@link isPastExpiry}.
      */
     expiresAtHeight?: number;
-    /**
-     * Virtual output status.
-     *
-     * @deprecated See {@link VirtualStatus}.
-     */
-    virtualStatus: VirtualStatus;
     /** Assets carried by this virtual output, if any. */
     assets?: Asset[];
 }
@@ -964,13 +863,9 @@ export {
     getAllNormalizedVtxos,
     getNormalizedVtxos,
     hasTerminalSpend,
-    isExpired,
     isPastExpiry,
-    isRecoverable,
-    isSpendable,
     isVirtualCoin,
     normalizeVtxo,
-    toVirtualStatus,
     type NormalizedExtendedVirtualCoin,
     type NormalizedVirtualCoin,
     type NormalizedVtxoPage,
@@ -985,7 +880,7 @@ export {
  * @param dust - dust threshold in satoshis
  * @returns `true` when the virtual output value is below `dust`
  *
- * @see isRecoverable
+ * @see canRecoverOnchain
  */
 export function isSubdust(vtxo: { value: number } | bigint, dust: bigint): boolean {
     if (typeof vtxo === "bigint") return vtxo < dust;
@@ -1155,17 +1050,6 @@ export interface IWallet extends IReadonlyWallet {
     identity: Identity;
 
     /**
-     * Send bitcoin to a single Arkade address.
-     *
-     * @param params - Destination, amount, fee rate override, etc
-     * @returns Arkade transaction id
-     * @deprecated Use `send`
-     * @see send
-     * @see Recipient
-     */
-    sendBitcoin(params: SendBitcoinParams): Promise<string>;
-
-    /**
      * Settle boarding inputs and/or preconfirmed virtual outputs into settled virtual outputs.
      *
      * @param params - Optional explicit settlement inputs and outputs
@@ -1205,9 +1089,6 @@ export interface IWallet extends IReadonlyWallet {
 
     /** @returns Delegation manager, when configured. */
     getDelegateManager(): Promise<IDelegateManager | undefined>;
-
-    /** @deprecated alias for @see IWallet.getDelegateManager */
-    getDelegatorManager(): Promise<IDelegateManager | undefined>;
 }
 
 /**

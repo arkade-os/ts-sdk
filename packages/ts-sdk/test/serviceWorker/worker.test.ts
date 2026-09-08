@@ -388,27 +388,6 @@ describe("Worker buildServices identity hydration", () => {
         });
     };
 
-    describe("legacy shapes (old page → new worker)", () => {
-        it("builds a Wallet with SingleKey from legacy { privateKey }", async () => {
-            await startBusAndInit({ privateKey: TEST_PRIVATE_KEY_HEX });
-            expect(walletCreateSpy).toHaveBeenCalledOnce();
-            expect(readonlyCreateSpy).not.toHaveBeenCalled();
-            const identity = walletCreateSpy.mock.calls[0][0].identity;
-            expect(identity).toBeInstanceOf(SingleKey);
-            expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/\[ts-sdk\].*legacy/i));
-        });
-
-        it("builds a ReadonlyWallet with ReadonlySingleKey from legacy { publicKey }", async () => {
-            const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
-            const publicKey = hex.encode(await signing.compressedPublicKey());
-            await startBusAndInit({ publicKey });
-            expect(readonlyCreateSpy).toHaveBeenCalledOnce();
-            expect(walletCreateSpy).not.toHaveBeenCalled();
-            const identity = readonlyCreateSpy.mock.calls[0][0].identity;
-            expect(identity).toBeInstanceOf(ReadonlySingleKey);
-        });
-    });
-
     describe("tagged envelopes (new page → new worker)", () => {
         it("hydrates single-key into a SingleKey", async () => {
             await startBusAndInit({

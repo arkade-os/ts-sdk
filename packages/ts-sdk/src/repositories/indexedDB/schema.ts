@@ -10,9 +10,6 @@ export const STORE_INTENTS = "intents";
 export const STORE_VIRTUAL_TXS = "virtualTxs";
 export const STORE_VTXO_BRANCHES = "vtxoBranches";
 
-// @deprecated use only for migrations, this is created in V1
-export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
-
 // Version history:
 //   v1 — initial wallet repo schema, `contractsCollections` store.
 //   v2 — new `vtxos/utxos/transactions/walletState/contracts` stores.
@@ -62,11 +59,6 @@ export function initDatabase(
         }
         if (!vtxosStore.indexNames.contains("status")) {
             vtxosStore.createIndex("status", "status", {
-                unique: false,
-            });
-        }
-        if (!vtxosStore.indexNames.contains("virtualStatus")) {
-            vtxosStore.createIndex("virtualStatus", "virtualStatus", {
                 unique: false,
             });
         }
@@ -189,12 +181,6 @@ export function initDatabase(
                 unique: false,
             });
         }
-    }
-
-    if (!db.objectStoreNames.contains(LEGACY_STORE_CONTRACT_COLLECTIONS)) {
-        db.createObjectStore(LEGACY_STORE_CONTRACT_COLLECTIONS, {
-            keyPath: "key",
-        });
     }
 
     // v2 → v3: add the `script` index on the existing vtxos store and

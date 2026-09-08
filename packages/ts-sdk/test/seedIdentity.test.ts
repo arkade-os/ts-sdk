@@ -447,10 +447,10 @@ describe("ReadonlyDescriptorIdentity", () => {
 
             for (const index of [0, 1, 7, 1024]) {
                 const concrete = identity.descriptor.replace("/*)", `/${index})`);
-                expect(readonly.isOurs(concrete)).toBe(true);
+                expect(readonly.ownsDescriptor(concrete)).toBe(true);
             }
             // The wildcard descriptor itself round-trips
-            expect(readonly.isOurs(identity.descriptor)).toBe(true);
+            expect(readonly.ownsDescriptor(identity.descriptor)).toBe(true);
         });
 
         it("isOurs rejects descriptors derived from a different seed", () => {
@@ -467,7 +467,7 @@ describe("ReadonlyDescriptorIdentity", () => {
             const otherDescriptor = SeedIdentity.fromSeed(otherSeed, {
                 isMainnet: true,
             }).descriptor;
-            expect(ourReadonly.isOurs(otherDescriptor)).toBe(false);
+            expect(ourReadonly.ownsDescriptor(otherDescriptor)).toBe(false);
         });
     });
 });
@@ -593,11 +593,11 @@ describe("Index substitution against the account descriptor template", () => {
     });
 });
 
-describe("SeedIdentity.isOurs", () => {
+describe("SeedIdentity.ownsDescriptor", () => {
     it("returns true for the identity's own descriptor", () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-        expect(identity.isOurs(identity.descriptor)).toBe(true);
+        expect(identity.ownsDescriptor(identity.descriptor)).toBe(true);
     });
 
     it("returns true for any derived-index descriptor of the same seed", () => {
@@ -605,14 +605,14 @@ describe("SeedIdentity.isOurs", () => {
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
         for (const i of [0, 1, 42, 100, 0x7fffffff]) {
-            expect(identity.isOurs(descriptorAtIndex(identity, i))).toBe(true);
+            expect(identity.ownsDescriptor(descriptorAtIndex(identity, i))).toBe(true);
         }
     });
 
     it("returns true for the wildcard template", () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-        expect(identity.isOurs(identity.descriptor)).toBe(true);
+        expect(identity.ownsDescriptor(identity.descriptor)).toBe(true);
     });
 
     it("returns false for a different seed's descriptor", () => {
@@ -623,22 +623,22 @@ describe("SeedIdentity.isOurs", () => {
         const otherIdentity = SeedIdentity.fromSeed(otherSeed, {
             isMainnet: true,
         });
-        expect(identity.isOurs(otherIdentity.descriptor)).toBe(false);
+        expect(identity.ownsDescriptor(otherIdentity.descriptor)).toBe(false);
     });
 
     it("returns false for non-descriptor strings", () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-        expect(identity.isOurs("")).toBe(false);
-        expect(identity.isOurs("not-a-descriptor")).toBe(false);
-        expect(identity.isOurs("tr()")).toBe(false);
+        expect(identity.ownsDescriptor("")).toBe(false);
+        expect(identity.ownsDescriptor("not-a-descriptor")).toBe(false);
+        expect(identity.ownsDescriptor("tr()")).toBe(false);
     });
 
     it("returns false for simple tr(otherPubkey) descriptors", () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
         const foreignPubkey = hex.encode(expectedXOnlyAtIndex(true, 0, OTHER_MNEMONIC));
-        expect(identity.isOurs(`tr(${foreignPubkey})`)).toBe(false);
+        expect(identity.ownsDescriptor(`tr(${foreignPubkey})`)).toBe(false);
     });
 
     it("treats mainnet and testnet descriptors from the same mnemonic as different", () => {
@@ -646,19 +646,19 @@ describe("SeedIdentity.isOurs", () => {
         const mainnet = SeedIdentity.fromSeed(seed, { isMainnet: true });
         const testnet = SeedIdentity.fromSeed(seed, { isMainnet: false });
         // Different coin-type paths produce different account xpubs.
-        expect(mainnet.isOurs(testnet.descriptor)).toBe(false);
-        expect(testnet.isOurs(mainnet.descriptor)).toBe(false);
+        expect(mainnet.ownsDescriptor(testnet.descriptor)).toBe(false);
+        expect(testnet.ownsDescriptor(mainnet.descriptor)).toBe(false);
     });
 });
 
-describe("SeedIdentity.signMessageWithDescriptor", () => {
+describe("SeedIdentity.signDescriptorMessage", () => {
     it("signs with the key derived from the given descriptor", async () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
         const message = new Uint8Array(32).fill(7);
 
         const descriptor = descriptorAtIndex(identity, 12);
-        const signature = await identity.signMessageWithDescriptor(descriptor, message);
+        const signature = await identity.signDescriptorMessage(descriptor, message);
 
         const expectedPub = expectedXOnlyAtIndex(true, 12);
         const ok = await schnorr.verifyAsync(signature, message, expectedPub);
@@ -671,7 +671,7 @@ describe("SeedIdentity.signMessageWithDescriptor", () => {
         const message = new Uint8Array(32).fill(9);
 
         const descriptor = descriptorAtIndex(identity, 3);
-        const signature = await identity.signMessageWithDescriptor(descriptor, message, "ecdsa");
+        const signature = await identity.signDescriptorMessage(descriptor, message, "ecdsa");
         expect(signature).toBeInstanceOf(Uint8Array);
 
         // ECDSA verification needs the compressed (33-byte) pubkey
@@ -692,7 +692,7 @@ describe("SeedIdentity.signMessageWithDescriptor", () => {
         });
 
         await expect(
-            identity.signMessageWithDescriptor(other.descriptor, new Uint8Array(32)),
+            identity.signDescriptorMessage(other.descriptor, new Uint8Array(32)),
         ).rejects.toThrow("does not belong to this identity");
     });
 
@@ -701,18 +701,18 @@ describe("SeedIdentity.signMessageWithDescriptor", () => {
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
         await expect(
-            identity.signMessageWithDescriptor(identity.descriptor, new Uint8Array(32)),
+            identity.signDescriptorMessage(identity.descriptor, new Uint8Array(32)),
         ).rejects.toThrow("wildcard descriptor");
     });
 });
 
-describe("SeedIdentity.signWithDescriptor", () => {
+describe("SeedIdentity.signDescriptorTransactions", () => {
     it("returns a Transaction per request when no inputs need signing", async () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
         const tx = new Transaction();
-        const result = await identity.signWithDescriptor([
+        const result = await identity.signDescriptorTransactions([
             { tx, descriptor: descriptorAtIndex(identity, 0) },
             { tx, descriptor: descriptorAtIndex(identity, 2) },
         ]);
@@ -733,7 +733,7 @@ describe("SeedIdentity.signWithDescriptor", () => {
 
         const tx = new Transaction();
         await expect(
-            identity.signWithDescriptor([{ tx, descriptor: descriptorAtIndex(other, 0) }]),
+            identity.signDescriptorTransactions([{ tx, descriptor: descriptorAtIndex(other, 0) }]),
         ).rejects.toThrow("does not belong to this identity");
     });
 });
@@ -748,7 +748,7 @@ describe("MnemonicIdentity DescriptorProvider", () => {
 
         expect(identity.descriptor).toBe(seedIdentity.descriptor);
         expect(descriptorAtIndex(identity, 42)).toBe(descriptorAtIndex(seedIdentity, 42));
-        expect(identity.isOurs(descriptorAtIndex(identity, 99))).toBe(true);
+        expect(identity.ownsDescriptor(descriptorAtIndex(identity, 99))).toBe(true);
     });
 });
 

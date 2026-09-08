@@ -85,7 +85,7 @@ describe("resolveUnilateralPath", () => {
             vtxo: { txid: "11".repeat(32), vout: 0, tapTree: script.encode() },
             scriptHex: contract.script,
             contractRepository: await repoWith(contract),
-            walletPubKeyHex: hex.encode(owner),
+            walletDescriptor: `tr(${hex.encode(owner)})`,
             currentTime: 1_000,
         });
         expect(resolved.label).toBe("default:unilateral");
@@ -99,7 +99,7 @@ describe("resolveUnilateralPath", () => {
             vtxo: { txid: "22".repeat(32), vout: 0, tapTree: script.encode() },
             scriptHex: contract.script,
             contractRepository: await repoWith(contract),
-            walletPubKeyHex: hex.encode(owner),
+            walletDescriptor: `tr(${hex.encode(owner)})`,
             currentTime: 1_000,
         });
         expect(resolved.label).toBe("vhtlc:unilateral");
@@ -113,7 +113,7 @@ describe("resolveUnilateralPath", () => {
             vtxo: { txid: "33".repeat(32), vout: 0, tapTree: script.encode() },
             scriptHex: hex.encode(script.pkScript),
             contractRepository: new InMemoryContractRepository(),
-            walletPubKeyHex: hex.encode(owner),
+            walletDescriptor: `tr(${hex.encode(owner)})`,
             currentTime: 1_000,
         });
         expect(resolved.label).toBe("default:exit");
@@ -126,7 +126,7 @@ describe("resolveUnilateralPath", () => {
             vtxo: { txid: "44".repeat(32), vout: 0, tapTree: script.encode() },
             scriptHex: contract.script,
             contractRepository: await repoWith(contract),
-            walletPubKeyHex: hex.encode(owner),
+            walletDescriptor: `tr(${hex.encode(owner)})`,
             currentTime: 1_000,
         });
         await expect(promise).rejects.toThrow(ExitPathError);
@@ -139,7 +139,7 @@ describe("resolveUnilateralPath", () => {
             vtxo: { txid: "55".repeat(32), vout: 0, tapTree: script.encode() },
             scriptHex: contract.script,
             contractRepository: await repoWith({ ...contract, type: "no-such-type" }),
-            walletPubKeyHex: hex.encode(owner),
+            walletDescriptor: `tr(${hex.encode(owner)})`,
             currentTime: 1_000,
         });
         await expect(promise).rejects.toMatchObject({ reason: "no-handler" });

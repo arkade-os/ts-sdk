@@ -101,17 +101,13 @@ import {
     SendBitcoinParams,
     SettleParams,
     Status,
-    VirtualStatus,
     Outpoint,
     VirtualCoin,
     TxKey,
     GetVtxosFilter,
     TapLeaves,
     StorageConfig,
-    isSpendable,
     isSubdust,
-    isRecoverable,
-    isExpired,
     // VTXO capability predicates
     canRecoverOnchain,
     canSpendOffchain,
@@ -231,7 +227,6 @@ import {
     SettlementEvent,
     SettlementEventType,
     ArkadeInfo,
-    ArkInfo,
     SignedIntent,
     Output,
     TxNotification,
@@ -251,11 +246,9 @@ import {
 import { CachingArkProvider } from "./providers/cachingArk";
 import {
     DelegateProvider,
-    DelegatorProvider,
     DelegateInfo,
     DelegateOptions,
     RestDelegateProvider,
-    RestDelegatorProvider,
 } from "./providers/delegate";
 import {
     CLTVMultisigTapscript,
@@ -452,24 +445,9 @@ import type {
     VtxoBranch,
 } from "./repositories/virtualTxRepository";
 import { ChainedTxType } from "./repositories/virtualTxRepository";
-import {
-    MIGRATION_KEY,
-    migrateWalletRepository,
-    requiresMigration,
-    getMigrationStatus,
-    rollbackMigration,
-} from "./repositories/migrations/fromStorageAdapter";
-import type { MigrationStatus } from "./repositories/migrations/fromStorageAdapter";
-import { WalletRepositoryImpl } from "./repositories/migrations/walletRepositoryImpl";
-import { ContractRepositoryImpl } from "./repositories/migrations/contractRepositoryImpl";
 import type { WalletRepository } from "./repositories/walletRepository";
 import type { ContractRepository } from "./repositories/contractRepository";
-import {
-    DelegateManagerImpl,
-    DelegatorManagerImpl,
-    IDelegateManager,
-    IDelegatorManager,
-} from "./wallet/delegate";
+import { DelegateManagerImpl, IDelegateManager } from "./wallet/delegate";
 
 export * from "./arkfee";
 export * from "./extension";
@@ -572,7 +550,6 @@ import {
     WalletNotInitializedError,
     ReadonlyWalletError,
     DelegateNotConfiguredError,
-    DelegatorNotConfiguredError,
 } from "./wallet/serviceWorker/wallet-message-handler";
 import {
     MESSAGE_BUS_INITIALIZING,
@@ -635,9 +612,7 @@ export {
     toXOnlySignerHex,
     HDDescriptorProvider,
     DelegateManagerImpl,
-    DelegatorManagerImpl,
     RestDelegateProvider,
-    RestDelegatorProvider,
     // Providers
     ESPLORA_URL,
     EsploraProvider,
@@ -672,7 +647,6 @@ export {
     WalletNotInitializedError,
     ReadonlyWalletError,
     DelegateNotConfiguredError,
-    DelegatorNotConfiguredError,
     MESSAGE_BUS_INITIALIZING,
     MESSAGE_BUS_NOT_INITIALIZED,
     MessageBusInitializingError,
@@ -773,13 +747,6 @@ export {
     isTerminalIntentState,
     INTENT_TERMINAL_STATES,
     ChainedTxType,
-    MIGRATION_KEY,
-    migrateWalletRepository,
-    requiresMigration,
-    getMigrationStatus,
-    rollbackMigration,
-    WalletRepositoryImpl,
-    ContractRepositoryImpl,
     // Intent proof
     Intent,
     // BIP-322 message signing
@@ -833,10 +800,7 @@ export {
     SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
     type CheckpointExitDelayPolicy,
     buildForfeitTx,
-    isRecoverable,
-    isSpendable,
     isSubdust,
-    isExpired,
     getSequence,
     // VTXO capability predicates
     canRecoverOnchain,
@@ -906,7 +870,6 @@ export type {
     SendBitcoinParams,
     SettleParams,
     Status,
-    VirtualStatus,
     Outpoint,
     VirtualCoin,
     TimeHeight,
@@ -956,7 +919,6 @@ export type {
     SettlementEvent,
     FeeInfo,
     ArkadeInfo,
-    ArkInfo,
     SignedIntent,
     Output,
     TxNotification,
@@ -1097,18 +1059,15 @@ export type {
     ArkadeBatchInput,
     ArkadeExtendedCoin,
     ArkadeExtendedVirtualCoin,
-    // Delegate types (Delegator* aliases deprecated)
+    // Delegate types
     IDelegateManager,
-    IDelegatorManager,
     DelegateProvider,
-    DelegatorProvider,
     DelegateInfo,
     DelegateOptions,
     // Repositories
     ManagedConnection,
     WalletRepository,
     ContractRepository,
-    MigrationStatus,
     IntentRepository,
     ArkIntent,
     ArkIntentState,

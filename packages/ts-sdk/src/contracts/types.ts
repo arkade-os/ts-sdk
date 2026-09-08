@@ -204,16 +204,9 @@ export interface PathContext {
     walletDescriptor?: string;
 
     /**
-     * Wallet's public key (x-only, 32 bytes hex).
-     * @deprecated Use walletDescriptor instead.
-     */
-    walletPubKey?: string;
-
-    /**
      * Explicit role override for multi-party contracts such as VHTLC.
      * If not provided, the handler may derive the role by matching
-     * {@link walletDescriptor} (preferred) — or {@link walletPubKey} as a
-     * fallback — against the contract's sender/receiver params.
+     * {@link walletDescriptor} against the contract's sender/receiver params.
      */
     role?: string;
 
@@ -311,7 +304,7 @@ export interface ContractHandler<P = Record<string, unknown>, S extends VtxoScri
     /**
      * Whether this contract's VTXOs may be picked by *generic* wallet spending —
      * send, settle, renewal, asset operations, offboard, `available` balance.
-     * Explicit-input APIs (`settle({ inputs })`, `sendBitcoin({ selectedVtxos })`,
+     * Explicit-input APIs (`settle({ inputs })`, `send({ selectedVtxos })`,
      * …) stay open regardless: naming an outpoint is the intent this gate protects.
      *
      * Pure, synchronous and offline — it runs inside the service worker, so no

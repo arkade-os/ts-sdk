@@ -313,10 +313,11 @@ const vtxo = (script: string, value: number): ExtendedVirtualCoin =>
         vout: 0,
         value,
         status: { confirmed: true },
-        virtualStatus: { state: "settled" },
         createdAt: new Date(),
         isUnrolled: false,
         isSpent: false,
+        isSwept: false,
+        isPreconfirmed: false,
         script,
         forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
         intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
@@ -327,7 +328,6 @@ const realWallet = async () => {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
     const wallet = await ReadonlyWallet.create({
-        arkServerUrl: "http://localhost:7070",
         arkProvider: { getInfo: async () => operatorInfo() } as Partial<ArkProvider> as ArkProvider,
         indexerProvider: offlineIndexer(),
         onchainProvider: {

@@ -6,22 +6,13 @@ import {
 import { isRetryableProviderError } from "../providers/availability";
 import type { GetVtxosOptions, IndexerProvider, PageResponse, Vtxo } from "../providers/indexer";
 import type { OnchainProvider } from "../providers/onchain";
-import type { ExtendedVirtualCoin, VirtualCoin, VirtualStatus } from "./index";
+import type { ExtendedVirtualCoin, VirtualCoin } from "./index";
 
 /**
- * Canonical VTXO facts, the conversions between them and the legacy `virtualStatus` projection,
- * and the capability predicates behavior is expected to read.
+ * Canonical VTXO fact normalization and capability predicates.
  *
- * Three directions are owned here:
- *
- * 1. wire `Vtxo` -> canonical ({@link convertVtxo})
- * 2. canonical -> legacy `virtualStatus` ({@link toVirtualStatus})
- * 3. legacy `virtualStatus` -> canonical ({@link normalizeVtxo})
- *
- * Direction 3 is not just for old persisted rows: `IndexerProvider` and `WalletRepository` are
- * public interfaces, so consumer implementations may hand back legacy-shaped coins through the
- * front door. Normalization therefore runs where the SDK *consumes* an interface, never inside an
- * implementation of one.
+ * Incoming VTXOs may omit optional boolean facts, so SDK logic normalizes them
+ * before applying spend/recovery predicates.
  */
 
 /**
@@ -111,106 +102,33 @@ export function parseWireExpiry(raw: string | null | undefined): {
     return { expiresAtHeight: n };
 }
 
-/** Canonical -> legacy `batchExpiry`. */
-export function toBatchExpiry(c: {
-    expiresAt?: Date;
-    expiresAtHeight?: number;
-}): number | undefined {
-    if (c.expiresAt !== undefined) return c.expiresAt.getTime();
-    // Multiplying a block height by 1000 is dimensionally meaningless, but it is what the legacy
-    // converter did and what consumers already receive. Preserved deliberately.
-    if (c.expiresAtHeight !== undefined) return c.expiresAtHeight * 1000;
-    return undefined;
-}
-
-/** Legacy `batchExpiry` -> canonical, inverting {@link toBatchExpiry} on its domain. */
-export function parseLegacyExpiry(batchExpiry: number | undefined): {
-    expiresAt?: Date;
-    expiresAtHeight?: number;
-} {
-    // Same `<= 0` guard as `parseWireExpiry`.
-    if (batchExpiry === undefined || batchExpiry <= 0) return {};
-    if (batchExpiry >= EXPIRY_MIN_PLAUSIBLE_MS) return { expiresAt: new Date(batchExpiry) };
-    return { expiresAtHeight: batchExpiry / 1000 };
-}
-
 // --- normalization -----------------------------------------------------------------------------
 
-/** Synthesize the legacy projection from canonical facts. */
-export function toVirtualStatus(c: {
-    isSpent?: boolean;
-    isSwept?: boolean;
-    isPreconfirmed?: boolean;
-    commitmentTxIds?: string[];
-    expiresAt?: Date;
-    expiresAtHeight?: number;
-}): VirtualStatus {
-    return {
-        // Precedence is load-bearing: consumers bucket on this label, so any other order silently
-        // moves VTXOs between buckets.
-        state: c.isSpent
-            ? "spent"
-            : c.isSwept
-              ? "swept"
-              : c.isPreconfirmed
-                ? "preconfirmed"
-                : "settled",
-        commitmentTxIds: c.commitmentTxIds,
-        batchExpiry: toBatchExpiry(c),
-    };
-}
-
 /**
- * Fill in every canonical fact, deriving from `virtualStatus` when a coin carries only the legacy
- * shape. Idempotent.
+ * Fill in every canonical fact. Idempotent.
  *
- * Facts are derived with `??` so a coin that already carries its own authoritative value keeps it
- * rather than having it re-derived from the lossy projection.
+ * Facts are derived with `??` so a coin that already carries its own authoritative value keeps it.
  */
 export function normalizeVtxo<T extends VirtualCoin>(v: T): T & NormalizedVirtualCoin {
-    const state = v.virtualStatus?.state;
-    const canonicalExpiry = v.expiresAt !== undefined || v.expiresAtHeight !== undefined;
-    const expiry = canonicalExpiry
-        ? // Coerce: a backend that persists through JSON hands back an ISO string, which typechecks
-          // as `Date` but returns NaN from `.getTime()` — comparing false against everything.
-          {
-              expiresAt: v.expiresAt === undefined ? undefined : new Date(v.expiresAt),
-              expiresAtHeight: v.expiresAtHeight,
-          }
-        : parseLegacyExpiry(v.virtualStatus?.batchExpiry);
-
-    // `state === "spent"` cannot tell us whether the coin was *also* swept or preconfirmed — the
-    // collapse destroyed that. Reading them as false matches today's behavior: a spent coin already
-    // fails every spendability check.
-    const isSpent = v.isSpent ?? state === "spent";
-    const isSwept = v.isSwept ?? state === "swept";
-    const isPreconfirmed = v.isPreconfirmed ?? state === "preconfirmed";
-    const commitmentTxIds = v.commitmentTxIds ?? v.virtualStatus?.commitmentTxIds ?? [];
+    const expiry = {
+        expiresAt: v.expiresAt === undefined ? undefined : new Date(v.expiresAt),
+        expiresAtHeight: v.expiresAtHeight,
+    };
 
     return {
         ...v,
-        isSpent,
-        isSwept,
-        isPreconfirmed,
+        isSpent: v.isSpent ?? false,
+        isSwept: v.isSwept ?? false,
+        isPreconfirmed: v.isPreconfirmed ?? false,
         spentBy: v.spentBy ?? "",
-        commitmentTxIds,
+        commitmentTxIds: v.commitmentTxIds ?? [],
         ...expiry,
-        virtualStatus:
-            v.virtualStatus ??
-            toVirtualStatus({ isSpent, isSwept, isPreconfirmed, commitmentTxIds, ...expiry }),
     };
 }
 
 /** Wire `Vtxo` -> canonical `VirtualCoin`. Shared by every indexer provider. */
 export function convertVtxo(vtxo: Vtxo): NormalizedVirtualCoin {
     const expiry = parseWireExpiry(vtxo.expiresAt);
-    const facts = {
-        isSpent: vtxo.isSpent,
-        isSwept: vtxo.isSwept,
-        isPreconfirmed: vtxo.isPreconfirmed,
-        commitmentTxIds: vtxo.commitmentTxids,
-        ...expiry,
-    };
     return {
         txid: vtxo.outpoint.txid,
         vout: vtxo.outpoint.vout,
@@ -219,8 +137,11 @@ export function convertVtxo(vtxo: Vtxo): NormalizedVirtualCoin {
             confirmed: !vtxo.isSwept && !vtxo.isPreconfirmed,
             isLeaf: !vtxo.isPreconfirmed,
         },
-        ...facts,
-        virtualStatus: toVirtualStatus(facts),
+        isSpent: vtxo.isSpent,
+        isSwept: vtxo.isSwept,
+        isPreconfirmed: vtxo.isPreconfirmed,
+        commitmentTxIds: vtxo.commitmentTxids,
+        ...expiry,
         spentBy: vtxo.spentBy ?? "",
         settledBy: vtxo.settledBy,
         arkTxId: vtxo.arkTxid,
@@ -403,14 +324,7 @@ export function canSweepOnchain(vtxo: VirtualCoin): boolean {
 
 // --- fee estimation ----------------------------------------------------------------------------
 
-/**
- * The `OffchainInput` fields that come from the VTXO itself, shared by every offchain fee estimate.
- *
- * @remarks
- * `expiry` goes through {@link toBatchExpiry} so the estimator keeps seeing exactly what the legacy
- * `batchExpiry` path fed it. Correcting the height case here would move fees, which is out of
- * scope.
- */
+/** The `OffchainInput` fields that come from the VTXO itself. */
 export function toOffchainInputFeeParams(vtxo: NormalizedVirtualCoin): {
     amount: bigint;
     type: "recoverable" | "vtxo";
@@ -418,13 +332,12 @@ export function toOffchainInputFeeParams(vtxo: NormalizedVirtualCoin): {
     birth: Date;
     expiry: Date | undefined;
 } {
-    const batchExpiry = toBatchExpiry(vtxo);
     return {
         amount: BigInt(vtxo.value),
         type: vtxo.isSwept ? "recoverable" : "vtxo",
         weight: 0,
         birth: vtxo.createdAt,
-        expiry: batchExpiry ? new Date(batchExpiry) : undefined,
+        expiry: vtxo.expiresAt,
     };
 }
 
@@ -446,50 +359,4 @@ export function isVirtualCoin<T>(input: T): input is T & VirtualCoin {
         input !== null &&
         typeof (input as { script?: unknown }).script === "string"
     );
-}
-
-// --- deprecated compatibility wrappers ---------------------------------------------------------
-
-/**
- * Return whether a virtual output is still spendable.
- *
- * @param vtxo - virtual output to inspect
- * @returns `true` when the virtual output has not been consumed
- *
- * @deprecated Ambiguous: `true` for swept, expired or unrolled virtual outputs, none of which can
- * in fact be spent offchain. Use {@link canSpendOffchain}.
- */
-export function isSpendable(vtxo: VirtualCoin): boolean {
-    return !hasTerminalSpend(vtxo);
-}
-
-/**
- * Return whether a virtual output is recoverable.
- *
- * @param vtxo - virtual output to inspect
- * @returns `true` when the virtual output is swept but not yet consumed
- *
- * @deprecated Swept-only: ignores virtual outputs that are past expiry but not yet swept, which are
- * equally recoverable, and claims unrolled ones, which are not recoverable at all. Use
- * {@link canRecoverOnchain}.
- */
-export function isRecoverable(vtxo: VirtualCoin): boolean {
-    const n = normalizeVtxo(vtxo);
-    return n.isSwept && !hasTerminalSpend(n);
-}
-
-/**
- * Return whether a virtual output should be treated as expired.
- *
- * @param vtxo - virtual output to inspect
- * @returns `true` when the virtual output is swept or its wall-clock batch expiry has passed
- *
- * @deprecated Conflates swept with expired, and cannot evaluate height-based expiry — being
- * synchronous, it has no source for the current chain tip, so it ignores `expiresAtHeight` exactly
- * as it always has. For the recovery decision use {@link canRecoverOnchain}; to reproduce this
- * truth condition use `v.isSwept || isPastExpiry(v, now)`.
- */
-export function isExpired(vtxo: VirtualCoin): boolean {
-    const n = normalizeVtxo(vtxo);
-    return n.isSwept || (n.expiresAt !== undefined && n.expiresAt.getTime() <= Date.now());
 }

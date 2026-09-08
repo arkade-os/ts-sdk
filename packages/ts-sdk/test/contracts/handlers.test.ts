@@ -77,18 +77,7 @@ describe("resolveRole", () => {
         ).toBe("receiver");
     });
 
-    it("should fall back to walletPubKey when walletDescriptor is unresolvable", () => {
-        expect(
-            resolveRole(contract, {
-                collaborative: false,
-                currentTime: Date.now(),
-                walletDescriptor: "tr([12345678/86'/0'/0']xpubSomething/0/5)",
-                walletPubKey: senderXOnly,
-            }),
-        ).toBe("sender");
-    });
-
-    it("should return undefined when neither walletDescriptor nor walletPubKey resolves", () => {
+    it("should return undefined when walletDescriptor is unresolvable", () => {
         expect(
             resolveRole(contract, {
                 collaborative: false,
@@ -98,16 +87,13 @@ describe("resolveRole", () => {
         ).toBeUndefined();
     });
 
-    it("should not fall back to walletPubKey when walletDescriptor resolves but does not match", () => {
-        // A resolved descriptor is authoritative: if it doesn't match
-        // sender/receiver, we return undefined rather than trying walletPubKey.
+    it("should return undefined when walletDescriptor resolves but does not match", () => {
         const unrelatedXOnly = "a".repeat(64);
         expect(
             resolveRole(contract, {
                 collaborative: false,
                 currentTime: Date.now(),
                 walletDescriptor: `tr(${unrelatedXOnly})`,
-                walletPubKey: senderXOnly,
             }),
         ).toBeUndefined();
     });
@@ -703,7 +689,7 @@ describe("VHTLCContractHandler", () => {
             collaborative: false,
             currentTime: Date.now(),
             blockHeight: 105,
-            walletPubKey: receiverXOnly,
+            walletDescriptor: `tr(${receiverXOnly})`,
             vtxo,
         });
         expect(notMature).toHaveLength(0);
@@ -712,7 +698,7 @@ describe("VHTLCContractHandler", () => {
             collaborative: false,
             currentTime: Date.now(),
             blockHeight: 200,
-            walletPubKey: receiverXOnly,
+            walletDescriptor: `tr(${receiverXOnly})`,
             vtxo,
         });
         expect(mature).toHaveLength(1);
@@ -754,7 +740,7 @@ describe("VHTLCContractHandler", () => {
                 collaborative: true,
                 currentTime: Date.now(), // Unix seconds far above 800000
                 blockHeight: 799_999,
-                walletPubKey: senderXOnly,
+                walletDescriptor: `tr(${senderXOnly})`,
             });
 
             expect(paths).toHaveLength(0);
@@ -768,7 +754,7 @@ describe("VHTLCContractHandler", () => {
                 collaborative: true,
                 currentTime: Date.now(),
                 blockHeight: 800_000,
-                walletPubKey: senderXOnly,
+                walletDescriptor: `tr(${senderXOnly})`,
             });
 
             expect(paths).toHaveLength(1);
@@ -781,7 +767,7 @@ describe("VHTLCContractHandler", () => {
             const paths = VHTLCContractHandler.getSpendablePaths(script, contract, {
                 collaborative: true,
                 currentTime: Date.now(),
-                walletPubKey: senderXOnly,
+                walletDescriptor: `tr(${senderXOnly})`,
             });
 
             expect(paths).toHaveLength(0);
@@ -796,7 +782,7 @@ describe("VHTLCContractHandler", () => {
                 collaborative: true,
                 currentTime: Date.now(),
                 blockHeight: 1_000_000_000, // irrelevant for timestamp locktime
-                walletPubKey: senderXOnly,
+                walletDescriptor: `tr(${senderXOnly})`,
             });
 
             expect(paths).toHaveLength(0);
@@ -810,7 +796,7 @@ describe("VHTLCContractHandler", () => {
             const paths = VHTLCContractHandler.getSpendablePaths(script, contract, {
                 collaborative: true,
                 currentTime: Date.now(),
-                walletPubKey: senderXOnly,
+                walletDescriptor: `tr(${senderXOnly})`,
             });
 
             expect(paths).toHaveLength(1);
@@ -824,7 +810,7 @@ describe("VHTLCContractHandler", () => {
                 collaborative: true,
                 currentTime: Date.now(),
                 blockHeight: 799_999,
-                walletPubKey: senderXOnly,
+                walletDescriptor: `tr(${senderXOnly})`,
             });
             expect(before).toBeNull();
 
@@ -832,7 +818,7 @@ describe("VHTLCContractHandler", () => {
                 collaborative: true,
                 currentTime: Date.now(),
                 blockHeight: 800_001,
-                walletPubKey: senderXOnly,
+                walletDescriptor: `tr(${senderXOnly})`,
             });
             expect(after).not.toBeNull();
             expect(after?.leaf).toBeDefined();

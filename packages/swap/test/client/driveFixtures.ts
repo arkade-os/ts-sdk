@@ -187,14 +187,19 @@ export const offerFunding = (): { psbt: string; txid: string } => {
 };
 
 /** The deposit at the offer's script, in whatever state the scan should read. */
-export const offerDeposit = (txid: string, state: string): FakeVtxo => ({
+export const offerDeposit = (
+    txid: string,
+    facts: Pick<FakeVtxo, "isSwept" | "isSpent"> = {},
+): FakeVtxo => ({
     txid,
     vout: 0,
     spentBy: "",
     script: OFFER_SCRIPT,
     value: 100_000,
     createdAt: new Date(1_700_000_000_000),
-    virtualStatus: { state },
+    isSpent: false,
+    isSwept: false,
+    ...facts,
 });
 
 /** A v2 offer record. `offerHex` is never decoded by anything under test here —
@@ -280,11 +285,11 @@ export interface FakeVtxo {
     spentBy: string;
     arkTxId?: string;
     isSpent?: boolean;
+    isSwept?: boolean;
     isUnrolled?: boolean;
     script?: string;
     value?: number;
     assets?: { assetId: string; amount: bigint }[];
-    virtualStatus?: { state: string };
     createdAt?: Date;
 }
 

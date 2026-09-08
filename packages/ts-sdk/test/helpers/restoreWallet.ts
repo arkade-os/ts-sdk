@@ -5,6 +5,7 @@ import {
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    RestArkProvider,
 } from "../../src";
 import type { IndexerProvider } from "../../src/providers/indexer";
 import type { OnchainProvider } from "../../src/providers/onchain";
@@ -118,7 +119,6 @@ function makeVtxo(script: string, value: number, createdAt: Date = new Date()): 
         script,
         isUnrolled: false,
         isSpent: false,
-        virtualStatus: { state: "settled" },
     };
 }
 
@@ -279,7 +279,7 @@ export async function makeStaticWalletForTest(
     const wallet = await Wallet.create({
         identity: SingleKey.fromHex(SINGLEKEY_HEX),
         walletMode: "static",
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider("http://localhost:7070"),
         indexerProvider: indexer,
         onchainProvider: makeMockOnchain(fundedOnchain),
         storage: { walletRepository, contractRepository },
@@ -314,7 +314,7 @@ export async function makeHdWalletForTest(
             isMainnet: false,
         }),
         walletMode: "hd",
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider("http://localhost:7070"),
         indexerProvider: indexer,
         onchainProvider: makeMockOnchain(fundedOnchain),
         storage: { walletRepository, contractRepository },

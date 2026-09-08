@@ -32,20 +32,18 @@ import {
     GetVtxosFilter,
     IssuanceParams,
     IssuanceResult,
-    isExpired,
-    isRecoverable,
     isSubdust,
     IWallet,
     NewAddress,
     Recipient,
     ReissuanceParams,
-    SendBitcoinParams,
     SettleParams,
     VirtualCoin,
     WalletBalance,
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
 import {
+    canSpendOffchain,
     fetchVtxoCreatedAtByTxid,
     hasTerminalSpend,
     type NormalizedExtendedVirtualCoin,
@@ -144,24 +142,11 @@ export class DelegateNotConfiguredError extends Error {
     }
 }
 
-/** @deprecated alias for DelegateNotConfiguredError */
-export const DelegatorNotConfiguredError = DelegateNotConfiguredError;
-export type DelegatorNotConfiguredError = DelegateNotConfiguredError;
-
 export const DEFAULT_MESSAGE_TAG = "WALLET_UPDATER";
 
 export type RequestInitWallet = RequestEnvelope & {
     type: "INIT_WALLET";
     payload: {
-        /**
-         * Legacy per-request key material. Ignored by the current handler —
-         * identity hydration happens during INITIALIZE_MESSAGE_BUS. Retained
-         * for wire compatibility with older workers that may still read it.
-         * Slated for removal in the next major.
-         *
-         * @deprecated Identity is now carried by INITIALIZE_MESSAGE_BUS.
-         */
-        key?: { privateKey: string } | { publicKey: string } | {};
         arkServerUrl: string;
         arkServerPublicKey?: string;
     };
@@ -176,15 +161,6 @@ export type RequestSettle = RequestEnvelope & {
 };
 export type ResponseSettle = ResponseEnvelope & {
     type: "SETTLE_SUCCESS";
-    payload: { txid: string };
-};
-
-export type RequestSendBitcoin = RequestEnvelope & {
-    type: "SEND_BITCOIN";
-    payload: SendBitcoinParams;
-};
-export type ResponseSendBitcoin = ResponseEnvelope & {
-    type: "SEND_BITCOIN_SUCCESS";
     payload: { txid: string };
 };
 
@@ -837,7 +813,6 @@ export type SerializedAggregateError = {
 export type WalletUpdaterRequest =
     | RequestInitWallet
     | RequestSettle
-    | RequestSendBitcoin
     | RequestGetAddress
     | RequestGetBoardingAddress
     | RequestGetArkadeInfo
@@ -893,7 +868,6 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseInitWallet
         | ResponseSettle
         | ResponseSettleEvent
-        | ResponseSendBitcoin
         | ResponseGetAddress
         | ResponseGetBoardingAddress
         | ResponseGetArkadeInfo
@@ -1184,13 +1158,6 @@ export class WalletMessageHandler
                     });
                 }
 
-                case "SEND_BITCOIN": {
-                    const response = await this.handleSendBitcoin(message);
-                    return this.tagged({
-                        id,
-                        ...response,
-                    });
-                }
                 case "GET_ADDRESS": {
                     const address = await this.readonlyWallet.getAddress();
                     return this.tagged({
@@ -1530,14 +1497,15 @@ export class WalletMessageHandler
                     });
                 }
                 case "SEND": {
+                    const wallet = this.requireWallet();
                     const { recipients, selectedVtxos } = (message as RequestSend).payload;
                     // Object form only when the client asked for it: the
                     // variadic form is what every existing client sends, and
                     // routing it through `{ recipients }` regardless would put
                     // a behaviour change behind a protocol field nobody set.
                     const txid = await (selectedVtxos
-                        ? (this.wallet as IWallet).send({ recipients, selectedVtxos })
-                        : (this.wallet as IWallet).send(...recipients));
+                        ? wallet.send({ recipients, selectedVtxos })
+                        : wallet.send(...recipients));
                     return this.tagged({
                         id,
                         type: "SEND_SUCCESS",
@@ -1556,7 +1524,7 @@ export class WalletMessageHandler
                 }
                 case "ISSUE": {
                     const { params } = (message as RequestIssue).payload;
-                    const result = await (this.wallet as IWallet).assetManager.issue(params);
+                    const result = await this.requireWallet().assetManager.issue(params);
                     return this.tagged({
                         id,
                         type: "ISSUE_SUCCESS",
@@ -1565,7 +1533,7 @@ export class WalletMessageHandler
                 }
                 case "REISSUE": {
                     const { params } = (message as RequestReissue).payload;
-                    const txid = await (this.wallet as IWallet).assetManager.reissue(params);
+                    const txid = await this.requireWallet().assetManager.reissue(params);
                     return this.tagged({
                         id,
                         type: "REISSUE_SUCCESS",
@@ -1574,7 +1542,7 @@ export class WalletMessageHandler
                 }
                 case "BURN": {
                     const { params } = (message as RequestBurn).payload;
-                    const txid = await (this.wallet as IWallet).assetManager.burn(params);
+                    const txid = await this.requireWallet().assetManager.burn(params);
                     return this.tagged({
                         id,
                         type: "BURN_SUCCESS",
@@ -2049,18 +2017,6 @@ export class WalletMessageHandler
         return { type: "SETTLE_SUCCESS", payload: { txid } } as ResponseSettle;
     }
 
-    private async handleSendBitcoin(message: RequestSendBitcoin) {
-        const wallet = this.requireWallet();
-        const txid = await wallet.sendBitcoin(message.payload);
-        if (!txid) {
-            throw new Error("Send bitcoin failed");
-        }
-        return {
-            type: "SEND_BITCOIN_SUCCESS",
-            payload: { txid },
-        } as ResponseSendBitcoin;
-    }
-
     private async handleSignTransaction(message: RequestSignTransaction) {
         const wallet = this.requireWallet();
         const { tx, inputIndexes } = message.payload;
@@ -2148,13 +2104,7 @@ export class WalletMessageHandler
             if (dustAmount != null && isSubdust(v, dustAmount)) {
                 return false;
             }
-            if (isRecoverable(v)) {
-                return false;
-            }
-            if (isExpired(v)) {
-                return false;
-            }
-            return true;
+            return canSpendOffchain(v, { timestamp: new Date() });
         });
     }
 

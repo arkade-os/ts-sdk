@@ -138,7 +138,6 @@ describe("Cross-contract spending", () => {
         // This means offchainTapscript is a DelegateVtxo.Script.
         const wallet = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
             arkProvider,
             indexerProvider: mockIndexer,
             onchainProvider,
@@ -188,9 +187,8 @@ describe("Cross-contract spending", () => {
         // sats total, and proceeds past coin selection into the
         // transaction-building stage (which we don't fully mock here).
         const bobAddress = await wallet.getAddress();
-        const sendPromise = wallet.sendBitcoin({
-            address: bobAddress,
-            amount: 1500,
+        const sendPromise = wallet.send({
+            recipients: [{ address: bobAddress, amount: 1500 }],
         });
         await expect(sendPromise).rejects.not.toThrow("Insufficient funds");
     });

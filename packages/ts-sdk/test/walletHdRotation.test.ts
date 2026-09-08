@@ -9,6 +9,7 @@ import {
     InMemoryContractRepository,
     DefaultVtxo,
     MissingSigningDescriptorError,
+    RestArkProvider,
     buildOffchainTx,
     CSVMultisigTapscript,
     type BatchSignableIdentity,
@@ -100,7 +101,7 @@ function makeHdWallet(
         // this file exercise the HD-rotation path, so they must opt
         // in explicitly.
         walletMode: "hd",
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider("http://localhost:7070"),
         storage: {
             walletRepository: walletRepo ?? new InMemoryWalletRepository(),
             contractRepository: contractRepo ?? new InMemoryContractRepository(),
@@ -165,7 +166,7 @@ describe("Wallet HD rotation", () => {
                 identity: SingleKey.fromHex(
                     "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                 ),
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: repo,
                     contractRepository: new InMemoryContractRepository(),
@@ -789,7 +790,7 @@ describe("Wallet HD rotation", () => {
                     isMainnet: false,
                 }),
                 walletMode: "static",
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: repo,
                     contractRepository: new InMemoryContractRepository(),
@@ -824,7 +825,7 @@ describe("Wallet HD rotation", () => {
                     isMainnet: false,
                 }),
                 // walletMode intentionally omitted → defaults to 'auto'.
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: repo,
                     contractRepository: new InMemoryContractRepository(),
@@ -842,7 +843,7 @@ describe("Wallet HD rotation", () => {
                         "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                     ),
                     walletMode: "hd",
-                    arkServerUrl: "http://localhost:7070",
+                    arkProvider: new RestArkProvider("http://localhost:7070"),
                     storage: {
                         walletRepository: new InMemoryWalletRepository(),
                         contractRepository: new InMemoryContractRepository(),
@@ -863,7 +864,7 @@ describe("Wallet HD rotation", () => {
                     "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                 ),
                 walletMode: provider as never,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: repo,
                     contractRepository: new InMemoryContractRepository(),
@@ -897,7 +898,7 @@ describe("Wallet HD rotation", () => {
                         "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                     ),
                     walletMode: provider as never,
-                    arkServerUrl: "http://localhost:7070",
+                    arkProvider: new RestArkProvider("http://localhost:7070"),
                     storage: {
                         walletRepository: new InMemoryWalletRepository(),
                         contractRepository: new InMemoryContractRepository(),
@@ -1463,7 +1464,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             : (base as unknown as ReturnType<typeof makeBatchSignable>);
         const wallet = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             storage: {
                 walletRepository: new InMemoryWalletRepository(),
                 contractRepository: contractRepo ?? new InMemoryContractRepository(),
@@ -1548,7 +1549,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         const signSpy = vi.spyOn(base, "sign");
         const wallet = await Wallet.create({
             identity: base,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             storage: {
                 walletRepository: new InMemoryWalletRepository(),
                 contractRepository: new InMemoryContractRepository(),

@@ -60,27 +60,8 @@ export function resolveRole(
         return undefined;
     };
 
-    // Try the preferred descriptor first. If it cannot be resolved
-    // (for example an HD descriptor without derivation support), fall back
-    // to walletPubKey for backward compatibility.
-    if (context.walletDescriptor) {
-        const walletDescriptorKey = extractRawPubKey(context.walletDescriptor);
-        const matchedRole = matchRole(walletDescriptorKey);
-        if (matchedRole) {
-            return matchedRole;
-        }
-
-        if (!walletDescriptorKey && context.walletPubKey) {
-            return matchRole(extractRawPubKey(context.walletPubKey));
-        }
-        return undefined;
-    }
-
-    if (context.walletPubKey) {
-        return matchRole(extractRawPubKey(context.walletPubKey));
-    }
-
-    return undefined;
+    if (!context.walletDescriptor) return undefined;
+    return matchRole(extractRawPubKey(context.walletDescriptor));
 }
 
 /**

@@ -83,7 +83,7 @@ describe("HD look-ahead band composition", () => {
                     csvTimelocks: [TL_A],
                     ...opts?.deps,
                 }),
-                onPromoted: async (index) => {
+                advanceWatermark: async (index) => {
                     promoted.push(index);
                 },
             },

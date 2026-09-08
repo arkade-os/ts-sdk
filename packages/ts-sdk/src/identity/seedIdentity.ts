@@ -257,30 +257,18 @@ export class SeedIdentity implements HDCapableIdentity {
         return ReadonlyDescriptorIdentity.fromDescriptor(this.descriptor);
     }
 
-    /**
-     * Returns true when `descriptor` is derived from this identity's seed.
-     * HD descriptors match by account xpub; bare `tr(pubkey)` descriptors
-     * match by raw pubkey. See {@link descriptorIsOurs}.
-     *
-     * @deprecated Prefer `DescriptorProvider.isOurs()` via
-     * `HDDescriptorProvider` for rotating HD wallets or
-     * `StaticDescriptorProvider` for legacy single-key wallets.
-     */
-    isOurs(descriptor: string): boolean {
+    /** Returns true when `descriptor` is derived from this identity's seed. */
+    ownsDescriptor(descriptor: string): boolean {
         return descriptorIsOurs(descriptor, this.descriptor, pubSchnorr(this.derivedKey));
     }
 
     /**
      * Signs each request with the key derived from its descriptor.
-     * Each descriptor must share this identity's seed ({@link isOurs}).
-     *
-     * @deprecated Prefer `DescriptorProvider.signWithDescriptor()` via
-     * `HDDescriptorProvider` or `StaticDescriptorProvider`. Identities keep
-     * this method only as backing implementation for descriptor providers.
+     * Each descriptor must share this identity's seed ({@link ownsDescriptor}).
      */
-    async signWithDescriptor(requests: DescriptorSigningRequest[]): Promise<Transaction[]> {
+    async signDescriptorTransactions(requests: DescriptorSigningRequest[]): Promise<Transaction[]> {
         return requests.map((request) => {
-            if (!this.isOurs(request.descriptor)) {
+            if (!this.ownsDescriptor(request.descriptor)) {
                 throw new Error(
                     `Descriptor ${request.descriptor} does not belong to this identity`,
                 );
@@ -290,19 +278,13 @@ export class SeedIdentity implements HDCapableIdentity {
         });
     }
 
-    /**
-     * Signs a message with the key derived from `descriptor`.
-     *
-     * @deprecated Prefer `DescriptorProvider.signMessageWithDescriptor()` via
-     * `HDDescriptorProvider` or `StaticDescriptorProvider`. Identities keep
-     * this method only as backing implementation for descriptor providers.
-     */
-    async signMessageWithDescriptor(
+    /** Signs a message with the key derived from `descriptor`. */
+    async signDescriptorMessage(
         descriptor: string,
         message: Uint8Array,
         signatureType: "schnorr" | "ecdsa" = "schnorr",
     ): Promise<Uint8Array> {
-        if (!this.isOurs(descriptor)) {
+        if (!this.ownsDescriptor(descriptor)) {
             throw new Error(`Descriptor ${descriptor} does not belong to this identity`);
         }
         const key = this.derivePrivateKeyForDescriptor(descriptor);
@@ -318,7 +300,7 @@ export class SeedIdentity implements HDCapableIdentity {
         descriptor: string,
         messageHash: Uint8Array,
     ): Promise<Uint8Array> {
-        if (!this.isOurs(descriptor)) {
+        if (!this.ownsDescriptor(descriptor)) {
             throw new Error(`Descriptor ${descriptor} does not belong to this identity`);
         }
         const key = this.derivePrivateKeyForDescriptor(descriptor);
@@ -524,17 +506,8 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
         return bip32!.publicKey;
     }
 
-    /**
-     * Returns true when `descriptor` derives from this identity's xpub.
-     * HD descriptors match by account xpub; bare `tr(pubkey)` descriptors
-     * fall back to comparing against the index-0 x-only pubkey. See
-     * {@link descriptorIsOurs}.
-     *
-     * @deprecated Prefer `DescriptorProvider.isOurs()` via
-     * `HDDescriptorProvider` for rotating HD wallets or
-     * `StaticDescriptorProvider` for legacy single-key wallets.
-     */
-    isOurs(descriptor: string): boolean {
+    /** Returns true when `descriptor` derives from this identity's xpub. */
+    ownsDescriptor(descriptor: string): boolean {
         return descriptorIsOurs(descriptor, this.descriptor, this.indexZero.pubkey!);
     }
 }

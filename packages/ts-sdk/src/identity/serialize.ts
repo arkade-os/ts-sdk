@@ -140,50 +140,10 @@ export function hydrateIdentity(s: SerializedIdentity): Identity | ReadonlyIdent
     }
 }
 
-/**
- * Legacy untagged shape emitted by page builds prior to the tagged
- * SerializedIdentity envelope. Retained so newer workers can still accept
- * older pages during a rolling upgrade. Slated for removal in the next major.
- *
- * @deprecated Use {@link SerializedIdentity}.
- */
-export type LegacySerializedIdentity = { privateKey: string } | { publicKey: string };
-
-let warnedLegacyShape = false;
-
-/**
- * Accept either a modern {@link SerializedIdentity} envelope or a legacy
- * `{ privateKey }` / `{ publicKey }` shape and normalize to a
- * {@link SerializedIdentity}. Emits a one-time deprecation warning when a
- * legacy shape is seen.
- *
- * Intended for the worker-side boundary; new page builds always emit tagged
- * envelopes via {@link serializeSigningIdentity} /
- * {@link serializeReadonlyIdentity}.
- */
-export function normalizeSerializedIdentity(
-    shape: SerializedIdentity | LegacySerializedIdentity,
-): SerializedIdentity {
-    if ("type" in shape) {
-        assertValidSerializedIdentity(shape);
-        return shape;
-    }
-    if (!warnedLegacyShape) {
-        warnedLegacyShape = true;
-        console.warn(
-            "[ts-sdk] Received legacy serialized identity shape " +
-                "(privateKey/publicKey). Upgrade the page build to the latest " +
-                "@arkade-os/sdk — this compatibility path will be removed in " +
-                "the next major.",
-        );
-    }
-    if ("privateKey" in shape && typeof shape.privateKey === "string") {
-        return { type: "single-key", privateKey: shape.privateKey };
-    }
-    if ("publicKey" in shape && typeof shape.publicKey === "string") {
-        return { type: "readonly-single-key", publicKey: shape.publicKey };
-    }
-    throw new Error("Unrecognized serialized identity shape");
+/** Validate and return a serialized identity envelope. */
+export function normalizeSerializedIdentity(shape: SerializedIdentity): SerializedIdentity {
+    assertValidSerializedIdentity(shape);
+    return shape;
 }
 
 /**

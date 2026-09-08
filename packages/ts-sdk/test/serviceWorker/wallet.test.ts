@@ -152,7 +152,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         await ServiceWorkerReadonlyWallet.setup({
             serviceWorkerPath: "/sw.js",
             serviceWorkerActivationTimeoutMs: 30_000,
-            arkServerUrl: "https://ark.example",
+            arkServer: { url: "https://ark.example" },
             identity: {} as any,
         });
 
@@ -1277,11 +1277,11 @@ describe("in-flight request deduplication", () => {
 
     it("does not dedup state-mutating requests", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
-            if (message.type === "SEND_BITCOIN") {
+            if (message.type === "SEND") {
                 return {
                     id: message.id,
                     tag: messageTag,
-                    type: "SEND_BITCOIN_SUCCESS",
+                    type: "SEND_SUCCESS",
                     payload: { txid: "tx-" + message.id },
                 };
             }
@@ -1294,12 +1294,12 @@ describe("in-flight request deduplication", () => {
 
         const wallet = createSWWallet(serviceWorker as any, messageTag);
         await Promise.all([
-            wallet.sendBitcoin({ address: "addr", amount: 1000 }),
-            wallet.sendBitcoin({ address: "addr", amount: 1000 }),
+            wallet.send({ address: "addr", amount: 1000 }),
+            wallet.send({ address: "addr", amount: 1000 }),
         ]);
 
         const sendCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "SEND_BITCOIN",
+            ([msg]: any) => msg.type === "SEND",
         );
         expect(sendCalls).toHaveLength(2);
     });
@@ -1693,7 +1693,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1731,7 +1731,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             walletMode: "hd",
             storage: storage(),
@@ -1750,7 +1750,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             minBatchExpirySeconds: 3_600n,
             minCheckpointExitDelaySeconds: 2_048n,
@@ -1770,7 +1770,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1807,7 +1807,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1827,7 +1827,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1849,7 +1849,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1869,7 +1869,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1891,7 +1891,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1912,7 +1912,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1934,7 +1934,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1956,7 +1956,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         await expect(
             ServiceWorkerWallet.create({
                 serviceWorker: serviceWorker as any,
-                arkServerUrl: "https://ark.test",
+                arkServer: { url: "https://ark.test" },
                 identity: readonly as any,
                 storage: storage(),
             }),
@@ -2016,7 +2016,7 @@ describe("ServiceWorker identity boundary assertion", () => {
         await expect(
             ServiceWorkerWallet.create({
                 serviceWorker: serviceWorker as any,
-                arkServerUrl: "https://ark.test",
+                arkServer: { url: "https://ark.test" },
                 identity,
                 storage: storage(),
             }),
@@ -2031,7 +2031,7 @@ describe("ServiceWorker identity boundary assertion", () => {
         await expect(
             ServiceWorkerWallet.create({
                 serviceWorker: serviceWorker as any,
-                arkServerUrl: "https://ark.test",
+                arkServer: { url: "https://ark.test" },
                 identity,
                 storage: storage(),
             }),
@@ -2078,7 +2078,7 @@ describe("ServiceWorker identity boundary assertion", () => {
 
         const wallet = await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });

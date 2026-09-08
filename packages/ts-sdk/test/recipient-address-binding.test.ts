@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { Script } from "@scure/btc-signer";
-import { Wallet, SingleKey, type Recipient } from "../src";
+import { Wallet, SingleKey, RestArkProvider, type Recipient } from "../src";
 import { VtxoScript } from "../src/script/base";
 import { ArkAddress } from "../src/script/address";
 import {
@@ -245,7 +245,7 @@ describe("Wallet recipient address binding", () => {
     it("send rejects an address from another network before spending", async () => {
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
         });
         const fetchCallsAfterCreate = mockFetch.mock.calls.length;
 
@@ -255,16 +255,15 @@ describe("Wallet recipient address binding", () => {
         expect(mockFetch.mock.calls.length).toBe(fetchCallsAfterCreate);
     });
 
-    it("sendBitcoin with selected vtxos rejects a foreign-operator address", async () => {
+    it("send with selected vtxos rejects a foreign-operator address", async () => {
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
         });
 
         await expect(
-            wallet.sendBitcoin({
-                address: encodeAddr(FOREIGN_XONLY, "tark"),
-                amount: 2000,
+            wallet.send({
+                recipients: [{ address: encodeAddr(FOREIGN_XONLY, "tark"), amount: 2000 }],
                 selectedVtxos: [{ value: 100_000 } as never],
             }),
         ).rejects.toThrow(/unknown operator signer key/);
@@ -286,7 +285,7 @@ describe("Wallet recipient address binding", () => {
 
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
         });
 
         const context = (
@@ -303,7 +302,7 @@ describe("Wallet recipient address binding", () => {
     it("settle rejects a foreign offchain output with the binding error", async () => {
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
         });
 
         await expect(
@@ -349,7 +348,10 @@ describe("send with caller-selected vtxos", () => {
         ({ value, ...(assets ? { assets } : {}) }) as never;
 
     const makeWallet = () =>
-        Wallet.create({ identity: mockIdentity, arkServerUrl: "http://localhost:7070" });
+        Wallet.create({
+            identity: mockIdentity,
+            arkProvider: new RestArkProvider("http://localhost:7070"),
+        });
 
     beforeEach(() => {
         mockFetch.mockReset();
@@ -487,7 +489,10 @@ describe("send argument dispatch", () => {
     };
 
     const makeWallet = () =>
-        Wallet.create({ identity: mockIdentity, arkServerUrl: "http://localhost:7070" });
+        Wallet.create({
+            identity: mockIdentity,
+            arkProvider: new RestArkProvider("http://localhost:7070"),
+        });
 
     beforeEach(() => {
         mockFetch.mockReset();

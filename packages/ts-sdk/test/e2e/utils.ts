@@ -13,7 +13,7 @@ import {
     IntentFeeConfig,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    ArkInfo,
+    ArkadeInfo,
     ArkProvider,
     RestArkProvider,
     WalletRepository,
@@ -40,6 +40,9 @@ export const arkdExec = "docker exec -t arkd";
 // at the root path and returns HTML). Every onchain helper must use this base —
 // hitting the root path makes JSON parsing fail on the HTML frontend.
 export const ESPLORA_API_URL = "http://localhost:3000/api";
+
+/** Regtest arkd. Wallets take it as a provider — the URL is not wallet config. */
+export const ARK_URL = "http://localhost:7070";
 
 /**
  * Default budget for a shell-out. Every `execSync` here MUST carry one:
@@ -156,7 +159,7 @@ export async function createTestArkWallet(opts?: {
 
     const wallet = await Wallet.create({
         identity,
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider(ARK_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -181,7 +184,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
 
     const wallet = await Wallet.create({
         identity,
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider(ARK_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -208,7 +211,7 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
 
     const wallet = await Wallet.create({
         identity,
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider(ARK_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -255,7 +258,7 @@ export async function createTestArkWalletFromMnemonic(
         identity,
         ...(walletMode !== undefined ? { walletMode } : {}),
         ...(lookAheadWindow !== undefined ? { lookAheadWindow } : {}),
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider(ARK_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -390,7 +393,7 @@ export async function waitFor(
  */
 export function createOverrideInfoArkProvider(
     real: ArkProvider,
-    overrides: Partial<ArkInfo>,
+    overrides: Partial<ArkadeInfo>,
 ): ArkProvider {
     return new Proxy(real, {
         get(target, prop, receiver) {
@@ -413,8 +416,6 @@ export function createOverrideInfoArkProvider(
 // (`recreateArkdWallet` / `restartArkd` in
 // ../arkd/internal/test/e2e/utils_test.go), adapted to this repo's two-file,
 // profiled compose project (`arkade-regtest`) launched by `regtest.mjs`.
-
-const ARK_URL = "http://localhost:7070";
 
 export interface ServerSignerInfo {
     /** Active signer pubkey, hex exactly as arkd's `/v1/info` returns it. */
@@ -562,8 +563,7 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
     repos: SharedRepos;
     unilateralExitDelay: bigint;
 }): Promise<TestArkWallet> {
-    const arkServerUrl = "http://localhost:7070";
-    const realProvider = new RestArkProvider(arkServerUrl);
+    const realProvider = new RestArkProvider(ARK_URL);
     const arkProvider = createOverrideInfoArkProvider(realProvider, {
         unilateralExitDelay: opts.unilateralExitDelay,
         // This fixture exercises the current-signer exit-delay change only. Pin a
@@ -577,7 +577,6 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
 
     const wallet = await Wallet.create({
         identity: opts.identity,
-        arkServerUrl,
         arkProvider,
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,

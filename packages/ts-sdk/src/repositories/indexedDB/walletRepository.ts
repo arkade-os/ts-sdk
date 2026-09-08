@@ -16,6 +16,7 @@ import { awaitTransaction, deleteByIndex, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
 import { initDatabase } from "./schema";
 import { scriptFromArkAddress } from "../scriptFromAddress";
+import { legacyVtxoFacts } from "../legacyVtxoFacts";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
 
@@ -273,9 +274,29 @@ export class IndexedDBWalletRepository implements WalletRepository {
 // Post-migration every row has `script`, but the backfill is idempotent: if a
 // legacy row is ever read before the upgrade-path completes, derive `script`
 // from `address` the same way the indexer would have populated it.
+//
+// The same read-time repair covers the canonical VTXO facts. Rows here are whole objects, so a
+// row written before those facts existed still carries the legacy `virtualStatus` blob and no
+// column migration can reach it — `normalizeVtxo` no longer reads that blob, so without this a
+// swept row comes back `isSwept: false`, spendable, until the first indexer sync.
 function deserializeVtxoWithBackfill(o: SerializedVtxo & { address: string }): ExtendedVirtualCoin {
     if (!o.script) {
         o = { ...o, script: scriptFromArkAddress(o.address) };
+    }
+    if (o.isSwept === undefined && o.isPreconfirmed === undefined) {
+        const facts = legacyVtxoFacts((o as { virtualStatus?: unknown }).virtualStatus);
+        // Blanks only: a row that carries its own values keeps them, the projection being lossier.
+        if (facts) {
+            o = {
+                ...o,
+                isSpent: o.isSpent ?? facts.isSpent,
+                isSwept: facts.isSwept,
+                isPreconfirmed: facts.isPreconfirmed,
+                commitmentTxIds: o.commitmentTxIds ?? facts.commitmentTxIds,
+                expiresAt: o.expiresAt ?? facts.expiresAt,
+                expiresAtHeight: o.expiresAtHeight ?? facts.expiresAtHeight,
+            };
+        }
     }
     return deserializeVtxo(o);
 }

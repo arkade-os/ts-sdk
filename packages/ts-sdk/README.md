@@ -591,7 +591,6 @@ Access the `VtxoManager` from the wallet after configuring `settlementConfig`:
 const manager = await wallet.getVtxoManager()
 ```
 
-> **Migration from `renewalConfig`:** Directly initializing a `VtxoManager` with `renewalConfig` is still supported but deprecated. Prefer `settlementConfig` where `vtxoThreshold` is expressed in **seconds** instead of milliseconds.
 
 #### Renewal: Prevent Expiration
 
@@ -1109,72 +1108,17 @@ examples.
 
 ### Repositories (Storage)
 
-The `StorageAdapter` API is deprecated. Use repositories instead. If you omit `storage`, the SDK uses IndexedDB repositories with the default database name.
-
-#### Migration from v1 StorageAdapter
-
-> [!WARNING]
-> If you previously used the v1 `StorageAdapter`-based repositories, migrate
-> data into the new IndexedDB repositories before use:
->
-> ```typescript
-> import {
->   IndexedDBWalletRepository,
->   IndexedDBContractRepository,
->   getMigrationStatus,
->   migrateWalletRepository,
->   rollbackMigration,
-> } from '@arkade-os/sdk'
-> import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'
->
-> const oldStorage = new IndexedDBStorageAdapter('legacy-wallet', 1)
-> const newDbName = 'my-app-db'
-> const walletRepository = new IndexedDBWalletRepository(newDbName)
->
-> // Check migration status before running
-> const status = await getMigrationStatus('wallet', oldStorage)
-> // status: "not-needed" | "pending" | "in-progress" | "done"
->
-> if (status === 'pending' || status === 'in-progress') {
->   try {
->     await migrateWalletRepository(oldStorage, walletRepository, {
->       onchain: [ 'address-1', 'address-2' ],
->       offchain: [ 'onboarding-address-1' ],
->     })
->   } catch (err) {
->     // Reset migration flag so the next attempt starts clean
->     await rollbackMigration('wallet', oldStorage)
->     throw err
->   }
-> }
-> ```
->
-> **Migration status helpers:**
->
-> | Helper | Description |
-> |--------|-------------|
-> | `getMigrationStatus(repoType, adapter)` | Returns `"not-needed"` (no legacy DB), `"pending"`, `"in-progress"` (interrupted), or `"done"` |
-> | `requiresMigration(repoType, adapter)` | Returns `true` if status is `"pending"` or `"in-progress"` |
-> | `rollbackMigration(repoType, adapter)` | Removes the migration flag so migration can re-run from scratch |
-> | `MIGRATION_KEY(repoType)` | Returns the storage key used for the migration flag |
->
-> `migrateWalletRepository` sets an `"in-progress"` flag before copying data.
-> If the process crashes mid-way, the flag remains as `"in-progress"` so the
-> next call to `getMigrationStatus` can detect the partial migration. Old data
-> is never deleted — re-running migration after a rollback is safe.
->
-> Anything related to contract repository migration must be handled by the
-> package that created the contracts. The SDK doesn't manage external contracts
-> in V1; data persisted by other packages remains untouched in its original
-> location.
+Use repository implementations via `StorageConfig`. If you omit `storage`, the
+SDK uses IndexedDB repositories with the default database name.
 
 #### Repository Versioning
 
-`WalletRepository`, `ContractRepository`, and `AssetSwapRepository` (in
-`@arkade-os/swap`) each declare a `readonly version` field with a literal
-type. All built-in implementations set this to the current version. If you
-maintain a custom repository implementation, TypeScript will produce a compile
-error when the version is bumped, signaling that a semantic update is required:
+`WalletRepository`, `ContractRepository`, `IntentRepository`,
+`VirtualTxRepository`, and `AssetSwapRepository` (in `@arkade-os/swap`) each
+declare a `readonly version` field with a literal type. All built-in
+implementations set this to the current version. If you maintain a custom
+repository implementation, TypeScript will produce a compile error when the
+version is bumped, signaling that a semantic update is required:
 
 ```typescript
 import { WalletRepository } from '@arkade-os/sdk'
@@ -1283,6 +1227,7 @@ const wallet = await Wallet.create({
 })
 ```
 
+### Using with Node.js
 ### Using with Node.js
 
 Node.js does not provide a global `EventSource` implementation (24.x has one behind `--experimental-eventsource`). The SDK relies on `EventSource` for Server-Sent Events during settlement (onboarding/offboarding) and contract watching, so tell it which one to use:
@@ -1406,7 +1351,7 @@ When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it
 
 HD wallets (`walletMode: 'hd'`, or an explicit HD `DescriptorProvider`) also watch a band of *unused* offchain receive scripts around their allocation watermark, so a payment to an address that some other party issued from the same seed — a merchant backend such as BTCPay Server, or the .NET SDK driving the same wallet — arrives without the user calling `restore()`. `lookAheadWindow` (default `20`) is the per-side width of that band: the wallet watches `[watermark - N, watermark + N]`. Speculative entries are subscription-only; they become contract rows, and enter balances, only once funded.
 
-The issuer, not the wallet, picks the contract shape, so each index is watched at *every* variant the wallet could own there: `default` and `delegate`, crossed with the unilateral-exit timelock matrix and the operator's current plus deprecated signers. That is the candidate set `restore()` probes too, so watching and restoring cover identical scripts.
+The issuer, not the wallet, picks the contract shape, so each index is watched at *every* variant the wallet could own there: `default` and `delegate`, crossed with the unilateral-exit timelock matrix and the operator's active plus retired signers. That is the candidate set `restore()` probes too, so watching and restoring cover identical scripts.
 
 ```typescript
 const wallet = await Wallet.create({
@@ -1471,7 +1416,7 @@ const paths = manager.getSpendablePaths({
   contractScript: contract.script,
   vtxo,
   collaborative: true,
-  walletPubKey: myPubKey,
+  walletDescriptor: myDescriptor,
 })
 if (paths.length > 0) {
   console.log('Contract is spendable via:', paths[0].leaf)
@@ -1481,7 +1426,7 @@ if (paths.length > 0) {
 const allPaths = await manager.getAllSpendingPaths({
   contractScript: contract.script,
   collaborative: true,
-  walletPubKey: myPubKey,
+  walletDescriptor: myDescriptor,
 })
 
 // Fetch contracts together with their current virtual outputs

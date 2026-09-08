@@ -190,11 +190,6 @@ writeFileSync(
 // wallet/expo/background is intentionally absent — see section 6.
 const nodeSafe = [
     ".",
-    "./adapters/expo",
-    "./adapters/localStorage",
-    "./adapters/fileSystem",
-    "./adapters/indexedDB",
-    "./adapters/asyncStorage",
     "./repositories/sqlite",
     "./repositories/realm",
     "./worker/expo",

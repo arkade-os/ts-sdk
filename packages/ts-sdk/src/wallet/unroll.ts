@@ -388,7 +388,6 @@ export async function prepareUnrollTransaction(
             vtxo,
             scriptHex: hex.encode(VtxoScript.decode(vtxo.tapTree).pkScript),
             contractRepository: wallet.contractRepository,
-            walletPubKeyHex: hex.encode((await wallet.identity.xOnlyPublicKey())!),
             currentTime: Date.now(),
         });
         const spendingLeaf = resolved.selection.leaf;

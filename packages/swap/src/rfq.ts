@@ -123,11 +123,6 @@ export const ONCHAIN_BTC = "onchain:BTC";
  */
 export const arkadeAssetLeg = (id: asset.AssetId): string => `arkade:${id.toString()}`;
 
-/** @deprecated The coarse asset leg. No solver serves it: `ASSET` is neither a
- * registered ticker nor a 68-hex asset id, so a solver's market-key derivation
- * throws on it. Use {@link arkadeAssetLeg}. Removed next major. */
-export const ARKADE_ASSET = "arkade:ASSET";
-
 export const rfqPair = (from: string, to: string): string => `${from}->${to}`;
 
 /** The implemented pair: pay a BOLT11 invoice out of an Arkade balance.

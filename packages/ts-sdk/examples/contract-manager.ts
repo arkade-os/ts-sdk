@@ -17,6 +17,8 @@
 import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    EsploraProvider,
+    RestArkProvider,
     SingleKey,
     Wallet,
     VHTLC,
@@ -62,8 +64,8 @@ async function main() {
     console.log("Creating Alice's wallet...");
     const aliceWallet = await Wallet.create({
         identity: alice,
-        esploraUrl: "http://localhost:3000/api",
-        arkServerUrl: "http://localhost:7070",
+        onchainProvider: new EsploraProvider("http://localhost:3000/api"),
+        arkProvider: new RestArkProvider("http://localhost:7070"),
         storage,
         // force refresh in 2s at most for the example to run quickly
         watcherConfig: { failsafePollIntervalMs: 2000 },

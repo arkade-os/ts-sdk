@@ -167,19 +167,19 @@ describe("descriptorIsOurs", () => {
     const other = SeedIdentity.fromSeed(otherSeed, { isMainnet: true });
 
     it("matches descriptors at any index from the same xpub", () => {
-        // SeedIdentity.isOurs delegates to descriptorIsOurs; using it as
+        // SeedIdentity.ownsDescriptor delegates to descriptorIsOurs; using it as
         // the entry point keeps us from having to expose the private
         // accountXpub field just to test the helper.
         const template = us.descriptor;
         for (const index of [0, 1, 7, 1024]) {
             const concrete = template.replace("/*)", `/${index})`);
-            expect(us.isOurs(concrete)).toBe(true);
+            expect(us.ownsDescriptor(concrete)).toBe(true);
         }
-        expect(us.isOurs(template)).toBe(true);
+        expect(us.ownsDescriptor(template)).toBe(true);
     });
 
     it("rejects descriptors derived from a different seed", () => {
-        expect(us.isOurs(other.descriptor)).toBe(false);
+        expect(us.ownsDescriptor(other.descriptor)).toBe(false);
     });
 
     it("matches a bare tr(pubkey) candidate against the cached x-only pubkey", () => {

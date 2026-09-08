@@ -17,6 +17,10 @@ const TEST_MNEMONIC =
 
 const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, { isMainnet: false });
 const descriptorAt = (index: number) => identity.descriptor.replace("/*)", `/${index})`);
+const descriptorSigner = {
+    signWithDescriptor: identity.signDescriptorTransactions.bind(identity),
+    signMessageWithDescriptor: identity.signDescriptorMessage.bind(identity),
+};
 
 /** The key the descriptor's index resolves to, straight from the seed. */
 function seedKeyAt(index: number): { privateKey: Uint8Array; publicKey: Uint8Array } {
@@ -44,7 +48,7 @@ describe("DescriptorIdentity", () => {
     const at = (index: number) =>
         new DescriptorIdentity({
             descriptor: descriptorAt(index),
-            signer: identity,
+            signer: descriptorSigner,
             base: identity,
         });
 
@@ -104,7 +108,7 @@ describe("DescriptorIdentity", () => {
     it("throws when the base identity cannot sign deterministically", async () => {
         const adapter = new DescriptorIdentity({
             descriptor: descriptorAt(1),
-            signer: identity,
+            signer: descriptorSigner,
             base: { ...identity, signSchnorrDeterministicWithDescriptor: undefined } as any,
         });
         await expect(adapter.signSchnorrDeterministic(new Uint8Array(32))).rejects.toThrow(
@@ -119,7 +123,7 @@ describe("DescriptorIdentity", () => {
         );
         const adapter = new DescriptorIdentity({
             descriptor: foreign.descriptor.replace("/*)", "/0)"),
-            signer: identity,
+            signer: descriptorSigner,
             base: identity,
         });
         await expect(adapter.signMessage(new Uint8Array(32))).rejects.toThrow(
