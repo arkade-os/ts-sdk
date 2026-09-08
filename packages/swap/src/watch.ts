@@ -34,9 +34,10 @@
 import { base64, hex } from "@scure/base";
 import {
     ArkAddress,
+    isContractVtxoEvent,
     Transaction,
-    type ContractEvent,
     type ContractVtxo,
+    type ContractVtxoEvent,
     type IWallet,
 } from "@arkade-os/sdk";
 import { RETIRABLE, retireOfferContract } from "./coverage";
@@ -239,7 +240,7 @@ export async function watchOfferSwaps<S extends OfferSwapFacts>({
         }
     };
 
-    const handleSpend = async (event: Extract<ContractEvent, { type: "vtxo_spent" }>) => {
+    const handleSpend = async (event: Extract<ContractVtxoEvent, { type: "vtxo_spent" }>) => {
         if (event.contract.metadata?.kind !== OFFER_CONTRACT_KIND) return;
 
         for (const vtxo of event.vtxos) {
@@ -278,7 +279,8 @@ export async function watchOfferSwaps<S extends OfferSwapFacts>({
     };
 
     const unsubscribe = manager.onContractEvent((event) => {
-        if (event.type !== "vtxo_spent") return;
+        // An offer is an owned contract; a watched script has no `metadata`.
+        if (!isContractVtxoEvent(event) || event.type !== "vtxo_spent") return;
         enqueue(() => handleSpend(event));
     });
 

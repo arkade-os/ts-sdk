@@ -2338,15 +2338,15 @@ describe("VtxoManager - Renewal loop prevention", () => {
 
         expect(eventHandler).toBeDefined();
 
-        // First vtxo_received triggers renewVtxos
-        eventHandler!({ type: "vtxo_received", vtxos: [] });
+        // First vtxo_received triggers renewVtxos. `contract` marks it as ours.
+        eventHandler!({ type: "vtxo_received", vtxos: [], contract: {} });
         await flushMicrotasks();
 
         // settle() was called once
         expect(wallet.settle).toHaveBeenCalledTimes(1);
 
         // Second vtxo_received while first renewal in flight → should be skipped
-        eventHandler!({ type: "vtxo_received", vtxos: [] });
+        eventHandler!({ type: "vtxo_received", vtxos: [], contract: {} });
         await flushMicrotasks();
 
         // Still only one settle call
@@ -2355,6 +2355,48 @@ describe("VtxoManager - Renewal loop prevention", () => {
         // Complete the first renewal
         resolveSettle("mock-txid");
         await flushMicrotasks();
+    });
+
+    it("does not renew on a watch-only event", async () => {
+        const now = Date.now();
+        const vtxos = [
+            {
+                txid: "tx1",
+                vout: 0,
+                value: 5000,
+                createdAt: new Date(now - 100_000),
+                virtualStatus: { state: "settled", batchExpiry: now + 5000 },
+                status: { confirmed: true },
+                isUnrolled: false,
+                isSpent: false,
+            } as any,
+        ];
+
+        let eventHandler: ((event: any) => void) | undefined;
+        const contractManager = {
+            onContractEvent: vi.fn().mockImplementation((handler) => {
+                eventHandler = handler;
+                return () => {};
+            }),
+            refreshOutpoints: vi.fn().mockResolvedValue(undefined),
+        };
+
+        const wallet = createMockWallet(vtxos, "arkade1myaddress", { contractManager });
+        (wallet.settle as any).mockResolvedValue("mock-txid");
+
+        new VtxoManager(wallet, undefined, {});
+        await flushMicrotasks();
+        await flushMicrotasks();
+        await flushMicrotasks();
+
+        expect(eventHandler).toBeDefined();
+
+        // Same type as an owned receive, no contract: must not make us settle.
+        eventHandler!({ type: "vtxo_received", vtxos: [], contractScript: "5120ff" });
+        await flushMicrotasks();
+        await flushMicrotasks();
+
+        expect(wallet.settle).not.toHaveBeenCalled();
     });
 
     it("should suppress renewal during cooldown after successful renewal", async () => {
@@ -2398,7 +2440,7 @@ describe("VtxoManager - Renewal loop prevention", () => {
         expect(eventHandler).toBeDefined();
 
         // First vtxo_received triggers renewal successfully
-        eventHandler!({ type: "vtxo_received", vtxos: [] });
+        eventHandler!({ type: "vtxo_received", vtxos: [], contract: {} });
         await flushMicrotasks();
         await flushMicrotasks();
 
@@ -2406,7 +2448,7 @@ describe("VtxoManager - Renewal loop prevention", () => {
 
         // Immediately after, another vtxo_received (from our own settlement output)
         // should be suppressed by the cooldown
-        eventHandler!({ type: "vtxo_received", vtxos: [] });
+        eventHandler!({ type: "vtxo_received", vtxos: [], contract: {} });
         await flushMicrotasks();
         await flushMicrotasks();
 
@@ -2464,7 +2506,7 @@ describe("VtxoManager - Renewal loop prevention", () => {
 
             // First call → settle throws, but flag is cleared and the cooldown
             // is armed in the finally block (lastRenewalTimestamp = now).
-            eventHandler!({ type: "vtxo_received", vtxos: [] });
+            eventHandler!({ type: "vtxo_received", vtxos: [], contract: {} });
             await flushMicrotasks();
             await flushMicrotasks();
 
@@ -2475,7 +2517,7 @@ describe("VtxoManager - Renewal loop prevention", () => {
             // transient settle failure would re-trigger renewal on every
             // incoming vtxo_received event.
             nowSpy.mockReturnValue(baseNow + 5_000);
-            eventHandler!({ type: "vtxo_received", vtxos: [] });
+            eventHandler!({ type: "vtxo_received", vtxos: [], contract: {} });
             await flushMicrotasks();
             await flushMicrotasks();
 
@@ -2485,7 +2527,7 @@ describe("VtxoManager - Renewal loop prevention", () => {
             // actually cleared in the finally block (otherwise renewal would
             // stay blocked forever).
             nowSpy.mockReturnValue(baseNow + 31_000);
-            eventHandler!({ type: "vtxo_received", vtxos: [] });
+            eventHandler!({ type: "vtxo_received", vtxos: [], contract: {} });
             await flushMicrotasks();
             await flushMicrotasks();
 
@@ -3738,7 +3780,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
 
             expect(eventHandler).toBeDefined();
 
-            eventHandler!({ type: "vtxo_received", vtxos: [] });
+            eventHandler!({ type: "vtxo_received", vtxos: [], contract: {} });
 
             await flushMicrotasks();
             await flushMicrotasks();

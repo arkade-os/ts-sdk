@@ -18,7 +18,9 @@ import {
     PathContext,
     PathSelection,
     ExtendedContractVtxo,
+    WatchedScript,
     hasCandidates,
+    isContractVtxoEvent,
     isDiscoverable,
     watchStateOf,
 } from "./types";
@@ -543,6 +545,39 @@ export interface IContractManager extends Disposable {
      *   `handlerErrors` *after* the inline VTXO pull.
      */
     scanContracts(opts: ScanContractsOptions): Promise<ScanResult>;
+
+    /**
+     * Report VTXO activity at `script` without registering it as a contract,
+     * and without the wallet owning it. Activity arrives as
+     * {@link ContractEvent} `vtxo_received` / `vtxo_spent` without the
+     * `contract` — narrow with {@link isContractVtxoEvent};
+     * nothing is persisted and the outputs never enter the wallet's balance,
+     * renewal or recovery paths.
+     *
+     * At-least-once, and re-announces on restart — the registration is
+     * in-memory, so there is no baseline to diff a restart against.
+     * Deduplicate by outpoint, and tolerate a `vtxo_spent` with no
+     * preceding `vtxo_received` — an output can be created and spent
+     * inside one gap in the stream. Re-registering a watched script is a
+     * no-op, so a caller may re-derive its whole set on a timer.
+     *
+     * Reports **spendable** outputs: a preconfirmed one counts, so a fresh
+     * funding is not missed, but one already recoverable or swept is not
+     * reported.
+     *
+     * Optional so adding it does not break an embedder with its own
+     * `IContractManager`; both shipped implementations provide it for real.
+     */
+    watchScript?(script: string, options?: { label?: string }): Promise<void>;
+
+    /** Stop watching a script registered via {@link watchScript}. */
+    unwatchScript?(script: string): Promise<void>;
+
+    /**
+     * Every script registered via {@link watchScript}. Async for the same
+     * reason {@link isWatching} is: a service worker answers over the bus.
+     */
+    getWatchedScripts?(): Promise<WatchedScript[]>;
 
     /**
      * Whether the underlying watcher is currently active.
@@ -2082,6 +2117,21 @@ export class ContractManager implements IContractManager {
         return this.watcher.isCurrentlyWatching();
     }
 
+    /** @see IContractManager.watchScript */
+    async watchScript(script: string, options?: { label?: string }): Promise<void> {
+        await this.watcher.addWatchedScript(script, options);
+    }
+
+    /** @see IContractManager.unwatchScript */
+    async unwatchScript(script: string): Promise<void> {
+        await this.watcher.removeWatchedScript(script);
+    }
+
+    /** @see IContractManager.getWatchedScripts */
+    async getWatchedScripts(): Promise<WatchedScript[]> {
+        return this.watcher.getWatchedScripts();
+    }
+
     /**
      * Emit an event to all registered callbacks.
      */
@@ -2113,11 +2163,15 @@ export class ContractManager implements IContractManager {
         try {
             switch (event.type) {
                 // Delta-sync only the changed virtual outputs for this contract.
+                // The guard below is the ownership boundary: a watch-only script
+                // reports these same types, so it must precede `syncContracts`.
                 case "vtxo_received":
+                    if (!isContractVtxoEvent(event)) break;
                     await this.syncContracts({ contracts: [event.contract] });
                     this.markSyncOnline();
                     break;
                 case "vtxo_spent":
+                    if (!isContractVtxoEvent(event)) break;
                     await this.syncContracts({ contracts: [event.contract] });
                     this.markSyncOnline();
                     if (this.config.onVtxosSpent) {

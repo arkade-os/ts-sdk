@@ -496,7 +496,7 @@ import {
     isArkContract,
 } from "./contracts/arkcontract";
 import type { ParsedArkContract } from "./contracts/arkcontract";
-import { hasCandidates, isDiscoverable } from "./contracts/types";
+import { hasCandidates, isContractVtxoEvent, isDiscoverable } from "./contracts/types";
 import {
     isContractGenericallySpendable,
     gatedContracts,
@@ -513,9 +513,11 @@ import type {
     ContractState,
     ContractEvent,
     ContractEventCallback,
+    ContractVtxoEvent,
     ContractBalance,
     ContractWithVtxos,
     ContractHandler,
+    WatchedScript,
     PathSelection,
     PathContext,
     ExtendedContractVtxo,
@@ -833,6 +835,7 @@ export {
     isArkContract,
     isDiscoverable,
     hasCandidates,
+    isContractVtxoEvent,
     // Contract handler authoring helpers (spending-path selection)
     isCsvSpendable,
     isCltvSatisfied,
@@ -1023,10 +1026,12 @@ export type {
     ContractState,
     ContractEvent,
     ContractEventCallback,
+    ContractVtxoEvent,
     ContractBalance,
     ContractWithVtxos,
     ContractHandler,
     IContractManager,
+    WatchedScript,
     PathSelection,
     ExtendedContractVtxo,
     PathContext,

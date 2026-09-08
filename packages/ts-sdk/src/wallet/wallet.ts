@@ -174,7 +174,13 @@ import {
 } from "./hdWalletCapable";
 import { deriveDescriptorLeafPubKey, identityDescriptor } from "../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
-import { CandidateDeps, Contract, ContractWithVtxos, DiscoveryDeps } from "../contracts/types";
+import {
+    CandidateDeps,
+    Contract,
+    ContractWithVtxos,
+    DiscoveryDeps,
+    isContractVtxoEvent,
+} from "../contracts/types";
 import {
     gateExclusion,
     gatedContracts,
@@ -1966,7 +1972,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             let annotationQueue: Promise<void> = Promise.resolve();
 
             indexerStopFunc = cm.onContractEvent((event) => {
-                if (event.type !== "vtxo_received" && event.type !== "vtxo_spent") {
+                if (!isContractVtxoEvent(event)) {
                     return;
                 }
                 if (event.contract.type !== "default" && event.contract.type !== "delegate") {
