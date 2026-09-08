@@ -119,7 +119,6 @@ function makeVtxo(script: string, value: number, createdAt: Date = new Date()): 
         script,
         isUnrolled: false,
         isSpent: false,
-        virtualStatus: { state: "settled" },
     };
 }
 

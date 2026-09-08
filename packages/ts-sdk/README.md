@@ -1111,6 +1111,123 @@ examples.
 Use repository implementations via `StorageConfig`. If you omit `storage`, the
 SDK uses IndexedDB repositories with the default database name.
 
+#### Repository Versioning
+
+`WalletRepository`, `ContractRepository`, `IntentRepository`,
+`VirtualTxRepository`, and `AssetSwapRepository` (in `@arkade-os/swap`) each
+declare a `readonly version` field with a literal type. All built-in
+implementations set this to the current version. If you maintain a custom
+repository implementation, TypeScript will produce a compile error when the
+version is bumped, signaling that a semantic update is required:
+
+```typescript
+import { WalletRepository } from '@arkade-os/sdk'
+
+class MyWalletRepository implements WalletRepository {
+  readonly version = 1 // must match the interface's literal type
+  // ...
+}
+```
+
+#### SQLite Repository (Node.js / React Native)
+
+For Node.js or React Native environments, use the SQLite repository with any
+SQLite driver. The SDK accepts a `SQLExecutor` interface — you provide the
+driver, the SDK handles the schema.
+
+See [examples/node/multiple-wallets.ts](examples/node/multiple-wallets.ts) for
+a full working example using `better-sqlite3`.
+
+```typescript
+import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
+import { SQLiteWalletRepository, SQLiteContractRepository, SQLExecutor } from '@arkade-os/sdk/repositories/sqlite'
+import Database from 'better-sqlite3'
+
+const db = new Database('my-wallet.sqlite')
+db.pragma('journal_mode = WAL')
+
+const executor: SQLExecutor = {
+  run: async (sql, params) => { db.prepare(sql).run(...(params ?? [])) },
+  get: async (sql, params) => db.prepare(sql).get(...(params ?? [])) as any,
+  all: async (sql, params) => db.prepare(sql).all(...(params ?? [])) as any,
+}
+
+const wallet = await Wallet.create({
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+  storage: {
+    walletRepository: new SQLiteWalletRepository(executor),
+    contractRepository: new SQLiteContractRepository(executor),
+  },
+})
+```
+
+#### Realm Repository (React Native)
+
+For React Native apps using Realm, pass your Realm instance directly:
+
+```typescript
+import {
+  RealmWalletRepository,
+  RealmContractRepository,
+  ArkRealmSchemas,
+  ARK_REALM_SCHEMA_VERSION,
+  runArkRealmMigrations,
+} from '@arkade-os/sdk/repositories/realm'
+
+const realm = await Realm.open({
+  schema: [...ArkRealmSchemas, ...yourSchemas],
+  schemaVersion: Math.max(ARK_REALM_SCHEMA_VERSION, yourSchemaVersion),
+  onMigration: (oldRealm, newRealm) => {
+    runArkRealmMigrations(oldRealm, newRealm)
+    // your own migrations
+  },
+})
+const wallet = await Wallet.create({
+  identity,
+  storage: {
+    walletRepository: new RealmWalletRepository(realm),
+    contractRepository: new RealmContractRepository(realm),
+  },
+})
+```
+
+#### IndexedDB Repository (Browser)
+
+In the browser, the SDK defaults to IndexedDB repositories when no `storage`
+is provided:
+
+```typescript
+import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
+
+const wallet = await Wallet.create({
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+  // Uses IndexedDB by default in the browser
+})
+```
+
+If you want a custom database name or a different repository implementation,
+pass `storage` explicitly.
+
+For ephemeral storage (no persistence), pass the in-memory repositories:
+
+```typescript
+import {
+  MnemonicIdentity,
+  Wallet,
+  InMemoryWalletRepository,
+  InMemoryContractRepository
+} from '@arkade-os/sdk'
+
+const wallet = await Wallet.create({
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+  storage: {
+    walletRepository: new InMemoryWalletRepository(),
+    contractRepository: new InMemoryContractRepository()
+  }
+})
+```
+
+### Using with Node.js
 ### Using with Node.js
 
 Node.js does not provide a global `EventSource` implementation (24.x has one behind `--experimental-eventsource`). The SDK relies on `EventSource` for Server-Sent Events during settlement (onboarding/offboarding) and contract watching, so tell it which one to use:

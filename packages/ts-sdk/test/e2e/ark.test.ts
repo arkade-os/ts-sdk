@@ -560,7 +560,9 @@ describe("Common", () => {
                 expect(exits.length).toBeGreaterThan(0);
 
                 const txStatus = await alice.wallet.onchainProvider.getTxStatus(unrolled.txid);
-                expect(txStatus.confirmed).toBe(true);
+                // `expect` does not narrow, and the unconfirmed arm carries no
+                // block fields — assert through the guard so it does.
+                if (!txStatus.confirmed) throw new Error("unroll tx is not confirmed");
 
                 // Keep this aligned with availableExitPath() selection logic,
                 // which currently returns the first mature exit path.
@@ -656,7 +658,9 @@ describe("Common", () => {
                 expect(exits.length).toBeGreaterThan(0);
 
                 const txStatus = await alice.wallet.onchainProvider.getTxStatus(unrolled.txid);
-                expect(txStatus.confirmed).toBe(true);
+                // `expect` does not narrow, and the unconfirmed arm carries no
+                // block fields — assert through the guard so it does.
+                if (!txStatus.confirmed) throw new Error("unroll tx is not confirmed");
 
                 // Keep this aligned with availableExitPath() selection logic,
                 // which currently returns the first mature exit path.
@@ -1199,7 +1203,9 @@ describe("Delegate", () => {
 
         const delegateManager = await alice.wallet.getDelegateManager();
         await delegateManager?.delegate(
-            [vtxoBeforeDelegate],
+            // `delegate` takes ContractVtxo; the wallet's own read does not carry
+            // `contractScript`, so name it the way the worker handler does.
+            [{ ...vtxoBeforeDelegate, contractScript: vtxoBeforeDelegate.script }],
             await alice.wallet.getAddress(),
             new Date(Date.now() + 1000),
         );
