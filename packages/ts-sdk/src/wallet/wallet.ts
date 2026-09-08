@@ -182,6 +182,9 @@ import {
 import {
     gateExclusion,
     gatedContracts,
+    gatedFrom,
+    isGatedVtxo,
+    type GatedContracts,
     logExcludedVtxos,
     outpointExclusion,
     type VtxoExclusion,
@@ -1293,7 +1296,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const vtxos = filterSnapshotVtxos(snapshot, filter, this._pendingSpendOutpoints);
         const { gated, pendingRecovery } = this.spendabilityView(snapshot);
         const selectable = vtxos.filter(
-            (vtxo) => !gated.has(vtxo.script) && !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
+            (vtxo) =>
+                !isGatedVtxo(vtxo, gated) && !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
         );
         const unlocked = await spendableVtxosExcludingLocked(selectable, this.intentRepository);
         logExcludedVtxos("getSpendableVtxos", vtxos, [
@@ -1420,11 +1424,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * {@link getSpendableVtxos} and the balance answer about the same instant.
      */
     private spendabilityView(snapshot: readonly ContractWithVtxos[]): {
-        gated: ReturnType<typeof gatedContracts>;
+        gated: GatedContracts;
         pendingRecovery: ReadonlySet<string>;
     } {
         return {
-            gated: gatedContracts(snapshot.map((_) => _.contract)),
+            gated: gatedFrom(snapshot),
             pendingRecovery: this.selectPendingRecovery(snapshot),
         };
     }
@@ -1445,7 +1449,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             now: { timestamp: new Date() },
             dust: this.dustAmount,
             isPendingRecovery: (vtxo) => pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
-            isGenericallySpendable: (vtxo) => !gated.has(vtxo.script),
+            isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
         };
     }
@@ -1489,22 +1493,28 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Return wallet transaction history derived from Arkade state and boarding transactions.
      */
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const contractManager = await this.getContractManager();
-        const response = await contractManager.getContractsWithVtxos();
-        const allVtxos = response.flatMap((_) => _.vtxos);
-
-        const { boardingTxs, commitmentsToIgnore } = await this.getBoardingTxs();
+        // Independent: one syncs against the indexer, the other reads the
+        // onchain provider. `getBalance` pairs its two reads the same way.
+        const [snapshot, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
+            this.contractSnapshot(),
+            this.getBoardingTxs(),
+        ]);
+        const allVtxos = snapshot.flatMap((_) => _.vtxos);
 
         // Best-effort: a retryable indexer failure yields a partial map, not a
         // failed read; terminal failures still propagate.
         const resolveTxCreatedAt = (txids: string[]) =>
             fetchVtxoCreatedAtByTxid(this.indexerProvider, txids);
 
+        // The gate off the same snapshot the coins came from, so both answer
+        // about one instant — see `buildTransactionHistory`'s `gatedScripts` for
+        // why history needs it at all.
         return buildTransactionHistory(
             allVtxos,
             boardingTxs,
             commitmentsToIgnore,
             resolveTxCreatedAt,
+            gatedFrom(snapshot),
         );
     }
 

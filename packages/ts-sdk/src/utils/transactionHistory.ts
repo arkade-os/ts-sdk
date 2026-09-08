@@ -1,9 +1,59 @@
 import { ArkTransaction, Asset, BuiltinTxTag, TxKey, TxType, VirtualCoin } from "../wallet";
 import { normalizeVtxo, type NormalizedVirtualCoin } from "../wallet/vtxo";
+import { isGatedVtxo, type GatedContracts } from "../contracts/spendability";
 
 type ExtendedArkTransaction = ArkTransaction & {
     tag: BuiltinTxTag;
 };
+
+/**
+ * When each transaction the wallet holds an output of was created, keyed by
+ * txid. Every coin counts, gated or not: holding *any* output of a transaction
+ * is what makes its creation time known without asking the indexer.
+ *
+ * Stating that once is what keeps the gate from complicating it. The rule is
+ * older than the gate — a spend that left change has always read its time off
+ * that change — and the partition below must not turn it into a per-partition
+ * special case, or a swap deposit with no change would be dated from the *input*
+ * coin and filed at the wrong end of the history.
+ */
+function localCreatedAtByTxid(vtxos: readonly NormalizedVirtualCoin[]): Map<string, number> {
+    const createdAt = new Map<string, number>();
+    for (const vtxo of vtxos) {
+        // Outputs of one transaction share a creation time, so the first write
+        // settles it; the caller's ascending sort makes that the earliest.
+        if (vtxo.txid && !createdAt.has(vtxo.txid)) {
+            createdAt.set(vtxo.txid, vtxo.createdAt.getTime());
+        }
+    }
+    return createdAt;
+}
+
+/**
+ * Where an Arkade transaction touched one of the wallet's gated contracts:
+ * `paidIn` holds the txids that created a gated output, `paidOut` the txids that
+ * spent one. Membership tags the row facing the contract, so a consumer can tell
+ * "into my own escrow" from "to a stranger" rather than the movement arriving
+ * unattributed.
+ *
+ * Offchain only: a gated coin settled in a batch carries `settledBy` and no
+ * `arkTxId`, so it reaches neither set and the batch or exit row facing it goes
+ * untagged. What that partition does to those arms' arithmetic is a larger gap,
+ * described where the partition happens.
+ */
+function gatedTouchpoints(gated: readonly NormalizedVirtualCoin[]): {
+    paidIn: ReadonlySet<string>;
+    paidOut: ReadonlySet<string>;
+} {
+    const paidIn = new Set<string>();
+    const paidOut = new Set<string>();
+    for (const vtxo of gated) {
+        if (vtxo.txid) paidIn.add(vtxo.txid);
+        if (vtxo.isSpent && vtxo.arkTxId) paidOut.add(vtxo.arkTxId);
+    }
+    return { paidIn, paidOut };
+}
+
 const txKey: TxKey = {
     commitmentTxid: "",
     boardingTxid: "",
@@ -65,15 +115,20 @@ function subtractAssets(spent: VirtualCoin[], change: VirtualCoin[]): Asset[] | 
 
 /**
  * Ark txids the main loop needs a `createdAt` for: spent virtual outputs whose
- * spending tx left no change output in the wallet. Exactly the loop's fetch set.
+ * spending transaction left the wallet no output to read the time off. Exactly
+ * the loop's fetch set, and exactly the complement of {@link localCreatedAtByTxid}
+ * — which is why gating history costs no extra indexer call, even though it
+ * moves a swap deposit's only local output out of the loop's own set.
  */
-function collectArkTxidsNeedingCreatedAt(vtxos: NormalizedVirtualCoin[]): string[] {
+function collectArkTxidsNeedingCreatedAt(
+    vtxos: readonly NormalizedVirtualCoin[],
+    localCreatedAt: ReadonlyMap<string, number>,
+): string[] {
     // Set, not a scan per vtxo: this runs over the whole history, and the wallets
     // that need the batching are the ones large enough for O(n²) to hurt.
-    const ownTxids = new Set(vtxos.map((v) => v.txid));
     const txids = new Set<string>();
     for (const vtxo of vtxos) {
-        if (vtxo.isSpent && vtxo.arkTxId && !ownTxids.has(vtxo.arkTxId)) {
+        if (vtxo.isSpent && vtxo.arkTxId && !localCreatedAt.has(vtxo.arkTxId)) {
             txids.add(vtxo.arkTxId);
         }
     }
@@ -89,6 +144,15 @@ function collectArkTxidsNeedingCreatedAt(vtxos: NormalizedVirtualCoin[]): string
  * @param {Set<string>} commitmentsToIgnore - A set of commitment IDs that should be excluded from processing.
  * @param resolveTxCreatedAt - Batched `createdAt` resolver, called at most once; missing txids
  * fall back to the spent output's `createdAt + 1`.
+ * @param gatedScripts - The contracts generic spending is closed on, as
+ * `gatedContracts()` returns them. Their VTXOs are read as an external
+ * counterparty: they are not the wallet's own coins, so a deposit into one is a
+ * send and its return is a receive, rather than both cancelling out as change.
+ * The rows facing them are tagged `"gated"`. It defaults to empty — every VTXO
+ * counts as the wallet's own, the behaviour that predates the gate — so that
+ * histories with no contract rows to judge, the unit suite's included, stay
+ * source-compatible. Every SDK read path passes it; a new one that means to
+ * report a wallet's own money must too.
  * @return {ExtendedArkTransaction[]} A sorted array of extended Arkade transactions, representing the transaction history.
  */
 export async function buildTransactionHistory(
@@ -96,13 +160,33 @@ export async function buildTransactionHistory(
     allBoardingTxs: ArkTransaction[],
     commitmentsToIgnore: Set<string>,
     resolveTxCreatedAt?: (txids: string[]) => Promise<Map<string, number>>,
+    gatedScripts: GatedContracts = new Map(),
 ): Promise<ExtendedArkTransaction[]> {
-    const fromOldestVtxo = vtxos
+    const normalized = vtxos
         .map(normalizeVtxo)
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 
+    const localCreatedAt = localCreatedAtByTxid(normalized);
+
+    // `getBalance`'s predicate, put to a different question. Balance asks what
+    // may be spent, and still counts a gated coin in `total`; history asks whose
+    // money moved — so a gated coin left among the wallet's own is one the
+    // history reads as the user's, which is exactly how an escrowed deposit and
+    // its return used to cancel each other out and vanish.
+    //
+    // `ownVtxos` is what every arm below cross-references, and only the two
+    // offchain arms have been reasoned about against its new, narrower
+    // membership. The batch and exit arms read it too: a gated coin settled in a
+    // batch is missing from both `forfeitVtxos` and their `changes`, so an exit
+    // row can under- or over-count and an escrow returning through a batch can
+    // produce no row at all, depending on which side of the settle it sits.
+    // Tracked in #860; this change does not interpret that corridor.
+    const gatedVtxos = normalized.filter((vtxo) => isGatedVtxo(vtxo, gatedScripts));
+    const ownVtxos = normalized.filter((vtxo) => !isGatedVtxo(vtxo, gatedScripts));
+    const { paidIn: paidIntoGated, paidOut: paidOutOfGated } = gatedTouchpoints(gatedVtxos);
+
     const txidsNeedingCreatedAt = resolveTxCreatedAt
-        ? collectArkTxidsNeedingCreatedAt(fromOldestVtxo)
+        ? collectArkTxidsNeedingCreatedAt(ownVtxos, localCreatedAt)
         : [];
     const resolvedCreatedAt =
         resolveTxCreatedAt && txidsNeedingCreatedAt.length > 0
@@ -115,7 +199,7 @@ export async function buildTransactionHistory(
     const sent: ExtendedArkTransaction[] = [];
     let received: ExtendedArkTransaction[] = [];
 
-    for (const vtxo of fromOldestVtxo) {
+    for (const vtxo of ownVtxos) {
         if (vtxo.status.isLeaf) {
             // If this virtual output is a leaf and it's not the settlement of a boarding or there's no virtual output refreshed by it,
             // it's translated into a received batch transaction
@@ -134,7 +218,7 @@ export async function buildTransactionHistory(
                             tx.key.commitmentTxid === vtxo.settledBy),
                 );
             } else if (
-                fromOldestVtxo.filter((v) => v.settledBy === vtxo.commitmentTxIds[0]).length === 0
+                ownVtxos.filter((v) => v.settledBy === vtxo.commitmentTxIds[0]).length === 0
             ) {
                 const duplicateBoardingReceive = consumeBoardingReceive(
                     unmatchedSettledBoardingTxs,
@@ -157,13 +241,16 @@ export async function buildTransactionHistory(
                     });
                 }
             }
-        } else if (fromOldestVtxo.filter((v) => v.arkTxId === vtxo.txid).length === 0) {
+        } else if (ownVtxos.filter((v) => v.arkTxId === vtxo.txid).length === 0) {
             // If this virtual output is preconfirmed and does not spend any other virtual outputs,
             // it's translated into a received offchain transaction
             const assets = collectAssets([vtxo]);
             received.push({
                 key: { ...txKey, arkTxid: vtxo.txid! },
-                tag: "offchain",
+                // The escrow paying out: a swap fill or a cancel spends the
+                // gated coin and lands the proceeds here. Nothing else about
+                // the row changes — the tag only names the counterparty.
+                tag: paidOutOfGated.has(vtxo.txid!) ? "gated" : "offchain",
                 type: TxType.TxReceived,
                 amount: vtxo.value,
                 settled: vtxo.status.isLeaf || vtxo.isSpent!,
@@ -178,11 +265,11 @@ export async function buildTransactionHistory(
         if (vtxo.isSpent) {
             // If the virtual output is spent offchain, it's translated into an offchain sent tx
             if (vtxo.arkTxId && !sent.some((s) => s.key.arkTxid === vtxo.arkTxId)) {
-                const changes = fromOldestVtxo.filter((_) => _.txid === vtxo.arkTxId);
+                const changes = ownVtxos.filter((_) => _.txid === vtxo.arkTxId);
 
                 // We want to find all the other virtual outputs spent by the same transaction to
                 // calculate the full amount of the change.
-                const allSpent = fromOldestVtxo.filter((v) => v.arkTxId === vtxo.arkTxId);
+                const allSpent = ownVtxos.filter((v) => v.arkTxId === vtxo.arkTxId);
                 const spentAmount = allSpent.reduce((acc, v) => acc + v.value, 0);
 
                 let txAmount = 0;
@@ -193,7 +280,14 @@ export async function buildTransactionHistory(
                     txTime = changes[0].createdAt.getTime();
                 } else {
                     txAmount = spentAmount;
-                    txTime = resolvedCreatedAt.get(vtxo.arkTxId) ?? vtxo.createdAt.getTime() + 1;
+                    // No change to read the time off, but the wallet may still
+                    // hold another of this tx's outputs — an escrow deposit does.
+                    // Failing that the resolver answers, and the input coin's
+                    // timestamp is the last resort, only approximately right.
+                    txTime =
+                        localCreatedAt.get(vtxo.arkTxId) ??
+                        resolvedCreatedAt.get(vtxo.arkTxId) ??
+                        vtxo.createdAt.getTime() + 1;
                 }
 
                 const assets = subtractAssets(allSpent, changes);
@@ -207,7 +301,10 @@ export async function buildTransactionHistory(
                 if (txAmount !== 0 || assets) {
                     sent.push({
                         key: { ...txKey, arkTxid: vtxo.arkTxId },
-                        tag: "offchain",
+                        // Funding the escrow: an output of this tx landed on a
+                        // gated contract of the wallet's, so the send is to the
+                        // user's own covenant rather than to a stranger.
+                        tag: paidIntoGated.has(vtxo.arkTxId) ? "gated" : "offchain",
                         type: TxType.TxSent,
                         amount: txAmount,
                         settled: true,
@@ -224,14 +321,14 @@ export async function buildTransactionHistory(
                 !commitmentsToIgnore.has(vtxo.settledBy) &&
                 !sent.some((s) => s.key.commitmentTxid === vtxo.settledBy)
             ) {
-                const changes = fromOldestVtxo.filter(
+                const changes = ownVtxos.filter(
                     (v) =>
                         v.status.isLeaf &&
                         v.commitmentTxIds.length > 0 &&
                         v.commitmentTxIds.every((_) => vtxo.settledBy === _),
                 );
 
-                const forfeitVtxos = fromOldestVtxo.filter((v) => v.settledBy === vtxo.settledBy);
+                const forfeitVtxos = ownVtxos.filter((v) => v.settledBy === vtxo.settledBy);
                 const forfeitAmount = forfeitVtxos.reduce((acc, v) => acc + v.value, 0);
 
                 if (changes.length > 0) {

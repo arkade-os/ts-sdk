@@ -27,6 +27,7 @@ import {
     makeStaticWalletForTest,
     makeHdWalletForTest,
 } from "./helpers/restoreWallet";
+import { jsonResponse } from "./helpers/response";
 
 const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -1717,8 +1718,7 @@ describe("Wallet.restore", () => {
         deprecatedSigners: { cutoffDate: number; pubkey: string }[],
     ) => {
         const mockFetch = vi.fn().mockImplementation((url: string) => {
-            const reply = (body: unknown) =>
-                Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+            const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
             if (url.includes("/info"))
                 return reply({
                     signerPubkey,

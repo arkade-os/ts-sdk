@@ -901,14 +901,24 @@ export interface TxKey {
     arkTxid: string;
 }
 
-/** The categories the history builder itself assigns. */
-export type BuiltinTxTag = "offchain" | "boarding" | "exit" | "batch";
+/**
+ * The categories the history builder itself assigns.
+ *
+ * Four of them name the mechanism that moved the coin. `"gated"` names the
+ * counterparty instead: an offchain row facing a contract row of this wallet's
+ * that generic spending is closed on — a swap covenant, a lockup — which is the
+ * same money {@link WalletBalance.gated} reports. History reads such a contract
+ * as an external party, so the movement is a real send or receive rather than
+ * change, and the tag is what lets a consumer tell "into my own escrow" from
+ * "to a stranger" instead of the movement arriving unattributed.
+ */
+export type BuiltinTxTag = "offchain" | "boarding" | "exit" | "batch" | "gated";
 
 /**
  * The category the history builder assigns to a transaction. The `(string & {})`
  * arm keeps the union open — apps and resolvers can introduce their own
  * categories without a breaking change — while preserving editor autocomplete
- * for the built-in four.
+ * for the built-in ones.
  */
 export type TxTag = BuiltinTxTag | (string & {});
 
