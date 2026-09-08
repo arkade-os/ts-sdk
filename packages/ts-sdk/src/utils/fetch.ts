@@ -27,10 +27,46 @@ export class FetchError extends Error {
 }
 
 /**
+ * Deadline applied to a read that carries no `AbortSignal` of its own.
+ *
+ * `fetch` has no default timeout, so a connection the network dropped silently
+ * stays pending until the runtime gives up — and every bound built on top of it
+ * waits with it. A retry ladder, a bounded queue or a mutex only work if the
+ * call underneath them terminates.
+ */
+export const READ_TIMEOUT_MS = 30_000;
+
+/**
+ * A deadline for this request, or `undefined` to leave it unbounded.
+ *
+ * Only GET and HEAD get one. A write that is aborted has not necessarily failed
+ * — its outcome is unknown — so bounding one converts a stall into a state
+ * question its caller may have no way to answer.
+ *
+ * A `Request` input is always left alone. Every `Request` carries a `signal`
+ * whether or not its author supplied one, so "did the caller bring a signal?"
+ * cannot be read back off it, and guessing wrong would cancel someone's
+ * lifetime for them.
+ */
+function readDeadline(input: RequestInfo | URL, init?: RequestInit): AbortSignal | undefined {
+    if (init?.signal || input instanceof Request) return undefined;
+    const { method } = describeRequest(input, init);
+    const verb = method.toUpperCase();
+    if (verb !== "GET" && verb !== "HEAD") return undefined;
+    return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+        ? AbortSignal.timeout(READ_TIMEOUT_MS)
+        : undefined;
+}
+
+/**
  * Guarded passthrough to the platform `fetch` with no Arkade-specific headers.
  * Use for any service that is NOT the Ark server (delegate, Esplora, …): those
  * origins reject unknown request headers such as `X-Build-Version` in the CORS
  * preflight.
+ *
+ * Reads without a caller-supplied signal are bounded by {@link READ_TIMEOUT_MS}.
+ * Long-lived streams do not come through here — they are `EventSource` — so the
+ * deadline cannot truncate a subscription.
  *
  * Transport-level rejections are re-thrown as a {@link FetchError}.
  */
@@ -38,7 +74,8 @@ export function baseFetch(input: RequestInfo | URL, init?: RequestInit): Promise
     if (typeof globalThis.fetch !== "function") {
         throw new Error("Fetch API is not available in this environment.");
     }
-    return globalThis.fetch(input, init).catch((cause) => {
+    const signal = readDeadline(input, init);
+    return globalThis.fetch(input, signal ? { ...init, signal } : init).catch((cause) => {
         const { url, method } = describeRequest(input, init);
         throw new FetchError(`Network request failed: ${method} ${url}`, { url, method, cause });
     });
