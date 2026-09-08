@@ -8,8 +8,14 @@
  * assumes that read works.
  */
 import { describe, expect, it, vi } from "vitest";
-import { hex } from "@scure/base";
-import { SingleKey } from "@arkade-os/sdk";
+import { base64, hex } from "@scure/base";
+import {
+    CSVMultisigTapscript,
+    ConditionWitness,
+    SingleKey,
+    buildOffchainTx,
+    setArkPsbtField,
+} from "@arkade-os/sdk";
 import { createSwapDrive, SwapDriveRefusedError, type SwapDrive } from "../../src/client/drive";
 import type { SwapUpdate } from "../../src/client/outcome";
 import {
@@ -26,6 +32,10 @@ import {
     AFTER,
     BEFORE,
     OFFER_SCRIPT,
+    OPERATOR,
+    PAYMENT_HASH,
+    PAYOUT,
+    PREIMAGE,
     RECEIVE_LOCKUP,
     REFUND_LOCKTIME,
     SEND_LOCKUP,
@@ -62,12 +72,48 @@ const signable = (over: Partial<CorridorSwapRecord> = {}): CorridorSwapRecord =>
         ...over,
     });
 
+/** `signable`, but committed to the hash the claim fixture below answers:
+ * `signable` defaults `paymentHash` to zeros, which no witness can hash to. */
+const settleable = (over: Partial<CorridorSwapRecord> = {}): CorridorSwapRecord =>
+    signable({
+        profile: {
+            signer: { signingDescriptor: SENDER_DESCRIPTOR },
+            hashlock: { paymentHash: PAYMENT_HASH },
+        },
+        ...over,
+    });
+
 const LOCKUP_OUTPOINT = { txid: "99".repeat(32), vout: 0 };
 /** An unspent output at the lockup — the shape `readLockupFate` reads as `open`. */
 const unspent = (): FakeVtxo[] => [{ ...LOCKUP_OUTPOINT, spentBy: "" }];
 const funded = (over: Partial<FakeFunded> = {}): FakeFunded[] => [
     { ...LOCKUP_OUTPOINT, value: 100_000, ...over },
 ];
+
+/** The solver's claim of the send lockup, with the preimage attached the way a
+ * condition closure is finalized — Ark's `ConditionWitness` PSBT field.
+ * `buildOffchainTx` emits one checkpoint per input, and that checkpoint is the
+ * transaction the indexer names in `spentBy`, so it is the one handed back. */
+const claimSpend = (): { txid: string; psbt: string } => {
+    const { checkpoints } = buildOffchainTx(
+        [
+            {
+                ...LOCKUP_OUTPOINT,
+                value: 100_000,
+                tapLeafScript: SEND_LOCKUP.claim(),
+                tapTree: SEND_LOCKUP.encode(),
+            },
+        ],
+        [{ script: PAYOUT, amount: BigInt(100_000) }],
+        CSVMultisigTapscript.encode({
+            timelock: { type: "blocks", value: BigInt(144) },
+            pubkeys: [OPERATOR],
+        }),
+    );
+    const checkpoint = checkpoints[0];
+    setArkPsbtField(checkpoint, 0, ConditionWitness, [PREIMAGE]);
+    return { txid: checkpoint.id, psbt: base64.encode(checkpoint.toPSBT()) };
+};
 
 interface Harness {
     readonly drive: SwapDrive;
@@ -88,6 +134,7 @@ const build = async (
         now?: number;
         vtxos?: FakeVtxo[];
         funded?: FakeFunded[];
+        txs?: { txid: string; psbt: string }[];
         indexerFails?: boolean;
         identity?: unknown;
         chain?: unknown | null;
@@ -122,6 +169,7 @@ const build = async (
         indexer: fakeIndexer({
             ...(over.vtxos === undefined ? {} : { vtxos: over.vtxos }),
             ...(over.funded === undefined ? {} : { funded: over.funded }),
+            ...(over.txs === undefined ? {} : { txs: over.txs }),
             ...(over.indexerFails ? { fail: true } : {}),
         }),
         contracts,
@@ -834,5 +882,69 @@ describe("the drive's own record write", () => {
         expect(stored.refundLocktime).toBe(REFUND_LOCKTIME);
         expect(stored.lockupPkScript).toBe(hex.encode(SEND_LOCKUP.pkScript));
         await h.drive.dispose();
+    });
+});
+
+describe("the settlement receipt", () => {
+    it("stamps the preimage that settled a send onto the stored record", async () => {
+        // Driven, not seeded: the receipt is learned from the witness the fate
+        // read verifies, and only the real pass exercises the path from that
+        // verdict through `save` to the repository.
+        const spend = claimSpend();
+        const h = await build({
+            records: [settleable({ fundingTxid: "aa".repeat(32) })],
+            vtxos: [{ ...LOCKUP_OUTPOINT, spentBy: spend.txid }],
+            txs: [spend],
+        });
+
+        const stored = (await h.repository.getSwapRecord("q1")) as CorridorSwapRecord;
+        expect(stored.state).toBe("settled");
+        expect(stored.settlementPreimageHex).toBe(hex.encode(PREIMAGE));
+        await h.drive.dispose();
+    });
+
+    it("answers a restarted client's receipt off storage, reading no indexer", async () => {
+        const spend = claimSpend();
+        const first = await build({
+            records: [settleable({ fundingTxid: "aa".repeat(32) })],
+            vtxos: [{ ...LOCKUP_OUTPOINT, spentBy: spend.txid }],
+            txs: [spend],
+        });
+        const settled = (await first.repository.getSwapRecord("q1")) as CorridorSwapRecord;
+        await first.drive.dispose();
+
+        // Through JSON, so no object the first drive still holds can be what
+        // the second one reads the receipt off.
+        const repository = memoryRepository();
+        await repository.saveSwapRecord(JSON.parse(JSON.stringify(settled)) as CorridorSwapRecord);
+        const contracts = fakeContracts([SEND_LOCKUP]);
+        const { wallet } = fakeWallet({ contracts, identity: SENDER });
+        const unreachable = () => {
+            throw new Error("the restart read the indexer");
+        };
+        const getVtxos = vi.fn(unreachable);
+        const getVirtualTxs = vi.fn(unreachable);
+        const drive = createSwapDrive({
+            wallet,
+            operator: fakeOperator(),
+            repository,
+            corridors: fakeCorridors(),
+            indexer: { getVtxos, getVirtualTxs } as never,
+            contracts,
+            now: () => BEFORE,
+            pollIntervalMs: 10 * 60 * 1000,
+        });
+        await drive.ready;
+        await drive.idle();
+
+        const restored = (await repository.getSwapRecord("q1")) as CorridorSwapRecord;
+        expect(restored.settlementPreimageHex).toBe(hex.encode(PREIMAGE));
+        expect(drive.swap("q1")?.outcome).toBe("paid");
+        // The whole point of storing it: a settled swap needs no network at
+        // all, so a restart neither re-reads the lockup nor re-fetches the
+        // witness to hand back the proof.
+        expect(getVtxos).not.toHaveBeenCalled();
+        expect(getVirtualTxs).not.toHaveBeenCalled();
+        await drive.dispose();
     });
 });

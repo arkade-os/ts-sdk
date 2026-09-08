@@ -210,6 +210,22 @@ interface RfqSwapCommon {
      * `LockupSpend` declares optional, for the same reason.
      */
     lockupSpendTxids?: string[];
+    /**
+     * `P`, hex — the preimage the solver revealed to claim the lockup,
+     * stamped from the chain read that ended the swap.
+     *
+     * Lightning sends only, and the one leg where the wallet cannot produce
+     * `P` itself: the payee mints it, so the quote carries only
+     * {@link paymentHash}. The claiming legs keep their own secret in
+     * `profile`, where `preimageForSwapRecord` recovers it — so this is a
+     * settlement receipt, not a second home for a claim secret, and not a
+     * secret at all: it is already public in the witness it came from.
+     * `readLockupFate` hashes it against {@link paymentHash} before returning
+     * it, so what is stamped here is verified by construction.
+     *
+     * Absent on the other legs, and on a send that did not settle.
+     */
+    settlementPreimageHex?: string;
     /** Why `state` is `failed`. */
     failure?: string;
     /**
@@ -1549,6 +1565,7 @@ export class RfqSwapManager {
             // makes dirty carries the spend with it — one write, not two, and
             // no window in which a terminal record names no ending transaction.
             this.stampLockupSpends(swap, fate.spends);
+            if (fate.fate === "claimed") this.stampSettlementPreimage(swap, fate.preimage);
             this.setState(swap, fate.fate === "claimed" ? "settled" : "refunded");
             return;
         }
@@ -2054,6 +2071,20 @@ export class RfqSwapManager {
             .filter((txid): txid is string => txid !== undefined);
         if (txids.length === 0) return;
         swap.lockupSpendTxids = txids;
+        this.touch(swap);
+    }
+
+    /**
+     * Keep the preimage that settled a Lightning send.
+     *
+     * Only that leg. A receive's `claimed` verdict reveals the wallet's own
+     * claim secret and an onchain send's reveals the one it minted — both
+     * already recoverable from `profile`, so stamping either would be a second
+     * home for a secret that has one.
+     */
+    private stampSettlementPreimage(swap: RfqSwap, preimage: Uint8Array): void {
+        if (swap.kind !== "lightning_send") return;
+        swap.settlementPreimageHex = hex.encode(preimage);
         this.touch(swap);
     }
 
