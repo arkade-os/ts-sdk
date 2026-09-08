@@ -690,6 +690,15 @@ export interface ContractManagerConfig {
      * and a path query is not worth failing over a provider hiccup.
      */
     chainTip?: () => Promise<{ height: number; time: number } | undefined>;
+
+    /**
+     * How stale {@link ContractManager.getContractsWithVtxos} may let its
+     * opportunistic sync be before repeating it. `0` (default) repeats it every
+     * call. A send syncs, selects, then submits, so its coins are already one
+     * submit latency stale; this widens that bound by this value, and is
+     * therefore a budget rather than a free saving.
+     */
+    vtxoSyncMaxAgeMs?: number;
 }
 
 /**
@@ -801,6 +810,7 @@ export class ContractManager implements IContractManager {
     private syncDegradedReason?: string;
     /** Epoch-ms of the last successful provider sync, if any. */
     private lastSyncedAt?: number;
+    private syncedAtByScript = new Map<string, number>();
     /** Last chain tip read, with the epoch-ms it was read at. @see currentChainTip */
     private chainTipCache?: { height: number; time: number; at: number };
     /** In-flight chain tip read, so concurrent cache misses share one. */
@@ -860,6 +870,11 @@ export class ContractManager implements IContractManager {
                   reason: this.syncDegradedReason,
                   lastSyncedAt: this.lastSyncedAt,
               };
+    }
+
+    /** @see ContractManagerConfig.vtxoSyncMaxAgeMs — for factory-built managers. */
+    setVtxoSyncMaxAge(maxAgeMs: number): void {
+        this.config.vtxoSyncMaxAgeMs = maxAgeMs;
     }
 
     private markSyncOnline(): void {
@@ -1645,12 +1660,19 @@ export class ContractManager implements IContractManager {
         // failure, serve repository state rather than failing the read. The
         // failed sync writes no partial state and does not advance the cursor
         // (targeted subset queries never do). Terminal failures still propagate.
-        try {
-            await this.syncContracts({ contracts, pageSize });
-            this.markSyncOnline();
-        } catch (err) {
-            if (!isRetryableProviderError(err)) throw err;
-            this.markSyncDegraded(err);
+        if (this.syncedWithin(contracts, this.config.vtxoSyncMaxAgeMs ?? 0)) {
+            // Skipping the fetch must not skip the demotion it carries: that
+            // half is repository-only, and an `awaiting-funds` contract left
+            // undemoted keeps a watch it no longer needs.
+            await this.demoteFundedAwaitingContracts(contracts);
+        } else {
+            try {
+                await this.syncContracts({ contracts, pageSize });
+                this.markSyncOnline();
+            } catch (err) {
+                if (!isRetryableProviderError(err)) throw err;
+                this.markSyncDegraded(err);
+            }
         }
         const vtxos = await this.getVtxosForContracts(contracts);
         return contracts.map((contract) => ({
@@ -2202,6 +2224,11 @@ export class ContractManager implements IContractManager {
                     // is monotonic so this never rewinds the cursor. The refill
                     // first, so catch-up-pending window entries retry their
                     // full-history sync without waiting for a restart.
+                    //
+                    // Freshness is dropped before that, not after: it is a claim
+                    // that events were arriving, and a reset says they were not
+                    // for an unknown stretch. The reconcile below re-earns it.
+                    this.syncedAtByScript.clear();
                     await this.scheduleLookAheadDrain();
                     await this.reconcileWatched();
                     this.markSyncOnline();
@@ -2282,9 +2309,25 @@ export class ContractManager implements IContractManager {
             await advanceSyncCursor(this.config.walletRepository, cutoff);
         }
 
+        // A narrowed window saw less than a normal sync would have, so claiming
+        // freshness from it would let a later read skip on evidence never held.
+        if (options.window === undefined) {
+            for (const contract of contracts) {
+                this.syncedAtByScript.set(contract.script, requestStartedAt);
+            }
+        }
+
         await this.demoteFundedAwaitingContracts(contracts);
 
         return result;
+    }
+
+    private syncedWithin(contracts: Contract[], maxAgeMs: number): boolean {
+        if (maxAgeMs <= 0) return false;
+        const floor = Date.now() - maxAgeMs;
+        return contracts.every(
+            (contract) => (this.syncedAtByScript.get(contract.script) ?? 0) >= floor,
+        );
     }
 
     /**
