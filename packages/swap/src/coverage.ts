@@ -8,7 +8,7 @@
  * ({@link retireSettledOfferContracts}). Identical offers derive one script, so
  * those two can name the same row — and a demotion that lands after a promotion
  * recreates exactly the failure the promotion exists to prevent: an address the
- * user was told to fund, out of the subscription, the poll and every sync.
+ * user was told to fund, out of the subscription and the failsafe poll.
  *
  * Two things keep them apart:
  *
@@ -138,9 +138,10 @@ export async function promoteOfferContract(
  *
  * `retained`, not deleted: the row is what keeps the deposit's VTXOs
  * annotatable and its history readable, while `retained` is what drops it from
- * the subscription, the failsafe poll and every sync. A user who has made
- * hundreds of offers otherwise re-subscribes to hundreds of dead scripts on
- * every wallet start.
+ * the subscription and the failsafe poll — not from every sync, since
+ * `getContractsWithVtxos` reads rows whatever their watch state and syncs the
+ * set it read. A user who has made hundreds of offers otherwise re-subscribes
+ * to hundreds of dead scripts on every wallet start.
  *
  * A `recoverable` record blocks its script for good — nothing moves a record
  * off that status — so a script that once held a swept deposit stays watched
