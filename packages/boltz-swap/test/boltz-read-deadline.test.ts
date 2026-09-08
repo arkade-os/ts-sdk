@@ -79,4 +79,35 @@ describe("BoltzSwapProvider read deadline", () => {
             vi.useRealTimers();
         }
     });
+
+    it("says so loudly when the runtime cannot bound a read at all — and only once", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const realTimeout = AbortSignal.timeout;
+        const realController = globalThis.AbortController;
+        // @ts-expect-error simulating a runtime without AbortSignal.timeout
+        AbortSignal.timeout = undefined;
+        // @ts-expect-error same
+        globalThis.AbortController = undefined;
+        try {
+            // Fresh module: the "warned once" flag is module-level, so asserting
+            // it from a shared instance would depend on nothing else having
+            // tripped it first.
+            vi.resetModules();
+            const fresh = await import("../src/boltz-swap-provider");
+            const p = new fresh.BoltzSwapProvider({
+                network: "regtest",
+                apiUrl: "http://localhost:9090",
+            }) as any;
+            await p.request("/v2/a", "GET").catch(() => undefined);
+            await p.request("/v2/b", "GET").catch(() => undefined);
+        } finally {
+            AbortSignal.timeout = realTimeout;
+            globalThis.AbortController = realController;
+        }
+
+        expect(seen).toHaveLength(2);
+        expect(seen[0].signal).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0][0])).toContain("UNBOUNDED");
+    });
 });
