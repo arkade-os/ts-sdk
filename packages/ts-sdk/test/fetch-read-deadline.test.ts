@@ -69,8 +69,62 @@ describe("baseFetch read deadline", () => {
         expect(isRetryableProviderError(err)).toBe(true);
     });
 
-    it("states a deadline rather than leaving it implicit", () => {
-        expect(READ_TIMEOUT_MS).toBeGreaterThan(0);
+    // Bounded both ways: a dropped zero makes reads fail on a slow-but-alive
+    // server, an extra zero makes the deadline decorative.
+    it("keeps the deadline inside a defensible range", () => {
+        expect(READ_TIMEOUT_MS).toBeGreaterThanOrEqual(5_000);
+        expect(READ_TIMEOUT_MS).toBeLessThanOrEqual(120_000);
+    });
+
+    // Without `AbortSignal.timeout` (some React Native runtimes) the bound has
+    // to come from `AbortController` + a timer, and this proves it actually
+    // fires rather than merely being attached.
+    it("still bounds the read when only AbortController is available", async () => {
+        vi.useFakeTimers();
+        const realTimeout = AbortSignal.timeout;
+        // @ts-expect-error simulating a runtime without AbortSignal.timeout
+        AbortSignal.timeout = undefined;
+        globalThis.fetch = vi.fn(
+            (_input: any, init?: RequestInit) =>
+                new Promise((_resolve, reject) => {
+                    init?.signal?.addEventListener("abort", () =>
+                        reject(new DOMException("aborted", "AbortError")),
+                    );
+                }),
+        ) as any;
+
+        try {
+            const pending = baseFetch("https://example.test/slow").catch((e) => e);
+            await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS);
+            const err = await pending;
+
+            expect(err).toBeInstanceOf(FetchError);
+            expect(isRetryableProviderError(err)).toBe(true);
+        } finally {
+            AbortSignal.timeout = realTimeout;
+            vi.useRealTimers();
+        }
+    });
+
+    it("says so loudly when the runtime cannot bound a read at all", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const realTimeout = AbortSignal.timeout;
+        const realController = globalThis.AbortController;
+        // @ts-expect-error simulating a runtime with neither primitive
+        AbortSignal.timeout = undefined;
+        // @ts-expect-error same
+        globalThis.AbortController = undefined;
+        try {
+            await baseFetch("https://example.test/a");
+            await baseFetch("https://example.test/b");
+        } finally {
+            AbortSignal.timeout = realTimeout;
+            globalThis.AbortController = realController;
+        }
+
+        expect(seen?.signal).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0][0])).toContain("UNBOUNDED");
     });
 
     // On Expo, `getExpoFetch` falls back to `baseFetch`, so this signal is what

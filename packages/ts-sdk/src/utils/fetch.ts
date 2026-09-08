@@ -36,8 +36,10 @@ export class FetchError extends Error {
  */
 export const READ_TIMEOUT_MS = 30_000;
 
+let warnedNoTimeoutSupport = false;
+
 /**
- * A deadline for this request, or `undefined` to leave it unbounded.
+ * The signal bounding this request, or `undefined` to leave it unbounded.
  *
  * Only GET and HEAD get one. A write that is aborted has not necessarily failed
  * — its outcome is unknown — so bounding one converts a stall into a state
@@ -53,9 +55,31 @@ function readDeadline(input: RequestInfo | URL, init?: RequestInit): AbortSignal
     const { method } = describeRequest(input, init);
     const verb = method.toUpperCase();
     if (verb !== "GET" && verb !== "HEAD") return undefined;
-    return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
-        ? AbortSignal.timeout(READ_TIMEOUT_MS)
-        : undefined;
+    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+        return AbortSignal.timeout(READ_TIMEOUT_MS);
+    }
+
+    // `AbortSignal.timeout` is absent on some React Native runtimes while
+    // `AbortController` is not, so fall back rather than silently leaving the
+    // read unbounded — which is the exact state this exists to prevent.
+    if (typeof AbortController === "function") {
+        const controller = new AbortController();
+        // Deliberately never cleared, so the bound covers the body read and not
+        // just the headers, matching the native path. Aborting an already
+        // settled request is a no-op; `unref` keeps it from holding Node open.
+        const timer: unknown = setTimeout(() => controller.abort(), READ_TIMEOUT_MS);
+        (timer as { unref?: () => void })?.unref?.();
+        return controller.signal;
+    }
+
+    if (!warnedNoTimeoutSupport) {
+        warnedNoTimeoutSupport = true;
+        console.warn(
+            "Neither AbortSignal.timeout nor AbortController is available in this runtime: " +
+                "provider reads are UNBOUNDED and READ_TIMEOUT_MS is not being applied.",
+        );
+    }
+    return undefined;
 }
 
 /**
