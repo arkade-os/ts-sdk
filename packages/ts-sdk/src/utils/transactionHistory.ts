@@ -36,9 +36,10 @@ function localCreatedAtByTxid(vtxos: readonly NormalizedVirtualCoin[]): Map<stri
  * "into my own escrow" from "to a stranger" rather than the movement arriving
  * unattributed.
  *
- * Offchain only. A gated coin settled in a batch carries `settledBy` and no
- * `arkTxId`, so it reaches neither set and the exit or batch row facing it stays
- * untagged — the corridor case this change deliberately does not interpret.
+ * Offchain only: a gated coin settled in a batch carries `settledBy` and no
+ * `arkTxId`, so it reaches neither set and the batch or exit row facing it goes
+ * untagged. What that partition does to those arms' arithmetic is a larger gap,
+ * described where the partition happens.
  */
 function gatedTouchpoints(gated: readonly NormalizedVirtualCoin[]): {
     paidIn: ReadonlySet<string>;
@@ -165,21 +166,27 @@ export async function buildTransactionHistory(
         .map(normalizeVtxo)
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 
+    const localCreatedAt = localCreatedAtByTxid(normalized);
+
     // `getBalance`'s predicate, put to a different question. Balance asks what
     // may be spent, and still counts a gated coin in `total`; history asks whose
-    // money moved, and everything below cross-references this set to decide
-    // change, receives and spent totals — so a gated coin left in it is one the
+    // money moved — so a gated coin left among the wallet's own is one the
     // history reads as the user's, which is exactly how an escrowed deposit and
     // its return used to cancel each other out and vanish.
-    // Built over every coin, before the partition: which transactions the wallet
-    // can date locally does not depend on which side of the gate a coin fell.
-    const localCreatedAt = localCreatedAtByTxid(normalized);
+    //
+    // `ownVtxos` is what every arm below cross-references, and only the two
+    // offchain arms have been reasoned about against its new, narrower
+    // membership. The batch and exit arms read it too: a gated coin settled in a
+    // batch is missing from both `forfeitVtxos` and their `changes`, so an exit
+    // row can under- or over-count and an escrow returning through a batch can
+    // produce no row at all, depending on which side of the settle it sits.
+    // Tracked in #860; this change does not interpret that corridor.
     const gatedVtxos = normalized.filter((vtxo) => isGatedVtxo(vtxo, gatedScripts));
-    const fromOldestVtxo = normalized.filter((vtxo) => !isGatedVtxo(vtxo, gatedScripts));
+    const ownVtxos = normalized.filter((vtxo) => !isGatedVtxo(vtxo, gatedScripts));
     const { paidIn: paidIntoGated, paidOut: paidOutOfGated } = gatedTouchpoints(gatedVtxos);
 
     const txidsNeedingCreatedAt = resolveTxCreatedAt
-        ? collectArkTxidsNeedingCreatedAt(fromOldestVtxo, localCreatedAt)
+        ? collectArkTxidsNeedingCreatedAt(ownVtxos, localCreatedAt)
         : [];
     const resolvedCreatedAt =
         resolveTxCreatedAt && txidsNeedingCreatedAt.length > 0
@@ -192,7 +199,7 @@ export async function buildTransactionHistory(
     const sent: ExtendedArkTransaction[] = [];
     let received: ExtendedArkTransaction[] = [];
 
-    for (const vtxo of fromOldestVtxo) {
+    for (const vtxo of ownVtxos) {
         if (vtxo.status.isLeaf) {
             // If this virtual output is a leaf and it's not the settlement of a boarding or there's no virtual output refreshed by it,
             // it's translated into a received batch transaction
@@ -211,7 +218,7 @@ export async function buildTransactionHistory(
                             tx.key.commitmentTxid === vtxo.settledBy),
                 );
             } else if (
-                fromOldestVtxo.filter((v) => v.settledBy === vtxo.commitmentTxIds[0]).length === 0
+                ownVtxos.filter((v) => v.settledBy === vtxo.commitmentTxIds[0]).length === 0
             ) {
                 const duplicateBoardingReceive = consumeBoardingReceive(
                     unmatchedSettledBoardingTxs,
@@ -234,7 +241,7 @@ export async function buildTransactionHistory(
                     });
                 }
             }
-        } else if (fromOldestVtxo.filter((v) => v.arkTxId === vtxo.txid).length === 0) {
+        } else if (ownVtxos.filter((v) => v.arkTxId === vtxo.txid).length === 0) {
             // If this virtual output is preconfirmed and does not spend any other virtual outputs,
             // it's translated into a received offchain transaction
             const assets = collectAssets([vtxo]);
@@ -258,11 +265,11 @@ export async function buildTransactionHistory(
         if (vtxo.isSpent) {
             // If the virtual output is spent offchain, it's translated into an offchain sent tx
             if (vtxo.arkTxId && !sent.some((s) => s.key.arkTxid === vtxo.arkTxId)) {
-                const changes = fromOldestVtxo.filter((_) => _.txid === vtxo.arkTxId);
+                const changes = ownVtxos.filter((_) => _.txid === vtxo.arkTxId);
 
                 // We want to find all the other virtual outputs spent by the same transaction to
                 // calculate the full amount of the change.
-                const allSpent = fromOldestVtxo.filter((v) => v.arkTxId === vtxo.arkTxId);
+                const allSpent = ownVtxos.filter((v) => v.arkTxId === vtxo.arkTxId);
                 const spentAmount = allSpent.reduce((acc, v) => acc + v.value, 0);
 
                 let txAmount = 0;
@@ -314,14 +321,14 @@ export async function buildTransactionHistory(
                 !commitmentsToIgnore.has(vtxo.settledBy) &&
                 !sent.some((s) => s.key.commitmentTxid === vtxo.settledBy)
             ) {
-                const changes = fromOldestVtxo.filter(
+                const changes = ownVtxos.filter(
                     (v) =>
                         v.status.isLeaf &&
                         v.commitmentTxIds.length > 0 &&
                         v.commitmentTxIds.every((_) => vtxo.settledBy === _),
                 );
 
-                const forfeitVtxos = fromOldestVtxo.filter((v) => v.settledBy === vtxo.settledBy);
+                const forfeitVtxos = ownVtxos.filter((v) => v.settledBy === vtxo.settledBy);
                 const forfeitAmount = forfeitVtxos.reduce((acc, v) => acc + v.value, 0);
 
                 if (changes.length > 0) {

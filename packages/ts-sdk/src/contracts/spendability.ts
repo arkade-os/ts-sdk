@@ -46,15 +46,23 @@ export type GatedContracts = ReadonlyMap<string, string>;
  * generic spending is open to it.
  *
  * The single spelling of the per-VTXO question, so the gate cannot be asked two
- * subtly different ways. Strict on `script`, matching `isVtxoForScript`: a VTXO
- * with a missing or empty script belongs to no contract row at all, so it is the
- * wallet's own coin.
+ * subtly different ways. A VTXO with no script belongs to no contract row, so it
+ * is the wallet's own coin.
+ *
+ * The `undefined` check is deliberately not a truthiness check, so that an
+ * empty-string script still asks the map rather than being read as "no
+ * contract". The two spellings are indistinguishable on both SDK read paths —
+ * `isVtxoForScript` keeps a `""`-scripted coin out of every snapshot bucket, and
+ * `saveVtxosForContract` refuses to persist one — so this is not a guarantee to
+ * lean on, only the pre-existing semantics preserved verbatim. It is kept
+ * because this predicate now decides coin selection and the `available` balance
+ * as well as history, which is not the place to take on a gratuitous difference.
  */
 function gatedTypeOf(
     vtxo: Pick<ExcludableVtxo, "script">,
     gated: GatedContracts,
 ): string | undefined {
-    return vtxo.script ? gated.get(vtxo.script) : undefined;
+    return vtxo.script === undefined ? undefined : gated.get(vtxo.script);
 }
 
 /** {@link gatedTypeOf} as a predicate, for callers with no use for the type. */
