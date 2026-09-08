@@ -1823,8 +1823,15 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // that many ceilings' worth. By the count alone, not the output fee too:
             // this weighs GROSS input value against pieces paid post-fee, so it
             // stays under what they can absorb.
+            //
+            // Except when the batch carries assets, which must come back as ONE
+            // piece: several ceilings' worth would leave it no valid plan at all —
+            // split and the asset guard refuses it, don't and the ceiling guard
+            // does. Judged BEFORE the cap so it cannot admit a batch it then
+            // strands; a cap that later drops the asset-bearing input only defers.
+            const carriesAssets = vtxos.some((vtxo) => (vtxo.assets?.length ?? 0) > 0);
             const capacity =
-                vtxoMaxAmount < 0n || !options?.split
+                vtxoMaxAmount < 0n || !options?.split || carriesAssets
                     ? vtxoMaxAmount
                     : BigInt(options.split.maxOutputs) * vtxoMaxAmount;
             const capped = capSettlementBatch(byExpiryAscending(vtxos, now), capacity);

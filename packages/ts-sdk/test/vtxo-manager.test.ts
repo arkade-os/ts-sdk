@@ -4439,6 +4439,29 @@ describe("VtxoManager - renewal output split", () => {
             expect(settled(wallet).outputs).toEqual([{ address: ADDRESS, amount: 8000n }]);
         });
 
+        /**
+         * A single piece cannot exceed the ceiling, so admitting several ceilings'
+         * worth would leave an asset-bearing batch with NO valid plan: split and
+         * the asset guard refuses, don't and the ceiling guard does. The batch
+         * takes the unsplit path's cap instead, deferring the overflow.
+         */
+        it("caps an asset-bearing batch to one ceiling so a single piece still fits", async () => {
+            const wallet = createMockWallet([withAssets(4000, "a"), expiring(4000, "b")], ADDRESS, {
+                vtxoMaxAmount: 5000n,
+            });
+            const split: RenewalSplit = {
+                maxOutputs: 4,
+                plan: ({ subtotal, hasAssets }) =>
+                    hasAssets ? [subtotal] : [subtotal / 2n, subtotal / 2n],
+            };
+
+            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+
+            const args = settled(wallet);
+            expect(args.inputs.map((v: ExtendedVirtualCoin) => v.txid)).toEqual(["a"]);
+            expect(args.outputs).toEqual([{ address: ADDRESS, amount: 4000n }]);
+        });
+
         it("lets the plan split again once no asset-bearing input survives selection", async () => {
             // The 1500 carries the assets and cannot pay its own 2000 fee.
             const wallet = createMockWallet([expiring(5000), withAssets(1500)], ADDRESS, {
