@@ -500,6 +500,11 @@ const lockupEvent = (
 ): ContractEvent =>
     ({ type, contractScript, vtxos: [], contract: {}, timestamp: 1 }) as unknown as ContractEvent;
 
+const watchedScriptEvent = (
+    type: "vtxo_received" | "vtxo_spent",
+    contractScript = LOCKUP_SCRIPT_HEX,
+): ContractEvent => ({ type, contractScript, vtxos: [], timestamp: 1 }) as unknown as ContractEvent;
+
 /** A manager wired to the given seams, never started — the tests drive `poll()`
  * so nothing depends on a timer. */
 const manager = (input: {
@@ -2577,6 +2582,25 @@ describe("RfqSwapManager — the lockup as a contract", () => {
             expect(indexer.vtxoCalls).toBeGreaterThan(before); // it looked
             expect(swap.state).toBe("pending"); // and believed what it saw
             expect(s.refunds).toEqual([]);
+            await m.stop();
+        });
+
+        it("ignores an event on the same script that carries no contract", async () => {
+            const s = spies();
+            const contracts = fakeContracts();
+            const indexer = fakeIndexer({ vtxos: unspent() });
+            const m = manager({ indexer, contracts, now: SAFE_NOW, spies: s });
+            const swap = swapWithLockup();
+            await m.start([swap]);
+
+            const before = indexer.vtxoCalls;
+            contracts.emit(watchedScriptEvent("vtxo_spent"));
+            await Promise.resolve();
+            await Promise.resolve();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            expect(indexer.vtxoCalls).toBe(before);
+            expect(swap.state).toBe("pending");
             await m.stop();
         });
 

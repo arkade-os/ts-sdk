@@ -7,6 +7,7 @@ import type {
     ContractWithVtxos,
     GetContractsFilter,
     PathSelection,
+    WatchedScript,
 } from "../../contracts";
 import type {
     ContractSyncState,
@@ -301,6 +302,37 @@ export type RequestGetContractsWithVtxos = RequestEnvelope & {
 export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     type: "CONTRACTS_WITH_VTXOS";
     payload: { contracts: ContractWithVtxos[] };
+};
+
+function unsupportedByManager(method: string): Error {
+    return new Error(`Contract manager does not support ${method}`);
+}
+
+export type RequestWatchScript = RequestEnvelope & {
+    type: "WATCH_SCRIPT";
+    payload: { script: string; label?: string };
+};
+export type ResponseWatchScript = ResponseEnvelope & {
+    type: "SCRIPT_WATCHED";
+    payload: { script: string };
+};
+
+export type RequestUnwatchScript = RequestEnvelope & {
+    type: "UNWATCH_SCRIPT";
+    payload: { script: string };
+};
+export type ResponseUnwatchScript = ResponseEnvelope & {
+    type: "SCRIPT_UNWATCHED";
+    payload: { script: string };
+};
+
+export type RequestGetWatchedScripts = RequestEnvelope & {
+    type: "GET_WATCHED_SCRIPTS";
+    payload: Record<string, never>;
+};
+export type ResponseGetWatchedScripts = ResponseEnvelope & {
+    type: "WATCHED_SCRIPTS";
+    payload: { scripts: WatchedScript[] };
 };
 
 export type RequestAnnotateVtxos = RequestEnvelope & {
@@ -786,6 +818,9 @@ export type WalletUpdaterRequest =
     | RequestCreateContract
     | RequestGetContracts
     | RequestGetContractsWithVtxos
+    | RequestWatchScript
+    | RequestUnwatchScript
+    | RequestGetWatchedScripts
     | RequestAnnotateVtxos
     | RequestUpdateContract
     | RequestDeleteContract
@@ -839,6 +874,9 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseCreateContract
         | ResponseGetContracts
         | ResponseGetContractsWithVtxos
+        | ResponseWatchScript
+        | ResponseUnwatchScript
+        | ResponseGetWatchedScripts
         | ResponseAnnotateVtxos
         | ResponseUpdateContract
         | ResponseDeleteContract
@@ -1245,6 +1283,41 @@ export class WalletMessageHandler
                         id,
                         type: "CONTRACTS_WITH_VTXOS",
                         payload: { contracts },
+                    });
+                }
+                case "WATCH_SCRIPT": {
+                    const manager = await this.readonlyWallet.getContractManager();
+                    // Acking a manager that cannot watch would tell the
+                    // caller its script is covered when nothing is subscribed.
+                    if (!manager.watchScript) throw unsupportedByManager("watchScript");
+                    await manager.watchScript(message.payload.script, {
+                        label: message.payload.label,
+                    });
+                    return this.tagged({
+                        id,
+                        type: "SCRIPT_WATCHED",
+                        payload: { script: message.payload.script },
+                    });
+                }
+                case "UNWATCH_SCRIPT": {
+                    const manager = await this.readonlyWallet.getContractManager();
+                    if (!manager.unwatchScript) throw unsupportedByManager("unwatchScript");
+                    await manager.unwatchScript(message.payload.script);
+                    return this.tagged({
+                        id,
+                        type: "SCRIPT_UNWATCHED",
+                        payload: { script: message.payload.script },
+                    });
+                }
+                case "GET_WATCHED_SCRIPTS": {
+                    const manager = await this.readonlyWallet.getContractManager();
+                    if (!manager.getWatchedScripts) {
+                        throw unsupportedByManager("getWatchedScripts");
+                    }
+                    return this.tagged({
+                        id,
+                        type: "WATCHED_SCRIPTS",
+                        payload: { scripts: await manager.getWatchedScripts() },
                     });
                 }
                 case "ANNOTATE_VTXOS": {
