@@ -1,6 +1,11 @@
 import { IndexerProvider, SubscriptionResponse } from "../providers/indexer";
 import { VirtualCoin } from "../wallet";
-import { normalizeVtxo } from "../wallet/vtxo";
+import {
+    getAllNormalizedVtxos,
+    hasTerminalSpend,
+    isPastExpiry,
+    normalizeVtxo,
+} from "../wallet/vtxo";
 import { extendVirtualCoinForContract } from "../wallet/utils";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
@@ -8,6 +13,7 @@ import {
     ContractVtxo,
     ContractEventCallback,
     ContractEvent,
+    WatchedScript,
     isWatchedContract,
 } from "./types";
 import { isEventSourceError } from "../providers/utils";
@@ -100,6 +106,12 @@ interface ContractState {
     lastKnownVtxos: Map<string, VirtualCoin>;
 }
 
+/** No `Contract` — that absence is the ownership boundary. */
+interface WatchedScriptState {
+    label?: string;
+    lastKnownVtxos: Map<string, VirtualCoin>;
+}
+
 /**
  * Connection state for the watcher.
  */
@@ -139,6 +151,8 @@ export class ContractWatcher {
     private config: Required<Omit<ContractWatcherConfig, "walletRepository">> &
         Pick<ContractWatcherConfig, "walletRepository">;
     private contracts: Map<string, ContractState> = new Map();
+    /** In-memory and process-lifetime; never persisted. */
+    private watchedScripts: Map<string, WatchedScriptState> = new Map();
     private subscriptionId?: string;
     private abortController?: AbortController;
     private isWatching = false;
@@ -285,6 +299,56 @@ export class ContractWatcher {
      */
     getWatchedContracts(): Contract[] {
         return this.getAllContracts().filter(isWatchedContract);
+    }
+
+    /**
+     * Every script the subscription must carry. Wider than
+     * {@link getWatchedContracts}, which stays the sync scope.
+     */
+    private getSubscribedScripts(): string[] {
+        const scripts = new Set(this.getWatchedContracts().map((c) => c.script));
+        for (const script of this.watchedScripts.keys()) {
+            scripts.add(script);
+        }
+        return Array.from(scripts);
+    }
+
+    /** @see IContractManager.watchScript for the delivery and filter contract. */
+    async addWatchedScript(script: string, options?: { label?: string }): Promise<void> {
+        const existing = this.watchedScripts.get(script);
+        if (existing) {
+            // Idempotent: a caller that re-derives its whole watched set on
+            // a timer would otherwise re-announce on every sweep.
+            if (options?.label !== undefined) existing.label = options.label;
+            return;
+        }
+
+        this.watchedScripts.set(script, {
+            label: options?.label,
+            lastKnownVtxos: new Map(),
+        });
+
+        if (this.isWatching) {
+            await this.pollWatchedScripts([script]);
+            await this.tryUpdateSubscription();
+        }
+    }
+
+    /** Stop watching a script added by {@link addWatchedScript}. */
+    async removeWatchedScript(script: string): Promise<void> {
+        if (!this.watchedScripts.delete(script)) return;
+
+        if (this.isWatching) {
+            await this.tryUpdateSubscription();
+        }
+    }
+
+    /** Every script registered via {@link addWatchedScript}. */
+    getWatchedScripts(): WatchedScript[] {
+        return Array.from(this.watchedScripts.entries()).map(([script, state]) => ({
+            script,
+            label: state.label,
+        }));
     }
 
     /**
@@ -537,8 +601,91 @@ export class ContractWatcher {
 
     private async pollAllContracts(): Promise<void> {
         const scripts = this.getWatchedContracts().map((c) => c.script);
+        if (scripts.length > 0) {
+            await this.pollContracts(scripts);
+        }
+        await this.pollWatchedScripts(Array.from(this.watchedScripts.keys()));
+    }
+
+    /**
+     * Poll watch-only scripts against the indexer and emit the delta.
+     *
+     * Separate from {@link pollContracts} because that one diffs the wallet
+     * repository, which is permanently empty for a script this wallet does not
+     * own — reusing it would report every live output as spent on every tick.
+     * Not a second poll loop: same timer and callers, different source.
+     */
+    private async pollWatchedScripts(candidates: string[]): Promise<void> {
+        if (!this.eventCallback) return;
+
+        // Same precedence as processSubscriptionVtxos: an actively-watched
+        // contract is polled above, a `retained` one by neither, so it stays ours.
+        const scripts = candidates.filter((s) => {
+            const state = this.contracts.get(s);
+            return (
+                this.watchedScripts.has(s) &&
+                (state === undefined || !isWatchedContract(state.contract))
+            );
+        });
         if (scripts.length === 0) return;
-        await this.pollContracts(scripts);
+
+        const now = Date.now();
+
+        let current: VirtualCoin[];
+        try {
+            current = await getAllNormalizedVtxos(this.config.indexerProvider, scripts, {
+                spendableOnly: true,
+            });
+        } catch (error) {
+            // Fail closed: an empty result is indistinguishable from "every
+            // output was spent", so reading a rejection as one would emit
+            // `vtxo_spent` for every live script on one flaky request.
+            console.error("ContractWatcher watch-only poll failed:", error);
+            return;
+        }
+
+        const byScript = new Map<string, VirtualCoin[]>();
+        for (const vtxo of current) {
+            let bucket = byScript.get(vtxo.script);
+            if (!bucket) {
+                bucket = [];
+                byScript.set(vtxo.script, bucket);
+            }
+            bucket.push(vtxo);
+        }
+
+        for (const script of scripts) {
+            const state = this.watchedScripts.get(script);
+            if (!state) continue;
+
+            const currentVtxos = byScript.get(script) || [];
+            const currentKeys = new Set(currentVtxos.map((v) => `${v.txid}:${v.vout}`));
+
+            const newVtxos: VirtualCoin[] = [];
+            for (const vtxo of currentVtxos) {
+                const key = `${vtxo.txid}:${vtxo.vout}`;
+                if (!state.lastKnownVtxos.has(key)) {
+                    newVtxos.push(vtxo);
+                    state.lastKnownVtxos.set(key, vtxo);
+                }
+            }
+
+            const spentVtxos: VirtualCoin[] = [];
+            for (const [key, vtxo] of state.lastKnownVtxos) {
+                if (!currentKeys.has(key)) {
+                    spentVtxos.push(vtxo);
+                    state.lastKnownVtxos.delete(key);
+                }
+            }
+
+            if (newVtxos.length > 0) {
+                this.emitWatchedScriptEvent(script, newVtxos, "vtxo_received", now);
+            }
+
+            if (spentVtxos.length > 0) {
+                this.emitWatchedScriptEvent(script, spentVtxos, "vtxo_spent", now);
+            }
+        }
     }
 
     /**
@@ -666,10 +813,10 @@ export class ContractWatcher {
     /**
      * Update the subscription with scripts that should be watched.
      *
-     * @see getWatchedContracts
+     * @see getSubscribedScripts
      */
     private async updateSubscription(): Promise<void> {
-        const scriptsToWatch = this.getWatchedContracts().map((c) => c.script);
+        const scriptsToWatch = this.getSubscribedScripts();
 
         if (scriptsToWatch.length === 0) {
             if (this.subscriptionId) {
@@ -773,20 +920,37 @@ export class ContractWatcher {
      */
     private processSubscriptionVtxos(
         vtxos: VirtualCoin[],
-        eventType: ContractEvent["type"],
+        eventType: "vtxo_received" | "vtxo_spent",
         timestamp: number,
     ): void {
         const byContract = new Map<string, VirtualCoin[]>();
+        const byWatchedScript = new Map<string, VirtualCoin[]>();
         let unknownScript = 0;
+        const now = { timestamp: new Date() };
         for (const vtxo of vtxos) {
-            if (!this.contracts.has(vtxo.script)) {
+            const state = this.contracts.get(vtxo.script);
+            const watchOnly = this.watchedScripts.has(vtxo.script);
+            // A registered contract wins, unless it is `retained`: routing
+            // that as a contract event answers it with syncContracts and
+            // undoes the owner's opt-out from background channels.
+            const preferContract =
+                state !== undefined && (!watchOnly || isWatchedContract(state.contract));
+            const target = preferContract ? byContract : watchOnly ? byWatchedScript : undefined;
+            if (!target) {
                 unknownScript++;
                 continue;
             }
-            let bucket = byContract.get(vtxo.script);
+            // Admit only what the spendable poll would return, or the next
+            // tick reads the difference as a spend. Spends stay unfiltered.
+            if (target === byWatchedScript && eventType === "vtxo_received") {
+                const n = normalizeVtxo(vtxo);
+                // No chain tip here: time-based expiry only.
+                if (hasTerminalSpend(n) || n.isSwept || isPastExpiry(n, now)) continue;
+            }
+            let bucket = target.get(vtxo.script);
             if (!bucket) {
                 bucket = [];
-                byContract.set(vtxo.script, bucket);
+                target.set(vtxo.script, bucket);
             }
             bucket.push(vtxo);
         }
@@ -814,6 +978,36 @@ export class ContractWatcher {
             }
             this.emitVtxoEvent(contractScript, bucketVtxos, eventType, timestamp);
         }
+
+        for (const [script, bucketVtxos] of byWatchedScript) {
+            const state = this.watchedScripts.get(script);
+            if (state) {
+                for (const vtxo of bucketVtxos) {
+                    const key = `${vtxo.txid}:${vtxo.vout}`;
+                    if (eventType === "vtxo_received") {
+                        state.lastKnownVtxos.set(key, vtxo);
+                    } else {
+                        state.lastKnownVtxos.delete(key);
+                    }
+                }
+            }
+            this.emitWatchedScriptEvent(script, bucketVtxos, eventType, timestamp);
+        }
+    }
+
+    /** As {@link emitVtxoEvent}, less the `contract` and the annotation. */
+    private emitWatchedScriptEvent(
+        script: string,
+        vtxos: VirtualCoin[],
+        eventType: "vtxo_received" | "vtxo_spent",
+        timestamp: number,
+    ): void {
+        if (!this.eventCallback) return;
+        if (eventType === "vtxo_received") {
+            this.eventCallback({ type: "vtxo_received", contractScript: script, vtxos, timestamp });
+            return;
+        }
+        this.eventCallback({ type: "vtxo_spent", contractScript: script, vtxos, timestamp });
     }
 
     /**
