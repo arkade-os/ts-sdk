@@ -29,6 +29,7 @@
  * the same backstop every other best-effort step here relies on.
  */
 import type { IContractManager } from "@arkade-os/sdk";
+import type { RfqSwapState } from "./rfqSwapState";
 import type { AssetSwapStatus } from "./store";
 
 /**
@@ -60,6 +61,11 @@ export const RETIRABLE: readonly AssetSwapStatus[] = ["fulfilled", "cancelled"];
 
 /** The one contract-manager capability changing coverage needs. */
 export type OfferContractRetirer = Pick<IContractManager, "setContractWatchState">;
+
+/** Corridor states after which the LOCKUP no longer holds funds: both mean it
+ *  WAS SPENT. `failed` is terminal too and excluded on purpose — an action that
+ *  missed its window says nothing about a covenant that can still be funded. */
+export const LOCKUP_RETIRABLE: readonly RfqSwapState[] = ["settled", "refunded"];
 
 /**
  * Scripts whose address has been handed out, by the time it was handed out.
