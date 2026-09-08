@@ -735,6 +735,25 @@ describe("ServiceWorkerWallet", () => {
         const wallet = createSWWallet(serviceWorker as any, messageTag);
         await expect(wallet.restore()).rejects.toThrow("boom");
     });
+
+    // `split.plan` is a function and the options object is posted to the worker.
+    it("refuses renewVtxos with a split rather than failing to clone it", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness();
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        const manager = await wallet.getVtxoManager();
+
+        await expect(
+            manager.renewVtxos(undefined, { split: { maxOutputs: 4, plan: () => [1000n] } }),
+        ).rejects.toThrow("split is not supported over the service worker");
+        expect(serviceWorker.postMessage).not.toHaveBeenCalledWith(
+            expect.objectContaining({ type: "RENEW_VTXOS" }),
+        );
+    });
 });
 
 describe("sendMessage reinitialize on SW restart", () => {

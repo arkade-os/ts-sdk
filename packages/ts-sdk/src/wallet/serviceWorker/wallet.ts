@@ -2135,6 +2135,15 @@ export class ServiceWorkerWallet
                 eventCallback?: (event: SettlementEvent) => void,
                 options?: RenewVtxosOptions,
             ): Promise<string> {
+                // `options` is posted to the worker and `split.plan` is a function,
+                // which structured clone refuses. Named rather than left to surface
+                // as a DataCloneError from inside postMessage.
+                if (options?.split) {
+                    throw new Error(
+                        "renewVtxos: split is not supported over the service worker — " +
+                            "its plan callback cannot cross the message bus",
+                    );
+                }
                 const message: RequestRenewVtxos = {
                     tag: messageTag,
                     type: "RENEW_VTXOS",

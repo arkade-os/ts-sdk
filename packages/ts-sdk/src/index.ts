@@ -173,6 +173,8 @@ import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import type {
     IVtxoManager,
     RenewVtxosOptions,
+    RenewalSplit,
+    RenewalSplitContext,
     SettlementConfig,
     MigrateDeprecatedSignerOptions,
     DeprecatedSignerMigrationReport,
@@ -976,6 +978,8 @@ export type {
     SettlementConfig,
     IVtxoManager,
     RenewVtxosOptions,
+    RenewalSplit,
+    RenewalSplitContext,
     MigrateDeprecatedSignerOptions,
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,
