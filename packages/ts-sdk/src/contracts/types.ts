@@ -569,7 +569,11 @@ export type ContractEvent =
 
 export type ContractVtxoEvent = Extract<ContractEvent, { contract: Contract }>;
 
-/** Gate every wallet-side effect on this: a watch-only event has no contract. */
+/**
+ * Gate every wallet-side effect on this: a watch-only event has no contract.
+ * @example `if (!isContractVtxoEvent(event)) return;` inside `onContractEvent`,
+ * before reading `event.contract` — which does not compile without it.
+ */
 export function isContractVtxoEvent(event: ContractEvent): event is ContractVtxoEvent {
     return "contract" in event && event.contract !== undefined;
 }

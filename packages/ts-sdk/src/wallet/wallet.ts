@@ -1918,7 +1918,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
             let annotationQueue: Promise<void> = Promise.resolve();
 
             indexerStopFunc = cm.onContractEvent((event) => {
-                // Owned events only: a watched script is not our coin movement.
                 if (!isContractVtxoEvent(event)) {
                     return;
                 }
