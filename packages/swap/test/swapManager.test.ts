@@ -1517,6 +1517,31 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         await expect(m.waitForSwapCompletion(RFQ_ID)).rejects.toThrow(/ark server unreachable/);
     });
 
+    it("keeps watching a lockup whose swap FAILED — terminal is not spent", async () => {
+        // Still funded here, so retiring drops a live lockup off the watcher.
+        const receiveScript = hex.encode(RECEIVE_LOCKUP.pkScript);
+        const contracts = fakeContracts({
+            preexisting: [{ script: receiveScript } as CreateContractParams],
+        });
+        let now = BEFORE_DEADLINE;
+        const s = spies({
+            claimLockup: async () => {
+                throw new Error("ark server unreachable");
+            },
+        });
+        const swap = receiveSwap();
+        const m = manager({ indexer: fundedIndexer(), contracts, now: () => now, spies: s });
+        await pass(m, swap);
+
+        now = REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS;
+        await m.poll();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(swap.state).toBe("failed");
+        expect(contracts.watched()).toEqual([receiveScript]);
+        expect(contracts.retired).toEqual([]);
+    });
+
     it("reports without acting when auto-actions are off", async () => {
         const s = spies();
         const swap = receiveSwap();

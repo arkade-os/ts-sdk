@@ -116,6 +116,7 @@ import {
     type RfqSwapRecord,
 } from "./rfqRecord";
 import { RefundNotLocallyPossibleError } from "./refundBlocked";
+import { LOCKUP_RETIRABLE } from "./coverage";
 import { isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
 
 // ── Records ──────────────────────────────────────────────────────────────────
@@ -1474,6 +1475,8 @@ export class RfqSwapManager {
         // one that never existed would throw "not found" and report a failure
         // on a swap that had in fact just succeeded.
         if (!this.deps.contracts || !this.registered.get(swap.rfqId)) return;
+        // Terminal is not spent: `failed` can leave the lockup funded.
+        if (!LOCKUP_RETIRABLE.includes(swap.state)) return;
         void this.deps.contracts
             .setContractWatchState(hex.encode(swap.lockupPkScript), "retained")
             .catch((error: unknown) => this.emitFailed(swap, error));
