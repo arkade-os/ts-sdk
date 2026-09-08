@@ -1,4 +1,4 @@
-import type { Asset, Recipient, Wallet } from "../index";
+import type { Asset, IWallet, Recipient } from "../index";
 
 export type PaymentStatus = "pending" | "sent" | "settled" | "failed";
 
@@ -86,7 +86,11 @@ export interface RouterPreferences {
 }
 
 export interface RouterContext {
-    wallet: Wallet;
+    /** A rail needing more than this takes it as a constructor dep, rather than
+     *  narrowing the context every other rail shares. */
+    wallet: IWallet;
+    /** Loosely typed in core to avoid a dependency on boltz-swap; swap rails cast it. */
+    swaps?: unknown;
     prefs: RouterPreferences;
 }
 

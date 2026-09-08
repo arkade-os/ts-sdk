@@ -6,12 +6,12 @@ export * from "./handle";
 export { PaymentRouter, AmbiguousRouteError } from "./router";
 export { arkRail } from "./rails/ark";
 export { arkAssetRail, ASSET_CARRIER_SATS } from "./rails/arkAsset";
-export { onchainRail } from "./rails/onchain";
+export { onchainRail, walletFeeSource } from "./rails/onchain";
 
 import { PaymentRouter } from "./router";
 import { arkRail } from "./rails/ark";
 import { arkAssetRail } from "./rails/arkAsset";
-import { onchainRail } from "./rails/onchain";
+import { onchainRail, walletFeeSource } from "./rails/onchain";
 import type { Wallet } from "../index";
 
 /**
@@ -30,5 +30,5 @@ export function createDefaultPaymentRouter(wallet: Wallet): PaymentRouter {
     })
         .use(arkRail())
         .use(arkAssetRail())
-        .use(onchainRail());
+        .use(onchainRail({ feeInfo: walletFeeSource(wallet) }));
 }

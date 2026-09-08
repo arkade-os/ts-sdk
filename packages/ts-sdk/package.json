@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/sdk",
-    "version": "0.5.0-rc.3",
+    "version": "0.5.0-rc.4",
     "description": "TypeScript SDK for building Bitcoin wallets using the Arkade protocol",
     "repository": {
         "type": "git",
@@ -106,6 +106,7 @@
         "smoke:dist": "node scripts/smoke-dist.mjs",
         "typecheck": "tsc --noEmit",
         "typecheck:tests": "tsc -p tsconfig.tests.json --noEmit",
+        "typecheck:types": "tsc -p tsconfig.typecheck.json --noEmit",
         "check:vtxo": "node scripts/check-virtual-status.mjs && node scripts/check-provider-boundary.mjs",
         "check:e2e-groups": "node ../../scripts/e2e-groups.mjs --check",
         "docs:build": "pnpm run typecheck && pnpm typedoc",

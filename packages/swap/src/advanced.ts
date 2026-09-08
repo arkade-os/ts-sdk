@@ -20,6 +20,9 @@
  * - a custom quote flow — `acceptQuote`, `QuotePreparation`, `quoteViaRfq`,
  *   the `verify*` checks, `quoteFromFeed`, `eligibleMarkets`;
  * - a record reader — `recordLeg`, `corridorOutcome`, `swapOf`, the prefixes.
+ * - a self-hosted claim flow — `revealClaimPacket` delivers the sealed claim
+ *   packet to your own covclaimd instead of the solver's courier, then you go
+ *   offline; `covclaimdClient` is the daemon's Reveal API.
  *
  * Two honesty notes. First, this is a superset of the root's vocabulary, not
  * a disjoint layer: the verbs, the route types and the taxonomy are here too,
@@ -34,3 +37,16 @@ export * from "./client";
 // The cancel plumbing for a manually-driven client: `client.cancel()` wraps
 // this, and an app that composed its own drive needs the same act.
 export { cancelSwap, type CancelInput, type CancelOutcome } from "./client/cancel";
+// covclaimd's Reveal API, client side: seal to the daemon this base URL serves
+// and register there directly, instead of handing the packet to the solver to
+// courier. Merged from `master` (`reveal.ts`); parked here rather than on the
+// root because it is manual orchestration below the verbs, not curated surface.
+export {
+    CovclaimdRevealError,
+    covclaimdClient,
+    revealClaimPacket,
+    revealFieldsFromScript,
+    type CovclaimdClient,
+    type CovclaimdInfo,
+    type RevealParams,
+} from "./reveal";

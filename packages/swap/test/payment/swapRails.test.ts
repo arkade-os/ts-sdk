@@ -267,10 +267,12 @@ describe("the quote a rail hands the router", () => {
 });
 
 describe("ranking against core's rails", () => {
+    // The collaborative exit is never quoted here — `options()` only runs
+    // `match`/`available`, both fee-free — so the fee source stays a stub.
     const router = (client: SwapRailClient): PaymentRouter =>
         new PaymentRouter({ wallet: ctxWallet, prefs: { priority: [...SWAP_ROUTER_PRIORITY] } })
             .use(arkRail())
-            .use(onchainRail())
+            .use(onchainRail({ feeInfo: async () => ({}) as never }))
             .use(lightningRail(client))
             .use(onchainSwapRail(client, { claimFeeRateSatVb: CLAIM_RATE }));
 
