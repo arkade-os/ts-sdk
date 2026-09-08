@@ -5676,8 +5676,11 @@ export class Wallet
                 // funds" against a balance that plainly covers the amount —
                 // name the actual ceiling instead. `totalBtcSelected + spare`
                 // is every spendable sat, so the ceiling is the balance's
-                // `maxSendable`.
-                const ceiling = Math.max(0, totalBtcSelected + spare - Number(this.dustAmount));
+                // `maxSendable` — the same floor as there: below dust nothing
+                // leaves alone (a recipient is padded to dust), so a ceiling
+                // under dust is zero, not a small send.
+                const rawCeiling = Math.max(0, totalBtcSelected + spare - Number(this.dustAmount));
+                const ceiling = rawCeiling >= Number(this.dustAmount) ? rawCeiling : 0;
                 throw new Error(
                     `send: ${changeAmount} sats of change cannot carry ${assetChanges.size} asset ` +
                         `change(s), needs ${this.dustAmount} — send at most ${ceiling} sats ` +

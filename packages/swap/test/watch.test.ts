@@ -787,14 +787,15 @@ describe("watchOfferSwaps", () => {
 
                 expect(await getAssetSwaps(repository)).toMatchObject([{ status: "fulfilled" }]);
                 const script = hex.encode(offer.swapPkScript);
-                // the sweep's "watched" did land after the event's retire —
-                // and the last word is "retained" again
+                // the sweep's cover is what re-watched the script, outracing
+                // the mid-sweep fill's retire; the sweep's own liveness
+                // re-derive has the last word: "retained" again
                 const calls = setContractWatchState.mock.calls;
-                expect(calls).toContainEqual([script, "watched"]);
+                const firstWatched = calls.findIndex((c) => c[1] === "watched");
+                const firstRetained = calls.findIndex((c) => c[1] === "retained");
+                expect(firstWatched).toBeGreaterThanOrEqual(0);
+                expect(firstRetained).toBeGreaterThan(firstWatched);
                 expect(calls[calls.length - 1]).toEqual([script, "retained"]);
-                expect(calls.indexOf(calls.find((c) => c[1] === "watched")!)).toBeLessThan(
-                    calls.length - 1,
-                );
             },
             {
                 // the event arrives while the sweep is reading the server

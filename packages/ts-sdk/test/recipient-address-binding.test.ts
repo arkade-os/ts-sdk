@@ -499,12 +499,12 @@ describe("send keeps a carrier for asset change", () => {
         }),
     ];
 
-    const makeWallet = async () => {
+    const makeWallet = async (overrideCoins: ReturnType<typeof coins> = coins()) => {
         const wallet = await Wallet.create({
             identity: mockIdentity,
             arkServerUrl: "http://localhost:7070",
         });
-        vi.spyOn(wallet, "getSpendableVtxos").mockResolvedValue(coins() as never);
+        vi.spyOn(wallet, "getSpendableVtxos").mockResolvedValue(overrideCoins as never);
         return wallet;
     };
 
@@ -531,6 +531,27 @@ describe("send keeps a carrier for asset change", () => {
         // change under a 1000 floor, and no spare coin to top it up.
         await expect(wallet.send({ address: ADDR, amount: 40_500 })).rejects.toThrow(
             /200 sats of change cannot carry 1 asset change\(s\), needs 1000 — send at most 39700 sats/,
+        );
+    });
+
+    it("reports zero, agreeing with maxSendable, when between one and two dust would leave", async () => {
+        // available is 1_500 on a single asset carrier: nothing but the
+        // carrier to spend, so a send of one dust consumes it whole, and the
+        // asset change is stranded exactly as "swap all" is. maxSendable's
+        // floor bites here: 1_500 - 1_000 = 500 < dust, so the ceiling is 0,
+        // not 500 — `send` pads its recipient to dust, so anything under dust
+        // cannot leave alone.
+        const wallet = await makeWallet([
+            createMockExtendedVtxo({
+                txid: "3".repeat(64),
+                vout: 0,
+                value: 1_500,
+                virtualStatus: { state: "settled" },
+                assets: [{ assetId: ASSET, amount: 5n }],
+            }) as never,
+        ]);
+        await expect(wallet.send({ address: ADDR, amount: 1_000 })).rejects.toThrow(
+            /500 sats of change cannot carry 1 asset change\(s\), needs 1000 — send at most 0 sats \(WalletBalance\.maxSendable\)/,
         );
     });
 

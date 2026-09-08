@@ -1010,7 +1010,13 @@ describe("the swap, against solverd (regtest)", () => {
         const live = await getAssetSwaps(makerRepository);
         expect(live.length).toBeGreaterThan(0);
 
-        const restored = await restoreFromKey(live.map((s) => s.fundingTxid));
+        // await the spends as well as the fundings: the restored wallet's
+        // history names both before the scan runs, so a fulfilled or cancelled
+        // deposit is read off the chain on this pass, completedAt included,
+        // rather than left for a retry the assertions would not see
+        const restored = await restoreFromKey(
+            live.flatMap((s) => (s.spentTxid ? [s.fundingTxid, s.spentTxid] : [s.fundingTxid])),
+        );
         try {
             const byId = new Map(restored.restored.map((s) => [s.id, s]));
             expect([...byId.keys()].sort()).toEqual(live.map((s) => s.id).sort());
