@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { Script } from "@scure/btc-signer";
-import { Wallet, SingleKey, type Recipient } from "../src";
+import {
+    AssetChangeCarrierError,
+    SelectedVtxosCannotCarryAssetChangeError,
+    SendAboveMaxSendableError,
+    SingleKey,
+    Wallet,
+    type Recipient,
+} from "../src";
 import { VtxoScript } from "../src/script/base";
 import { ArkAddress } from "../src/script/address";
 import {
@@ -565,6 +572,42 @@ describe("send keeps a carrier for asset change", () => {
         // that the carrier was found and the send got past coin selection.
         expect(String(err)).not.toMatch(/cannot carry/);
         expect(String(err)).not.toMatch(/Insufficient funds/);
+    });
+
+    // The ceiling is the reason this refusal exists, so a caller has to be able
+    // to read it back without parsing the sentence it appears in — a "send max"
+    // control that raced a receive re-prefills from the error itself.
+    it("carries the ceiling as a field, not only in the message", async () => {
+        const wallet = await makeWallet();
+        const err = await wallet.send({ address: ADDR, amount: 40_700 }).catch((e: unknown) => e);
+
+        expect(err).toBeInstanceOf(SendAboveMaxSendableError);
+        expect(err).toBeInstanceOf(AssetChangeCarrierError);
+        const refusal = err as SendAboveMaxSendableError;
+        expect(refusal.name).toBe("SendAboveMaxSendableError");
+        expect(refusal.maxSendable).toBe(39_700);
+        expect(refusal.changeAmount).toBe(0);
+        expect(refusal.assetChangeCount).toBe(1);
+        expect(refusal.dustAmount).toBe(1_000n);
+    });
+
+    // Distinct remedy, distinct type: the wallet may hold a coin that would
+    // fund the carrier, but this path may not reach for one the caller did not
+    // name, so there is no ceiling to report and lowering the amount is the
+    // wrong advice.
+    it("refuses caller-pinned inputs under a different type, with no ceiling", async () => {
+        const wallet = await makeWallet();
+        const err = await wallet
+            .send({
+                recipients: [{ address: ADDR, amount: 40_700 }],
+                selectedVtxos: coins() as never,
+            })
+            .catch((e: unknown) => e);
+
+        expect(err).toBeInstanceOf(SelectedVtxosCannotCarryAssetChangeError);
+        expect(err).toBeInstanceOf(AssetChangeCarrierError);
+        expect(err).not.toBeInstanceOf(SendAboveMaxSendableError);
+        expect(err).not.toHaveProperty("maxSendable");
     });
 });
 

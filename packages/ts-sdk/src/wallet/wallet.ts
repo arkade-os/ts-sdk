@@ -192,6 +192,7 @@ import {
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./signingErrors";
+import { SelectedVtxosCannotCarryAssetChangeError, SendAboveMaxSendableError } from "./sendErrors";
 
 export const getArkadeServerUrl = ({ arkServerUrl }: { arkServerUrl?: string }) =>
     arkServerUrl || DEFAULT_ARKADE_SERVER_URL;
@@ -5664,10 +5665,11 @@ export class Wallet
             if (selectedVtxos) {
                 // Asset change needs a change output at or above dust, and this path
                 // may not reach for a coin the caller did not name.
-                throw new Error(
-                    `send({ selectedVtxos }): ${changeAmount} sats of change cannot carry ` +
-                        `${assetChanges.size} asset change(s), needs ${this.dustAmount}`,
-                );
+                throw new SelectedVtxosCannotCarryAssetChangeError({
+                    changeAmount,
+                    assetChangeCount: assetChanges.size,
+                    dustAmount: this.dustAmount,
+                });
             }
             const availableCoins = virtualCoins.filter(
                 (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
@@ -5687,11 +5689,12 @@ export class Wallet
                 // under dust is zero, not a small send.
                 const rawCeiling = Math.max(0, totalBtcSelected + spare - Number(this.dustAmount));
                 const ceiling = rawCeiling >= Number(this.dustAmount) ? rawCeiling : 0;
-                throw new Error(
-                    `send: ${changeAmount} sats of change cannot carry ${assetChanges.size} asset ` +
-                        `change(s), needs ${this.dustAmount} — send at most ${ceiling} sats ` +
-                        `(WalletBalance.maxSendable) to keep the assets, or send them too`,
-                );
+                throw new SendAboveMaxSendableError({
+                    changeAmount,
+                    assetChangeCount: assetChanges.size,
+                    dustAmount: this.dustAmount,
+                    maxSendable: ceiling,
+                });
             }
             const { inputs: extraCoins } = selectVirtualCoins(availableCoins, shortfall);
 
