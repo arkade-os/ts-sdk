@@ -14,7 +14,7 @@
  * testnet rejection: `OnchainNetwork` has three members and signet, mutinynet
  * and testnet all fold into `testnet`.
  */
-import { btcTarget } from "@arkade-os/sdk";
+import { BIP21, btcTarget } from "@arkade-os/sdk";
 import * as btc from "@scure/btc-signer";
 import { L1_NETWORKS } from "../../onchainHtlc";
 import { l1NetworkFromArk } from "../../rfq";
@@ -63,7 +63,18 @@ export const onchainCorridor: CorridorFactory<OnchainCorridorDeps> = Object.assi
                 } catch {
                     return { refused: `this is not a ${l1} address` };
                 }
-                return { claimed: { kind: "address", address: target } };
+                // A bare address pins no amount; a BIP21 `amount=` does, and it
+                // is the destination's own statement of what the recipient
+                // expects. `amountSats` returns a `number` of sats — integral by
+                // BIP21's grammar, and widened to the corridor's bigint here.
+                const amount = BIP21.amountSats(raw);
+                return {
+                    claimed: {
+                        kind: "address",
+                        address: target,
+                        ...(amount === undefined ? {} : { amount: BigInt(amount) }),
+                    },
+                };
             },
         };
     },

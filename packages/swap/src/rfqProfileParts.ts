@@ -42,6 +42,8 @@ import type { ProvisionedClaimSecret, ProvisionedKey } from "@arkade-os/sdk";
  * refund side, and a corridor that settles with no preimage at all still needs
  * it. A corridor whose leg this wallet never signs omits the key entirely — as
  * with everything else here, absent rather than blank.
+ *
+ * @deprecated Internal to the corridor modules; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface RfqSignerProjection {
     /** Public. The wallet re-derives the signer from it; no key material is at
@@ -57,6 +59,8 @@ export interface RfqSignerProjection {
  * can never open it. The preimage fields are the capability, and only a corridor
  * where WE claim ever writes them: `provisionClaimSecret` produces that arm,
  * `provisionRefundKey` does not.
+ *
+ * @deprecated Internal to the corridor modules; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export type RfqHashlockProjection = Omit<SwapSecretsProjection, "signingDescriptor"> & {
     /** `sha256(P)`, hex. Not recoverable from the covenant, which binds
@@ -72,6 +76,8 @@ export type RfqHashlockProjection = Omit<SwapSecretsProjection, "signingDescript
  *
  * Structurally `SwapSecretsProjection & { paymentHash }`, which is exactly that
  * helper's parameter.
+ *
+ * @deprecated Internal to the corridor modules; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export type RfqClaimSecretProjection = RfqSignerProjection & RfqHashlockProjection;
 
@@ -82,6 +88,8 @@ export type RfqClaimSecretProjection = RfqSignerProjection & RfqHashlockProjecti
  * Writes what the provisioning result actually has. Omit `paymentHash` and you
  * get `signer` alone — which is what a non-hashlock corridor calls, and why it
  * never has to reach for `hashlock`.
+ *
+ * @deprecated Internal to the corridor modules; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const rfqSecretsProfile = (
     secrets: ProvisionedKey | ProvisionedClaimSecret,
@@ -218,6 +226,8 @@ export const hydrateHashlock = (profile: {
  * permanent `RefundNotLocallyPossibleError("no-secrets")` the manager acts on.
  * Handing it a silently-emptied projection would report "no local refund is
  * possible" for a storage bug.
+ *
+ * @deprecated Internal to the corridor modules; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const rfqSignerOf = (record: RfqSwapRecord): RfqSignerProjection | undefined => {
     const signer = record.profile.signer;
@@ -236,6 +246,8 @@ export const rfqSignerOf = (record: RfqSwapRecord): RfqSignerProjection | undefi
  * `PreimageNotRecoverableError("malformed-record")` rather than returning a
  * partial projection — which `preimageForSwapRecord` would claim with, its hash
  * check being conditional on the very field that went missing.
+ *
+ * @deprecated Internal to the corridor modules; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const rfqClaimSecretOf = (record: RfqSwapRecord): RfqClaimSecretProjection | undefined => {
     const handler = rfqCorridorHandlers.getOrThrow(record.kind);

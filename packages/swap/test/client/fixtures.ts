@@ -330,10 +330,24 @@ export const onchainSendAnswer = (
         },
         "regtest",
     );
+    // The pinned side echoes the request — a to-pinned request is the
+    // recipient-exact one, and the take leg the client now asks for includes
+    // the claim fee's gross-up, so a fixed `to_amount` here would read as the
+    // solver repricing the pin rather than as this double honouring it.
+    //
+    // A FIXED budget, not a spread-preserving one: `from_amount` stays
+    // 100_000 while the grossed take grows into it, so the double's spread
+    // shrinks around the claim fee. A take pin above ~99_848 (at the regtest
+    // floor) therefore prices the double into a negative spread and the
+    // client's pair check refuses it — correctly, the way it would refuse a
+    // live solver mispricing the pin. Keep pins under that budget, or pass
+    // `over.quote` with a `from_amount` that covers the gross-up.
+    const requested = Number(payload.amount);
+    const toPinned = payload.amount_side === "to";
     return {
         ...baseQuote(payload, clock),
-        from_amount: 100_000,
-        to_amount: 99_000,
+        from_amount: toPinned ? 100_000 : requested,
+        to_amount: toPinned ? requested : 99_000,
         profile: {
             lockup_address: script.address(NETWORK.hrp, OPERATOR_PUBKEY).encode(),
             receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),

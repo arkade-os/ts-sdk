@@ -102,6 +102,17 @@ describe("the eligible set", () => {
         );
     });
 
+    it("bounds the take leg against the card, and only when a pin names it", () => {
+        const snapshot = snapshotOf([lightningCard]);
+        const legs = { give: ARKADE_BTC, take: LIGHTNING_BTC } as const;
+        // The card serves 1000..50_000_000 on either side.
+        expect(eligibleMarkets(snapshot, legs, undefined, 100_000n)).toHaveLength(1);
+        expect(eligibleMarkets(snapshot, legs, undefined, 50_000_001n)).toEqual([]);
+        expect(eligibleMarkets(snapshot, legs, undefined, 999n)).toEqual([]);
+        // An unpinned read is not a zero-sized trade; it still serves.
+        expect(eligibleMarkets(snapshot, legs, undefined, undefined)).toHaveLength(1);
+    });
+
     it("filters on the registry URL, exactly", () => {
         const snapshot = snapshotOf([lightningCard, rivalLightningCard]);
         const both = eligibleMarkets(snapshot, { give: ARKADE_BTC, take: LIGHTNING_BTC });

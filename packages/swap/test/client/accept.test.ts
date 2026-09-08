@@ -25,7 +25,11 @@ import { OFFER_PACKET_TYPE, decodeOffer } from "../../src/offer";
 import { SWAP_LOCKUP_CONTRACT_TYPE } from "../../src/lockupContract";
 import { conflictingFields } from "../../src/client/accept";
 import type { Quote, QuoteInput } from "../../src/client/quote";
-import type { CorridorSwapRecord, OfferSwapRecord } from "../../src/client/record";
+import {
+    assetSwapIdOf,
+    type CorridorSwapRecord,
+    type OfferSwapRecord,
+} from "../../src/client/record";
 import {
     EMULATOR_PUBKEY_HEX,
     FUNDING_TXID,
@@ -129,7 +133,8 @@ describe("accept() — the ordering", () => {
         const quote = await quoteFor(h, route);
         const swap = await h.client.accept(quote);
 
-        expect(swap.id).toBe(quote.id);
+        // The public id carries the family tag; the storage key stays bare.
+        expect(swap.id).toBe(assetSwapIdOf(swap.family, quote.id));
         const stored = await h.repository.getSwapRecord(quote.id);
         expect(stored?.id).toBe(quote.id);
         // The txid is a field, never the identity — which is what let the
@@ -321,7 +326,9 @@ describe("accept() — idempotency by quote id", () => {
         // names this a resume rather than a conflict, by name.
         expect(stored?.fundingTxid).toBeDefined();
         vi.setSystemTime((quote.expiresAt + 1) * 1000);
-        await expect(h.client.accept(quote)).resolves.toMatchObject({ id: quote.id });
+        await expect(h.client.accept(quote)).resolves.toMatchObject({
+            id: assetSwapIdOf("rfq", quote.id),
+        });
     });
 });
 
@@ -476,7 +483,9 @@ describe("accept() — AcceptConflict, one case per compared field", () => {
         expect(conflictingFields(reordered, quote)).not.toContain("take.instrument");
 
         await h.repository.saveSwapRecord(reordered);
-        await expect(h.client.accept(quote)).resolves.toMatchObject({ id: quote.id });
+        await expect(h.client.accept(quote)).resolves.toMatchObject({
+            id: assetSwapIdOf("rfq", quote.id),
+        });
     });
 
     it("does not conflict on a field absent from both sides", async () => {
@@ -486,7 +495,9 @@ describe("accept() — AcceptConflict, one case per compared field", () => {
         const h = await setup();
         const quote = await quoteFor(h, "spot");
         await h.client.accept(quote);
-        await expect(h.client.accept(quote)).resolves.toMatchObject({ id: quote.id });
+        await expect(h.client.accept(quote)).resolves.toMatchObject({
+            id: assetSwapIdOf("offer", quote.id),
+        });
     });
 });
 
@@ -509,7 +520,9 @@ describe("accept() — the pre-flight and the clock", () => {
         // instrument and not the asset, both give legs here being BTC.
         const h = await setup({ balance: { available: 0, availableAssets: [] } });
         const quote = await quoteFor(h, "lightningReceive");
-        await expect(h.client.accept(quote)).resolves.toMatchObject({ id: quote.id });
+        await expect(h.client.accept(quote)).resolves.toMatchObject({
+            id: assetSwapIdOf("rfq", quote.id),
+        });
     });
 
     it("refuses an accept past the quote's own expiry", async () => {
@@ -527,7 +540,9 @@ describe("accept() — the pre-flight and the clock", () => {
         const h = await setup();
         const quote = await quoteFor(h, "lightningSend");
         vi.setSystemTime(quote.expiresAt * 1000);
-        await expect(h.client.accept(quote)).resolves.toMatchObject({ id: quote.id });
+        await expect(h.client.accept(quote)).resolves.toMatchObject({
+            id: assetSwapIdOf("rfq", quote.id),
+        });
     });
 
     it("names the repository when the client was given none", async () => {

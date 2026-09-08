@@ -7,18 +7,23 @@
  */
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import type { PaymentRail, RouteQuote, RouterContext } from "@arkade-os/sdk";
-import { invoiceTarget, makeHandle } from "@arkade-os/sdk";
+import { assertNoAssets, assetsOf, invoiceTarget, makeHandle } from "@arkade-os/sdk";
 import { assertFundable, requestLightningSend, type InvoiceFacts, type RfqTransport } from "../rfq";
 import { solverRendezvous, type SolverRendezvous } from "./rendezvous";
 
+/** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const SOLVER_LIGHTNING_RAIL = "solver-lightning";
 
+/** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export type SolverLightningSend = Awaited<ReturnType<typeof requestLightningSend>> & {
     invoice: InvoiceFacts;
     rendezvous: SolverRendezvous;
 };
 
-/** Mirrors {@link SolverOnchainRailDeps}; see there for the shared seams. */
+/** Mirrors {@link SolverOnchainRailDeps}; see there for the shared seams.
+ *
+ * @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export interface SolverLightningRailDeps {
     /** A decoder that throws drops the rail rather than taking the router
      *  down — correct, since an undecodable invoice cannot be paid. */
@@ -56,6 +61,7 @@ const factsOf = (
     return facts;
 };
 
+/** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const solverLightningRendezvous = (
     markets: DiscoveredMarket[],
     amountSats: number,
@@ -63,6 +69,7 @@ export const solverLightningRendezvous = (
 ): SolverRendezvous | undefined =>
     solverRendezvous(markets, "lightning", amountSats, fallbackEmulatorPubkey);
 
+/** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export function solverLightningRail(deps: SolverLightningRailDeps): PaymentRail {
     const rendezvousFor = async (amountSats: number): Promise<SolverRendezvous | undefined> =>
         solverLightningRendezvous(await deps.discover(), amountSats, deps.fallbackEmulatorPubkey);
@@ -72,6 +79,8 @@ export function solverLightningRail(deps: SolverLightningRailDeps): PaymentRail 
         match: (req) => invoiceTarget(req.raw) !== undefined,
 
         available: async (req) => {
+            // A bolt11 invoice is denominated in sats; an asset cannot ride it.
+            if (assetsOf(req).length > 0) return false;
             const facts = factsOf(req.raw, deps.decodeInvoice, Math.floor(Date.now() / 1000));
             if (!facts) return false;
             // A request amount contradicting the invoice is unpayable.
@@ -80,6 +89,7 @@ export function solverLightningRail(deps: SolverLightningRailDeps): PaymentRail 
         },
 
         quote: async (req, ctx: RouterContext): Promise<RouteQuote> => {
+            assertNoAssets(SOLVER_LIGHTNING_RAIL, req);
             const facts = factsOf(req.raw, deps.decodeInvoice, Math.floor(Date.now() / 1000));
             if (!facts) {
                 throw new Error(

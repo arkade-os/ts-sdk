@@ -383,9 +383,14 @@ export const fakeWallet = (
  * A corridor set that answers only for `onchain`, which is the only corridor a
  * drive pass resolves. `chain: null` models the deliberate refusal — the case
  * whose whole point is that it must not become a construction failure.
+ *
+ * `claimFeeRateSatVb` is the corridor's resolved fee rate as the real module
+ * would carry it: present (the table's default, or the caller's override),
+ * absent (an unknown network — manual mode's signal to the drive's default
+ * claim, which synthesizes nothing without it).
  */
 export const fakeCorridors = (
-    over: { chain?: unknown | null; claim?: unknown } = {},
+    over: { chain?: unknown | null; claim?: unknown; claimFeeRateSatVb?: number } = {},
 ): (() => Promise<CorridorSet>) & { readonly resolved: string[] } => {
     const resolved: string[] = [];
     const set = {
@@ -394,7 +399,13 @@ export const fakeCorridors = (
             if (corridor !== "onchain") return { deps: {} };
             if (over.chain === null) throw new Error("the onchain corridor has no chain source");
             return {
-                deps: { chain: over.chain ?? {}, ...(over.claim ? { claim: over.claim } : {}) },
+                deps: {
+                    chain: over.chain ?? {},
+                    ...(over.claim ? { claim: over.claim } : {}),
+                    ...(over.claimFeeRateSatVb === undefined
+                        ? {}
+                        : { claimFeeRateSatVb: over.claimFeeRateSatVb }),
+                },
             };
         },
         claim: () => undefined,

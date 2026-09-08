@@ -706,7 +706,7 @@ function release(args) {
                 }
                 console.log(`Tag ${tag} already exists at HEAD; reusing.`);
             } else {
-                run("git", ["tag", tag]);
+                run("git", ["tag", "-a", "-m", `Release ${plan.get(key).next}`, tag]);
                 console.log(`Created tag ${tag}`);
             }
             state.tagsCreated[key] = true;

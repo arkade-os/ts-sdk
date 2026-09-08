@@ -41,7 +41,7 @@ import {
     unilateralClaimDelay,
     type RfqQuote,
     type RfqTransport,
-} from "../../src";
+} from "../../src/protocol";
 
 const OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";

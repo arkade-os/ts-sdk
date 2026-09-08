@@ -225,12 +225,18 @@ export interface ResolvedEndpoint {
     readonly instrument?: Instrument;
 }
 
-/** The amount a caller (or an invoice) pinned, and which leg it pins. */
+/** The amount a caller or a destination pinned, and which leg it pins. */
 export interface PinnedAmount {
     readonly value: bigint;
     readonly on: AmountOn;
-    /** What pinned it, for the diagnostic an `AmountMismatch` carries. */
-    readonly source: "caller" | "invoice";
+    /**
+     * What pinned it, for the diagnostic an `AmountMismatch` carries.
+     *
+     * `"destination"` covers the two shapes a destination pins an amount in —
+     * an amount-bearing bolt11 and a BIP21 `amount=` — so the message names the
+     * destination's pin rather than pretending the caller supplied it.
+     */
+    readonly source: "caller" | "destination";
 }
 
 /**

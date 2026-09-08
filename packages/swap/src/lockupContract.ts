@@ -16,19 +16,30 @@ import {
 } from "@arkade-os/sdk";
 
 /** The contract type a swap lockup registers under. `@arkade-os/sdk`'s handler
- * for `VHTLC.ScriptV2` — the covenant script this corridor builds. */
+ * for `VHTLC.ScriptV2` — the covenant script this corridor builds.
+ *
+ * @deprecated Lockup registration is internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const SWAP_LOCKUP_CONTRACT_TYPE = "vhtlc-v2";
 
+/** @deprecated Lockup registration is internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const SWAP_LOCKUP_CONTRACT_LABEL = "Arkade RFQ swap lockup";
+/** @deprecated Lockup registration is internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const SWAP_LOCKUP_CONTRACT_KIND = "rfq-swap-lockup";
 
 /** The write seam registration needs, narrowed to the one method — the same
  * injection style as `SwapContractRegistry`, and satisfied by a real
- * `ContractManager` (`await wallet.getContractManager()`). */
+ * `ContractManager` (`await wallet.getContractManager()`).
+ *
+ * @deprecated Lockup registration is internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export type LockupContractWriter = Pick<IContractManager, "createContract">;
 
 /** The read seam {@link lockupContractParams} needs. Same narrowing, same
- * `ContractManager` satisfies it. */
+ * `ContractManager` satisfies it.
+ *
+ * @deprecated Lockup registration is internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export type LockupContractReader = Pick<IContractManager, "getContracts">;
 
 /**
@@ -39,6 +50,8 @@ export type LockupContractReader = Pick<IContractManager, "getContracts">;
  * covenant, which registration writes before the address can be funded. So this
  * means the contract store was cleared or was never the one that registered
  * this swap, and the remedy is a store, not a re-quote.
+ *
+ * @deprecated Lockup registration is internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export class LockupContractMissing extends Error {
     /** The lockup whose row is absent. */
@@ -70,6 +83,9 @@ export class LockupContractMissing extends Error {
  * one resuming from its own record — can retry `registerLockupContract` alone
  * instead of re-quoting. It is NOT enough to resume a request that threw here:
  * that caller never received the invoice or `secrets`.
+ *
+ * A root export because `client.accept()` throws it: a caller catching that
+ * refusal names this class.
  */
 export class LockupRegistrationFailed extends Error {
     /** The lockup address that was never registered — never fund it: nothing
@@ -100,6 +116,8 @@ export class LockupRegistrationFailed extends Error {
  *
  * Throws {@link LockupRegistrationFailed}, so a caller can tell a local
  * storage problem from a reason to walk away from the quote.
+ *
+ * @deprecated Lockup registration is internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function registerLockupContract(
     contracts: LockupContractWriter,
@@ -134,6 +152,8 @@ export async function registerLockupContract(
  * address instead of as a missing row.
  *
  * Throws {@link LockupContractMissing} when there is no row.
+ *
+ * @deprecated Lockup registration is internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function lockupContractParams(
     contracts: LockupContractReader,

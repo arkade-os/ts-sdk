@@ -16,7 +16,10 @@ const addressOf = (pkScript: Uint8Array, network: OnchainNetwork): string =>
 
 /** `network` is `requestOnchainSend`'s `l1Network`, and only decodes scripts to
  *  addresses — the provider decides which chain is read, so mismatching the two
- *  yields addresses it knows nothing about rather than an error. */
+ *  yields addresses it knows nothing about rather than an error.
+ *
+ * @deprecated Internal to the onchain corridor; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const chainSourceFrom = (
     provider: OnchainProvider,
     network: OnchainNetwork,

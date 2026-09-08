@@ -9,27 +9,28 @@ introduces the API they describe, or be marked as future shape.
 
 ## Status
 
-The current branch has the v2 type foundation and corridor modules. The v2
-client surface is still internal under `src/client`; it is not exported from the
-package root yet. The root export continues to expose the existing offer, RFQ,
-restore, watch and manager building blocks until the deprecation milestone moves
-the protocol helpers behind their final boundary.
+The v2 client surface has landed through M8 and is the root export. The v1
+`createSwapClient` facade it replaced is gone, and the offer, RFQ, restore,
+watch and manager building blocks moved to `@arkade-os/swap/protocol` under
+`@deprecated` pointers — off the root in the same release, with no window in
+which both spellings work. The `@arkade-os/swap/client` subpath that carried
+this surface on the release branch is retired without ever having shipped; see
+`MIGRATION.md`.
 
-Current contributor imports look like this:
+Current imports look like this:
 
 ```ts
-import { Amount, canonicalAssetId } from "./src/client";
-import { corridorSet, resolveCorridorBase } from "./src/client/corridors";
+import { createSwapClient } from "@arkade-os/swap";
+import { Amount, canonicalAssetId } from "@arkade-os/swap";
 ```
-
-Future application imports should come from `@arkade-os/swap` once the client
-surface is published.
 
 ## The Shape
 
 A v2 swap starts with a route request:
 
 ```ts
+const client = createSwapClient({ wallet, repository });
+
 const quote = await client.quote({
     give: "arkade:bitcoin/slip44:0",
     take: "bolt11:bitcoin/slip44:0",
@@ -39,8 +40,20 @@ const quote = await client.quote({
 const outcome = await client.accept(quote);
 ```
 
-That is the target shape. The current branch provides the pieces that make the
-route safe before quote and accept are wired:
+`quote` writes nothing durable, but it is not network-free: it loads the market
+index and runs one RFQ round trip to a solver, disclosing the destination's
+amount and pairing to get binding, verified terms. The offline pre-disclosure
+read is `resolve` — it answers what the active snapshot would serve without a
+round trip. `accept` writes the record before funding. Most applications skip
+all three and use a verb — `pay`, `receive` or `exchange` — which run `quote` →
+fee ceiling → `accept` as one call:
+
+```ts
+const result = await client.pay(destination, { amount: 50_000n });
+```
+
+That is the target shape, and it is wired. The pieces below are what make the
+route safe before and inside it:
 
 - asset ids are parsed and checked before they reach discovery or RFQ;
 - display amounts become `bigint` atomic units before records or wire payloads;
@@ -124,10 +137,13 @@ refund path end to end.
 
 ## Destination Claiming
 
-The corridor registry is the current source-level API for parsing a destination
-string:
+The corridor registry is the source-level API for parsing a destination
+string, exported from `@arkade-os/swap/advanced` (the orchestration subpath —
+the verbs claim destinations themselves, so the root does not carry it):
 
 ```ts
+import { corridorSet, resolveCorridorBase } from "@arkade-os/swap/advanced";
+
 const broadcaster = await wallet.getArkadeBroadcaster();
 const operator = {
     getInfo: () => wallet.getArkadeInfo({ requireLive: true }),
@@ -150,7 +166,10 @@ const claim = corridors.claim(to);
 true })` read and derives the network and signer set from it. A stale snapshot
 is not used for covenant derivation.
 
-`corridors.claim(to)` returns:
+`corridors.claim(to)` returns `ClaimedDestination | undefined`: `undefined`
+when core classifies the string but no corridor serves it — an LNURL today —
+which becomes `UnsupportedRoute` at route resolution rather than a parse
+failure here. Otherwise it returns:
 
 ```ts
 type ClaimedDestination = {
@@ -181,8 +200,8 @@ disabled" and is refused only when that corridor is actually used.
 
 ## Persistence and Outcomes
 
-Quote, accept and outcome driving are later milestones. The rules this document
-will keep carrying forward are:
+Quote, accept and outcome driving have landed. The rules this document keeps
+carrying forward are:
 
 - persist before funding;
 - funding is acceptance;
@@ -190,3 +209,10 @@ will keep carrying forward are:
 - everything after funding is an outcome, not a thrown setup error;
 - the wallet is the source of Arkade server identity, network and signing
   policy.
+
+Past funding, the client owns the lifecycle: `cancel` takes back an unfilled
+offer's deposit (a fill winning the race reconciles to `filled`, never throws),
+`swaps` reads the client's history in the drive's outcome vocabulary, and
+`onUpdate` streams every transition — including `needs_recovery`, which
+`recover` drives. Construction stays inert; the first `await client.ready`
+runs the restore read and arms the drive where there is live work.

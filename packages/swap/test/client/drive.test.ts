@@ -12,7 +12,12 @@ import { hex } from "@scure/base";
 import { SingleKey } from "@arkade-os/sdk";
 import { createSwapDrive, SwapDriveRefusedError, type SwapDrive } from "../../src/client/drive";
 import type { SwapUpdate } from "../../src/client/outcome";
-import type { CorridorSwapRecord, OfferSwapRecord, SwapRecord } from "../../src/client/record";
+import {
+    quoteIdOfSwapId,
+    type CorridorSwapRecord,
+    type OfferSwapRecord,
+    type SwapRecord,
+} from "../../src/client/record";
 import { RFQ_CONFIGURATION_REFUSAL, RFQ_CONFIGURATION_REFUSALS } from "../../src/swapManager";
 import { REFUND_MTP_LAG_SECONDS } from "../../src/refund";
 import { RefundNotLocallyPossibleError } from "../../src/refundBlocked";
@@ -143,7 +148,10 @@ const build = async (
         resolved: corridors.resolved,
         seen,
         recoveries,
-        outcomes: (id) => seen.filter((u) => u.swap.id === id).map((u) => u.outcome),
+        // `swap.id` is the tagged public form; these fixtures name the bare
+        // quote id, which is what storage and the drive key on.
+        outcomes: (id) =>
+            seen.filter((u) => quoteIdOfSwapId(u.swap.id) === id).map((u) => u.outcome),
         settle: () => drive.idle(),
     };
 };
@@ -288,6 +296,47 @@ describe("the lifecycle", () => {
         // A terminal record is loaded so a caller can read it, and nothing is
         // driven: the manager is not running and the watcher was never built.
         expect(h.drive.swap("q1")?.outcome).toBe("paid");
+        await h.drive.dispose();
+    });
+
+    it("reports terminal records off their stored state without rebuilding them", async () => {
+        // The restore deliberately does not hand terminal records to the
+        // manager — rebuilding each one is a covenant derivation and a
+        // contract row lookup for a swap the manager would only file in
+        // `finished`. They stay readable and answer off their own state,
+        // through the same table cell the live path reads.
+        const records = [
+            signable({ id: "q1", rfqId: "rfq-1", state: "settled", fundingTxid: "aa".repeat(32) }),
+            signable({ id: "q2", rfqId: "rfq-2", state: "refunded", fundingTxid: "bb".repeat(32) }),
+            signable({
+                id: "q3",
+                rfqId: "rfq-3",
+                kind: "lightning_receive",
+                state: "refunded",
+                fundingTxid: "cc".repeat(32),
+            }),
+            signable({ id: "q4", rfqId: "rfq-4", state: "failed", fundingTxid: "dd".repeat(32) }),
+            // No contract row, no profile: nothing here could be rebuilt, so
+            // a `paid` below proves the rebuild was never attempted rather
+            // than merely survived.
+            signable({
+                id: "q5",
+                rfqId: "rfq-5",
+                state: "settled",
+                fundingTxid: "ee".repeat(32),
+                lockupAddress: "bogus",
+                profile: {},
+            }),
+        ];
+        const h = await build({ records, vtxos: unspent() });
+
+        expect(h.drive.swap("q1")?.outcome).toBe("paid");
+        expect(h.drive.swap("q2")?.outcome).toBe("refunded");
+        // The inversion: the wire calls both `refunded`, but on the receive
+        // leg the lockup was the solver's, so the payment never arrived.
+        expect(h.drive.swap("q3")?.outcome).toBe("lapsed");
+        expect(h.drive.swap("q4")?.outcome).toBe("failed");
+        expect(h.drive.swap("q5")?.outcome).toBe("paid");
         await h.drive.dispose();
     });
 

@@ -79,7 +79,28 @@ export const isAddressable = (card: DiscoveredMarket): boolean =>
     (typeof card.discovery_pubkey === "string" &&
         (card.transports?.nostr?.relays?.length ?? 0) > 0);
 
-const backendOf = (card: DiscoveredMarket): MarketBackend => (isRfqMarket(card) ? "rfq" : "feed");
+/** Which backend a card selects — the card decides it, never the client. */
+export const marketBackendOf = (card: DiscoveredMarket): MarketBackend =>
+    isRfqMarket(card) ? "rfq" : "feed";
+
+/**
+ * The cards on a snapshot this client may act on at all, before any pair is
+ * named: the policy's registry allowlist, then addressability.
+ *
+ * Shared by the routing read and `markets()`, so the escape hatch cannot offer
+ * a card the quote path would then refuse.
+ */
+export const usableMarkets = (
+    snapshot: DiscoverySnapshot,
+    policy?: SwapPolicy,
+): DiscoveredMarket[] => {
+    const allowed = policy?.allowedRegistries;
+    return (
+        allowed
+            ? snapshot.markets.filter((card) => allowed.includes(card.source))
+            : snapshot.markets
+    ).filter(isAddressable);
+};
 
 /**
  * Every card on the snapshot that serves this leg pair, best-ranked first,
@@ -89,18 +110,27 @@ const backendOf = (card: DiscoveredMarket): MarketBackend => (isRfqMarket(card) 
  * `source` and not `discovery_pubkey` because the latter is the field a cached
  * card carries unvalidated: filtering trust on untrusted content would give the
  * allowlist the shape of a check and none of the effect.
+ *
+ * `takeAmount` is the pinned trade size on the leg the trader receives, and it
+ * is what makes a card's own `min/max` bounds mean something: without it a
+ * snapshot serving the pair answers "eligible" for any size, and the swap rails'
+ * documented self-healing — an out-of-range amount drops the rail at
+ * `available()` and the collaborative exit wins — never fires.
+ *
+ * @param takeAmount The pin on the TAKE leg only, which is the side `wantSide`
+ *   names. Omitting it skips the bounds entirely — an unpinned read is not a
+ *   zero-sized trade. A GIVE-side pin is deliberately not converted and passed:
+ *   that would need a price this read does not have, so a give-side amount past
+ *   a card's ceiling still answers `eligible: 1` here and is refused by the
+ *   solver instead. That asymmetry is the known sharp edge of this parameter.
  */
 export const eligibleMarkets = (
     snapshot: DiscoverySnapshot,
     legs: { give: DiscoveryLeg; take: DiscoveryLeg },
     policy?: SwapPolicy,
+    takeAmount?: bigint,
 ): MarketCandidate[] => {
-    const allowed = policy?.allowedRegistries;
-    const markets = (
-        allowed
-            ? snapshot.markets.filter((card) => allowed.includes(card.source))
-            : snapshot.markets
-    ).filter(isAddressable);
+    const markets = usableMarkets(snapshot, policy);
 
     const { give, take } = legs;
     // Same leg on both sides is not a swap — and it is the LEG that has to
@@ -119,7 +149,13 @@ export const eligibleMarkets = (
             // The trader receives the take leg, so that side must be one the
             // solver can pay out; a direction nobody solves yields no market.
             wantSide: side === "base" ? "quote" : "base",
-        }).map((card) => ({ card, give: side, backend: backendOf(card), key: marketKeyOf(card) }));
+            ...(takeAmount === undefined ? {} : { wantAmount: takeAmount }),
+        }).map((card) => ({
+            card,
+            give: side,
+            backend: marketBackendOf(card),
+            key: marketKeyOf(card),
+        }));
     };
 
     // Give-as-base first, matching `findMarket`'s own preference order.
@@ -153,19 +189,42 @@ export const chooseMarket = (
 };
 
 /** The provenance a candidate leaves on every quote it prices. */
-export const marketRefOf = (candidate: MarketCandidate, snapshot: SnapshotRef): CardMarketRef => ({
+export const marketRefOf = (candidate: MarketCandidate, snapshot: SnapshotRef): CardMarketRef =>
+    cardMarketOf(candidate.card, snapshot, candidate.key, candidate.backend);
+
+/** A card's own provenance — the same fields {@link marketRefOf} writes, read
+ * off the card rather than off a routed candidate. */
+export const cardMarketOf = (
+    card: DiscoveredMarket,
+    snapshot: SnapshotRef,
+    key: string,
+    backend: MarketBackend,
+): CardMarketRef => ({
     kind: "card",
-    key: candidate.key,
-    backend: candidate.backend,
-    source: candidate.card.source,
-    sourceType: candidate.card.sourceType,
-    solver: candidate.card.solver,
-    ...(candidate.card.discovery_pubkey === undefined
-        ? {}
-        : { discoveryPubkey: candidate.card.discovery_pubkey }),
-    pair: candidate.card.pair,
+    key,
+    backend,
+    source: card.source,
+    sourceType: card.sourceType,
+    solver: card.solver,
+    ...(card.discovery_pubkey === undefined ? {} : { discoveryPubkey: card.discovery_pubkey }),
+    pair: card.pair,
     snapshot,
 });
 
 /** Narrow a `MarketRef` to the card arm — the only one minted today. */
 export const isCardMarket = (market: MarketRef): market is CardMarketRef => market.kind === "card";
+
+/**
+ * A market as the v2 client publishes it — one shape with {@link CardMarketRef},
+ * the type `Quote.market` already points at.
+ *
+ * `markets()` is the escape hatch, and its return is deliberately the same card
+ * a quote cites: a caller picking a market for a custom `quote()` reads the same
+ * provenance the quote will carry, key for key and snapshot for snapshot.
+ * Discovery's own `DiscoveredMarket` never crosses the v2 root — its asset ids
+ * (`"btc"` or a 68-hex string) and its display `pair` are exactly the vocabulary
+ * the alias layer exists to keep off it. The honest limit of the escape hatch
+ * is that it carries no discovery asset id; an integrator needing the native
+ * cards keeps the package's own discovery reader below the public surface.
+ */
+export type Market = CardMarketRef;

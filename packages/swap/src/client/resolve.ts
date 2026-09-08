@@ -227,7 +227,15 @@ export const resolveRoute = async (
     const amount = pinAmount(input, take.instrument);
 
     // 7. The market, after the policy filters that must run before disclosure.
-    const candidates = eligibleMarkets(snapshot, { give: giveLeg, take: takeLeg }, deps.policy);
+    //    A take-side pin also bounds-checks the card, so a size no solver on
+    //    this snapshot serves is `eligible: 0` here rather than an RFQ round
+    //    trip that discloses the amount only to be refused.
+    const candidates = eligibleMarkets(
+        snapshot,
+        { give: giveLeg, take: takeLeg },
+        deps.policy,
+        amount?.on === "take" ? amount.value : undefined,
+    );
     const market = chooseMarket(candidates, deps.policy);
 
     const resolution: RouteResolution = {
@@ -289,12 +297,18 @@ const pinAmount = (
     input: QuoteInput,
     takeInstrument: Instrument | undefined,
 ): PinnedAmount | undefined => {
-    const invoiced =
+    // The destination's own pin. An amount-bearing bolt11 pins it by existing;
+    // so does a BIP21 `amount=` carried on an address instrument, which is the
+    // destination's statement of what the recipient expects just as the
+    // invoice's is. One source, whichever instrument brought it.
+    const pinned =
         takeInstrument?.kind === "invoice" && takeInstrument.amount !== undefined
-            ? takeInstrument.amount
-            : undefined;
-    if (input.amount !== undefined && invoiced !== undefined) {
-        throw new AmountMismatch([`the invoice's ${invoiced}`, `amount ${input.amount}`]);
+            ? { value: takeInstrument.amount, named: "the invoice's" }
+            : takeInstrument?.kind === "address" && takeInstrument.amount !== undefined
+              ? { value: takeInstrument.amount, named: "the destination's" }
+              : undefined;
+    if (input.amount !== undefined && pinned !== undefined) {
+        throw new AmountMismatch([`${pinned.named} ${pinned.value}`, `amount ${input.amount}`]);
     }
     if (input.amount !== undefined) {
         if (input.amountOn === undefined) {
@@ -307,6 +321,6 @@ const pinAmount = (
         }
         return { value: input.amount, on: input.amountOn, source: "caller" };
     }
-    if (invoiced !== undefined) return { value: invoiced, on: "take", source: "invoice" };
+    if (pinned !== undefined) return { value: pinned.value, on: "take", source: "destination" };
     return undefined;
 };

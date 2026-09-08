@@ -1,254 +1,297 @@
+/**
+ * `@arkade-os/swap` — the v2 swap client.
+ *
+ * The caller states a route: what to give, what to take, and where the value
+ * ends up. Everything that used to be a caller obligation happens behind
+ * `quote()` and `accept()` — the destination parse, the corridor pair, the
+ * market lookup, the rendezvous, the amount encoding, the covenant derivation,
+ * the funding packet, the persist-before-watch ordering, the claim and the
+ * refund. `README.md` is one chain per route and nothing else.
+ *
+ * Three layers reach that surface, in the order a consumer meets them:
+ *
+ * 1. **The verbs.** `pay`, `receive` and `exchange` are `quote` -> fee ceiling
+ *    -> `accept`, and add no capability the client did not already have.
+ * 2. **The client.** `createSwapClient` returns the same object the verbs use;
+ *    reach for it when you want the terms before committing to them, the
+ *    history, a cancel, or the update stream.
+ * 3. **The protocol floor.** Everything below the client from the v1 line —
+ *    requests, covenants, records, the RFQ transports — lives at
+ *    `@arkade-os/swap/protocol`, under `@deprecated` pointers naming what
+ *    replaced it, and nowhere else. It is a floor for solvers and
+ *    terms-showing apps, not a staging area: nothing is scheduled to disappear
+ *    from it.
+ *
+ * ## What this root is, and what it is not
+ *
+ * The root is a CURATED surface: the client factory, the three verbs, the
+ * route/amount/asset vocabulary, the sixteen-member error taxonomy, the
+ * durable record `accept()` writes, the storage backends, and the payment
+ * rails. Everything else the client's modules define — the drive, the corridor
+ * modules, the RFQ wire builders, quote preparation and verification, the
+ * record navigation and outcome derivations — is orchestration below the
+ * verbs, and it lives at `@arkade-os/swap/advanced`, NOT here.
+ *
+ * That split is a deliberate break within `0.1.0`, on top of the break against
+ * `0.1.0-rc.1` this release already is. An earlier revision of this root was
+ * `export * from "./client"`, which put ~160 names here — `acceptQuote`,
+ * `createSwapDrive`, `corridorSet`, `quoteViaRfq`, `walletLockupIndexer` and
+ * every helper beside them — and committed the package to supporting internals
+ * the verbs exist to absorb. A name on the root is a support promise, so the
+ * boundary is now the point: what is here is the v2 surface; what is advanced
+ * is one specifier edit away; nothing moved to `/protocol`, which is still
+ * exclusively the v1 floor. `V2_API.md` is the UX note, `README.md` compiles
+ * against exactly this root, and `test/exports.test.ts` asserts the boundary
+ * in both directions.
+ *
+ * The v1 names are NOT re-exported here, and that is deliberate. `0.1.0` breaks
+ * against `0.1.0-rc.1` regardless — the client took the `createSwapClient` name
+ * and the `./client` subpath is gone — so a window would not spare anyone a
+ * migration, only split it into two, while leaving 200 v1 names on a root whose
+ * whole claim is to be the v2 surface. One break, one migration, one specifier
+ * edit for anything that reaches below the client. `MIGRATION.md` maps it.
+ *
+ * Two subpaths are neither deprecations nor going anywhere: `./nostr` is the
+ * hand-built transport floor, and `./node` plus `./repositories/*` are the
+ * storage backends. `./client` is gone — the client is this root.
+ */
+
+// ── The client ──────────────────────────────────────────────────────────────
+// The factory, the object it returns, and the config it takes. `Config`'s
+// field types that a caller names when writing one — discovery, corridor
+// overrides, policy, the transport factory — are exported with it.
 export {
-    createOffer,
-    cancelOffer,
-    encodeOffer,
-    decodeOffer,
-    offerContract,
-    swapPrograms,
-    OFFER_PACKET_TYPE,
-    type Offer,
-} from "./offer";
+    createSwapClient,
+    type SwapClient,
+    type SwapClientConfig,
+    type SwapFilter,
+} from "./client/client";
+export type { DiscoveryConfig, DiscoverySnapshot } from "./client/discovery";
+export { REGISTRY_URL } from "./client/discovery";
+export type { CorridorOverrides } from "./client/corridors/deps";
+export type { DriveMode, RfqAuctionPolicy, SwapPolicy } from "./client/policy";
+export type { RfqTransportFactory } from "./client/transport";
+
+// ── The verbs ───────────────────────────────────────────────────────────────
+// `pay`, `receive` and `exchange`, and the option/return vocabulary a caller
+// types against them. `enforceFeeCeiling` is the verbs' own plumbing and stays
+// on `./advanced`.
 export {
-    discoverMarkets,
-    findMarket,
-    validatePlan,
-    makeCachedFeedFetch,
-    QUOTE_OPTIONS,
-    type DiscoverMarketsOptions,
-    type PlanError,
-} from "./markets";
+    exchange,
+    pay,
+    receive,
+    type ExchangeOptions,
+    type FeeCeiling,
+    type PayOptions,
+    type PayResult,
+    type ReceiveArtifact,
+    type ReceiveOptions,
+    type ReceiveRequest,
+    type VerbDeps,
+} from "./client/verbs";
+
+// ── The route vocabulary ────────────────────────────────────────────────────
+// The closed `Route` union and the terms `quote()` answers in. All types: the
+// only way to state a route is a `QuoteInput`, and the only way to hold terms
+// is the `Quote` the client returns.
+export type {
+    Artifact,
+    AssetOn,
+    DepositArtifact,
+    Endpoint,
+    Ep,
+    Instrument,
+    Route,
+} from "./client/route";
+export type { CorridorId } from "./client/corridor";
+export type {
+    AssetRef,
+    AuctionMarketRef,
+    AuctionProvenance,
+    CardMarketRef,
+    MarketBackend,
+    MarketRef,
+    PinnedAmount,
+    Quote,
+    QuoteId,
+    QuoteInput,
+    QuoteLeg,
+    RankedBid,
+    ResolvedEndpoint,
+    RouteResolution,
+    SnapshotRef,
+} from "./client/quote";
+export type { Market } from "./client/market";
+
+// ── Asset ids and amounts ───────────────────────────────────────────────────
+// CAIP-19 with the rail as the CAIP-2 namespace; `bigint` atomic units inside,
+// `Amount` at the UI boundary. The alias layer (`canonicalAssetId`) is human
+// input's way in; the constants and parse/format helpers are the vocabulary.
 export {
-    BTC_ASSET_ID,
-    getAssetSwaps,
-    getAssetSwapsOrThrow,
-    addAssetSwap,
-    updateAssetSwap,
-    updateAssetSwapBestEffort,
-    swapSecretsToRecord,
-    preimageForSwapRecord,
-    PreimageNotRecoverableError,
-    type AssetSwap,
-    type AssetSwapStatus,
-    type PreimageBlockedReason,
-    type SwapSecretsProjection,
-} from "./store";
+    ARKADE_ASSET_NAMESPACE,
+    arkadeAsset,
+    AssetIdError,
+    assetPartOf,
+    BITCOIN_RAILS,
+    bitcoinNetworkOf,
+    BTC_ASSET_PART,
+    btcOn,
+    formatAssetId,
+    isAssetId,
+    isNetworkRef,
+    issuanceOf,
+    parseAssetId,
+    railOf,
+    RAILS,
+    sameAsset,
+    type AssetId,
+    type AssetIdRefusal,
+    type AssetNamespace,
+    type AssetPart,
+    type BitcoinRail,
+    type NetworkRef,
+    type ParsedAssetId,
+    type Rail,
+} from "./client/assetId";
+export {
+    canonicalAssetId,
+    type AssetAliasTable,
+    type RegisteredAsset,
+} from "./client/aliases";
+export {
+    Amount,
+    AmountFormatError,
+    fromAtomicDecimal,
+    isAtomicDecimal,
+    toAtomicDecimal,
+    type AmountRefusal,
+    type AssetScale,
+    type AtomicDecimal,
+    type DisplayDecimal,
+} from "./client/amount";
+
+// ── The error taxonomy ──────────────────────────────────────────────────────
+// Sixteen classes, each a condition noun, plus the base type, the name union,
+// the complete list and the guard. `SwapRefusal` — the solver declining, a
+// decision rather than a fault — is the one member the protocol layer owns;
+// the other fifteen name what the client refused and why.
+export {
+    AcceptConflict,
+    AmbiguousDestination,
+    AmountEncodingUnsupported,
+    AmountMismatch,
+    ClientDisposed,
+    DiscoverySnapshotUnavailable,
+    InconsistentRoute,
+    InsufficientFunds,
+    isSwapError,
+    MaxFeeExceeded,
+    MissingCorridorDep,
+    NotCancellable,
+    OperatorUnreachable,
+    QuoteExpired,
+    QuoteVerificationFailed,
+    SWAP_ERROR_NAMES,
+    SwapRefusal,
+    UnsupportedRoute,
+    type QuoteCheck,
+    type SwapError,
+    type SwapErrorName,
+} from "./client/errors";
+// Thrown by the PUBLIC client off the taxonomy — `start()` and `recover()`
+// under `drive: "readonly"` — so it is catchable from the root too.
+export { SwapDriveRefusedError } from "./client/drive";
+
+// ── The durable record ──────────────────────────────────────────────────────
+// What `accept()` writes, the ids that address it, the outcome vocabulary
+// `onUpdate` streams, and the results `cancel()`/`recover()` answer. The
+// builders and projections below this — `recordLeg`, `corridorOutcome`,
+// `splitRecords` and friends — are the drive's, on `./advanced`.
+export {
+    assetSwapIdOf,
+    familyOfSwapId,
+    quoteIdOfSwapId,
+    type AssetSwapId,
+    type CorridorSwapRecord,
+    type OfferSwapRecord,
+    type RecordedArtifact,
+    type RecordedEndpoint,
+    type RecordedInstrument,
+    type RecordedLeg,
+    type Swap,
+    type SwapFamily,
+    type SwapRecord,
+    type SwapRecordCommon,
+} from "./client/record";
+export type {
+    CorridorKind,
+    Outcome,
+    RawState,
+    SwapUpdate,
+    Unsubscribe,
+} from "./client/outcome";
+export type { CancelOutcome } from "./client/cancel";
+export type { RecoveryResult } from "./client/drive";
+
+// Storage. `SwapClientConfig.repository` takes the interface; the backends are
+// the browser default, the explicit ephemeral one, and — off `./node` and
+// `./repositories/*` — SQLite and Realm. There is no implicit default: a client
+// that accepts a swap with nowhere to write it is the silent loss the rule
+// exists to forbid.
 export {
     type AssetSwapRepository,
     type MarketsCacheEntry,
     InMemoryAssetSwapRepository,
 } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
-// The corridor handlers and their registry are internal — see `rfqCorridor.ts`
-// for why. What a consumer writes into `RfqSwapOrigin.profile` is these: every
-// corridor's keys through `rfqSecretsProfile`, then whatever its own leg adds.
-// The two readers are how they come back — `rfqSignerOf` for the refund signer
-// on any leg, `rfqClaimSecretOf` for the preimage on a leg we claim.
+
+// `SwapClientConfig.operator`: the structural slice of the operator connection,
+// for a second operator or a test. The wallet supplies it otherwise, and no
+// server URL is accepted anywhere.
+export { type SwapOperator } from "./refund";
+
+// Names v1 declared that the v2 surface REFERENCES, and which are therefore v2
+// names whatever their origin.
+//
+// The rule is the type system's, not a judgement call: if a root-exported
+// declaration names a type, a consumer has to be able to name it too, or the
+// declaration is unusable without reaching into `/protocol` — and a consumer
+// forced onto a deprecated barrel to configure the client is being told the
+// supported path is the deprecated one. Each of these sits in something the
+// caller AUTHORS (`CorridorOverrides`, `SwapDriveConfig`), IMPLEMENTS
+// (`AssetSwapRepository`, above), READS (`CorridorSwapRecord.state`), or
+// CATCHES (`client.accept()` throws `LockupRegistrationFailed`).
+//
+// They keep their v1 declarations and their v1 shape. What they lose is the
+// `@deprecated` tag, which was never true of them.
+export { type AssetSwap } from "./store";
+export { type InvoiceFacts } from "./rfq";
+export { type ChainSource } from "./onchainHtlc";
+export { LockupRegistrationFailed } from "./lockupContract";
+export { type LockupSpendIndexer } from "./refund";
+export { type SwapContractRegistry } from "./swapManager";
+export { isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
+
+// The payment rails, for an app that routes through core's payment router
+// rather than calling the verbs itself. These are the v2 rails — the `solver-*`
+// ones they replaced are on the protocol floor below.
+export { LIGHTNING_RAIL, lightningRail } from "./payment/lightning";
 export {
-    onchainSendProfile,
-    type LightningReceiveProfile,
-    type LightningSendProfile,
-    type OnchainSendProfile,
-} from "./rfqCorridors";
+    ONCHAIN_SWAP_RAIL,
+    claimFeeSats,
+    onchainSwapRail,
+    type OnchainSwapRailDeps,
+} from "./payment/onchainSwap";
 export {
-    rfqSecretsProfile,
-    rfqClaimSecretOf,
-    rfqSignerOf,
-    type RfqClaimSecretProjection,
-    type RfqHashlockProjection,
-    type RfqSignerProjection,
-} from "./rfqProfileParts";
+    SWAP_ROUTER_PRIORITY,
+    createSwapPaymentRouter,
+    type SwapPaymentRouterConfig,
+} from "./payment/router";
+export { PAYMENT_STATUS, isTerminalStatus, paymentStatusOf } from "./payment/status";
 export {
-    RFQ_SWAP_RETENTION_SECONDS,
-    createRfqSwapRecord,
-    normalizeRfqSwapRecord,
-    rebuildRfqSwap,
-    rfqSwapOriginOf,
-    shouldRetainRfqSwap,
-    updateRfqSwapRecord,
-    type LockupParams,
-    type PersistableRfqSwap,
-    type RfqSwapOrigin,
-    type RfqSwapRecord,
-} from "./rfqRecord";
-export {
-    restoreAssetSwaps,
-    classifySpend,
-    classifyDepositSpend,
-    spendTxidsOf,
-    type RestoreIndexer,
-    type SpendKind,
-    type Tx,
-} from "./restore";
-export {
-    watchOfferSwaps,
-    spendUpdate,
-    type OfferSwapWatcher,
-    type WatchOfferSwapsParams,
-} from "./watch";
-export { retireSettledOfferContracts, type OfferContractRetirer } from "./coverage";
-export {
-    ARKADE_BTC,
-    LIGHTNING_BTC,
-    LIGHTNING_RECEIVE_PAIR,
-    LIGHTNING_SEND_PAIR,
-    MIN_CLAIM_WINDOW_SECONDS,
-    MIN_HEADROOM_SECONDS,
-    RFQ_TERMINAL_STATES,
-    SOLO_REFUND_HEADROOM_SECONDS,
-    AddressMismatch,
-    SwapRefusal,
-    arkadeAssetLeg,
-    arkadeSwapRequest,
-    assertFundable,
-    assertReceivable,
-    deriveLightningReceive,
-    deriveOnchainReceive,
-    httpTransport,
-    lightningReceiveRequest,
-    lightningSendRequest,
-    lightningSendContract,
-    newRfqId,
-    offerTermsFromQuote,
-    lightningReceiveContract,
-    relayTransport,
-    requestLightningReceive,
-    requestLightningSend,
-    rfqPair,
-    unilateralClaimDelay,
-    unilateralRefundDelay,
-    unilateralRefundWithoutReceiverDelay,
-    verifyLockupAddress,
-    verifyReceiveInvoice,
-    type InvoiceFacts,
-    type LightningReceiveContractParams,
-    type LightningSendContractParams,
-    type RelaySocket,
-    type RfqQuote,
-    type RfqRefusalReason,
-    type RfqStatus,
-    type RfqTransport,
-} from "./rfq";
-export {
-    LOCKTIME_THRESHOLD,
-    ONCHAIN_DUST_SATS,
-    ONCHAIN_SECONDS_PER_BLOCK,
-    awaitOnchainFill,
-    buildHtlcClaim,
-    buildHtlcRefund,
-    claimOnchainFill,
-    classifyOnchainHtlc,
-    extractPreimage,
-    newPreimage,
-    l1ScriptForAddress,
-    onchainHtlcScript,
-    paymentHashOf,
-    type ChainSource,
-    type ChainUtxo,
-    type HtlcUtxo,
-    type OnchainHtlc,
-    type OnchainHtlcParams,
-    type OnchainHtlcPhase,
-    type OnchainNetwork,
-} from "./onchainHtlc";
-export { chainSourceFrom } from "./chainSource";
-export * from "./payment";
-export {
-    ONCHAIN_BTC,
-    ONCHAIN_RECEIVE_PAIR,
-    ONCHAIN_SEND_PAIR,
-    MAX_MIN_CONFIRMATIONS,
-    ONCHAIN_CLAIM_MARGIN_SECONDS,
-    ONCHAIN_ORDER_MARGIN_SECONDS,
-    deriveOnchainSend,
-    onchainReceiveRequest,
-    onchainSendRequest,
-    requestOnchainReceive,
-    requestOnchainSend,
-} from "./rfq";
-export { sealClaimPacket, type ClaimPacketInput, type SealedClaimPacket } from "./claimPacket";
-export {
-    LockupAmountMismatchError,
-    awaitLockupFunding,
-    claimReceiveLockup,
-    pushClaim,
-} from "./claim";
-export {
-    RefundNotLocallyPossibleError,
-    senderIdentityForSwapRecord,
-    type RefundBlockedReason,
-} from "./refundBlocked";
-export {
-    LockupNeedsRecoveryError,
-    REFUND_MTP_LAG_SECONDS,
-    RFQ_RESOLVED_STATES,
-    awaitRfqResolution,
-    findLockupVtxos,
-    isRfqTerminal,
-    pushRefundWithoutReceiver,
-    readLockupFate,
-    refundIfUnresolved,
-    type LockupFate,
-    type LockupSpend,
-    type LockupSpendIndexer,
-    type LockupVtxo,
-    type RefundIndexer,
-    type RefundOutcome,
-    type SwapOperator,
-} from "./refund";
-export { arkadeRefunder, type ArkadeRefunderDeps } from "./arkadeRefunder";
-export {
-    LockupContractMissing,
-    LockupRegistrationFailed,
-    SWAP_LOCKUP_CONTRACT_KIND,
-    SWAP_LOCKUP_CONTRACT_LABEL,
-    SWAP_LOCKUP_CONTRACT_TYPE,
-    lockupContractParams,
-    registerLockupContract,
-    type LockupContractReader,
-    type LockupContractWriter,
-} from "./lockupContract";
-export {
-    RFQ_SWAP_TERMINAL_STATES,
-    RfqSwapManager,
-    RfqSwapOriginRequired,
-    isRfqSwapTerminal,
-    nextOnchainAction,
-    type ArkadeRefundResult,
-    type AvailableRfqSwapManagerCallbacks,
-    type LightningReceiveSwap,
-    type LightningSendSwap,
-    type OnchainSendAction,
-    type OnchainSendSwap,
-    type RfqRestoreFailure,
-    type RfqRestoreOptions,
-    type RfqRestoreResult,
-    type RfqSwap,
-    type RfqSwapActionName,
-    type RfqSwapLockup,
-    type RfqSwapManagerCallbacks,
-    type RfqSwapManagerConfig,
-    type RfqSwapManagerDeps,
-    type RfqSwapManagerEvents,
-    type RfqSwapOutcome,
-    type RfqSwapRecordStore,
-    type RfqSwapState,
-    type SwapContractRegistry,
-} from "./swapManager";
-export {
-    rfqSwapActivityInputs,
-    swapActivityResolver,
-    type RfqSwapActivityDeps,
-    type SwapActivityInput,
-} from "./activity";
-export {
-    createSwapClient,
-    type LightningReceiveQuote,
-    type LightningSendQuote,
-    type OnchainSendQuote,
-    type SpotQuote,
-    type SwapClient,
-    type SwapClientDeps,
-    type SwapQuote,
-    type SwapQuoteInput,
-    type UnifiedSwap,
-} from "./swapClient";
+    SwapPaymentFailedError,
+    railAvailable,
+    receiverExact,
+    swapHandle,
+    type SwapRailClient,
+} from "./payment/swapRail";

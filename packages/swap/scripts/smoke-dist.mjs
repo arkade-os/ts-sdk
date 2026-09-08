@@ -17,7 +17,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hex } from "@scure/base";
 import { ArkAddress, asset } from "@arkade-os/sdk";
-import { encodeOffer, decodeOffer, offerContract } from "@arkade-os/swap";
+// The TLV round-trip below reaches below the client, so it imports the way a
+// consumer doing that now has to: off `/protocol`, not off the root.
+import { encodeOffer, decodeOffer, offerContract } from "@arkade-os/swap/protocol";
 import { SQLiteAssetSwapRepository } from "@arkade-os/swap/repositories/sqlite";
 import {
     AssetSwapRealmSchemas,
@@ -62,6 +64,87 @@ for (const specifier of specifiers) {
         if (!mod || Object.keys(mod).length === 0) {
             throw new Error(`${specifier} (${condition}) → resolved to an empty module`);
         }
+    }
+}
+
+// Named-symbol coverage: the walk above only proves each subpath resolves
+// non-empty. A barrel that drops a name resolves fine and breaks the consumer's
+// first import instead of the release, so the names are pinned here — and the
+// list is not written twice. `scripts/dispositions.json` is the record M8 wrote
+// as it rebuilt the barrels, `test/exports.test.ts` diffs it against the source,
+// and this diffs the same record against the BUILT artifact, which is the half a
+// source test cannot see: a dts rollup or an entry-point change can drop a name
+// from `dist` while `src` still exports it.
+//
+// Only value exports are checkable at runtime. Types are covered by
+// `tsconfig.test.json` and by the barrel typechecking at all.
+const dispositions = JSON.parse(readFileSync(resolve(pkgRoot, "scripts/dispositions.json"), "utf8"));
+const isValue = (mod, name) => Object.hasOwn(mod, name) && mod[name] !== undefined;
+
+const [rootEsm, rootCjs] = [await import("@arkade-os/swap"), require("@arkade-os/swap")];
+const [protoEsm, protoCjs] = [
+    await import("@arkade-os/swap/protocol"),
+    require("@arkade-os/swap/protocol"),
+];
+
+for (const [condition, root, protocol] of [
+    ["import", rootEsm, protoEsm],
+    ["require", rootCjs, protoCjs],
+]) {
+    // The v2 surface: the factory, the three verbs, and the taxonomy's base.
+    for (const name of ["createSwapClient", "pay", "receive", "exchange"]) {
+        if (typeof root[name] !== "function") {
+            throw new Error(`@arkade-os/swap (${condition}) is missing ${name}`);
+        }
+    }
+    // The taxonomy is sixteen members, and the count is the assertion: a class
+    // that never made it onto the barrel leaves `SWAP_ERROR_NAMES` short while
+    // every other check still passes.
+    if (root.SWAP_ERROR_NAMES?.length !== 16) {
+        throw new Error(
+            `@arkade-os/swap (${condition}) publishes ${root.SWAP_ERROR_NAMES?.length} error names, not 16`,
+        );
+    }
+    for (const name of ["ClientDisposed", "MaxFeeExceeded", "SwapRefusal"]) {
+        if (typeof root[name] !== "function") {
+            throw new Error(`@arkade-os/swap (${condition}) is missing ${name}`);
+        }
+    }
+
+    // The deprecated floor: every P value on the subpath, and none of them on
+    // the root. Which P names are values rather than types is read off the
+    // built subpath rather than recorded a second time — a type simply is not
+    // there at runtime — and the floor count guards against the degenerate pass
+    // where the module resolved empty and nothing was checked.
+    const values = dispositions.P.filter((name) => isValue(protoEsm, name));
+    if (values.length < 100) {
+        throw new Error(`@arkade-os/swap/protocol (${condition}) exports only ${values.length} values`);
+    }
+    const missing = values.filter((name) => !isValue(protocol, name));
+    if (missing.length) {
+        throw new Error(
+            `@arkade-os/swap/protocol (${condition}) is missing ${missing.length} deprecated ` +
+                `name(s): ${missing.slice(0, 8).join(", ")}`,
+        );
+    }
+    // The window was collapsed on purpose: one break, one migration, and a root
+    // that is the v2 surface rather than 41% v1. A P name back on the root is
+    // that decision being undone by accident.
+    const onRoot = values.filter((name) => isValue(root, name));
+    if (onRoot.length) {
+        throw new Error(
+            `@arkade-os/swap (${condition}) re-exports ${onRoot.length} /protocol ` +
+                `name(s): ${onRoot.slice(0, 8).join(", ")}`,
+        );
+    }
+
+    // And what M8 removed stays removed. A D or I name back on the root is the
+    // deprecation quietly reverting to a re-export.
+    const returned = [...dispositions.I, ...dispositions.D].filter(
+        (name) => isValue(root, name) || isValue(protocol, name),
+    );
+    if (returned.length) {
+        throw new Error(`(${condition}) internalized/deleted names are exported again: ${returned}`);
     }
 }
 

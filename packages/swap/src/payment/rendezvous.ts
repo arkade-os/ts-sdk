@@ -11,7 +11,10 @@ const XONLY_HEX = /^[0-9a-f]{64}$/;
 /** Where to reach a solver. Bounds are indicative — the quote binds.
  *
  *  No `emulatorPubkey`: the card's key only FILTERS here — the covenant is
- *  built from `deps.emulatorPubkey` or the pinned default, never from it. */
+ *  built from `deps.emulatorPubkey` or the pinned default, never from it.
+ *
+ * @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export interface SolverRendezvous {
     solverPubkey: string;
     transports: { nostr: { relays: string[] } };
@@ -52,7 +55,10 @@ const rendezvousOf = (market: DiscoveredMarket, pinned?: string): SolverRendezvo
 /** The size check is not a courtesy: quoting outside a card's advertised range
  *  burns a negotiation, tells a third party what the user is about to do, and
  *  is refused anyway. A card that serves the corridor but not the size is
- *  skipped, not fatal — another may take it. */
+ *  skipped, not fatal — another may take it.
+ *
+ * @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const solverRendezvous = (
     markets: DiscoveredMarket[],
     payoutCorridor: "onchain" | "lightning",

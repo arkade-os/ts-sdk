@@ -54,6 +54,8 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  * proves nothing here, because the script was never the lie. Claiming anyway
  * publishes `P`, which is what lets the solver settle the payer's Lightning
  * HTLC in full.
+ *
+ * @deprecated The claim path is internal to the drive; watch it with `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export class LockupAmountMismatchError extends Error {
     readonly name = "LockupAmountMismatchError";
@@ -116,6 +118,8 @@ const assertFiniteAmount = (value: number, reason: string, label: string): void 
  * against that input's own leaf. It does not protect `P` — that reached the
  * server at submit — but it turns "reported claimed, nothing landed, the
  * solver refunds hours later" into an immediate failure.
+ *
+ * @deprecated The claim path is internal to the drive; watch `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function pushClaim(
     operator: SwapOperator,
@@ -213,6 +217,8 @@ export async function pushClaim(
  * Same conventions as `awaitRfqResolution`: a `pollMs` interval, an optional
  * unix-seconds `deadline`, and a thrown error carrying a stable `reason` when
  * the deadline passes.
+ *
+ * @deprecated The claim path is internal to the drive; watch `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function awaitLockupFunding(
     indexer: RefundIndexer,
@@ -246,6 +252,8 @@ export async function awaitLockupFunding(
  * {@link LockupAmountMismatchError}. Nothing was signed, so retrying once the
  * rest lands is safe — and that is also the answer to a genuinely underfunded
  * lockup, which never gets past the gate at all.
+ *
+ * @deprecated The claim path is internal to the drive; watch it with `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function claimReceiveLockup(
     indexer: RefundIndexer,

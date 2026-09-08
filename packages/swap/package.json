@@ -1,8 +1,8 @@
 {
     "name": "@arkade-os/swap",
-    "version": "0.1.0-rc.0",
+    "version": "0.1.0-rc.3",
     "type": "module",
-    "description": "Client-side Arkade Intents asset swaps: discover markets, quote, create/track/cancel offers, restore from chain.",
+    "description": "Client-side Arkade Intents asset swaps: state a route, get an outcome. Pay a bolt11 invoice, receive over Lightning, exchange assets, or withdraw onchain.",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/arkade-os/ts-sdk.git",
@@ -21,6 +21,16 @@
                 "default": "./dist/index.cjs"
             }
         },
+        "./advanced": {
+            "import": {
+                "types": "./dist/advanced.d.ts",
+                "default": "./dist/advanced.js"
+            },
+            "require": {
+                "types": "./dist/advanced.d.ts",
+                "default": "./dist/advanced.cjs"
+            }
+        },
         "./nostr": {
             "import": {
                 "types": "./dist/nostr.d.ts",
@@ -29,6 +39,16 @@
             "require": {
                 "types": "./dist/nostr.d.ts",
                 "default": "./dist/nostr.cjs"
+            }
+        },
+        "./protocol": {
+            "import": {
+                "types": "./dist/protocol.d.ts",
+                "default": "./dist/protocol.js"
+            },
+            "require": {
+                "types": "./dist/protocol.d.ts",
+                "default": "./dist/protocol.cjs"
             }
         },
         "./node": {
@@ -67,7 +87,7 @@
     ],
     "scripts": {
         "build": "pnpm run build:web && pnpm run build:node",
-        "build:web": "tsup src/index.ts src/nostr.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
+        "build:web": "tsup src/index.ts src/advanced.ts src/nostr.ts src/protocol.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
         "build:node": "tsup --config tsup.node.config.ts",
         "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
         "format": "biome format --write src test",
