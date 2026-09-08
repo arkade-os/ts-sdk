@@ -178,6 +178,7 @@ import {
     gatedContracts,
     gatedFrom,
     isGatedVtxo,
+    type GatedContracts,
     logExcludedVtxos,
     outpointExclusion,
     type VtxoExclusion,
@@ -1414,7 +1415,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * {@link getSpendableVtxos} and the balance answer about the same instant.
      */
     private spendabilityView(snapshot: readonly ContractWithVtxos[]): {
-        gated: ReturnType<typeof gatedContracts>;
+        gated: GatedContracts;
         pendingRecovery: ReadonlySet<string>;
     } {
         return {

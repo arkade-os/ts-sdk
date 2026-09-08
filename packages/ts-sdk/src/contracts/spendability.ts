@@ -31,7 +31,7 @@ export function gatedContracts(contracts: readonly Contract[]): Map<string, stri
  * actually holds, so the four callers that need the gate do not keep
  * `gatedContracts(snapshot.map((_) => _.contract))` in step by hand.
  */
-export function gatedFrom(snapshot: readonly { contract: Contract }[]): Map<string, string> {
+export function gatedFrom(snapshot: readonly { contract: Contract }[]): GatedContracts {
     return gatedContracts(snapshot.map((entry) => entry.contract));
 }
 
@@ -50,7 +50,7 @@ export type GatedContracts = ReadonlyMap<string, string>;
  * with a missing or empty script belongs to no contract row at all, so it is the
  * wallet's own coin.
  */
-export function gatedTypeOf(
+function gatedTypeOf(
     vtxo: Pick<ExcludableVtxo, "script">,
     gated: GatedContracts,
 ): string | undefined {

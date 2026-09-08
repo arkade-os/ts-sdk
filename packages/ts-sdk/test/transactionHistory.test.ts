@@ -1132,6 +1132,13 @@ describe("buildTransactionHistory", () => {
          */
         const checkpointOf = (arkTxid: string) => `${arkTxid}-checkpoint`;
 
+        /** The three fields that together say "this coin was spent by that tx". */
+        const spentIn = (arkTxid: string) => ({
+            isSpent: true,
+            spentBy: checkpointOf(arkTxid),
+            arkTxId: arkTxid,
+        });
+
         /** A contract row the way `@arkade-os/swap`'s `createOffer` registers it. */
         const offerContract = (overrides: Partial<Contract> = {}): Contract => ({
             type: "arkade",
@@ -1147,21 +1154,11 @@ describe("buildTransactionHistory", () => {
         /**
          * The builder under the gate both read paths build, straight off the
          * contract rows. Boarding transactions and ignored commitments are
-         * beside the point here; the `createdAt` resolver is only passed by the
-         * one test that asserts it is never called.
+         * beside the point here, and no `createdAt` resolver is wired: the one
+         * test that cares whether it is called passes its own.
          */
-        const history = (
-            vtxos: VirtualCoin[],
-            contract: Contract = offerContract(),
-            resolveTxCreatedAt?: (txids: string[]) => Promise<Map<string, number>>,
-        ) =>
-            buildTransactionHistory(
-                vtxos,
-                [],
-                new Set(),
-                resolveTxCreatedAt,
-                gatedContracts([contract]),
-            );
+        const history = (vtxos: VirtualCoin[], contract: Contract = offerContract()) =>
+            buildTransactionHistory(vtxos, [], new Set(), undefined, gatedContracts([contract]));
 
         /** The same builder with no gate at all: the behaviour that predates it. */
         const ungatedHistory = (vtxos: VirtualCoin[]) =>
@@ -1173,11 +1170,7 @@ describe("buildTransactionHistory", () => {
          * than a position, so it survives a fixture growing an output.
          */
         const closedBy = (coins: VirtualCoin[], txid: string) =>
-            coins.map((c) =>
-                c.script === covenantScript
-                    ? { ...c, isSpent: true, spentBy: checkpointOf(txid), arkTxId: txid }
-                    : c,
-            );
+            coins.map((c) => (c.script === covenantScript ? { ...c, ...spentIn(txid) } : c));
 
         const coin = (
             over: Partial<VirtualCoin> & Pick<VirtualCoin, "txid" | "value">,
@@ -1195,8 +1188,7 @@ describe("buildTransactionHistory", () => {
         const sentOf = (txs: ArkTransaction[]) => txs.filter((t) => t.type === TxType.TxSent);
         const rowsFor = (txs: ArkTransaction[], arkTxid: string) =>
             txs.filter((t) => t.key.arkTxid === arkTxid);
-        const sentFor = (txs: ArkTransaction[], arkTxid: string) =>
-            rowsFor(txs, arkTxid).filter((t) => t.type === TxType.TxSent);
+        const sentFor = (txs: ArkTransaction[], arkTxid: string) => sentOf(rowsFor(txs, arkTxid));
         const receivedFor = (txs: ArkTransaction[], arkTxid: string) =>
             rowsFor(txs, arkTxid).filter((t) => t.type === TxType.TxReceived);
 
@@ -1210,9 +1202,7 @@ describe("buildTransactionHistory", () => {
                 coin({
                     txid: "wallet-coin-btc-give",
                     value: 10_000,
-                    isSpent: true,
-                    spentBy: checkpointOf(fundingTxid),
-                    arkTxId: fundingTxid,
+                    ...spentIn(fundingTxid),
                 }),
                 coin({
                     txid: fundingTxid,
@@ -1306,9 +1296,7 @@ describe("buildTransactionHistory", () => {
                 coin({
                     txid: "wallet-coin-asset-give",
                     value: 500,
-                    isSpent: true,
-                    spentBy: checkpointOf(fundingTxid),
-                    arkTxId: fundingTxid,
+                    ...spentIn(fundingTxid),
                     assets: [{ assetId: assetX, amount: 1_000n }],
                 }),
                 coin({
@@ -1338,9 +1326,7 @@ describe("buildTransactionHistory", () => {
                     coin({
                         txid: "wallet-coin-asset-partial",
                         value: 800,
-                        isSpent: true,
-                        spentBy: checkpointOf(fundingTxid),
-                        arkTxId: fundingTxid,
+                        ...spentIn(fundingTxid),
                         assets: [{ assetId: assetX, amount: 1_000n }],
                     }),
                     coin({
@@ -1419,7 +1405,13 @@ describe("buildTransactionHistory", () => {
                 // back to the input coin's timestamp — which would be a month
                 // stale here — nor pay for a round-trip to learn it.
                 const resolveTxCreatedAt = vi.fn(async () => new Map<string, number>());
-                const txs = await history(funding(), offerContract(), resolveTxCreatedAt);
+                const txs = await buildTransactionHistory(
+                    funding(),
+                    [],
+                    new Set(),
+                    resolveTxCreatedAt,
+                    gatedContracts([offerContract()]),
+                );
 
                 expect(resolveTxCreatedAt).not.toHaveBeenCalled();
                 expect(sentFor(txs, fundingTxid)[0].createdAt).toBe(at(1_000).getTime());
@@ -1464,9 +1456,7 @@ describe("buildTransactionHistory", () => {
                     coin({
                         txid: "wallet-coin-ordinary",
                         value: 10_000,
-                        isSpent: true,
-                        spentBy: checkpointOf(paymentTxid),
-                        arkTxId: paymentTxid,
+                        ...spentIn(paymentTxid),
                     }),
                     // What the stranger got is not in the wallet's set; the
                     // change is.
@@ -1508,9 +1498,7 @@ describe("buildTransactionHistory", () => {
                     scriptless({
                         txid: "scriptless-spent",
                         value: 1_000,
-                        isSpent: true,
-                        spentBy: checkpointOf("scriptless-tx"),
-                        arkTxId: "scriptless-tx",
+                        ...spentIn("scriptless-tx"),
                     }),
                     scriptless({ txid: "scriptless-tx", value: 400, createdAt: at(1_000) }),
                 ]);
@@ -1529,9 +1517,7 @@ describe("buildTransactionHistory", () => {
                     coin({
                         txid: "old-signer-coin",
                         value: 184_875,
-                        isSpent: true,
-                        spentBy: checkpointOf(arkTxId),
-                        arkTxId,
+                        ...spentIn(arkTxId),
                     }),
                     coin({ txid: arkTxId, value: 184_875, createdAt: at(1_000) }),
                 ]);
@@ -1552,9 +1538,7 @@ describe("buildTransactionHistory", () => {
                         coin({
                             txid: `${arkTxId}-input`,
                             value: 1_000,
-                            isSpent: true,
-                            spentBy: checkpointOf(arkTxId),
-                            arkTxId,
+                            ...spentIn(arkTxId),
                             ...(spentUnits > 0n && {
                                 assets: [{ assetId: assetX, amount: spentUnits }],
                             }),

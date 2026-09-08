@@ -2150,16 +2150,14 @@ export class WalletMessageHandler
      *
      * Takes its own {@link repoSnapshot} rather than a caller-supplied VTXO
      * list: the coins and the gate that judges them have to come off one read
-     * or they answer about different instants. It is also the worker's only
-     * history builder, so neither of its two callers can pass coins without the
-     * gate that judges them.
+     * or they answer about different instants, and being the worker's only
+     * history builder means neither caller can supply one without the other.
+     * The snapshot and the boarding read are independent, so they run together
+     * — the same pairing `handleGetBalance` makes.
      */
     private async buildTransactionHistoryFromCache(): Promise<ArkTransaction[] | null> {
         if (!this.readonlyWallet) return null;
 
-        // Independent halves — repository rows here, the onchain provider
-        // there — so they run together, as `handleGetBalance` already runs its
-        // own pair.
         const [{ snapshot, vtxos }, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
             this.repoSnapshot(),
             this.readonlyWallet.getBoardingTxs(),
@@ -2170,10 +2168,9 @@ export class WalletMessageHandler
             ? (txids: string[]) => fetchVtxoCreatedAtByTxid(indexerProvider, txids)
             : undefined;
 
-        // Same gate `handleGetBalance` builds, off the same kind of snapshot as
-        // `ReadonlyWallet`'s, so both sides of the bus classify a coin alike —
-        // still differing in freshness, as the balance reads do, because this
-        // snapshot never syncs.
+        // `ReadonlyWallet` derives the same gate from its own snapshot, so both
+        // sides of the bus classify a coin alike — differing only in freshness,
+        // as the balance reads do, because this one never syncs.
         return buildTransactionHistory(
             vtxos,
             boardingTxs,

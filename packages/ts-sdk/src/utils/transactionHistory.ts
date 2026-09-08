@@ -7,32 +7,47 @@ type ExtendedArkTransaction = ArkTransaction & {
 };
 
 /**
- * Where an Arkade transaction touched one of the wallet's gated contracts:
- * `paidIn` maps the txid of a transaction that created a gated output to when
- * that output was created, `paidOut` holds the txids that spent one.
+ * When each transaction the wallet holds an output of was created, keyed by
+ * txid. Every coin counts, gated or not: holding *any* output of a transaction
+ * is what makes its creation time known without asking the indexer.
  *
- * Two jobs, one pass over the coins the gate set aside. Membership tags the row
- * facing the contract, so a consumer can tell "into my own escrow" from "to a
- * stranger" rather than the movement being dropped unattributed. `paidIn`'s
- * value dates a send whose outputs all went to the escrow: the wallet keeps no
- * change to read the time off, and the gated output is that time — already
- * local, where the fallback is the *input* coin's timestamp, which files a fresh
- * deposit at the wrong end of the history.
+ * Stating that once is what keeps the gate from complicating it. The rule is
+ * older than the gate — a spend that left change has always read its time off
+ * that change — and the partition below must not turn it into a per-partition
+ * special case, or a swap deposit with no change would be dated from the *input*
+ * coin and filed at the wrong end of the history.
+ */
+function localCreatedAtByTxid(vtxos: readonly NormalizedVirtualCoin[]): Map<string, number> {
+    const createdAt = new Map<string, number>();
+    for (const vtxo of vtxos) {
+        // Outputs of one transaction share a creation time, so the first write
+        // settles it; the caller's ascending sort makes that the earliest.
+        if (vtxo.txid && !createdAt.has(vtxo.txid)) {
+            createdAt.set(vtxo.txid, vtxo.createdAt.getTime());
+        }
+    }
+    return createdAt;
+}
+
+/**
+ * Where an Arkade transaction touched one of the wallet's gated contracts:
+ * `paidIn` holds the txids that created a gated output, `paidOut` the txids that
+ * spent one. Membership tags the row facing the contract, so a consumer can tell
+ * "into my own escrow" from "to a stranger" rather than the movement arriving
+ * unattributed.
  *
  * Offchain only. A gated coin settled in a batch carries `settledBy` and no
  * `arkTxId`, so it reaches neither set and the exit or batch row facing it stays
  * untagged — the corridor case this change deliberately does not interpret.
  */
 function gatedTouchpoints(gated: readonly NormalizedVirtualCoin[]): {
-    paidIn: ReadonlyMap<string, number>;
+    paidIn: ReadonlySet<string>;
     paidOut: ReadonlySet<string>;
 } {
-    const paidIn = new Map<string, number>();
+    const paidIn = new Set<string>();
     const paidOut = new Set<string>();
     for (const vtxo of gated) {
-        // First write wins: the caller passes these in `createdAt` order, and
-        // outputs of one transaction share a creation time anyway.
-        if (vtxo.txid && !paidIn.has(vtxo.txid)) paidIn.set(vtxo.txid, vtxo.createdAt.getTime());
+        if (vtxo.txid) paidIn.add(vtxo.txid);
         if (vtxo.isSpent && vtxo.arkTxId) paidOut.add(vtxo.arkTxId);
     }
     return { paidIn, paidOut };
@@ -99,28 +114,20 @@ function subtractAssets(spent: VirtualCoin[], change: VirtualCoin[]): Asset[] | 
 
 /**
  * Ark txids the main loop needs a `createdAt` for: spent virtual outputs whose
- * spending tx left no change output in the wallet. Exactly the loop's fetch set.
- *
- * `datedLocally` is the gate's contribution — transactions whose only outputs
- * went to a gated contract still have one of those outputs in hand, so they need
- * no round-trip. Without it, gating history would add an indexer call for every
- * escrow deposit, which is precisely the shape it exists to surface.
+ * spending transaction left the wallet no output to read the time off. Exactly
+ * the loop's fetch set, and exactly the complement of {@link localCreatedAtByTxid}
+ * — which is why gating history costs no extra indexer call, even though it
+ * moves a swap deposit's only local output out of the loop's own set.
  */
 function collectArkTxidsNeedingCreatedAt(
-    vtxos: NormalizedVirtualCoin[],
-    datedLocally: ReadonlyMap<string, number>,
+    vtxos: readonly NormalizedVirtualCoin[],
+    localCreatedAt: ReadonlyMap<string, number>,
 ): string[] {
     // Set, not a scan per vtxo: this runs over the whole history, and the wallets
     // that need the batching are the ones large enough for O(n²) to hurt.
-    const ownTxids = new Set(vtxos.map((v) => v.txid));
     const txids = new Set<string>();
     for (const vtxo of vtxos) {
-        if (
-            vtxo.isSpent &&
-            vtxo.arkTxId &&
-            !ownTxids.has(vtxo.arkTxId) &&
-            !datedLocally.has(vtxo.arkTxId)
-        ) {
+        if (vtxo.isSpent && vtxo.arkTxId && !localCreatedAt.has(vtxo.arkTxId)) {
             txids.add(vtxo.arkTxId);
         }
     }
@@ -164,12 +171,15 @@ export async function buildTransactionHistory(
     // change, receives and spent totals — so a gated coin left in it is one the
     // history reads as the user's, which is exactly how an escrowed deposit and
     // its return used to cancel each other out and vanish.
+    // Built over every coin, before the partition: which transactions the wallet
+    // can date locally does not depend on which side of the gate a coin fell.
+    const localCreatedAt = localCreatedAtByTxid(normalized);
     const gatedVtxos = normalized.filter((vtxo) => isGatedVtxo(vtxo, gatedScripts));
     const fromOldestVtxo = normalized.filter((vtxo) => !isGatedVtxo(vtxo, gatedScripts));
     const { paidIn: paidIntoGated, paidOut: paidOutOfGated } = gatedTouchpoints(gatedVtxos);
 
     const txidsNeedingCreatedAt = resolveTxCreatedAt
-        ? collectArkTxidsNeedingCreatedAt(fromOldestVtxo, paidIntoGated)
+        ? collectArkTxidsNeedingCreatedAt(fromOldestVtxo, localCreatedAt)
         : [];
     const resolvedCreatedAt =
         resolveTxCreatedAt && txidsNeedingCreatedAt.length > 0
@@ -263,13 +273,12 @@ export async function buildTransactionHistory(
                     txTime = changes[0].createdAt.getTime();
                 } else {
                     txAmount = spentAmount;
-                    // No change output to read the time off. The escrow's own
-                    // output dates it exactly and needs no network; the resolver
-                    // answers for an ordinary send-all; the input coin's
-                    // timestamp is the last resort and is only approximately
-                    // right.
+                    // No change to read the time off, but the wallet may still
+                    // hold another of this tx's outputs — an escrow deposit does.
+                    // Failing that the resolver answers, and the input coin's
+                    // timestamp is the last resort, only approximately right.
                     txTime =
-                        paidIntoGated.get(vtxo.arkTxId) ??
+                        localCreatedAt.get(vtxo.arkTxId) ??
                         resolvedCreatedAt.get(vtxo.arkTxId) ??
                         vtxo.createdAt.getTime() + 1;
                 }

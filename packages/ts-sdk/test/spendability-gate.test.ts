@@ -959,12 +959,14 @@ describe("main-thread / worker balance parity", () => {
      * because it is bounded and self-inflicted — such a spend is doomed at the
      * server, and the wedge lasts until it rejects.
      */
+    /**
+     * One worker request against the same wallet and repository the main-thread
+     * read uses — two stubs would agree with each other and prove nothing.
+     */
     const workerRequest = async (
         seeded: Awaited<ReturnType<typeof seededWallet>>,
         type: "GET_BALANCE" | "GET_TRANSACTION_HISTORY",
     ) => {
-        // Same wallet, same repository as the main-thread read — two stubs
-        // would agree with each other and prove nothing.
         const handler = new WalletMessageHandler();
         (handler as any).readonlyWallet = seeded.wallet;
         (handler as any).walletRepository = seeded.walletRepository;
