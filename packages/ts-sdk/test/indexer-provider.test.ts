@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RestIndexerProvider } from "../src";
 import { MockEventSource } from "./mocks/eventSource";
+import { jsonResponse } from "./helpers/response";
 
 const { mockFetch } = vi.hoisted(() => ({
     mockFetch: vi.fn(),
@@ -22,10 +23,7 @@ describe("RestIndexerProvider", () => {
 
     describe("getVtxos", () => {
         it("serializes the current getVtxos query parameters", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({ vtxos: [] }),
-            });
+            mockFetch.mockResolvedValueOnce(jsonResponse({ vtxos: [] }));
 
             const provider = new RestIndexerProvider("http://localhost:7070");
             await provider.getVtxos({
@@ -54,10 +52,7 @@ describe("RestIndexerProvider", () => {
         });
 
         it("serializes the renewableOnly filter", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({ vtxos: [] }),
-            });
+            mockFetch.mockResolvedValueOnce(jsonResponse({ vtxos: [] }));
 
             const provider = new RestIndexerProvider("http://localhost:7070");
             await provider.getVtxos({ scripts: ["script-a"], renewableOnly: true });
@@ -67,10 +62,7 @@ describe("RestIndexerProvider", () => {
         });
 
         it("serializes outpoints and legacy filters alongside the new bounds", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({ vtxos: [] }),
-            });
+            mockFetch.mockResolvedValueOnce(jsonResponse({ vtxos: [] }));
 
             const provider = new RestIndexerProvider("http://localhost:7070");
             await provider.getVtxos({
@@ -247,22 +239,18 @@ describe("RestIndexerProvider", () => {
             // page in `current`; `next` points at the following page until the
             // last one, where it pins at `total`.
             mockFetch
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () =>
-                        Promise.resolve({
-                            vtxos: fullPage,
-                            page: { current: 1, next: 2, total: 2 },
-                        }),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () =>
-                        Promise.resolve({
-                            vtxos: [vtxo("page1-0")],
-                            page: { current: 2, next: 2, total: 2 },
-                        }),
-                });
+                .mockResolvedValueOnce(
+                    jsonResponse({
+                        vtxos: fullPage,
+                        page: { current: 1, next: 2, total: 2 },
+                    }),
+                )
+                .mockResolvedValueOnce(
+                    jsonResponse({
+                        vtxos: [vtxo("page1-0")],
+                        page: { current: 2, next: 2, total: 2 },
+                    }),
+                );
 
             const provider = new RestIndexerProvider("http://localhost:7070");
             const result = await provider.getVtxos({ scripts: ["script-a"] });
@@ -297,16 +285,14 @@ describe("RestIndexerProvider", () => {
                 spentBy: "",
             });
             const fullPage = Array.from({ length: 500 }, (_, i) => vtxo(`only-${i}`));
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () =>
-                    Promise.resolve({
-                        vtxos: fullPage,
-                        // The server clamps page.index=0 to page 1 and echoes
-                        // the 1-based page: current 1 of 1, next pinned at 1.
-                        page: { current: 1, next: 1, total: 1 },
-                    }),
-            });
+            mockFetch.mockResolvedValueOnce(
+                jsonResponse({
+                    vtxos: fullPage,
+                    // The server clamps page.index=0 to page 1 and echoes
+                    // the 1-based page: current 1 of 1, next pinned at 1.
+                    page: { current: 1, next: 1, total: 1 },
+                }),
+            );
 
             const provider = new RestIndexerProvider("http://localhost:7070");
             const result = await provider.getVtxos({ scripts: ["script-a"] });
@@ -317,10 +303,9 @@ describe("RestIndexerProvider", () => {
         });
 
         it("leaves a caller-named page alone, cursor included", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({ vtxos: [], page: { current: 2, next: 3, total: 9 } }),
-            });
+            mockFetch.mockResolvedValueOnce(
+                jsonResponse({ vtxos: [], page: { current: 2, next: 3, total: 9 } }),
+            );
 
             const provider = new RestIndexerProvider("http://localhost:7070");
             const result = await provider.getVtxos({ scripts: ["script-a"], pageIndex: 2 });
@@ -345,14 +330,12 @@ describe("RestIndexerProvider", () => {
             });
             const fullPage = Array.from({ length: 500 }, (_, i) => vtxo(`page0-${i}`));
             mockFetch
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () =>
-                        Promise.resolve({
-                            vtxos: fullPage,
-                            page: { current: 0, next: 1, total: 2 },
-                        }),
-                })
+                .mockResolvedValueOnce(
+                    jsonResponse({
+                        vtxos: fullPage,
+                        page: { current: 0, next: 1, total: 2 },
+                    }),
+                )
                 .mockResolvedValueOnce({
                     ok: false,
                     statusText: "Internal Server Error",

@@ -3,6 +3,7 @@ import { RestIndexerProvider, RestArkProvider, ProviderUnavailableError, ArkErro
 import { throwIfHttpUnavailable, toProviderUnavailable } from "../src/providers/errors";
 import { FetchError } from "../src/utils/fetch";
 import { rateGate } from "../src/providers/rateGate";
+import { jsonResponse } from "./helpers/response";
 
 const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }));
 
@@ -111,7 +112,7 @@ describe("RestIndexerProvider availability classification", () => {
     it("retries a 503 and succeeds on a later attempt", async () => {
         mockFetch
             .mockResolvedValueOnce({ ok: false, status: 503, statusText: "Service Unavailable" })
-            .mockResolvedValueOnce({ ok: true, json: async () => ({ vtxos: [] }) });
+            .mockResolvedValueOnce(jsonResponse({ vtxos: [] }));
         await expect(provider().getVtxos({ scripts: ["s"] })).resolves.toMatchObject({
             vtxos: [],
         });

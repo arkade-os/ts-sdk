@@ -8,6 +8,7 @@ import {
 } from "./helpers/restoreWallet";
 import { BoardingContractHandler } from "../src/contracts/handlers/boarding";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
+import { jsonResponse } from "./helpers/response";
 
 const NEW_SERVER = "ab".repeat(32);
 
@@ -245,8 +246,7 @@ describe("Boarding watch path across server-signer rotation", () => {
         vi.stubGlobal(
             "fetch",
             vi.fn().mockImplementation((url: string) => {
-                const reply = (b: unknown) =>
-                    Promise.resolve({ ok: true, json: () => Promise.resolve(b) });
+                const reply = (b: unknown) => Promise.resolve(jsonResponse(b));
                 if (url.includes("/info"))
                     return reply({
                         ...mockArkInfo,
@@ -357,8 +357,7 @@ describe("Offchain baseline matrix across server-signer rotation", () => {
         vi.stubGlobal(
             "fetch",
             vi.fn().mockImplementation((url: string) => {
-                const reply = (b: unknown) =>
-                    Promise.resolve({ ok: true, json: () => Promise.resolve(b) });
+                const reply = (b: unknown) => Promise.resolve(jsonResponse(b));
                 if (url.includes("/info"))
                     return reply({
                         ...mockArkInfo,
