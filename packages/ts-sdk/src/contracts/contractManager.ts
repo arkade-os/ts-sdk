@@ -560,8 +560,9 @@ export interface IContractManager extends Disposable {
      * At-least-once, and re-announces on restart — the registration is
      * in-memory, so there is no baseline to diff a restart against.
      * Deduplicate by outpoint, and tolerate a `script_vtxo_spent` with no
-     * preceding `script_vtxo_received`: an output can be created and spent
-     * inside one gap in the stream.
+     * preceding `script_vtxo_received` — an output can be created and spent
+     * inside one gap in the stream. Re-registering a watched script is a
+     * no-op, so a caller may re-derive its whole set on a timer.
      *
      * Reports **spendable** outputs: a preconfirmed one counts, so a fresh
      * funding is not missed, but one already recoverable or swept is not

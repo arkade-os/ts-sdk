@@ -1,6 +1,11 @@
 import { IndexerProvider, SubscriptionResponse } from "../providers/indexer";
 import { VirtualCoin } from "../wallet";
-import { getAllNormalizedVtxos, hasTerminalSpend, normalizeVtxo } from "../wallet/vtxo";
+import {
+    getAllNormalizedVtxos,
+    hasTerminalSpend,
+    isPastExpiry,
+    normalizeVtxo,
+} from "../wallet/vtxo";
 import { extendVirtualCoinForContract } from "../wallet/utils";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
@@ -101,7 +106,7 @@ interface ContractState {
     lastKnownVtxos: Map<string, VirtualCoin>;
 }
 
-/** No `Contract`, by construction — that absence is the ownership boundary. */
+/** No `Contract` — that absence is the ownership boundary. */
 interface WatchedScriptState {
     label?: string;
     lastKnownVtxos: Map<string, VirtualCoin>;
@@ -146,7 +151,7 @@ export class ContractWatcher {
     private config: Required<Omit<ContractWatcherConfig, "walletRepository">> &
         Pick<ContractWatcherConfig, "walletRepository">;
     private contracts: Map<string, ContractState> = new Map();
-    /** Watch-only scripts. In-memory and process-lifetime; never persisted. */
+    /** In-memory and process-lifetime; never persisted. */
     private watchedScripts: Map<string, WatchedScriptState> = new Map();
     private subscriptionId?: string;
     private abortController?: AbortController;
@@ -297,9 +302,8 @@ export class ContractWatcher {
     }
 
     /**
-     * Every script the subscription must carry. Deliberately wider than
-     * {@link getWatchedContracts}, which stays the sync scope — what decides
-     * whose VTXOs get fetched, persisted and counted as the wallet's.
+     * Every script the subscription must carry. Wider than
+     * {@link getWatchedContracts}, which stays the sync scope.
      */
     private getSubscribedScripts(): string[] {
         const scripts = new Set(this.getWatchedContracts().map((c) => c.script));
@@ -311,6 +315,14 @@ export class ContractWatcher {
 
     /** @see IContractManager.watchScript for the delivery and filter contract. */
     async addWatchedScript(script: string, options?: { label?: string }): Promise<void> {
+        const existing = this.watchedScripts.get(script);
+        if (existing) {
+            // Idempotent: a caller that re-derives its whole watched set on
+            // a timer would otherwise re-announce on every sweep.
+            if (options?.label !== undefined) existing.label = options.label;
+            return;
+        }
+
         this.watchedScripts.set(script, {
             label: options?.label,
             lastKnownVtxos: new Map(),
@@ -909,24 +921,26 @@ export class ContractWatcher {
         const byContract = new Map<string, VirtualCoin[]>();
         const byWatchedScript = new Map<string, VirtualCoin[]>();
         let unknownScript = 0;
+        const now = { timestamp: new Date() };
         for (const vtxo of vtxos) {
-            // Contract precedence: registered-and-watched yields one event.
-            const target = this.contracts.has(vtxo.script)
-                ? byContract
-                : this.watchedScripts.has(vtxo.script)
-                  ? byWatchedScript
-                  : undefined;
+            const state = this.contracts.get(vtxo.script);
+            const watchOnly = this.watchedScripts.has(vtxo.script);
+            // A registered contract wins, unless it is `retained`: routing
+            // that as a contract event answers it with syncContracts and
+            // undoes the owner's opt-out from background channels.
+            const preferContract =
+                state !== undefined && (!watchOnly || isWatchedContract(state.contract));
+            const target = preferContract ? byContract : watchOnly ? byWatchedScript : undefined;
             if (!target) {
                 unknownScript++;
                 continue;
             }
-            // The watch-only baseline has to admit only what the spendable
-            // poll would return, or the next tick reads the difference as a
-            // spend and emits `script_vtxo_spent` for an output nobody spent.
-            // Spend notifications stay unfiltered.
+            // Admit only what the spendable poll would return, or the next
+            // tick reads the difference as a spend. Spends stay unfiltered.
             if (target === byWatchedScript && eventType === "vtxo_received") {
                 const n = normalizeVtxo(vtxo);
-                if (hasTerminalSpend(n) || n.isSwept) continue;
+                // No chain tip here: time-based expiry only.
+                if (hasTerminalSpend(n) || n.isSwept || isPastExpiry(n, now)) continue;
             }
             let bucket = target.get(vtxo.script);
             if (!bucket) {

@@ -562,6 +562,26 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
+    it("refuses watch-only messages when the manager cannot serve them", async () => {
+        (updater as any).readonlyWallet = {
+            getContractManager: vi.fn().mockResolvedValue({}),
+        };
+
+        for (const [type, payload] of [
+            ["WATCH_SCRIPT", { script: "aa" }],
+            ["UNWATCH_SCRIPT", { script: "aa" }],
+            ["GET_WATCHED_SCRIPTS", {}],
+        ] as const) {
+            const response = await updater.handleMessage({
+                ...baseMessage(`x-${type}`),
+                type,
+                payload,
+            } as any);
+            expect((response as any).error).toBeDefined();
+            expect((response as any).error.message).toMatch(/does not support/);
+        }
+    });
+
     it("pushes contract events straight to the channel", async () => {
         const manager = {
             onContractEvent: vi.fn((cb: any) => {

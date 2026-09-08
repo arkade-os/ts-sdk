@@ -124,7 +124,6 @@ describe("ContractWatcher watch-only scripts", () => {
             }),
         }));
 
-        // An owned contract too, so the resubscribe happens either way.
         await watcher.addContract(activeContract());
         await watcher.addWatchedScript(FOREIGN_SCRIPT);
         await watcher.startWatching(() => {});
@@ -156,30 +155,75 @@ describe("ContractWatcher watch-only scripts", () => {
         await watcher.stopWatching();
     });
 
-    // Admitting one would make the next spendable-only poll read its absence
-    // as a spend and emit `script_vtxo_spent` for an output nobody spent.
-    it("keeps an already-spent subscription output out of the watch-only baseline", async () => {
+    // Admitting one makes the next poll read its absence as a spend.
+    it.each([
+        { label: "spent", extra: { isSpent: true } },
+        { label: "swept", extra: { isSwept: true } },
+        { label: "batch-expired", extra: { expiresAt: new Date(Date.now() - 60_000) } },
+    ])(
+        "keeps an already-$label subscription output out of the watch-only baseline",
+        async ({ extra }) => {
+            vi.useFakeTimers();
+
+            const dead = createMockVtxo({ script: FOREIGN_SCRIPT, value: 1500, ...extra });
+            (mockIndexer.getSubscription as any).mockImplementation(
+                subscriptionYielding([{ newVtxos: [dead] }]),
+            );
+
+            const callback = vi.fn();
+            await watcher.addWatchedScript(FOREIGN_SCRIPT);
+            await watcher.startWatching(callback);
+            await vi.advanceTimersByTimeAsync(0);
+
+            expect(callback).not.toHaveBeenCalledWith(
+                expect.objectContaining({ type: "script_vtxo_received" }),
+            );
+
+            await vi.advanceTimersByTimeAsync(1000);
+            expect(callback).not.toHaveBeenCalledWith(
+                expect.objectContaining({ type: "script_vtxo_spent" }),
+            );
+
+            await watcher.stopWatching();
+        },
+    );
+
+    it("does not let a retained contract out-rank a watch-only registration", async () => {
+        const vtxo = createMockVtxo({ script: TEST_DEFAULT_SCRIPT, value: 2468 });
+        (mockIndexer.getSubscription as any).mockImplementation(
+            subscriptionYielding([{ newVtxos: [vtxo] }]),
+        );
+
+        const events: ContractEvent[] = [];
+        await watcher.addContract({ ...activeContract(), watch: "retained" });
+        await watcher.addWatchedScript(TEST_DEFAULT_SCRIPT);
+        await watcher.startWatching((e) => events.push(e));
+        await vi.waitFor(() =>
+            expect(events.some((e) => e.type !== "connection_reset")).toBe(true),
+        );
+
+        const vtxoEvents = events.filter((e) => e.type !== "connection_reset");
+        expect(vtxoEvents.map((e) => e.type)).toEqual(["script_vtxo_received"]);
+
+        await watcher.stopWatching();
+    });
+
+    it("re-registering an already-watched script does not re-announce it", async () => {
         vi.useFakeTimers();
 
-        const dead = createMockVtxo({ script: FOREIGN_SCRIPT, value: 1500, isSpent: true });
-        (mockIndexer.getSubscription as any).mockImplementation(
-            subscriptionYielding([{ newVtxos: [dead] }]),
-        );
+        const vtxo = createMockVtxo({ script: FOREIGN_SCRIPT, value: 640 });
+        (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [vtxo] });
 
         const callback = vi.fn();
-        await watcher.addWatchedScript(FOREIGN_SCRIPT);
         await watcher.startWatching(callback);
-        await vi.advanceTimersByTimeAsync(0);
+        await watcher.addWatchedScript(FOREIGN_SCRIPT, { label: "first" });
+        callback.mockClear();
 
-        expect(callback).not.toHaveBeenCalledWith(
-            expect.objectContaining({ type: "script_vtxo_received" }),
-        );
-
-        // And no phantom spend on the next poll, since it never entered.
+        await watcher.addWatchedScript(FOREIGN_SCRIPT, { label: "second" });
         await vi.advanceTimersByTimeAsync(1000);
-        expect(callback).not.toHaveBeenCalledWith(
-            expect.objectContaining({ type: "script_vtxo_spent" }),
-        );
+
+        expect(callback).not.toHaveBeenCalled();
+        expect(watcher.getWatchedScripts()).toEqual([{ script: FOREIGN_SCRIPT, label: "second" }]);
 
         await watcher.stopWatching();
     });
