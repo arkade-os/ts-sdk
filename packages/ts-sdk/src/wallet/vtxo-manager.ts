@@ -800,11 +800,11 @@ export interface RenewalSplitContext {
     /** The address every piece lands on — the wallet's own, after any signer rotation. */
     address: string;
     /**
-     * Whether any selected input carries assets — when it does, a plan MUST
-     * return a single piece. `Wallet.settle` bags every input asset onto the
-     * FIRST output matching the destination script, and every piece is on that
-     * script, so a split would silently put the whole holding on piece 0. The
-     * SPLIT is refused rather than the renewal: an unrenewed float expires.
+     * Whether any selected input carries assets — then a plan MUST return one
+     * piece. `Wallet.settle` bags every input asset onto the FIRST output
+     * matching the destination script, and every piece is on it, so a split
+     * would silently put the whole holding on piece 0. The SPLIT is refused
+     * rather than the renewal: an unrenewed float expires.
      */
     hasAssets: boolean;
 }
@@ -1824,11 +1824,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // this weighs GROSS input value against pieces paid post-fee, so it
             // stays under what they can absorb.
             //
-            // Except when the batch carries assets, which must come back as ONE
-            // piece: several ceilings' worth would leave it no valid plan at all —
-            // split and the asset guard refuses it, don't and the ceiling guard
-            // does. Judged BEFORE the cap so it cannot admit a batch it then
-            // strands; a cap that later drops the asset-bearing input only defers.
+            // Except an asset-bearing batch, which must come back as ONE piece:
+            // several ceilings' worth would leave it no valid plan at all. Judged
+            // BEFORE the cap, so it cannot admit a batch it then strands.
             const carriesAssets = vtxos.some((vtxo) => (vtxo.assets?.length ?? 0) > 0);
             const capacity =
                 vtxoMaxAmount < 0n || !options?.split || carriesAssets

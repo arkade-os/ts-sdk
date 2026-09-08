@@ -4393,8 +4393,8 @@ describe("VtxoManager - renewal output split", () => {
         });
     });
 
-    // `Wallet.settle` bags every input asset onto the FIRST matching output, and
-    // every piece is on that script — so a split hands them all to piece 0.
+    // settle bags every input asset onto the FIRST matching output, and every
+    // piece is on that script — so a split hands them all to piece 0.
     describe("assets", () => {
         const withAssets = (value: number, txid = `asset-${value}`): ExtendedVirtualCoin =>
             ({ ...expiring(value, txid), assets: [{ assetId: "aa", amount: 5n }] }) as any;
@@ -4427,8 +4427,7 @@ describe("VtxoManager - renewal output split", () => {
             expect(wallet.settle).not.toHaveBeenCalled();
         });
 
-        // Refusing the SPLIT, not the renewal: an unrenewed float expires, which is
-        // worse than one fat coin carrying the assets unambiguously.
+        // An unrenewed float expires, which is worse than one fat coin.
         it("still renews an asset-bearing float into one piece", async () => {
             const wallet = createMockWallet([withAssets(5000), expiring(3000)], ADDRESS);
 
@@ -4439,12 +4438,8 @@ describe("VtxoManager - renewal output split", () => {
             expect(settled(wallet).outputs).toEqual([{ address: ADDRESS, amount: 8000n }]);
         });
 
-        /**
-         * A single piece cannot exceed the ceiling, so admitting several ceilings'
-         * worth would leave an asset-bearing batch with NO valid plan: split and
-         * the asset guard refuses, don't and the ceiling guard does. The batch
-         * takes the unsplit path's cap instead, deferring the overflow.
-         */
+        // Admitting several ceilings' worth would leave an asset-bearing batch no
+        // valid plan: split and the asset guard refuses, don't and the ceiling does.
         it("caps an asset-bearing batch to one ceiling so a single piece still fits", async () => {
             const wallet = createMockWallet([withAssets(4000, "a"), expiring(4000, "b")], ADDRESS, {
                 vtxoMaxAmount: 5000n,
