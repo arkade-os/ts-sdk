@@ -65,8 +65,14 @@ function readDeadline(input: RequestInfo | URL, init?: RequestInit): AbortSignal
  * preflight.
  *
  * Reads without a caller-supplied signal are bounded by {@link READ_TIMEOUT_MS}.
- * Long-lived streams do not come through here — they are `EventSource` — so the
- * deadline cannot truncate a subscription.
+ *
+ * **A long-lived request opts out by supplying its own signal — that is the only
+ * thing keeping this deadline off a stream.** On web, SSE happens to use
+ * `EventSource` and never arrives here at all; on Expo it does arrive here
+ * whenever `expo/fetch` fails to import and `getExpoFetch` falls back to this
+ * module, and `sseStreamIterator` passing `signal: fetchController.signal` is
+ * what prevents a 30-second truncation. That signal is load-bearing, not
+ * incidental: a streaming caller that omits one gets cut off here.
  *
  * Transport-level rejections are re-thrown as a {@link FetchError}.
  */

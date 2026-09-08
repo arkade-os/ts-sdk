@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { baseFetch, FetchError, READ_TIMEOUT_MS } from "../src/utils/fetch";
 import { isRetryableProviderError } from "../src/providers/availability";
+import { sseStreamIterator } from "../src/providers/expoUtils";
 
 describe("baseFetch read deadline", () => {
     let seen: RequestInit | undefined;
@@ -70,5 +71,26 @@ describe("baseFetch read deadline", () => {
 
     it("states a deadline rather than leaving it implicit", () => {
         expect(READ_TIMEOUT_MS).toBeGreaterThan(0);
+    });
+
+    // On Expo, `getExpoFetch` falls back to `baseFetch`, so this signal is what
+    // keeps the deadline off a long-lived stream. Guard it against removal.
+    it("sseStreamIterator supplies a signal, which is what opts a stream out", async () => {
+        let received: RequestInit | undefined;
+        const fetchFn = (async (_url: string, init?: RequestInit) => {
+            received = init;
+            return new Response(null, { status: 500 });
+        }) as unknown as typeof globalThis.fetch;
+
+        const stream = sseStreamIterator(
+            "https://example.test/stream",
+            new AbortController().signal,
+            fetchFn,
+            {},
+            (d) => d,
+        );
+        await stream.next().catch(() => undefined);
+
+        expect(received?.signal).toBeInstanceOf(AbortSignal);
     });
 });

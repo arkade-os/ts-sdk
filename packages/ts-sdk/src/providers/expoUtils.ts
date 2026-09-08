@@ -61,6 +61,9 @@ export async function* sseStreamIterator<T>(
                 Accept: "text/event-stream",
                 ...headers,
             },
+            // Required, not just for cancellation: `getExpoFetch` falls back to
+            // `baseFetch`, which bounds any read that brings no signal of its
+            // own. Drop this and the stream is truncated at READ_TIMEOUT_MS.
             signal: fetchController.signal,
         });
 
