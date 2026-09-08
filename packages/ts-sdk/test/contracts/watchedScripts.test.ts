@@ -9,6 +9,7 @@ import {
     type IndexerProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    isContractVtxoEvent,
     SingleKey,
     Wallet,
 } from "../../src";
@@ -50,6 +51,32 @@ function subscriptionYielding(updates: unknown[]) {
     });
 }
 
+// Delivers strictly after boot; `createContract` hydrates on its own, so a
+// racing update would prove nothing about the event path.
+function controllableSubscription() {
+    const queue: unknown[] = [];
+    let wake: (() => void) | undefined;
+    return {
+        push(update: unknown) {
+            queue.push(update);
+            wake?.();
+            wake = undefined;
+        },
+        factory: () => ({
+            [Symbol.asyncIterator]: () => ({
+                async next() {
+                    while (queue.length === 0) {
+                        await new Promise<void>((resolve) => {
+                            wake = resolve;
+                        });
+                    }
+                    return { value: queue.shift(), done: false };
+                },
+            }),
+        }),
+    };
+}
+
 describe("ContractWatcher watch-only scripts", () => {
     let watcher: ContractWatcher;
     let mockIndexer: IndexerProvider;
@@ -67,7 +94,7 @@ describe("ContractWatcher watch-only scripts", () => {
         vi.useRealTimers();
     });
 
-    it("emits script_vtxo_received for a watch-only script over the subscription", async () => {
+    it("emits vtxo_received for a watch-only script over the subscription", async () => {
         const vtxo = createMockVtxo({ script: FOREIGN_SCRIPT, value: 4200 });
         (mockIndexer.getSubscription as any).mockImplementation(
             subscriptionYielding([{ newVtxos: [vtxo] }]),
@@ -79,8 +106,8 @@ describe("ContractWatcher watch-only scripts", () => {
         await vi.waitFor(() => expect(events.length).toBeGreaterThan(0));
 
         expect(events).toContainEqual({
-            type: "script_vtxo_received",
-            script: FOREIGN_SCRIPT,
+            type: "vtxo_received",
+            contractScript: FOREIGN_SCRIPT,
             vtxos: [expect.objectContaining({ script: FOREIGN_SCRIPT, value: 4200 })],
             timestamp: expect.any(Number),
         });
@@ -107,8 +134,8 @@ describe("ContractWatcher watch-only scripts", () => {
 
         expect(callback).toHaveBeenCalledWith(
             expect.objectContaining({
-                type: "script_vtxo_spent",
-                script: FOREIGN_SCRIPT,
+                type: "vtxo_spent",
+                contractScript: FOREIGN_SCRIPT,
             }),
         );
 
@@ -147,8 +174,8 @@ describe("ContractWatcher watch-only scripts", () => {
 
         expect(after).toContainEqual(
             expect.objectContaining({
-                type: "script_vtxo_received",
-                script: FOREIGN_SCRIPT,
+                type: "vtxo_received",
+                contractScript: FOREIGN_SCRIPT,
             }),
         );
 
@@ -176,12 +203,15 @@ describe("ContractWatcher watch-only scripts", () => {
             await vi.advanceTimersByTimeAsync(0);
 
             expect(callback).not.toHaveBeenCalledWith(
-                expect.objectContaining({ type: "script_vtxo_received" }),
+                expect.objectContaining({
+                    type: "vtxo_received",
+                    contractScript: FOREIGN_SCRIPT,
+                }),
             );
 
             await vi.advanceTimersByTimeAsync(1000);
             expect(callback).not.toHaveBeenCalledWith(
-                expect.objectContaining({ type: "script_vtxo_spent" }),
+                expect.objectContaining({ type: "vtxo_spent", contractScript: FOREIGN_SCRIPT }),
             );
 
             await watcher.stopWatching();
@@ -203,7 +233,31 @@ describe("ContractWatcher watch-only scripts", () => {
         );
 
         const vtxoEvents = events.filter((e) => e.type !== "connection_reset");
-        expect(vtxoEvents.map((e) => e.type)).toEqual(["script_vtxo_received"]);
+        expect(vtxoEvents.map((e) => e.type)).toEqual(["vtxo_received"]);
+        expect(vtxoEvents.map(isContractVtxoEvent)).toEqual([false]);
+
+        await watcher.stopWatching();
+    });
+
+    // `getWatchedContracts` drops retained, so without this the pair has no failsafe.
+    it("polls a retained-and-watched script the contract sweep leaves uncovered", async () => {
+        vi.useFakeTimers();
+
+        const vtxo = createMockVtxo({ script: TEST_DEFAULT_SCRIPT, value: 1357 });
+        (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [vtxo] });
+
+        const callback = vi.fn();
+        await watcher.addContract({ ...activeContract(), watch: "retained" });
+        await watcher.addWatchedScript(TEST_DEFAULT_SCRIPT);
+        await watcher.startWatching(callback);
+        callback.mockClear();
+
+        (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(callback).toHaveBeenCalledWith(
+            expect.objectContaining({ type: "vtxo_spent", contractScript: TEST_DEFAULT_SCRIPT }),
+        );
 
         await watcher.stopWatching();
     });
@@ -272,7 +326,7 @@ describe("ContractWatcher watch-only scripts", () => {
         const vtxoEvents = events.filter((e) => e.type !== "connection_reset");
         expect(vtxoEvents).toHaveLength(1);
         expect(vtxoEvents[0].type).toBe("vtxo_received");
-        expect(vtxoEvents.some((e) => e.type.startsWith("script_"))).toBe(false);
+        expect(isContractVtxoEvent(vtxoEvents[0])).toBe(true);
 
         await watcher.stopWatching();
     });
@@ -310,36 +364,102 @@ describe("ContractWatcher watch-only scripts", () => {
         await watcher.stopWatching();
     });
 
-    // `handleContractEvent` has no case for the script_ variants, so the event
-    // is forwarded without reaching syncContracts/saveVtxosForContract.
-    it("forwards a watch-only event through the manager without syncing it", async () => {
+    it("syncs an owned contract to the wallet, and never a watched script", async () => {
         const walletRepository = new InMemoryWalletRepository();
         const indexer = createMockIndexerProvider();
-        (indexer.getSubscription as any).mockImplementation(
-            subscriptionYielding([
-                {
-                    scripts: [FOREIGN_SCRIPT],
-                    newVtxos: [createMockVtxo({ script: FOREIGN_SCRIPT, value: 8080 })],
-                    spentVtxos: [],
-                    sweptVtxos: [],
-                },
-            ]),
-        );
+
+        const ownedVtxo = createMockVtxo({
+            script: TEST_DEFAULT_SCRIPT,
+            value: 31337,
+            txid: hex.encode(new Uint8Array(32).fill(0xaa)),
+        });
+        const foreignVtxo = createMockVtxo({
+            script: FOREIGN_SCRIPT,
+            value: 99999,
+            txid: hex.encode(new Uint8Array(32).fill(0xbb)),
+        });
+
+        (indexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+
+        const subscription = controllableSubscription();
+        (indexer.getSubscription as any).mockImplementation(subscription.factory);
 
         const manager = await ContractManager.create({
             indexerProvider: indexer,
             contractRepository: new InMemoryContractRepository(),
             walletRepository,
         });
+        await manager.createContract({
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "address",
+        });
 
         const seen: ContractEvent[] = [];
         manager.onContractEvent((e) => seen.push(e));
         await manager.watchScript!(FOREIGN_SCRIPT);
 
-        // Either name: `handleContractEvent` awaits its sync before forwarding.
-        await vi.waitFor(() => expect(seen.some((e) => e.type !== "connection_reset")).toBe(true));
+        expect(await walletRepository.getVtxosForScript!(TEST_DEFAULT_SCRIPT)).toEqual([]);
+
+        (indexer.getVtxos as any).mockImplementation((opts: { scripts?: string[] }) =>
+            Promise.resolve({
+                vtxos: [ownedVtxo, foreignVtxo].filter((v) =>
+                    (opts?.scripts ?? []).includes(v.script),
+                ),
+            }),
+        );
+        subscription.push({
+            scripts: [TEST_DEFAULT_SCRIPT, FOREIGN_SCRIPT],
+            newVtxos: [ownedVtxo, foreignVtxo],
+            spentVtxos: [],
+            sweptVtxos: [],
+        });
+
+        await vi.waitFor(async () => {
+            expect(await walletRepository.getVtxosForScript!(TEST_DEFAULT_SCRIPT)).not.toEqual([]);
+        });
+
+        // The owned side above is what stops this one passing vacuously.
         expect(await walletRepository.getVtxosForScript!(FOREIGN_SCRIPT)).toEqual([]);
-        expect(seen.map((e) => e.type)).toContain("script_vtxo_received");
+
+        const watchOnly = seen.filter((e) => e.type === "vtxo_received" && !isContractVtxoEvent(e));
+        expect(watchOnly.length).toBeGreaterThan(0);
+        expect(watchOnly[0]).toMatchObject({ contractScript: FOREIGN_SCRIPT });
+
+        manager.dispose();
+    });
+
+    // `onVtxosSpent` sits after the same guard, so it catches a leak even when
+    // the sync below it fails harmlessly.
+    it("does not prune wallet state on a watch-only spend", async () => {
+        const onVtxosSpent = vi.fn().mockResolvedValue(undefined);
+        const indexer = createMockIndexerProvider();
+        (indexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+
+        const subscription = controllableSubscription();
+        (indexer.getSubscription as any).mockImplementation(subscription.factory);
+
+        const manager = await ContractManager.create({
+            indexerProvider: indexer,
+            contractRepository: new InMemoryContractRepository(),
+            walletRepository: new InMemoryWalletRepository(),
+            onVtxosSpent,
+        });
+
+        const seen: ContractEvent[] = [];
+        manager.onContractEvent((e) => seen.push(e));
+        await manager.watchScript!(FOREIGN_SCRIPT);
+
+        subscription.push({
+            scripts: [FOREIGN_SCRIPT],
+            newVtxos: [],
+            spentVtxos: [createMockVtxo({ script: FOREIGN_SCRIPT, value: 4242 })],
+            sweptVtxos: [],
+        });
+
+        await vi.waitFor(() => expect(seen.some((e) => e.type === "vtxo_spent")).toBe(true));
+        expect(onVtxosSpent).not.toHaveBeenCalled();
 
         manager.dispose();
     });

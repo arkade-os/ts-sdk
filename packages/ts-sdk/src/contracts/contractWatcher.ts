@@ -618,10 +618,15 @@ export class ContractWatcher {
     private async pollWatchedScripts(candidates: string[]): Promise<void> {
         if (!this.eventCallback) return;
 
-        // Contract precedence: an owned script is served by the path above.
-        const scripts = candidates.filter(
-            (s) => this.watchedScripts.has(s) && !this.contracts.has(s),
-        );
+        // Same precedence as processSubscriptionVtxos: an actively-watched
+        // contract is polled above, a `retained` one by neither, so it stays ours.
+        const scripts = candidates.filter((s) => {
+            const state = this.contracts.get(s);
+            return (
+                this.watchedScripts.has(s) &&
+                (state === undefined || !isWatchedContract(state.contract))
+            );
+        });
         if (scripts.length === 0) return;
 
         const now = Date.now();
@@ -634,7 +639,7 @@ export class ContractWatcher {
         } catch (error) {
             // Fail closed: an empty result is indistinguishable from "every
             // output was spent", so reading a rejection as one would emit
-            // `script_vtxo_spent` for every live script on one flaky request.
+            // `vtxo_spent` for every live script on one flaky request.
             console.error("ContractWatcher watch-only poll failed:", error);
             return;
         }
@@ -990,7 +995,7 @@ export class ContractWatcher {
         }
     }
 
-    /** Unannotated, unlike {@link emitVtxoEvent}: annotation needs a contract. */
+    /** As {@link emitVtxoEvent}, less the `contract` and the annotation. */
     private emitWatchedScriptEvent(
         script: string,
         vtxos: VirtualCoin[],
@@ -998,12 +1003,11 @@ export class ContractWatcher {
         timestamp: number,
     ): void {
         if (!this.eventCallback) return;
-        this.eventCallback({
-            type: eventType === "vtxo_received" ? "script_vtxo_received" : "script_vtxo_spent",
-            script,
-            vtxos,
-            timestamp,
-        });
+        if (eventType === "vtxo_received") {
+            this.eventCallback({ type: "vtxo_received", contractScript: script, vtxos, timestamp });
+            return;
+        }
+        this.eventCallback({ type: "vtxo_spent", contractScript: script, vtxos, timestamp });
     }
 
     /**

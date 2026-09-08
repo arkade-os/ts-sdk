@@ -128,10 +128,6 @@ async function main() {
             console.log(`\n[Event] ${event.type} received from ContractManager.`);
             return;
         }
-        if (event.type === "script_vtxo_received" || event.type === "script_vtxo_spent") {
-            console.log(`\n[Event] ${event.type} on watched script ${event.script}`);
-            return;
-        }
         console.log(`\n[Event] ${event.type} on contract ${event.contractScript}`);
         if (event.vtxos?.length) {
             console.log(`\tVTXOs: ${event.vtxos.length}`);

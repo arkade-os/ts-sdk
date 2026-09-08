@@ -533,9 +533,10 @@ export interface WatchedScript {
 /**
  * Event emitted when contract-related changes occur.
  *
- * The `script_`-prefixed variants report a watch-only script. They carry no
- * `contract` and no tapscript annotation: the wallet does not own the script,
- * so it cannot derive the forfeit leaves annotation stamps.
+ * A watch-only script reports the same `vtxo_received` / `vtxo_spent` types
+ * but carries no `contract`, and cannot: annotation needs one. That absence is
+ * the ownership boundary, and the compiler enforces it — reading
+ * `event.contract` unnarrowed by {@link isContractVtxoEvent} fails.
  */
 export type ContractEvent =
     | {
@@ -553,18 +554,25 @@ export type ContractEvent =
           timestamp: number;
       }
     | {
-          type: "script_vtxo_received";
-          script: string;
+          type: "vtxo_received";
+          contractScript: string;
           vtxos: VirtualCoin[];
           timestamp: number;
       }
     | {
-          type: "script_vtxo_spent";
-          script: string;
+          type: "vtxo_spent";
+          contractScript: string;
           vtxos: VirtualCoin[];
           timestamp: number;
       }
     | { type: "connection_reset"; timestamp: number };
+
+export type ContractVtxoEvent = Extract<ContractEvent, { contract: Contract }>;
+
+/** Gate every wallet-side effect on this: a watch-only event has no contract. */
+export function isContractVtxoEvent(event: ContractEvent): event is ContractVtxoEvent {
+    return "contract" in event && event.contract !== undefined;
+}
 
 /**
  * Callback for contract events.

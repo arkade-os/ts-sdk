@@ -77,7 +77,12 @@
  * failsafe rather than being replaced.
  */
 import { hex } from "@scure/base";
-import { type ContractEvent, type IContractManager, type VHTLC } from "@arkade-os/sdk";
+import {
+    isContractVtxoEvent,
+    type ContractEvent,
+    type IContractManager,
+    type VHTLC,
+} from "@arkade-os/sdk";
 
 import {
     ONCHAIN_CLAIM_MARGIN_SECONDS,
@@ -1282,7 +1287,7 @@ export class RfqSwapManager {
             }
             // Contract-borne events only. Watch-only script events carry no
             // contract, and this manager registers every lockup it tracks.
-            if (event.type !== "vtxo_received" && event.type !== "vtxo_spent") return;
+            if (!isContractVtxoEvent(event)) return;
             const swap = this.byLockupScript.get(event.contractScript);
             // Not one of ours — a wallet's other contracts share this stream.
             if (!swap) return;

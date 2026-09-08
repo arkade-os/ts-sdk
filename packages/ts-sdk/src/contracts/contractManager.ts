@@ -20,6 +20,7 @@ import {
     ExtendedContractVtxo,
     WatchedScript,
     hasCandidates,
+    isContractVtxoEvent,
     isDiscoverable,
     watchStateOf,
 } from "./types";
@@ -553,14 +554,15 @@ export interface IContractManager extends Disposable {
     /**
      * Report VTXO activity at `script` without registering it as a contract,
      * and without the wallet owning it. Activity arrives as
-     * {@link ContractEvent} `script_vtxo_received` / `script_vtxo_spent`;
+     * {@link ContractEvent} `vtxo_received` / `vtxo_spent` without the
+     * `contract` — narrow with {@link isContractVtxoEvent};
      * nothing is persisted and the outputs never enter the wallet's balance,
      * renewal or recovery paths.
      *
      * At-least-once, and re-announces on restart — the registration is
      * in-memory, so there is no baseline to diff a restart against.
-     * Deduplicate by outpoint, and tolerate a `script_vtxo_spent` with no
-     * preceding `script_vtxo_received` — an output can be created and spent
+     * Deduplicate by outpoint, and tolerate a `vtxo_spent` with no
+     * preceding `vtxo_received` — an output can be created and spent
      * inside one gap in the stream. Re-registering a watched script is a
      * no-op, so a caller may re-derive its whole set on a timer.
      *
@@ -2173,11 +2175,15 @@ export class ContractManager implements IContractManager {
         try {
             switch (event.type) {
                 // Delta-sync only the changed virtual outputs for this contract.
+                // The guard below is the ownership boundary: a watch-only script
+                // reports these same types, so it must precede `syncContracts`.
                 case "vtxo_received":
+                    if (!isContractVtxoEvent(event)) break;
                     await this.syncContracts({ contracts: [event.contract] });
                     this.markSyncOnline();
                     break;
                 case "vtxo_spent":
+                    if (!isContractVtxoEvent(event)) break;
                     await this.syncContracts({ contracts: [event.contract] });
                     this.markSyncOnline();
                     if (this.config.onVtxosSpent) {
