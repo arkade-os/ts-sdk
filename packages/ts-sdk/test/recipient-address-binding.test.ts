@@ -9,6 +9,7 @@ import {
     validateRecipients,
     type RecipientAddressContext,
 } from "../src/wallet/utils";
+import { jsonResponse } from "./helpers/response";
 
 // Mock fetch
 const { mockFetch } = vi.hoisted(() => ({
@@ -224,10 +225,7 @@ describe("Wallet recipient address binding", () => {
 
     beforeEach(() => {
         mockFetch.mockReset();
-        mockFetch.mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(mockArkInfo),
-        });
+        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
     });
 
     it("send rejects an address from another network before spending", async () => {
@@ -261,16 +259,14 @@ describe("Wallet recipient address binding", () => {
     it("carries cached deprecated signers, cutoffs included, into the recipient context", async () => {
         const cutoff = BigInt(NOW_SECONDS + 100_000);
         mockFetch.mockReset();
-        mockFetch.mockResolvedValueOnce({
-            ok: true,
-            json: () =>
-                Promise.resolve({
-                    ...mockArkInfo,
-                    deprecatedSigners: [
-                        { pubkey: hex.encode(DEPRECATED_XONLY), cutoffDate: cutoff.toString() },
-                    ],
-                }),
-        });
+        mockFetch.mockResolvedValueOnce(
+            jsonResponse({
+                ...mockArkInfo,
+                deprecatedSigners: [
+                    { pubkey: hex.encode(DEPRECATED_XONLY), cutoffDate: cutoff.toString() },
+                ],
+            }),
+        );
 
         const wallet = await Wallet.create({
             identity: mockIdentity,
@@ -341,10 +337,7 @@ describe("send with caller-selected vtxos", () => {
 
     beforeEach(() => {
         mockFetch.mockReset();
-        mockFetch.mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(mockArkInfo),
-        });
+        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
     });
 
     it("rejects an empty selection instead of choosing for the caller", async () => {
@@ -479,10 +472,7 @@ describe("send argument dispatch", () => {
 
     beforeEach(() => {
         mockFetch.mockReset();
-        mockFetch.mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(mockArkInfo),
-        });
+        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
     });
 
     it("reads a lone recipient object as a recipient, not as params", async () => {

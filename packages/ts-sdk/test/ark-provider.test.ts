@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { RestArkProvider } from "../src/providers/ark";
 import { MockEventSource } from "./mocks/eventSource";
+import { jsonResponse } from "./helpers/response";
 
 describe("RestArkProvider.getEventStream", () => {
     beforeEach(() => {
@@ -192,7 +193,7 @@ describe("RestArkProvider.getInfo transaction limits", () => {
     const infoResponse = (body: Record<string, unknown>) => {
         vi.stubGlobal(
             "fetch",
-            vi.fn(async () => ({ ok: true, json: async () => body })),
+            vi.fn(async () => jsonResponse(body)),
         );
         return new RestArkProvider("http://ark.test").getInfo();
     };
