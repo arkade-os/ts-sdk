@@ -160,6 +160,9 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
      * the chain read that ended the swap. See
      * `RfqSwapCommon.lockupSpendTxids`. */
     lockupSpendTxids?: string[];
+    /** The preimage that settled a Lightning send, stamped by the manager from
+     * the same chain read. See `RfqSwapCommon.settlementPreimageHex`. */
+    settlementPreimageHex?: string;
     failure?: string;
     /** Last local receive-claim error while the swap is still retryable. */
     claimFailure?: string;
@@ -247,6 +250,7 @@ const managerState = (swap: PersistableRfqSwap) => ({
     updatedAt: swap.updatedAt,
     ...(swap.refundTxid ? { refundTxid: swap.refundTxid } : {}),
     ...(swap.lockupSpendTxids?.length ? { lockupSpendTxids: [...swap.lockupSpendTxids] } : {}),
+    ...(swap.settlementPreimageHex ? { settlementPreimageHex: swap.settlementPreimageHex } : {}),
     ...(swap.failure ? { failure: swap.failure } : {}),
     ...(swap.claimFailure ? { claimFailure: swap.claimFailure } : {}),
     ...(swap.blockedReason ? { blockedReason: swap.blockedReason } : {}),
@@ -332,6 +336,7 @@ export function updateRfqSwapRecord(
     const {
         refundTxid: _refundTxid,
         lockupSpendTxids: _lockupSpendTxids,
+        settlementPreimageHex: _settlementPreimageHex,
         failure: _failure,
         claimFailure: _claimFailure,
         blockedReason: _blockedReason,
@@ -429,6 +434,9 @@ export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): Per
         ...(stored.refundTxid ? { refundTxid: stored.refundTxid } : {}),
         ...(stored.lockupSpendTxids?.length
             ? { lockupSpendTxids: [...stored.lockupSpendTxids] }
+            : {}),
+        ...(stored.settlementPreimageHex
+            ? { settlementPreimageHex: stored.settlementPreimageHex }
             : {}),
         ...(stored.failure ? { failure: stored.failure } : {}),
         ...(stored.claimFailure ? { claimFailure: stored.claimFailure } : {}),

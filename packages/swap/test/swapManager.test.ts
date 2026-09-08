@@ -3364,4 +3364,94 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(result.restored[0].lockupSpendTxids).toEqual([ARK_TXID]);
         });
     });
+
+    describe("stamping the preimage that settled the swap", () => {
+        it("keeps the preimage the solver revealed to claim a lightning send", async () => {
+            const store = fakeStore();
+            const s = spies();
+            const swap = lightningSwap();
+            const m = manager({
+                indexer: settlingIndexer(),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await m.addSwap(swap, sendOrigin());
+            await m.poll();
+
+            expect(swap.state).toBe("settled");
+            // The one leg whose `P` the wallet never had: the payee minted it,
+            // so the quote carries only the hash and nothing else on the record
+            // can give it back.
+            expect(swap.settlementPreimageHex).toBe(hex.encode(PREIMAGE));
+            expect(store.records.get(RFQ_ID)?.settlementPreimageHex).toBe(hex.encode(PREIMAGE));
+        });
+
+        it("stamps nothing on a receive whose own claim is what the chain read", async () => {
+            // `P` here is the wallet's claim secret, already recoverable from
+            // `profile` — stamping it would be a second home for it.
+            const store = fakeStore();
+            const s = spies();
+            const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
+            const spend = spendOfLockup({ script: RECEIVE_LOCKUP, conditionWitness: [PREIMAGE] });
+            const m = manager({
+                indexer: fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await m.addSwap(swap, receiveOrigin());
+            await m.poll();
+
+            expect(swap.state).toBe("settled");
+            expect(swap.settlementPreimageHex).toBeUndefined();
+            // the stored record reached the end too, so the absence below is
+            // the stamp declining rather than a row that was never written
+            expect(store.records.get(RFQ_ID)?.state).toBe("settled");
+            expect(store.records.get(RFQ_ID)?.settlementPreimageHex).toBeUndefined();
+        });
+
+        it("stamps nothing on an onchain send, whose P the wallet minted", async () => {
+            const store = fakeStore();
+            const s = spies();
+            const swap = onchainSwap();
+            const m = manager({
+                indexer: settlingIndexer(),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await m.addSwap(swap, sendOrigin({ kind: "onchain_send" }));
+            await m.poll();
+
+            expect(swap.state).toBe("settled");
+            expect(swap.settlementPreimageHex).toBeUndefined();
+            expect(store.records.get(RFQ_ID)?.state).toBe("settled");
+            expect(store.records.get(RFQ_ID)?.settlementPreimageHex).toBeUndefined();
+        });
+
+        it("stamps nothing on a send that came back instead of settling", async () => {
+            const store = fakeStore();
+            const s = spies();
+            const swap = lightningSwap();
+            const refund = spendOfLockup({ leaf: "refundWithoutReceiver" });
+            const m = manager({
+                indexer: fakeIndexer({ vtxos: spentBy(refund.txid), txs: [refund] }),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await m.addSwap(swap, sendOrigin());
+            await m.poll();
+
+            expect(swap.state).toBe("refunded");
+            expect(swap.settlementPreimageHex).toBeUndefined();
+            expect(store.records.get(RFQ_ID)?.state).toBe("refunded");
+            expect(store.records.get(RFQ_ID)?.settlementPreimageHex).toBeUndefined();
+        });
+    });
 });

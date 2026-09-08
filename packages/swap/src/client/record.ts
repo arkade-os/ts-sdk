@@ -301,6 +301,17 @@ export interface CorridorSwapRecord extends SwapRecordCommon {
     readonly profile: Record<string, unknown>;
     readonly refundTxid?: string;
     readonly lockupSpendTxids?: readonly string[];
+    /**
+     * `P`, hex — the preimage the solver revealed to settle a Lightning send.
+     *
+     * The exception the doctrine above allows for, and only on that leg: the
+     * payee mints `P`, so {@link profile}'s hashlock carries the payment hash
+     * and no claim-secret material. This is the counterparty's revealed
+     * settlement proof, not a second copy of the wallet's own claim secret —
+     * and public by the time it is written, being read out of the witness that
+     * spent the lockup.
+     */
+    readonly settlementPreimageHex?: string;
 }
 
 /** Everything `accept()` persists, both families in one key space. */
