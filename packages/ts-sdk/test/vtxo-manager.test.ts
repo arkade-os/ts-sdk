@@ -4339,6 +4339,26 @@ describe("VtxoManager - renewal output split", () => {
         ]);
     });
 
+    // Both diagnostics count against `capacity`, so under a split they have to
+    // name it — an operator sent to the per-output ceiling would be diagnosing
+    // against a number nothing was compared to.
+    it("names the combined split capacity, not the per-output ceiling", async () => {
+        const wallet = createMockWallet([expiring(22_000)], ADDRESS, { vtxoMaxAmount: 5000n });
+        const manager = new VtxoManager(wallet, undefined, {});
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        try {
+            await expect(
+                manager.renewVtxos(undefined, { split: fixedSplit(4, [22_000n]) }),
+            ).rejects.toThrow("within the combined split capacity 20000 (4 x 5000)");
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.stringContaining("exceed the combined split capacity 20000 (4 x 5000)"),
+            );
+        } finally {
+            warnSpy.mockRestore();
+        }
+    });
+
     describe("refuses a plan the server would reject", () => {
         const renewWith = (split: RenewalSplit, options: MockWalletOptions = {}) => {
             const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS, options);

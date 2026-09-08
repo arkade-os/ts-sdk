@@ -413,7 +413,9 @@ function offchainOutputFee(amount: bigint, estimator: Estimator, arkAddress: str
 }
 
 /**
- * Run a caller's {@link RenewalSplit} and refuse a plan the server would reject.
+ * Run a caller's {@link RenewalSplit} and refuse a plan whose SHAPE the server
+ * would reject — count, ceiling and budget. Dust is judged by the caller, on
+ * every output whichever path produced it, so the one rule cannot drift.
  *
  * Refused, not corrected — a reshaped plan renews the float into a shape nobody
  * asked for. Under-claiming IS allowed: it leaves a residue as fee, the
@@ -1832,6 +1834,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 vtxoMaxAmount < 0n || !options?.split || carriesAssets
                     ? vtxoMaxAmount
                     : BigInt(options.split.maxOutputs) * vtxoMaxAmount;
+            // Name the bound that actually fired. Both messages below count against
+            // `capacity`, so naming the per-output ceiling under a split would have
+            // an operator diagnose against a number nothing was compared to.
+            const limitLabel =
+                capacity === vtxoMaxAmount
+                    ? `per-output limit ${vtxoMaxAmount}`
+                    : `combined split capacity ${capacity} (${options?.split?.maxOutputs} x ${vtxoMaxAmount})`;
             const capped = capSettlementBatch(byExpiryAscending(vtxos, now), capacity);
             if (capacity >= 0n) {
                 // A VTXO whose value alone exceeds the per-output ceiling can
@@ -1842,8 +1851,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 const oversized = vtxos.filter((vtxo) => BigInt(vtxo.value) > capacity);
                 if (oversized.length > 0) {
                     console.warn(
-                        `Renewal: ${oversized.length} VTXO(s) exceed the per-output limit ` +
-                            `${vtxoMaxAmount} and cannot be renewed; they risk unilateral exit`,
+                        `Renewal: ${oversized.length} VTXO(s) exceed the ${limitLabel} ` +
+                            "and cannot be renewed; they risk unilateral exit",
                     );
                 }
             }
@@ -1853,12 +1862,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 // keep the original selection (and order) untouched.
                 vtxos = capped;
                 if (vtxos.length === 0) {
-                    // The soonest-expiring VTXO alone exceeds vtxoMaxAmount, so
-                    // no batch fits. Only reachable if the server lowered the
-                    // ceiling below an existing VTXO; it would reject it anyway.
-                    throw new Error(
-                        `No VTXOs available to renew within the per-output limit ${vtxoMaxAmount}`,
-                    );
+                    // The soonest-expiring VTXO alone exceeds the bound, so no
+                    // batch fits. Only reachable if the server lowered the ceiling
+                    // below an existing VTXO; it would reject it anyway.
+                    throw new Error(`No VTXOs available to renew within the ${limitLabel}`);
                 }
             }
 
