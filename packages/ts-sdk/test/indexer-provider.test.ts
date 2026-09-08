@@ -90,6 +90,80 @@ describe("RestIndexerProvider", () => {
             expect(requestUrl.searchParams.get("before")).toBe("0");
         });
 
+        const wireVtxo = (txid: string) => ({
+            outpoint: { txid, vout: 0 },
+            createdAt: "1700000000",
+            expiresAt: "1700003600",
+            amount: "1000",
+            script: "51200a",
+            isPreconfirmed: false,
+            isSwept: false,
+            isUnrolled: false,
+            isSpent: false,
+            spentBy: null,
+            commitmentTxids: [],
+        });
+
+        it("serves two identical concurrent reads from one request", async () => {
+            let resolveFetch: (v: unknown) => void = () => {};
+            mockFetch.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    resolveFetch = resolve;
+                }),
+            );
+
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const first = provider.getVtxos({ scripts: ["script-a"] });
+            const second = provider.getVtxos({ scripts: ["script-a"] });
+
+            resolveFetch({
+                ok: true,
+                json: () => Promise.resolve({ vtxos: [wireVtxo("aa"), wireVtxo("bb")] }),
+            });
+            const [a, b] = await Promise.all([first, second]);
+
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(a.vtxos.map((v) => v.txid)).toEqual(["aa", "bb"]);
+            expect(b.vtxos.map((v) => v.txid)).toEqual(["aa", "bb"]);
+        });
+
+        it("gives each of those two callers an independently mutable result", async () => {
+            let resolveFetch: (v: unknown) => void = () => {};
+            mockFetch.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    resolveFetch = resolve;
+                }),
+            );
+
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const first = provider.getVtxos({ scripts: ["script-a"] });
+            const second = provider.getVtxos({ scripts: ["script-a"] });
+            resolveFetch({
+                ok: true,
+                json: () => Promise.resolve({ vtxos: [wireVtxo("aa"), wireVtxo("bb")] }),
+            });
+            const [a, b] = await Promise.all([first, second]);
+
+            // Two kinds of isolation, and the second is the one a shared
+            // response would break: the array, then the coins inside it.
+            a.vtxos.reverse();
+            a.vtxos.find((v) => v.txid === "aa")!.value = 999;
+
+            expect(b.vtxos.map((v) => v.txid)).toEqual(["aa", "bb"]);
+            expect(b.vtxos.find((v) => v.txid === "aa")!.value).toBe(1000);
+        });
+
+        it("re-requests once the shared read has settled", async () => {
+            const page = () => ({ ok: true, json: () => Promise.resolve({ vtxos: [] }) });
+            mockFetch.mockResolvedValueOnce(page()).mockResolvedValueOnce(page());
+
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            await provider.getVtxos({ scripts: ["script-a"] });
+            await provider.getVtxos({ scripts: ["script-a"] });
+
+            expect(mockFetch).toHaveBeenCalledTimes(2);
+        });
+
         it("rejects requests that mix scripts and outpoints", async () => {
             const provider = new RestIndexerProvider("http://localhost:7070");
 
