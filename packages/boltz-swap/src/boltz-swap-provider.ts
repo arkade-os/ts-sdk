@@ -49,6 +49,48 @@ export type BoltzSwapStatus =
     | "transaction.server.mempool"
     | "transaction.server.confirmed";
 
+/**
+ * Deadline for a Boltz API read.
+ *
+ * `fetch` has no default timeout, so a connection the network dropped silently
+ * stays pending until the runtime gives up. That is not one missing safeguard
+ * among several — it is the one the others rest on: the `inflightGets`
+ * deduplication above and every retry around this client assume the call
+ * underneath them terminates.
+ */
+export const BOLTZ_READ_TIMEOUT_MS = 30_000;
+
+let warnedNoTimeoutSupport = false;
+
+/**
+ * A signal bounding a Boltz **read**, or `undefined` when the runtime offers no
+ * way to build one.
+ *
+ * Reads only. An aborted POST to Boltz has not necessarily failed — it may have
+ * created a swap — so bounding one would turn a stall into a state question the
+ * caller cannot answer, and a retry could create a second swap.
+ */
+const readDeadline = (): AbortSignal | undefined => {
+    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+        return AbortSignal.timeout(BOLTZ_READ_TIMEOUT_MS);
+    }
+    // Absent on some React Native runtimes, where `AbortController` is not.
+    if (typeof AbortController === "function") {
+        const controller = new AbortController();
+        const timer: unknown = setTimeout(() => controller.abort(), BOLTZ_READ_TIMEOUT_MS);
+        (timer as { unref?: () => void })?.unref?.();
+        return controller.signal;
+    }
+    if (!warnedNoTimeoutSupport) {
+        warnedNoTimeoutSupport = true;
+        console.warn(
+            "Neither AbortSignal.timeout nor AbortController is available in this runtime: " +
+                "Boltz API reads are UNBOUNDED.",
+        );
+    }
+    return undefined;
+};
+
 /** Returns true if the status indicates a failed submarine swap. */
 export const isSubmarineFailedStatus = (status: BoltzSwapStatus): boolean => {
     return ["invoice.failedToPay", "transaction.lockupFailed", "swap.expired"].includes(status);
@@ -1741,6 +1783,8 @@ export class BoltzSwapProvider {
                 method,
                 headers: { "Content-Type": "application/json" },
                 body: body ? JSON.stringify(body) : undefined,
+                // GET only — see `readDeadline`.
+                ...(method === "GET" ? { signal: readDeadline() } : {}),
             });
 
             if (!response.ok) {

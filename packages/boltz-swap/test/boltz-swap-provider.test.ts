@@ -130,10 +130,12 @@ describe("BoltzSwapProvider", () => {
             expect(fetch).toHaveBeenCalledWith("http://localhost:9090/v2/swap/submarine", {
                 method: "GET",
                 headers: { "Content-Type": "application/json" },
+                signal: expect.any(AbortSignal),
             });
             expect(fetch).toHaveBeenCalledWith("http://localhost:9090/v2/swap/reverse", {
                 method: "GET",
                 headers: { "Content-Type": "application/json" },
+                signal: expect.any(AbortSignal),
             });
             expect(fetch).toHaveBeenCalledTimes(2);
             expect(fees).toEqual({
@@ -194,6 +196,7 @@ describe("BoltzSwapProvider", () => {
             expect(fetch).toHaveBeenCalledWith("http://localhost:9090/v2/swap/submarine", {
                 method: "GET",
                 headers: { "Content-Type": "application/json" },
+                signal: expect.any(AbortSignal),
             });
             expect(limits).toEqual({ min: 1000, max: 1000000 });
         });
@@ -368,6 +371,7 @@ describe("BoltzSwapProvider", () => {
             expect(fetch).toHaveBeenCalledWith("http://localhost:9090/v2/swap/mock-id", {
                 method: "GET",
                 headers: { "Content-Type": "application/json" },
+                signal: expect.any(AbortSignal),
             });
             expect(status).toEqual(mockResponse);
         });
@@ -461,6 +465,7 @@ describe("BoltzSwapProvider", () => {
                 {
                     method: "GET",
                     headers: { "Content-Type": "application/json" },
+                    signal: expect.any(AbortSignal),
                 },
             );
             expect(result).toEqual(mockResponse);
@@ -495,6 +500,7 @@ describe("BoltzSwapProvider", () => {
                 {
                     method: "GET",
                     headers: { "Content-Type": "application/json" },
+                    signal: expect.any(AbortSignal),
                 },
             );
             expect(result).toEqual(mockResponse);
