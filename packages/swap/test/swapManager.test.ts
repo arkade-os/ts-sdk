@@ -503,8 +503,7 @@ const lockupEvent = (
 const watchedScriptEvent = (
     type: "vtxo_received" | "vtxo_spent",
     contractScript = LOCKUP_SCRIPT_HEX,
-): ContractEvent =>
-    ({ type, contractScript, vtxos: [], timestamp: 1 }) as unknown as ContractEvent;
+): ContractEvent => ({ type, contractScript, vtxos: [], timestamp: 1 }) as unknown as ContractEvent;
 
 /** A manager wired to the given seams, never started — the tests drive `poll()`
  * so nothing depends on a timer. */
