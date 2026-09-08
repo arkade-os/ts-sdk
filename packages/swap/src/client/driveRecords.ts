@@ -70,6 +70,9 @@ export const rfqRecordOf = (record: CorridorSwapRecord): RfqSwapRecord => ({
     updatedAt: record.updatedAt,
     ...(record.refundTxid === undefined ? {} : { refundTxid: record.refundTxid }),
     ...(record.lockupSpendTxids?.length ? { lockupSpendTxids: [...record.lockupSpendTxids] } : {}),
+    ...(record.settlementPreimageHex === undefined
+        ? {}
+        : { settlementPreimageHex: record.settlementPreimageHex }),
     ...(record.failure === undefined ? {} : { failure: record.failure }),
     ...(record.claimFailure === undefined ? {} : { claimFailure: record.claimFailure }),
     ...(record.blockedReason === undefined ? {} : { blockedReason: record.blockedReason }),
@@ -92,6 +95,7 @@ export const withRfqState = (
     const {
         refundTxid: _refundTxid,
         lockupSpendTxids: _lockupSpendTxids,
+        settlementPreimageHex: _settlementPreimageHex,
         failure: _failure,
         claimFailure: _claimFailure,
         blockedReason: _blockedReason,
@@ -106,6 +110,9 @@ export const withRfqState = (
         ...(state.lockupSpendTxids?.length
             ? { lockupSpendTxids: [...state.lockupSpendTxids] }
             : {}),
+        ...(state.settlementPreimageHex === undefined
+            ? {}
+            : { settlementPreimageHex: state.settlementPreimageHex }),
         ...(state.failure === undefined ? {} : { failure: state.failure }),
         ...(state.claimFailure === undefined ? {} : { claimFailure: state.claimFailure }),
         ...(state.blockedReason === undefined ? {} : { blockedReason: state.blockedReason }),

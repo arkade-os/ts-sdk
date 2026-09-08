@@ -509,6 +509,7 @@ describe("rfqSwapOriginOf", () => {
         blockedReason: "no signer for this descriptor",
         refundTxid: "ff".repeat(32),
         lockupSpendTxids: ["ab".repeat(32)],
+        settlementPreimageHex: "11".repeat(32),
     };
 
     it("keeps every request-time fact", () => {
@@ -526,6 +527,7 @@ describe("rfqSwapOriginOf", () => {
         expect(rebuilt.blockedReason).toBeUndefined();
         expect(rebuilt.refundTxid).toBeUndefined();
         expect(rebuilt.lockupSpendTxids).toBeUndefined();
+        expect(rebuilt.settlementPreimageHex).toBeUndefined();
     });
 
     it("gives the profile its own top-level object, so a new key does not reach the record", () => {
@@ -557,6 +559,38 @@ describe("the spend that ended the swap", () => {
             lockupSpendTxids: ["ab".repeat(32)],
         });
         expect(updateRfqSwapRecord(record, swapOf(sendOrigin)).lockupSpendTxids).toBeUndefined();
+    });
+});
+
+describe("the preimage that settled a send", () => {
+    // The one leg whose P the wallet never minted: it is a receipt of the
+    // solver's claim, so the record is the only place it can survive.
+    const PREIMAGE_HEX = "11".repeat(32);
+
+    it("round-trips through the record and back onto the live swap", () => {
+        const swap = { ...swapOf(sendOrigin, "settled"), settlementPreimageHex: PREIMAGE_HEX };
+        const record = createRfqSwapRecord(sendOrigin, swap);
+        expect(record.settlementPreimageHex).toBe(PREIMAGE_HEX);
+        expect(rebuildRfqSwap(record, paramsOf(sendOrigin)).settlementPreimageHex).toBe(
+            PREIMAGE_HEX,
+        );
+    });
+
+    it("stays absent when the swap never carried one", () => {
+        const record = createRfqSwapRecord(sendOrigin, swapOf(sendOrigin, "settled"));
+        expect(record).not.toHaveProperty("settlementPreimageHex");
+        expect(rebuildRfqSwap(record, paramsOf(sendOrigin)).settlementPreimageHex).toBeUndefined();
+    });
+
+    it("is cleared by an update whose swap no longer carries it", () => {
+        // Same replacement rule as the spends: nothing merges the mutable half.
+        const record = createRfqSwapRecord(sendOrigin, {
+            ...swapOf(sendOrigin, "settled"),
+            settlementPreimageHex: PREIMAGE_HEX,
+        });
+        expect(
+            updateRfqSwapRecord(record, swapOf(sendOrigin)).settlementPreimageHex,
+        ).toBeUndefined();
     });
 });
 
