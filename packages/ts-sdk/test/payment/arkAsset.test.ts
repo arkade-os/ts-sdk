@@ -170,7 +170,10 @@ describe("the BTC-only rails refuse an asset rather than dropping it", () => {
     it("onchain drops itself — an Arkade asset has no L1 form to offboard to", async () => {
         const btc = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
         expect(
-            await onchainRail().available?.({ raw: btc, amount: 1000, assets: [USDX] }, ctx()),
+            await onchainRail({ feeInfo: async () => ({}) as any }).available?.(
+                { raw: btc, amount: 1000, assets: [USDX] },
+                ctx(),
+            ),
         ).toBe(false);
     });
 });

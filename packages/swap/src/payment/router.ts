@@ -10,11 +10,12 @@
  * client.
  *
  * **The rails close over their own dependencies, and `RouterContext` is not
- * re-opened.** Widening core's context was the alternative and it is the wrong
- * half: it edits a published payment type, re-imports the `swaps?: unknown`
- * smell that was deliberately deleted, and asks core to name things it cannot —
- * a repository, a transport, a discovery index. A rail factory over an
- * already-constructed `SwapClient` names none of that in core.
+ * re-opened.** Widening core's context further was the alternative and it is
+ * the wrong half: it edits a published payment type and asks core to name
+ * things it cannot — a repository, a transport, a discovery index. (Core's
+ * context carries an optional `swaps` slot for the legacy boltz-swap rails;
+ * these rails ignore it.) A rail factory over an already-constructed
+ * `SwapClient` names none of that in core.
  *
  * This factory stays out of core's own, which is pinned at exactly
  * `["ark", "onchain"]`. Registering the swap rails is the app's decision, and
@@ -23,7 +24,7 @@
  * `available()` and the collaborative exit wins with no error.
  */
 import type { PaymentRouter, RouterPreferences, Wallet } from "@arkade-os/sdk";
-import { PaymentRouter as Router, arkRail, onchainRail } from "@arkade-os/sdk";
+import { PaymentRouter as Router, arkRail, onchainRail, walletFeeSource } from "@arkade-os/sdk";
 import { LIGHTNING_RAIL, lightningRail } from "./lightning";
 import { ONCHAIN_SWAP_RAIL, onchainSwapRail, type OnchainSwapRailDeps } from "./onchainSwap";
 import type { SwapRailClient } from "./swapRail";
@@ -45,8 +46,9 @@ export interface SwapPaymentRouterConfig extends OnchainSwapRailDeps {
  * Core's four rails plus the two this package supplies, ranked as the deleted
  * factory ranked them.
  *
- * Takes the concrete `Wallet` because that is what `RouterContext` holds — core
- * types it as the class, not `IWallet` — and the already-constructed client,
+ * Takes the concrete `Wallet` — it fits core's `IWallet`-typed
+ * `RouterContext`, and only the concrete class reaches `arkProvider`, which
+ * the `onchain` rail's fee source needs — and the already-constructed client,
  * because building one here would put storage, discovery and corridor policy
  * behind a payment-router call that has no business deciding any of them.
  */
@@ -60,7 +62,7 @@ export function createSwapPaymentRouter(
         prefs: { priority: [...SWAP_ROUTER_PRIORITY], ...config.prefs },
     })
         .use(arkRail())
-        .use(onchainRail())
+        .use(onchainRail({ feeInfo: walletFeeSource(wallet) }))
         .use(lightningRail(client))
         .use(
             onchainSwapRail(client, {

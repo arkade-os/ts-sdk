@@ -106,6 +106,7 @@
         "smoke:dist": "node scripts/smoke-dist.mjs",
         "typecheck": "tsc --noEmit",
         "typecheck:tests": "tsc -p tsconfig.tests.json --noEmit",
+        "typecheck:types": "tsc -p tsconfig.typecheck.json --noEmit",
         "check:vtxo": "node scripts/check-virtual-status.mjs && node scripts/check-provider-boundary.mjs",
         "check:e2e-groups": "node ../../scripts/e2e-groups.mjs --check",
         "docs:build": "pnpm run typecheck && pnpm typedoc",

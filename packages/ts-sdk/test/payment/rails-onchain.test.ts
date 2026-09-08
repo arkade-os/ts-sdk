@@ -9,16 +9,13 @@ const arkAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fi
 
 const fees = { intentFee: {}, txFeeRate: "1" };
 
-const ctx = (
-    wallet: Partial<Record<string, any>>,
-    feeInfo: Record<string, any> = fees,
-): RouterContext => ({
-    wallet: {
-        arkProvider: { getInfo: vi.fn().mockResolvedValue({ fees: feeInfo }) },
-        ...wallet,
-    } as any,
+const ctx = (wallet: Partial<Record<string, any>> = {}): RouterContext => ({
+    wallet: wallet as any,
     prefs: {},
 });
+
+const rail = (feeInfo: Record<string, any> = fees) =>
+    onchainRail({ feeInfo: async () => feeInfo as any });
 
 describe("onchainRail (collaborative exit)", () => {
     let offboard: ReturnType<typeof vi.spyOn>;
@@ -31,20 +28,20 @@ describe("onchainRail (collaborative exit)", () => {
     });
 
     it("matches a bare BTC address and the on-chain part of a BIP21 URI", () => {
-        const r = onchainRail();
+        const r = rail();
         expect(r.match({ raw: btcAddr }, ctx({}))).toBe(true);
         expect(r.match({ raw: `bitcoin:${btcAddr}?ark=${arkAddr}` }, ctx({}))).toBe(true);
     });
 
     it("does not match an ark address or a bolt11 invoice", () => {
-        const r = onchainRail();
+        const r = rail();
         expect(r.match({ raw: arkAddr }, ctx({}))).toBe(false);
         expect(r.match({ raw: "lnbc10n1pjexample" }, ctx({}))).toBe(false);
     });
 
     it("offboards the amount to the BTC address and surfaces the txid", async () => {
         const c = ctx({});
-        const q = await onchainRail().quote({ raw: btcAddr, amount: 1000 }, c);
+        const q = await rail().quote({ raw: btcAddr, amount: 1000 }, c);
         const h = await q.send();
 
         expect(await h.settled()).toMatchObject({ railId: "onchain", txid: "txEXIT" });
@@ -53,7 +50,7 @@ describe("onchainRail (collaborative exit)", () => {
     });
 
     it("falls back to the BIP21-encoded amount (BTC) converted to sats", async () => {
-        const q = await onchainRail().quote({ raw: `bitcoin:${btcAddr}?amount=0.00001` }, ctx({}));
+        const q = await rail().quote({ raw: `bitcoin:${btcAddr}?amount=0.00001` }, ctx());
         expect(q.amount).toBe(1000);
         await q.send().then((h) => h.settled());
         expect(offboard).toHaveBeenCalledWith(btcAddr, fees, 1000n);
@@ -65,7 +62,7 @@ describe("onchainRail (collaborative exit)", () => {
         // other rails. A 1% fee is amount-dependent, so the gross-up is a
         // fixpoint: 10000 -> 10100 (fee 101, one sat short) -> 10102 (fee 102).
         const feeInfo = { intentFee: { onchainOutput: "amount * 0.01" }, txFeeRate: "1" };
-        const q = await onchainRail().quote({ raw: btcAddr, amount: 10_000 }, ctx({}, feeInfo));
+        const q = await rail(feeInfo).quote({ raw: btcAddr, amount: 10_000 }, ctx());
 
         expect(q.amount).toBe(10_000); // what the recipient receives
         expect(q.fee).toBe(102);
@@ -77,7 +74,7 @@ describe("onchainRail (collaborative exit)", () => {
 
     it("reports an amount-independent offboard fee on the quote", async () => {
         const feeInfo = { intentFee: { onchainOutput: "200.0" }, txFeeRate: "1" };
-        const q = await onchainRail().quote({ raw: btcAddr, amount: 1000 }, ctx({}, feeInfo));
+        const q = await rail(feeInfo).quote({ raw: btcAddr, amount: 1000 }, ctx());
 
         expect(q).toMatchObject({ amount: 1000, fee: 200, total: 1200 });
         await q.send().then((h) => h.settled());
@@ -85,11 +82,21 @@ describe("onchainRail (collaborative exit)", () => {
     });
 
     it("rejects a non-positive or fractional amount up front", async () => {
-        await expect(onchainRail().quote({ raw: btcAddr, amount: 0 }, ctx({}))).rejects.toThrow(
+        await expect(rail().quote({ raw: btcAddr, amount: 0 }, ctx())).rejects.toThrow(
             /invalid amount/i,
         );
-        await expect(onchainRail().quote({ raw: btcAddr, amount: 1.5 }, ctx({}))).rejects.toThrow(
+        await expect(rail().quote({ raw: btcAddr, amount: 1.5 }, ctx())).rejects.toThrow(
             /invalid amount/i,
+        );
+    });
+
+    // Types do not bind JS callers, and a rail that builds without a fee source
+    // would fail mid-payment instead — the router does not re-rank after a throw.
+    it("refuses to build without a usable fee source", () => {
+        expect(() => (onchainRail as any)()).toThrow(/feeInfo source is required/i);
+        expect(() => (onchainRail as any)({})).toThrow(/feeInfo source is required/i);
+        expect(() => (onchainRail as any)({ feeInfo: "nope" })).toThrow(
+            /feeInfo source is required/i,
         );
     });
 });
