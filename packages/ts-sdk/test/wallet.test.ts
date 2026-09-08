@@ -198,7 +198,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
             });
 
             const balance = await wallet.getBalance();
@@ -554,7 +554,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
             });
 
             const address = await wallet.getAddress();
@@ -610,7 +610,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
             });
 
             const readonlyWallet = await wallet.toReadonly();
@@ -643,7 +643,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
             });
 
             const readonlyWallet = await wallet.toReadonly();
@@ -710,7 +710,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
             });
 
             const readonlyWallet = await wallet.toReadonly();
@@ -745,7 +745,6 @@ describe("Wallet", () => {
 
             const wallet = await ReadonlyWallet.create({
                 identity: readonlyIdentity,
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo),
                 } as Partial<ArkProvider> as ArkProvider,
@@ -996,7 +995,6 @@ describe("Wallet", () => {
 
             const wallet = await ReadonlyWallet.create({
                 identity: readonlyIdentity,
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo),
                 } as Partial<ArkProvider> as ArkProvider,
@@ -1059,7 +1057,6 @@ describe("Wallet", () => {
 
             const wallet = await ReadonlyWallet.create({
                 identity: readonlyIdentity,
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo),
                 } as Partial<ArkProvider> as ArkProvider,
@@ -1158,7 +1155,6 @@ describe("Wallet", () => {
 
             const wallet = await ReadonlyWallet.create({
                 identity: readonlyIdentity,
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo),
                 } as Partial<ArkProvider> as ArkProvider,
@@ -1334,7 +1330,6 @@ describe("Wallet", () => {
 
             const wallet = await ReadonlyWallet.create({
                 identity: readonlyIdentity,
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: vi
                         .fn()
@@ -1368,7 +1363,6 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo("bitcoin", ARKD_DELAY)),
                 } as Partial<ArkProvider> as ArkProvider,
@@ -1581,7 +1575,7 @@ describe("ReadonlyWallet", () => {
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
         });
 
         expect(readonlyWallet).toBeInstanceOf(ReadonlyWallet);
@@ -1679,7 +1673,7 @@ describe("ReadonlyWallet", () => {
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
         });
 
         const balance = await readonlyWallet.getBalance();
@@ -1701,7 +1695,7 @@ describe("ReadonlyWallet", () => {
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
         });
 
         // Should not have transaction methods

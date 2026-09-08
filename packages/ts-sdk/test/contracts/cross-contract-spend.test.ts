@@ -138,7 +138,6 @@ describe("Cross-contract spending", () => {
         // This means offchainTapscript is a DelegateVtxo.Script.
         const wallet = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
             arkProvider,
             indexerProvider: mockIndexer,
             onchainProvider,

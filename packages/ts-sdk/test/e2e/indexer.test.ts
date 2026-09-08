@@ -340,7 +340,7 @@ describe("Indexer provider", () => {
 
         // then alice sends a vtxo to herself via an offchain tx
         const aliceOffchainAddress = await alice.wallet.getAddress();
-        const arkTxId = await alice.wallet.sendBitcoin({
+        const arkTxId = await alice.wallet.send({
             address: aliceOffchainAddress,
             amount: fundAmount,
         });

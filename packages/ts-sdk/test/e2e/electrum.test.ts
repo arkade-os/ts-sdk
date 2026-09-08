@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { execSync } from "child_process";
 import { ElectrumWS } from "ws-electrumx-client";
 import { Address, OutScript } from "@scure/btc-signer";
 import {

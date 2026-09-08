@@ -22,6 +22,7 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    RestArkProvider,
     RestIndexerProvider,
     SingleKey,
     Wallet,
@@ -113,7 +114,7 @@ const clientOn = (over: { repository?: InMemoryAssetSwapRepository } = {}): Swap
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: OPERATOR_URL,
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -345,9 +346,7 @@ describe("the v2 cancel (regtest)", () => {
         await waitFor(async () => {
             const reader = await wallet.getArkadeReader();
             const { vtxos } = await reader.getVtxos({ scripts: [record.swapPkScript] });
-            return vtxos.some(
-                (v) => v.txid === record.fundingTxid && v.virtualStatus.state === "spent",
-            );
+            return vtxos.some((v) => v.txid === record.fundingTxid && v.isSpent);
         });
     }, 300_000);
 });

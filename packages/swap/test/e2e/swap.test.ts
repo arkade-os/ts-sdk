@@ -18,6 +18,7 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    RestArkProvider,
     RestIndexerProvider,
     SingleKey,
     Wallet,
@@ -76,7 +77,7 @@ let operatorPubkey: Uint8Array;
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: OPERATOR_URL,
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,

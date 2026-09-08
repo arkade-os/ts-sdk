@@ -24,7 +24,9 @@ import { EventSource } from "eventsource";
 
 import {
     InMemoryContractRepository,
+    EsploraProvider,
     InMemoryWalletRepository,
+    RestArkProvider,
     RestDelegateProvider,
     SingleKey,
     Wallet,
@@ -82,8 +84,8 @@ async function main() {
     log("Creating wallet with settlement + delegation enabled (in-memory storage)...");
     const wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: ARK_SERVER_URL,
-        esploraUrl: ESPLORA_URL,
+        arkProvider: new RestArkProvider(ARK_SERVER_URL),
+        onchainProvider: new EsploraProvider(ESPLORA_URL),
         storage: {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),

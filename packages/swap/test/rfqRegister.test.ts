@@ -328,7 +328,6 @@ const realWallet = async () => {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
     const wallet = await ReadonlyWallet.create({
-        arkServerUrl: "http://localhost:7070",
         arkProvider: { getInfo: async () => operatorInfo() } as Partial<ArkProvider> as ArkProvider,
         indexerProvider: offlineIndexer(),
         onchainProvider: {

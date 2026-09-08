@@ -6,6 +6,7 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    RestArkProvider,
     SingleKey,
     Wallet,
 } from "../../src";
@@ -92,7 +93,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
     const makeWallet = async (): Promise<Wallet> =>
         Wallet.create({
             identity: createTestIdentity(),
-            arkServerUrl: arkUrl,
+            arkProvider: new RestArkProvider(arkUrl),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,

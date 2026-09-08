@@ -75,7 +75,6 @@ async function createWallet(
     );
     return ReadonlyWallet.create({
         identity,
-        arkServerUrl: "http://localhost:7070",
         arkProvider: {
             getInfo: opts?.getInfo ?? (async () => arkInfo()),
         } as Partial<ArkProvider> as ArkProvider,

@@ -327,7 +327,6 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
     ) {
         return ReadonlyWallet.create({
             identity: await readonlyIdentity(),
-            arkServerUrl: "http://localhost:7070",
             arkProvider: { getInfo } as Partial<ArkProvider> as ArkProvider,
             indexerProvider: { ...indexerStub(), ...indexer } as IndexerProvider,
             onchainProvider: {} as OnchainProvider,
@@ -521,7 +520,6 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         await expect(
             Wallet.create({
                 identity: SingleKey.fromHex(privKeyHex),
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: async () => makeArkInfo({ checkpointTapscript: "zz" }),
                 } as Partial<ArkProvider> as ArkProvider,
@@ -547,7 +545,6 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         await expect(
             Wallet.create({
                 identity: SingleKey.fromHex(privKeyHex),
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: async () => makeArkInfo({ checkpointTapscript: oneBlockCheckpoint }),
                 } as Partial<ArkProvider> as ArkProvider,
@@ -574,7 +571,6 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         await expect(
             Wallet.create({
                 identity: SingleKey.fromHex(privKeyHex),
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: async () =>
                         makeArkInfo({ checkpointTapscript: wrongPubkeyCheckpoint }),

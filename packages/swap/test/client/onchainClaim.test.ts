@@ -12,6 +12,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
+import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { SingleKey } from "@arkade-os/sdk";
 import { createSwapClient } from "../../src/client/client";
@@ -57,6 +58,7 @@ const setup = async (
     over: {
         corridors?: Parameters<typeof createSwapClient>[0]["corridors"];
         answer?: Parameters<typeof solverTransport>[0];
+        onchain?: DiscoveredMarket;
     } = {},
 ) => {
     const wallet = await hdWallet();
@@ -64,7 +66,7 @@ const setup = async (
     const feed = feedServing();
     const client = createSwapClient({
         wallet,
-        discovery: { snapshot: [lightningCard, onchainCard, spotCard] },
+        discovery: { snapshot: [lightningCard, over.onchain ?? onchainCard, spotCard] },
         emulatorPubkey: EMULATOR_PUBKEY_HEX,
         transportFor: () => transport,
         fetchImpl: feed.fetch,
@@ -148,7 +150,12 @@ describe("the recipient-exact take leg", () => {
 
 describe("the dust floor", () => {
     it("refuses a payout the claim could not build, before anything is funded", async () => {
-        const { client, transport } = await setup();
+        // The card's own minimum (1000 sats) sits above the dust floor, so the
+        // stock card refuses a 200 sat take as an unserved route long before
+        // the claim is priced. Drop the minimum so the FLOOR is what answers.
+        const { client, transport } = await setup({
+            onchain: { ...onchainCard, min_base_amount: "1", min_quote_amount: "1" },
+        });
         // 200 sats pinned for the recipient: net of the 152 sat claim fee
         // that is a 200 sat payout, which `buildHtlcClaim` would refuse at
         // claim time with the lockup already funded.

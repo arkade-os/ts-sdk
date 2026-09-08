@@ -135,7 +135,6 @@ async function seededWallet(opts?: {
     }
 
     const config = {
-        arkServerUrl: "http://localhost:7070",
         arkProvider: { getInfo: async () => arkInfo() } as Partial<ArkProvider> as ArkProvider,
         indexerProvider: opts?.indexerProvider ?? offlineIndexer(),
         onchainProvider: {
