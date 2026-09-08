@@ -420,10 +420,17 @@ function offchainOutputFee(amount: bigint, estimator: Estimator, arkAddress: str
  * direction {@link deductOffchainOutputFee} already errs in.
  */
 function planSplitOutputs(split: RenewalSplit, context: RenewalSplitContext): bigint[] {
-    const { subtotal, outputFeeOn, maxAmount } = context;
+    const { subtotal, outputFeeOn, maxAmount, hasAssets } = context;
     const amounts = [...split.plan(context)];
     if (amounts.length === 0) {
         throw new Error(`Renewal split produced no outputs for a subtotal of ${subtotal}`);
+    }
+    if (hasAssets && amounts.length > 1) {
+        throw new Error(
+            `Renewal split produced ${amounts.length} outputs while the selected inputs carry assets: ` +
+                "settle assigns every input asset to the first matching output, so they would all land on " +
+                "piece 0. Return a single piece when the split context reports hasAssets.",
+        );
     }
     if (amounts.length > split.maxOutputs) {
         throw new Error(
@@ -792,6 +799,14 @@ export interface RenewalSplitContext {
     dust: bigint;
     /** The address every piece lands on — the wallet's own, after any signer rotation. */
     address: string;
+    /**
+     * Whether any selected input carries assets — when it does, a plan MUST
+     * return a single piece. `Wallet.settle` bags every input asset onto the
+     * FIRST output matching the destination script, and every piece is on that
+     * script, so a split would silently put the whole holding on piece 0. The
+     * SPLIT is refused rather than the renewal: an unrenewed float expires.
+     */
+    hasAssets: boolean;
 }
 
 /**
@@ -1870,6 +1885,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                       maxAmount: vtxoMaxAmount,
                       dust: dustAmount,
                       address: arkAddress,
+                      // Read off the FINAL selection, so a cap that dropped the only
+                      // asset-bearing input frees the plan to split again.
+                      hasAssets: vtxos.some((vtxo) => (vtxo.assets?.length ?? 0) > 0),
                   })
                 : // The fee an intent offers IS `sum(inputs) - sum(outputs)`, so the
                   // output has to come back short by what the operator's programs

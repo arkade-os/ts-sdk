@@ -4392,4 +4392,64 @@ describe("VtxoManager - renewal output split", () => {
             expect(wallet.settle).not.toHaveBeenCalled();
         });
     });
+
+    // `Wallet.settle` bags every input asset onto the FIRST matching output, and
+    // every piece is on that script — so a split hands them all to piece 0.
+    describe("assets", () => {
+        const withAssets = (value: number, txid = `asset-${value}`): ExtendedVirtualCoin =>
+            ({ ...expiring(value, txid), assets: [{ assetId: "aa", amount: 5n }] }) as any;
+
+        it("reports no assets when none of the selected inputs carry any", async () => {
+            const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS);
+            const split = fixedSplit(4, [5000n, 3000n]);
+
+            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+
+            expect(split.seen[0].hasAssets).toBe(false);
+        });
+
+        it("reports assets when any selected input carries them", async () => {
+            const wallet = createMockWallet([withAssets(5000), expiring(3000)], ADDRESS);
+            const split = fixedSplit(4, [8000n]);
+
+            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+
+            expect(split.seen[0].hasAssets).toBe(true);
+        });
+
+        it("refuses a multi-piece plan over asset-bearing inputs", async () => {
+            const wallet = createMockWallet([withAssets(5000), expiring(3000)], ADDRESS);
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            await expect(
+                manager.renewVtxos(undefined, { split: fixedSplit(4, [5000n, 3000n]) }),
+            ).rejects.toThrow("they would all land on piece 0");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        // Refusing the SPLIT, not the renewal: an unrenewed float expires, which is
+        // worse than one fat coin carrying the assets unambiguously.
+        it("still renews an asset-bearing float into one piece", async () => {
+            const wallet = createMockWallet([withAssets(5000), expiring(3000)], ADDRESS);
+
+            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, {
+                split: fixedSplit(4, [8000n]),
+            });
+
+            expect(settled(wallet).outputs).toEqual([{ address: ADDRESS, amount: 8000n }]);
+        });
+
+        it("lets the plan split again once no asset-bearing input survives selection", async () => {
+            // The 1500 carries the assets and cannot pay its own 2000 fee.
+            const wallet = createMockWallet([expiring(5000), withAssets(1500)], ADDRESS, {
+                intentFee: { offchainInput: "2000.0" },
+            });
+            const split = fixedSplit(4, [2000n, 1000n]);
+
+            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+
+            expect(split.seen[0].hasAssets).toBe(false);
+            expect(settled(wallet).outputs).toHaveLength(2);
+        });
+    });
 });
