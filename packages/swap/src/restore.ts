@@ -443,5 +443,10 @@ export async function restoreAssetSwaps(
  * Statuses under which a restored deposit still sits at its covenant, and so
  * is the wallet's to watch. `recoverable` too: a swept deposit is still the
  * user's money at that script (see `RETIRABLE` in coverage.ts).
+ *
+ * `cancelling` is deliberately absent: the restore scan classifies by chain
+ * state and never produces a `cancelling` record — only `NEEDS_COVERAGE` in
+ * watch.ts has it, and only because a cancel in flight may still be resolved
+ * by a spend the watcher later hears about.
  */
 const LIVE_DEPOSIT: readonly AssetSwapStatus[] = ["pending", "recoverable"];

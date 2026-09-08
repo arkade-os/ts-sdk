@@ -246,6 +246,10 @@ export async function watchOfferSwaps({
         if (vtxo.virtualStatus.state !== "spent") return;
         const spentTxid = vtxo.arkTxId || vtxo.spentBy;
         if (!spentTxid) return;
+        // No timestamp available on this path: the indexer VTXO only carries
+        // `createdAt` (its own creation), not the spend's time. A reload caught
+        // here is persisted without `completedAt`; the consumer re-queries the
+        // spending transaction if it needs the fill time.
         await resolveSpend(swap, vtxo, spentTxid);
     };
 
@@ -294,7 +298,8 @@ export async function watchOfferSwaps({
         const swaps = await getAssetSwaps(repository);
         for (const script of new Set(uncovered.map((swap) => swap.swapPkScript))) {
             const [row] = await manager.getContracts({ script });
-            if (row?.watch === "retained") continue;
+            if (!row) continue; // never registered (partial ensureOfferContracts failure)
+            if (row.watch === "retained") continue;
             await retireOfferContract(manager, swaps, script);
         }
     });
