@@ -167,6 +167,7 @@ async function seededWallet(opts?: {
     return { wallet, defaultScript, walletRepository, contractRepository };
 }
 
+const amountsOf = (txs: { amount: number }[]) => txs.map((t) => t.amount).sort((a, b) => a - b);
 const scriptsOf = (vtxos: { script: string }[]) => vtxos.map((v) => v.script).sort();
 const txidsOf = (vtxos: { txid: string }[]) => vtxos.map((v) => v.txid).sort();
 
@@ -551,14 +552,38 @@ describe("getBalance", () => {
 });
 
 describe("gated reads stay ungated (D1b/D1d)", () => {
-    it("keeps escrowed funds in the recovery and history reads", async () => {
+    it("keeps escrowed funds in the recovery read", async () => {
         const { wallet } = await seededWallet();
 
         expect(scriptsOf(await wallet.getVtxos({ withRecoverable: true }))).toContain(
             ESCROW_SCRIPT,
         );
+    });
+
+    /**
+     * History used to be listed alongside `getVtxos` as an ungated read. It is
+     * not one, and treating it as one was the defect: because a swap covenant is
+     * registered as a contract of the wallet that funds it, its deposit output
+     * counted as change, so the deposit and its return cancelled and the whole
+     * movement — funding, fill and cancel alike — produced no row at all.
+     *
+     * The two reads answer different questions. `getVtxos` reports which coins
+     * exist, and an escrowed one does; history reports whose money moved, and an
+     * escrowed one is not the wallet's to move. So the coins stay in the
+     * recovery read above and leave this one, and what history reports instead
+     * is the wallet-side movement facing the escrow.
+     */
+    it("gates the history read, so escrow is a counterparty rather than change", async () => {
+        const { wallet, defaultScript } = await seededWallet();
+
         const history = await wallet.getTransactionHistory();
-        expect(history.length).toBeGreaterThan(0);
+
+        // Only the two coins generic spending may touch: the wallet's own, and
+        // the `arkade` row marked `genericallySpendable`. The unmarked escrow
+        // and the unregistered type are both default-closed.
+        expect(amountsOf(history)).toEqual([10_000, 40_000]);
+        expect(scriptsOf(await wallet.getVtxos())).toContain(ESCROW_SCRIPT);
+        expect(defaultScript).not.toBe(ESCROW_SCRIPT);
     });
 
     it("settles a gated VTXO when it is named explicitly (D1d)", async () => {
@@ -934,9 +959,14 @@ describe("main-thread / worker balance parity", () => {
      * because it is bounded and self-inflicted — such a spend is doomed at the
      * server, and the wedge lasts until it rejects.
      */
-    const workerBalance = async (seeded: Awaited<ReturnType<typeof seededWallet>>) => {
-        // Same wallet, same repository as the main-thread read — two stubs
-        // would agree with each other and prove nothing.
+    /**
+     * One worker request against the same wallet and repository the main-thread
+     * read uses — two stubs would agree with each other and prove nothing.
+     */
+    const workerRequest = async (
+        seeded: Awaited<ReturnType<typeof seededWallet>>,
+        type: "GET_BALANCE" | "GET_TRANSACTION_HISTORY",
+    ) => {
         const handler = new WalletMessageHandler();
         (handler as any).readonlyWallet = seeded.wallet;
         (handler as any).walletRepository = seeded.walletRepository;
@@ -946,11 +976,14 @@ describe("main-thread / worker balance parity", () => {
         const response = await handler.handleMessage({
             id: "1",
             tag: DEFAULT_MESSAGE_TAG,
-            type: "GET_BALANCE",
+            type,
         } as any);
         expect(response.error).toBeUndefined();
-        return (response as any).payload as Awaited<ReturnType<Wallet["getBalance"]>>;
+        return (response as any).payload;
     };
+
+    const workerBalance = async (seeded: Awaited<ReturnType<typeof seededWallet>>) =>
+        (await workerRequest(seeded, "GET_BALANCE")) as Awaited<ReturnType<Wallet["getBalance"]>>;
 
     it("reports the same unrolled bucket on both sides of the bus", async () => {
         const seeded = await seededWallet();
@@ -986,5 +1019,27 @@ describe("main-thread / worker balance parity", () => {
         expect(main.unrolled).toBe(0);
         expect(main.total).toBe(worker.total);
         expect(main.total).toBe(70_000);
+    });
+
+    /**
+     * The gate is assembled separately on each side of the bus — off
+     * `contractSnapshot()` here, off `repoSnapshot()` there — so nothing but a
+     * test stops one of them from being dropped. Without it the whole wiring
+     * could be reverted (both call sites simply stop passing the gate) and every
+     * unit test over `buildTransactionHistory` would stay green, because none of
+     * them goes through a wallet.
+     */
+    it("gates the history read on both sides of the bus", async () => {
+        const seeded = await seededWallet();
+
+        const main = await seeded.wallet.getTransactionHistory();
+        const worker = (await workerRequest(seeded, "GET_TRANSACTION_HISTORY"))
+            .transactions as Awaited<ReturnType<Wallet["getTransactionHistory"]>>;
+
+        // Non-empty first: two paths both reporting nothing must not pass as
+        // parity. The escrowed 10_000 and the unregistered-type 10_000 are the
+        // two the gate removes.
+        expect(amountsOf(main)).toEqual([10_000, 40_000]);
+        expect(amountsOf(worker)).toEqual(amountsOf(main));
     });
 });
