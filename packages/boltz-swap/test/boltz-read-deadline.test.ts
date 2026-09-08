@@ -69,9 +69,8 @@ describe("BoltzSwapProvider read deadline", () => {
         ) as any;
 
         try {
-            const pending = (provider() as any)
-                .request("/v2/slow", "GET")
-                .catch((e: unknown) => e);
+            const p = provider() as any;
+            const pending = p.request("/v2/slow", "GET").catch((e: unknown) => e);
             await vi.advanceTimersByTimeAsync(BOLTZ_READ_TIMEOUT_MS);
 
             expect(await pending).toBeInstanceOf(Error);
