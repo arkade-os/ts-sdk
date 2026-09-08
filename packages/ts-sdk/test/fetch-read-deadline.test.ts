@@ -106,7 +106,7 @@ describe("baseFetch read deadline", () => {
         }
     });
 
-    it("says so loudly when the runtime cannot bound a read at all", async () => {
+    it("says so loudly when the runtime cannot bound a read at all — and only once", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const realTimeout = AbortSignal.timeout;
         const realController = globalThis.AbortController;
@@ -115,8 +115,13 @@ describe("baseFetch read deadline", () => {
         // @ts-expect-error same
         globalThis.AbortController = undefined;
         try {
-            await baseFetch("https://example.test/a");
-            await baseFetch("https://example.test/b");
+            // Fresh module: the "warned once" flag is module-level, so asserting
+            // it from a shared instance would depend on nothing else having
+            // tripped it first.
+            vi.resetModules();
+            const fresh = await import("../src/utils/fetch");
+            await fresh.baseFetch("https://example.test/a");
+            await fresh.baseFetch("https://example.test/b");
         } finally {
             AbortSignal.timeout = realTimeout;
             globalThis.AbortController = realController;
