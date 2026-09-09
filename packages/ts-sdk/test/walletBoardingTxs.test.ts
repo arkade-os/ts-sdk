@@ -6,6 +6,7 @@ import {
     InMemoryContractRepository,
     RestArkProvider,
 } from "../src";
+import { jsonResponse } from "./helpers/response";
 
 /**
  * Regression for the arkade.money phantom-receive inflation (boarding sweeps).
@@ -80,8 +81,7 @@ describe("getBoardingTxs — sweep correlation without outspend txid", () => {
         };
 
         mockFetch.mockImplementation((url: string) => {
-            const reply = (body: unknown) =>
-                Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+            const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
             if (url.includes("/info")) return reply(mockArkInfo);
             if (url.includes("subscribe") || url.includes("subscriptions"))
                 return reply({ subscriptionId: "sub-1" });

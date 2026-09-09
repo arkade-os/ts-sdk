@@ -20,6 +20,7 @@ import {
 } from "../src/wallet/serviceWorker/wallet-message-handler";
 import { ExpoWallet } from "../src/wallet/expo/wallet";
 import { ServiceWorkerWallet } from "../src/wallet/serviceWorker/wallet";
+import { jsonResponse } from "./helpers/response";
 
 /**
  * The explicit multi-type address allocator (`getNewAddresses`).
@@ -69,8 +70,7 @@ beforeEach(() => {
     vi.stubGlobal("EventSource", MockEventSource);
     mockFetch.mockReset();
     mockFetch.mockImplementation((url: string) => {
-        const reply = (body: unknown) =>
-            Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+        const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
         if (url.includes("/info")) return reply(mockArkInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });

@@ -401,6 +401,12 @@ export class RestIndexerProvider implements IndexerProvider {
     /** Overrides {@link configureEventSource} for this provider's subscription. */
     protected readonly eventSource?: EventSourceFactory;
 
+    /** @see fetchVtxosJson */
+    private readonly inFlightVtxoReads = new Map<
+        string,
+        Promise<{ vtxos: Vtxo[]; page?: PageResponse }>
+    >();
+
     constructor(
         public serverUrl: string = DEFAULT_ARKADE_SERVER_URL,
         options: EventSourceCapable = {},
@@ -799,18 +805,47 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await indexerFetch(url);
-        if (!res.ok) {
-            throw new Error(`Failed to fetch vtxos: ${res.statusText}`);
-        }
-        const data = await res.json();
-        if (!Response.isVtxosResponse(data)) {
-            throw new Error("Invalid vtxos data received");
-        }
+        const data = await this.fetchVtxosJson(url);
+        // Mapped per caller, not shared: `convertVtxo` builds a fresh coin, so
+        // two callers served from one request still get independent results.
         return {
             vtxos: data.vtxos.map(convertVtxo),
             page: data.page,
         };
+    }
+
+    /**
+     * The wire read behind {@link fetchVtxosPage}, with an identical read
+     * already in flight served from that one request instead of repeated.
+     *
+     * Two callers can want the same page at the same instant without either
+     * being redundant, so there is no single call site to remove: a send that
+     * leaves change makes the indexer emit `vtxo_spent` and `vtxo_received` for
+     * the wallet's own contract milliseconds apart, and `handleContractEvent`
+     * delta-syncs that contract on both arms.
+     */
+    private async fetchVtxosJson(url: string): Promise<{ vtxos: Vtxo[]; page?: PageResponse }> {
+        const joined = this.inFlightVtxoReads.get(url);
+        if (joined) return joined;
+
+        const shared = (async () => {
+            const res = await indexerFetch(url);
+            if (!res.ok) {
+                throw new Error(`Failed to fetch vtxos: ${res.statusText}`);
+            }
+            const data = await res.json();
+            if (!Response.isVtxosResponse(data)) {
+                throw new Error("Invalid vtxos data received");
+            }
+            return data;
+        })();
+
+        this.inFlightVtxoReads.set(url, shared);
+        try {
+            return await shared;
+        } finally {
+            if (this.inFlightVtxoReads.get(url) === shared) this.inFlightVtxoReads.delete(url);
+        }
     }
 
     async getAssetDetails(assetId: string): Promise<AssetDetails> {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RestDelegateProvider } from "../src";
+import { jsonResponse } from "./helpers/response";
 
 const { mockFetch } = vi.hoisted(() => ({
     mockFetch: vi.fn(),
@@ -19,11 +20,7 @@ describe("RestDelegateProvider.getDelegateInfo", () => {
         vi.unstubAllGlobals();
     });
 
-    const respondWith = (body: unknown) =>
-        mockFetch.mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(body),
-        });
+    const respondWith = (body: unknown) => mockFetch.mockResolvedValueOnce(jsonResponse(body));
 
     it("rejects a non-string delegateAddress even when the legacy field is present", async () => {
         respondWith({

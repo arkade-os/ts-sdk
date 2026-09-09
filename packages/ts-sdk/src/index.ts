@@ -529,7 +529,7 @@ import type {
 import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
 import { toXOnly } from "./utils/keys";
-import { buildVersion, sdkVersion, FetchError } from "./utils/fetch";
+import { buildVersion, sdkVersion, FetchError, READ_TIMEOUT_MS } from "./utils/fetch";
 import {
     closeDatabase,
     openDatabase,
@@ -626,6 +626,7 @@ export {
     CachingArkProvider,
     DigestMismatchError,
     FetchError,
+    READ_TIMEOUT_MS,
     RestIndexerProvider,
     RestEmulatorProvider,
     DEFAULT_VTXO_PAGE_SIZE,

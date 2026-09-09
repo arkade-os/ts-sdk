@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { CachingArkProvider } from "../src/providers/cachingArk";
 import { ArkadeInfo, ArkProvider, RestArkProvider } from "../src/providers/ark";
 import { extractArkProviderUrl } from "../src/wallet/wallet";
+import { jsonResponse } from "./helpers/response";
 
 const SIGNER = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const ROTATED = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
@@ -176,7 +177,7 @@ describe("CachingArkProvider", () => {
         let signerPubkey = SIGNER;
         vi.stubGlobal(
             "fetch",
-            vi.fn(async () => ({ ok: true, json: async () => ({ signerPubkey, digest }) })),
+            vi.fn(async () => jsonResponse({ signerPubkey, digest })),
         );
         const provider = new CachingArkProvider(new RestArkProvider("http://ark.test"), 60_000);
         await provider.getInfo();

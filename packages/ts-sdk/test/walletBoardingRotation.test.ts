@@ -8,6 +8,7 @@ import {
     RestArkProvider,
     toXOnlySignerHex,
 } from "../src";
+import { jsonResponse } from "./helpers/response";
 
 /**
  * Per-derivation boarding rotation (plan §6-II).
@@ -62,8 +63,7 @@ beforeEach(() => {
     vi.stubGlobal("EventSource", MockEventSource);
     mockFetch.mockReset();
     mockFetch.mockImplementation((url: string) => {
-        const reply = (body: unknown) =>
-            Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+        const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
         if (url.includes("/info")) return reply(mockArkInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });

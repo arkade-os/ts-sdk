@@ -19,6 +19,7 @@ import {
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
 import { WalletReceiveRotator } from "../src/wallet/walletReceiveRotator";
 import type { Contract, ContractEvent, ExtendedVirtualCoin } from "../src";
+import { jsonResponse } from "./helpers/response";
 
 /**
  * Hand-crafted integration tests for HD receive rotation against the
@@ -69,11 +70,7 @@ beforeEach(() => {
     mockFetch.mockReset();
     // Route by URL so test ordering doesn't depend on exact fetch counts.
     mockFetch.mockImplementation((url: string) => {
-        const reply = (body: unknown) =>
-            Promise.resolve({
-                ok: true,
-                json: () => Promise.resolve(body),
-            });
+        const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
         if (url.includes("/info")) return reply(mockArkInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });

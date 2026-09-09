@@ -433,7 +433,6 @@ describe("WalletMessageHandler handleMessage", () => {
         const transactions = [{ txid: "tx" }];
         (updater as any).readonlyWallet = {};
         (updater as any).buildTransactionHistoryFromCache = vi.fn().mockResolvedValue(transactions);
-        (updater as any).getVtxosFromRepo = vi.fn().mockResolvedValue([]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),

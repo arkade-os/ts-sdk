@@ -58,7 +58,7 @@ import {
 } from "../wallet";
 import { computeOffchainBalance } from "../balance";
 import { isHDAllocationCapable, isHDWalletCapable } from "../hdWalletCapable";
-import { gatedContracts } from "../../contracts/spendability";
+import { gatedFrom, isGatedVtxo } from "../../contracts/spendability";
 import type {
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,
@@ -1297,9 +1297,7 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_TRANSACTION_HISTORY": {
-                    const allVtxos = await this.getVtxosFromRepo();
-                    const transactions =
-                        (await this.buildTransactionHistoryFromCache(allVtxos)) ?? [];
+                    const transactions = (await this.buildTransactionHistoryFromCache()) ?? [];
                     return this.tagged({
                         id,
                         type: "TRANSACTION_HISTORY",
@@ -1819,7 +1817,7 @@ export class WalletMessageHandler
             }
         }
 
-        const gated = gatedContracts(snapshot.map((_) => _.contract));
+        const gated = gatedFrom(snapshot);
         const unlocked = new Set(
             (
                 await spendableVtxosExcludingLocked(allVtxos, this.readonlyWallet?.intentRepository)
@@ -1831,7 +1829,7 @@ export class WalletMessageHandler
         const offchain = computeOffchainBalance(allVtxos, {
             now: { timestamp: new Date() },
             isPendingRecovery: (vtxo) => pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
-            isGenericallySpendable: (vtxo) => !gated.has(vtxo.script),
+            isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
         });
 
@@ -2032,9 +2030,6 @@ export class WalletMessageHandler
             return;
         }
 
-        // Read virtual outputs from repository (now populated by contract manager)
-        const vtxos = await this.getVtxosFromRepo();
-
         // Fetch boarding inputs across the full boarding-address set (current +
         // historical rotated; plan §6-IV.2). Fetch FIRST: getBoardingUtxos
         // re-fetches each boarding address from the onchain provider and saves
@@ -2055,7 +2050,7 @@ export class WalletMessageHandler
 
         // Build transaction history from cached virtual outputs (no indexer call)
         const address = await this.readonlyWallet.getAddress();
-        const txs = await this.buildTransactionHistoryFromCache(vtxos);
+        const txs = await this.buildTransactionHistoryFromCache();
         if (txs) await this.walletRepository.saveTransactions(address, txs);
     }
 
@@ -2301,20 +2296,37 @@ export class WalletMessageHandler
     /**
      * Build transaction history from cached virtual outputs, hitting the indexer only for
      * uncached timestamps. Best-effort, like the plain Wallet path.
+     *
+     * Takes its own {@link repoSnapshot} rather than a caller-supplied VTXO
+     * list: the coins and the gate that judges them have to come off one read
+     * or they answer about different instants, and being the worker's only
+     * history builder means neither caller can supply one without the other.
+     * The snapshot and the boarding read are independent, so they run together
+     * — the same pairing `handleGetBalance` makes.
      */
-    private async buildTransactionHistoryFromCache(
-        vtxos: ExtendedVirtualCoin[],
-    ): Promise<ArkTransaction[] | null> {
+    private async buildTransactionHistoryFromCache(): Promise<ArkTransaction[] | null> {
         if (!this.readonlyWallet) return null;
 
-        const { boardingTxs, commitmentsToIgnore } = await this.readonlyWallet.getBoardingTxs();
+        const [{ snapshot, vtxos }, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
+            this.repoSnapshot(),
+            this.readonlyWallet.getBoardingTxs(),
+        ]);
 
         const indexerProvider = this.indexerProvider;
         const resolveTxCreatedAt = indexerProvider
             ? (txids: string[]) => fetchVtxoCreatedAtByTxid(indexerProvider, txids)
             : undefined;
 
-        return buildTransactionHistory(vtxos, boardingTxs, commitmentsToIgnore, resolveTxCreatedAt);
+        // `ReadonlyWallet` derives the same gate from its own snapshot, so both
+        // sides of the bus classify a coin alike — differing only in freshness,
+        // as the balance reads do, because this one never syncs.
+        return buildTransactionHistory(
+            vtxos,
+            boardingTxs,
+            commitmentsToIgnore,
+            resolveTxCreatedAt,
+            gatedFrom(snapshot),
+        );
     }
 
     private async ensureContractEventBroadcasting() {
