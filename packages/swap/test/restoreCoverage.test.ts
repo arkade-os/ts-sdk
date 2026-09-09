@@ -134,7 +134,6 @@ describe("restoreOfferCoverage", () => {
     });
 
     it("costs the same /v1/info whether it covers one script or many", async () => {
-        // one round trip per script is 110-215ms each, sequential, on boot
         const many = [50_000, 60_000, 70_000, 80_000].map((n, i) =>
             restored(makeOffer(BigInt(n)), {
                 id: `0${i}`.repeat(32),

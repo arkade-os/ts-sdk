@@ -526,7 +526,8 @@ async function registerOfferContract(
  * {@link retireSettledOfferContracts} and re-subscribes settled scripts.
  *
  * One client for the batch, so `/v1/info` is a constant cost rather than one per
- * script: this runs on wallet boot, already under latency pressure.
+ * script. Setup rejects rather than being caught: one bad record is skipped, but
+ * a server it could not reach covered nothing, and a caller told so never retries.
  */
 export async function restoreOfferCoverage(
     wallet: IWallet,
