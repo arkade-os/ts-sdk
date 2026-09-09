@@ -127,7 +127,11 @@ const readMarketsCache = async (
         const entry = await repository.getCachedMarkets(network, registry);
         if (!Array.isArray(entry?.markets) || typeof entry?.fetchedAt !== "number")
             return undefined;
-        return entry.markets.every(isMarketShaped) ? entry : undefined;
+        const markets = entry.markets.filter(isMarketShaped);
+        // An empty cache is authoritative. A non-empty cache with no readable
+        // markets is malformed and should be replaced by a fresh fetch.
+        if (entry.markets.length > 0 && markets.length === 0) return undefined;
+        return { ...entry, markets };
     } catch {
         return undefined;
     }
