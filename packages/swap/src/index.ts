@@ -18,6 +18,15 @@ export {
     type PlanError,
 } from "./markets";
 export {
+    MARKET_CORRIDORS,
+    isRfqMarket,
+    marketAssetId,
+    marketCorridor,
+    marketPairLabel,
+    type MarketCorridor,
+    type MarketLike,
+} from "./marketShape";
+export {
     BTC_ASSET_ID,
     getAssetSwaps,
     getAssetSwapsOrThrow,
