@@ -11,6 +11,17 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **`@arkade-os/boltz-swap` is removed from the repo and will not be
+  published on the 0.5 line.** The package's Boltz-routed rails are
+  superseded by the `@arkade-os/swap` v2 client (`createSwapClient` on the
+  package root). There is no in-tree replacement for `ArkadeSwaps`,
+  `BoltzSwapProvider`, or `ArkadeLightning` as drop-in APIs — consumers
+  migrate to the v2 corridors. Known pinned consumers that need a coordinated
+  migration before or with this release: **BlueWallet**
+  (`@arkade-os/boltz-swap@0.3.26`), **arkade-wdk** (`0.3.40`), **coinflip**
+  (`0.3.60`), and **checkout** (`@latest`). See the boltz-swap section of
+  [`packages/swap/MIGRATION.md`](packages/swap/MIGRATION.md) for the mapping.
+
 - **`@arkade-os/swap`: the root export is the v2 client, and the v1
   building blocks moved to `@arkade-os/swap/protocol`.** `createSwapClient`
   and `SwapClient` on the root are now the v2 declarations, not the facade

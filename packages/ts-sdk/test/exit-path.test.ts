@@ -133,6 +133,36 @@ describe("resolveUnilateralPath", () => {
         await expect(promise).rejects.toMatchObject({ reason: "no-unilateral-path" });
     });
 
+    // Regression for `prepareUnrollTransaction`, which resolves through this
+    // helper and previously omitted `walletDescriptor`: a contract-backed VTXO
+    // whose role can only be known from the wallet key swept with "no exit
+    // path found" (VHTLC) or could pre-sign a leaf the wallet cannot sign
+    // (Arkade signer filter). The resolver must see the key.
+    it("fails a contract-backed VTXO when the wallet descriptor is omitted", async () => {
+        const { script, contract } = vhtlcFixture(true); // receiver WITH preimage
+        const promise = resolveUnilateralPath({
+            vtxo: { txid: "66".repeat(32), vout: 0, tapTree: script.encode() },
+            scriptHex: contract.script,
+            contractRepository: await repoWith(contract),
+            // no walletDescriptor — the role cannot resolve
+            currentTime: 1_000,
+        });
+        await expect(promise).rejects.toMatchObject({ reason: "no-unilateral-path" });
+    });
+
+    it("accepts a raw x-only hex key as the descriptor (the unroll path passes one)", async () => {
+        const { script, contract } = vhtlcFixture(true);
+        const resolved = await resolveUnilateralPath({
+            vtxo: { txid: "77".repeat(32), vout: 0, tapTree: script.encode() },
+            scriptHex: contract.script,
+            contractRepository: await repoWith(contract),
+            walletDescriptor: hex.encode(owner), // what prepareUnrollTransaction passes
+            currentTime: 1_000,
+        });
+        expect(resolved.label).toBe("vhtlc:unilateral");
+        expect(resolved.selection.sequence).toBe(expectedSequence);
+    });
+
     it("throws no-handler for unregistered contract types", async () => {
         const { script, contract } = defaultFixture();
         const promise = resolveUnilateralPath({

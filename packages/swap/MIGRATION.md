@@ -4,6 +4,32 @@ Newest first. Each section is one upgrade; nothing below `0.1.0` auto-upgrades i
 it under npm's `0.0.x` rules, so a consumer arriving from an old pin meets several of these in one
 jump and should read down until the version it left.
 
+## `@arkade-os/boltz-swap` (any version) → `@arkade-os/swap` — the package is gone
+
+`@arkade-os/boltz-swap` is removed on this release line and will not be published again. Its
+Boltz-routed rails are superseded by the v2 client on the `@arkade-os/swap` root; there is no
+drop-in replacement for the old class-based API, so this is a rewrite-level migration, not a
+specifier-edit one. Concept mapping:
+
+| `@arkade-os/boltz-swap`                                  | `@arkade-os/swap`                                                                 |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `new ArkadeSwaps(wallet, config)` + `swapRepository`      | `createSwapClient(config)` — the drive, persistence and events are internal        |
+| `BoltzSwapProvider` (quoting / pair discovery)            | resolved for you inside `client.quote(input)` — markets come from discovery        |
+| `sendViaLightning` / `receiveViaLightning`                | `client.quote({ give, take, amount })` over the `lightning:BTC` ↔ `arkade:BTC` corridor |
+| `ArkadeLightning` (Expo background swaps)                 | `client.onUpdate(({ swap, outcome, detail }) => …)` driven from your background task |
+| `SwapRepository` / `BoltzRealmSchemas`                    | `AssetSwapRepository` + `AssetSwapRealmSchemas` (schema v5, additive)              |
+
+Two things have no v2 equivalent and are deliberate losses: the per-VTXO `skipped`/`retryAt`
+retry ledger (the v2 refund push is atomic — one transaction spends every lockup output at
+once, so there is no partial success to re-arm) and the solver `status()` poll (the v2 manager
+reads outcomes from chain facts only). If your integration surfaced either, drop the UI for it.
+
+Known pinned consumers at the time of removal — **BlueWallet** (`0.3.26`), **arkade-wdk**
+(`0.3.40`), **coinflip** (`0.3.60`), **checkout** (`@latest`): pin the last published
+`boltz-swap` version to keep building, and migrate against this table; the last published
+version keeps working against the servers it already talks to, it just receives no further
+fixes.
+
 ## `0.1.0-rc.1` → `0.1.0` — the v2 client takes the root
 
 The root export is now the v2 client. `createSwapClient`, the three verbs, the closed `Route`

@@ -12,14 +12,10 @@
  * swap at a time, remembers where each one got to, and tells the caller when
  * something happened. That is this module.
  *
- * TODO: `packages/boltz-swap` is gone. This paragraph and the three bullets
- * under it are framed as a diff against its `SwapManager`, so the rationale
- * needs restating on its own terms.
- *
- * The shape is deliberately the one `packages/boltz-swap`'s `SwapManager`
- * arrived at — monitor a set, act automatically through injected callbacks,
- * persist through an injected `saveSwap` or a repository of its own, expose
- * events plus a promise-based escape hatch. Three things are different, each
+ * The shape is the one a swap monitor converges on: watch a set of live
+ * swaps, act automatically through injected callbacks, persist through an
+ * injected `saveSwap` or a repository of its own, expose events plus a
+ * promise-based escape hatch. Three design choices define this manager, each
  * for a reason:
  *
  * - **The solver is never asked.** This manager holds no `RfqTransport` at
@@ -56,15 +52,15 @@
  * - **No manager-level retry backoff.** The one long-running action here,
  *   the `refundWithoutReceiver` push, is atomic — one transaction spending
  *   every lockup output into one aggregate output — so there is no partial
- *   success to re-arm, unlike Boltz's per-VTXO `skipped`/`retryAt` outcome.
+ *   success to re-arm. That atomicity is what makes per-attempt bookkeeping
+ *   (`skipped`, `retryAt` and the like) unnecessary: either the push lands
+ *   and every lockup is refunded at once, or it is refused and nothing has
+ *   moved, so the next pass simply tries again with no state to reconcile.
  *   Retrying it is genuinely needed (median-time-past lags wall clock, so the
  *   first pushes after `refundLocktime` are EXPECTED to be refused), but the
  *   poll interval is already that retry cadence and
  *   {@link REFUND_MTP_LAG_SECONDS} is already that deadline. A second backoff
  *   on top would only fight the first.
- *
- *   TODO: the `skipped`/`retryAt` contrast above points at the removed
- *   boltz-swap — restate why the atomicity matters without it.
  *
  * **The manager owns WHEN, the caller owns HOW.** It holds the observation
  * seams (a {@link LockupSpendIndexer} for the Arkade side, and `ChainSource`
@@ -178,7 +174,7 @@ interface RfqSwapCommon {
      * stored record already says so — the hash lives in `profile.hashlock`, not
      * on `RfqSwapRecord` — and this field follows onto the per-corridor swap
      * types when the first such corridor lands. Do not read the current shape as
-     * settled.
+     * final.
      */
     paymentHash: string;
     /**

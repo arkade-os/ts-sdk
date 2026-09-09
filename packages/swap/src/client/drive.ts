@@ -171,6 +171,12 @@ export interface SwapDriveConfig {
      */
     readonly corridors: () => Promise<CorridorSet>;
     readonly mode?: DriveMode;
+    /**
+     * How often the fallback poll pass runs. Default 5000 ms — the same
+     * interval `RfqSwapManagerConfig.pollIntervalMs` documents one layer
+     * down, and the retry cadence for the refund push after
+     * `refundLocktime`. Tune only relative to that default.
+     */
     readonly pollIntervalMs?: number;
     /** Unix seconds. Injected for tests. */
     readonly now?: () => number;
