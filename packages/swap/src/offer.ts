@@ -33,6 +33,7 @@ import {
     getNetwork,
     resolveEmulatorPubkey,
     toXOnlySignerHex,
+    type IContractManager,
     type IWallet,
     type NetworkName,
     type RelativeTimelock,
@@ -482,10 +483,12 @@ async function registerOfferContract(
     binding: Omit<Offer, "swapPkScript">,
     serverPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
-    opts: { issued?: number; client?: arkade.Arkade } = {},
+    opts: { issued?: number; client?: arkade.Arkade; contractManager?: IContractManager } = {},
 ): Promise<void> {
     const { program, args, keys } = swapProgramBinding(binding, serverPubkey);
-    const contractManager = await wallet.getContractManager();
+    // the caller's when it has one: `register` goes through `opts.client`'s
+    // manager, so a second fetch here splits one registration across two
+    const contractManager = opts.contractManager ?? (await wallet.getContractManager());
     const client =
         opts.client ??
         (await arkade.Arkade.connect({
@@ -518,16 +521,12 @@ async function registerOfferContract(
  * {@link restoreAssetSwaps} rebuilds the *record* and nothing else, so a
  * restored wallet holds swaps with no contract row behind them — never
  * subscribed, never emitting `vtxo_spent`, unresolvable by the watcher. The
- * restore-scan backstop three modules lean on restores records, not coverage. A
- * separate call rather than an option on that scan, which is indexer-only and
- * whose records must survive a coverage failure.
- *
- * A script whose every record is {@link RETIRABLE} is skipped, or this undoes
- * {@link retireSettledOfferContracts} and re-subscribes settled scripts.
- *
- * One client for the batch, so `/v1/info` is a constant cost rather than one per
- * script. Setup rejects rather than being caught: one bad record is skipped, but
- * a server it could not reach covered nothing, and a caller told so never retries.
+ * restore-scan backstop three modules lean on restores records, not coverage.
+ * Separate from that scan, which is indexer-only and whose records must survive
+ * a coverage failure. A script whose every record is {@link RETIRABLE} is
+ * skipped, or this undoes {@link retireSettledOfferContracts}. One client and
+ * one contract manager for the batch; setup rejects rather than being caught,
+ * because a server it could not reach covered nothing.
  */
 export async function restoreOfferCoverage(
     wallet: IWallet,
@@ -540,12 +539,13 @@ export async function restoreOfferCoverage(
     const arkProvider = new RestArkProvider(arkServerUrl);
     const info = await arkProvider.getInfo();
     const serverPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
+    const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
         arkade: arkProvider,
         indexer: new RestIndexerProvider(arkServerUrl),
         identity: wallet.identity,
         network: getNetwork(info.network as NetworkName),
-        contractManager: await wallet.getContractManager(),
+        contractManager,
     });
     const done = new Set<string>();
     for (const swap of live) {
@@ -560,7 +560,7 @@ export async function restoreOfferCoverage(
                 binding,
                 serverPubKey,
                 hex.decode(swap.swapPkScript),
-                { issued: swap.createdAt, client },
+                { issued: swap.createdAt, client, contractManager },
             );
         } catch (err) {
             console.warn(`[swap] could not restore coverage for ${swap.swapPkScript}`, err);
