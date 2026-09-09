@@ -10,7 +10,27 @@ import { canRecoverOnchain, canSpendOffchain, hasTerminalSpend } from "./vtxo";
 export interface OffchainBalance {
     settled: number;
     preconfirmed: number;
+    /**
+     * What generic selection may pick: `settled + preconfirmed - gated -
+     * intentLocked`. Not what one `send` can move out — see {@link maxSendable}.
+     */
     available: number;
+    /**
+     * The largest amount one `send` to a single recipient is sure to accept
+     * while every asset the wallet holds stays behind: {@link available}, less
+     * one dust carrier once any spendable coin carries an asset
+     * (`availableAssets` non-empty). Asset change has to land on a change
+     * output at or above dust, so a send of `available` itself is refused
+     * whenever the coins it selects carry assets — and after the first asset
+     * receive that is every wallet, since assets arrive on a dust carrier that
+     * `available` counts. A ceiling, not a tight bound: an amount the plain
+     * coins alone cover goes through above it, but only this figure holds
+     * whatever coins selection picks. Zero when less than dust could leave —
+     * a send pads its recipient to dust before selecting, so nothing below
+     * dust ever leaves on its own — and so zero when the carriers are all
+     * there is.
+     */
+    maxSendable: number;
     /**
      * Spendable-but-for-the-gate funds: VTXOs under a contract
      * {@link BalanceCapabilities.isGenericallySpendable} refuses — a VHTLC
@@ -63,6 +83,12 @@ export interface OffchainBalance {
  */
 export interface BalanceCapabilities {
     now: TimeHeight;
+    /**
+     * The server's dust floor — what a change output has to hold to carry
+     * asset change, and so the reserve {@link OffchainBalance.maxSendable}
+     * keeps back.
+     */
+    dust: bigint;
     /** Past-cutoff deprecated-signer funds awaiting recovery. */
     isPendingRecovery: (vtxo: NormalizedExtendedVirtualCoin) => boolean;
     /** The generic-spending gate. @see isContractGenericallySpendable */
@@ -77,8 +103,10 @@ export interface BalanceCapabilities {
  * Owned vs spendable is the whole shape here. `settled`/`preconfirmed`/`total`
  * and `assets` count everything the wallet owns — escrowed funds are still the
  * user's funds. `available` and `availableAssets` count only what generic
- * spending would actually pick, so nothing reported as available can be refused
- * by `send`.
+ * spending would actually pick. `maxSendable` is the one figure a `send` amount
+ * can be taken from as-is: `available` overstates it by one dust carrier
+ * whenever the spendable coins carry assets, because the asset change those
+ * coins produce needs a change output at or above dust to land on.
  *
  * Terminally spent VTXOs are skipped outright: no capability predicate claims
  * them, and they must not reach the asset rollup. An unrolled one is not spent,
@@ -89,7 +117,7 @@ export function computeOffchainBalance(
     vtxos: readonly NormalizedExtendedVirtualCoin[],
     caps: BalanceCapabilities,
 ): OffchainBalance {
-    const { now, isPendingRecovery, isGenericallySpendable, isUnlocked } = caps;
+    const { now, dust, isPendingRecovery, isGenericallySpendable, isUnlocked } = caps;
 
     let settled = 0;
     let preconfirmed = 0;
@@ -164,10 +192,22 @@ export function computeOffchainBalance(
     const toAssets = (from: Map<string, bigint>): Asset[] =>
         Array.from(from.entries()).map(([assetId, amount]) => ({ assetId, amount }));
 
+    // One carrier covers every asset: `send` consolidates all asset change onto
+    // its single change output, so the reserve is a dust floor, not a per-asset
+    // sum. Keyed on `spendable` rather than `owned` — assets held only on gated
+    // or locked coins are never selected and produce no change to carry.
+    const carrierReserve = spendable.size > 0 ? Number(dust) : 0;
+    const ceiling = available - carrierReserve;
+    // Below dust nothing leaves alone: `send` pads its recipient to dust
+    // before selecting, so a ceiling under dust is a send that cannot be
+    // covered, not a small one.
+    const maxSendable = ceiling >= Number(dust) ? ceiling : 0;
+
     return {
         settled,
         preconfirmed,
         available,
+        maxSendable,
         gated,
         intentLocked,
         recoverable,

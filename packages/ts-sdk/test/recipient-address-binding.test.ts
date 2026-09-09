@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { Script } from "@scure/btc-signer";
-import { Wallet, SingleKey, type Recipient } from "../src";
+import {
+    AssetChangeCarrierError,
+    SelectedVtxosCannotCarryAssetChangeError,
+    SendAboveMaxSendableError,
+    SingleKey,
+    Wallet,
+    type Recipient,
+} from "../src";
 import { VtxoScript } from "../src/script/base";
 import { ArkAddress } from "../src/script/address";
 import {
@@ -9,6 +16,7 @@ import {
     validateRecipients,
     type RecipientAddressContext,
 } from "../src/wallet/utils";
+import { createMockExtendedVtxo } from "./contracts/helpers";
 import { jsonResponse } from "./helpers/response";
 
 // Mock fetch
@@ -441,6 +449,155 @@ describe("send with caller-selected vtxos", () => {
                 selectedVtxos: [coin(2000, [{ assetId: ASSET_A, amount: 100n }])],
             }),
         ).rejects.toThrow(/cannot carry 1 asset change\(s\), needs 1000/);
+    });
+});
+
+/**
+ * Generic selection with a wallet that holds assets: the balance figure and
+ * the send path agree. `maxSendable` goes through; `available` is refused —
+ * and refused with the ceiling named, not as "Insufficient funds" against a
+ * balance that plainly covers the amount. This is the "swap all" / "send max"
+ * of every wallet that has ever received an asset, since assets arrive on a
+ * dust carrier the balance counts.
+ */
+// AI-generated, and to be redone: written by Claude, kept for the coverage it
+// gives the fix rather than for its shape. Rewrite by hand before reading it as
+// the specification.
+describe("send keeps a carrier for asset change", () => {
+    const ASSET = "a".repeat(64);
+    const ADDR = encodeAddr(SERVER_XONLY, "tark");
+    const mockIdentity = SingleKey.fromHex(
+        "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
+    );
+    const mockArkInfo = {
+        signerPubkey: SERVER_KEY_HEX,
+        forfeitPubkey: SERVER_KEY_HEX,
+        batchExpiry: BigInt(144),
+        unilateralExitDelay: BigInt(144),
+        boardingExitDelay: BigInt(144),
+        roundInterval: BigInt(144),
+        network: "mutinynet",
+        dust: BigInt(1000),
+        forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+        checkpointTapscript:
+            "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+    };
+
+    // 40k on a plain coin, 700 on a carrier an asset arrived on. Selection is
+    // expiry-then-amount, so the plain coin goes first and the carrier is
+    // reached only when the amount outgrows it.
+    const coins = () => [
+        createMockExtendedVtxo({
+            txid: "1".repeat(64),
+            vout: 0,
+            value: 40_000,
+            virtualStatus: { state: "settled" },
+        }),
+        createMockExtendedVtxo({
+            txid: "2".repeat(64),
+            vout: 0,
+            value: 700,
+            virtualStatus: { state: "settled" },
+            assets: [{ assetId: ASSET, amount: 5n }],
+        }),
+    ];
+
+    const makeWallet = async (overrideCoins: ReturnType<typeof coins> = coins()) => {
+        const wallet = await Wallet.create({
+            identity: mockIdentity,
+            arkServerUrl: "http://localhost:7070",
+        });
+        vi.spyOn(wallet, "getSpendableVtxos").mockResolvedValue(overrideCoins as never);
+        return wallet;
+    };
+
+    beforeEach(() => {
+        mockFetch.mockReset();
+        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
+    });
+
+    it("refuses a send of the whole balance and names the ceiling", async () => {
+        const wallet = await makeWallet();
+        // 40_700 is `available`; every sat is an input, so the asset change
+        // has nothing left to ride on. The ceiling is `available - dust`.
+        await expect(wallet.send({ address: ADDR, amount: 40_700 })).rejects.toThrow(
+            /0 sats of change cannot carry 1 asset change\(s\), needs 1000 — send at most 39700 sats \(WalletBalance\.maxSendable\)/,
+        );
+    });
+
+    it("names the ceiling when the change is short of dust, not only when it is zero", async () => {
+        const wallet = await makeWallet();
+        // 40_500 outgrows the plain coin, so the carrier is picked too: 200 of
+        // change under a 1000 floor, and no spare coin to top it up.
+        await expect(wallet.send({ address: ADDR, amount: 40_500 })).rejects.toThrow(
+            /200 sats of change cannot carry 1 asset change\(s\), needs 1000 — send at most 39700 sats/,
+        );
+    });
+
+    it("reports zero, agreeing with maxSendable, when between one and two dust would leave", async () => {
+        // available is 1_500 on a single asset carrier: nothing but the
+        // carrier to spend, so a send of one dust consumes it whole, and the
+        // asset change is stranded exactly as "swap all" is. maxSendable's
+        // floor bites here: 1_500 - 1_000 = 500 < dust, so the ceiling is 0,
+        // not 500 — `send` pads its recipient to dust, so anything under dust
+        // cannot leave alone.
+        const wallet = await makeWallet([
+            createMockExtendedVtxo({
+                txid: "3".repeat(64),
+                vout: 0,
+                value: 1_500,
+                virtualStatus: { state: "settled" },
+                assets: [{ assetId: ASSET, amount: 5n }],
+            }) as never,
+        ]);
+        await expect(wallet.send({ address: ADDR, amount: 1_000 })).rejects.toThrow(
+            /500 sats of change cannot carry 1 asset change\(s\), needs 1000 — send at most 0 sats \(WalletBalance\.maxSendable\)/,
+        );
+    });
+
+    it("lets a send of `maxSendable` through the accounting", async () => {
+        const wallet = await makeWallet();
+        const err = await wallet.send({ address: ADDR, amount: 39_700 }).catch((e: unknown) => e);
+        // It fails later, at the submit this mock cannot serve. What matters is
+        // that the carrier was found and the send got past coin selection.
+        expect(String(err)).not.toMatch(/cannot carry/);
+        expect(String(err)).not.toMatch(/Insufficient funds/);
+    });
+
+    // The ceiling is the reason this refusal exists, so a caller has to be able
+    // to read it back without parsing the sentence it appears in — a "send max"
+    // control that raced a receive re-prefills from the error itself.
+    it("carries the ceiling as a field, not only in the message", async () => {
+        const wallet = await makeWallet();
+        const err = await wallet.send({ address: ADDR, amount: 40_700 }).catch((e: unknown) => e);
+
+        expect(err).toBeInstanceOf(SendAboveMaxSendableError);
+        expect(err).toBeInstanceOf(AssetChangeCarrierError);
+        const refusal = err as SendAboveMaxSendableError;
+        expect(refusal.name).toBe("SendAboveMaxSendableError");
+        expect(refusal.maxSendable).toBe(39_700);
+        expect(refusal.changeAmount).toBe(0);
+        expect(refusal.assetChangeCount).toBe(1);
+        expect(refusal.dustAmount).toBe(1_000n);
+    });
+
+    // Distinct remedy, distinct type: the wallet may hold a coin that would
+    // fund the carrier, but this path may not reach for one the caller did not
+    // name, so there is no ceiling to report and lowering the amount is the
+    // wrong advice.
+    it("refuses caller-pinned inputs under a different type, with no ceiling", async () => {
+        const wallet = await makeWallet();
+        const err = await wallet
+            .send({
+                recipients: [{ address: ADDR, amount: 40_700 }],
+                selectedVtxos: coins() as never,
+            })
+            .catch((e: unknown) => e);
+
+        expect(err).toBeInstanceOf(SelectedVtxosCannotCarryAssetChangeError);
+        expect(err).toBeInstanceOf(AssetChangeCarrierError);
+        expect(err).not.toBeInstanceOf(SendAboveMaxSendableError);
+        expect(err).not.toHaveProperty("maxSendable");
     });
 });
 

@@ -195,6 +195,7 @@ import {
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./signingErrors";
+import { SelectedVtxosCannotCarryAssetChangeError, SendAboveMaxSendableError } from "./sendErrors";
 
 export const getArkadeServerUrl = ({ arkServerUrl }: { arkServerUrl?: string }) =>
     arkServerUrl || DEFAULT_ARKADE_SERVER_URL;
@@ -1240,8 +1241,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         // `settled`/`preconfirmed`/`total` and the `assets` rollup count every VTXO
         // the wallet owns, including escrowed and intent-locked ones; `available`
-        // and `availableAssets` count only what generic spending would pick, so
-        // nothing reported as available can be refused by `send`.
+        // and `availableAssets` count only what generic spending would pick.
+        // `maxSendable` is the send ceiling: one dust carrier under `available`
+        // while a spendable coin carries an asset (see computeOffchainBalance).
         const totalBoarding = confirmed + unconfirmed;
         const offchain = computeOffchainBalance(
             vtxos,
@@ -1257,6 +1259,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             settled: offchain.settled,
             preconfirmed: offchain.preconfirmed,
             available: offchain.available,
+            maxSendable: offchain.maxSendable,
             gated: offchain.gated,
             intentLocked: offchain.intentLocked,
             recoverable: offchain.recoverable,
@@ -1444,6 +1447,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
         return {
             now: { timestamp: new Date() },
+            dust: this.dustAmount,
             isPendingRecovery: (vtxo) => pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
             isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
@@ -5671,18 +5675,38 @@ export class Wallet
             if (selectedVtxos) {
                 // Asset change needs a change output at or above dust, and this path
                 // may not reach for a coin the caller did not name.
-                throw new Error(
-                    `send({ selectedVtxos }): ${changeAmount} sats of change cannot carry ` +
-                        `${assetChanges.size} asset change(s), needs ${this.dustAmount}`,
-                );
+                throw new SelectedVtxosCannotCarryAssetChangeError({
+                    changeAmount,
+                    assetChangeCount: assetChanges.size,
+                    dustAmount: this.dustAmount,
+                });
             }
             const availableCoins = virtualCoins.filter(
                 (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
             );
-            const { inputs: extraCoins } = selectVirtualCoins(
-                availableCoins,
-                Number(this.dustAmount) - changeAmount,
-            );
+            const shortfall = Number(this.dustAmount) - changeAmount;
+            const spare = availableCoins.reduce((sum, c) => sum + c.value, 0);
+            if (spare < shortfall) {
+                // Every spendable sat is already an input or spoken for by the
+                // recipients, so nothing can fund the carrier the asset change
+                // needs. This is the "send all" of a wallet that holds assets,
+                // and `selectVirtualCoins` would report it as "Insufficient
+                // funds" against a balance that plainly covers the amount —
+                // name the actual ceiling instead. `totalBtcSelected + spare`
+                // is every spendable sat, so the ceiling is the balance's
+                // `maxSendable` — the same floor as there: below dust nothing
+                // leaves alone (a recipient is padded to dust), so a ceiling
+                // under dust is zero, not a small send.
+                const rawCeiling = Math.max(0, totalBtcSelected + spare - Number(this.dustAmount));
+                const ceiling = rawCeiling >= Number(this.dustAmount) ? rawCeiling : 0;
+                throw new SendAboveMaxSendableError({
+                    changeAmount,
+                    assetChangeCount: assetChanges.size,
+                    dustAmount: this.dustAmount,
+                    maxSendable: ceiling,
+                });
+            }
+            const { inputs: extraCoins } = selectVirtualCoins(availableCoins, shortfall);
 
             for (const coin of extraCoins) {
                 if (coin.assets) {

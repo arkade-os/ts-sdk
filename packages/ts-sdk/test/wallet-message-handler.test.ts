@@ -2101,6 +2101,8 @@ describe("WalletMessageHandler repo-backed reads", () => {
             payload: {
                 settled: 30000,
                 available: 30000,
+                // no asset on any spendable coin: nothing held back
+                maxSendable: 30000,
             },
         });
     });
@@ -2143,6 +2145,8 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 settled: 30000,
                 total: 30000,
                 available: 10000,
+                // the spendable coin carries an asset: one dust (546) carrier held back
+                maxSendable: 9454,
                 gated: 20000,
                 intentLocked: 0,
                 assets: [{ assetId: "cc".repeat(32), amount: 7n }],
