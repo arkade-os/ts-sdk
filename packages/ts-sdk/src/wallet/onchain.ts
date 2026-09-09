@@ -14,7 +14,7 @@ import { DUST_AMOUNT } from "./utils";
  * Onchain Bitcoin wallet implementation for traditional Bitcoin transactions.
  *
  * This wallet handles regular Bitcoin transactions on the blockchain without
- * using the Arkade protocol. It supports P2TR (Pay-to-Taproot) addresses and
+ * within Arkade. It supports P2TR (Pay-to-Taproot) addresses and
  * provides basic Bitcoin wallet functionality.
  *
  * @example

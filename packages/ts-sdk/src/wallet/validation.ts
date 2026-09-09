@@ -66,7 +66,7 @@ export function assertFinalCommitmentMatchesValidated(
 /**
  * Validates both offchain and onchain recipients.
  * Offchain recipients are checked against vtxo tree leaves for correct amounts and assets.
- * Onchain recipients are validated against the round transaction outputs (amounts and scripts)
+ * Onchain recipients are validated against the commitment transaction outputs (amounts and scripts)
  * via validateOnchainRecipient.
  *
  * Presence only: the commitment tx and the tree are shared with every other intent in the batch,

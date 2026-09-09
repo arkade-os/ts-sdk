@@ -127,7 +127,7 @@ export interface NewAddress {
  *
  * The wallet will use provided URLs to create default providers if custom provider
  * instances are not supplied. If optional parameters are not provided, the wallet
- * will fetch configuration from the Arkade server.
+ * will fetch configuration from the operator.
  *
  * @remarks
  * URL-based and provider-based configuration can be mixed, but provider instances
@@ -139,7 +139,7 @@ export interface NewAddress {
  */
 export interface BaseWalletConfig {
     /**
-     * Base URL of the Arkade server.
+     * Base URL of the operator.
      *
      * @deprecated Pass an explicit `arkProvider` instance instead. URL-based
      * configuration will be removed in a future major version.
@@ -158,7 +158,7 @@ export interface BaseWalletConfig {
      */
     esploraUrl?: string;
 
-    /** Optional Arkade server public key used to construct and validate Arkade addresses. */
+    /** Optional operator public key used to construct and validate Arkade addresses. */
     arkServerPublicKey?: string;
     /** Relative timelock applied to boarding scripts. */
     boardingTimelock?: RelativeTimelock;
@@ -1074,7 +1074,7 @@ export interface IAssetManager extends IReadonlyAssetManager {
 }
 
 /**
- * Core wallet interface for Bitcoin transactions with Arkade protocol support.
+ * Core wallet interface for Bitcoin transactions with Arkade support.
  *
  * This interface defines the contract that all wallet implementations must follow.
  * It provides methods for address management, balance checking, virtual output
@@ -1152,7 +1152,7 @@ export interface IWallet extends IReadonlyWallet {
 }
 
 /**
- * Readonly wallet interface for Bitcoin transactions with Arkade protocol support.
+ * Readonly wallet interface for Bitcoin transactions with Arkade support.
  *
  * This interface defines the contract that all wallet implementations must follow.
  * It provides methods for address management, balance checking, virtual output

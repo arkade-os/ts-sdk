@@ -531,7 +531,7 @@ export function assertSubmittedArkTxid(
  * confirm, and learning the truth when the counterparty's refund lands.
  */
 export interface VerifyServerSignatures {
-    /** The Ark server's key; x-only or compressed, both accepted. */
+    /** The operator's key; x-only or compressed, both accepted. */
     serverPubkey: Uint8Array;
 }
 
@@ -631,7 +631,7 @@ export function assertCheckpointsMatchInputs(
 }
 
 /**
- * Submit a pre-built offchain transaction to the Ark server and finalize it.
+ * Submit a pre-built offchain transaction to the operator and finalize it.
  *
  * Owns the submit → checkpoint-sign → finalize sequence shared by every Ark
  * spend path (the wallet send/migration path and the single-key ArkadeCash

@@ -430,7 +430,7 @@ export namespace VHTLC {
     /**
      * Virtual Hash Time Lock Contract (VHTLC) script implementation.
      *
-     * VHTLC enables atomic swaps and conditional payments in the Arkade protocol.
+     * VHTLC enables atomic swaps and conditional payments within Arkade.
      * It provides multiple spending paths:
      *
      * - **claim**: Receiver can claim funds by revealing the preimage

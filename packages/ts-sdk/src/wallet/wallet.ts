@@ -912,7 +912,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * The wallet's current boarding tapscript (the on-chain onboarding
+     * The wallet's current boarding tapscript (the onchain onboarding
      * target). Read-only from the outside; mutated only via
      * {@link Wallet.setBoardingTapscriptForRotation} when a fresh boarding
      * address is explicitly allocated. Single-valued for static / `auto`
@@ -1029,14 +1029,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
             if (identityIsMainnet && !serverIsMainnet) {
                 throw new Error(
                     `Network mismatch: identity uses mainnet derivation (coin type 0) ` +
-                        `but the Arkade server is on ${info.network}. ` +
+                        `but the operator is on ${info.network}. ` +
                         `Create identity with { isMainnet: false } to use testnet derivation.`,
                 );
             }
             if (!identityIsMainnet && serverIsMainnet) {
                 throw new Error(
                     `Network mismatch: identity uses testnet derivation (coin type 1) ` +
-                        `but the Arkade server is on mainnet. ` +
+                        `but the operator is on mainnet. ` +
                         `Create identity with { isMainnet: true } or omit isMainnet (defaults to mainnet).`,
                 );
             }
@@ -1542,7 +1542,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
     }
     /**
-     * The on-chain (P2TR) addresses of every boarding tapscript this wallet
+     * The onchain (P2TR) addresses of every boarding tapscript this wallet
      * uses — the current address plus any historical rotated boarding
      * addresses. The aggregating boarding readers (history, notifications) fan
      * out over this set so deposits at previous boarding addresses are still
@@ -1671,7 +1671,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * The set of boarding tapscripts whose on-chain UTXOs belong to this
+     * The set of boarding tapscripts whose onchain UTXOs belong to this
      * wallet — the current display tapscript plus every historical boarding
      * address it has used. Under per-derivation rotation (plan §6-II) a wallet
      * can hold unspent boarding UTXOs at several addresses at once, so fund
@@ -1685,7 +1685,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * @param allowedSigners - Optional set of x-only-hex server keys whose
      *   persisted boarding rows are included. Defaults to `{current x-only
      *   signer}`, preserving today's current-signer-only discovery (and the
-     *   foreign-ASP guard). The deprecated-signer migration path widens this to
+     *   foreign-operator guard). The deprecated-signer migration path widens this to
      *   reach old-signer boarding addresses. The index-0 baseline and the
      *   current display tapscript are always included regardless of the set.
      */
@@ -1719,7 +1719,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         });
         for (const c of boardingContracts) {
             // Only allowed servers. By default this is the wallet's current
-            // signer, so a row left by a previous ASP (e.g. a repo recovered
+            // signer, so a row left by a previous operator (e.g. a repo recovered
             // against a different server) — or, here, an old-signer row outside
             // the requested set — would otherwise emit a spurious onchain script
             // and a wasted getCoins/getTransactions call on every boarding read.
@@ -2314,7 +2314,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 }
 
 /**
- * Main wallet implementation for Bitcoin transactions with Arkade protocol support.
+ * Main wallet implementation for Bitcoin transactions with Arkade support.
  * The wallet does not store any data locally and relies on Arkade and onchain
  * providers to fetch onchain and virtual outputs.
  *
@@ -2571,7 +2571,7 @@ export class Wallet
     private _serverRotationChain: Promise<void> = Promise.resolve();
 
     /**
-     * Allocate and return a *fresh* on-chain boarding address, rotating the
+     * Allocate and return a *fresh* onchain boarding address, rotating the
      * wallet's current boarding tapscript to a new HD index.
      *
      * This is the explicit boarding allocator — the analogue of dotnet's
@@ -2580,7 +2580,7 @@ export class Wallet
      * address that never burns an index), each call here:
      *
      * - allocates the next index from the shared HD stream (so boarding and
-     *   L2 receive interleave on one monotonic index);
+     *   virtual-output receive interleave on one monotonic index);
      * - builds the boarding tapscript at that index with the boarding-exit
      *   CSV;
      * - persists an `active` `boarding` contract tagged
@@ -3325,7 +3325,7 @@ export class Wallet
             indexerProvider: this.indexerProvider,
             onchainProvider: this.onchainProvider,
             network: { hrp: this.network.hrp },
-            // Full network for the boarding on-chain (P2TR) probe — the
+            // Full network for the boarding onchain (P2TR) probe — the
             // `{ hrp }` shape above lacks the `bech32` data
             // `VtxoScript.onchainAddress` needs (plan §6-I.1).
             onchainNetwork: this.network,
@@ -4177,7 +4177,7 @@ export class Wallet
 
         const abortController = new AbortController();
         let stream: AsyncIterableIterator<SettlementEvent> | undefined;
-        // Set once Batch.join returns: the batch is committed on-chain and no
+        // Set once Batch.join returns: the batch is committed onchain and no
         // local cleanup failure may cancel it. Authoritative in memory even if
         // the hook's terminal repo write failed, which repo state can't tell us.
         let committedTxid: string | undefined;
@@ -4257,11 +4257,11 @@ export class Wallet
             await this.updateDbAfterSettle(params.inputs, commitmentTxid);
 
             // Boarding rotation (rotate-on-board): if this settle swept any
-            // boarding (on-chain) UTXO into Arkade, advance the boarding
+            // boarding (onchain) UTXO into Arkade, advance the boarding
             // address to a fresh HD index so the next deposit lands on a new
-            // address. This is the boarding analogue of the L2 receive
-            // rotation that runs on `vtxo_received` — boarding has no on-chain
-            // receival event (ContractWatcher watches only the L2 indexer), so
+            // address. This is the boarding analogue of the virtual-output receive
+            // rotation that runs on `vtxo_received` — boarding has no onchain
+            // receival event (ContractWatcher watches only the indexer), so
             // the board itself is the trigger. Best-effort: it never fails an
             // already-committed settle.
             await this.maybeRotateBoardingAfterBoard(params.inputs);
@@ -4319,9 +4319,9 @@ export class Wallet
     /**
      * Rotate the boarding address after a board (rotate-on-board trigger).
      *
-     * Mirrors {@link WalletReceiveRotator}'s L2 rotation, but driven by a
+     * Mirrors {@link WalletReceiveRotator}'s virtual-output rotation, but driven by a
      * board instead of a `vtxo_received` event: when a settle consumes at
-     * least one boarding (on-chain) UTXO, the current boarding address has
+     * least one boarding (onchain) UTXO, the current boarding address has
      * served its purpose, so we allocate a fresh one via
      * {@link getNewBoardingAddress}. A settle that consumed only VTXOs (a
      * renewal / offboard) is not a board and leaves the boarding address
@@ -4746,7 +4746,7 @@ export class Wallet
     }
 
     /**
-     * @internal Sign an on-chain boarding exit / sweep transaction, routing
+     * @internal Sign an onchain boarding exit / sweep transaction, routing
      * each input to the correct key by its `witnessUtxo.script`: the identity
      * for index-0 / static boarding, the per-index descriptor for a rotated
      * boarding UTXO (plan §6-III.3). Used by
@@ -6242,7 +6242,7 @@ export class Wallet
                     // boarding input = remove it from the bucket of the
                     // address it actually sits on. The source boarding address
                     // is recoverable from the input's tapTree (its leaves
-                    // determine the tweaked key → on-chain P2TR), so a UTXO
+                    // determine the tweaked key → onchain P2TR), so a UTXO
                     // received at a rotated-away boarding address is cleaned up
                     // in its own bucket rather than the current one. Fall back
                     // to the current boarding address if the tapTree can't be

@@ -63,7 +63,7 @@ Every swap has the same two beats, on this route and on the cross-ledger corrido
    deposit back.
 
 Cancel is this route's refund path. Where an HTLC corridor refunds through a timelocked leaf, this
-covenant refunds through `cancelOffer` — a 2-of-2 with the Arkade server, **no solver signature
+covenant refunds through `cancelOffer` — a 2-of-2 with the operator, **no solver signature
 involved**. Same job, same guarantee that the money comes home, reached by a script that fits a
 single-ledger swap.
 
@@ -214,7 +214,7 @@ await wallet.send({
 ```
 
 The covenant co-signer ("emulator") key defaults to the SDK's per-network pin, resolved from the
-network the Ark server reports — never fetched from the emulator itself. Pass
+network the operator reports — never fetched from the emulator itself. Pass
 `params.emulatorPubkey` (33-byte compressed hex, the same contract as `Arkade.connect`'s option)
 to override it for a self-hosted emulator, an unpinned network (signet, testnet), or a key
 rotation the SDK hasn't shipped yet.
@@ -307,7 +307,7 @@ message anywhere: **acceptance is funding**.
 - **Arkade → Lightning** (`arkade:BTC->lightning:BTC`, implemented): the trader derives the
   lightning-send covenant LOCALLY from the quote's binding fields plus its own data, refuses to
   fund on any address mismatch, funds its own derivation before `valid_until`, and may go
-  offline. The solver observes the funding on-chain, pays the invoice, and claims with the
+  offline. The solver observes the funding onchain, pays the invoice, and claims with the
   preimage — which lands publicly in the claim witness as the receipt. A failed swap refunds by
   covenant to the trader's address, pushable by anyone, no trader keys or state.
 - **Arkade ↔ arkade** (BTC↔asset, asset↔asset): an arkade asset leg names the asset id itself —
@@ -470,7 +470,7 @@ The invoice on the lightning-receive leg is the _solver's_, so the SDK owns the 
 than taking the caller's facts about it: `requestLightningReceive` requires a `decodeInvoice`
 callback (no BOLT11 dependency is added) and `verifyReceiveInvoice` binds the decoded invoice to
 this swap's `H` and to `quote.from_amount` — an invoice on another payment hash is the one attack
-here with no on-chain trace, since the payer pays it in full and no lockup on `H` is ever funded.
+here with no onchain trace, since the payer pays it in full and no lockup on `H` is ever funded.
 `assertReceivable` replaces `assertFundable` on this leg: the refund CLTV is the solver's, so the
 window that can run out is the hold invoice's, and the claim window is measured from
 `payDeadline = min(invoice expiry, valid_until)` — returned as the absolute `invoiceExpiresAt`,
@@ -482,7 +482,7 @@ flows return `expectedAmount` (the quote's `to_amount`) — persist it: `pushCla
 refuses, with `LockupAmountMismatchError`, to publish `P` for a lockup funded below it. Matching the
 `pkScript` is not enough on this leg, since a solver that funds the correctly derived script with
 dust still settles the payer's HTLC in full once `P` is out. The gate sums every live output and
-runs before signing — `P` reaches the Ark server at submit — and is skipped only for a lockup we
+runs before signing — `P` reaches the operator at submit — and is skipped only for a lockup we
 have already partially claimed (`partiallyClaimed`), where `P` is public anyway. The push itself is
 core's `signAndSubmitOffchainTx` plus `claimWithPreimageIdentity`, with `verifyServerSignatures`
 on: the server's countersignature is checked per input, against the leaf the local build spends,

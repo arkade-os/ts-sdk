@@ -96,7 +96,7 @@ interface SweepCapableWallet extends IReadonlyWallet {
     arkProvider: ArkProvider;
     network: Network;
     /**
-     * Descriptor-aware signer for on-chain boarding exit/sweep txs. Routes
+     * Descriptor-aware signer for onchain boarding exit/sweep txs. Routes
      * each input to the identity (baseline) or its per-index descriptor
      * (rotated boarding), so a sweep that batches UTXOs across boarding
      * addresses signs each with the correct key (plan §6-III.3).
@@ -815,7 +815,7 @@ export type MigrationGlobalSkipReason = "no-deprecated-vtxos" | "unknown-wallet-
 /**
  * Outcome of one migration leg. The VTXO leg migrates through the Ark send path
  * ({@link Wallet.sendSelectedVtxosToSelf}); the boarding leg keeps its
- * settle-backed migration (boarding coins are on-chain inputs with no send
+ * settle-backed migration (boarding coins are onchain inputs with no send
  * path). Each leg owns its full sizing pipeline (oversized filtering, count +
  * amount caps, its own dust floor) and reports independently — a failure or skip
  * in one leg never suppresses the other.
@@ -948,7 +948,7 @@ interface ClassifiedVtxo {
 
 /**
  * A deprecated-signer boarding UTXO paired with its signer classification
- * (Section 7). Mirrors {@link ClassifiedVtxo}, substituting the on-chain
+ * (Section 7). Mirrors {@link ClassifiedVtxo}, substituting the onchain
  * boarding coin for the offchain VTXO.
  */
 interface ClassifiedBoarding {
@@ -1022,7 +1022,7 @@ function mergeSignerReports(...reportLists: DeprecatedSignerReport[][]): Depreca
  * - **Expiry monitoring**: Check for virtual outputs that are expiring soon
  *
  * Virtual outputs become recoverable when:
- * - The Arkade server sweeps them (`isSwept`) and they remain spendable
+ * - The operator sweeps them (`isSwept`) and they remain spendable
  * - They are preconfirmed subdust (to consolidate small amounts without locking liquidity on settled virtual outputs)
  *
  * @example
@@ -1863,7 +1863,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * - Batches multiple expired boarding inputs into one transaction
      * - Skips the sweep if the output after fees would be below dust
      *
-     * No Arkade server involvement is needed — this is a pure onchain transaction.
+     * No operator involvement is needed — this is a pure onchain transaction.
      *
      * @returns The broadcast transaction ID
      * @throws Error if no expired boarding inputs are found
@@ -2143,7 +2143,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // Two independent legs, run sequentially (each acquires the wallet tx
         // lock itself): VTXOs migrate through the Ark send path; boarding UTXOs
-        // keep a SEPARATE settle-backed migration — they are on-chain inputs
+        // keep a SEPARATE settle-backed migration — they are onchain inputs
         // with no send path. They are never combined into one intent, each owns
         // its full sizing pipeline (oversized + caps + its own dust floor), and a
         // failure/skip in one never suppresses the other. A leg is present iff it
@@ -2418,7 +2418,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     // wallet-owned output when one exists), and a single unrolled/
                     // settled input here would otherwise throw and fail the whole
                     // VTXO leg. Such holdings stay counted in the per-signer report
-                    // above; they exit via on-chain/recovery paths, not cooperative
+                    // above; they exit via onchain/recovery paths, not cooperative
                     // send.
                     if (v.expiresAt === undefined && v.expiresAtHeight === undefined) continue;
                     migratable.push({ vtxo: v, classification: cls });
@@ -2439,7 +2439,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     /**
      * Boarding sibling of {@link classifyDeprecatedSignerContracts} (Section 7):
      * fan out over the wallet's boarding addresses (current + historical), group
-     * the on-chain UTXOs per address, classify each address's signer against the
+     * the onchain UTXOs per address, classify each address's signer against the
      * fresh signer set, and split the confirmed boarding coins into cooperatively-
      * migratable and cutoff-expired sets while building the per-signer report.
      *
@@ -2447,7 +2447,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * included), so expired-signer boarding is still reported; migration
      * eligibility is gated afterwards by {@link isCooperativelyMigratable} and a
      * per-row boarding-output CSV check — never by the fetch. Current-signer
-     * coins are classified `CURRENT` and ignored; foreign-ASP rows are excluded
+     * coins are classified `CURRENT` and ignored; foreign-operator rows are excluded
      * because their keys are not in the signer set.
      */
     private async classifyDeprecatedSignerBoarding(info: ArkInfo): Promise<{

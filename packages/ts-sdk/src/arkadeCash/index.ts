@@ -7,7 +7,7 @@ import { RelativeTimelock } from "../script/tapscript";
 import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
 
 /**
- * ArkadeCash is a bearer instrument for the Ark protocol.
+ * ArkadeCash is a bearer instrument within Arkade.
  * It encodes a private key and contract parameters as a bech32m string,
  * enabling wallet-to-wallet transfers without address exchange.
  *

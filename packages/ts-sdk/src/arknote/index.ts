@@ -5,7 +5,7 @@ import { TapLeafScript, VtxoScript } from "../script/base";
 import { ExtendedCoin, Status } from "../wallet";
 
 /**
- * ArkNotes are special virtual outputs in the Arkade protocol that
+ * ArkNotes are special virtual outputs within Arkade that
  * can be created and spent without requiring any transactions.
  * The server mints them, and they are encoded as base58 strings
  * with a human-readable prefix, a preimage and a value.

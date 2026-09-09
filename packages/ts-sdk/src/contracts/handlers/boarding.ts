@@ -22,10 +22,10 @@ export type BoardingContractParams = DefaultContractParams;
 /**
  * Handler for the boarding contract (registered type `boarding`).
  *
- * The boarding contract derives the on-chain Bitcoin address used to
+ * The boarding contract derives the onchain Bitcoin address used to
  * board funds onto Arkade. It shares the exact `DefaultVtxo.Script`
  * shape with the `default` contract — a Taproot output co-owned by the
- * wallet and the Ark server, with a CSV exit path back to the wallet —
+ * wallet and the operator, with a CSV exit path back to the wallet —
  * and therefore reuses the `default` handler's path logic (forfeit via
  * server cooperation, exit after the boarding CSV).
  *
@@ -40,10 +40,10 @@ export type BoardingContractParams = DefaultContractParams;
  *
  * Like `default` / `delegate`, the boarding handler implements
  * {@link Discoverable.discoverAt} so `wallet.restore()` can rediscover
- * used boarding indices from authoritative on-chain data. It differs from
- * the L2 handlers in its source of truth: boarding probes the **on-chain**
+ * used boarding indices from authoritative onchain data. It differs from
+ * the virtual-output handlers in its source of truth: boarding probes the **onchain**
  * UTXO set at its P2TR address (`OnchainProvider.getCoins`) rather than the
- * Ark indexer, and builds its candidate from the boarding-exit CSV
+ * indexer, and builds its candidate from the boarding-exit CSV
  * (`deps.boardingTimelock`). When boarding discovery is not plumbed (no
  * `deps.boardingTimelock` / `deps.onchainNetwork`) `discoverAt` no-ops.
  *
@@ -110,13 +110,13 @@ export const BoardingContractHandler: ContractHandler<BoardingContractParams, De
     isGenericallySpendable: () => true,
 
     /**
-     * Probe the on-chain UTXO set for a boarding output at this HD index.
+     * Probe the onchain UTXO set for a boarding output at this HD index.
      *
-     * Boarding's source of truth is the **current** on-chain coin set
-     * (`OnchainProvider.getCoins`), not the Ark indexer: a boarded (spent)
-     * boarding output becomes an L2 VTXO at the receive index, so the
+     * Boarding's source of truth is the **current** onchain coin set
+     * (`OnchainProvider.getCoins`), not the indexer: a boarded (spent)
+     * boarding output becomes a virtual output at the receive index, so the
      * indexer probe already keeps the gap window open for it; only an
-     * *unspent* boarding output needs the on-chain probe (see plan §2).
+     * *unspent* boarding output needs the onchain probe (see plan §2).
      *
      * No-ops (returns `[]`) when boarding discovery is not plumbed — i.e.
      * `deps.boardingTimelock` or `deps.onchainNetwork` is absent — so the
@@ -153,8 +153,8 @@ export const BoardingContractHandler: ContractHandler<BoardingContractParams, De
         // Always `type: "boarding"` (see method doc). The equal-delay
         // same-script collision is resolved first-wins at persistence, and the
         // scan probes boarding before default so a both-purpose rotated index
-        // resolves to a `boarding` row — keeping both the on-chain UTXO and any
-        // L2 VTXO recoverable (docs/hd-wallets_onchain_rotation_collision_fix.md
+        // resolves to a `boarding` row — keeping both the onchain UTXO and any
+        // virtual output recoverable (docs/hd-wallets_onchain_rotation_collision_fix.md
         // §5.2, §5.4).
         return [
             {
@@ -166,8 +166,8 @@ export const BoardingContractHandler: ContractHandler<BoardingContractParams, De
                 },
                 script: scriptHex,
                 // The persisted row's `address` is the *Ark* address (not the
-                // on-chain P2TR), matching the row registered at init so the
-                // ContractWatcher keeps monitoring the same L2 script and the
+                // onchain P2TR), matching the row registered at init so the
+                // ContractWatcher keeps monitoring the same virtual-output script and the
                 // VTXO repository bucket lines up (plan §6-I.4). The P2TR is
                 // recomputed from params only for the `getCoins` probe.
                 address: script.address(deps.network.hrp, deps.serverPubKey).encode(),

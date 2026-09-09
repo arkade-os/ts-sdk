@@ -14,7 +14,9 @@ export const ErrWrongSettlementTxid = new Error("wrong settlement txid");
 export const ErrInvalidAmount = new Error("invalid amount");
 export const ErrNoLeaves = new Error("no leaves");
 export const ErrInvalidTaprootScript = new Error("invalid taproot script");
-export const ErrInvalidRoundTxOutputs = new Error("invalid round transaction outputs");
+export const ErrInvalidCommitmentTxOutputs = new Error("invalid commitment transaction outputs");
+/** @deprecated Use {@link ErrInvalidCommitmentTxOutputs}. */
+export const ErrInvalidRoundTxOutputs = ErrInvalidCommitmentTxOutputs;
 export const ErrWrongCommitmentTxid = new Error("wrong commitment txid");
 export const ErrMissingCosignersPublicKeys = new Error("missing cosigners public keys");
 
@@ -50,16 +52,16 @@ export function validateConnectorsTxGraph(settlementTxB64: string, connectorsGra
 // - input and output amounts.
 export function validateVtxoTxGraph(
     graph: TxTree,
-    roundTransaction: Transaction,
+    commitmentTransaction: Transaction,
     sweepTapTreeRoot: Uint8Array,
 ): void {
-    if (roundTransaction.outputsLength < BATCH_OUTPUT_VTXO_INDEX + 1) {
-        throw ErrInvalidRoundTxOutputs;
+    if (commitmentTransaction.outputsLength < BATCH_OUTPUT_VTXO_INDEX + 1) {
+        throw ErrInvalidCommitmentTxOutputs;
     }
 
-    const batchOutputAmount = roundTransaction.getOutput(BATCH_OUTPUT_VTXO_INDEX)?.amount;
+    const batchOutputAmount = commitmentTransaction.getOutput(BATCH_OUTPUT_VTXO_INDEX)?.amount;
     if (!batchOutputAmount) {
-        throw ErrInvalidRoundTxOutputs;
+        throw ErrInvalidCommitmentTxOutputs;
     }
 
     if (!graph.root) {
@@ -67,7 +69,7 @@ export function validateVtxoTxGraph(
     }
 
     const rootInput = graph.root.getInput(0);
-    const commitmentTxid = roundTransaction.id;
+    const commitmentTxid = commitmentTransaction.id;
 
     if (
         !rootInput.txid ||

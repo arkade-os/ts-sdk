@@ -84,7 +84,7 @@ function readDeadline(input: RequestInfo | URL, init?: RequestInit): AbortSignal
 
 /**
  * Guarded passthrough to the platform `fetch` with no Arkade-specific headers.
- * Use for any service that is NOT the Ark server (delegate, Esplora, …): those
+ * Use for any service that is NOT the operator (delegate, Esplora, …): those
  * origins reject unknown request headers such as `X-Build-Version` in the CORS
  * preflight.
  *
@@ -112,7 +112,7 @@ export function baseFetch(input: RequestInfo | URL, init?: RequestInit): Promise
 }
 
 /**
- * `fetch` for the Ark server only: adds the `X-Build-Version` compatibility
+ * `fetch` for the operator only: adds the `X-Build-Version` compatibility
  * header that arkd's version guard reads, plus the `X-SDK-VERSION` header
  * carrying this package's own version. Do NOT use it for other origins — they
  * reject these custom headers in CORS preflight.

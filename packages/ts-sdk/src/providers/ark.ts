@@ -225,7 +225,7 @@ export interface ArkInfo {
     vtxoMinAmount: bigint;
 }
 
-/** Signed intent payload sent to the Arkade server. */
+/** Signed intent payload sent to the operator. */
 export interface SignedIntent<T extends Intent.Message> {
     /** Base64-encoded signed proof transaction. */
     proof: string;
@@ -234,7 +234,7 @@ export interface SignedIntent<T extends Intent.Message> {
     message: T;
 }
 
-/** Transaction notification emitted by the Arkade server stream. */
+/** Transaction notification emitted by the operator stream. */
 export interface TxNotification {
     /** Transaction id. */
     txid: string;
@@ -277,7 +277,7 @@ export interface TxNotificationEvent {
 }
 
 export interface ArkProvider {
-    /** Fetch Arkade server configuration and fee settings. */
+    /** Fetch operator configuration and fee settings. */
     getInfo(): Promise<ArkInfo>;
 
     /** Submit a signed Arkade transaction and its checkpoint transactions. */
@@ -293,7 +293,7 @@ export interface ArkProvider {
     /** Finalize a previously submitted Arkade transaction. */
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
 
-    /** Register a signed intent with the Arkade server. */
+    /** Register a signed intent with the operator. */
     registerIntent(intent: SignedIntent<Intent.RegisterMessage>): Promise<string>;
 
     /** Delete a previously registered intent. */
@@ -318,7 +318,7 @@ export interface ArkProvider {
     /** Open the settlement event stream for the given topics. */
     getEventStream(signal: AbortSignal, topics: string[]): AsyncIterableIterator<SettlementEvent>;
 
-    /** Stream transaction notifications emitted by the Arkade server. */
+    /** Stream transaction notifications emitted by the operator. */
     getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<TxNotificationEvent>;
 
     /** Fetch pending transactions for a signed get-pending-tx intent. */
@@ -474,8 +474,8 @@ export class RestArkProvider implements ArkProvider {
         }
         this.emitServerInfoChanged(info);
         throw new DigestMismatchError(
-            "Arkade server reported a configuration digest mismatch; server info was " +
-                "refreshed. Rebuild and retry the request under the new server info.",
+            "The operator reported a configuration digest mismatch; operator info was " +
+                "refreshed. Rebuild and retry the request under the new operator info.",
         );
     }
 

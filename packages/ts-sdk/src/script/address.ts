@@ -36,7 +36,7 @@ export class ArkAddress {
     /**
      * Create an Arkade address from its server public key, Taproot output key, and prefix.
      *
-     * @param serverPubKey - 32-byte Arkade server public key
+     * @param serverPubKey - 32-byte operator public key
      * @param vtxoTaprootKey - 32-byte Taproot output key (a.k.a. tweaked public key)
      * @param hrp - Bech32 human-readable prefix
      * @param version - Address version byte

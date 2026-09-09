@@ -1,6 +1,6 @@
 # Arkade TypeScript SDK
 
-The Arkade SDK is a TypeScript library for building Bitcoin wallets using the Arkade protocol.
+The Arkade SDK is a TypeScript library for building Bitcoin wallets within Arkade.
 
 [![TypeDoc](https://img.shields.io/badge/TypeScript-Documentation-blue?style=flat-square)](https://arkade-os.github.io/ts-sdk/)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/arkade-os/ts-sdk)
@@ -217,7 +217,7 @@ Identities without `signMultiple` continue to work unchanged — each checkpoint
 
 ### Ark Provider Caching
 
-`RestArkProvider.getInfo()` fetches current Arkade server parameters on every call. Wrap it
+`RestArkProvider.getInfo()` fetches current operator parameters on every call. Wrap it
 with `CachingArkProvider` when you reuse that response for fee, signer, or limit lookups:
 
 ```typescript
@@ -249,7 +249,7 @@ Wallets read onchain state (UTXOs, transactions, fee rates, chain tip) through a
 
 If you don't pass a provider explicitly, `OnchainWallet` and `Wallet.create({ ... })` both default to `EsploraProvider` pointing at the URL in `ESPLORA_URL[networkName]`.
 
-> **New:** the interface also requires `getRawTransaction(txid): Promise<Uint8Array>`, the raw wire bytes of a transaction. Emulator v0.0.7+ demands the previous transaction of every input a covenant spend or intent proof carries, and a boarding or commitment parent has no off-chain source. Both shipped providers implement it; a custom `OnchainProvider` has to add it.
+> **New:** the interface also requires `getRawTransaction(txid): Promise<Uint8Array>`, the raw wire bytes of a transaction. Emulator v0.0.7+ demands the previous transaction of every input a covenant spend or intent proof carries, and a boarding or commitment parent has no offchain source. Both shipped providers implement it; a custom `OnchainProvider` has to add it.
 
 #### Default URLs
 
@@ -470,7 +470,7 @@ const activities = await wallet.getActivityHistory()
 
 ### Assets (Issue, Reissue, Burn, Send)
 
-The wallet's `assetManager` lets you create and manage assets on Arkade. The `send` method supports sending assets.
+The wallet's `assetManager` lets you create and manage assets within Arkade. The `send` method supports sending assets.
 
 ```typescript
 // Issue a new asset (non-reissuable by default)
@@ -596,7 +596,7 @@ const manager = await wallet.getVtxoManager()
 #### Renewal: Prevent Expiration
 
 Renew virtual outputs before they expire to retain unilateral control of funds.
-This settles expiring and recoverable virtual outputs back to your wallet, refreshing their expiration time.
+This settles expiring and recoverable virtual outputs back to your wallet, renewing their expiration time.
 
 ```typescript
 // Renew all virtual outputs to prevent expiration
@@ -633,9 +633,9 @@ try {
 }
 ```
 
-#### Recovery: Reclaim Swept VTXOs
+#### Recovery: Reclaim swept virtual outputs
 
-Recover virtual outputs that have been swept by the server or consolidate small amounts (subdust).
+Recover virtual outputs that have been swept by the operator or consolidate small amounts (subdust).
 
 ```typescript
 // Recover swept virtual outputs and preconfirmed subdust
@@ -656,7 +656,7 @@ Instead of the delegating user renewing virtual outputs by themselves, their del
 
 This is useful for wallets that cannot be online 24/7.
 
-When a `delegateProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegate to co-sign renewals alongside the Arkade server.
+When a `delegateProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegate to co-sign renewals alongside the operator.
 
 To run a delegation service, you'll need to set up a [Fulmine server](https://github.com/ArkLabsHQ/fulmine) with the [Delegation API](https://github.com/ArkLabsHQ/fulmine?tab=readme-ov-file#-delegate-api) enabled.
 
@@ -786,7 +786,7 @@ const wallet = await Wallet.create({
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
 })
 
-// Get fee information from the server
+// Get fee information from the operator
 const { fees: feeInfo } = await wallet.arkProvider.getInfo();
 
 const exitTxid = await new Ramps(wallet).offboard(
@@ -797,7 +797,7 @@ const exitTxid = await new Ramps(wallet).offboard(
 
 ### Unilateral Exit
 
-Unilateral exit allows you to withdraw your funds from the Arkade protocol back to the Bitcoin blockchain without requiring cooperation from the Arkade server. This process involves two main steps:
+Unilateral exit allows you to withdraw your funds within Arkade back to the Bitcoin blockchain if the operator is unavailable. This process involves two main steps:
 
 1. **Unrolling**: Broadcasting the transaction chain from offchain back to onchain
 2. **Completing the exit**: Spending the unrolled virtual outputs after the timelock expires
