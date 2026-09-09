@@ -679,8 +679,14 @@ function release(args) {
             console.log(`Set ${pkg.name} to ${plan.get(key).next}`);
         }
 
-        console.log("Building packages...");
-        run("pnpm", ["-r", "build"]);
+        if (!selectedKeys.includes("sdk")) {
+            // Dependents resolve @arkade-os/sdk to its built dist via the workspace
+            // link, so it must be fresh even when SDK isn't part of this release.
+            // When SDK *is* selected, its own publish below builds it (via `prepack`)
+            // before any dependent's turn, since packages publish in dependency order.
+            console.log("Building @arkade-os/sdk (workspace dependency)...");
+            run("pnpm", ["run", "build"], { cwd: PACKAGE_BY_KEY.sdk.dir });
+        }
 
         const manifestPaths = selectedKeys.map((k) => PACKAGE_BY_KEY[k].pkgJson);
         run("git", ["add", ...manifestPaths]);
