@@ -292,6 +292,24 @@ describe("discoverMarkets caching", () => {
         expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
+    it("drops an unreadable market without discarding the readable cache", async () => {
+        await seedCache(Date.now(), [btcUsd, null as unknown as DiscoveredMarket]);
+        const fetchImpl = jsonFetch([registryIndex()]);
+
+        const served = await discoverWith(fetchImpl);
+        expect(served).toHaveLength(1);
+        expect(served[0].source).toBe(btcUsd.source);
+        expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it("serves a fresh empty cache without refetching", async () => {
+        await seedCache(Date.now(), []);
+        const fetchImpl = jsonFetch([registryIndex()]);
+
+        expect(await discoverWith(fetchImpl)).toEqual([]);
+        expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
     it("fetches when the cache backend itself is unreadable", async () => {
         // a broken backend must degrade to a network fetch, never throw out
         const broken = Object.assign(new InMemoryAssetSwapRepository(), {
