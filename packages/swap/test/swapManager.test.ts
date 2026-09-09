@@ -815,6 +815,41 @@ describe("RfqSwapManager — the onchain-receive L1 half", () => {
         expect(isRfqSwapTerminal(swap.state)).toBe(false);
     });
 
+    it("keeps the value gate on a restored record that never claimed", async () => {
+        // `claimArkTxid` is written only from a live `claimLockup` return, so a
+        // restore cannot manufacture `partiallyClaimed` and skip the gate on a
+        // FIRST claim of an underfunded lockup.
+        const s = spies();
+        const { swap } = await drive({
+            spies: s,
+            indexer: fakeIndexer({
+                vtxos: unspent(),
+                funded: [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE - 1 }],
+            }),
+            chain: fakeChain({ utxos: [FILL], mtp: 0 }),
+        });
+
+        expect(s.lockupClaims).toHaveLength(0);
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/below the agreed/);
+    });
+
+    it("skips that gate only once a claim of ours has published P", async () => {
+        const s = spies();
+        await drive({
+            swap: onchainReceiveSwap({ claimArkTxid: CLAIM_ARK_TXID }),
+            spies: s,
+            indexer: fakeIndexer({
+                vtxos: unspent(),
+                funded: [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE - 1 }],
+            }),
+            chain: fakeChain({ utxos: [FILL], mtp: 0 }),
+        });
+
+        expect(s.lockupClaims).toHaveLength(1);
+        expect(s.lockupClaims[0]!.partiallyClaimed).toBe(true);
+    });
+
     it("still claims the Arkade lockup while the L1 half is being driven", async () => {
         const s = spies();
         await drive({
