@@ -1282,13 +1282,27 @@ export class ContractManager implements IContractManager {
     /**
      * `createContract`'s step order, fetch batched: persist all, hydrate once,
      * then watch. Hydrating first keeps it equivalent — the watcher seeds from
-     * the repository, so an unhydrated row reads as all-new.
+     * the repository, so an unhydrated row reads as all-new. A part-way failure
+     * still watches what it wrote; a retry reports those rows as existing.
      */
     async createContracts(paramsList: CreateContractParams[]): Promise<Contract[]> {
         if (paramsList.length === 0) return [];
         return this.watcher.withCoalescedSubscription(async () => {
             const upserted = [];
-            for (const params of paramsList) upserted.push(await this.upsertContract(params));
+            try {
+                for (const params of paramsList) upserted.push(await this.upsertContract(params));
+            } catch (err) {
+                // not hydrated: that can fail too, and would take the watch with it
+                for (const u of upserted) {
+                    if (!u.persisted) continue;
+                    await this.watcher
+                        .addContract(u.contract)
+                        .catch((e) =>
+                            console.error(`ContractManager: ${u.contract.script} left dark`, e),
+                        );
+                }
+                throw err;
+            }
 
             const fresh = upserted.filter((u) => u.persisted).map((u) => u.contract);
             if (fresh.length > 0) {

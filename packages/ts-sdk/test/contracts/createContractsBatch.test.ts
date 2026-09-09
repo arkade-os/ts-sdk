@@ -87,7 +87,37 @@ describe("ContractManager.createContracts", () => {
         for (const row of rows) await sequential.createContract(row);
         const oneAtATime = (sequentialIndexer.getVtxos as any).mock.calls.length;
 
-        expect(oneAtATime).toBeGreaterThan(batched);
+        // exact, not `>`: N−1 calls would satisfy a comparison and save nothing
+        expect(batched).toBe(1);
+        expect(oneAtATime).toBe(rows.length);
+    });
+
+    it("watches what it already persisted when a later row fails", async () => {
+        const failing = new InMemoryContractRepository();
+        const save = failing.saveContract.bind(failing);
+        failing.saveContract = async (c) => {
+            if (c.script === b.script) throw new Error("disk full");
+            return save(c);
+        };
+        const m = await ContractManager.create({
+            indexerProvider: createMockIndexerProvider(),
+            contractRepository: failing,
+            walletRepository: new InMemoryWalletRepository(),
+            watcherConfig: { failsafePollIntervalMs: 1000, reconnectDelayMs: 500 },
+        });
+        const rows = [
+            { type: "default", params: a.params, script: a.script, address: "addr-a" },
+            { type: "default", params: b.params, script: b.script, address: "addr-b" },
+        ];
+
+        await expect(m.createContracts!(rows)).rejects.toThrow("disk full");
+
+        const watched = (m as any).watcher.getAllContracts().map((c: any) => c.script);
+        expect(watched).toEqual([a.script]);
+        expect((await m.getContracts()).map((c) => c.script)).toEqual([a.script]);
+
+        await expect(m.createContracts!(rows)).rejects.toThrow("disk full");
+        expect((m as any).watcher.getAllContracts().map((c: any) => c.script)).toEqual([a.script]);
     });
 
     it("is a no-op for an empty set", async () => {
