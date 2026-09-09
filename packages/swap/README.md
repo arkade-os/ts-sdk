@@ -319,7 +319,7 @@ message anywhere: **acceptance is funding**.
   reference solver serves the Lightning pair today.
 
 ```ts
-import { httpTransport, requestLightningSend } from "@arkade-os/swap";
+import { httpTransport, requestLightningSend, SwapRefusal } from "@arkade-os/swap";
 
 // invoice facts from YOUR OWN decoder — the module takes facts, not a decoder
 const swap = await requestLightningSend(wallet, arkServerUrl, httpTransport(solverUrl), {
@@ -342,9 +342,21 @@ The trust model is the offer side's, applied to quotes: only `solver_pubkey`,
 parameter is the trader's own data, and anything address-shaped from the solver is compare-only
 (`AddressMismatch` means refuse-to-fund). The emulator key is neither: as above, it is a
 per-network pin inside the SDK, not solver data.
-Refusals carry a closed reason set (`SwapRefusal`); unknown reasons are a generic decline. The
-`swap-lightning-send.program.json` bytes are frozen the same way the offer programs are — a
-golden test pins the compiled leaves and scriptPubKey to the reference solver's exact script.
+Refusals carry a closed reason set (`SwapRefusal`). A solver may also return a recognised
+`error_code` with client-safe context. The error exposes these as `errorCode`, `field`, `actual`,
+`expected`, `limit`, and `unit`, and includes useful numeric context in its message. Match
+`errorCode` for a specific remedy while treating `reason` as the compatible fallback:
+
+```ts
+if (error instanceof SwapRefusal && error.errorCode === "invoice_cltv_too_large") {
+    console.error(`Invoice CLTV is ${error.actual} blocks; solver limit is ${error.limit}`);
+}
+```
+
+Unknown diagnostic codes and fields stay generic. `RFQ_REFUSAL_ERROR_CODES` and
+`isRfqRefusalErrorCode` expose the accepted vocabulary. The `swap-lightning-send.program.json`
+bytes are frozen the same way the offer programs are — a golden test pins the compiled leaves and
+scriptPubKey to the reference solver's exact script.
 
 Transports are symmetric-outbound: `httpTransport` (POST `/v1/swap`, GET `/v1/rfq/<rfq_id>`),
 `relayTransport` (the dev broker framing), and `nostrRfqTransport` — the production one a
