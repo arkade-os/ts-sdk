@@ -39,6 +39,17 @@ export interface RestoreAssetSwapRepositoryResult {
 }
 
 const isOpen = (swap: AssetSwap) => swap.status === "pending" || swap.status === "cancelling";
+const isOfferSwap = (swap: AssetSwap): boolean =>
+    typeof (swap as { offerHex?: unknown }).offerHex === "string";
+
+const restoreCoverage = async (
+    wallet: IWallet,
+    arkServerUrl: string,
+    swaps: AssetSwap[],
+): Promise<void> => {
+    const offers = swaps.filter(isOfferSwap);
+    if (offers.length > 0) await restoreOfferCoverage(wallet, arkServerUrl, offers);
+};
 
 const aborted = (swaps: AssetSwap[]): RestoreAssetSwapRepositoryResult => ({
     swaps,
@@ -77,14 +88,14 @@ export async function restoreAssetSwapRepository(
         scan = await restoreAssetSwaps(indexer, txs, new Set(existing.map((swap) => swap.id)), {
             serverPubkey,
             scanned,
-            reopen: existing.filter(isOpen),
+            reopen: existing.filter((swap) => isOpen(swap) && isOfferSwap(swap)),
         });
     } catch (scanError) {
         // Coverage for records already on disk must not depend on the chain scan
         // succeeding. If both fail, preserve both causes for the caller.
         if (!signal?.aborted) {
             try {
-                await restoreOfferCoverage(wallet, arkServerUrl, existing);
+                await restoreCoverage(wallet, arkServerUrl, existing);
             } catch (coverageError) {
                 throw new AggregateError(
                     [scanError, coverageError],
@@ -98,28 +109,37 @@ export async function restoreAssetSwapRepository(
 
     const before = new Map(existing.map((swap) => [swap.id, swap]));
     const changes: AssetSwapRestoreChange[] = [];
+    const cancelledAfterCommit = async (
+        scannedTxids: string[] = [],
+    ): Promise<RestoreAssetSwapRepositoryResult> => ({
+        swaps: await getAssetSwapsOrThrow(repository),
+        changes,
+        scannedTxids,
+        aborted: true,
+    });
     for (const restored of scan.restored) {
-        if (signal?.aborted) return aborted(existing);
+        if (signal?.aborted) return cancelledAfterCommit();
         const previous = before.get(restored.id);
         const current = previous || !prepareNew ? restored : await prepareNew(restored);
         if (current.id !== restored.id) {
             throw new Error("prepareNew must not change an asset swap id");
         }
-        if (signal?.aborted) return aborted(existing);
+        if (signal?.aborted) return cancelledAfterCommit();
         await repository.saveSwap(current);
         changes.push(previous ? { previous, current } : { current });
+        if (signal?.aborted) return cancelledAfterCommit();
     }
 
-    if (signal?.aborted) return aborted(existing);
+    if (signal?.aborted) return cancelledAfterCommit();
     if (scan.scannedTxids.length > 0) {
         await repository.markTxidsScanned(scan.scannedTxids);
     }
     const swaps = await getAssetSwapsOrThrow(repository);
-    if (signal?.aborted) return aborted(swaps);
+    if (signal?.aborted) return cancelledAfterCommit(scan.scannedTxids);
 
     let coverageError: unknown;
     try {
-        await restoreOfferCoverage(wallet, arkServerUrl, swaps);
+        await restoreCoverage(wallet, arkServerUrl, swaps);
     } catch (error) {
         coverageError = error;
     }

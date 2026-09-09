@@ -154,6 +154,23 @@ describe("restoreAssetSwapRepository", () => {
         expect(result.coverageError).toBe(unavailable);
     });
 
+    it("does not attempt offer coverage for a payment-hash-only record", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const onchain = {
+            ...pending("onchain"),
+            offerHex: undefined,
+            paymentHash: "cc".repeat(32),
+        } as unknown as AssetSwap;
+        await repository.saveSwap(onchain);
+        mocks.restoreAssetSwaps.mockResolvedValue({ restored: [], scannedTxids: [] });
+        mocks.restoreOfferCoverage.mockRejectedValue(new Error("Ark server unavailable"));
+
+        const result = await run(repository);
+
+        expect(result.coverageError).toBeUndefined();
+        expect(mocks.restoreOfferCoverage).not.toHaveBeenCalled();
+    });
+
     it("still repairs coverage for stored records when the chain scan fails", async () => {
         const repository = new InMemoryAssetSwapRepository();
         const open = pending("open");
@@ -179,6 +196,34 @@ describe("restoreAssetSwapRepository", () => {
 
         expect(result.aborted).toBe(true);
         expect(await repository.getAllSwaps()).toEqual([]);
+        expect(await repository.getScannedTxids()).toEqual(new Set());
+        expect(mocks.restoreOfferCoverage).not.toHaveBeenCalled();
+    });
+
+    it("reports records durably saved before cancellation without advancing the cursor", async () => {
+        const controller = new AbortController();
+        class CancellingRepository extends InMemoryAssetSwapRepository {
+            override async saveSwap(swap: AssetSwap): Promise<void> {
+                await super.saveSwap(swap);
+                controller.abort();
+            }
+        }
+        const repository = new CancellingRepository();
+        const first = pending("first", { swapAddress: "" });
+        const second = pending("second", { swapAddress: "" });
+        mocks.restoreAssetSwaps.mockResolvedValue({
+            restored: [first, second],
+            scannedTxids: ["first", "second"],
+        });
+
+        const result = await run(repository, { signal: controller.signal });
+
+        expect(result).toMatchObject({
+            swaps: [first],
+            changes: [{ current: first }],
+            scannedTxids: [],
+            aborted: true,
+        });
         expect(await repository.getScannedTxids()).toEqual(new Set());
         expect(mocks.restoreOfferCoverage).not.toHaveBeenCalled();
     });
