@@ -620,6 +620,24 @@ describe("restoreAssetSwaps — reopening records the scan left pending", () => 
         expect(result).toEqual({ restored: [], scannedTxids: [] });
     });
 
+    it("resolves an in-flight cancel once its deposit is spent", async () => {
+        // what a `cancelling` record exists for: the user cancelled, the wallet
+        // closed before the spend landed, and `reopen` is what finishes it
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const cancel = spendPsbt([
+            { offer, deposit: { txid: funding.txid, vout: 0 }, via: "cancel" },
+        ]);
+        const indexer = makeIndexer([cancel], [spentVtxo(offer, funding.txid, cancel.txid)]);
+
+        const result = await reask(indexer, [
+            record(offer, funding.txid, { status: "cancelling", spentTxid: cancel.txid }),
+        ]);
+
+        expect(result.restored).toMatchObject([{ status: "cancelled", spentTxid: cancel.txid }]);
+        expect(result.restored[0].completedAt).toBeUndefined();
+    });
+
     it("preserves the fields only the stored record carries", async () => {
         // a `createOffer` record knows its swap address; the scan writes ""
         const offer = makeOffer("want-asset", BigInt(992));
