@@ -58,25 +58,39 @@ const spendPsbt = (offer: Offer, via: "cancel" | "fulfill", vout = 0) => {
  * event seam, and an address to recover the server key from. `emit` plays the
  * manager's part.
  */
-const makeWallet = (getVirtualTxs: (txids: string[]) => Promise<{ txs: string[] }>) => {
+const makeWallet = (
+    getVirtualTxs: (txids: string[]) => Promise<{ txs: string[] }>,
+    contracts: any[] = [],
+) => {
     const callbacks = new Set<(event: any) => void>();
     // a real ark address, so ArkAddress.decode recovers SERVER_KEY from it
     const address = new ArkAddress(SERVER_KEY, key("66"), "tark").encode();
     const setContractWatchState = vi.fn(async (_script: string, _watch: string) => {});
+    const order: string[] = [];
+    const getContractsWithVtxos = vi.fn(async (filter?: any) => {
+        order.push("getContractsWithVtxos");
+        const scripts = filter?.script;
+        if (!scripts) return contracts;
+        return contracts.filter((c) => scripts.includes(c.contract.script));
+    });
     const wallet = {
         getAddress: async () => address,
         getContractManager: async () => ({
             onContractEvent: (cb: (event: any) => void) => {
+                order.push("onContractEvent");
                 callbacks.add(cb);
                 return () => callbacks.delete(cb);
             },
             setContractWatchState,
+            getContractsWithVtxos,
         }),
     } as any;
     return {
         wallet,
         getVirtualTxs,
         setContractWatchState,
+        getContractsWithVtxos,
+        order,
         emit: (event: any) => callbacks.forEach((cb) => cb(event)),
         listeners: () => callbacks.size,
     };
@@ -91,18 +105,29 @@ const spentEvent = (offer: Offer, spentTxid: string, overrides: Record<string, u
     ...overrides,
 });
 
+/** A contract row as the manager's own view returns it, deposit already spent —
+ * what the start-up pass reads when no live event ever arrived. */
+const spentDeposit = (offer: Offer, spentTxid: string, vtxo: Record<string, unknown> = {}) => ({
+    contract: {
+        script: hex.encode(offer.swapPkScript),
+        metadata: { kind: OFFER_CONTRACT_KIND },
+    },
+    vtxos: [{ txid: FUNDING_TXID, vout: 0, isSpent: true, arkTxId: spentTxid, ...vtxo }],
+});
+
 // the watcher builds its own RestIndexerProvider from arkServerUrl; intercept
 // the one call it makes rather than reaching through the constructor
 const withIndexer = async (
     fetcher: (txids: string[]) => Promise<{ txs: string[] }>,
     run: (harness: ReturnType<typeof makeWallet>) => Promise<void>,
+    contracts: any[] = [],
 ) => {
     const sdk = await import("@arkade-os/sdk");
     const spy = vi
         .spyOn(sdk.RestIndexerProvider.prototype, "getVirtualTxs")
         .mockImplementation(fetcher as any);
     try {
-        await run(makeWallet(fetcher));
+        await run(makeWallet(fetcher, contracts));
     } finally {
         spy.mockRestore();
     }
@@ -469,6 +494,116 @@ describe("watchOfferSwaps", () => {
                 expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
             },
         );
+    });
+
+    describe("start-up pass", () => {
+        it("resolves a spend that landed while nothing was subscribed", async () => {
+            // the wallet was closed when the solver filled the offer: the boot
+            // sync wrote the spend before any subscriber existed, and nothing
+            // replays it. Without a pass the record is pending forever.
+            const offer = makeOffer();
+            const fill = spendPsbt(offer, "fulfill");
+            const repository = new InMemoryAssetSwapRepository();
+            await addAssetSwap(repository, swapFor(offer));
+
+            await withIndexer(
+                async () => ({ txs: [fill.psbt] }),
+                async ({ wallet }) => {
+                    const watcher = await watchOfferSwaps({
+                        wallet,
+                        arkServerUrl: "http://ark",
+                        repository,
+                    });
+                    await watcher.idle();
+                    watcher.stop();
+
+                    expect(await getAssetSwaps(repository)).toMatchObject([
+                        { status: "fulfilled", spentTxid: fill.txid },
+                    ]);
+                },
+                [spentDeposit(offer, fill.txid)],
+            );
+        });
+
+        it("subscribes before it reads, so a spend landing mid-pass is not lost", async () => {
+            const offer = makeOffer();
+            const repository = new InMemoryAssetSwapRepository();
+            await addAssetSwap(repository, swapFor(offer));
+
+            await withIndexer(
+                async () => ({ txs: [] }),
+                async ({ wallet, order }) => {
+                    const watcher = await watchOfferSwaps({
+                        wallet,
+                        arkServerUrl: "http://ark",
+                        repository,
+                    });
+                    await watcher.idle();
+                    watcher.stop();
+
+                    expect(order).toEqual(["onContractEvent", "getContractsWithVtxos"]);
+                },
+                [],
+            );
+        });
+
+        it("asks only about scripts a live record still holds", async () => {
+            const open = makeOffer();
+            const settled = makeOffer("want-btc");
+            const repository = new InMemoryAssetSwapRepository();
+            await addAssetSwap(repository, swapFor(open));
+            await addAssetSwap(
+                repository,
+                swapFor(settled, {
+                    id: "ee".repeat(32),
+                    fundingTxid: "ee".repeat(32),
+                    status: "fulfilled",
+                }),
+            );
+
+            await withIndexer(
+                async () => ({ txs: [] }),
+                async ({ wallet, getContractsWithVtxos }) => {
+                    const watcher = await watchOfferSwaps({
+                        wallet,
+                        arkServerUrl: "http://ark",
+                        repository,
+                    });
+                    await watcher.idle();
+                    watcher.stop();
+
+                    expect(getContractsWithVtxos).toHaveBeenCalledWith({
+                        script: [hex.encode(open.swapPkScript)],
+                    });
+                },
+                [],
+            );
+        });
+
+        it("leaves a contract that is not an offer covenant alone", async () => {
+            const offer = makeOffer();
+            const fill = spendPsbt(offer, "fulfill");
+            const repository = new InMemoryAssetSwapRepository();
+            await addAssetSwap(repository, swapFor(offer));
+            const row = spentDeposit(offer, fill.txid);
+            row.contract.metadata = { kind: "other" };
+
+            await withIndexer(
+                async () => ({ txs: [fill.psbt] }),
+                async ({ wallet }) => {
+                    const watcher = await watchOfferSwaps({
+                        wallet,
+                        arkServerUrl: "http://ark",
+                        repository,
+                    });
+                    await watcher.idle();
+                    watcher.stop();
+
+                    expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
+                },
+                [row],
+            );
+        });
     });
 });
 
