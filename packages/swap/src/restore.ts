@@ -10,7 +10,7 @@
  *
  * The scan is incremental: txids checked with an authoritative answer are
  * remembered, so late-synced history is picked up by later scans and nothing
- * is ever fetched twice.
+ * is ever fetched twice. `reopen` re-asks one it left `pending`.
  */
 import { base64, hex } from "@scure/base";
 import {
@@ -107,6 +107,8 @@ const unscannedSwapCandidates = (
  * caller decides whether to retry or accept a default.
  */
 export type SpendKind = "cancelled" | "fulfilled" | "indeterminate";
+
+type Found = { fundingTx: Tx; offer: Offer; offerHex: string; existing?: AssetSwap };
 
 /**
  * Classify a spend by the covenant leaf it took.
@@ -240,16 +242,44 @@ export function classifyDepositSpend(
  * `serverPubkey` must be the server key the covenants were funded against; a
  * key that has rotated since makes every affected swap unclassifiable rather
  * than misclassified.
+ *
+ * ## `reopen`: re-asking a record this left pending
+ *
+ * A run finding the deposit unspent returns `pending` *and* marks the funding
+ * txid scanned, so the natural call asks once and never again — `pending` is the
+ * absence of an answer. Pass those records as `reopen`: re-answered from stored
+ * `offerHex`, no funding fetch, skip lists unchanged, definite outcomes only.
  */
 export async function restoreAssetSwaps(
     indexer: RestoreIndexer,
     txs: Tx[],
     existingIds: ReadonlySet<string>,
-    opts: { serverPubkey: Uint8Array; scanned?: ReadonlySet<string> },
+    opts: { serverPubkey: Uint8Array; scanned?: ReadonlySet<string>; reopen?: AssetSwap[] },
 ): Promise<{ restored: AssetSwap[]; scannedTxids: string[] }> {
-    const { serverPubkey, scanned = new Set<string>() } = opts;
-    const candidates = unscannedSwapCandidates(txs, existingIds, scanned);
-    if (candidates.length === 0) return { restored: [], scannedTxids: [] };
+    const { serverPubkey, scanned = new Set<string>(), reopen = [] } = opts;
+
+    const reopened: Found[] = [];
+    for (const swap of reopen) {
+        try {
+            reopened.push({
+                fundingTx: { type: "sent", redeemTxid: swap.fundingTxid },
+                offer: decodeOffer(hex.decode(swap.offerHex)),
+                offerHex: swap.offerHex,
+                existing: swap,
+            });
+        } catch {
+            // an offerHex that will not decode names no covenant to look up
+        }
+    }
+    // a reopened txid leaves the candidate set, or one funding tx is answered by
+    // both paths and returned twice, with two different records under one id
+    const reopenedTxids = new Set(reopened.map((f) => f.fundingTx.redeemTxid));
+    const candidates = unscannedSwapCandidates(txs, existingIds, scanned).filter(
+        (tx) => !reopenedTxids.has(tx.redeemTxid),
+    );
+    if (candidates.length === 0 && reopened.length === 0) {
+        return { restored: [], scannedTxids: [] };
+    }
 
     // fetch the raw txs and pick out the ones carrying an offer packet
     const byTxid = new Map(candidates.map((tx) => [tx.redeemTxid, tx]));
@@ -259,7 +289,7 @@ export async function restoreAssetSwaps(
     );
 
     const fetchedTxids: string[] = [];
-    const found: { fundingTx: Tx; offer: Offer; offerHex: string }[] = [];
+    const found: Found[] = [...reopened];
     for (const [txid, parsed] of parsedByTxid) {
         const fundingTx = byTxid.get(txid);
         if (!fundingTx) continue;
@@ -316,7 +346,7 @@ export async function restoreAssetSwaps(
 
     const restored: AssetSwap[] = [];
     const unresolved = new Set<string>();
-    for (const { fundingTx, offer, offerHex } of found) {
+    for (const { fundingTx, offer, offerHex, existing } of found) {
         const swapPkScript = hex.encode(offer.swapPkScript);
         const vtxo = vtxoByScriptAndTxid.get(`${swapPkScript}:${fundingTx.redeemTxid}`);
         if (!vtxo) {
@@ -373,6 +403,19 @@ export async function restoreAssetSwaps(
             status = kind;
         }
 
+        const completion =
+            status === "fulfilled" && spentTxid && txByAnyId.get(spentTxid)?.createdAt
+                ? { completedAt: txByAnyId.get(spentTxid)!.createdAt! * 1000 }
+                : {};
+
+        if (existing) {
+            // writing `pending` back would overwrite a `cancelling` record —
+            // losing the cancel txid its exact classifier matches on
+            if (status === "pending") continue;
+            restored.push({ ...existing, status, spentTxid, ...completion });
+            continue;
+        }
+
         restored.push({
             id: fundingTx.redeemTxid,
             fromAsset,
@@ -390,11 +433,7 @@ export async function restoreAssetSwaps(
             spentTxid,
             status,
             createdAt: fundingTx.createdAt ? fundingTx.createdAt * 1000 : vtxo.createdAt.getTime(),
-            // the completion time is the caller's record of the spend, if it
-            // has one — the psbt that classified it carries no timestamp
-            ...(status === "fulfilled" && spentTxid && txByAnyId.get(spentTxid)?.createdAt
-                ? { completedAt: txByAnyId.get(spentTxid)!.createdAt! * 1000 }
-                : {}),
+            ...completion,
         });
     }
     return { restored, scannedTxids: fetchedTxids.filter((id) => !unresolved.has(id)) };
