@@ -321,6 +321,13 @@ export interface IContractManager extends Disposable {
     createContract(params: CreateContractParams): Promise<Contract>;
 
     /**
+     * {@link createContract} for a set, one indexer round trip instead of N.
+     * Optional so adding it breaks no implementer of this public interface
+     * (`serviceWorker/wallet.ts` proxies each method over wire): fall back.
+     */
+    createContracts?(paramsList: CreateContractParams[]): Promise<Contract[]>;
+
+    /**
      * List contracts with optional filters.
      *
      * @example
@@ -1270,6 +1277,32 @@ export class ContractManager implements IContractManager {
             await this.watcher.addContract(contract);
         }
         return contract;
+    }
+
+    /**
+     * `createContract`'s step order, fetch batched: persist all, hydrate once,
+     * then watch. Hydrating first keeps it equivalent — the watcher seeds from
+     * the repository, so an unhydrated row reads as all-new.
+     */
+    async createContracts(paramsList: CreateContractParams[]): Promise<Contract[]> {
+        if (paramsList.length === 0) return [];
+        return this.watcher.withCoalescedSubscription(async () => {
+            const upserted = [];
+            for (const params of paramsList) upserted.push(await this.upsertContract(params));
+
+            const fresh = upserted.filter((u) => u.persisted).map((u) => u.contract);
+            if (fresh.length > 0) {
+                try {
+                    await this.fetchContractVxosFromIndexer(fresh);
+                    this.markSyncOnline();
+                } catch (err) {
+                    if (!isRetryableProviderError(err)) throw err;
+                    this.markSyncDegraded(err);
+                }
+                for (const contract of fresh) await this.watcher.addContract(contract);
+            }
+            return upserted.map((u) => u.contract);
+        });
     }
 
     /**

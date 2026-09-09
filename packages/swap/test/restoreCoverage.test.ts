@@ -26,6 +26,7 @@ const state = vi.hoisted(() => ({
     watched: [] as [string, string][],
     getInfoCalls: 0,
     managerCalls: 0,
+    batchCalls: 0,
 }));
 
 vi.mock("@arkade-os/sdk", async (importOriginal) => {
@@ -65,6 +66,13 @@ const contractManager = {
     createContract: async (params: Record<string, unknown>) => {
         state.created.push(params);
         return { ...params, state: "active", createdAt: 0 };
+    },
+    createContracts: async (list: Record<string, unknown>[]) => {
+        state.batchCalls++;
+        return list.map((params) => {
+            state.created.push(params);
+            return { ...params, state: "active", createdAt: 0 };
+        });
     },
     setContractWatchState: async (script: string, watch: string) => {
         state.watched.push([script, watch]);
@@ -115,6 +123,7 @@ beforeEach(() => {
     state.watched = [];
     state.getInfoCalls = 0;
     state.managerCalls = 0;
+    state.batchCalls = 0;
 });
 
 describe("restoreOfferCoverage", () => {
@@ -150,6 +159,7 @@ describe("restoreOfferCoverage", () => {
         const forOne = state.getInfoCalls;
         state.getInfoCalls = 0;
         state.managerCalls = 0;
+        state.batchCalls = 0;
         await restoreOfferCoverage(wallet, "http://ark", many);
 
         // 5 = 1 from the single-script call above, 4 from the batch
@@ -157,6 +167,7 @@ describe("restoreOfferCoverage", () => {
         expect(state.getInfoCalls).toBe(forOne);
         // one manager for the whole batch, or a registration spans two
         expect(state.managerCalls).toBe(1);
+        expect(state.batchCalls).toBe(1);
     });
 
     it("leaves a script whose every record has settled alone", async () => {
