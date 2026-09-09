@@ -33,6 +33,7 @@ import {
     getNetwork,
     resolveEmulatorPubkey,
     toXOnlySignerHex,
+    type IContractManager,
     type IWallet,
     type NetworkName,
     type RelativeTimelock,
@@ -40,9 +41,14 @@ import {
 
 import wantAssetProgram from "./swap-want-asset.program.json";
 import wantBtcProgram from "./swap-want-btc.program.json";
-import { promoteOfferContract, retireOfferContract } from "./coverage";
+import { promoteOfferContract, retireOfferContract, RETIRABLE } from "./coverage";
 import type { AssetSwapRepository } from "./repository";
-import { getAssetSwapsOrThrow, updateAssetSwap, updateAssetSwapBestEffort } from "./store";
+import {
+    getAssetSwapsOrThrow,
+    updateAssetSwap,
+    updateAssetSwapBestEffort,
+    type AssetSwap,
+} from "./store";
 
 // json imports widen "type": "pubkey" to string; parseArtifact validates at runtime
 type Artifact = Parameters<typeof arkade.parseArtifact>[0];
@@ -477,19 +483,24 @@ async function registerOfferContract(
     binding: Omit<Offer, "swapPkScript">,
     serverPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
+    opts: { issued?: number; client?: arkade.Arkade; contractManager?: IContractManager } = {},
 ): Promise<void> {
     const { program, args, keys } = swapProgramBinding(binding, serverPubkey);
-    const contractManager = await wallet.getContractManager();
-    const client = await arkade.Arkade.connect({
-        arkade: new RestArkProvider(arkServerUrl),
-        indexer: new RestIndexerProvider(arkServerUrl),
-        identity: wallet.identity,
-        // without this the row's `address` would be derived against the SDK's
-        // default network while its script is right — a row that disagrees with
-        // the address the user is about to fund
-        network: getNetwork(network),
-        contractManager,
-    });
+    // the caller's when it has one: `register` goes through `opts.client`'s
+    // manager, so a second fetch here splits one registration across two
+    const contractManager = opts.contractManager ?? (await wallet.getContractManager());
+    const client =
+        opts.client ??
+        (await arkade.Arkade.connect({
+            arkade: new RestArkProvider(arkServerUrl),
+            indexer: new RestIndexerProvider(arkServerUrl),
+            identity: wallet.identity,
+            // without this the row's `address` would be derived against the SDK's
+            // default network while its script is right — a row that disagrees with
+            // the address the user is about to fund
+            network: getNetwork(network),
+            contractManager,
+        }));
     const contract = new arkade.ArkadeContract(client, program, args, keys);
     // the row is keyed by script: registering anything but the script being
     // funded would leave the real deposit unwatched and unmarked, which is the
@@ -501,7 +512,60 @@ async function registerOfferContract(
         label: OFFER_CONTRACT_LABEL,
         metadata: { genericallySpendable: false, kind: OFFER_CONTRACT_KIND },
     });
-    await promoteOfferContract(contractManager, hex.encode(expectedPkScript));
+    await promoteOfferContract(contractManager, hex.encode(expectedPkScript), opts.issued);
+}
+
+/**
+ * Put the covenants of restored swap records back in the watched set.
+ *
+ * {@link restoreAssetSwaps} rebuilds the *record* and nothing else, so a
+ * restored wallet holds swaps with no contract row behind them — never
+ * subscribed, never emitting `vtxo_spent`, unresolvable by the watcher. The
+ * restore-scan backstop three modules lean on restores records, not coverage.
+ * Separate from that scan, which is indexer-only and whose records must survive
+ * a coverage failure. A script whose every record is {@link RETIRABLE} is
+ * skipped, or this undoes {@link retireSettledOfferContracts}. One client and
+ * one contract manager for the batch; setup rejects rather than being caught,
+ * because a server it could not reach covered nothing.
+ */
+export async function restoreOfferCoverage(
+    wallet: IWallet,
+    arkServerUrl: string,
+    swaps: AssetSwap[],
+): Promise<void> {
+    const live = swaps.filter((s) => !RETIRABLE.includes(s.status));
+    if (live.length === 0) return;
+
+    const arkProvider = new RestArkProvider(arkServerUrl);
+    const info = await arkProvider.getInfo();
+    const serverPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
+    const contractManager = await wallet.getContractManager();
+    const client = await arkade.Arkade.connect({
+        arkade: arkProvider,
+        indexer: new RestIndexerProvider(arkServerUrl),
+        identity: wallet.identity,
+        network: getNetwork(info.network as NetworkName),
+        contractManager,
+    });
+    const done = new Set<string>();
+    for (const swap of live) {
+        if (done.has(swap.swapPkScript)) continue;
+        done.add(swap.swapPkScript);
+        try {
+            const { swapPkScript: _, ...binding } = decodeOffer(hex.decode(swap.offerHex));
+            await registerOfferContract(
+                wallet,
+                arkServerUrl,
+                info.network as NetworkName,
+                binding,
+                serverPubKey,
+                hex.decode(swap.swapPkScript),
+                { issued: swap.createdAt, client, contractManager },
+            );
+        } catch (err) {
+            console.warn(`[swap] could not restore coverage for ${swap.swapPkScript}`, err);
+        }
+    }
 }
 
 // ── User operations ─────────────────────────────────────────────────────────
