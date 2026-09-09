@@ -17,7 +17,6 @@
  * and an amount to a transport that cannot say who is listening.
  */
 import { hex } from "@scure/base";
-import { secp256k1 } from "@noble/curves/secp256k1.js";
 import {
     networkFromArkadeInfo,
     provisionClaimSecret,
@@ -186,24 +185,17 @@ const covenantInputs = (input: RfqQuoteInput): CovenantInputs => {
 };
 
 /**
- * Who the claim packet is sealed to.
+ * Who the claim packet is sealed to, or `undefined` where no covclaimd is
+ * deployed — in which case no packet is sent and claiming the lockup before the
+ * quote's `refund_locktime` is the trader's own job.
  *
- * The default is section 4's "internal ephemeral seal": a fresh key whose secret
- * is discarded, so the packet is opaque to everyone — the solver carries it
- * blindly and nobody can open it. That is the honest state of the corridor
- * today, since covclaimd cannot claim this covenant yet and the trader claims it
- * itself; the packet exists because the wire requires the field, not because
- * anything reads it. A deployment key is optional config, and naming one is what
- * makes the offline path real.
- *
- * This is not the key-provisioning rule's business: nothing here signs, and the
- * secret is destroyed before the function returns.
+ * Never seal to a minted throwaway key: an undecryptable packet is
+ * indistinguishable on the wire from a working one, so covclaimd would decline
+ * it with a Debug line and claim nothing. An absent field fails loudly instead.
  */
-const sealingKey = (deps: LightningCorridorDeps): Uint8Array => {
+const sealingKey = (deps: LightningCorridorDeps): Uint8Array | undefined => {
     const configured = deps.covclaimd?.pubkey;
-    if (configured === undefined) {
-        return secp256k1.getPublicKey(secp256k1.utils.randomSecretKey(), true);
-    }
+    if (configured === undefined) return undefined;
     const key = hex.decode(configured);
     if (key.length !== 33) {
         throw new Error(
@@ -348,10 +340,10 @@ const quoteLightningReceive = async (
     const paymentHash = hex.encode(secrets.paymentHash);
     const payoutAddress = await input.wallet.getAddress();
     const lightning = input.corridors.get("lightning").deps;
-    const claimPacket = await sealClaimPacket({
-        preimage: secrets.preimage,
-        covclaimdPubkey: sealingKey(lightning),
-    });
+    const sealTo = sealingKey(lightning);
+    const claimPacket = sealTo
+        ? await sealClaimPacket({ preimage: secrets.preimage, covclaimdPubkey: sealTo })
+        : undefined;
 
     const wire = await input.transport.requestQuote(
         withCanonicalAmount(
@@ -360,7 +352,7 @@ const quoteLightningReceive = async (
                 paymentHash,
                 payoutAddress,
                 payoutPubkey: secrets.pubkey,
-                claimPacket: claimPacket.ciphertext,
+                claimPacket: claimPacket?.ciphertext,
                 // Placeholder: the v1 builders type this field `number`, and the
                 // wire adapter re-encodes it as the canonical decimal string.
                 // Encoding it here as well would put the decision in two places.

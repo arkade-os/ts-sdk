@@ -106,8 +106,8 @@ export interface CorridorOverrides {
     lightning?: {
         /** Default: the package's own {@link decodeBolt11}. */
         decode?: ((bolt11: string) => InvoiceFacts) | null;
-        /** Default: an internal ephemeral self-claim seal, which is what
-         * `undefined` here means — a deployment key is optional config. */
+        /** Default: none — nothing is sealed and no packet is sent, so the
+         * trader must claim its own lockup before `refund_locktime`. */
         covclaimd?: { pubkey: Pubkey } | null;
     };
     onchain?: {
@@ -204,8 +204,8 @@ export interface ArkadeCorridorDeps {
 export interface LightningCorridorDeps {
     readonly networkName: NetworkName;
     readonly decode: (bolt11: string) => InvoiceFacts;
-    /** `undefined` is the default seal — an internal ephemeral self-claim key —
-     * and not a missing dep. */
+    /** `undefined` means no covclaimd is deployed — nothing is sealed and no
+     * packet is sent. Not a missing dep. */
     readonly covclaimd: { pubkey: Pubkey } | undefined;
 }
 

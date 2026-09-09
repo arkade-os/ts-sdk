@@ -10,6 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { createSwapClient } from "../../src/client/client";
+import { openClaimPacket } from "../helpers/claimPacket";
 import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../../src/repository";
 import {
     AmountMismatch,
@@ -27,6 +28,7 @@ import {
     SOLVER_DISCOVERY_KEY,
     SOLVER_PUBKEY,
     clockAt,
+    compressed,
     feedServing,
     hdWallet,
     invoiceFor,
@@ -52,6 +54,7 @@ const setup = async (
         attestedResponder?: string | undefined;
         snapshot?: (typeof lightningCard)[];
         policy?: Parameters<typeof createSwapClient>[0]["policy"];
+        corridors?: Parameters<typeof createSwapClient>[0]["corridors"];
         price?: number;
     } = {},
 ) => {
@@ -68,6 +71,7 @@ const setup = async (
         transportFor: () => transport,
         fetchImpl: feed.fetch,
         ...(over.policy === undefined ? {} : { policy: over.policy }),
+        ...(over.corridors === undefined ? {} : { corridors: over.corridors }),
     });
     return { client, transport, feed, wallet };
 };
@@ -175,6 +179,33 @@ describe("quote() on lightning -> arkade", () => {
         // an hour from now. The earlier of the two binds.
         expect(quote.expiresAt).toBe(NOW + 3_540);
         expect(quote.expiresAt).toBeLessThan(CLOCK.validUntil);
+    });
+
+    // Sealing to a minted throwaway key would satisfy every shape assertion
+    // here while producing a packet no covclaimd can open, so the seal is
+    // asserted by opening it — see `sealingKey` in client/quoteRfq.ts.
+    describe("the claim packet", () => {
+        const COVCLAIMD_SK = new Uint8Array(32).fill(7);
+
+        it("is omitted when no covclaimd deployment key is configured", async () => {
+            const { client, transport } = await setup();
+            await client.quote(receive());
+
+            const { profile } = transport.sent[0] as { profile: Record<string, unknown> };
+            expect(Object.keys(profile)).not.toContain("claim_packet");
+        });
+
+        it("opens under the configured deployment key when there is one", async () => {
+            const { client, transport } = await setup({
+                corridors: { lightning: { covclaimd: { pubkey: compressed(7) } } },
+            });
+            await client.quote(receive());
+
+            const { profile } = transport.sent[0] as { profile: Record<string, unknown> };
+            expect(
+                await openClaimPacket(profile.claim_packet as string, COVCLAIMD_SK),
+            ).toHaveLength(32);
+        });
     });
 });
 
