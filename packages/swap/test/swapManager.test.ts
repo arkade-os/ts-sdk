@@ -794,6 +794,39 @@ describe("RfqSwapManager — the onchain-receive L1 half", () => {
         expect(isRfqSwapTerminal(swap.state)).toBe(false);
     });
 
+    it("reports a refundable HTLC nobody is wired to take back", async () => {
+        // No `claimable` manual mode here, so silence strands a live refund.
+        const s = spies();
+        const m = new RfqSwapManager(
+            {
+                indexer: fakeIndexer({ vtxos: [], funded: [] }),
+                chain: fakeChain({ utxos: [FILL], mtp: RECEIVE_HTLC_LOCKTIME }),
+            },
+            { now: () => SAFE_NOW },
+        );
+        const swap = onchainReceiveSwap();
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/no callbacks are wired/);
+        expect(s.onchainRefunds).toHaveLength(0);
+    });
+
+    it("reports a refundable HTLC when automatic actions are disabled", async () => {
+        const s = spies();
+        const { swap } = await drive({
+            spies: s,
+            enableAutoActions: false,
+            indexer: fakeIndexer({ vtxos: [], funded: [] }),
+            chain: fakeChain({ utxos: [FILL], mtp: RECEIVE_HTLC_LOCKTIME }),
+        });
+
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/automatic actions are disabled/);
+        expect(s.onchainRefunds).toHaveLength(0);
+    });
+
     it("records the fill outpoint so a restart does not read a spent HTLC as unfunded", async () => {
         const { swap } = await drive({
             chain: fakeChain({ utxos: [FILL], mtp: 0 }),
@@ -812,6 +845,48 @@ describe("RfqSwapManager — the onchain-receive L1 half", () => {
         });
 
         expect(s.onchainRefunds).toHaveLength(0);
+        expect(isRfqSwapTerminal(swap.state)).toBe(false);
+    });
+
+    it("never finalizes on the Arkade deadline while the L1 half is still funded", async () => {
+        // Mainline failure: trader funded L1, solver never funded the lockup
+        // (`unknown`), and this leg's refund leaf opens after that deadline.
+        const s = spies();
+        const { swap, m } = await drive({
+            spies: s,
+            indexer: fakeIndexer({ vtxos: [], funded: [] }),
+            chain: fakeChain({ utxos: [FILL], mtp: RECEIVE_HTLC_LOCKTIME - 1 }),
+            now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS + 1,
+        });
+
+        expect(isRfqSwapTerminal(swap.state)).toBe(false);
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
+        expect(s.onchainRefunds).toHaveLength(0);
+    });
+
+    it("refunds that same swap once its own refund leaf opens", async () => {
+        const s = spies();
+        const { swap } = await drive({
+            spies: s,
+            indexer: fakeIndexer({ vtxos: [], funded: [] }),
+            chain: fakeChain({ utxos: [FILL], mtp: RECEIVE_HTLC_LOCKTIME }),
+            now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS + 1,
+        });
+
+        expect(s.onchainRefunds).toHaveLength(1);
+        expect(isRfqSwapTerminal(swap.state)).toBe(false);
+    });
+
+    it("blocks rather than drives when the lockup was unilaterally exited", async () => {
+        const s = spies();
+        const { swap } = await drive({
+            spies: s,
+            indexer: fakeIndexer({ vtxos: exited() }),
+            chain: fakeChain({ utxos: [FILL], mtp: 0 }),
+        });
+
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/unilaterally exited/);
         expect(isRfqSwapTerminal(swap.state)).toBe(false);
     });
 
@@ -3074,6 +3149,24 @@ describe("RfqSwapManager — manager-owned persistence", () => {
         ...over,
     });
 
+    const onchainReceiveOrigin = (): RfqSwapOrigin => ({
+        kind: "onchain_receive",
+        lockupAddress: RECEIVE_ADDRESS,
+        profile: {
+            signer: { signingDescriptor: `tr(${hex.encode(key(13))})` },
+            hashlock: { paymentHash: PAYMENT_HASH },
+            expectedAmount: LOCKUP_VALUE,
+            payoutAddress: "tark1payout",
+            claimKey: hex.encode(key(1)),
+            refundKey: hex.encode(key(3)),
+            htlcLocktime: RECEIVE_HTLC_LOCKTIME,
+            network: "regtest",
+            htlcAddress: receiveHtlcOf().address,
+            minConfirmations: 2,
+            refundPkScript: hex.encode(PAYOUT),
+        },
+    });
+
     const receiveOrigin = (): RfqSwapOrigin => ({
         kind: "lightning_receive",
         lockupAddress: RECEIVE_ADDRESS,
@@ -3349,6 +3442,30 @@ describe("RfqSwapManager — manager-owned persistence", () => {
     describe("restoreFromRepository", () => {
         const contractsFor = (...rows: CreateContractParams[]) =>
             fakeContracts({ preexisting: rows });
+
+        it("refuses a restored onchain_receive swap that has no ChainSource", async () => {
+            // Rebuilds and tracks directly, bypassing `addSwap`'s refusal.
+            const store = fakeStore([
+                createRfqSwapRecord(onchainReceiveOrigin(), onchainReceiveSwap()),
+            ]);
+            const m = manager({
+                indexer: settlingIndexer(),
+                repository: store,
+                now: SAFE_NOW,
+                spies: spies(),
+            });
+
+            const result = await m.restoreFromRepository({
+                params: async () => VHTLCV2ContractHandler.serializeParams(RECEIVE_LOCKUP.options),
+            });
+
+            expect(result.restored).toHaveLength(0);
+            expect(result.failed).toHaveLength(1);
+            expect(result.failed[0]!.error.name).toBe("OnchainReceiveNeedsChainSource");
+            expect(await m.hasSwap(RFQ_ID)).toBe(false);
+            // the record is KEPT: it is restorable once a chain is wired
+            expect(store.records.has(RFQ_ID)).toBe(true);
+        });
 
         it("rebuilds every stored record and drives it", async () => {
             const store = fakeStore([storedSend()]);

@@ -51,6 +51,7 @@ export const LightningSendCorridor: RfqCorridorHandler<LightningSendProfile> = {
 export interface LightningReceiveProfile extends Record<string, unknown> {
     signer: RfqSignerProjection;
     hashlock: RfqHashlockProjection;
+    /** The quote's `to_amount`, captured at REQUEST time. */
     expectedAmount: number;
     /** Where the claim pays. */
     payoutAddress: string;

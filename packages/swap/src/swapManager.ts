@@ -989,6 +989,10 @@ export class RfqSwapManager {
             let swap: RfqSwap;
             try {
                 swap = rebuildRfqSwap(record, await params(record));
+                // Inside the try so it lands in `failed` and the record stays.
+                if (swap.kind === "onchain_receive" && !this.deps.chain) {
+                    throw new OnchainReceiveNeedsChainSource(swap.rfqId);
+                }
             } catch (error) {
                 failed.push({
                     rfqId: record.rfqId,
@@ -1782,23 +1786,41 @@ export class RfqSwapManager {
             return;
         }
 
-        const l1 = await this.driveOnchainRefund(swap, settled);
+        const l1 = await this.driveOnchainRefund(swap);
 
         if (fate.fate === "returned") {
-            if (l1 === "resolved") this.setState(swap, "refunded");
+            if (l1.verdict === "resolved") this.setState(swap, "refunded");
+            else if (l1.blocked) this.block(swap, l1.blocked);
             return;
         }
         if (fate.fate === "exited") return this.blockExitedLockup(swap, fate);
-        return this.driveReceiveClaim(swap);
+        // `driveReceiveClaim` ends a receive swap at its own deadline, which
+        // this leg cannot afford: the trader's refund leaf opens AFTER it, and
+        // an unfunded lockup — what a defaulting solver leaves — reaches here.
+        if (
+            l1.verdict === "live" &&
+            this.config.now() >= swap.refundLocktime + REFUND_MTP_LAG_SECONDS
+        ) {
+            return this.block(
+                swap,
+                l1.blocked ??
+                    "the Arkade claim window closed unclaimed and the L1 HTLC is still funded — " +
+                        "holding the swap open until its refund leaf opens",
+            );
+        }
+        await this.driveReceiveClaim(swap);
+        // After that arm, never before: it `unblock`s an empty lockup, which
+        // would erase the refusal the L1 half just reported.
+        if (l1.blocked && !isRfqSwapTerminal(swap.state)) this.block(swap, l1.blocked);
     }
 
-    /** `resolved`: the HTLC can hold nothing more. No give-up branch. */
+    /** `resolved`: the HTLC can hold nothing more. `blocked` is a refusal the
+     * caller applies once the Arkade arm has run. No give-up branch. */
     private async driveOnchainRefund(
         swap: OnchainReceiveSwap,
-        settled: boolean,
-    ): Promise<"resolved" | "live"> {
+    ): Promise<{ verdict: "resolved" | "live"; blocked?: string }> {
         // `admit` refuses this kind without one; never drive blind if that changes.
-        if (!this.deps.chain) return "live";
+        if (!this.deps.chain) return { verdict: "live" };
 
         let phase: OnchainHtlcPhase;
         try {
@@ -1808,40 +1830,48 @@ export class RfqSwapManager {
                 funding: swap.funding,
             });
         } catch {
-            return "live";
+            return { verdict: "live" };
         }
         if ("utxo" in phase && !swap.funding) {
             swap.funding = { txid: phase.utxo.txid, vout: phase.utxo.vout };
             this.touch(swap);
         }
-        if (phase.phase === "unfunded" && !swap.funding) return "resolved";
+        if (phase.phase === "unfunded" && !swap.funding) return { verdict: "resolved" };
 
-        switch (nextOnchainReceiveAction({ phase, settled })) {
+        // Always `false`: `driveOnchainReceive` returns first when settled.
+        switch (nextOnchainReceiveAction({ phase, settled: false })) {
             case "taken":
-                return "resolved";
+                return { verdict: "resolved" };
             case "refunded":
                 if (phase.phase === "swept" && !swap.refundTxid) {
                     swap.refundTxid = phase.txid;
                     this.touch(swap);
                 }
-                return "resolved";
+                return { verdict: "resolved" };
             case "wait":
-                return "live";
+                return { verdict: "live" };
             case "refund":
                 break;
         }
-        if (phase.phase !== "refundable") return "live";
-        if (swap.refundTxid) return "live";
+        if (phase.phase !== "refundable") return { verdict: "live" };
+        if (swap.refundTxid) return { verdict: "live" };
 
-        // Blocked, not failed: `setCallbacks` exists so this can arrive late.
-        if (this.callbacks && !this.callbacks.refundOnchain) {
-            this.block(
-                swap,
-                "no refundOnchain callback is wired, so this wallet cannot take the L1 funding back",
-            );
-            return "live";
+        // Reported, not silent: no `claimable` manual mode exists here.
+        if (!this.callbacks?.refundOnchain) {
+            return {
+                verdict: "live",
+                blocked: this.callbacks
+                    ? "no refundOnchain callback is wired, so this wallet cannot take the L1 funding back"
+                    : "no callbacks are wired, so this wallet cannot take the L1 funding back",
+            };
         }
-        if (!this.config.enableAutoActions || !this.callbacks?.refundOnchain) return "live";
+        if (!this.config.enableAutoActions) {
+            return {
+                verdict: "live",
+                blocked:
+                    "automatic actions are disabled, so this wallet will not push the L1 refund",
+            };
+        }
         try {
             const { txid } = await this.callbacks.refundOnchain(swap, phase.utxo);
             swap.refundTxid = txid;
@@ -1850,7 +1880,7 @@ export class RfqSwapManager {
         } catch (error) {
             this.emitFailed(swap, error);
         }
-        return "live";
+        return { verdict: "live" };
     }
 
     /** `handled` ends the pass; `continue` falls through to the refund gate. */
