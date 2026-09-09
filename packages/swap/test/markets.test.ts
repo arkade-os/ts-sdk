@@ -51,6 +51,30 @@ describe("findMarket", () => {
     it("returns a null market for unknown assets", () => {
         expect(findMarket(markets, "btc", "ff".repeat(34))?.market).toBeNull();
     });
+
+    it("maps logical btc to the Arkade CAIP-19 BTC leg", () => {
+        const caip19 = {
+            ...btcUsd,
+            pair: undefined,
+            base_asset: { ...btcUsd.base_asset, id: "arkade:mutinynet/slip44:1" },
+        } as unknown as DiscoveredMarket;
+        expect(findMarket([caip19], "btc", USD_ID)).toEqual({ market: caip19, give: "base" });
+        expect(findMarket([caip19], USD_ID, "btc")).toEqual({ market: caip19, give: "quote" });
+    });
+
+    it("maps an Arkade asset id to its CAIP-19 market leg", () => {
+        const caip19 = {
+            ...btcUsd,
+            pair: undefined,
+            base_asset: { ...btcUsd.base_asset, id: "arkade:mutinynet/slip44:1" },
+            quote_asset: {
+                ...btcUsd.quote_asset,
+                id: `arkade:mutinynet/asset:${USD_ID}`,
+            },
+        } as unknown as DiscoveredMarket;
+        expect(findMarket([caip19], "btc", USD_ID)).toEqual({ market: caip19, give: "base" });
+        expect(findMarket([caip19], USD_ID, "btc")).toEqual({ market: caip19, give: "quote" });
+    });
 });
 
 describe("quoteOffer with the package quote options", () => {
@@ -228,6 +252,19 @@ describe("discoverMarkets caching", () => {
         const fetchImpl = jsonFetch([registryIndex()]);
         const markets = await discoverWith(fetchImpl);
         expect(markets).toHaveLength(1);
+        expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it("serves a fresh pairless CAIP-19 cache without fetching", async () => {
+        const pairless = {
+            ...btcUsd,
+            pair: undefined,
+            base_asset: { ...btcUsd.base_asset, id: "arkade:mutinynet/slip44:1" },
+        } as unknown as DiscoveredMarket;
+        await seedCache(Date.now(), [pairless]);
+        const fetchImpl = jsonFetch([registryIndex()]);
+
+        expect(await discoverWith(fetchImpl)).toEqual([pairless]);
         expect(fetchImpl).not.toHaveBeenCalled();
     });
 
