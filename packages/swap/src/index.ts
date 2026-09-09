@@ -44,9 +44,11 @@ export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
 // The two readers are how they come back — `rfqSignerOf` for the refund signer
 // on any leg, `rfqClaimSecretOf` for the preimage on a leg we claim.
 export {
+    onchainReceiveProfile,
     onchainSendProfile,
     type LightningReceiveProfile,
     type LightningSendProfile,
+    type OnchainReceiveProfile,
     type OnchainSendProfile,
 } from "./rfqCorridors";
 export {
@@ -221,16 +223,21 @@ export {
 } from "./lockupContract";
 export {
     RFQ_SWAP_TERMINAL_STATES,
+    OnchainReceiveNeedsChainSource,
     RfqSwapManager,
     RfqSwapOriginRequired,
     isRfqSwapTerminal,
     nextOnchainAction,
+    nextOnchainReceiveAction,
     type ArkadeRefundResult,
     type AvailableRfqSwapManagerCallbacks,
     type LightningReceiveSwap,
     type LightningSendSwap,
+    type OnchainReceiveAction,
+    type OnchainReceiveSwap,
     type OnchainSendAction,
     type OnchainSendSwap,
+    type ReceiveLockupSwap,
     type RfqRestoreFailure,
     type RfqRestoreOptions,
     type RfqRestoreResult,

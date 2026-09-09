@@ -558,3 +558,108 @@ describe("the spend that ended the swap", () => {
         expect(updateRfqSwapRecord(record, swapOf(sendOrigin)).lockupSpendArkTxids).toBeUndefined();
     });
 });
+
+describe("an onchain-receive record carries BOTH halves", () => {
+    // The L1 HTLC has no contract row anywhere, so every input is stored here.
+    const HTLC_LOCKTIME = REFUND_LOCKTIME + 7_200;
+    const REFUND_PK_SCRIPT = hex.encode(new Uint8Array([0x51, 0x20, ...key(21)]));
+    const L1_HTLC = onchainHtlcScript(
+        {
+            paymentHash: PAYMENT_HASH,
+            claimKey: key(15),
+            refundKey: key(11),
+            refundLocktime: HTLC_LOCKTIME,
+        },
+        "regtest",
+    );
+
+    const origin: RfqSwapOrigin = {
+        kind: "onchain_receive",
+        lockupAddress: RECEIVE_LOCKUP.address,
+        profile: {
+            signer: { signingDescriptor: `tr(${hex.encode(key(7))})` },
+            hashlock: { paymentHash: PAYMENT_HASH },
+            expectedAmount: 100_000,
+            payoutAddress: "ark1payout",
+            claimKey: hex.encode(key(15)),
+            refundKey: hex.encode(key(11)),
+            htlcLocktime: HTLC_LOCKTIME,
+            network: "regtest" as const,
+            htlcAddress: L1_HTLC.address,
+            minConfirmations: 2,
+            refundPkScript: REFUND_PK_SCRIPT,
+        },
+        amount: 100_000,
+    };
+
+    const live = (over: Record<string, unknown> = {}) =>
+        ({
+            kind: "onchain_receive",
+            rfqId: "rfq-1",
+            state: "pending",
+            lockupPkScript: RECEIVE_LOCKUP.pkScript,
+            paymentHash: PAYMENT_HASH,
+            refundLocktime: REFUND_LOCKTIME,
+            expectedAmount: 100_000,
+            htlc: {},
+            minConfirmations: 2,
+            refundPkScript: new Uint8Array(),
+            createdAt: 1_000,
+            updatedAt: 1_000,
+            ...over,
+        }) as unknown as Parameters<typeof createRfqSwapRecord>[1];
+
+    const rebuiltFrom = (over: Record<string, unknown> = {}) =>
+        rebuildRfqSwap(createRfqSwapRecord(origin, live(over)), RECEIVE_LOCKUP.params) as {
+            htlc: { address: string; refundLocktime: number };
+            refundPkScript: Uint8Array;
+            expectedAmount: number;
+            refundTxid?: string;
+            funding?: { txid: string; vout: number };
+        };
+
+    it("rebuilds the L1 htlc and the script its refund pays to", () => {
+        const rebuilt = rebuiltFrom();
+        expect(rebuilt.htlc.address).toBe(L1_HTLC.address);
+        expect(rebuilt.htlc.refundLocktime).toBe(HTLC_LOCKTIME);
+        expect(rebuilt.htlc.refundLocktime).not.toBe(REFUND_LOCKTIME);
+        expect(hex.encode(rebuilt.refundPkScript)).toBe(REFUND_PK_SCRIPT);
+        expect(rebuilt.expectedAmount).toBe(100_000);
+    });
+
+    it("refuses a record with no refundPkScript rather than stranding the funding", () => {
+        const record = createRfqSwapRecord(origin, live());
+        const { refundPkScript: _dropped, ...profile } = record.profile;
+        expect(() => rebuildRfqSwap({ ...record, profile }, RECEIVE_LOCKUP.params)).toThrow(
+            /refundPkScript/,
+        );
+    });
+
+    it("refuses L1 inputs that derive some other HTLC", () => {
+        const record = createRfqSwapRecord(origin, live());
+        const swapped = {
+            ...record.profile,
+            claimKey: hex.encode(key(11)),
+            refundKey: hex.encode(key(15)),
+        };
+        expect(() =>
+            rebuildRfqSwap({ ...record, profile: swapped }, RECEIVE_LOCKUP.params),
+        ).toThrow(/not this swap's/);
+    });
+
+    it("refuses a record whose value gate cannot be checked", () => {
+        const record = createRfqSwapRecord(origin, live());
+        const { expectedAmount: _dropped, ...profile } = record.profile;
+        expect(() => rebuildRfqSwap({ ...record, profile }, RECEIVE_LOCKUP.params)).toThrow(
+            /expectedAmount/,
+        );
+    });
+
+    it("carries the funding outpoint and our own L1 refund back", () => {
+        // Without these a restart re-broadcasts, or reads a spent HTLC as unfunded.
+        const funding = { txid: "ab".repeat(32), vout: 1 };
+        const rebuilt = rebuiltFrom({ funding, refundTxid: "fa".repeat(32) });
+        expect(rebuilt.funding).toEqual(funding);
+        expect(rebuilt.refundTxid).toBe("fa".repeat(32));
+    });
+});

@@ -37,7 +37,12 @@
  */
 import { ArkAddress, VHTLCV2ContractHandler, type VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
-import type { LightningReceiveSwap, LightningSendSwap, OnchainSendSwap } from "./swapManager";
+import type {
+    LightningReceiveSwap,
+    LightningSendSwap,
+    OnchainReceiveSwap,
+    OnchainSendSwap,
+} from "./swapManager";
 // From the vocabulary module, not from `swapManager`: the manager persists
 // through this file, so a runtime edge back to it would close a cycle.
 import { isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
@@ -45,7 +50,7 @@ import { rfqCorridorHandlers } from "./rfqCorridor";
 import "./rfqCorridors";
 
 /**
- * The swap kinds this projection covers — all three the manager monitors.
+ * The swap kinds this projection covers — all four the manager monitors.
  *
  * `onchain_send` carries an L1 half nothing else can rebuild. Its Arkade lockup
  * has a contract row like the others, but the HTLC is Bitcoin L1, not an Arkade
@@ -55,7 +60,11 @@ import "./rfqCorridors";
  * that corridor's {@link RfqSwapOrigin.profile}, and without them a restored
  * swap would let its L1 refund window pass unwatched.
  */
-export type PersistableRfqSwap = LightningSendSwap | LightningReceiveSwap | OnchainSendSwap;
+export type PersistableRfqSwap =
+    | LightningSendSwap
+    | LightningReceiveSwap
+    | OnchainSendSwap
+    | OnchainReceiveSwap;
 
 /**
  * The serialized covenant parameters a rebuild is given.

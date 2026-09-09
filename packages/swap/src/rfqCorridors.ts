@@ -18,7 +18,12 @@ import {
     type OnchainHtlcParams,
     type OnchainNetwork,
 } from "./onchainHtlc";
-import type { LightningReceiveSwap, OnchainSendSwap, RfqSwap } from "./swapManager";
+import type {
+    LightningReceiveSwap,
+    OnchainReceiveSwap,
+    OnchainSendSwap,
+    RfqSwap,
+} from "./swapManager";
 
 /**
  * `arkade:BTC->lightning:BTC`. Nothing beyond its keys and the covenant: the
@@ -46,7 +51,6 @@ export const LightningSendCorridor: RfqCorridorHandler<LightningSendProfile> = {
 export interface LightningReceiveProfile extends Record<string, unknown> {
     signer: RfqSignerProjection;
     hashlock: RfqHashlockProjection;
-    /** The quote's `to_amount`, captured at REQUEST time. */
     expectedAmount: number;
     /** Where the claim pays. */
     payoutAddress: string;
@@ -276,6 +280,127 @@ export const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
     activityTxids: (profile) => (profile.claimTxid ? [profile.claimTxid] : []),
 };
 
+/** `onchain:BTC->arkade:BTC`: a receive Arkade half and a send L1 half, L1 key roles swapped. */
+export interface OnchainReceiveProfile extends Record<string, unknown> {
+    signer: RfqSignerProjection;
+    hashlock: RfqHashlockProjection;
+    /** The quote's `to_amount`, captured at REQUEST time. */
+    expectedAmount: number;
+    payoutAddress: string;
+    claimArkTxid?: string;
+    /** The SOLVER's L1 key; `refundKey` is the TRADER's own. */
+    claimKey: string;
+    refundKey: string;
+    /** The trader's L1 deadline, not the lockup's. */
+    htlcLocktime: number;
+    network: OnchainNetwork;
+    htlcAddress: string;
+    minConfirmations: number;
+    /** Where the L1 REFUND pays, hex — nothing else gives it back. */
+    refundPkScript: string;
+    funding?: { txid: string; vout: number };
+    refundTxid?: string;
+}
+
+/** The L1 half of what `requestOnchainReceive` returned. Exists for
+ * {@link onchainSendProfile}'s reason: `refundLocktime` becomes `htlcLocktime`,
+ * the record's own being the lockup's. */
+export function onchainReceiveProfile(result: {
+    htlc: Pick<OnchainHtlc, "address">;
+    htlcParams: OnchainHtlcParams;
+    l1Network: OnchainNetwork;
+    minConfirmations: number;
+    refundPkScript: Uint8Array;
+}): Omit<
+    OnchainReceiveProfile,
+    "signer" | "hashlock" | "expectedAmount" | "payoutAddress" | "claimArkTxid"
+> {
+    return {
+        claimKey: hex.encode(result.htlcParams.claimKey),
+        refundKey: hex.encode(result.htlcParams.refundKey),
+        htlcLocktime: result.htlcParams.refundLocktime,
+        network: result.l1Network,
+        htlcAddress: result.htlc.address,
+        minConfirmations: result.minConfirmations,
+        refundPkScript: hex.encode(result.refundPkScript),
+    };
+}
+
+export const OnchainReceiveCorridor: RfqCorridorHandler<OnchainReceiveProfile> = {
+    kind: "onchain_receive",
+
+    project: (swap: RfqSwap) => {
+        const receive = swap as OnchainReceiveSwap;
+        return {
+            expectedAmount: receive.expectedAmount,
+            ...(receive.claimArkTxid ? { claimArkTxid: receive.claimArkTxid } : {}),
+            ...(receive.funding ? { funding: receive.funding } : {}),
+            ...(receive.refundTxid ? { refundTxid: receive.refundTxid } : {}),
+        };
+    },
+
+    hydrate(profile) {
+        const { paymentHash } = hydrateHashlock(profile);
+        if (
+            typeof profile.expectedAmount !== "number" ||
+            !Number.isFinite(profile.expectedAmount)
+        ) {
+            throw new Error("onchain_receive record carries no expectedAmount; it cannot claim");
+        }
+        if (!profile.claimKey || !profile.refundKey) {
+            throw new Error(
+                "onchain_receive record carries no L1 keys; its HTLC cannot be rebuilt and the " +
+                    "trader's own funding could never be taken back",
+            );
+        }
+        if (!Number.isInteger(profile.minConfirmations) || profile.minConfirmations < 1) {
+            throw new Error(
+                `onchain_receive record carries no usable minConfirmations ` +
+                    `(${String(profile.minConfirmations)}); the confirmation gate cannot be checked`,
+            );
+        }
+        // Required where the send leg's `payoutPkScript` is optional: no
+        // record predates this one, and without it no refund can be built.
+        if (!profile.refundPkScript) {
+            throw new Error(
+                "onchain_receive record carries no refundPkScript; its L1 refund could not be " +
+                    "built, so the trader's funding would be stranded",
+            );
+        }
+        const htlc = onchainHtlcScript(
+            {
+                paymentHash,
+                claimKey: hex.decode(profile.claimKey),
+                refundKey: hex.decode(profile.refundKey),
+                refundLocktime: profile.htlcLocktime,
+            },
+            profile.network,
+        );
+        if (htlc.address !== profile.htlcAddress) {
+            throw new Error(
+                `onchain_receive record's L1 inputs derive ${htlc.address}, but the funding went ` +
+                    `to ${String(profile.htlcAddress)} — these are not this swap's`,
+            );
+        }
+        return {
+            paymentHash,
+            htlc,
+            expectedAmount: profile.expectedAmount,
+            minConfirmations: profile.minConfirmations,
+            refundPkScript: hex.decode(profile.refundPkScript),
+            ...(profile.claimArkTxid ? { claimArkTxid: profile.claimArkTxid } : {}),
+            ...(profile.funding ? { funding: profile.funding } : {}),
+            ...(profile.refundTxid ? { refundTxid: profile.refundTxid } : {}),
+        };
+    },
+
+    claimSecret: (profile) => ({ ...profile.signer, ...profile.hashlock }),
+
+    activityTxids: (profile) =>
+        [profile.claimArkTxid, profile.refundTxid].filter((txid): txid is string => !!txid),
+};
+
 rfqCorridorHandlers.register(LightningSendCorridor as RfqCorridorHandler);
 rfqCorridorHandlers.register(LightningReceiveCorridor as RfqCorridorHandler);
 rfqCorridorHandlers.register(OnchainSendCorridor as RfqCorridorHandler);
+rfqCorridorHandlers.register(OnchainReceiveCorridor as RfqCorridorHandler);
