@@ -214,9 +214,8 @@ export class DelegateManagerImpl implements IDelegateManager {
  * Delegates virtual outputs to a delegation service, allowing them to manage their renewal
  * on behalf of the wallet owner.
  * @param vtxos - Array of extended virtual outputs to delegate. Must not be empty.
- * @param delegateAt - Optional Date specifying when the delegation
- *                     should occur. If not provided, defaults to 12 hours before the earliest
- *                     expiry time of the provided vtxos.
+ * @param delegateAt - Optional delegation time. By default, scheduling leaves at least 10% of
+ *                     the remaining lifetime and one operator session before the earliest expiry.
  */
 async function delegate(
     identity: Identity,
@@ -247,13 +246,7 @@ async function delegate(
             // if no expiry (recoverable virtual outputs), delegate 1 minute from now
             delegateAt = new Date(Date.now() + 1 * 60 * 1000);
         } else {
-            const remainingTimeMs = expiryTimestamp - Date.now();
-            if (remainingTimeMs <= 0) {
-                delegateAt = new Date(Date.now() + 1 * 60 * 1000);
-            } else {
-                // delegate 10% before the expiry
-                delegateAt = new Date(expiryTimestamp - remainingTimeMs * 0.1);
-            }
+            delegateAt = defaultDelegateAt(expiryTimestamp, arkInfo.sessionDuration);
         }
     }
     const { fees, dust, forfeitAddress, network } = arkInfo;
@@ -460,6 +453,20 @@ async function makeSignedDelegateIntent(
         proof: base64.encode(signedProof.toPSBT()),
         message,
     };
+}
+
+export function defaultDelegateAt(
+    expiryTimestamp: number,
+    sessionDurationSeconds: bigint,
+    now = Date.now(),
+): Date {
+    const remainingTimeMs = expiryTimestamp - now;
+    if (remainingTimeMs <= 0) return new Date(now + 60_000);
+
+    const sessionLeadMs = Number(sessionDurationSeconds * 1000n);
+    const leadTimeMs = Math.max(remainingTimeMs * 0.1, sessionLeadMs);
+    const delegateAt = expiryTimestamp - leadTimeMs;
+    return new Date(delegateAt > now ? delegateAt : now + 2_000);
 }
 
 /**
