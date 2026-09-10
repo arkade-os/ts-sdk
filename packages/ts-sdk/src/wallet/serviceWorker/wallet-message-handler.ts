@@ -1734,6 +1734,7 @@ export class WalletMessageHandler
         // No chain tip: this is an offline-first read.
         const offchain = computeOffchainBalance(allVtxos, {
             now: { timestamp: new Date() },
+            dust: this.readonlyWallet?.dustAmount ?? 0n,
             isPendingRecovery: (vtxo) => pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
             isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
