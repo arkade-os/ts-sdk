@@ -54,10 +54,21 @@ describe("unilateral exit — deep chain ordering", () => {
         for (let i = 0; i < HOPS; i++) {
             const vtxos = await alice.wallet.getVtxos();
             const spine = vtxos.reduce((a, b) => (a.value > b.value ? a : b));
-            await alice.wallet.send({ address, amount: spine.value - 12_000 });
-            await waitFor(async () => (await alice.wallet.getVtxos()).length === i + 2, {
-                timeout: 30_000,
+            const txid = await alice.wallet.send({
+                recipients: [{ address, amount: spine.value - 12_000 }],
+                selectedVtxos: [spine],
             });
+            await waitFor(
+                async () => {
+                    const next = await alice.wallet.getVtxos();
+                    return (
+                        next.length === i + 2 &&
+                        next.some((vtxo) => vtxo.txid === txid) &&
+                        !next.some((vtxo) => vtxo.txid === spine.txid && vtxo.vout === spine.vout)
+                    );
+                },
+                { timeout: 30_000 },
+            );
         }
 
         const dest = await createTestOnchainWallet();
