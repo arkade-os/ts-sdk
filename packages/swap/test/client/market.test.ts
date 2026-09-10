@@ -21,10 +21,26 @@ const snapshotOf = (markets: DiscoveredMarket[]): DiscoverySnapshot => ({
     ref: { fetchedAt: 1_700_000_000_000, live: true, source: "injected" },
 });
 
-const ARKADE_BTC = { corridor: "arkade", assetId: "btc" } as const;
-const LIGHTNING_BTC = { corridor: "lightning", assetId: "btc" } as const;
-const ONCHAIN_BTC = { corridor: "onchain", assetId: "btc" } as const;
-const ARKADE_USD = { corridor: "arkade", assetId: USD_ASSET_ID } as const;
+const ARKADE_BTC = {
+    corridor: "arkade",
+    assetId: "btc",
+    marketId: "arkade:regtest/slip44:0",
+} as const;
+const LIGHTNING_BTC = {
+    corridor: "lightning",
+    assetId: "btc",
+    marketId: "bolt11:regtest/slip44:0",
+} as const;
+const ONCHAIN_BTC = {
+    corridor: "onchain",
+    assetId: "btc",
+    marketId: "bitcoin:regtest/slip44:0",
+} as const;
+const ARKADE_USD = {
+    corridor: "arkade",
+    assetId: USD_ASSET_ID,
+    marketId: `arkade:regtest/asset:${USD_ASSET_ID}`,
+} as const;
 
 describe("the canonical market key", () => {
     it("puts the arkade leg first, whichever side the card publishes it on", () => {
@@ -52,6 +68,33 @@ describe("the canonical market key", () => {
 });
 
 describe("the eligible set", () => {
+    it("finds canonical CAIP-19 cards as well as legacy corridor cards", () => {
+        const canonical: DiscoveredMarket = {
+            ...lightningCard,
+            base_asset: {
+                ...lightningCard.base_asset,
+                caip19_id: ARKADE_BTC.marketId,
+            },
+            quote_asset: {
+                ...lightningCard.quote_asset,
+                caip19_id: LIGHTNING_BTC.marketId,
+            },
+        };
+
+        expect(
+            eligibleMarkets(snapshotOf([canonical]), {
+                give: ARKADE_BTC,
+                take: LIGHTNING_BTC,
+            }).map((candidate) => candidate.card),
+        ).toEqual([canonical]);
+        expect(
+            eligibleMarkets(snapshotOf([lightningCard]), {
+                give: ARKADE_BTC,
+                take: LIGHTNING_BTC,
+            }).map((candidate) => candidate.card),
+        ).toEqual([lightningCard]);
+    });
+
     it("finds one card in both directions", () => {
         const snapshot = snapshotOf([lightningCard, onchainCard, spotCard]);
         const send = eligibleMarkets(snapshot, { give: ARKADE_BTC, take: LIGHTNING_BTC });

@@ -13,11 +13,19 @@
  * ticker listed by nine solvers for the same asset is one row and not an
  * ambiguity.
  */
-import { marketCorridor, type DiscoveredMarket, type Side } from "@arkade-os/solver-discovery";
+import type { DiscoveredMarket, Side } from "@arkade-os/solver-discovery";
 import { BTC_ASSET_ID } from "../store";
+import { marketAssetId, marketCorridor } from "../marketShape";
 import type { AssetAliasTable, RegisteredAsset } from "./aliases";
-import { ARKADE_ASSET_NAMESPACE, type AssetId, type NetworkRef, type Rail, btcOn } from "./assetId";
-import { railOfCorridor, type Corridor } from "./corridor";
+import {
+    ARKADE_ASSET_NAMESPACE,
+    type AssetId,
+    type NetworkRef,
+    type Rail,
+    btcOn,
+    isAssetId,
+} from "./assetId";
+import { corridorOfRail, railOfCorridor, type Corridor } from "./corridor";
 
 /** The 68-lowercase-hex Arkade issuance identity, as a card spells it. */
 const ARKADE_ASSET_IDENTITY = /^[0-9a-f]{68}$/;
@@ -49,7 +57,13 @@ export const aliasTableFrom = (
     const rows = new Map<string, RegisteredAsset>();
     const add = (card: DiscoveredMarket, side: Side): void => {
         const info = side === "base" ? card.base_asset : card.quote_asset;
-        const id = publicAssetId(marketCorridor(card, side), info.id, network);
+        const corridor = corridorOfRail(marketCorridor(card, side));
+        if (corridor === undefined) return;
+        const canonical = marketAssetId(card, side);
+        const id =
+            canonical !== undefined && isAssetId(canonical)
+                ? canonical
+                : publicAssetId(corridor, info.id, network);
         if (id === undefined || typeof info.ticker !== "string" || info.ticker === "") return;
         rows.set(`${id} ${info.ticker.toLowerCase()}`, { id, ticker: info.ticker });
     };

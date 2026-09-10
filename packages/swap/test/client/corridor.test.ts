@@ -4,12 +4,13 @@ import { BITCOIN_RAILS, railOf } from "../../src/client/assetId";
 import { CORRIDORS, corridorOfRail, railOfCorridor } from "../../src/client/corridor";
 
 describe("the corridor axis and its rails", () => {
-    it("re-exports discovery's corridor list by identity", () => {
-        expect(CORRIDORS).toBe(DISCOVERY_CORRIDORS);
+    it("keeps route names independent from discovery's CAIP chain namespaces", () => {
+        expect(CORRIDORS).toEqual(["arkade", "lightning", "onchain"]);
+        expect(DISCOVERY_CORRIDORS).toEqual(["arkade", "bolt11", "bitcoin", "eip155"]);
     });
 
     it("is a bijection with the bitcoin-family rails", () => {
-        for (const corridor of DISCOVERY_CORRIDORS) {
+        for (const corridor of CORRIDORS) {
             expect(corridorOfRail(railOfCorridor(corridor))).toBe(corridor);
         }
         for (const rail of BITCOIN_RAILS) {

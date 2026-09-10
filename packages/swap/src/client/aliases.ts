@@ -35,6 +35,8 @@ export interface DiscoveryLeg {
     corridor: Corridor;
     /** `"btc"`, or the 68-hex Arkade asset identity. */
     assetId: string;
+    /** Full CAIP-19 id used by solver-discovery's canonical market selector. */
+    marketId: AssetId;
 }
 
 /**
@@ -48,20 +50,23 @@ export const toDiscoveryLeg = (id: AssetId): DiscoveryLeg => {
     const { rail, assetNamespace, assetReference } = parseAssetId(id);
     const asset = `${assetNamespace}:${assetReference}`;
     if (rail === "arkade") {
-        if (asset === BTC_ASSET_PART) return { corridor: "arkade", assetId: BTC_ASSET_ID };
+        if (asset === BTC_ASSET_PART)
+            return { corridor: "arkade", assetId: BTC_ASSET_ID, marketId: id };
         if (assetNamespace === ARKADE_ASSET_NAMESPACE) {
-            return { corridor: "arkade", assetId: assetReference };
+            return { corridor: "arkade", assetId: assetReference, marketId: id };
         }
         throw new UnsupportedRoute(`the arkade corridor has no ${asset}`);
     }
     // Lightning and L1 carry BTC and nothing else — there is no leg name for
     // an asset on them, so this is a refusal rather than a lookup miss.
     if (rail === "bolt11") {
-        if (asset === BTC_ASSET_PART) return { corridor: "lightning", assetId: BTC_ASSET_ID };
+        if (asset === BTC_ASSET_PART)
+            return { corridor: "lightning", assetId: BTC_ASSET_ID, marketId: id };
         throw new UnsupportedRoute(`the lightning corridor carries BTC only, not ${asset}`);
     }
     if (rail === "bitcoin") {
-        if (asset === BTC_ASSET_PART) return { corridor: "onchain", assetId: BTC_ASSET_ID };
+        if (asset === BTC_ASSET_PART)
+            return { corridor: "onchain", assetId: BTC_ASSET_ID, marketId: id };
         throw new UnsupportedRoute(`the onchain corridor carries BTC only, not ${asset}`);
     }
     throw new UnsupportedRoute(`no corridor serves ${id}`);

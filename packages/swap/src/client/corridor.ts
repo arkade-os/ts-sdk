@@ -1,35 +1,28 @@
 /**
  * The corridor axis, and its bijection with the rail namespaces.
  *
- * One axis, two vocabularies: discovery speaks `arkade | lightning | onchain`
- * and an asset id's CAIP-2 namespace is `arkade | bolt11 | bitcoin`. They agree
- * on one member of three. Collapsing them was the alternative and it loses
- * either way — take the rail names and every market lookup translates on the
- * way out to discovery; take the corridor names and `lightning:` overruns
+ * One axis, two vocabularies: client routes speak `arkade | lightning |
+ * onchain` and an asset id's CAIP-2 namespace is `arkade | bolt11 | bitcoin`.
+ * They agree on one member of three. Collapsing them was the alternative and
+ * it loses either way — take the rail names and the public route vocabulary
+ * becomes protocol-shaped; take the route names and `lightning:` overruns
  * CAIP-2's eight-character namespace cap.
  *
- * So both stay, and the disagreement is spent once, here: `Corridor` is
- * discovery's type verbatim, {@link railOfCorridor} is total, and `route.ts`
- * ties an endpoint's corridor to its asset's rail in the type system so the two
- * cannot disagree in a value.
+ * So both stay, and the disagreement is spent once, here:
+ * {@link railOfCorridor} is total, and `route.ts` ties an endpoint's corridor
+ * to its asset's rail in the type system so the two cannot disagree in a value.
  */
-import {
-    CORRIDORS as DISCOVERY_CORRIDORS,
-    type Corridor as DiscoveryCorridor,
-} from "@arkade-os/solver-discovery";
 import type { BitcoinRail, Rail } from "./assetId";
 
 /**
  * The corridor a leg settles on.
  *
- * Aliased from discovery rather than re-declared: it is discovery's vocabulary,
- * the alias layer has to speak it, and a re-declaration would drift silently
- * the day discovery adds a corridor.
+ * This is deliberately independent from discovery's CAIP chain-namespace
+ * vocabulary. Discovery changed its public corridor names to `bolt11` and
+ * `bitcoin`; those are rail identifiers here, not caller-facing route names.
  */
-export type Corridor = DiscoveryCorridor;
-
-/** Discovery's corridor list, re-exported so this package does not redeclare it. */
-export const CORRIDORS = DISCOVERY_CORRIDORS;
+export const CORRIDORS = ["arkade", "lightning", "onchain"] as const;
+export type Corridor = (typeof CORRIDORS)[number];
 
 /**
  * A corridor id: the three implemented corridors plus §9's EVM chains.

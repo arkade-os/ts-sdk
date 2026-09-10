@@ -42,7 +42,9 @@ import {
 import type { NetworkName } from "@arkade-os/sdk";
 import { MARKETS_CACHE_TTL_MS } from "../markets";
 import type { AssetSwapRepository } from "../repository";
+import { marketAssetId } from "../marketShape";
 import { isIndexedNetwork } from "./aliases";
+import { isAssetId } from "./assetId";
 import { CORRIDORS } from "./corridor";
 import { DiscoverySnapshotUnavailable } from "./errors";
 import type { SnapshotRef } from "./quote";
@@ -119,6 +121,7 @@ export interface DiscoveryIndex {
 }
 
 const HEX_64 = /^[0-9a-f]{64}$/;
+const LEGACY_ASSET_ID = /^(?:btc|[0-9a-f]{68})$/;
 
 const isRelayList = (value: unknown): boolean =>
     Array.isArray(value) &&
@@ -140,8 +143,9 @@ const isCorridorField = (value: unknown): boolean =>
  */
 export const isUsableCard = (value: unknown): value is DiscoveredMarket => {
     const card = value as Partial<DiscoveredMarket> | null;
+    if (!card) return false;
     if (
-        typeof card?.pair !== "string" ||
+        (card.pair !== undefined && typeof card.pair !== "string") ||
         typeof card.solver !== "string" ||
         typeof card.source !== "string" ||
         (card.sourceType !== "registry" && card.sourceType !== "local") ||
@@ -153,6 +157,10 @@ export const isUsableCard = (value: unknown): value is DiscoveredMarket => {
         !isCorridorField(card.quote_corridor)
     ) {
         return false;
+    }
+    for (const side of ["base", "quote"] as const) {
+        const id = marketAssetId(card, side);
+        if (id === undefined || (!isAssetId(id) && !LEGACY_ASSET_ID.test(id))) return false;
     }
     // A corridor market is addressed, not just priced: without a key to encrypt
     // to and a relay to reach, it is a card no quote can be requested from —

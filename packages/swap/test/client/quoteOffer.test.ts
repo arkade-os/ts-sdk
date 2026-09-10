@@ -21,8 +21,16 @@ const snapshot: DiscoverySnapshot = {
     ref: { fetchedAt: NOW * 1000, live: true, source: "injected" },
 };
 
-const ARKADE_BTC = { corridor: "arkade", assetId: "btc" } as const;
-const ARKADE_USD = { corridor: "arkade", assetId: USD_ASSET_ID } as const;
+const ARKADE_BTC = {
+    corridor: "arkade",
+    assetId: "btc",
+    marketId: "arkade:regtest/slip44:0",
+} as const;
+const ARKADE_USD = {
+    corridor: "arkade",
+    assetId: USD_ASSET_ID,
+    marketId: `arkade:regtest/asset:${USD_ASSET_ID}`,
+} as const;
 
 const legs = { give: ARKADE_BTC, take: ARKADE_USD };
 const endpoints = {
@@ -126,10 +134,44 @@ describe("the minted expiry", () => {
 });
 
 describe("the one check this backend runs", () => {
+    it("accepts a plan whose card carries canonical CAIP-19 leg ids", async () => {
+        const canonical = {
+            ...spotCard,
+            base_asset: { ...spotCard.base_asset, caip19_id: ARKADE_BTC.marketId },
+            quote_asset: { ...spotCard.quote_asset, caip19_id: ARKADE_USD.marketId },
+        };
+        const canonicalSnapshot: DiscoverySnapshot = {
+            markets: [canonical],
+            ref: snapshot.ref,
+        };
+        const [candidate] = eligibleMarkets(canonicalSnapshot, legs);
+        const { feed } = serving();
+
+        await expect(
+            quoteFromFeed({
+                quoteId: "q-caip",
+                candidate,
+                market: marketRefOf(candidate, canonicalSnapshot.ref),
+                legs,
+                endpoints,
+                amount: { value: 10_000n, on: "give", source: "caller" },
+                feed,
+                now: NOW,
+            }),
+        ).resolves.toHaveProperty("quote.take.asset", ARKADE_USD.marketId);
+    });
+
     it("refuses a plan that prices legs nobody asked for", async () => {
         await expect(
             quoteWith({
-                legs: { give: ARKADE_BTC, take: { corridor: "arkade", assetId: "ff".repeat(34) } },
+                legs: {
+                    give: ARKADE_BTC,
+                    take: {
+                        corridor: "arkade",
+                        assetId: "ff".repeat(34),
+                        marketId: `arkade:regtest/asset:${"ff".repeat(34)}`,
+                    },
+                },
             }).run(),
         ).rejects.toThrow(QuoteVerificationFailed);
     });

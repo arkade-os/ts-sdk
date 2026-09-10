@@ -26,18 +26,22 @@ describe("public ids down to discovery legs", () => {
         expect(toDiscoveryLeg(btcOn("arkade", NETWORK))).toEqual({
             corridor: "arkade",
             assetId: BTC_ASSET_ID,
+            marketId: "arkade:regtest/slip44:0",
         });
         expect(toDiscoveryLeg(btcOn("bolt11", NETWORK))).toEqual({
             corridor: "lightning",
             assetId: BTC_ASSET_ID,
+            marketId: "bolt11:regtest/slip44:0",
         });
         expect(toDiscoveryLeg(btcOn("bitcoin", NETWORK))).toEqual({
             corridor: "onchain",
             assetId: BTC_ASSET_ID,
+            marketId: "bitcoin:regtest/slip44:0",
         });
         expect(toDiscoveryLeg(USD)).toEqual({
             corridor: "arkade",
             assetId: `${"11".repeat(32)}0000`,
+            marketId: USD,
         });
     });
 

@@ -173,6 +173,25 @@ describe("the cache as a trust boundary", () => {
         expect(isUsableCard(spotCard)).toBe(true);
     });
 
+    it("keeps a canonical card with no deprecated display or corridor fields", () => {
+        const canonical = {
+            ...lightningCard,
+            pair: undefined,
+            base_corridor: undefined,
+            quote_corridor: undefined,
+            base_asset: {
+                ...lightningCard.base_asset,
+                id: "arkade:regtest/slip44:0",
+            },
+            quote_asset: {
+                ...lightningCard.quote_asset,
+                id: "bolt11:regtest/slip44:0",
+            },
+        };
+
+        expect(isUsableCard(canonical)).toBe(true);
+    });
+
     it("drops a corridor card with no rendezvous, which the v1 read trusts", () => {
         const { discovery_pubkey, ...noKey } = lightningCard;
         expect(isUsableCard(noKey)).toBe(false);

@@ -2,8 +2,8 @@
  * Market resolution: `(give.asset, take.asset, corridors)` to the card that
  * prices the swap, and the provenance that card leaves on the quote.
  *
- * The lookup itself is discovery's — `selectMarkets` matches a leg pair with
- * both corridors, arkade defaulted on either side — and this module supplies
+ * The lookup itself is discovery's — `selectMarkets` matches a leg pair — and
+ * this module supplies
  * the three things around it that the client cannot borrow: the policy filters
  * that run before disclosure, the canonical market key derived under the
  * protocol's own leg order rather than the card's, and the addressability check
@@ -28,6 +28,7 @@ import type { DiscoveryLeg } from "./aliases";
 import type { DiscoverySnapshot } from "./discovery";
 import type { SwapPolicy } from "./policy";
 import type { CardMarketRef, MarketBackend, MarketRef, SnapshotRef } from "./quote";
+import { marketPairLabel } from "../marketShape";
 
 /** One card that can price this route, with what the route needs read off it. */
 export interface MarketCandidate {
@@ -141,16 +142,32 @@ export const eligibleMarkets = (
     const oriented = (side: Side): MarketCandidate[] => {
         const base = side === "base" ? give : take;
         const quote = side === "base" ? take : give;
-        return selectMarkets([...markets], {
-            baseId: base.assetId,
-            quoteId: quote.assetId,
-            baseCorridor: base.corridor,
-            quoteCorridor: quote.corridor,
+        const selection = {
             // The trader receives the take leg, so that side must be one the
             // solver can pay out; a direction nobody solves yields no market.
             wantSide: side === "base" ? "quote" : "base",
             ...(takeAmount === undefined ? {} : { wantAmount: takeAmount }),
-        }).map((card) => ({
+        } as const;
+
+        // New indexes identify legs with CAIP-19. Keep accepting snapshots
+        // produced from legacy cards too: solver-discovery deliberately keeps
+        // their old `<corridor>:<short-id>` key, while the RFQ wire still needs
+        // the short id carried by `assetId`.
+        const canonical = selectMarkets([...markets], {
+            baseId: base.marketId,
+            quoteId: quote.marketId,
+            ...selection,
+        });
+        const legacy = selectMarkets([...markets], {
+            baseId: `${base.corridor}:${base.assetId}`,
+            quoteId: `${quote.corridor}:${quote.assetId}`,
+            ...selection,
+        });
+        const selected = [...canonical, ...legacy].filter(
+            (card, index, all) => all.indexOf(card) === index,
+        );
+
+        return selected.map((card) => ({
             card,
             give: side,
             backend: marketBackendOf(card),
@@ -207,7 +224,7 @@ export const cardMarketOf = (
     sourceType: card.sourceType,
     solver: card.solver,
     ...(card.discovery_pubkey === undefined ? {} : { discoveryPubkey: card.discovery_pubkey }),
-    pair: card.pair,
+    pair: card.pair ?? marketPairLabel(card),
     snapshot,
 });
 

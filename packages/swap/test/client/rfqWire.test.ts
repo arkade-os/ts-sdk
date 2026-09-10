@@ -19,10 +19,26 @@ import {
 } from "../../src/rfq";
 import { USD_ASSET_ID } from "./fixtures";
 
-const arkade = { corridor: "arkade", assetId: "btc" } as const;
-const lightning = { corridor: "lightning", assetId: "btc" } as const;
-const onchain = { corridor: "onchain", assetId: "btc" } as const;
-const usd = { corridor: "arkade", assetId: USD_ASSET_ID } as const;
+const arkade = {
+    corridor: "arkade",
+    assetId: "btc",
+    marketId: "arkade:regtest/slip44:0",
+} as const;
+const lightning = {
+    corridor: "lightning",
+    assetId: "btc",
+    marketId: "bolt11:regtest/slip44:0",
+} as const;
+const onchain = {
+    corridor: "onchain",
+    assetId: "btc",
+    marketId: "bitcoin:regtest/slip44:0",
+} as const;
+const usd = {
+    corridor: "arkade",
+    assetId: USD_ASSET_ID,
+    marketId: `arkade:regtest/asset:${USD_ASSET_ID}`,
+} as const;
 
 describe("the pair string", () => {
     it("spells BTC as the wire's own constants do", () => {
