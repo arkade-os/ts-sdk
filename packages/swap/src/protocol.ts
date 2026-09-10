@@ -1,9 +1,9 @@
 /**
  * The v1 protocol building blocks, off the root and under this name.
  *
- * Everything here was the integration surface before the v2 client, and every
- * name carries an `@deprecated` pointer on its declaration naming what replaces
- * it — editors reach the tag through this re-export, which is why nothing moved
+ * Everything here was the integration surface before the v2 client. Most names
+ * carry an `@deprecated` pointer on their declaration naming what replaces them
+ * — editors reach the tag through this re-export, which is why nothing moved
  * files to get here. The barrel exists so that "deprecated" does not mean
  * "deleted": a solver, a terms-showing app or anything reaching below the
  * client keeps a floor, while the root stops advertising it.

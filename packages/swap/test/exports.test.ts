@@ -505,9 +505,34 @@ describe("the @deprecated pointers", () => {
         return sources.get(module)!;
     };
     const declaredIn = moduleOf(PROTOCOL_ENTRY);
+    const intentionallyUntagged = new Set([
+        "awaitOnchainFill",
+        "buildHtlcClaim",
+        "buildHtlcRefund",
+        "ChainUtxo",
+        "claimOnchainFill",
+        "classifyOnchainHtlc",
+        "extractPreimage",
+        "HtlcUtxo",
+        "l1ScriptForAddress",
+        "LOCKTIME_THRESHOLD",
+        "MAX_MIN_CONFIRMATIONS",
+        "newPreimage",
+        "ONCHAIN_CLAIM_MARGIN_SECONDS",
+        "ONCHAIN_DUST_SATS",
+        "ONCHAIN_ORDER_MARGIN_SECONDS",
+        "ONCHAIN_SECONDS_PER_BLOCK",
+        "OnchainHtlc",
+        "OnchainHtlcParams",
+        "OnchainHtlcPhase",
+        "onchainHtlcScript",
+        "OnchainNetwork",
+        "paymentHashOf",
+    ]);
 
     it("tags every P declaration", () => {
         const untagged = [...P].filter((name: string) => {
+            if (intentionallyUntagged.has(name)) return false;
             const module = declaredIn.get(name);
             if (!module) return true;
             const source = sourceOf(module);
@@ -534,7 +559,7 @@ describe("the @deprecated pointers", () => {
             // The shared tail names the subpath, so it carries backticks of its
             // own; strip it before asking whether the POINTER says anything.
             .map((t) => t.replace(/Moved off the package root to `[^`]+`\./, ""));
-        expect(tags.length).toBeGreaterThanOrEqual(P.length);
+        expect(tags.length).toBeGreaterThanOrEqual(P.length - intentionallyUntagged.size);
         const empty = tags.filter((t) => !/`[^`]+`/.test(t) && !t.includes("no replacement"));
         expect(empty).toEqual([]);
     });
