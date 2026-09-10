@@ -78,6 +78,13 @@ describe("claim packet TLV, against covclaimd's own bytes", () => {
     });
 
     it("keeps the legacy shape when a TLV body is malformed", () => {
+        const withoutCovclaimdPubkey = Uint8Array.from([
+            0x01,
+            0x00,
+            0x5d,
+            ...new Uint8Array(SEALED_CIPHERTEXT_LENGTH),
+        ]);
+        expect(claimPacketShape(base64.encode(withoutCovclaimdPubkey)).kind).toBe("ciphertext");
         expect(shapeOf("0300020102").kind).toBe("ciphertext"); // 0x03 at the wrong width
         expect(shapeOf("01ffff00").kind).toBe("ciphertext"); // length overruns the buffer
         expect(claimPacketShape("not base64 at all!!").kind).toBe("ciphertext");

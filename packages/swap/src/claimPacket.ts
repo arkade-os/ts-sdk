@@ -198,7 +198,9 @@ export const claimPacketShape = (b64: string): ClaimPacketShape => {
         if (raw.length === SEALED_CIPHERTEXT_LENGTH) return { kind: "ciphertext" };
         const { ciphertextLength, hasArkadeScript, pubkey } = parseTlv(raw);
         // A wrong length fails to decrypt either way, so take the loud path.
-        if (ciphertextLength !== SEALED_CIPHERTEXT_LENGTH) return { kind: "ciphertext" };
+        if (ciphertextLength !== SEALED_CIPHERTEXT_LENGTH || pubkey === undefined) {
+            return { kind: "ciphertext" };
+        }
         return {
             kind: "packet",
             body: raw,

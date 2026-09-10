@@ -18,6 +18,7 @@ import {
     Wallet,
 } from "@arkade-os/sdk";
 import {
+    CLAIM_PACKET_TYPE,
     claimPacketShape,
     covclaimdClient,
     httpTransport,
@@ -32,9 +33,6 @@ const COVCLAIMD_URL = "http://localhost:7271";
 
 /** Interior to the solver's regtest limits (1_000..1_000_000) and to lnd-peer's outbound. */
 const RECEIVE_SATS = 25_000;
-
-/** covclaimd's Arkade extension packet type. */
-const CLAIM_PACKET = 0x04;
 
 const execCommand = (command: string): string =>
     execSync(command, { encoding: "utf8" })
@@ -137,7 +135,7 @@ describe("claim packet, end to end (regtest)", () => {
         for (let i = 0; i < funding.outputsLength; i++) {
             const script = funding.getOutput(i)?.script;
             if (script && Extension.isExtension(script)) {
-                packets.push(Extension.fromBytes(script).getPacketByType(CLAIM_PACKET));
+                packets.push(Extension.fromBytes(script).getPacketByType(CLAIM_PACKET_TYPE));
             }
         }
         const stamped = packets.find((p) => p !== null && p !== undefined);
