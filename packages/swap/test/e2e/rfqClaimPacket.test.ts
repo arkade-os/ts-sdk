@@ -17,14 +17,9 @@ import {
     Transaction,
     Wallet,
 } from "@arkade-os/sdk";
-import {
-    CLAIM_PACKET_TYPE,
-    claimPacketShape,
-    covclaimdClient,
-    httpTransport,
-    requestLightningReceive,
-    type InvoiceFacts,
-} from "../../src";
+import { CLAIM_PACKET_TYPE, claimPacketShape } from "../../src";
+import { covclaimdClient } from "../../src/advanced";
+import { httpTransport, requestLightningReceive, type InvoiceFacts } from "../../src/protocol";
 
 const ARK_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";
