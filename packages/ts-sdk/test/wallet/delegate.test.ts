@@ -1,5 +1,21 @@
 import { describe, it, expect } from "vitest";
-import { findDestinationOutputIndex } from "../../src/wallet/delegate";
+import { defaultDelegateAt, findDestinationOutputIndex } from "../../src/wallet/delegate";
+
+describe("defaultDelegateAt", () => {
+    const now = Date.UTC(2026, 0, 1);
+
+    it("uses ten percent of a long remaining lifetime", () => {
+        expect(defaultDelegateAt(now + 1_000_000, 30n, now).getTime()).toBe(now + 900_000);
+    });
+
+    it("leaves a full server session when it is longer than ten percent", () => {
+        expect(defaultDelegateAt(now + 120_000, 30n, now).getTime()).toBe(now + 90_000);
+    });
+
+    it("uses a short scheduling margin when less than one server session remains", () => {
+        expect(defaultDelegateAt(now + 20_000, 30n, now).getTime()).toBe(now + 2_000);
+    });
+});
 
 describe("findDestinationOutputIndex", () => {
     const scriptA = new Uint8Array([0x00, 0x14, 0xaa, 0xbb]);
