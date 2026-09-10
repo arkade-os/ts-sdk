@@ -78,6 +78,7 @@ import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { classifyAgainstSignerSet, signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
 import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "./batchExpiry";
 import type { BatchExpiryPolicy } from "./batchExpiry";
+import { runWalletRestoreHooks } from "./restoreHooks";
 import {
     assertValidServerUnrollScript,
     resolveCheckpointExitDelayPolicy,
@@ -3282,7 +3283,10 @@ export class Wallet
                 `restore: gapLimit must be a positive integer (got ${String(opts?.gapLimit)})`,
             );
         }
-        this._restoreInFlight = this._runRestore(gapLimit).finally(() => {
+        this._restoreInFlight = (async () => {
+            await this._runRestore(gapLimit);
+            await runWalletRestoreHooks(this);
+        })().finally(() => {
             this._restoreInFlight = undefined;
         });
         return this._restoreInFlight;

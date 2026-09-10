@@ -1396,6 +1396,35 @@ const swWallet = await ServiceWorkerWallet.setup({
 
 Raise it when the external issuer is expected to burn more than `N` consecutive addresses without any of them being paid — every index in such a run is a miss, and the funded one sits past the band. When that happens the funds are invisible until a `restore()` whose `gapLimit` is large enough to cross the run (`wallet.restore({ gapLimit: 200 })`); a default restore closes its gap window before reaching the funded index. Keep the value modest: the band adds up to `2N + 1` indices × the candidate matrix (typically 1-4 scripts each) to the wallet's subscription.
 
+#### Restoring plugin state
+
+`wallet.restore()` is the explicit imported-wallet recovery boundary. It first restores the
+wallet's own addresses, contracts, history, and balances, then runs every restore hook registered
+for that wallet instance. `Wallet` and `ServiceWorkerWallet` both follow this ordering, and
+concurrent calls coalesce until the hooks finish.
+
+```typescript
+import { registerWalletRestoreHook } from '@arkade-os/sdk'
+
+const unregister = registerWalletRestoreHook(wallet, {
+  id: 'my-plugin',
+  restore: async (restoredWallet) => {
+    await rebuildPluginState(await restoredWallet.getTransactionHistory())
+  },
+})
+
+await wallet.restore()
+```
+
+Registering the same `id` again replaces that hook without changing its position. A run uses a
+stable snapshot, attempts every hook in registration order, and throws an `AggregateError` after
+all failures have been collected. If core recovery fails, hooks do not run. The returned function
+removes only that exact registration and is safe to call more than once.
+
+Hooks do not run during `Wallet.create()`, `ServiceWorkerWallet.setup()`, or ordinary startup. A
+plugin should register before an application calls `restore()` and keep its normal incremental
+reconciliation for state that arrives later.
+
 For advanced use cases, you can access the ContractManager directly to register external contracts:
 
 ```typescript
