@@ -1,9 +1,7 @@
 /**
  * The claim packet against a REAL solver and a REAL covclaimd — the only place
- * its bug could live. One wire format has three implementations (covclaimd's
- * Go, this package, the solver) and unit tests reach only the two in TypeScript.
- *
- * The property: the client goes offline after paying and never calls
+ * its bug could live, since one wire format has three implementations and unit
+ * tests reach only the two in TypeScript. The property: the client never calls
  * `pushClaim`, yet the money arrives. Unstamped, the lockup sits until expiry.
  */
 import { beforeAll, describe, expect, it } from "vitest";
@@ -32,8 +30,7 @@ const ESPLORA_API_URL = "http://localhost:3000/api";
 const SOLVER_URL = "http://localhost:8787";
 const COVCLAIMD_URL = "http://localhost:7271";
 
-/** Interior to the solver's regtest corridor limits (1_000..1_000_000), and
- * inside what `lnd-peer` holds after pushing half its channel to `lnd`. */
+/** Interior to the solver's regtest limits (1_000..1_000_000) and to lnd-peer's outbound. */
 const RECEIVE_SATS = 25_000;
 
 /** covclaimd's Arkade extension packet type. */
@@ -97,7 +94,8 @@ beforeAll(async () => {
 
 describe("claim packet, end to end (regtest)", () => {
     it("lets covclaimd claim a lockup the client never touches", async () => {
-        const before = (await wallet.getBalance()).total;
+        // Nothing spendable to start: the closing assertion has one possible cause.
+        expect((await wallet.getBalance()).available).toBe(0);
 
         const receive = await requestLightningReceive(wallet, ARK_URL, httpTransport(SOLVER_URL), {
             amount: RECEIVE_SATS,
@@ -153,16 +151,19 @@ describe("claim packet, end to end (regtest)", () => {
         expect(shape.needsArkadeScript).toBe(false);
         expect(hex.encode(shape.covclaimdPubkey!)).toBe(hex.encode(covclaimdPubkey));
 
-        // No pushClaim anywhere below: an arriving balance is covclaimd's doing.
-        await waitFor(async () => (await wallet.getBalance()).total >= before + RECEIVE_SATS, {
+        // `available`, NOT `total`: this wallet watches the lockup contract, so
+        // the lockup counts toward total the moment the solver funds it and this
+        // would pass with covclaimd switched off. Only a claim is spendable.
+        await waitFor(async () => (await wallet.getBalance()).available >= RECEIVE_SATS, {
             timeout: 300_000,
-            what: "covclaimd to claim the lockup",
+            what: "covclaimd to claim the lockup into spendable funds",
         });
 
+        // `some`, not `every`: every() is vacuously true on an empty vtxo list.
         await waitFor(
             async () =>
-                (await indexer.getVtxos({ scripts: [lockupScript] })).vtxos.every(
-                    (v) => v.txid !== lockup.txid || v.isSpent === true,
+                (await indexer.getVtxos({ scripts: [lockupScript] })).vtxos.some(
+                    (v) => v.txid === lockup.txid && v.isSpent === true,
                 ),
             { what: "the lockup to read as spent" },
         );
