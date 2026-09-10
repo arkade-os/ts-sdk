@@ -72,10 +72,13 @@ export {
     validatePlan,
 } from "./markets";
 export {
+    ASSET_CARRIER_SATS,
     cancelOffer,
     createOffer,
     decodeOffer,
     encodeOffer,
+    fillOffer,
+    type FillFunding,
     NoSpendableDepositError,
     type Offer,
     OFFER_PACKET_TYPE,
