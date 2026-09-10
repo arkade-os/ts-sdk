@@ -18,9 +18,9 @@ import {
     Transaction,
     Wallet,
 } from "@arkade-os/sdk";
-import { CLAIM_PACKET_TYPE, claimPacketShape } from "../../src";
+import { CLAIM_PACKET_TYPE, claimPacketShape, type InvoiceFacts } from "../../src";
 import { covclaimdClient } from "../../src/advanced";
-import { httpTransport, requestLightningReceive, type InvoiceFacts } from "../../src/protocol";
+import { httpTransport, requestLightningReceive } from "../../src/protocol";
 
 const ARK_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";
@@ -91,7 +91,7 @@ describe("claim packet, end to end (regtest)", () => {
         // Nothing spendable to start: the closing assertion has one possible cause.
         expect((await wallet.getBalance()).available).toBe(0);
 
-        const receive = await requestLightningReceive(wallet, ARK_URL, httpTransport(SOLVER_URL), {
+        const receive = await requestLightningReceive(wallet, httpTransport(SOLVER_URL), {
             amount: RECEIVE_SATS,
             amountSide: "to",
             covclaimdPubkey,
@@ -114,7 +114,9 @@ describe("claim packet, end to end (regtest)", () => {
             ],
             { stdio: "ignore" },
         );
-        onTestFinished(() => payment.kill());
+        onTestFinished(() => {
+            payment.kill();
+        });
 
         const lockupScript = hex.encode(receive.swapPkScript);
         await waitFor(
