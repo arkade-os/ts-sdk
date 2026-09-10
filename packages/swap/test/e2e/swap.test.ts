@@ -14,6 +14,7 @@ import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import {
     ArkAddress,
+    ArkNote,
     asset,
     EsploraProvider,
     InMemoryContractRepository,
@@ -89,12 +90,12 @@ beforeAll(async () => {
         settlementConfig: false,
     });
 
-    // fund the maker offchain: mint a note to the arkd CLI wallet, redeem it,
-    // and send from there (the same faucet path the ts-sdk e2e suites use)
-    const note = execCommand(`${arkdExec} arkd note --amount 200000`);
-    execCommand(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
     const address = await wallet.getAddress();
-    execCommand(`${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`);
+    const note = execCommand(`${arkdExec} arkd note --amount ${FAUCET_SATS}`);
+    await wallet.settle({
+        inputs: [ArkNote.fromString(note)],
+        outputs: [{ address, amount: BigInt(FAUCET_SATS) }],
+    });
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
 
     operatorPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;

@@ -19,6 +19,7 @@ import { hex } from "@scure/base";
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import {
     ArkAddress,
+    ArkNote,
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
@@ -126,10 +127,12 @@ beforeAll(async () => {
         settlementConfig: false,
     });
 
-    const note = execCommand(`${arkdExec} arkd note --amount 200000`);
-    execCommand(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
     const address = await wallet.getAddress();
-    execCommand(`${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`);
+    const note = execCommand(`${arkdExec} arkd note --amount ${FAUCET_SATS}`);
+    await wallet.settle({
+        inputs: [ArkNote.fromString(note)],
+        outputs: [{ address, amount: BigInt(FAUCET_SATS) }],
+    });
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
 }, 180_000);
 

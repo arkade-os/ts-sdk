@@ -18,6 +18,7 @@ import { execSync } from "child_process";
 import { base64, hex } from "@scure/base";
 import {
     ArkAddress,
+    ArkNote,
     asset,
     EsploraProvider,
     InMemoryContractRepository,
@@ -87,11 +88,12 @@ const newWallet = async (): Promise<Wallet> =>
     });
 
 const faucet = async (w: Wallet, sats: number): Promise<void> => {
-    const note = execCommand(`${arkdExec} arkd note --amount 200000`);
-    execCommand(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
-    execCommand(
-        `${arkdExec} ark send --to ${await w.getAddress()} --amount ${sats} --password secret`,
-    );
+    const address = await w.getAddress();
+    const note = execCommand(`${arkdExec} arkd note --amount ${sats}`);
+    await w.settle({
+        inputs: [ArkNote.fromString(note)],
+        outputs: [{ address, amount: BigInt(sats) }],
+    });
     await waitFor(async () => (await w.getBalance()).available >= sats);
 };
 
