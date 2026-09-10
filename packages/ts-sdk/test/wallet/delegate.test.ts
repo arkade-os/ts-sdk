@@ -12,6 +12,10 @@ describe("defaultDelegateAt", () => {
         expect(defaultDelegateAt(now + 120_000, 30n, now).getTime()).toBe(now + 90_000);
     });
 
+    it("preserves the full server session at the short-lifetime boundary", () => {
+        expect(defaultDelegateAt(now + 31_000, 30n, now).getTime()).toBe(now + 1_000);
+    });
+
     it("uses a short scheduling margin when less than one server session remains", () => {
         expect(defaultDelegateAt(now + 20_000, 30n, now).getTime()).toBe(now + 2_000);
     });

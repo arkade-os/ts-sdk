@@ -470,7 +470,8 @@ export function defaultDelegateAt(
 
     const sessionLeadMs = Number(sessionDurationSeconds * 1000n);
     const leadTimeMs = Math.max(remainingTimeMs * 0.1, sessionLeadMs);
-    return new Date(Math.max(now + 2_000, expiryTimestamp - leadTimeMs));
+    const delegateAt = expiryTimestamp - leadTimeMs;
+    return new Date(delegateAt > now ? delegateAt : now + 2_000);
 }
 
 /**
