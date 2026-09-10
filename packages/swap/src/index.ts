@@ -54,6 +54,10 @@ export {
     type RestoreAssetSwapRepositoryOptions,
     type RestoreAssetSwapRepositoryResult,
 } from "./restoreRepository";
+export {
+    registerAssetSwapRestore,
+    type RegisterAssetSwapRestoreOptions,
+} from "./registerRestore";
 // The corridor handlers and their registry are internal — see `rfqCorridor.ts`
 // for why. What a consumer writes into `RfqSwapOrigin.profile` is these: every
 // corridor's keys through `rfqSecretsProfile`, then whatever its own leg adds.
