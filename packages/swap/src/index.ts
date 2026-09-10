@@ -195,7 +195,16 @@ export {
     requestOnchainReceive,
     requestOnchainSend,
 } from "./rfq";
-export { sealClaimPacket, type ClaimPacketInput, type SealedClaimPacket } from "./claimPacket";
+export {
+    appendArkadeScript,
+    CLAIM_PACKET_TYPE,
+    type ClaimPacketInput,
+    claimPacketShape,
+    type ClaimPacketShape,
+    sealClaimPacket,
+    SEALED_CIPHERTEXT_LENGTH,
+    type SealedClaimPacket,
+} from "./claimPacket";
 export {
     CovclaimdRevealError,
     covclaimdClient,
