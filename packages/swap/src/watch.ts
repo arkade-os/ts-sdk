@@ -42,7 +42,7 @@ import {
     type IWallet,
 } from "@arkade-os/sdk";
 import { RETIRABLE, retireOfferContract } from "./coverage";
-import { decodeOffer, OFFER_CONTRACT_KIND } from "./offer";
+import { decodeOffer, ensureOfferContracts, OFFER_CONTRACT_KIND } from "./offer";
 import type { AssetSwapRepository } from "./repository";
 import { classifyDepositSpend, spendTxidsOf, type RestoreIndexer, type SpendKind } from "./restore";
 import {
@@ -55,6 +55,11 @@ import {
 /** Statuses a spend cannot move: the swap is already resolved.
  * @see RETIRABLE — a different question, and not the same set. */
 const TERMINAL: readonly AssetSwapStatus[] = ["fulfilled", "cancelled", "recoverable"];
+
+/** Statuses whose covenant may still hold a deposit, so still need coverage.
+ * Broader than restore's live set: includes `cancelling` (a cancel in flight
+ * may still be resolved by a spend the watcher later hears about). */
+const NEEDS_COVERAGE: readonly AssetSwapStatus[] = ["pending", "cancelling", "recoverable"];
 
 /**
  * The record change a classified spend implies, or `undefined` when it implies
@@ -107,6 +112,21 @@ export interface WatchOfferSwapsParams {
  * *Live* updates depend on the wallet's contract event transport. In Node,
  * callers must provide an `EventSource` implementation or use a runtime where
  * it is enabled. The start-up pass needs none of it.
+ *
+ * **Starting the watcher re-covers what it is asked to watch, and reconciles
+ * it.** Every record in the repository whose deposit may still be at its
+ * covenant gets that covenant registered ({@link ensureOfferContracts}) — a
+ * no-op for offers this wallet created, and the missing registration for
+ * records the restore scan rebuilt on a wallet that never made them. Only a
+ * registered script produces the events this watcher runs on. Registration
+ * alone is not enough, though: a deposit spent *before* its script was
+ * covered produces no event — the manager hydrates it already spent and the
+ * watch baseline starts past it — so each covered record is then read off the
+ * indexer once (and via the manager's contract view) and a spend found there
+ * is classified exactly as an event would be. The sweep is best effort and
+ * runs after the subscription is in place, so a spend landing mid-sweep is
+ * still delivered; a record it could not cover is logged and is tried again
+ * at the next start.
  */
 export async function watchOfferSwaps({
     wallet,
@@ -214,14 +234,95 @@ export async function watchOfferSwaps({
         }
     };
 
+    /**
+     * Indexer backstop for deposits spent or swept while a script was
+     * uncovered: the manager's view only sees contracts it already held, and
+     * a newly covered spent deposit produces no event. Swept → recoverable is
+     * invisible to {@link resolveOpenSwaps} (it only looks at `isSpent`).
+     */
+    const reconcileFromIndexer = async (swap: AssetSwap) => {
+        try {
+            const { vtxos } = await indexer.getVtxos({ scripts: [swap.swapPkScript] });
+            const vtxo = vtxos.find((v) => v.txid === swap.fundingTxid);
+            if (!vtxo) return;
+            if (vtxo.virtualStatus.state === "swept") {
+                if (swap.status === "recoverable") return;
+                const changes = { status: "recoverable" as const };
+                const { persisted } = await updateAssetSwapBestEffort(repository, swap.id, changes);
+                if (persisted) onUpdate?.({ ...swap, ...changes });
+                return;
+            }
+            if (vtxo.virtualStatus.state !== "spent") return;
+            const spentTxid = vtxo.arkTxId || vtxo.spentBy;
+            if (!spentTxid) return;
+            // No timestamp on this path: the indexer VTXO carries createdAt of
+            // the deposit, not the spend. Persist without completedAt.
+            await resolveSpends(swap.swapPkScript, [
+                {
+                    txid: vtxo.txid,
+                    vout: vtxo.vout,
+                    isSpent: true,
+                    arkTxId: vtxo.arkTxId,
+                    spentBy: vtxo.spentBy,
+                } as ContractVtxo,
+            ]);
+        } catch (err) {
+            console.warn(`[swap] could not reconcile offer ${swap.id} after covering it`, err);
+        }
+    };
+
+    /**
+     * A settlement that landed mid-sweep may have retired its script before
+     * the sweep re-watched it; re-derive liveness for scripts the sweep
+     * touched so nothing stays watched forever after that race.
+     */
+    const retireUntouchedScripts = async (covered: readonly AssetSwap[]) => {
+        const swaps = await getAssetSwaps(repository);
+        const getContracts = (
+            manager as { getContracts?: (q: { script: string }) => Promise<{ watch?: string }[]> }
+        ).getContracts;
+        for (const script of new Set(covered.map((s) => s.swapPkScript))) {
+            if (getContracts) {
+                const [row] = await getContracts.call(manager, { script });
+                if (!row) continue;
+                if (row.watch === "retained") continue;
+            }
+            await retireOfferContract(manager, swaps, script);
+        }
+    };
+
     const unsubscribe = manager.onContractEvent((event) => {
         // An offer is an owned contract; a watched script has no `metadata`.
         if (!isContractVtxoEvent(event) || event.type !== "vtxo_spent") return;
         enqueue(() => handleSpend(event));
     });
+
+    // After subscribing, never before: registration is what starts the
+    // manager's own watch on a script, and an event it delivers during the
+    // sweep must find a handler already attached.
+    const uncovered = (await getAssetSwaps(repository)).filter(
+        (swap) => typeof swap.offerHex === "string" && NEEDS_COVERAGE.includes(swap.status),
+    );
+    try {
+        await ensureOfferContracts(
+            wallet,
+            arkServerUrl,
+            uncovered.map((swap) => ({
+                offerHex: swap.offerHex,
+                ...(swap.swapAddress ? { swapAddress: swap.swapAddress } : {}),
+            })),
+        );
+    } catch (err) {
+        console.warn("[swap] could not re-register every live offer covenant", err);
+    }
+
     // enqueued rather than awaited: the pass must not read before the
-    // subscription is installed, or a spend landing mid-pass falls between them
+    // subscription is installed, or a spend landing mid-pass falls between them.
+    // resolveOpenSwaps (#895) answers spent deposits the manager already knew;
+    // the indexer pass catches spends/sweeps that landed while uncovered.
     enqueue(resolveOpenSwaps);
+    for (const swap of uncovered) enqueue(() => reconcileFromIndexer(swap));
+    enqueue(() => retireUntouchedScripts(uncovered));
 
     return {
         stop: unsubscribe,

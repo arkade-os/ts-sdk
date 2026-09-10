@@ -19,8 +19,15 @@ import {
     Transaction,
     scriptFromTapLeafScript,
 } from "@arkade-os/sdk";
-import { decodeOffer, Offer, OFFER_PACKET_TYPE, offerVtxoScript } from "./offer";
+import {
+    decodeOffer,
+    ensureOfferContracts,
+    Offer,
+    OFFER_PACKET_TYPE,
+    offerVtxoScript,
+} from "./offer";
 import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "./store";
+import type { IWallet } from "@arkade-os/sdk";
 
 // ponytail: fixed request size; tune only if histories outgrow it
 const TXS_PER_REQUEST = 50;
@@ -249,14 +256,36 @@ export function classifyDepositSpend(
  * txid scanned, so the natural call asks once and never again — `pending` is the
  * absence of an answer. Pass those records as `reopen`: re-answered from stored
  * `offerHex`, no funding fetch, skip lists unchanged, definite outcomes only.
+ *
+ * ## A restored deposit is the wallet's to watch again
+ *
+ * Pass `cover` and every record restored with its deposit still at the
+ * covenant — `pending`, or `recoverable` — has that covenant registered with
+ * the wallet before it is returned, exactly as `createOffer` registers it
+ * ({@link ensureOfferContracts}). Without it the record is back but the
+ * deposit is not: not gated, not counted, and a later fill goes unnoticed,
+ * because {@link watchOfferSwaps} only hears about registered scripts and this
+ * scan never revisits a funding txid it has answered. The scan itself does not
+ * need a wallet, which is why this is an option rather than a parameter.
+ *
+ * Best effort, and never a reason to lose the record: a registration that
+ * fails is logged and the record is still returned — the scan will not come
+ * back to it (its txid is answered), but {@link watchOfferSwaps} covers every
+ * live record at its next start and reconciles it against the chain then.
  */
 export async function restoreAssetSwaps(
     indexer: RestoreIndexer,
     txs: Tx[],
     existingIds: ReadonlySet<string>,
-    opts: { serverPubkey: Uint8Array; scanned?: ReadonlySet<string>; reopen?: AssetSwap[] },
+    opts: {
+        serverPubkey: Uint8Array;
+        scanned?: ReadonlySet<string>;
+        reopen?: AssetSwap[];
+        /** The wallet to register live restored covenants with. */
+        cover?: { wallet: IWallet; arkServerUrl: string };
+    },
 ): Promise<{ restored: AssetSwap[]; scannedTxids: string[] }> {
-    const { serverPubkey, scanned = new Set<string>(), reopen = [] } = opts;
+    const { serverPubkey, scanned = new Set<string>(), reopen = [], cover } = opts;
 
     const reopened: Found[] = [];
     for (const swap of reopen) {
@@ -436,5 +465,28 @@ export async function restoreAssetSwaps(
             ...completion,
         });
     }
+    if (cover) {
+        const live = restored.filter((swap) => LIVE_DEPOSIT.includes(swap.status));
+        try {
+            // the key the records were classified with: a restored record has
+            // no swapAddress to pin it, and the current key is wrong after a
+            // rotation
+            await ensureOfferContracts(cover.wallet, cover.arkServerUrl, live, { serverPubkey });
+        } catch (err) {
+            console.warn("[swap] could not re-register every restored offer covenant", err);
+        }
+    }
     return { restored, scannedTxids: fetchedTxids.filter((id) => !unresolved.has(id)) };
 }
+
+/**
+ * Statuses under which a restored deposit still sits at its covenant, and so
+ * is the wallet's to watch. `recoverable` too: a swept deposit is still the
+ * user's money at that script (see `RETIRABLE` in coverage.ts).
+ *
+ * `cancelling` is deliberately absent: the restore scan classifies by chain
+ * state and never produces a `cancelling` record — only `NEEDS_COVERAGE` in
+ * watch.ts has it, and only because a cancel in flight may still be resolved
+ * by a spend the watcher later hears about.
+ */
+const LIVE_DEPOSIT: readonly AssetSwapStatus[] = ["pending", "recoverable"];

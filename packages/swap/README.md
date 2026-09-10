@@ -88,10 +88,13 @@ funds an offer should keep cancelling within reach.
 4. **`restore`** — `restoreAssetSwaps` rebuilds lost records by scanning sent virtual txs for
    offer packets and binding each funding vtxo to its spend. Incremental: answered txids are
    remembered in the repository (`getScannedTxids`/`markTxidsScanned`) so nothing is fetched
-   twice.
+   twice. With `cover`, a restored deposit still at its covenant is registered with the wallet
+   again — see "After a restore" below. `restoreOfferCoverage` does the same for records you
+   already hold.
 5. **`watch`** — `watchOfferSwaps` drives swap status from the wallet's own contract events, so a
    fill shows up without re-running a scan. Registration is what makes it possible: only a
-   registered covenant is watched. See "Live status" below.
+   registered covenant is watched. On start it also re-covers live records and reconciles
+   deposits spent while nothing watched. See "Live status" / "After a restore" below.
 6. **`rfq`** — the user side of quoted swaps: RFQ negotiation over HTTP or a
    relay, then non-interactive filling (see below). All four reference-solver corridors:
    `arkade:BTC -> lightning:BTC` and `arkade:BTC -> onchain:BTC` (send), `lightning:BTC ->
@@ -256,6 +259,35 @@ guess: a stored swap is skipped by every later scan, so a guess here would be pe
 
 `onUpdate` is a notification for UI reactivity, not a second store; every write goes through the
 repository.
+
+### After a restore
+
+A record `restoreAssetSwaps` rebuilds has no registration behind it: the deposit is on chain and
+the record is back, but nothing has told the wallet the script is its own. Left that way the
+deposit is neither gated nor counted, and a later fill is never noticed — the watcher only hears
+registered scripts, and the scan never revisits a funding txid it has answered. Two things close
+that gap:
+
+```ts
+// registers the covenant of every restored deposit still at its script, before returning
+const { restored } = await restoreAssetSwaps(indexer, txs, existing, {
+    serverPubkey,
+    cover: { wallet, arkServerUrl: ARK },
+});
+
+// or, for records you already hold:
+await restoreOfferCoverage(wallet, ARK, restored);
+```
+
+and `watchOfferSwaps` itself, which on start registers the covenant of every live record in the
+repository (`pending`, `cancelling`, `recoverable`) — a no-op for offers this wallet created, and
+the missing registration for records restored without `cover` — then reconciles each against the
+chain (manager view + indexer): a spend that landed while the script was uncovered never becomes
+an event, and that read is what classifies it. Both registrations go through `ensureOfferContracts`
+/ `restoreOfferCoverage`, exported for a consumer that needs to run them on its own schedule.
+Registration is idempotent and best effort: a record that could not be covered is logged and tried
+again at the watcher's next start — the scan will not come back to it, since its funding txid is
+already answered.
 
 ## Cancelling: the refund path
 

@@ -2,6 +2,7 @@ export {
     createOffer,
     cancelOffer,
     restoreOfferCoverage,
+    ensureOfferContracts,
     encodeOffer,
     decodeOffer,
     offerVtxoScript,
