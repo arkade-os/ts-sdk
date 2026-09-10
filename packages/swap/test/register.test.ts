@@ -14,7 +14,16 @@ import {
     type RelativeTimelock,
     type OnchainProvider,
 } from "@arkade-os/sdk";
-import { createOffer, decodeOffer, OFFER_CONTRACT_KIND, OFFER_CONTRACT_LABEL } from "../src/offer";
+import {
+    createOffer,
+    decodeOffer,
+    encodeOffer,
+    ensureOfferContracts,
+    offerVtxoScript,
+    OFFER_CONTRACT_KIND,
+    OFFER_CONTRACT_LABEL,
+} from "../src/offer";
+import { retireOfferContract } from "../src/coverage";
 
 // the covenant derivation, Arkade.connect, ArkadeContract and register() are
 // all real here — only the network seam (the three Rest* providers) and the
@@ -333,5 +342,129 @@ describe("an offer at a script an earlier offer retired", () => {
 
         const row = (await contractRepository.getContracts()).find((c) => c.script === script);
         expect(row?.watch).toBe("watched");
+    });
+});
+
+// AI-generated, and to be redone: written by Claude, kept for the coverage it
+// gives the fix rather than for its shape. Rewrite by hand before reading it as
+// the specification.
+describe("ensureOfferContracts", () => {
+    const serverKey = hex.decode(
+        "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+    );
+    /** An offer at a script none of the `create()` calls above ever promoted,
+     * so the issuance mark (module state, keyed by script) cannot leak in. */
+    const unmarkedOffer = async () => {
+        const created = await create();
+        const { swapPkScript: _, ...binding } = decodeOffer(hex.decode(created.offerHex));
+        const rebound = { ...binding, wantAmount: BigInt(777_777) };
+        const script = offerVtxoScript(rebound, serverKey);
+        return {
+            offerHex: hex.encode(encodeOffer({ ...rebound, swapPkScript: script.pkScript })),
+            script: hex.encode(script.pkScript),
+        };
+    };
+
+    it("writes the row createOffer would, and watches it", async () => {
+        const { offerHex, script } = await unmarkedOffer();
+        state.created = [];
+        state.watched = [];
+
+        await ensureOfferContracts(wallet, "http://ark", [{ offerHex }]);
+
+        expect(state.created).toHaveLength(1);
+        expect(state.created[0]).toMatchObject({
+            type: "arkade",
+            script,
+            label: OFFER_CONTRACT_LABEL,
+            metadata: { genericallySpendable: false, kind: OFFER_CONTRACT_KIND },
+        });
+        expect(state.watched).toEqual([[script, "watched"]]);
+    });
+
+    it("sets no issuance mark, so a settled record can retire the script", async () => {
+        // createOffer's mark says an address is out waiting for its deposit;
+        // here the deposit is the record itself, and a mark set after the
+        // funding would never be cleared by it
+        const { offerHex, script } = await unmarkedOffer();
+        await ensureOfferContracts(wallet, "http://ark", [{ offerHex }]);
+        state.watched = [];
+
+        await retireOfferContract(
+            contractManager,
+            [
+                {
+                    id: "ab".repeat(32),
+                    fromAsset: "btc",
+                    toAsset: testAsset.toString(),
+                    fromAmount: "10000",
+                    toAmount: "777777",
+                    swapAddress: "",
+                    swapPkScript: script,
+                    offerHex,
+                    fundingTxid: "ab".repeat(32),
+                    status: "fulfilled",
+                    createdAt: 0,
+                },
+            ],
+            script,
+        );
+        expect(state.watched).toEqual([[script, "retained"]]);
+    });
+
+    it("refuses an offer the current server key no longer rebuilds, and registers the rest", async () => {
+        // a signer rotation since funding: the TLV pins the funded script, the
+        // rebuild under today's key disagrees, and registering at the rebuilt
+        // script would watch an address the deposit never sat at
+        const good = await unmarkedOffer();
+        const { swapPkScript: _, ...binding } = decodeOffer(hex.decode(good.offerHex));
+        const rotatedKey = schnorr.getPublicKey(hex.decode("7".repeat(64)));
+        const rotated = offerVtxoScript(binding, rotatedKey);
+        const stale = hex.encode(encodeOffer({ ...binding, swapPkScript: rotated.pkScript }));
+        state.created = [];
+
+        await expect(
+            ensureOfferContracts(wallet, "http://ark", [{ offerHex: stale }, good]),
+        ).rejects.toThrow(/could not register 1 offer covenant\(s\).*rotated/);
+        expect(state.created.map((row) => row.script)).toEqual([good.script]);
+    });
+
+    it("takes the funded address as the key to rebuild with", async () => {
+        // the pin cancelOffer honours: a record that kept its swapAddress keeps
+        // working across a rotation, because the key comes from the address
+        const good = await unmarkedOffer();
+        const { swapPkScript: _, ...binding } = decodeOffer(hex.decode(good.offerHex));
+        const rotatedKey = schnorr.getPublicKey(hex.decode("7".repeat(64)));
+        const rotated = offerVtxoScript(binding, rotatedKey);
+        const stale = hex.encode(encodeOffer({ ...binding, swapPkScript: rotated.pkScript }));
+        const fundedAddress = rotated.address("tark", rotatedKey).encode();
+        state.created = [];
+
+        await ensureOfferContracts(wallet, "http://ark", [
+            { offerHex: stale, swapAddress: fundedAddress },
+        ]);
+        expect(state.created.map((row) => row.script)).toEqual([hex.encode(rotated.pkScript)]);
+    });
+
+    it("falls back to the caller's key for a record with no address to pin", async () => {
+        // what the restore scan hands over: the key it classified with, which
+        // is the funded one after a rotation while the server's is not
+        const good = await unmarkedOffer();
+        const { swapPkScript: _, ...binding } = decodeOffer(hex.decode(good.offerHex));
+        const rotatedKey = schnorr.getPublicKey(hex.decode("7".repeat(64)));
+        const rotated = offerVtxoScript(binding, rotatedKey);
+        const stale = hex.encode(encodeOffer({ ...binding, swapPkScript: rotated.pkScript }));
+        state.created = [];
+
+        await ensureOfferContracts(wallet, "http://ark", [{ offerHex: stale }], {
+            serverPubkey: rotatedKey,
+        });
+        expect(state.created.map((row) => row.script)).toEqual([hex.encode(rotated.pkScript)]);
+    });
+
+    it("reads nothing off the server for an empty list", async () => {
+        state.created = [];
+        await ensureOfferContracts(wallet, "http://ark", []);
+        expect(state.created).toEqual([]);
     });
 });
