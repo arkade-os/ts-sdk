@@ -1811,7 +1811,7 @@ export class RfqSwapManager {
         // The mirror of the `settled` refusal: whichever leg the trader takes
         // first forecloses the other. Reachable only when the quote leaves both
         // legs live at once, which `assertFundable` does not gate here.
-        if (swap.refundTxid) {
+        if (swap.refundTxid || l1.attempted) {
             return this.block(
                 swap,
                 "the L1 funding was refunded, so claiming the lockup too would take both " +
@@ -1831,7 +1831,7 @@ export class RfqSwapManager {
         /** A claim of ours is out, so this output is the solver's. Cannot ride
          * on `settled`, whose early return would skip the refund entirely. */
         claimSubmitted: boolean,
-    ): Promise<{ verdict: "resolved" | "live"; blocked?: string }> {
+    ): Promise<{ verdict: "resolved" | "live"; blocked?: string; attempted?: boolean }> {
         // `admit` refuses this kind without one; never drive blind if that changes.
         if (!this.deps.chain) return { verdict: "live" };
 
@@ -1892,7 +1892,9 @@ export class RfqSwapManager {
         } catch (error) {
             this.emitFailed(swap, error);
         }
-        return { verdict: "live" };
+        // `attempted`, not just `refundTxid`: a callback that broadcast then
+        // threw leaves no txid, and claiming this pass would take both legs.
+        return { verdict: "live", attempted: true };
     }
 
     /** `handled` ends the pass; `continue` falls through to the refund gate. */

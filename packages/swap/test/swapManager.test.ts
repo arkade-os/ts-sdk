@@ -919,6 +919,26 @@ describe("RfqSwapManager — the onchain-receive L1 half", () => {
         expect(swap.claimArkTxid).toBeUndefined();
     });
 
+    it("does not claim after a refund ATTEMPT, which may have broadcast before throwing", async () => {
+        const s = spies({
+            refundOnchain: () => Promise.reject(new Error("broadcast ok, parse failed")),
+        });
+        const { swap } = await drive({
+            swap: onchainReceiveSwap({ htlc: invertedHtlc() }),
+            spies: s,
+            indexer: fakeIndexer({
+                vtxos: unspent(),
+                funded: [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }],
+            }),
+            chain: fakeChain({ utxos: [FILL], mtp: REFUND_LOCKTIME - 3600 }),
+            now: SAFE_NOW,
+        });
+
+        expect(s.onchainRefunds).toHaveLength(1);
+        expect(s.lockupClaims).toHaveLength(0);
+        expect(swap.refundTxid).toBeUndefined();
+    });
+
     it("does not refund the L1 half once a claim of ours is out", async () => {
         const s = spies();
         await drive({
