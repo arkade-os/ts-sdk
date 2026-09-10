@@ -18,6 +18,7 @@ import {
     bestMarket,
     discover,
     isNetwork,
+    marketLegKey,
     sideLimits,
     type DiscoveredMarket,
     type LocalCardInput,
@@ -217,13 +218,13 @@ export const findMarket = (
         for (const market of markets) {
             for (const side of ["base", "quote"] as const) {
                 const asset = side === "base" ? market.base_asset : market.quote_asset;
-                if (asset.id === id) return id;
+                if (asset.id === id) return marketLegKey(market, side);
                 const canonical = marketAssetId(market, side) ?? "";
                 const matchesBtc =
                     id === BTC_ASSET_ID && /^arkade:[^/]+\/slip44:(?:0|1)$/.test(canonical);
                 const matchesAsset =
                     /^[0-9a-f]{68}$/.test(id) && canonical.endsWith(`/asset:${id}`);
-                if ((matchesBtc || matchesAsset) && typeof asset.id === "string") return asset.id;
+                if (matchesBtc || matchesAsset) return marketLegKey(market, side);
             }
         }
         return id;
