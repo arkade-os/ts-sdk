@@ -890,6 +890,51 @@ describe("RfqSwapManager — the onchain-receive L1 half", () => {
         expect(isRfqSwapTerminal(swap.state)).toBe(false);
     });
 
+    const invertedHtlc = () =>
+        onchainHtlcScript(
+            {
+                paymentHash: PAYMENT_HASH,
+                claimKey: key(1),
+                refundKey: key(3),
+                refundLocktime: REFUND_LOCKTIME - 3600,
+            },
+            "regtest",
+        );
+
+    it("does not claim the lockup once it has refunded the L1 half", async () => {
+        const s = spies();
+        const { swap } = await drive({
+            swap: onchainReceiveSwap({ htlc: invertedHtlc() }),
+            spies: s,
+            indexer: fakeIndexer({
+                vtxos: unspent(),
+                funded: [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }],
+            }),
+            chain: fakeChain({ utxos: [FILL], mtp: REFUND_LOCKTIME - 3600 }),
+            now: SAFE_NOW,
+        });
+
+        expect(s.onchainRefunds).toHaveLength(1);
+        expect(s.lockupClaims).toHaveLength(0);
+        expect(swap.claimArkTxid).toBeUndefined();
+    });
+
+    it("does not refund the L1 half once a claim of ours is out", async () => {
+        const s = spies();
+        await drive({
+            swap: onchainReceiveSwap({
+                htlc: invertedHtlc(),
+                claimArkTxid: CLAIM_ARK_TXID,
+            }),
+            spies: s,
+            indexer: fakeIndexer({ vtxos: unspent(), funded: [] }),
+            chain: fakeChain({ utxos: [FILL], mtp: REFUND_LOCKTIME - 3600 }),
+            now: SAFE_NOW,
+        });
+
+        expect(s.onchainRefunds).toHaveLength(0);
+    });
+
     it("keeps the value gate on a restored record that never claimed", async () => {
         // `claimArkTxid` is written only from a live `claimLockup` return, so a
         // restore cannot manufacture `partiallyClaimed` and skip the gate on a

@@ -1786,7 +1786,7 @@ export class RfqSwapManager {
             return;
         }
 
-        const l1 = await this.driveOnchainRefund(swap);
+        const l1 = await this.driveOnchainRefund(swap, swap.claimArkTxid !== undefined);
 
         if (fate.fate === "returned") {
             if (l1.verdict === "resolved") this.setState(swap, "refunded");
@@ -1808,6 +1808,16 @@ export class RfqSwapManager {
                         "holding the swap open until its refund leaf opens",
             );
         }
+        // The mirror of the `settled` refusal: whichever leg the trader takes
+        // first forecloses the other. Reachable only when the quote leaves both
+        // legs live at once, which `assertFundable` does not gate here.
+        if (swap.refundTxid) {
+            return this.block(
+                swap,
+                "the L1 funding was refunded, so claiming the lockup too would take both " +
+                    "sides of the trade — the solver's reclaim ends this swap",
+            );
+        }
         await this.driveReceiveClaim(swap);
         // After that arm, never before: it `unblock`s an empty lockup, which
         // would erase the refusal the L1 half just reported.
@@ -1818,6 +1828,9 @@ export class RfqSwapManager {
      * caller applies once the Arkade arm has run. No give-up branch. */
     private async driveOnchainRefund(
         swap: OnchainReceiveSwap,
+        /** A claim of ours is out, so this output is the solver's. Cannot ride
+         * on `settled`, whose early return would skip the refund entirely. */
+        claimSubmitted: boolean,
     ): Promise<{ verdict: "resolved" | "live"; blocked?: string }> {
         // `admit` refuses this kind without one; never drive blind if that changes.
         if (!this.deps.chain) return { verdict: "live" };
@@ -1838,8 +1851,7 @@ export class RfqSwapManager {
         }
         if (phase.phase === "unfunded" && !swap.funding) return { verdict: "resolved" };
 
-        // Always `false`: `driveOnchainReceive` returns first when settled.
-        switch (nextOnchainReceiveAction({ phase, settled: false })) {
+        switch (nextOnchainReceiveAction({ phase, settled: claimSubmitted })) {
             case "taken":
                 return { verdict: "resolved" };
             case "refunded":
