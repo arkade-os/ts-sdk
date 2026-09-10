@@ -485,8 +485,7 @@ async function registerOfferContract(
     expectedPkScript: Uint8Array,
     opts: { issued?: number; client?: arkade.Arkade; contractManager?: IContractManager } = {},
 ): Promise<void> {
-    const { program, args, keys } = swapProgramBinding(binding, serverPubkey);
-    // the caller's when it has one: `register` goes through `opts.client`'s
+    // the caller's when it has one: registration goes through `opts.client`'s
     // manager, so a second fetch here splits one registration across two
     const contractManager = opts.contractManager ?? (await wallet.getContractManager());
     const client =
@@ -501,6 +500,19 @@ async function registerOfferContract(
             network: getNetwork(network),
             contractManager,
         }));
+    await contractManager.createContract(
+        offerContractParams(client, binding, serverPubkey, expectedPkScript),
+    );
+    await promoteOfferContract(contractManager, hex.encode(expectedPkScript), opts.issued);
+}
+
+function offerContractParams(
+    client: arkade.Arkade,
+    binding: Omit<Offer, "swapPkScript">,
+    serverPubkey: Uint8Array,
+    expectedPkScript: Uint8Array,
+) {
+    const { program, args, keys } = swapProgramBinding(binding, serverPubkey);
     const contract = new arkade.ArkadeContract(client, program, args, keys);
     // the row is keyed by script: registering anything but the script being
     // funded would leave the real deposit unwatched and unmarked, which is the
@@ -508,11 +520,11 @@ async function registerOfferContract(
     if (hex.encode(contract.pkScript) !== hex.encode(expectedPkScript)) {
         throw new Error("derived covenant does not match the offer's swapPkScript");
     }
-    await contract.register({
+    return {
+        ...contract.toContractParams(),
         label: OFFER_CONTRACT_LABEL,
         metadata: { genericallySpendable: false, kind: OFFER_CONTRACT_KIND },
-    });
-    await promoteOfferContract(contractManager, hex.encode(expectedPkScript), opts.issued);
+    };
 }
 
 /**
@@ -524,9 +536,11 @@ async function registerOfferContract(
  * restore-scan backstop three modules lean on restores records, not coverage.
  * Separate from that scan, which is indexer-only and whose records must survive
  * a coverage failure. A script whose every record is {@link RETIRABLE} is
- * skipped, or this undoes {@link retireSettledOfferContracts}. One client and
- * one contract manager for the batch; setup rejects rather than being caught,
- * because a server it could not reach covered nothing.
+ * skipped, or this undoes {@link retireSettledOfferContracts}. One client, one
+ * manager and one `createContracts` for the batch, so N covenants cost one
+ * indexer round trip. A covenant that no longer derives is skipped; a dead
+ * server or store is not — it covered nothing, and saying otherwise stops the
+ * caller retrying.
  */
 export async function restoreOfferCoverage(
     wallet: IWallet,
@@ -548,24 +562,36 @@ export async function restoreOfferCoverage(
         contractManager,
     });
     const done = new Set<string>();
+    const covenants = [];
     for (const swap of live) {
         if (done.has(swap.swapPkScript)) continue;
         done.add(swap.swapPkScript);
         try {
             const { swapPkScript: _, ...binding } = decodeOffer(hex.decode(swap.offerHex));
-            await registerOfferContract(
-                wallet,
-                arkServerUrl,
-                info.network as NetworkName,
-                binding,
-                serverPubKey,
-                hex.decode(swap.swapPkScript),
-                { issued: swap.createdAt, client, contractManager },
-            );
+            covenants.push({
+                script: swap.swapPkScript,
+                issued: swap.createdAt,
+                params: offerContractParams(
+                    client,
+                    binding,
+                    serverPubKey,
+                    hex.decode(swap.swapPkScript),
+                ),
+            });
         } catch (err) {
             console.warn(`[swap] could not restore coverage for ${swap.swapPkScript}`, err);
         }
     }
+    if (covenants.length === 0) return;
+
+    const paramsList = covenants.map((c) => c.params);
+    if (contractManager.createContracts) {
+        await contractManager.createContracts(paramsList);
+    } else {
+        // no batch path (the service-worker proxy, a consumer's own): N as before
+        for (const params of paramsList) await contractManager.createContract(params);
+    }
+    for (const c of covenants) await promoteOfferContract(contractManager, c.script, c.issued);
 }
 
 // ── User operations ─────────────────────────────────────────────────────────
