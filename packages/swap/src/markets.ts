@@ -27,6 +27,7 @@ import {
 } from "@arkade-os/solver-discovery";
 import { isSubdust } from "@arkade-os/sdk";
 import type { AssetSwapRepository, MarketsCacheEntry } from "./repository";
+import { marketAssetId } from "./marketShape";
 import { BTC_ASSET_ID } from "./store";
 
 /** Shared quote options so every quote path agrees.
@@ -106,8 +107,8 @@ const MARKETS_CACHE_TTL_MS = 60 * 60 * 1000;
 
 const isMarketShaped = (m: unknown): m is DiscoveredMarket => {
     const market = m as Partial<DiscoveredMarket> | null;
+    if (!market) return false;
     return (
-        typeof market?.pair === "string" &&
         typeof market.base_asset?.id === "string" &&
         typeof market.quote_asset?.id === "string" &&
         typeof market.quote_asset.decimals === "number"
@@ -126,7 +127,11 @@ const readMarketsCache = async (
         const entry = await repository.getCachedMarkets(network, registry);
         if (!Array.isArray(entry?.markets) || typeof entry?.fetchedAt !== "number")
             return undefined;
-        return entry.markets.every(isMarketShaped) ? entry : undefined;
+        const markets = entry.markets.filter(isMarketShaped);
+        // An empty cache is authoritative. A non-empty cache with no readable
+        // markets is malformed and should be replaced by a fresh fetch.
+        if (entry.markets.length > 0 && markets.length === 0) return undefined;
+        return { ...entry, markets };
     } catch {
         return undefined;
     }
@@ -208,10 +213,35 @@ export const findMarket = (
     toId: string,
 ): { market: DiscoveredMarket | null; give: Side } | undefined => {
     if (fromId === toId) return undefined;
-    const givingBase = bestMarket(markets, { baseId: fromId, quoteId: toId, wantSide: "quote" });
+    const resolveMarketId = (id: string): string => {
+        for (const market of markets) {
+            for (const side of ["base", "quote"] as const) {
+                const asset = side === "base" ? market.base_asset : market.quote_asset;
+                if (asset.id === id) return id;
+                const canonical = marketAssetId(market, side) ?? "";
+                const matchesBtc =
+                    id === BTC_ASSET_ID && /^arkade:[^/]+\/slip44:(?:0|1)$/.test(canonical);
+                const matchesAsset =
+                    /^[0-9a-f]{68}$/.test(id) && canonical.endsWith(`/asset:${id}`);
+                if ((matchesBtc || matchesAsset) && typeof asset.id === "string") return asset.id;
+            }
+        }
+        return id;
+    };
+    const resolvedFrom = resolveMarketId(fromId);
+    const resolvedTo = resolveMarketId(toId);
+    const givingBase = bestMarket(markets, {
+        baseId: resolvedFrom,
+        quoteId: resolvedTo,
+        wantSide: "quote",
+    });
     if (givingBase) return { market: givingBase, give: "base" };
     return {
-        market: bestMarket(markets, { baseId: toId, quoteId: fromId, wantSide: "base" }),
+        market: bestMarket(markets, {
+            baseId: resolvedTo,
+            quoteId: resolvedFrom,
+            wantSide: "base",
+        }),
         give: "quote",
     };
 };

@@ -7,6 +7,25 @@ This file covers the **0.4.x** line. Pre-0.4 release history (0.3.x and
 earlier) lives in `git log` — those entries were not written in this
 style and have not been backfilled.
 
+## [Unreleased]
+
+### Bug Fixes
+
+- **A `vtxo_spent` from the failsafe poll now carries the row that records
+  the spend.** `ContractWatcher.pollContracts` reported the difference
+  using its *cached* rows, and those were unspent when cached — so a
+  poll-derived `vtxo_spent` stated `isSpent: false`, `spentBy: ""` and no
+  `arkTxId` on an event whose whole meaning is that the output was spent.
+  Anything reading a spend txid off these events saw nothing to bind the
+  spend to, including `Wallet`'s own subscription, which forwards them as
+  `spentVtxos`. The poll now takes spent rows from the repository query it
+  was already making — no extra read — and emits the stored row, falling
+  back to the cached one when storage has nothing fresher. **Grep your
+  `vtxo_spent` handlers for `spentBy`, `arkTxId` and `isSpent`**: fields
+  that were always empty on the poll path are now populated, and a handler
+  branching on `!vtxo.isSpent` inside a spend handler now takes the other
+  branch. (#864)
+
 ## [0.4.23] - 2026-05-04
 
 ### Breaking Changes

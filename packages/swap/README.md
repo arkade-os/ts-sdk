@@ -85,10 +85,11 @@ funds an offer should keep cancelling within reach.
 3. **`store`** — the persisted `AssetSwap` records (`getAssetSwaps`/`addAssetSwap`/
    `updateAssetSwap`), thin helpers over an `AssetSwapRepository`. Read failures degrade to an
    empty list; write failures throw so pre-funding records can be retried before money is sent.
-4. **`restore`** — `restoreAssetSwaps` rebuilds lost records by scanning sent virtual txs for
-   offer packets and binding each funding vtxo to its spend. Incremental: answered txids are
-   remembered in the repository (`getScannedTxids`/`markTxidsScanned`) so nothing is fetched
-   twice.
+4. **`restore`** — `registerAssetSwapRestore` attaches durable swap recovery to an explicit
+   `wallet.restore()`. The underlying `restoreAssetSwapRepository` / `restoreAssetSwaps` scan sent
+   virtual txs for offer packets and bind each funding vtxo to its spend. The scan remains
+   available directly for ordinary startup and later reconciliation; answered txids are remembered
+   in the repository (`getScannedTxids`/`markTxidsScanned`) so nothing is fetched twice.
 5. **`watch`** — `watchOfferSwaps` drives swap status from the wallet's own contract events, so a
    fill shows up without re-running a scan. Registration is what makes it possible: only a
    registered covenant is watched. See "Live status" below.
@@ -120,6 +121,56 @@ uncached discovery.
 
 Neither subpath adds a dependency: they take the SDK's structural `SQLExecutor` / `RealmLike`
 handles, so you pass the database you already opened.
+
+### Restore an imported wallet
+
+Register swap recovery before the application calls the core wallet's explicit `restore()`:
+
+```ts
+import {
+    IndexedDbAssetSwapRepository,
+    registerAssetSwapRestore,
+} from "@arkade-os/swap";
+
+const repository = new IndexedDbAssetSwapRepository();
+const unregisterSwapRestore = registerAssetSwapRestore(wallet, {
+    arkServerUrl,
+    repository,
+    onResult: ({ changes, coverageError }) => {
+        if (coverageError) console.warn("Swap coverage was incomplete", coverageError);
+        console.info(`Restored or updated ${changes.length} swaps`);
+    },
+});
+
+await wallet.restore();
+```
+
+Core address, contract, history, and balance recovery finishes before the swap scan starts. The
+helper reads the recovered wallet history, normalizes it for the scan, rebuilds durable records,
+and repairs covenant coverage. Registering it again on the same wallet replaces the prior
+registration through the stable `arkade-os:asset-swap` hook ID, so setup is idempotent. Call
+`unregisterSwapRestore()` when that integration no longer owns the wallet.
+
+A direct `Wallet` exposes the indexer and current Ark server key the helper needs. A proxy or
+custom `IWallet` that does not expose them must pass both explicitly:
+
+```ts
+registerAssetSwapRestore(serviceWorkerWallet, {
+    arkServerUrl,
+    repository,
+    indexer,
+    serverPubkey,
+});
+```
+
+`coverageError` is result-level: records were already persisted, so the helper still delivers the
+complete result to `onResult` and a later restore can retry coverage safely. Scan, persistence, or
+`onResult` failures reject the hook; `wallet.restore()` reports hook failures through its
+`AggregateError` after attempting the other registered hooks.
+
+Keep calling `restoreAssetSwapRepository` directly during ordinary startup or when history may
+arrive later. Hooks run only during an explicit `wallet.restore()`, and the repository cursor makes
+the manual reconciliation idempotent against records the hook already rebuilt.
 
 All four carry both record types: asset swaps and the monitored RFQ swaps
 (`saveRfqSwap` / `getRfqSwap` / `getAllRfqSwaps` / `removeRfqSwap`). Each keeps them in a store of their own — a
@@ -319,7 +370,7 @@ message anywhere: **acceptance is funding**.
   reference solver serves the Lightning pair today.
 
 ```ts
-import { httpTransport, requestLightningSend } from "@arkade-os/swap";
+import { httpTransport, requestLightningSend, SwapRefusal } from "@arkade-os/swap";
 
 // invoice facts from YOUR OWN decoder — the module takes facts, not a decoder
 const swap = await requestLightningSend(wallet, arkServerUrl, httpTransport(solverUrl), {
@@ -342,9 +393,21 @@ The trust model is the offer side's, applied to quotes: only `solver_pubkey`,
 parameter is the trader's own data, and anything address-shaped from the solver is compare-only
 (`AddressMismatch` means refuse-to-fund). The emulator key is neither: as above, it is a
 per-network pin inside the SDK, not solver data.
-Refusals carry a closed reason set (`SwapRefusal`); unknown reasons are a generic decline. The
-`swap-lightning-send.program.json` bytes are frozen the same way the offer programs are — a
-golden test pins the compiled leaves and scriptPubKey to the reference solver's exact script.
+Refusals carry a closed reason set (`SwapRefusal`). A solver may also return a recognised
+`error_code` with client-safe context. The error exposes these as `errorCode`, `field`, `actual`,
+`expected`, `limit`, and `unit`, and includes useful numeric context in its message. Match
+`errorCode` for a specific remedy while treating `reason` as the compatible fallback:
+
+```ts
+if (error instanceof SwapRefusal && error.errorCode === "invoice_cltv_too_large") {
+    console.error(`Invoice CLTV is ${error.actual} blocks; solver limit is ${error.limit}`);
+}
+```
+
+Unknown diagnostic codes and fields stay generic. `RFQ_REFUSAL_ERROR_CODES` and
+`isRfqRefusalErrorCode` expose the accepted vocabulary. The `swap-lightning-send.program.json`
+bytes are frozen the same way the offer programs are — a golden test pins the compiled leaves and
+scriptPubKey to the reference solver's exact script.
 
 Transports are symmetric-outbound: `httpTransport` (POST `/v1/swap`, GET `/v1/rfq/<rfq_id>`),
 `relayTransport` (the dev broker framing), and `nostrRfqTransport` — the production one a

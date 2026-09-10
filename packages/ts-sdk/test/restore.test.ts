@@ -28,6 +28,7 @@ import {
     makeHdWalletForTest,
 } from "./helpers/restoreWallet";
 import { jsonResponse } from "./helpers/response";
+import { registerWalletRestoreHook } from "../src/wallet/restoreHooks";
 
 const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -2077,6 +2078,71 @@ describe("Wallet.restore", () => {
             await wallet.restore();
             expect(indexer.getVtxosCalls.length).toBeGreaterThan(singleRunCalls);
         } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("runs registered hooks after core recovery", async () => {
+        const { wallet, indexer } = await makeStaticWalletForTest();
+        const observedProbeCounts: number[] = [];
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "observe-core-recovery",
+            restore: async (restoredWallet) => {
+                expect(restoredWallet).toBe(wallet);
+                observedProbeCounts.push(indexer.getVtxosCalls.length);
+            },
+        });
+        try {
+            await wallet.restore();
+
+            expect(observedProbeCounts).toHaveLength(1);
+            expect(observedProbeCounts[0]).toBeGreaterThan(0);
+        } finally {
+            unregister();
+            await wallet.dispose();
+        }
+    });
+
+    it("keeps concurrent restore calls coalesced until hooks finish", async () => {
+        const { wallet } = await makeStaticWalletForTest();
+        let releaseHook = () => undefined;
+        const hookGate = new Promise<void>((resolve) => {
+            releaseHook = resolve;
+        });
+        const hook = vi.fn(async () => hookGate);
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "delayed",
+            restore: hook,
+        });
+        try {
+            const first = wallet.restore();
+            await vi.waitFor(() => expect(hook).toHaveBeenCalledOnce());
+            const second = wallet.restore();
+
+            releaseHook();
+            await Promise.all([first, second]);
+
+            expect(hook).toHaveBeenCalledOnce();
+        } finally {
+            unregister();
+            await wallet.dispose();
+        }
+    });
+
+    it("skips hooks when core recovery fails", async () => {
+        const { wallet } = await makeStaticWalletForTest();
+        const coreFailure = new Error("core recovery failed");
+        vi.spyOn(wallet as any, "_runRestore").mockRejectedValueOnce(coreFailure);
+        const hook = vi.fn(async () => undefined);
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "must-not-run",
+            restore: hook,
+        });
+        try {
+            await expect(wallet.restore()).rejects.toBe(coreFailure);
+            expect(hook).not.toHaveBeenCalled();
+        } finally {
+            unregister();
             await wallet.dispose();
         }
     });

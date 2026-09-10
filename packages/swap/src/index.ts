@@ -1,11 +1,15 @@
 export {
     createOffer,
     cancelOffer,
+    fillOffer,
+    restoreOfferCoverage,
     encodeOffer,
     decodeOffer,
     offerVtxoScript,
     swapPrograms,
+    ASSET_CARRIER_SATS,
     OFFER_PACKET_TYPE,
+    type FillFunding,
     type Offer,
 } from "./offer";
 export {
@@ -17,6 +21,15 @@ export {
     type DiscoverMarketsOptions,
     type PlanError,
 } from "./markets";
+export {
+    MARKET_CORRIDORS,
+    isRfqMarket,
+    marketAssetId,
+    marketCorridor,
+    marketPairLabel,
+    type MarketCorridor,
+    type MarketLike,
+} from "./marketShape";
 export {
     BTC_ASSET_ID,
     getAssetSwaps,
@@ -38,6 +51,16 @@ export {
     InMemoryAssetSwapRepository,
 } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
+export {
+    restoreAssetSwapRepository,
+    type AssetSwapRestoreChange,
+    type RestoreAssetSwapRepositoryOptions,
+    type RestoreAssetSwapRepositoryResult,
+} from "./restoreRepository";
+export {
+    registerAssetSwapRestore,
+    type RegisterAssetSwapRestoreOptions,
+} from "./registerRestore";
 // The corridor handlers and their registry are internal — see `rfqCorridor.ts`
 // for why. What a consumer writes into `RfqSwapOrigin.profile` is these: every
 // corridor's keys through `rfqSecretsProfile`, then whatever its own leg adds.
@@ -97,6 +120,7 @@ export {
     LIGHTNING_SEND_PAIR,
     MIN_CLAIM_WINDOW_SECONDS,
     MIN_HEADROOM_SECONDS,
+    RFQ_REFUSAL_ERROR_CODES,
     RFQ_TERMINAL_STATES,
     SOLO_REFUND_HEADROOM_SECONDS,
     AddressMismatch,
@@ -108,6 +132,7 @@ export {
     deriveLightningReceive,
     deriveOnchainReceive,
     httpTransport,
+    isRfqRefusalErrorCode,
     lightningReceiveRequest,
     lightningSendRequest,
     lightningSendVtxoScript,
@@ -128,7 +153,10 @@ export {
     type LightningSendTreeParams,
     type RelaySocket,
     type RfqQuote,
+    type RfqRefusalDetail,
+    type RfqRefusalErrorCode,
     type RfqRefusalReason,
+    type RfqRefusalUnit,
     type RfqStatus,
     type RfqTransport,
 } from "./rfq";
