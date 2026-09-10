@@ -10,6 +10,14 @@ import { canRecoverOnchain, canSpendOffchain, hasTerminalSpend } from "./vtxo";
 export interface OffchainBalance {
     settled: number;
     preconfirmed: number;
+    /**
+     * `settled + preconfirmed - gated - intentLocked`, less one dust carrier
+     * while a spendable coin carries an asset, and zero below dust — an amount
+     * generic selection always accepts. A safe floor, not a tight maximum: a
+     * send whose selected inputs happen to carry no asset can exceed it. Not
+     * the input budget either — selection picks from the VTXO set, reserved
+     * carrier included.
+     */
     available: number;
     /**
      * Spendable-but-for-the-gate funds: VTXOs under a contract
@@ -63,6 +71,8 @@ export interface OffchainBalance {
  */
 export interface BalanceCapabilities {
     now: TimeHeight;
+    /** The server's dust floor: what a change output needs to carry asset change. */
+    dust: bigint;
     /** Past-cutoff deprecated-signer funds awaiting recovery. */
     isPendingRecovery: (vtxo: NormalizedExtendedVirtualCoin) => boolean;
     /** The generic-spending gate. @see isContractGenericallySpendable */
@@ -89,7 +99,7 @@ export function computeOffchainBalance(
     vtxos: readonly NormalizedExtendedVirtualCoin[],
     caps: BalanceCapabilities,
 ): OffchainBalance {
-    const { now, isPendingRecovery, isGenericallySpendable, isUnlocked } = caps;
+    const { now, dust, isPendingRecovery, isGenericallySpendable, isUnlocked } = caps;
 
     let settled = 0;
     let preconfirmed = 0;
@@ -164,10 +174,13 @@ export function computeOffchainBalance(
     const toAssets = (from: Map<string, bigint>): Asset[] =>
         Array.from(from.entries()).map(([assetId, amount]) => ({ assetId, amount }));
 
+    // One change output carries every asset change, so the reserve is one dust.
+    const ceiling = available - (spendable.size > 0 ? Number(dust) : 0);
+
     return {
         settled,
         preconfirmed,
-        available,
+        available: ceiling >= Number(dust) ? ceiling : 0,
         gated,
         intentLocked,
         recoverable,

@@ -1445,6 +1445,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
         return {
             now: { timestamp: new Date() },
+            dust: this.dustAmount,
             isPendingRecovery: (vtxo) => pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
             isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),

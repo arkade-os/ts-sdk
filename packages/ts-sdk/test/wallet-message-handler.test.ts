@@ -2142,7 +2142,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             payload: {
                 settled: 30000,
                 total: 30000,
-                available: 10000,
+                available: 9454, // 10000 less the 546 dust carrier its asset needs
                 gated: 20000,
                 intentLocked: 0,
                 assets: [{ assetId: "cc".repeat(32), amount: 7n }],
