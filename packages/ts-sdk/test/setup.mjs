@@ -2,6 +2,7 @@ import { execSync } from "child_process";
 import {
     printSetupBanner,
     waitForArkServer,
+    waitForBoltzPairs,
     waitForEmulator,
 } from "../../../scripts/regtest-wait.mjs";
 
@@ -27,6 +28,7 @@ async function setup() {
         await waitForArkServer();
         initArkCli();
         await waitForEmulator();
+        await waitForBoltzPairs();
         printSetupBanner();
     } catch (error) {
         console.error("\n✗ Setup failed:", error);

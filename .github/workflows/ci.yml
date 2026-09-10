@@ -165,14 +165,12 @@ jobs:
       - name: Capture logs on failure
         if: failure()
         run: |
-          # arkade-regtest#62 deleted boltz/boltz-lnd/boltz-fulmine and renamed
-          # the second LND node to `lnd-peer`; the swap stacks also run the
-          # solver and covclaimd now. `|| true` kept a stale list quiet, which
-          # is exactly why it went unnoticed — a Lightning failure dumped nothing.
-          for c in arkd arkd-wallet emulator lnd lnd-peer intent-solver covclaimd; do
-            echo "===== logs: $c ====="
-            docker logs --tail 200 "$c" 2>&1 || true
-          done
+          docker logs arkd 2>&1 || true
+          docker logs arkd-wallet 2>&1 || true
+          docker logs emulator 2>&1 || true
+          docker logs boltz 2>&1 || true
+          docker logs boltz-lnd 2>&1 || true
+          docker logs boltz-fulmine 2>&1 || true
 
       - name: Cleanup
         if: always()
