@@ -13,6 +13,7 @@
  * against covclaimd's before production use (see the package README).
  */
 import { base64 } from "@scure/base";
+import { concatBytes } from "@scure/btc-signer/utils.js";
 import { gcm } from "@noble/ciphers/aes.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
@@ -21,10 +22,28 @@ import { sha256 } from "@noble/hashes/sha2.js";
 const HKDF_INFO = new TextEncoder().encode("covclaimd/preimage/v1");
 
 export interface SealedClaimPacket {
-    /** `ephPub(33) ‖ nonce(12) ‖ ciphertext`, base64 — wire-ready. This is
-     * the whole packet: the RFQ request's `claim_packet` field carries
-     * exactly this string. */
+    /** `ephPub(33) ‖ nonce(12) ‖ ciphertext`, base64 — the bare sealed bytes,
+     * 93 decoded. The older of the two `claim_packet` shapes: a solver holding
+     * it can only hand it to covclaimd over the Reveal API, which needs both
+     * sides pointed at the SAME covclaimd — an agreement nothing on the wire
+     * expresses. Prefer {@link SealedClaimPacket.packet}. */
     ciphertext: string;
+    /**
+     * covclaimd's serialised `ClaimPacket` body, base64 — TLV `0x01` ciphertext
+     * and `0x03` covclaimd_pub_key. **This is what `claim_packet` should
+     * carry** (§ 7.1.2: senders SHOULD prefer the packet shape).
+     *
+     * It is what lets the solver stamp the funding transaction as Arkade
+     * extension packet `0x04`, which covclaimd finds on the arkd stream by
+     * itself. The `0x03` TLV is what its filter selects on, so the client alone
+     * chooses which covclaimd — the solver needs none configured or reachable.
+     *
+     * `0x02` arkade_script is deliberately absent: the covenant commits to
+     * `taggedHash("ArkScriptHash", script)`, so the funder holds the only copy
+     * guaranteed to match and appends it. A client deriving its own would add a
+     * way for the two to disagree and strand the claim.
+     */
+    packet: string;
 }
 
 export interface ClaimPacketInput {
@@ -75,9 +94,25 @@ export async function sealWithEntropy(
     if (nonce.length !== 12) throw new Error("nonce must be 12 bytes");
     const sealed = gcm(key, nonce, ephemeralPub).encrypt(input.preimage);
 
-    const packet = new Uint8Array(33 + 12 + sealed.length);
-    packet.set(ephemeralPub, 0);
-    packet.set(nonce, 33);
-    packet.set(sealed, 45);
-    return { ciphertext: base64.encode(packet) };
+    const ciphertext = new Uint8Array(33 + 12 + sealed.length);
+    ciphertext.set(ephemeralPub, 0);
+    ciphertext.set(nonce, 33);
+    ciphertext.set(sealed, 45);
+    return {
+        ciphertext: base64.encode(ciphertext),
+        packet: base64.encode(
+            concatBytes(
+                tlv(TLV_CIPHERTEXT, ciphertext),
+                tlv(TLV_COVCLAIMD_PUBKEY, input.covclaimdPubkey),
+            ),
+        ),
+    };
 }
+
+const TLV_CIPHERTEXT = 0x01;
+const TLV_COVCLAIMD_PUBKEY = 0x03;
+
+/** `type(1) ‖ length(2, big-endian) ‖ value`, covclaimd's own framing. The
+ * length is two bytes even for a 33-byte key: the format is fixed, not minimal. */
+const tlv = (type: number, value: Uint8Array): Uint8Array =>
+    Uint8Array.from([type, (value.length >> 8) & 0xff, value.length & 0xff, ...value]);

@@ -40,6 +40,43 @@ describe("sealClaimPacket", () => {
         );
     });
 
+    /**
+     * § 7.1.2: a client sends `0x01` ciphertext and `0x03` covclaimd_pub_key,
+     * and omits `0x02` arkade_script for the solver to append. The `0x03` TLV
+     * is REQUIRED — covclaimd's extension filter selects on it, so without one
+     * the solver refuses to stamp and the swap falls back to the Reveal API.
+     */
+    it("frames the packet shape as TLV 0x01 + 0x03, and omits 0x02", async () => {
+        const sealed = await deterministic();
+        const raw = base64.decode(sealed.packet);
+        const ct = base64.decode(sealed.ciphertext);
+
+        // type(1) ‖ length(2 BE) ‖ value, twice
+        expect(raw[0]).toBe(0x01);
+        expect((raw[1]! << 8) | raw[2]!).toBe(ct.length);
+        expect(hex.encode(raw.subarray(3, 3 + ct.length))).toBe(hex.encode(ct));
+
+        const at = 3 + ct.length;
+        expect(raw[at]).toBe(0x03);
+        expect((raw[at + 1]! << 8) | raw[at + 2]!).toBe(33);
+        expect(hex.encode(raw.subarray(at + 3, at + 36))).toBe(hex.encode(COVCLAIMD_PK));
+
+        // nothing else — 0x02 is the funder's to add
+        expect(raw.length).toBe(at + 36);
+    });
+
+    /**
+     * The solver tells the shapes apart BY LENGTH ALONE: 93 decoded is the bare
+     * ciphertext, anything else is parsed as TLV. A packet that landed on 93
+     * would be read as the legacy shape and never stamped — which is exactly
+     * the bug this shape exists to fix.
+     */
+    it("cannot be mistaken for the bare ciphertext", async () => {
+        const sealed = await deterministic();
+        expect(base64.decode(sealed.ciphertext).length).toBe(93);
+        expect(base64.decode(sealed.packet).length).toBeGreaterThan(93);
+    });
+
     it("round-trips: covclaimd's key recovers exactly P", async () => {
         const packet = await deterministic();
         const opened = await openClaimPacket(packet.ciphertext, COVCLAIMD_SK);
