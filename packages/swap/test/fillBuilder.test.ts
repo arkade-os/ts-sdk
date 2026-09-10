@@ -173,6 +173,33 @@ describe("fillOffer against the REAL Arkade builder", () => {
         expect(tx.getOutput(1)!.amount).toBe(BigInt(90_000));
     });
 
+    /**
+     * `hasPayoutOutput` predicts whether `.change()` will emit vout 1, and every
+     * asset it routes there depends on the prediction holding. It holds because
+     * the builder balances inputs against outputs EXACTLY — no fee comes out of
+     * change — so `inputsSum > outputsSum` is the builder's own `surplus > 0n`
+     * rather than an estimate of it.
+     *
+     * Pinned at a surplus of ONE sat, with an asset in the spend: if a fee were
+     * ever deducted, this is the case that would lose the change output and
+     * route the asset to a vout that does not exist.
+     */
+    it("emits the payout output at a one-sat surplus, with an asset routed to it", async () => {
+        reset();
+        // 1-sat deposit carrying the asset, funded to exactly wantAmount:
+        // 1 + 50_000 in, 50_000 to the maker, so surplus is 1.
+        state.vtxos = [{ ...mintCoin(1), assets: [{ assetId: DEPOSIT_ASSET, amount: 2_000 }] }];
+        await fillOffer(wallet, "http://ark", offerHex, {
+            fund: [fundingCoin(50_000)] as never,
+            emulator: "http://emulator.test",
+            payoutScript: TAKER_PAYOUT,
+        });
+
+        const tx = built();
+        expect(tx.getOutput(1)).toBeDefined();
+        expect(hex.encode(tx.getOutput(1)!.script!)).toBe(hex.encode(TAKER_PAYOUT));
+    });
+
     it("hands the wallet's contract manager to the arkade client", async () => {
         reset();
         // Behavioural: the manager is the only source of the deposit here.
