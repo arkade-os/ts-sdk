@@ -85,10 +85,11 @@ funds an offer should keep cancelling within reach.
 3. **`store`** — the persisted `AssetSwap` records (`getAssetSwaps`/`addAssetSwap`/
    `updateAssetSwap`), thin helpers over an `AssetSwapRepository`. Read failures degrade to an
    empty list; write failures throw so pre-funding records can be retried before money is sent.
-4. **`restore`** — `restoreAssetSwaps` rebuilds lost records by scanning sent virtual txs for
-   offer packets and binding each funding vtxo to its spend. Incremental: answered txids are
-   remembered in the repository (`getScannedTxids`/`markTxidsScanned`) so nothing is fetched
-   twice.
+4. **`restore`** — `registerAssetSwapRestore` attaches durable swap recovery to an explicit
+   `wallet.restore()`. The underlying `restoreAssetSwapRepository` / `restoreAssetSwaps` scan sent
+   virtual txs for offer packets and bind each funding vtxo to its spend. The scan remains
+   available directly for ordinary startup and later reconciliation; answered txids are remembered
+   in the repository (`getScannedTxids`/`markTxidsScanned`) so nothing is fetched twice.
 5. **`watch`** — `watchOfferSwaps` drives swap status from the wallet's own contract events, so a
    fill shows up without re-running a scan. Registration is what makes it possible: only a
    registered covenant is watched. See "Live status" below.
@@ -120,6 +121,56 @@ uncached discovery.
 
 Neither subpath adds a dependency: they take the SDK's structural `SQLExecutor` / `RealmLike`
 handles, so you pass the database you already opened.
+
+### Restore an imported wallet
+
+Register swap recovery before the application calls the core wallet's explicit `restore()`:
+
+```ts
+import {
+    IndexedDbAssetSwapRepository,
+    registerAssetSwapRestore,
+} from "@arkade-os/swap";
+
+const repository = new IndexedDbAssetSwapRepository();
+const unregisterSwapRestore = registerAssetSwapRestore(wallet, {
+    arkServerUrl,
+    repository,
+    onResult: ({ changes, coverageError }) => {
+        if (coverageError) console.warn("Swap coverage was incomplete", coverageError);
+        console.info(`Restored or updated ${changes.length} swaps`);
+    },
+});
+
+await wallet.restore();
+```
+
+Core address, contract, history, and balance recovery finishes before the swap scan starts. The
+helper reads the recovered wallet history, normalizes it for the scan, rebuilds durable records,
+and repairs covenant coverage. Registering it again on the same wallet replaces the prior
+registration through the stable `arkade-os:asset-swap` hook ID, so setup is idempotent. Call
+`unregisterSwapRestore()` when that integration no longer owns the wallet.
+
+A direct `Wallet` exposes the indexer and current Ark server key the helper needs. A proxy or
+custom `IWallet` that does not expose them must pass both explicitly:
+
+```ts
+registerAssetSwapRestore(serviceWorkerWallet, {
+    arkServerUrl,
+    repository,
+    indexer,
+    serverPubkey,
+});
+```
+
+`coverageError` is result-level: records were already persisted, so the helper still delivers the
+complete result to `onResult` and a later restore can retry coverage safely. Scan, persistence, or
+`onResult` failures reject the hook; `wallet.restore()` reports hook failures through its
+`AggregateError` after attempting the other registered hooks.
+
+Keep calling `restoreAssetSwapRepository` directly during ordinary startup or when history may
+arrive later. Hooks run only during an explicit `wallet.restore()`, and the repository cursor makes
+the manual reconciliation idempotent against records the hook already rebuilt.
 
 All four carry both record types: asset swaps and the monitored RFQ swaps
 (`saveRfqSwap` / `getRfqSwap` / `getAllRfqSwaps` / `removeRfqSwap`). Each keeps them in a store of their own — a

@@ -60,7 +60,7 @@ The proxy adds a local in-flight guard covering the worker request and local hoo
 
 1. Register one stable hook id through `registerWalletRestoreHook`.
 2. After core restore, call `wallet.getTransactionHistory()` so the scan sees the newly recovered history.
-3. Call `restoreAssetSwapRepository` with the wallet, plugin repository, wallet indexer, current operator key, configured operator URL, and optional `prepareNew` callback.
+3. Normalize the SDK's recovered `ArkTransaction` history into the scan's compact `Tx` shape, then call `restoreAssetSwapRepository` with the wallet, plugin repository, wallet indexer, current operator key, configured operator URL, and optional `prepareNew` callback.
 4. Deliver the complete `RestoreAssetSwapRepositoryResult` to an optional `onResult` callback for application state and notifications.
 
 Conceptual usage:
@@ -82,9 +82,9 @@ The existing standalone function remains public for applications that need manua
 
 ### Dependencies Derived from the Wallet
 
-The swap helper reads `indexerProvider` and `arkServerPublicKey` from the wallet rather than asking applications to pass duplicate values that could disagree with the restored wallet. The operator URL remains explicit because an injected `ArkProvider` is not guaranteed to expose a URL.
+The swap helper reads `indexerProvider` and `arkServerPublicKey` from a concrete wallet by default rather than asking applications to pass duplicate values that could disagree with it. The operator URL remains explicit because an injected `ArkProvider` is not guaranteed to expose a URL.
 
-The helper accepts wallets that implement the current `IWallet` restore and history surface, including `ServiceWorkerWallet`. If a proxy cannot expose a usable indexer provider, the helper accepts an explicit `indexer` override; the wallet-derived provider is the default.
+The helper accepts wallets that implement the current `IWallet` restore and history surface, including `ServiceWorkerWallet`. Since those dependencies are not part of the structural `IWallet` contract, a proxy or custom wallet that does not expose them passes explicit `indexer` and `serverPubkey` overrides; wallet-derived values remain the default.
 
 ## Errors and Results
 
@@ -138,7 +138,7 @@ Swap tests cover:
 
 - recovered history is fetched after core restore invokes the hook;
 - wallet-derived indexer and operator key are passed to repository recovery;
-- explicit indexer override works for proxy/custom wallets;
+- explicit indexer and server-key overrides work for proxy/custom wallets;
 - `prepareNew` and `onResult` are forwarded once;
 - duplicate registration does not duplicate scans;
 - standalone `restoreAssetSwapRepository` behavior remains unchanged.
