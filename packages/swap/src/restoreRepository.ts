@@ -120,7 +120,8 @@ export async function restoreAssetSwapRepository(
     for (const restored of scan.restored) {
         if (signal?.aborted) return cancelledAfterCommit();
         const previous = before.get(restored.id);
-        const current = previous || !prepareNew ? restored : await prepareNew(restored);
+        const current =
+            previous !== undefined || !prepareNew ? restored : await prepareNew(restored);
         if (current.id !== restored.id) {
             throw new Error("prepareNew must not change an asset swap id");
         }
