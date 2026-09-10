@@ -392,12 +392,16 @@ export interface WalletBalance {
     /** Preconfirmed (unfinalized) balance the wallet owns, on the same owned rule as {@link settled}. */
     preconfirmed: number;
     /**
-     * Immediately spendable offchain balance, and the most one `send` can move
-     * out while the wallet's assets stay behind — what a "send max" control
-     * prefills: `settled + preconfirmed - gated - intentLocked`, less one dust
-     * carrier while a spendable coin carries an asset (asset change needs a
-     * change output at or above dust), and zero below dust. Not the input
-     * budget: selection still picks from the VTXO set, reserved carrier
+     * Immediately spendable offchain balance: an amount one `send` always
+     * accepts while the wallet's assets stay behind, and what a "send max"
+     * control prefills. `settled + preconfirmed - gated - intentLocked`, less
+     * one dust carrier while a spendable coin carries an asset (asset change
+     * needs a change output at or above dust), and zero below dust.
+     *
+     * A safe floor, not a tight maximum — a send whose selected inputs happen
+     * to carry no asset can exceed it — and it describes generic selection
+     * only: `send({ selectedVtxos })` spends exactly the inputs named. Not the
+     * input budget either; selection picks from the VTXO set, reserved carrier
      * included.
      */
     available: number;

@@ -12,9 +12,11 @@ export interface OffchainBalance {
     preconfirmed: number;
     /**
      * `settled + preconfirmed - gated - intentLocked`, less one dust carrier
-     * while a spendable coin carries an asset, and zero below dust — the most
-     * one `send` can move out. Not the input budget: selection still picks from
-     * the VTXO set, reserved carrier included.
+     * while a spendable coin carries an asset, and zero below dust — an amount
+     * generic selection always accepts. A safe floor, not a tight maximum: a
+     * send whose selected inputs happen to carry no asset can exceed it. Not
+     * the input budget either — selection picks from the VTXO set, reserved
+     * carrier included.
      */
     available: number;
     /**

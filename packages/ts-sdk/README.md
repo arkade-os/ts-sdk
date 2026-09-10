@@ -408,8 +408,8 @@ console.log('Unilaterally exited:', balance.unrolled)
 
 `settled` and `preconfirmed` are the owned offchain buckets this relationship is
 about — `recoverable`, `pendingRecovery` and `unrolled` are the wallet's funds
-too, just held under a different predicate. `available` is what one send can
-actually move out, and the difference between the two is accounted for exactly:
+too, just held under a different predicate. `available` is what one send always
+accepts, and the difference between the two is accounted for exactly:
 
 ```text
 settled + preconfirmed === available + carrierReserve + gated + intentLocked
@@ -417,7 +417,10 @@ settled + preconfirmed === available + carrierReserve + gated + intentLocked
 
 `carrierReserve` is one dust floor, held back only while a spendable coin carries
 an asset, since asset change needs a change output at or above dust. Those sats
-are still selected as inputs — they come back as change rather than leaving.
+are still selected as inputs — they come back as change rather than leaving. It
+is a safe floor rather than a tight maximum: a send whose selected inputs carry
+no asset can exceed it, and `send({ selectedVtxos })` spends exactly the inputs
+you name.
 
 `unrolled` holds virtual outputs whose unilateral exit already happened: they sit
 onchain behind their CSV timelock, so nothing offchain can move them and
