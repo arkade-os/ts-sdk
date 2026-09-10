@@ -537,9 +537,9 @@ runs before signing — `P` reaches the Ark server at submit — and is skipped 
 have already partially claimed (`partiallyClaimed`), where `P` is public anyway. The push itself is
 core's `signAndSubmitOffchainTx` plus `claimWithPreimageIdentity`, with `verifyServerSignatures`
 on: the server's countersignature is checked per input, against the leaf the local build spends,
-before finalizing. Until covclaimd's
-reference vectors are cross-checked, the `sealClaimPacket` test vector is pinned from this
-implementation and marked provisional (`TODO(claim-packet-vectors)`).
+before finalizing. The `sealClaimPacket` vector is cross-checked against
+covclaimd's own `preimage.Decrypt`, and the TLV framing against its `DeserializeClaim`, so both
+are pinned by the reference implementation rather than by this one.
 
 `RfqSwapManager` drives the lightning-receive leg too, as `kind: "lightning_receive"` records
 carrying `expectedAmount` and wired to a `claimLockup` callback (`pushClaim`, with `expectedAmount`
