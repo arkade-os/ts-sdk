@@ -569,6 +569,18 @@ describe("guardrails", () => {
 });
 
 describe("expectQuote", () => {
+    it("exports the refusal vocabulary clients use for typed handling", async () => {
+        const publicApi = (await import("../src/index")) as Record<string, unknown>;
+        const codes = publicApi.RFQ_REFUSAL_ERROR_CODES as string[] | undefined;
+        const recognises = publicApi.isRfqRefusalErrorCode as
+            | ((value: unknown) => boolean)
+            | undefined;
+
+        expect(codes).toContain("invoice_cltv_too_large");
+        expect(recognises?.("invoice_cltv_too_large")).toBe(true);
+        expect(recognises?.("backend_exception")).toBe(false);
+    });
+
     it("refuses a quote for a pair other than the one requested, case included", () => {
         const requested = LIGHTNING_SEND_PAIR;
         expect(expectQuote(quoteFixture(), RFQ_ID, requested).to_amount).toBe(2100);
@@ -592,6 +604,68 @@ describe("expectQuote", () => {
                 LIGHTNING_SEND_PAIR,
             ),
         ).toThrow(SwapRefusal);
+    });
+
+    it("surfaces recognised client-safe refusal details", () => {
+        const reply = {
+            v: 1,
+            type: "rfq_refusal",
+            rfq_id: RFQ_ID,
+            reason: "unsupported_payload",
+            error_code: "invoice_cltv_too_large",
+            field: "profile.invoice",
+            actual: 624,
+            limit: 288,
+            unit: "blocks",
+        };
+
+        let refusal: SwapRefusal | undefined;
+        try {
+            expectQuote(reply, RFQ_ID);
+        } catch (error) {
+            refusal = error as SwapRefusal;
+        }
+
+        expect(refusal).toMatchObject({
+            reason: "unsupported_payload",
+            errorCode: "invoice_cltv_too_large",
+            field: "profile.invoice",
+            actual: 624,
+            limit: 288,
+            unit: "blocks",
+        });
+        expect(refusal?.message).toContain("624 blocks, limit 288");
+    });
+
+    it("keeps an unrecognised diagnostic generic", () => {
+        const reply = {
+            v: 1,
+            type: "rfq_refusal",
+            rfq_id: RFQ_ID,
+            reason: "unsupported_payload",
+            error_code: "backend_exception",
+            field: "internal.stack",
+            actual: 624,
+            limit: 288,
+            unit: "secret",
+        };
+
+        let refusal: SwapRefusal | undefined;
+        try {
+            expectQuote(reply, RFQ_ID);
+        } catch (error) {
+            refusal = error as SwapRefusal;
+        }
+
+        expect(refusal).toMatchObject({
+            message: "solver refused: unsupported_payload",
+            reason: "unsupported_payload",
+        });
+        expect(refusal?.errorCode).toBeUndefined();
+        expect(refusal?.field).toBeUndefined();
+        expect(refusal?.actual).toBeUndefined();
+        expect(refusal?.limit).toBeUndefined();
+        expect(refusal?.unit).toBeUndefined();
     });
 });
 

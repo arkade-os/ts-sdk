@@ -165,6 +165,88 @@ export type RfqRefusalReason =
 /** Lifecycle vocabulary; states after which nothing more will happen. */
 export const RFQ_TERMINAL_STATES = ["settled", "refused", "expired", "refunded", "stuck"] as const;
 
+export const RFQ_REFUSAL_ERROR_CODES = [
+    "amount_side_unsupported",
+    "exact_out_unsupported",
+    "invalid_amount",
+    "invalid_payout_address",
+    "invalid_refund_address",
+    "invoice_amount_mismatch",
+    "invoice_cltv_too_large",
+    "invoice_malformed",
+    "invoice_missing_amount",
+    "invoice_missing_network",
+    "invoice_missing_payment_hash",
+    "invoice_missing_timestamp",
+    "invoice_mixed_case",
+    "invoice_sub_satoshi_amount",
+    "invoice_too_long",
+    "invoice_wrong_network",
+] as const;
+
+export type RfqRefusalErrorCode = (typeof RFQ_REFUSAL_ERROR_CODES)[number];
+export type RfqRefusalUnit = "blocks" | "characters" | "sats";
+
+export interface RfqRefusalDetail {
+    errorCode?: RfqRefusalErrorCode;
+    field?: string;
+    actual?: number;
+    expected?: number;
+    limit?: number;
+    unit?: RfqRefusalUnit;
+}
+
+export const isRfqRefusalErrorCode = (value: unknown): value is RfqRefusalErrorCode =>
+    typeof value === "string" && (RFQ_REFUSAL_ERROR_CODES as readonly string[]).includes(value);
+
+const REFUSAL_FIELDS = new Set([
+    "amount",
+    "amount_side",
+    "profile.invoice",
+    "profile.payout_address",
+    "profile.refund_address",
+]);
+const REFUSAL_UNITS = new Set<RfqRefusalUnit>(["blocks", "characters", "sats"]);
+const safeInteger = (value: unknown): number | undefined =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+const safeRefusalDetail = (detail: {
+    errorCode?: unknown;
+    field?: unknown;
+    actual?: unknown;
+    expected?: unknown;
+    limit?: unknown;
+    unit?: unknown;
+}): RfqRefusalDetail => {
+    if (!isRfqRefusalErrorCode(detail.errorCode)) return {};
+    return {
+        errorCode: detail.errorCode,
+        field:
+            typeof detail.field === "string" && REFUSAL_FIELDS.has(detail.field)
+                ? detail.field
+                : undefined,
+        actual: safeInteger(detail.actual),
+        expected: safeInteger(detail.expected),
+        limit: safeInteger(detail.limit),
+        unit:
+            typeof detail.unit === "string" && REFUSAL_UNITS.has(detail.unit as RfqRefusalUnit)
+                ? (detail.unit as RfqRefusalUnit)
+                : undefined,
+    };
+};
+
+const refusalMessage = (reason: string, detail: RfqRefusalDetail): string => {
+    if (!detail.errorCode) return `solver refused: ${reason}`;
+    const where = detail.field ? ` at ${detail.field}` : "";
+    const unit = detail.unit ? ` ${detail.unit}` : "";
+    if (detail.actual !== undefined && detail.limit !== undefined) {
+        return `solver refused: ${reason} (${detail.errorCode}${where}: ${detail.actual}${unit}, limit ${detail.limit})`;
+    }
+    if (detail.actual !== undefined && detail.expected !== undefined) {
+        return `solver refused: ${reason} (${detail.errorCode}${where}: ${detail.actual}${unit}, expected ${detail.expected})`;
+    }
+    return `solver refused: ${reason} (${detail.errorCode}${where})`;
+};
+
 /** A refusal from the solver, carrying its closed-set reason. */
 export class SwapRefusal extends Error {
     /** Literal-typed so the v2 error taxonomy's union discriminates on `name`
@@ -173,10 +255,23 @@ export class SwapRefusal extends Error {
     override readonly name = "SwapRefusal";
     readonly reason: string;
     readonly rfqId: string | undefined;
-    constructor(reason: string, rfqId?: string) {
-        super(`solver refused: ${reason}`);
+    readonly errorCode: RfqRefusalErrorCode | undefined;
+    readonly field: string | undefined;
+    readonly actual: number | undefined;
+    readonly expected: number | undefined;
+    readonly limit: number | undefined;
+    readonly unit: RfqRefusalUnit | undefined;
+    constructor(reason: string, rfqId?: string, detail: RfqRefusalDetail = {}) {
+        const safeDetail = safeRefusalDetail(detail);
+        super(refusalMessage(reason, safeDetail));
         this.reason = reason;
         this.rfqId = rfqId;
+        this.errorCode = safeDetail.errorCode;
+        this.field = safeDetail.field;
+        this.actual = safeDetail.actual;
+        this.expected = safeDetail.expected;
+        this.limit = safeDetail.limit;
+        this.unit = safeDetail.unit;
     }
 }
 
@@ -620,8 +715,28 @@ export interface RfqTransport {
  * byte-identical copy — module-level only, never re-exported from `index.ts`.
  */
 export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: string): RfqQuote => {
-    const p = payload as { type?: string; reason?: string; rfq_id?: string; pair?: unknown } | null;
-    if (p?.type === "rfq_refusal") throw new SwapRefusal(p.reason ?? "unknown", p.rfq_id ?? rfqId);
+    const p = payload as {
+        type?: string;
+        reason?: string;
+        rfq_id?: string;
+        pair?: unknown;
+        error_code?: unknown;
+        field?: unknown;
+        actual?: unknown;
+        expected?: unknown;
+        limit?: unknown;
+        unit?: unknown;
+    } | null;
+    if (p?.type === "rfq_refusal") {
+        throw new SwapRefusal(p.reason ?? "unknown", p.rfq_id ?? rfqId, {
+            errorCode: p.error_code as RfqRefusalErrorCode,
+            field: p.field as string,
+            actual: p.actual as number,
+            expected: p.expected as number,
+            limit: p.limit as number,
+            unit: p.unit as RfqRefusalUnit,
+        });
+    }
     if (p?.type !== "rfq_quote" || p.rfq_id !== rfqId) {
         throw new Error(`unexpected reply: ${p?.type ?? "no payload"}`);
     }

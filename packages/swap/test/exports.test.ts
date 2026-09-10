@@ -167,6 +167,11 @@ const CURATED_ROOT: readonly string[] = [
     "SwapErrorName",
     "QuoteCheck",
     "SwapDriveRefusedError",
+    "RFQ_REFUSAL_ERROR_CODES",
+    "isRfqRefusalErrorCode",
+    "RfqRefusalDetail",
+    "RfqRefusalErrorCode",
+    "RfqRefusalUnit",
     // The durable record, its ids, and the outcome vocabulary.
     "Swap",
     "SwapRecord",
@@ -194,6 +199,12 @@ const CURATED_ROOT: readonly string[] = [
     "MarketsCacheEntry",
     "InMemoryAssetSwapRepository",
     "IndexedDbAssetSwapRepository",
+    "restoreAssetSwapRepository",
+    "RestoreAssetSwapRepositoryOptions",
+    "RestoreAssetSwapRepositoryResult",
+    "AssetSwapRestoreChange",
+    "registerAssetSwapRestore",
+    "RegisterAssetSwapRestoreOptions",
     // The operator slice for `SwapClientConfig.operator`.
     "SwapOperator",
     // Names v1 declared that the v2 surface references — in something the

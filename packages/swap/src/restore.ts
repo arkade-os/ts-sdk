@@ -51,6 +51,13 @@ export interface Tx {
  */
 export type RestoreIndexer = Pick<RestIndexerProvider, "getVirtualTxs" | "getVtxos">;
 
+type Found = {
+    fundingTx: Tx;
+    offer: Offer;
+    offerHex: string;
+    existing?: AssetSwap;
+};
+
 /**
  * Fetch and parse virtual txs, keyed by the psbt's own unsigned txid rather
  * than by response order. Chunks are independent requests and are issued
@@ -269,11 +276,31 @@ export async function restoreAssetSwaps(
     indexer: RestoreIndexer,
     txs: Tx[],
     existingIds: ReadonlySet<string>,
-    opts: { operatorPubkey: Uint8Array; scanned?: ReadonlySet<string> },
+    opts: {
+        operatorPubkey: Uint8Array;
+        scanned?: ReadonlySet<string>;
+        reopen?: AssetSwap[];
+    },
 ): Promise<{ restored: AssetSwap[]; scannedTxids: string[] }> {
-    const { operatorPubkey, scanned = new Set<string>() } = opts;
-    const candidates = unscannedSwapCandidates(txs, existingIds, scanned);
-    if (candidates.length === 0) return { restored: [], scannedTxids: [] };
+    const { operatorPubkey, scanned = new Set<string>(), reopen = [] } = opts;
+    const reopened: Found[] = [];
+    for (const swap of reopen) {
+        try {
+            reopened.push({
+                fundingTx: { type: "sent", redeemTxid: swap.fundingTxid },
+                offer: decodeOffer(hex.decode(swap.offerHex)),
+                offerHex: swap.offerHex,
+                existing: swap,
+            });
+        } catch {}
+    }
+    const reopenedTxids = new Set(reopened.map(({ fundingTx }) => fundingTx.redeemTxid));
+    const candidates = unscannedSwapCandidates(txs, existingIds, scanned).filter(
+        ({ redeemTxid }) => !reopenedTxids.has(redeemTxid),
+    );
+    if (candidates.length === 0 && reopened.length === 0) {
+        return { restored: [], scannedTxids: [] };
+    }
 
     // fetch the raw txs and pick out the ones carrying an offer packet
     const byTxid = new Map(candidates.map((tx) => [tx.redeemTxid, tx]));
@@ -283,7 +310,7 @@ export async function restoreAssetSwaps(
     );
 
     const fetchedTxids: string[] = [];
-    const found: { fundingTx: Tx; offer: Offer; offerHex: string }[] = [];
+    const found: Found[] = [...reopened];
     for (const [txid, parsed] of parsedByTxid) {
         const fundingTx = byTxid.get(txid);
         if (!fundingTx) continue;
@@ -340,7 +367,7 @@ export async function restoreAssetSwaps(
 
     const restored: AssetSwap[] = [];
     const unresolved = new Set<string>();
-    for (const { fundingTx, offer, offerHex } of found) {
+    for (const { fundingTx, offer, offerHex, existing } of found) {
         const swapPkScript = hex.encode(offer.swapPkScript);
         const vtxo = vtxoByScriptAndTxid.get(`${swapPkScript}:${fundingTx.redeemTxid}`);
         if (!vtxo) {
@@ -396,6 +423,17 @@ export async function restoreAssetSwaps(
             status = kind;
         }
 
+        const completion =
+            status === "fulfilled" && spentTxid && txByAnyId.get(spentTxid)?.createdAt
+                ? { completedAt: txByAnyId.get(spentTxid)!.createdAt! * 1000 }
+                : {};
+
+        if (existing) {
+            if (status === "pending") continue;
+            restored.push({ ...existing, status, spentTxid, ...completion });
+            continue;
+        }
+
         restored.push({
             id: fundingTx.redeemTxid,
             fromAsset,
@@ -415,9 +453,7 @@ export async function restoreAssetSwaps(
             createdAt: fundingTx.createdAt ? fundingTx.createdAt * 1000 : vtxo.createdAt.getTime(),
             // the completion time is the caller's record of the spend, if it
             // has one — the psbt that classified it carries no timestamp
-            ...(status === "fulfilled" && spentTxid && txByAnyId.get(spentTxid)?.createdAt
-                ? { completedAt: txByAnyId.get(spentTxid)!.createdAt! * 1000 }
-                : {}),
+            ...completion,
         });
     }
     return { restored, scannedTxids: fetchedTxids.filter((id) => !unresolved.has(id)) };

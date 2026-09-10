@@ -38,9 +38,14 @@ import {
 
 import wantAssetProgram from "./swap-want-asset.program.json";
 import wantBtcProgram from "./swap-want-btc.program.json";
-import { promoteOfferContract, retireOfferContract } from "./coverage";
+import { promoteOfferContract, RETIRABLE, retireOfferContract } from "./coverage";
 import type { AssetSwapRepository } from "./repository";
-import { getAssetSwapsOrThrow, updateAssetSwap, updateAssetSwapBestEffort } from "./store";
+import {
+    getAssetSwapsOrThrow,
+    type AssetSwap,
+    updateAssetSwap,
+    updateAssetSwapBestEffort,
+} from "./store";
 
 // json imports widen "type": "pubkey" to string; parseArtifact validates at runtime
 type Artifact = Parameters<typeof arkade.parseArtifact>[0];
@@ -492,7 +497,6 @@ async function registerOfferContract(
     operatorPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
 ): Promise<void> {
-    const { program, args, keys } = swapProgramBinding(binding, operatorPubkey);
     const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
         // Registration derives and persists; it never broadcasts and never
@@ -508,6 +512,19 @@ async function registerOfferContract(
         network: networkFromArkadeInfo(info),
         contractManager,
     });
+    await contractManager.createContract(
+        offerContractParams(client, binding, operatorPubkey, expectedPkScript),
+    );
+    await promoteOfferContract(contractManager, hex.encode(expectedPkScript));
+}
+
+function offerContractParams(
+    client: arkade.Arkade,
+    binding: Omit<Offer, "swapPkScript">,
+    operatorPubkey: Uint8Array,
+    expectedPkScript: Uint8Array,
+) {
+    const { program, args, keys } = swapProgramBinding(binding, operatorPubkey);
     const contract = new arkade.ArkadeContract(client, program, args, keys);
     // the row is keyed by script: registering anything but the script being
     // funded would leave the real deposit unwatched and unmarked, which is the
@@ -515,11 +532,58 @@ async function registerOfferContract(
     if (hex.encode(contract.pkScript) !== hex.encode(expectedPkScript)) {
         throw new Error("derived covenant does not match the offer's swapPkScript");
     }
-    await contract.register({
+    return {
+        ...contract.toContractParams(),
         label: OFFER_CONTRACT_LABEL,
         metadata: { genericallySpendable: false, kind: OFFER_CONTRACT_KIND },
+    };
+}
+
+export async function restoreOfferCoverage(wallet: IWallet, swaps: AssetSwap[]): Promise<void> {
+    const live = swaps.filter((swap) => !RETIRABLE.includes(swap.status));
+    if (live.length === 0) return;
+
+    const [info, contractManager] = await Promise.all([
+        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getContractManager(),
+    ]);
+    const operatorPubkey = hex.decode(toXOnlySignerHex(info.signerPubkey));
+    const client = await arkade.Arkade.connect({
+        arkade: { getInfo: async () => info },
+        identity: wallet.identity,
+        network: networkFromArkadeInfo(info),
+        contractManager,
     });
-    await promoteOfferContract(contractManager, hex.encode(expectedPkScript));
+    const seen = new Set<string>();
+    const covenants = [];
+    for (const swap of live) {
+        if (seen.has(swap.swapPkScript)) continue;
+        seen.add(swap.swapPkScript);
+        try {
+            const { swapPkScript: _, ...binding } = decodeOffer(hex.decode(swap.offerHex));
+            covenants.push({
+                script: swap.swapPkScript,
+                issued: swap.createdAt,
+                params: offerContractParams(
+                    client,
+                    binding,
+                    operatorPubkey,
+                    hex.decode(swap.swapPkScript),
+                ),
+            });
+        } catch (error) {
+            console.warn(`[swap] could not restore coverage for ${swap.swapPkScript}`, error);
+        }
+    }
+    const params = covenants.map((covenant) => covenant.params);
+    if (contractManager.createContracts) {
+        await contractManager.createContracts(params);
+    } else {
+        for (const contract of params) await contractManager.createContract(contract);
+    }
+    for (const covenant of covenants) {
+        await promoteOfferContract(contractManager, covenant.script, covenant.issued);
+    }
 }
 
 // ── User operations ─────────────────────────────────────────────────────────

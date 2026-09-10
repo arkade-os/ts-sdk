@@ -36,6 +36,7 @@ import type {
     AddressAllocationCapable,
 } from "../hdWalletCapable";
 import { resolveDescriptorSigner } from "../hdWalletCapable";
+import { runWalletRestoreHooks } from "../restoreHooks";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { setupServiceWorker } from "../../worker/browser/utils";
@@ -1693,6 +1694,7 @@ export class ServiceWorkerWallet
     public readonly identity: Identity;
     private readonly _assetManager: IAssetManager;
     private readonly hasDelegate: boolean;
+    private _restoreInFlight?: Promise<void>;
 
     protected constructor(
         public readonly serviceWorker: ServiceWorker,
@@ -2034,6 +2036,17 @@ export class ServiceWorkerWallet
      * reconstructed here so callers can inspect `.errors`.
      */
     async restore(opts?: { gapLimit?: number }): Promise<void> {
+        if (this._restoreInFlight) return this._restoreInFlight;
+        this._restoreInFlight = (async () => {
+            await this._restoreWorkerWallet(opts);
+            await runWalletRestoreHooks(this);
+        })().finally(() => {
+            this._restoreInFlight = undefined;
+        });
+        return this._restoreInFlight;
+    }
+
+    private async _restoreWorkerWallet(opts?: { gapLimit?: number }): Promise<void> {
         const message: RequestRestoreWallet = {
             id: getRandomId(),
             tag: this.messageTag,

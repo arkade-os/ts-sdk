@@ -201,6 +201,13 @@ export {
 // Thrown by the PUBLIC client off the taxonomy — `start()` and `recover()`
 // under `drive: "readonly"` — so it is catchable from the root too.
 export { SwapDriveRefusedError } from "./client/drive";
+export {
+    RFQ_REFUSAL_ERROR_CODES,
+    isRfqRefusalErrorCode,
+    type RfqRefusalDetail,
+    type RfqRefusalErrorCode,
+    type RfqRefusalUnit,
+} from "./rfq";
 
 // ── The durable record ──────────────────────────────────────────────────────
 // What `accept()` writes, the ids that address it, the outcome vocabulary
@@ -244,6 +251,16 @@ export {
     InMemoryAssetSwapRepository,
 } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
+export {
+    restoreAssetSwapRepository,
+    type AssetSwapRestoreChange,
+    type RestoreAssetSwapRepositoryOptions,
+    type RestoreAssetSwapRepositoryResult,
+} from "./restoreRepository";
+export {
+    registerAssetSwapRestore,
+    type RegisterAssetSwapRestoreOptions,
+} from "./registerRestore";
 
 // `SwapClientConfig.operator`: the structural slice of the operator connection,
 // for a second operator or a test. The wallet supplies it otherwise, and no

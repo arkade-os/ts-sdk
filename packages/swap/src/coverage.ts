@@ -129,12 +129,16 @@ function addressOutstanding(swaps: readonly CoveredSwap[], script: string): bool
 export async function promoteOfferContract(
     manager: OfferContractRetirer,
     script: string,
+    /** When the address went out. A restore passes its record's funding time:
+     * that deposit has landed, and a mark dated after every record at the
+     * script pins it watched for the life of the process. */
+    issued: number = Date.now(),
 ): Promise<void> {
     await serialize(script, async () => {
         await manager.setContractWatchState(script, "watched");
         // after the write: a promotion that failed hands out no address, so
         // there is nothing outstanding to protect
-        issuedAt.set(script, Date.now());
+        issuedAt.set(script, issued);
     });
 }
 

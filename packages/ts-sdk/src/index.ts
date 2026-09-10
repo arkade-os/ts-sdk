@@ -147,6 +147,10 @@ export {
     type ActivityResolver,
     type TxTag,
 } from "./wallet";
+export {
+    registerWalletRestoreHook,
+    type WalletRestoreHook,
+} from "./wallet/restoreHooks";
 import { Batch } from "./wallet/batch";
 import {
     signingDescriptorIndex,

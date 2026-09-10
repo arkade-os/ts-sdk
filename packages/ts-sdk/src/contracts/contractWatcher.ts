@@ -697,17 +697,22 @@ export class ContractWatcher {
         const now = Date.now();
 
         try {
-            // Load all the virtual outputs for these contracts, from DB
+            // spent rows too: `includeSpent` post-filters one repository read,
+            // so a spend can be reported with the row that records it. The row
+            // this diffs against was unspent when cached (#864).
             const vtxosMap = await this.getContractVtxos({
                 contractScripts,
-                includeSpent: false, // only spendable ones!
+                includeSpent: true,
             });
 
             for (const contractScript of contractScripts) {
                 const state = this.contracts.get(contractScript);
                 if (!state) continue;
 
-                const currentVtxos = vtxosMap.get(contractScript) || [];
+                const known = vtxosMap.get(contractScript) || [];
+                const knownByKey = new Map(known.map((v) => [`${v.txid}:${v.vout}`, v]));
+                // the diff below is still against the unspent set
+                const currentVtxos = known.filter((v) => !v.isSpent);
                 const currentKeys = new Set(currentVtxos.map((v) => `${v.txid}:${v.vout}`));
 
                 // Find new virtual outputs and add them to the contract's state
@@ -724,7 +729,8 @@ export class ContractWatcher {
                 const spentVtxos: VirtualCoin[] = [];
                 for (const [key, vtxo] of state.lastKnownVtxos) {
                     if (!currentKeys.has(key)) {
-                        spentVtxos.push(vtxo);
+                        // the cached row only when storage has nothing fresher
+                        spentVtxos.push(knownByKey.get(key) ?? vtxo);
                         state.lastKnownVtxos.delete(key);
                     }
                 }

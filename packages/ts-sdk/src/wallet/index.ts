@@ -1208,3 +1208,8 @@ export interface IReadonlyWallet {
      */
     clear(): Promise<void>;
 }
+
+export {
+    registerWalletRestoreHook,
+    type WalletRestoreHook,
+} from "./restoreHooks";

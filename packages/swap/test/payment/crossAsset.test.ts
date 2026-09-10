@@ -206,6 +206,20 @@ describe("crossAssetRail.quote", () => {
         expect(quote.assets?.spent.assetId).not.toBe(quote.assets?.delivered.assetId);
     });
 
+    it("derives the market label when the wire pair is absent", async () => {
+        const pairless = {
+            ...plan(100_000n, 500n),
+            market: market({
+                pair: undefined,
+                base_asset: { id: "arkade:mutinynet/slip44:1", decimals: 8, ticker: "BTC" },
+                quote_asset: { id: USDX_ID, decimals: 2, ticker: "USDX" },
+            }),
+        } as OfferPlan;
+        const rail = crossAssetRail(depsWith({ quote: vi.fn(async () => pairless) }));
+
+        expect((await rail.quote(req, ctxWith())).meta?.market).toBe("BTC/USDX");
+    });
+
     it("prices BOTH legs into the sats that leave the wallet", async () => {
         const quote = await crossAssetRail(depsWith({ carrierSats: 330 })).quote(req, ctxWith());
         expect(quote).toMatchObject({ amount: 330, fee: 100_000, total: 100_330 });

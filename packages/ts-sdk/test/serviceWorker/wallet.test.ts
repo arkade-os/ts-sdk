@@ -20,6 +20,7 @@ import {
 } from "../../src/wallet/serviceWorker/wallet-message-handler";
 import { MESSAGE_BUS_NOT_INITIALIZED, ServiceWorkerTimeoutError } from "../../src/worker/errors";
 import { DEFAULT_ARKADE_SERVER_URL } from "../../src/networks";
+import { registerWalletRestoreHook } from "../../src/wallet/restoreHooks";
 
 type MessageHandler = (event: { data: any }) => void;
 
@@ -948,6 +949,92 @@ describe("ServiceWorkerWallet", () => {
 
         const wallet = createSWWallet(serviceWorker as any, messageTag);
         await expect(wallet.restore()).rejects.toThrow("boom");
+    });
+
+    it("runs local hooks after worker recovery", async () => {
+        const events: string[] = [];
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "RESTORE_WALLET") return null;
+            events.push("worker");
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "RESTORE_WALLET_SUCCESS",
+            };
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "local",
+            restore: async (restoredWallet) => {
+                expect(restoredWallet).toBe(wallet);
+                events.push("hook");
+            },
+        });
+
+        await wallet.restore();
+
+        unregister();
+        expect(events).toEqual(["worker", "hook"]);
+    });
+
+    it("coalesces worker recovery through local hook completion", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "RESTORE_WALLET") return null;
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "RESTORE_WALLET_SUCCESS",
+            };
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        let releaseHook = () => undefined;
+        const hookGate = new Promise<void>((resolve) => {
+            releaseHook = resolve;
+        });
+        const hook = vi.fn(async () => hookGate);
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "delayed",
+            restore: hook,
+        });
+
+        const first = wallet.restore();
+        await vi.waitFor(() => expect(hook).toHaveBeenCalledOnce());
+        const second = wallet.restore();
+        releaseHook();
+        await Promise.all([first, second]);
+
+        unregister();
+        expect(hook).toHaveBeenCalledOnce();
+        expect(
+            serviceWorker.postMessage.mock.calls.filter(
+                ([message]) => message.type === "RESTORE_WALLET",
+            ),
+        ).toHaveLength(1);
+    });
+
+    it("skips local hooks when worker recovery fails", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "RESTORE_WALLET") return null;
+            return {
+                id: message.id,
+                tag: messageTag,
+                error: new Error("worker failed"),
+            };
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        const hook = vi.fn(async () => undefined);
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "must-not-run",
+            restore: hook,
+        });
+
+        await expect(wallet.restore()).rejects.toThrow("worker failed");
+
+        unregister();
+        expect(hook).not.toHaveBeenCalled();
     });
 });
 

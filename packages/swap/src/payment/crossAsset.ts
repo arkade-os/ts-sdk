@@ -78,6 +78,9 @@ const parseAssetId = (assetId: string): assetExt.AssetId | undefined => {
     }
 };
 
+const marketLabel = (market: OfferPlan["market"]): string =>
+    `${market.base_asset.ticker || market.base_asset.id}/${market.quote_asset.ticker || market.quote_asset.id}`;
+
 /** Rank after `ark-asset`, which pays from a balance already held. Both match,
  *  so `options()` can offer "pay from your USDX" beside "buy USDX and pay".
  *
@@ -154,7 +157,7 @@ export function crossAssetRail(deps: CrossAssetRailDeps): PaymentRail {
                     spent: { assetId: BTC_ASSET_ID, amount: plan.deposit.atomic },
                 },
                 meta: {
-                    market: plan.market.pair,
+                    market: marketLabel(plan.market),
                     priceDisplay: plan.priceDisplay,
                     give: plan.give,
                 },
