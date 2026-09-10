@@ -152,15 +152,18 @@ export async function watchOfferSwaps({
         }
     };
 
-    const resolveSpends = async (contractScript: string, vtxos: ContractVtxo[], at?: number) => {
+    /** `known` must be the FULL list: {@link retireOfferContract} reads liveness off it. */
+    const resolveSpends = async (
+        contractScript: string,
+        vtxos: ContractVtxo[],
+        { at, known }: { at?: number; known?: AssetSwap[] } = {},
+    ) => {
+        // repository v1 has no indexed lookup, so each `find` costs O(history)
+        let swaps = known ?? (await getAssetSwaps(repository));
         for (const vtxo of vtxos) {
             const spentTxid = vtxo.arkTxId || vtxo.spentBy;
             if (!spentTxid) continue;
-            // Identical offers share one script and are told apart by the
-            // deposit that funded them. Repository v1 has no indexed lookup, so
-            // this is O(history) per spend event; add a query API if offer
-            // event volume makes this hot.
-            const swap = (await getAssetSwaps(repository)).find(
+            const swap = swaps.find(
                 (s) => s.fundingTxid === vtxo.txid && s.swapPkScript === contractScript,
             );
             if (!swap) continue;
@@ -172,17 +175,16 @@ export async function watchOfferSwaps({
             // notify only on a write that landed: `onUpdate` is documented as
             // firing after the change is persisted, and a consumer that caches
             // from it would otherwise run ahead of the store
-            const { persisted, swaps } = await updateAssetSwapBestEffort(
+            const { persisted, swaps: written } = await updateAssetSwapBestEffort(
                 repository,
                 swap.id,
                 changes,
             );
-            // a lost write must not retire: the next restore scan still
-            // believes this deposit is live
+            // a lost write must not retire, nor carry its optimistic merge:
+            // the store still holds the old record and later deposits see that
             if (!persisted) continue;
+            swaps = written;
             onUpdate?.({ ...swap, ...changes });
-            // `swaps` is the post-update view, so the liveness check sees this
-            // record's new status without a third read
             if (changes.status && RETIRABLE.includes(changes.status)) {
                 await retireOfferContract(manager, swaps, contractScript);
             }
@@ -191,7 +193,7 @@ export async function watchOfferSwaps({
 
     const handleSpend = async (event: Extract<ContractVtxoEvent, { type: "vtxo_spent" }>) => {
         if (event.contract.metadata?.kind !== OFFER_CONTRACT_KIND) return;
-        await resolveSpends(event.contractScript, event.vtxos, event.timestamp);
+        await resolveSpends(event.contractScript, event.vtxos, { at: event.timestamp });
     };
 
     /**
@@ -202,14 +204,18 @@ export async function watchOfferSwaps({
      * `Date.now()` would record the scan as the completion.
      */
     const resolveOpenSwaps = async () => {
-        const open = (await getAssetSwaps(repository)).filter((s) => !TERMINAL.includes(s.status));
+        const swaps = await getAssetSwaps(repository);
+        const open = swaps.filter((s) => !TERMINAL.includes(s.status));
         if (open.length === 0) return;
         const script = [...new Set(open.map((s) => s.swapPkScript))];
         for (const { contract, vtxos } of await manager.getContractsWithVtxos({ script })) {
             if (contract.metadata?.kind !== OFFER_CONTRACT_KIND) continue;
+            // one read serves every contract: a swap carries one script, so a
+            // write under another contract is never the record this one seeks
             await resolveSpends(
                 contract.script,
                 vtxos.filter((v) => v.isSpent),
+                { known: swaps },
             );
         }
     };

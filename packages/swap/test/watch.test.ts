@@ -45,10 +45,15 @@ const swapFor = (offer: Offer, overrides: Partial<AssetSwap> = {}): AssetSwap =>
     ...overrides,
 });
 
-const spendPsbt = (offer: Offer, via: "cancel" | "fulfill", vout = 0) => {
+const spendPsbt = (
+    offer: Offer,
+    via: "cancel" | "fulfill",
+    vout = 0,
+    fundingTxid = FUNDING_TXID,
+) => {
     const leaf = offerVtxoScript(offer, SERVER_KEY).functionByName(via)!.tapLeafScript;
     const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
-    tx.addInput({ txid: hex.decode(FUNDING_TXID), index: vout, tapLeafScript: [leaf] });
+    tx.addInput({ txid: hex.decode(fundingTxid), index: vout, tapLeafScript: [leaf] });
     tx.addOutput({ script: MAKER_PK_SCRIPT, amount: BigInt(9_000) });
     return { psbt: base64.encode(tx.toPSBT()), txid: tx.id };
 };
@@ -114,6 +119,31 @@ const spentDeposit = (offer: Offer, spentTxid: string, vtxo: Record<string, unkn
     },
     vtxos: [{ txid: FUNDING_TXID, vout: 0, isSpent: true, arkTxId: spentTxid, ...vtxo }],
 });
+
+const spentDeposits = (
+    offer: Offer,
+    deposits: { txid: string; vout: number; spentTxid: string }[],
+) => ({
+    contract: {
+        script: hex.encode(offer.swapPkScript),
+        metadata: { kind: OFFER_CONTRACT_KIND },
+    },
+    vtxos: deposits.map((d) => ({
+        txid: d.txid,
+        vout: d.vout,
+        isSpent: true,
+        arkTxId: d.spentTxid,
+    })),
+});
+
+/** Answers only for spends the test built: a wrong txid reads as indeterminate
+ * rather than reusing another deposit's transaction. */
+const psbtsByTxid = (spends: { psbt: string; txid: string }[]) => {
+    const byTxid = new Map(spends.map((s) => [s.txid, s.psbt]));
+    return async (txids: string[]) => ({
+        txs: txids.flatMap((t) => (byTxid.has(t) ? [byTxid.get(t)!] : [])),
+    });
+};
 
 // the watcher builds its own RestIndexerProvider from arkServerUrl; intercept
 // the one call it makes rather than reaching through the constructor
@@ -577,6 +607,81 @@ describe("watchOfferSwaps", () => {
                     });
                 },
                 [],
+            );
+        });
+
+        it("reads history once for the pass, not once per deposit", async () => {
+            const offer = makeOffer();
+            const funding = ["c1", "c2", "c3"].map((b) => b.repeat(32));
+            const spends = funding.map((txid, i) => spendPsbt(offer, "fulfill", i, txid));
+            const repository = new InMemoryAssetSwapRepository();
+            for (const txid of funding) {
+                await addAssetSwap(repository, swapFor(offer, { id: txid, fundingTxid: txid }));
+            }
+            const reads = vi.spyOn(repository, "getAllSwaps");
+
+            await withIndexer(
+                psbtsByTxid(spends),
+                async ({ wallet }) => {
+                    reads.mockClear();
+                    const watcher = await watchOfferSwaps({
+                        wallet,
+                        arkServerUrl: "http://ark",
+                        repository,
+                    });
+                    await watcher.idle();
+                    watcher.stop();
+                    const duringPass = reads.mock.calls.length;
+
+                    const after = await getAssetSwaps(repository);
+                    expect(after.filter((s) => s.status === "fulfilled")).toHaveLength(
+                        funding.length,
+                    );
+                    // one read to open the pass, then one inside each write it
+                    // makes; a per-deposit lookup adds a third for every deposit
+                    expect(duringPass).toBe(1 + funding.length);
+                },
+                [
+                    spentDeposits(
+                        offer,
+                        funding.map((txid, i) => ({ txid, vout: i, spentTxid: spends[i].txid })),
+                    ),
+                ],
+            );
+        });
+
+        it("sees its own write, so two deposits of one funding tx resolve once", async () => {
+            // the aliasing case a hoisted read breaks: both lookups hit one record
+            const offer = makeOffer();
+            const first = spendPsbt(offer, "fulfill", 0);
+            const second = spendPsbt(offer, "fulfill", 1);
+            const repository = new InMemoryAssetSwapRepository();
+            await addAssetSwap(repository, swapFor(offer));
+
+            await withIndexer(
+                psbtsByTxid([first, second]),
+                async ({ wallet }) => {
+                    const updates: AssetSwap[] = [];
+                    const watcher = await watchOfferSwaps({
+                        wallet,
+                        arkServerUrl: "http://ark",
+                        repository,
+                        onUpdate: (swap) => updates.push(swap),
+                    });
+                    await watcher.idle();
+                    watcher.stop();
+
+                    expect(updates).toHaveLength(1);
+                    expect(await getAssetSwaps(repository)).toMatchObject([
+                        { status: "fulfilled", spentTxid: first.txid },
+                    ]);
+                },
+                [
+                    spentDeposits(offer, [
+                        { txid: FUNDING_TXID, vout: 0, spentTxid: first.txid },
+                        { txid: FUNDING_TXID, vout: 1, spentTxid: second.txid },
+                    ]),
+                ],
             );
         });
 
