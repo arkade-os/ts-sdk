@@ -10,6 +10,8 @@ import {
     MAX_VTXOS_PER_SETTLEMENT,
     capSettlementBatch,
     SettlementConfig,
+    RenewalSplit,
+    RenewalSplitContext,
 } from "../src/wallet/vtxo-manager";
 import { IWallet, ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
 import type { IntentFeeConfig } from "../src/arkfee";
@@ -4221,6 +4223,271 @@ describe("VtxoManager - intent fee pricing", () => {
                 "Recoverable amount 600 net of intent fees is below dust threshold 1000",
             );
             expect(wallet.settle).not.toHaveBeenCalled();
+        });
+    });
+});
+
+describe("VtxoManager - renewal output split", () => {
+    const ADDRESS =
+        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g";
+
+    const expiring = (value: number, txid = `expiring-${value}`): ExtendedVirtualCoin => {
+        const now = Date.now();
+        return {
+            txid,
+            vout: 0,
+            value,
+            createdAt: new Date(now - 100_000),
+            virtualStatus: { state: "settled", batchExpiry: now + 5000 },
+            status: { confirmed: true },
+            isUnrolled: false,
+            isSpent: false,
+        } as any;
+    };
+
+    const settled = (wallet: IWallet) => (wallet.settle as any).mock.calls[0][0];
+
+    const fixedSplit = (
+        maxOutputs: number,
+        amounts: bigint[],
+    ): RenewalSplit & { seen: RenewalSplitContext[] } => {
+        const seen: RenewalSplitContext[] = [];
+        return {
+            maxOutputs,
+            seen,
+            plan(context) {
+                seen.push(context);
+                return amounts;
+            },
+        };
+    };
+
+    it("settles into every piece the plan asks for", async () => {
+        const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS);
+        const manager = new VtxoManager(wallet, undefined, {});
+
+        await manager.renewVtxos(undefined, { split: fixedSplit(4, [5000n, 3000n]) });
+
+        expect(settled(wallet).outputs).toEqual([
+            { address: ADDRESS, amount: 5000n },
+            { address: ADDRESS, amount: 3000n },
+        ]);
+    });
+
+    it("still settles into exactly one output when no split is given", async () => {
+        const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS);
+        const manager = new VtxoManager(wallet, undefined, {});
+
+        await manager.renewVtxos();
+
+        expect(settled(wallet).outputs).toEqual([{ address: ADDRESS, amount: 8000n }]);
+    });
+
+    it("offers the plan the subtotal net of each input's own intent fee", async () => {
+        const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS, {
+            intentFee: { offchainInput: "amount * 0.01" },
+        });
+        const split = fixedSplit(4, [7000n]);
+
+        await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+
+        expect(split.seen[0].subtotal).toBe(7920n);
+        expect(split.seen[0].address).toBe(ADDRESS);
+    });
+
+    // `gross - n * fee` is wrong for a proportional policy; one evaluation at the subtotal is wrong for all but one piece.
+    it("prices each piece's output fee at that piece's own size", async () => {
+        const wallet = createMockWallet([expiring(500_000)], ADDRESS, {
+            intentFee: { offchainOutput: "amount * 0.01" },
+        });
+        const split = fixedSplit(4, [100_000n, 50_000n]);
+
+        await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+
+        const { outputFeeOn } = split.seen[0];
+        expect(outputFeeOn(100_000n)).toBe(1000n);
+        expect(outputFeeOn(50_000n)).toBe(500n);
+    });
+
+    it("tells the plan the server's per-output ceiling and dust floor", async () => {
+        const wallet = createMockWallet([expiring(5000)], ADDRESS, { vtxoMaxAmount: 4000n });
+        const split = fixedSplit(4, [3000n, 2000n]);
+
+        await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+
+        expect(split.seen[0].maxAmount).toBe(4000n);
+        expect(split.seen[0].dust).toBe(1000n);
+    });
+
+    // The ceiling bounds one OUTPUT; judged against a single one, every pass caps at one ceiling's worth.
+    it("admits a batch worth several ceilings once a split can place it", async () => {
+        const withoutSplit = createMockWallet([expiring(4000, "a"), expiring(4000, "b")], ADDRESS, {
+            vtxoMaxAmount: 5000n,
+        });
+        await new VtxoManager(withoutSplit, undefined, {}).renewVtxos();
+        expect(settled(withoutSplit).inputs.map((v: ExtendedVirtualCoin) => v.txid)).toEqual(["a"]);
+
+        const withSplit = createMockWallet([expiring(4000, "a"), expiring(4000, "b")], ADDRESS, {
+            vtxoMaxAmount: 5000n,
+        });
+        await new VtxoManager(withSplit, undefined, {}).renewVtxos(undefined, {
+            split: fixedSplit(4, [4000n, 4000n]),
+        });
+        expect(settled(withSplit).inputs.map((v: ExtendedVirtualCoin) => v.txid)).toEqual([
+            "a",
+            "b",
+        ]);
+    });
+
+    // Both diagnostics count against `capacity`, so under a split they have to
+    // name it — an operator sent to the per-output ceiling would be diagnosing
+    // against a number nothing was compared to.
+    it("names the combined split capacity, not the per-output ceiling", async () => {
+        const wallet = createMockWallet([expiring(22_000)], ADDRESS, { vtxoMaxAmount: 5000n });
+        const manager = new VtxoManager(wallet, undefined, {});
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        try {
+            await expect(
+                manager.renewVtxos(undefined, { split: fixedSplit(4, [22_000n]) }),
+            ).rejects.toThrow("within the combined split capacity 20000 (4 x 5000)");
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.stringContaining("exceed the combined split capacity 20000 (4 x 5000)"),
+            );
+        } finally {
+            warnSpy.mockRestore();
+        }
+    });
+
+    describe("refuses a plan the server would reject", () => {
+        const renewWith = (split: RenewalSplit, options: MockWalletOptions = {}) => {
+            const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS, options);
+            const manager = new VtxoManager(wallet, undefined, {});
+            return { wallet, run: () => manager.renewVtxos(undefined, { split }) };
+        };
+
+        it("when the pieces plus their fees claim more than the subtotal", async () => {
+            const { wallet, run } = renewWith(fixedSplit(4, [8000n]), {
+                intentFee: { offchainOutput: "250.0" },
+            });
+
+            await expect(run()).rejects.toThrow("claims 8250 with fees, more than the 8000");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        it("when a piece is over the per-output ceiling", async () => {
+            const { wallet, run } = renewWith(fixedSplit(4, [6000n, 2000n]), {
+                vtxoMaxAmount: 5000n,
+            });
+
+            await expect(run()).rejects.toThrow("output 6000 exceeds the per-output limit 5000");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        it("when a piece is below dust", async () => {
+            const { wallet, run } = renewWith(fixedSplit(4, [7000n, 500n]));
+
+            await expect(run()).rejects.toThrow("Total amount 500 is below dust threshold 1000");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        it("when it emits more pieces than it allows", async () => {
+            const { wallet, run } = renewWith(fixedSplit(2, [3000n, 3000n, 1000n]));
+
+            await expect(run()).rejects.toThrow("produced 3 outputs, more than the 2 it allows");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        it("when it emits nothing at all", async () => {
+            const { wallet, run } = renewWith(fixedSplit(4, []));
+
+            await expect(run()).rejects.toThrow("produced no outputs for a subtotal of 8000");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        it("when maxOutputs is not a positive integer", async () => {
+            const { wallet, run } = renewWith(fixedSplit(0, [8000n]));
+
+            await expect(run()).rejects.toThrow(TypeError);
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+    });
+
+    // settle bags every input asset onto the FIRST matching output, and every
+    // piece is on that script — so a split hands them all to piece 0.
+    describe("assets", () => {
+        const withAssets = (value: number, txid = `asset-${value}`): ExtendedVirtualCoin =>
+            ({ ...expiring(value, txid), assets: [{ assetId: "aa", amount: 5n }] }) as any;
+
+        it("reports no assets when none of the selected inputs carry any", async () => {
+            const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS);
+            const split = fixedSplit(4, [5000n, 3000n]);
+
+            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+
+            expect(split.seen[0].hasAssets).toBe(false);
+        });
+
+        it("reports assets when any selected input carries them", async () => {
+            const wallet = createMockWallet([withAssets(5000), expiring(3000)], ADDRESS);
+            const split = fixedSplit(4, [8000n]);
+
+            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+
+            expect(split.seen[0].hasAssets).toBe(true);
+        });
+
+        it("refuses a multi-piece plan over asset-bearing inputs", async () => {
+            const wallet = createMockWallet([withAssets(5000), expiring(3000)], ADDRESS);
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            await expect(
+                manager.renewVtxos(undefined, { split: fixedSplit(4, [5000n, 3000n]) }),
+            ).rejects.toThrow("they would all land on piece 0");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        // An unrenewed float expires, which is worse than one fat coin.
+        it("still renews an asset-bearing float into one piece", async () => {
+            const wallet = createMockWallet([withAssets(5000), expiring(3000)], ADDRESS);
+
+            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, {
+                split: fixedSplit(4, [8000n]),
+            });
+
+            expect(settled(wallet).outputs).toEqual([{ address: ADDRESS, amount: 8000n }]);
+        });
+
+        // Admitting several ceilings' worth would leave an asset-bearing batch no
+        // valid plan: split and the asset guard refuses, don't and the ceiling does.
+        it("caps an asset-bearing batch to one ceiling so a single piece still fits", async () => {
+            const wallet = createMockWallet([withAssets(4000, "a"), expiring(4000, "b")], ADDRESS, {
+                vtxoMaxAmount: 5000n,
+            });
+            const split: RenewalSplit = {
+                maxOutputs: 4,
+                plan: ({ subtotal, hasAssets }) =>
+                    hasAssets ? [subtotal] : [subtotal / 2n, subtotal / 2n],
+            };
+
+            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+
+            const args = settled(wallet);
+            expect(args.inputs.map((v: ExtendedVirtualCoin) => v.txid)).toEqual(["a"]);
+            expect(args.outputs).toEqual([{ address: ADDRESS, amount: 4000n }]);
+        });
+
+        it("lets the plan split again once no asset-bearing input survives selection", async () => {
+            // The 1500 carries the assets and cannot pay its own 2000 fee.
+            const wallet = createMockWallet([expiring(5000), withAssets(1500)], ADDRESS, {
+                intentFee: { offchainInput: "2000.0" },
+            });
+            const split = fixedSplit(4, [2000n, 1000n]);
+
+            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+
+            expect(split.seen[0].hasAssets).toBe(false);
+            expect(settled(wallet).outputs).toHaveLength(2);
         });
     });
 });

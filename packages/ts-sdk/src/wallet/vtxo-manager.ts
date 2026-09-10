@@ -394,18 +394,67 @@ function deductOffchainOutputFee(
     estimator: Estimator,
     arkAddress: string,
 ): bigint {
+    return subtotal - offchainOutputFee(subtotal, estimator, arkAddress);
+}
+
+function offchainOutputFee(amount: bigint, estimator: Estimator, arkAddress: string): bigint {
     // Mirror the estimator's own early return rather than reaching it through
     // `ArkAddress.decode`: with no output program the script is never read, and
     // an operator that doesn't price outputs shouldn't make a decodable address
     // a precondition for renewing or recovering.
     if (!estimator.config.offchainOutput) {
-        return subtotal;
+        return 0n;
     }
     const outputFee = estimator.evalOffchainOutput({
-        amount: subtotal,
+        amount,
         script: hex.encode(ArkAddress.decode(arkAddress).pkScript),
     });
-    return subtotal - BigInt(outputFee.satoshis);
+    return BigInt(outputFee.satoshis);
+}
+
+/**
+ * Run a caller's {@link RenewalSplit} and refuse a plan whose SHAPE the server
+ * would reject — count, ceiling and budget. Dust is judged by the caller, on
+ * every output whichever path produced it, so the one rule cannot drift.
+ *
+ * Refused, not corrected — a reshaped plan renews the float into a shape nobody
+ * asked for. Under-claiming IS allowed: it leaves a residue as fee, the
+ * direction {@link deductOffchainOutputFee} already errs in.
+ */
+function planSplitOutputs(split: RenewalSplit, context: RenewalSplitContext): bigint[] {
+    const { subtotal, outputFeeOn, maxAmount, hasAssets } = context;
+    const amounts = [...split.plan(context)];
+    if (amounts.length === 0) {
+        throw new Error(`Renewal split produced no outputs for a subtotal of ${subtotal}`);
+    }
+    if (hasAssets && amounts.length > 1) {
+        throw new Error(
+            `Renewal split produced ${amounts.length} outputs while the selected inputs carry assets: ` +
+                "settle assigns every input asset to the first matching output, so they would all land on " +
+                "piece 0. Return a single piece when the split context reports hasAssets.",
+        );
+    }
+    if (amounts.length > split.maxOutputs) {
+        throw new Error(
+            `Renewal split produced ${amounts.length} outputs, more than the ${split.maxOutputs} it allows`,
+        );
+    }
+
+    let claimed = 0n;
+    for (const amount of amounts) {
+        if (maxAmount >= 0n && amount > maxAmount) {
+            throw new Error(
+                `Renewal split output ${amount} exceeds the per-output limit ${maxAmount}`,
+            );
+        }
+        claimed += amount + outputFeeOn(amount);
+    }
+    if (claimed > subtotal) {
+        throw new Error(
+            `Renewal split claims ${claimed} with fees, more than the ${subtotal} available`,
+        );
+    }
+    return amounts;
 }
 
 /** Default renewal threshold in seconds (3 days). */
@@ -724,6 +773,42 @@ export interface RenewVtxosOptions {
      * more urgently expiring than the globally configured threshold.
      */
     thresholdSeconds?: number;
+    /** Give the renewal back as several outputs. Omitted, it settles into one. */
+    split?: RenewalSplit;
+}
+
+/**
+ * How a renewal divides its proceeds across outputs. The arithmetic that gets a
+ * settlement accepted stays here; this decides only the SHAPE, which is a policy
+ * the wallet cannot know.
+ */
+export interface RenewalSplit {
+    /**
+     * Most outputs one renewal may create — the caller's own bound, the server
+     * bounding WEIGHT. Also raises admission to this many `vtxoMaxAmount`s.
+     */
+    maxOutputs: number;
+    plan(context: RenewalSplitContext): readonly bigint[];
+}
+
+/** What a {@link RenewalSplit} gets to decide against. */
+export interface RenewalSplitContext {
+    /** Inputs' worth net of their own intent fees, BEFORE any output fee. */
+    subtotal: bigint;
+    outputFeeOn(amount: bigint): bigint;
+    /** Server per-output ceiling; `-1n` means none. */
+    maxAmount: bigint;
+    dust: bigint;
+    /** The address every piece lands on — the wallet's own, after any signer rotation. */
+    address: string;
+    /**
+     * Whether any selected input carries assets — then a plan MUST return one
+     * piece. `Wallet.settle` bags every input asset onto the FIRST output
+     * matching the destination script, and every piece is on it, so a split
+     * would silently put the whole holding on piece 0. The SPLIT is refused
+     * rather than the renewal: an unrenewed float expires.
+     */
+    hasAssets: boolean;
 }
 
 /**
@@ -1657,6 +1742,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             }
         }
 
+        // Same reason, and needed this early: the batch cap below multiplies by it.
+        if (options?.split !== undefined) {
+            const { maxOutputs } = options.split;
+            if (!Number.isInteger(maxOutputs) || maxOutputs < 1) {
+                throw new TypeError(
+                    `Invalid split.maxOutputs: expected a positive integer, got ${String(maxOutputs)}`,
+                );
+            }
+        }
+
         if (this.renewalInProgress) {
             throw new Error("Renewal already in progress");
         }
@@ -1726,18 +1821,38 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 );
             }
 
-            const capped = capSettlementBatch(byExpiryAscending(vtxos, now), vtxoMaxAmount);
-            if (vtxoMaxAmount >= 0n) {
+            // The ceiling bounds each OUTPUT, so a split emitting several carries
+            // that many ceilings' worth. By the count alone, not the output fee too:
+            // this weighs GROSS input value against pieces paid post-fee, so it
+            // stays under what they can absorb.
+            //
+            // Except an asset-bearing batch, which must come back as ONE piece:
+            // several ceilings' worth would leave it no valid plan at all. Judged
+            // BEFORE the cap, so it cannot admit a batch it then strands.
+            const carriesAssets = vtxos.some((vtxo) => (vtxo.assets?.length ?? 0) > 0);
+            const capacity =
+                vtxoMaxAmount < 0n || !options?.split || carriesAssets
+                    ? vtxoMaxAmount
+                    : BigInt(options.split.maxOutputs) * vtxoMaxAmount;
+            // Name the bound that actually fired. Both messages below count against
+            // `capacity`, so naming the per-output ceiling under a split would have
+            // an operator diagnose against a number nothing was compared to.
+            const limitLabel =
+                capacity === vtxoMaxAmount
+                    ? `per-output limit ${vtxoMaxAmount}`
+                    : `combined split capacity ${capacity} (${options?.split?.maxOutputs} x ${vtxoMaxAmount})`;
+            const capped = capSettlementBatch(byExpiryAscending(vtxos, now), capacity);
+            if (capacity >= 0n) {
                 // A VTXO whose value alone exceeds the per-output ceiling can
                 // never be renewed by this path (the server would reject it) and
                 // will drift toward a unilateral exit as it nears expiry. The
                 // routine count-cap overflow is benign (deferred next cycle), but
                 // this is not — surface it so operators can act (e.g. split it).
-                const oversized = vtxos.filter((vtxo) => BigInt(vtxo.value) > vtxoMaxAmount);
+                const oversized = vtxos.filter((vtxo) => BigInt(vtxo.value) > capacity);
                 if (oversized.length > 0) {
                     console.warn(
-                        `Renewal: ${oversized.length} VTXO(s) exceed the per-output limit ` +
-                            `${vtxoMaxAmount} and cannot be renewed; they risk unilateral exit`,
+                        `Renewal: ${oversized.length} VTXO(s) exceed the ${limitLabel} ` +
+                            "and cannot be renewed; they risk unilateral exit",
                     );
                 }
             }
@@ -1747,12 +1862,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 // keep the original selection (and order) untouched.
                 vtxos = capped;
                 if (vtxos.length === 0) {
-                    // The soonest-expiring VTXO alone exceeds vtxoMaxAmount, so
-                    // no batch fits. Only reachable if the server lowered the
-                    // ceiling below an existing VTXO; it would reject it anyway.
-                    throw new Error(
-                        `No VTXOs available to renew within the per-output limit ${vtxoMaxAmount}`,
-                    );
+                    // The soonest-expiring VTXO alone exceeds the bound, so no
+                    // batch fits. Only reachable if the server lowered the ceiling
+                    // below an existing VTXO; it would reject it anyway.
+                    throw new Error(`No VTXOs available to renew within the ${limitLabel}`);
                 }
             }
 
@@ -1775,34 +1888,38 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // the script the renewed VTXO actually lands on.
             const arkAddress = await this.wallet.getAddress();
 
-            // The fee an intent offers IS `sum(inputs) - sum(outputs)`, so the
-            // output has to come back short by what the operator's programs
-            // price. Asking for the gross sum offers zero and the server rejects
-            // with INTENT_INSUFFICIENT_FEE — see `priceSettlementInputs`.
-            const totalAmount = deductOffchainOutputFee(
-                subtotalOf(vtxos, net),
-                estimator,
-                arkAddress,
-            );
+            const subtotal = subtotalOf(vtxos, net);
+
+            const amounts = options?.split
+                ? planSplitOutputs(options.split, {
+                      subtotal,
+                      outputFeeOn: (amount) => offchainOutputFee(amount, estimator, arkAddress),
+                      maxAmount: vtxoMaxAmount,
+                      dust: dustAmount,
+                      address: arkAddress,
+                      // Read off the FINAL selection, so a cap that dropped the only
+                      // asset-bearing input frees the plan to split again.
+                      hasAssets: vtxos.some((vtxo) => (vtxo.assets?.length ?? 0) > 0),
+                  })
+                : // The fee an intent offers IS `sum(inputs) - sum(outputs)`, so the
+                  // output has to come back short by what the operator's programs
+                  // price. Asking for the gross sum offers zero and the server rejects
+                  // with INTENT_INSUFFICIENT_FEE — see `priceSettlementInputs`.
+                  [deductOffchainOutputFee(subtotal, estimator, arkAddress)];
 
             // Dust is judged on the NET output, not the gross input sum: the fees
             // come off after selection, so a batch that clears dust gross can
             // land under it here.
-            if (totalAmount < dustAmount) {
-                throw new Error(
-                    `Total amount ${totalAmount} is below dust threshold ${dustAmount}`,
-                );
+            for (const amount of amounts) {
+                if (amount < dustAmount) {
+                    throw new Error(`Total amount ${amount} is below dust threshold ${dustAmount}`);
+                }
             }
 
             const txid = await this.wallet.settle(
                 {
                     inputs: vtxos,
-                    outputs: [
-                        {
-                            address: arkAddress,
-                            amount: totalAmount,
-                        },
-                    ],
+                    outputs: amounts.map((amount) => ({ address: arkAddress, amount })),
                 },
                 eventCallback,
             );
