@@ -179,6 +179,32 @@ though: a `Date` in a field you added comes back an ISO string, a `Set` or `Map`
 and a `bigint` throws on save. The package's own records are JSON-safe by design; keep yours that
 way too.
 
+### Restore an imported wallet
+
+Register swap recovery before calling the core wallet's explicit `restore()`:
+
+```ts
+import { IndexedDbAssetSwapRepository, registerAssetSwapRestore } from "@arkade-os/swap";
+
+const repository = new IndexedDbAssetSwapRepository();
+const unregisterSwapRestore = registerAssetSwapRestore(wallet, {
+    arkServerUrl,
+    repository,
+    onResult: ({ changes, coverageError }) => {
+        if (coverageError) console.warn("Swap coverage was incomplete", coverageError);
+        console.info(`Restored or updated ${changes.length} swaps`);
+    },
+});
+
+await wallet.restore();
+```
+
+Core address, contract, history, and balance recovery finishes before the swap scan. Registering
+again replaces the prior hook, so setup is idempotent; call `unregisterSwapRestore()` when the
+integration no longer owns the wallet. A proxy or custom `IWallet` must also pass `indexer` and
+`serverPubkey` when it does not expose them. Keep calling `restoreAssetSwapRepository` directly
+during ordinary startup: hooks run only for an explicit `wallet.restore()`.
+
 ## Runtime requirements
 
 The one global the core requires is `crypto.getRandomValues`. Node and browsers have it; React

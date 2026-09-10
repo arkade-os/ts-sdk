@@ -55,6 +55,12 @@ const advanced = namesOf(ADVANCED_ENTRY);
  * moving between groups reads as the curation changing, not as noise.
  */
 const CURATED_ROOT: readonly string[] = [
+    // Solver-side claim packet stamping and classification.
+    "appendArkadeScript",
+    "CLAIM_PACKET_TYPE",
+    "claimPacketShape",
+    "ClaimPacketShape",
+    "SEALED_CIPHERTEXT_LENGTH",
     // The client: factory, object, config, and the config's field types.
     "createSwapClient",
     "SwapClient",

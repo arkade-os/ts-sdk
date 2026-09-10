@@ -252,6 +252,13 @@ export {
 } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
 export {
+    appendArkadeScript,
+    CLAIM_PACKET_TYPE,
+    claimPacketShape,
+    type ClaimPacketShape,
+    SEALED_CIPHERTEXT_LENGTH,
+} from "./claimPacket";
+export {
     restoreAssetSwapRepository,
     type AssetSwapRestoreChange,
     type RestoreAssetSwapRepositoryOptions,

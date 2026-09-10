@@ -28,10 +28,14 @@
         "    reason this file needs a fifth letter the spec's four do not cover."
     ],
     "S": [
+        "appendArkadeScript",
         "AssetSwap",
         "AssetSwapRepository",
+        "CLAIM_PACKET_TYPE",
         "ChainSource",
+        "ClaimPacketShape",
         "claimFeeSats",
+        "claimPacketShape",
         "createSwapPaymentRouter",
         "IndexedDbAssetSwapRepository",
         "InMemoryAssetSwapRepository",
@@ -51,6 +55,7 @@
         "railAvailable",
         "receiverExact",
         "RfqSwapState",
+        "SEALED_CIPHERTEXT_LENGTH",
         "SWAP_ROUTER_PRIORITY",
         "SwapContractRegistry",
         "swapHandle",
