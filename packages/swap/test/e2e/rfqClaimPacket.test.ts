@@ -4,7 +4,7 @@
  * tests reach only the two in TypeScript. The property: the client never calls
  * `pushClaim`, yet the money arrives. Unstamped, the lockup sits until expiry.
  */
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, onTestFinished } from "vitest";
 import { execSync, spawn } from "child_process";
 import { base64, hex } from "@scure/base";
 import {
@@ -118,6 +118,7 @@ describe("claim packet, end to end (regtest)", () => {
             ],
             { stdio: "ignore" },
         );
+        onTestFinished(() => payment.kill());
 
         const lockupScript = hex.encode(receive.swapPkScript);
         await waitFor(
@@ -165,7 +166,5 @@ describe("claim packet, end to end (regtest)", () => {
                 ),
             { what: "the lockup to read as spent" },
         );
-
-        payment.kill();
     }, 900_000);
 });
