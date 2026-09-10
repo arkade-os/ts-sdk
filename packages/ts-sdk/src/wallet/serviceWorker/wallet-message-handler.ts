@@ -1703,14 +1703,17 @@ export class WalletMessageHandler
      * runs over this method's local snapshot instead.
      */
     private async handleGetBalance(): Promise<WalletBalance> {
+        // One wallet for the whole read: `CLEAR` can land between the awaits
+        // below, and a balance half-answered by two wallets is worse than one
+        // answered by the wallet the read started under.
+        const wallet = this.readonlyWallet;
         const [boardingUtxos, { snapshot, vtxos: allVtxos }] = await Promise.all([
             this.getAllBoardingUtxos(),
             this.repoSnapshot(),
         ]);
         // Both exclusion sets come off that one snapshot, so they answer about
         // the same instant — and neither costs an indexer round-trip.
-        const pendingOutpoints =
-            this.readonlyWallet?.pendingRecoveryOutpointsIn(snapshot) ?? new Set<string>();
+        const pendingOutpoints = wallet?.pendingRecoveryOutpointsIn(snapshot) ?? new Set<string>();
 
         // boarding
         let confirmed = 0;
@@ -1725,16 +1728,16 @@ export class WalletMessageHandler
 
         const gated = gatedFrom(snapshot);
         const unlocked = new Set(
-            (
-                await spendableVtxosExcludingLocked(allVtxos, this.readonlyWallet?.intentRepository)
-            ).map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
+            (await spendableVtxosExcludingLocked(allVtxos, wallet?.intentRepository)).map(
+                (vtxo) => `${vtxo.txid}:${vtxo.vout}`,
+            ),
         );
 
         const totalBoarding = confirmed + unconfirmed;
         // No chain tip: this is an offline-first read.
         const offchain = computeOffchainBalance(allVtxos, {
             now: { timestamp: new Date() },
-            dust: this.readonlyWallet?.dustAmount ?? 0n,
+            dust: wallet?.dustAmount ?? 0n,
             isPendingRecovery: (vtxo) => pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
             isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
