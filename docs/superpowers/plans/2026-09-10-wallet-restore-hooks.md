@@ -336,8 +336,10 @@
 - Modify: `work/wallet/src/providers/wallet.tsx`
 - Modify: `work/wallet/package.json`
 - Modify: `work/wallet/pnpm-lock.yaml`
+- Modify: `work/wallet/pnpm-workspace.yaml`
 - Modify: `work/wallet/vendor/README.md`
 - Replace: `work/wallet/vendor/arkade-os-swap-0.0.14-pr901-0999579.tgz`
+- Create: `work/wallet/vendor/arkade-os-sdk-0.4.71-pr901-<ts-sdk-short-sha>.tgz`
 
 - [ ] Add a focused `WalletProvider` import/restore test before changing the provider.
 
@@ -363,13 +365,17 @@
 
   Run: `pnpm exec vitest run src/test/providers/wallet.test.tsx src/test/providers/assetSwaps.test.tsx`
 
-- [ ] Build and pack the final swap package from the ts-sdk commit that includes Tasks 1–5.
+- [ ] Build and pack the final core and swap packages from the ts-sdk commit that includes Tasks 1–5.
+
+  Run from `work/ts-sdk`: `pnpm --filter @arkade-os/sdk build`
 
   Run from `work/ts-sdk`: `pnpm --filter @arkade-os/swap build`
 
+  Run from `work/ts-sdk/packages/ts-sdk`: `pnpm pack --pack-destination ../../../wallet/vendor`
+
   Run from `work/ts-sdk/packages/swap`: `pnpm pack --pack-destination ../../../wallet/vendor`
 
-  Rename the tarball to `arkade-os-swap-0.0.14-pr901-<ts-sdk-short-sha>.tgz`. Update `package.json`, `pnpm-lock.yaml`, and `vendor/README.md`; remove only the superseded `arkade-os-swap-0.0.14-pr901-0999579.tgz` after verifying the new absolute target lies under `work/wallet/vendor`.
+  Rename the tarballs to `arkade-os-sdk-0.4.71-pr901-<ts-sdk-short-sha>.tgz` and `arkade-os-swap-0.0.14-pr901-<ts-sdk-short-sha>.tgz`. Update `package.json`, `pnpm-lock.yaml`, and `vendor/README.md`; remove only the superseded `arkade-os-swap-0.0.14-pr901-0999579.tgz` after verifying the new absolute target lies under `work/wallet/vendor`. Add a pnpm override for `@arkade-os/sdk` so the swap tarball's packed `0.4.71` dependency resolves to the same vendored core build rather than installing a second registry copy without restore hooks.
 
 - [ ] Install against the new tarball without broad dependency upgrades and re-run focused tests.
 
