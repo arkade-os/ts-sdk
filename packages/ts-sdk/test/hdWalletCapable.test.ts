@@ -16,6 +16,7 @@ import {
 import { sha256 } from "@noble/hashes/sha2.js";
 import { deriveDescriptorLeafCompressedPubKey } from "../src/identity/descriptor";
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
+import { jsonResponse } from "./helpers/response";
 
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -53,7 +54,7 @@ beforeEach(() => {
     vi.stubGlobal("EventSource", MockEventSource);
     mockFetch.mockReset();
     mockFetch.mockImplementation((url: string) => {
-        const reply = (body: unknown) => Promise.resolve({ ok: true, json: async () => body });
+        const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
         if (url.includes("/info")) return reply(mockArkInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });

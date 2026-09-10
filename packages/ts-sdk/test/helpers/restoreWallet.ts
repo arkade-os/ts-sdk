@@ -10,6 +10,7 @@ import type { IndexerProvider } from "../../src/providers/indexer";
 import type { OnchainProvider } from "../../src/providers/onchain";
 import type { VirtualCoin } from "../../src";
 import { HDDescriptorProvider } from "../../src/wallet/hdDescriptorProvider";
+import { jsonResponse } from "./response";
 
 /**
  * Test harness for the `Wallet.restore()` suite.
@@ -54,11 +55,7 @@ export const mockArkInfo = {
  */
 export function installRestoreHarness(): void {
     const mockFetch = vi.fn().mockImplementation((url: string) => {
-        const reply = (body: unknown) =>
-            Promise.resolve({
-                ok: true,
-                json: () => Promise.resolve(body),
-            });
+        const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
         if (url.includes("/info")) return reply(mockArkInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });

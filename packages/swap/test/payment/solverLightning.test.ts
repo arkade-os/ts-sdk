@@ -391,4 +391,14 @@ describe("the gates are re-run before anything is spent", () => {
         await expect((await quote.send()).settled()).rejects.toThrow(/quote expired/);
         expect(send).not.toHaveBeenCalled();
     });
+
+    it("states the earlier of the quote validity and the invoice expiry", async () => {
+        const soonInvoice = facts({ expiresAt: NOW() + 60 });
+        const { quote } = await quoted(soonInvoice, NOW() + 3600);
+        expect(quote.validUntil).toBe(soonInvoice.expiresAt);
+
+        const soonQuote = NOW() + 30;
+        const { quote: other } = await quoted(facts(), soonQuote);
+        expect(other.validUntil).toBe(soonQuote);
+    });
 });

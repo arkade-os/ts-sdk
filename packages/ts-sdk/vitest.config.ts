@@ -24,6 +24,15 @@ export default mergeConfig(
             sequence: {
                 sequencer: CustomSequencer,
             },
+            typecheck: {
+                enabled: true,
+                tsconfig: "./tsconfig.typecheck.json",
+                // Pinned to the tsconfig's own scope. Vitest's default glob is
+                // wider, and a file it collects but tsc excludes is reported as
+                // passing without ever being compiled.
+                include: ["test/**/*.test-d.ts"],
+                exclude: ["test/e2e/**"],
+            },
         },
     }),
 );

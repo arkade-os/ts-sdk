@@ -36,6 +36,9 @@ jobs:
       - name: Type-check ts-sdk
         run: pnpm -C packages/ts-sdk run typecheck
 
+      - name: Type-check ts-sdk type tests
+        run: pnpm -C packages/ts-sdk run typecheck:types
+
       - name: Build
         run: pnpm run build
 

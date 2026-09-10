@@ -23,6 +23,7 @@ import { ArkInfo, ArkProvider, SettlementEvent } from "../providers/ark";
 import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
 import type { ExtendedContractVtxo } from "../contracts/types";
+import { isContractVtxoEvent } from "../contracts/types";
 import {
     classifyAgainstSignerSet,
     isCooperativelyMigratable,
@@ -2765,7 +2766,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             ]);
 
             const stopWatching = contractManager.onContractEvent((event) => {
-                if (event.type !== "vtxo_received") {
+                // A watched script's outputs are not ours to renew or delegate.
+                if (event.type !== "vtxo_received" || !isContractVtxoEvent(event)) {
                     return;
                 }
 

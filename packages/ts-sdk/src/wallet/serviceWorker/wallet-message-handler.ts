@@ -7,6 +7,7 @@ import type {
     ContractWithVtxos,
     GetContractsFilter,
     PathSelection,
+    WatchedScript,
 } from "../../contracts";
 import type {
     ContractSyncState,
@@ -50,7 +51,7 @@ import {
 } from "../wallet";
 import { computeOffchainBalance } from "../balance";
 import { isHDAllocationCapable, isHDWalletCapable } from "../hdWalletCapable";
-import { gatedContracts } from "../../contracts/spendability";
+import { gatedFrom, isGatedVtxo } from "../../contracts/spendability";
 import type {
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,
@@ -301,6 +302,37 @@ export type RequestGetContractsWithVtxos = RequestEnvelope & {
 export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     type: "CONTRACTS_WITH_VTXOS";
     payload: { contracts: ContractWithVtxos[] };
+};
+
+function unsupportedByManager(method: string): Error {
+    return new Error(`Contract manager does not support ${method}`);
+}
+
+export type RequestWatchScript = RequestEnvelope & {
+    type: "WATCH_SCRIPT";
+    payload: { script: string; label?: string };
+};
+export type ResponseWatchScript = ResponseEnvelope & {
+    type: "SCRIPT_WATCHED";
+    payload: { script: string };
+};
+
+export type RequestUnwatchScript = RequestEnvelope & {
+    type: "UNWATCH_SCRIPT";
+    payload: { script: string };
+};
+export type ResponseUnwatchScript = ResponseEnvelope & {
+    type: "SCRIPT_UNWATCHED";
+    payload: { script: string };
+};
+
+export type RequestGetWatchedScripts = RequestEnvelope & {
+    type: "GET_WATCHED_SCRIPTS";
+    payload: Record<string, never>;
+};
+export type ResponseGetWatchedScripts = ResponseEnvelope & {
+    type: "WATCHED_SCRIPTS";
+    payload: { scripts: WatchedScript[] };
 };
 
 export type RequestAnnotateVtxos = RequestEnvelope & {
@@ -786,6 +818,9 @@ export type WalletUpdaterRequest =
     | RequestCreateContract
     | RequestGetContracts
     | RequestGetContractsWithVtxos
+    | RequestWatchScript
+    | RequestUnwatchScript
+    | RequestGetWatchedScripts
     | RequestAnnotateVtxos
     | RequestUpdateContract
     | RequestDeleteContract
@@ -839,6 +874,9 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseCreateContract
         | ResponseGetContracts
         | ResponseGetContractsWithVtxos
+        | ResponseWatchScript
+        | ResponseUnwatchScript
+        | ResponseGetWatchedScripts
         | ResponseAnnotateVtxos
         | ResponseUpdateContract
         | ResponseDeleteContract
@@ -1166,9 +1204,7 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_TRANSACTION_HISTORY": {
-                    const allVtxos = await this.getVtxosFromRepo();
-                    const transactions =
-                        (await this.buildTransactionHistoryFromCache(allVtxos)) ?? [];
+                    const transactions = (await this.buildTransactionHistoryFromCache()) ?? [];
                     return this.tagged({
                         id,
                         type: "TRANSACTION_HISTORY",
@@ -1245,6 +1281,41 @@ export class WalletMessageHandler
                         id,
                         type: "CONTRACTS_WITH_VTXOS",
                         payload: { contracts },
+                    });
+                }
+                case "WATCH_SCRIPT": {
+                    const manager = await this.readonlyWallet.getContractManager();
+                    // Acking a manager that cannot watch would tell the
+                    // caller its script is covered when nothing is subscribed.
+                    if (!manager.watchScript) throw unsupportedByManager("watchScript");
+                    await manager.watchScript(message.payload.script, {
+                        label: message.payload.label,
+                    });
+                    return this.tagged({
+                        id,
+                        type: "SCRIPT_WATCHED",
+                        payload: { script: message.payload.script },
+                    });
+                }
+                case "UNWATCH_SCRIPT": {
+                    const manager = await this.readonlyWallet.getContractManager();
+                    if (!manager.unwatchScript) throw unsupportedByManager("unwatchScript");
+                    await manager.unwatchScript(message.payload.script);
+                    return this.tagged({
+                        id,
+                        type: "SCRIPT_UNWATCHED",
+                        payload: { script: message.payload.script },
+                    });
+                }
+                case "GET_WATCHED_SCRIPTS": {
+                    const manager = await this.readonlyWallet.getContractManager();
+                    if (!manager.getWatchedScripts) {
+                        throw unsupportedByManager("getWatchedScripts");
+                    }
+                    return this.tagged({
+                        id,
+                        type: "WATCHED_SCRIPTS",
+                        payload: { scripts: await manager.getWatchedScripts() },
                     });
                 }
                 case "ANNOTATE_VTXOS": {
@@ -1652,7 +1723,7 @@ export class WalletMessageHandler
             }
         }
 
-        const gated = gatedContracts(snapshot.map((_) => _.contract));
+        const gated = gatedFrom(snapshot);
         const unlocked = new Set(
             (
                 await spendableVtxosExcludingLocked(allVtxos, this.readonlyWallet?.intentRepository)
@@ -1664,7 +1735,7 @@ export class WalletMessageHandler
         const offchain = computeOffchainBalance(allVtxos, {
             now: { timestamp: new Date() },
             isPendingRecovery: (vtxo) => pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
-            isGenericallySpendable: (vtxo) => !gated.has(vtxo.script),
+            isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
         });
 
@@ -1865,9 +1936,6 @@ export class WalletMessageHandler
             return;
         }
 
-        // Read virtual outputs from repository (now populated by contract manager)
-        const vtxos = await this.getVtxosFromRepo();
-
         // Fetch boarding inputs across the full boarding-address set (current +
         // historical rotated; plan §6-IV.2). Fetch FIRST: getBoardingUtxos
         // re-fetches each boarding address from the onchain provider and saves
@@ -1888,7 +1956,7 @@ export class WalletMessageHandler
 
         // Build transaction history from cached virtual outputs (no indexer call)
         const address = await this.readonlyWallet.getAddress();
-        const txs = await this.buildTransactionHistoryFromCache(vtxos);
+        const txs = await this.buildTransactionHistoryFromCache();
         if (txs) await this.walletRepository.saveTransactions(address, txs);
     }
 
@@ -2152,20 +2220,37 @@ export class WalletMessageHandler
     /**
      * Build transaction history from cached virtual outputs, hitting the indexer only for
      * uncached timestamps. Best-effort, like the plain Wallet path.
+     *
+     * Takes its own {@link repoSnapshot} rather than a caller-supplied VTXO
+     * list: the coins and the gate that judges them have to come off one read
+     * or they answer about different instants, and being the worker's only
+     * history builder means neither caller can supply one without the other.
+     * The snapshot and the boarding read are independent, so they run together
+     * — the same pairing `handleGetBalance` makes.
      */
-    private async buildTransactionHistoryFromCache(
-        vtxos: ExtendedVirtualCoin[],
-    ): Promise<ArkTransaction[] | null> {
+    private async buildTransactionHistoryFromCache(): Promise<ArkTransaction[] | null> {
         if (!this.readonlyWallet) return null;
 
-        const { boardingTxs, commitmentsToIgnore } = await this.readonlyWallet.getBoardingTxs();
+        const [{ snapshot, vtxos }, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
+            this.repoSnapshot(),
+            this.readonlyWallet.getBoardingTxs(),
+        ]);
 
         const indexerProvider = this.indexerProvider;
         const resolveTxCreatedAt = indexerProvider
             ? (txids: string[]) => fetchVtxoCreatedAtByTxid(indexerProvider, txids)
             : undefined;
 
-        return buildTransactionHistory(vtxos, boardingTxs, commitmentsToIgnore, resolveTxCreatedAt);
+        // `ReadonlyWallet` derives the same gate from its own snapshot, so both
+        // sides of the bus classify a coin alike — differing only in freshness,
+        // as the balance reads do, because this one never syncs.
+        return buildTransactionHistory(
+            vtxos,
+            boardingTxs,
+            commitmentsToIgnore,
+            resolveTxCreatedAt,
+            gatedFrom(snapshot),
+        );
     }
 
     private async ensureContractEventBroadcasting() {

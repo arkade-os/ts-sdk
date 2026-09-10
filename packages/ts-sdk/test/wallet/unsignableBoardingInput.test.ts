@@ -6,6 +6,7 @@ import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
 } from "../../src";
+import { jsonResponse } from "../helpers/response";
 
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -43,8 +44,7 @@ beforeEach(() => {
     vi.stubGlobal("EventSource", MockEventSource);
     mockFetch.mockReset();
     mockFetch.mockImplementation((url: string) => {
-        const reply = (body: unknown) =>
-            Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+        const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
         if (url.includes("/info")) return reply(mockArkInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RestDelegateProvider } from "../src/providers/delegate";
+import { jsonResponse } from "./helpers/response";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -15,15 +16,11 @@ describe("RestDelegateProvider request headers (CORS)", () => {
             "fetch",
             vi.fn(async (_url: string, init?: RequestInit) => {
                 seen.push(new Headers(init?.headers));
-                return {
-                    ok: true,
-                    text: async () => "",
-                    json: async () => ({
-                        pubkey: "02abc",
-                        fee: "0",
-                        delegatorAddress: "tark1validaddress",
-                    }),
-                };
+                return jsonResponse({
+                    pubkey: "02abc",
+                    fee: "0",
+                    delegatorAddress: "tark1validaddress",
+                });
             }),
         );
 

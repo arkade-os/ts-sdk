@@ -149,15 +149,110 @@ export type RfqRefusalReason =
 /** Lifecycle vocabulary; states after which nothing more will happen. */
 export const RFQ_TERMINAL_STATES = ["settled", "refused", "expired", "refunded", "stuck"] as const;
 
+export const RFQ_REFUSAL_ERROR_CODES = [
+    "amount_side_unsupported",
+    "exact_out_unsupported",
+    "invalid_amount",
+    "invalid_payout_address",
+    "invalid_refund_address",
+    "invoice_amount_mismatch",
+    "invoice_cltv_too_large",
+    "invoice_malformed",
+    "invoice_missing_amount",
+    "invoice_missing_network",
+    "invoice_missing_payment_hash",
+    "invoice_missing_timestamp",
+    "invoice_mixed_case",
+    "invoice_sub_satoshi_amount",
+    "invoice_too_long",
+    "invoice_wrong_network",
+] as const;
+
+export type RfqRefusalErrorCode = (typeof RFQ_REFUSAL_ERROR_CODES)[number];
+export type RfqRefusalUnit = "blocks" | "characters" | "sats";
+
+export interface RfqRefusalDetail {
+    errorCode?: RfqRefusalErrorCode;
+    field?: string;
+    actual?: number;
+    expected?: number;
+    limit?: number;
+    unit?: RfqRefusalUnit;
+}
+
+export const isRfqRefusalErrorCode = (value: unknown): value is RfqRefusalErrorCode =>
+    typeof value === "string" && (RFQ_REFUSAL_ERROR_CODES as readonly string[]).includes(value);
+
+const REFUSAL_FIELDS = new Set([
+    "amount",
+    "amount_side",
+    "profile.invoice",
+    "profile.payout_address",
+    "profile.refund_address",
+]);
+const REFUSAL_UNITS = new Set<RfqRefusalUnit>(["blocks", "characters", "sats"]);
+const safeInteger = (value: unknown): number | undefined =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+const safeRefusalDetail = (detail: {
+    errorCode?: unknown;
+    field?: unknown;
+    actual?: unknown;
+    expected?: unknown;
+    limit?: unknown;
+    unit?: unknown;
+}): RfqRefusalDetail => {
+    if (!isRfqRefusalErrorCode(detail.errorCode)) return {};
+    return {
+        errorCode: detail.errorCode,
+        field:
+            typeof detail.field === "string" && REFUSAL_FIELDS.has(detail.field)
+                ? detail.field
+                : undefined,
+        actual: safeInteger(detail.actual),
+        expected: safeInteger(detail.expected),
+        limit: safeInteger(detail.limit),
+        unit:
+            typeof detail.unit === "string" && REFUSAL_UNITS.has(detail.unit as RfqRefusalUnit)
+                ? (detail.unit as RfqRefusalUnit)
+                : undefined,
+    };
+};
+
+const refusalMessage = (reason: string, detail: RfqRefusalDetail): string => {
+    if (!detail.errorCode) return `solver refused: ${reason}`;
+    const where = detail.field ? ` at ${detail.field}` : "";
+    const unit = detail.unit ? ` ${detail.unit}` : "";
+    if (detail.actual !== undefined && detail.limit !== undefined) {
+        return `solver refused: ${reason} (${detail.errorCode}${where}: ${detail.actual}${unit}, limit ${detail.limit})`;
+    }
+    if (detail.actual !== undefined && detail.expected !== undefined) {
+        return `solver refused: ${reason} (${detail.errorCode}${where}: ${detail.actual}${unit}, expected ${detail.expected})`;
+    }
+    return `solver refused: ${reason} (${detail.errorCode}${where})`;
+};
+
 /** A refusal from the solver, carrying its closed-set reason. */
 export class SwapRefusal extends Error {
     readonly reason: string;
     readonly rfqId: string | undefined;
-    constructor(reason: string, rfqId?: string) {
-        super(`solver refused: ${reason}`);
+    readonly errorCode: RfqRefusalErrorCode | undefined;
+    readonly field: string | undefined;
+    readonly actual: number | undefined;
+    readonly expected: number | undefined;
+    readonly limit: number | undefined;
+    readonly unit: RfqRefusalUnit | undefined;
+    constructor(reason: string, rfqId?: string, detail: RfqRefusalDetail = {}) {
+        const safeDetail = safeRefusalDetail(detail);
+        super(refusalMessage(reason, safeDetail));
         this.name = "SwapRefusal";
         this.reason = reason;
         this.rfqId = rfqId;
+        this.errorCode = safeDetail.errorCode;
+        this.field = safeDetail.field;
+        this.actual = safeDetail.actual;
+        this.expected = safeDetail.expected;
+        this.limit = safeDetail.limit;
+        this.unit = safeDetail.unit;
     }
 }
 
@@ -581,8 +676,32 @@ export interface RfqTransport {
  * byte-identical copy — module-level only, never re-exported from `index.ts`.
  */
 export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: string): RfqQuote => {
-    const p = payload as { type?: string; reason?: string; rfq_id?: string; pair?: unknown } | null;
-    if (p?.type === "rfq_refusal") throw new SwapRefusal(p.reason ?? "unknown", p.rfq_id ?? rfqId);
+    const p = payload as {
+        type?: string;
+        reason?: string;
+        rfq_id?: string;
+        pair?: unknown;
+        error_code?: unknown;
+        field?: unknown;
+        actual?: unknown;
+        expected?: unknown;
+        limit?: unknown;
+        unit?: unknown;
+    } | null;
+    if (p?.type === "rfq_refusal") {
+        throw new SwapRefusal(
+            p.reason ?? "unknown",
+            p.rfq_id ?? rfqId,
+            safeRefusalDetail({
+                errorCode: p.error_code,
+                field: p.field,
+                actual: p.actual,
+                expected: p.expected,
+                limit: p.limit,
+                unit: p.unit,
+            }),
+        );
+    }
     if (p?.type !== "rfq_quote" || p.rfq_id !== rfqId) {
         throw new Error(`unexpected reply: ${p?.type ?? "no payload"}`);
     }
@@ -1165,8 +1284,10 @@ export const lightningReceiveRequest = (input: {
     payoutAddress: string;
     /** Trader's x-only arkade key — the covenant's `receiver` role. */
     payoutPubkey: Uint8Array;
-    /** `P` sealed to covclaimd, base64 — `sealClaimPacket(...).ciphertext`. */
-    claimPacket: string;
+    /** `P` sealed to covclaimd, base64 — `sealClaimPacket(...).ciphertext`.
+     * Omitted when there is no covclaimd to seal to; the field is then left off
+     * the wire entirely, since the solver refuses an empty packet. */
+    claimPacket?: string;
     amount: number;
     amountSide: "from" | "to";
 }): Record<string, unknown> => ({
@@ -1180,7 +1301,7 @@ export const lightningReceiveRequest = (input: {
         payment_hash: input.paymentHash,
         payout_address: input.payoutAddress,
         payout_pubkey: hex.encode(input.payoutPubkey),
-        claim_packet: input.claimPacket,
+        ...(input.claimPacket === undefined ? {} : { claim_packet: input.claimPacket }),
     },
 });
 
@@ -1198,8 +1319,9 @@ export const onchainReceiveRequest = (input: {
     payoutPubkey: Uint8Array;
     /** Trader's x-only L1 key for the HTLC's refund leaf. */
     refundPubkey: Uint8Array;
-    /** `P` sealed to covclaimd, base64 — `sealClaimPacket(...).ciphertext`. */
-    claimPacket: string;
+    /** `P` sealed to covclaimd, base64. Omitted when there is none to seal to —
+     * see {@link lightningReceiveRequest}. */
+    claimPacket?: string;
     amount: number;
     amountSide: "from" | "to";
 }): Record<string, unknown> => ({
@@ -1211,7 +1333,7 @@ export const onchainReceiveRequest = (input: {
     amount: input.amount,
     profile: {
         payment_hash: input.paymentHash,
-        claim_packet: input.claimPacket,
+        ...(input.claimPacket === undefined ? {} : { claim_packet: input.claimPacket }),
         refund_pubkey: hex.encode(input.refundPubkey),
         payout_address: input.payoutAddress,
         payout_pubkey: hex.encode(input.payoutPubkey),
@@ -1805,8 +1927,10 @@ export async function requestLightningReceive(
          * {@link resolveEmulatorPubkey}. */
         emulatorPubkey?: string;
         /** covclaimd's 33-byte compressed pubkey (from its own info endpoint)
-         * — the claim packet seals to it and only it can ever read `P` early. */
-        covclaimdPubkey: Uint8Array;
+         * — the claim packet seals to it and only it can ever read `P` early.
+         * Unset where no covclaimd is deployed: nothing is sealed and no packet
+         * is sent. Never substitute a throwaway key — nobody could open it. */
+        covclaimdPubkey?: Uint8Array;
         /** The caller's own BOLT11 decoder, applied to the SOLVER's invoice.
          * Required: an optional verifier is one integrators skip, and this is
          * the check whose absence loses the whole payment. */
@@ -1861,10 +1985,12 @@ export async function requestLightningReceive(
         new RestArkProvider(arkServerUrl).getInfo(),
         wallet.getAddress(),
     ]);
-    const claimPacket = await sealClaimPacket({
-        preimage,
-        covclaimdPubkey: params.covclaimdPubkey,
-    });
+    const claimPacket = params.covclaimdPubkey
+        ? await sealClaimPacket({
+              preimage,
+              covclaimdPubkey: params.covclaimdPubkey,
+          })
+        : undefined;
 
     const quote = await transport.requestQuote(
         lightningReceiveRequest({
@@ -1872,7 +1998,7 @@ export async function requestLightningReceive(
             paymentHash,
             payoutAddress,
             payoutPubkey,
-            claimPacket: claimPacket.ciphertext,
+            claimPacket: claimPacket?.ciphertext,
             amount: params.amount,
             amountSide: params.amountSide,
         }),
@@ -2036,8 +2162,9 @@ export async function requestOnchainReceive(
         emulatorPubkey?: string;
         /** Trader's x-only L1 key for the HTLC's refund leaf. */
         refundPubkey: Uint8Array;
-        /** covclaimd's 33-byte compressed pubkey — see {@link requestLightningReceive}. */
-        covclaimdPubkey: Uint8Array;
+        /** covclaimd's 33-byte compressed pubkey, unset where none is deployed
+         * — see {@link requestLightningReceive}. */
+        covclaimdPubkey?: Uint8Array;
         rfqId?: string;
     },
 ): Promise<{
@@ -2076,10 +2203,12 @@ export async function requestOnchainReceive(
         new RestArkProvider(arkServerUrl).getInfo(),
         wallet.getAddress(),
     ]);
-    const claimPacket = await sealClaimPacket({
-        preimage,
-        covclaimdPubkey: params.covclaimdPubkey,
-    });
+    const claimPacket = params.covclaimdPubkey
+        ? await sealClaimPacket({
+              preimage,
+              covclaimdPubkey: params.covclaimdPubkey,
+          })
+        : undefined;
 
     const quote = await transport.requestQuote(
         onchainReceiveRequest({
@@ -2088,7 +2217,7 @@ export async function requestOnchainReceive(
             payoutAddress,
             payoutPubkey,
             refundPubkey: params.refundPubkey,
-            claimPacket: claimPacket.ciphertext,
+            claimPacket: claimPacket?.ciphertext,
             amount: params.amount,
             amountSide: params.amountSide,
         }),

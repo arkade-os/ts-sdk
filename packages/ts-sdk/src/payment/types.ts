@@ -1,4 +1,4 @@
-import type { Asset, Recipient, Wallet } from "../index";
+import type { Asset, IWallet, Recipient } from "../index";
 
 export type PaymentStatus = "pending" | "sent" | "settled" | "failed";
 
@@ -54,6 +54,18 @@ export interface RouteQuote {
     /** `amount + fee` — what leaves the wallet. */
     total: number;
     /**
+     * Unix seconds after which the counterparty stops honouring this quote.
+     *
+     * Absent means "nothing to observe", not "never expires": a rail with no
+     * counterparty and no quote book — an Arkade transfer, an asset transfer, a
+     * collaborative exit — has no validity to state. A caller holding a quote
+     * across user think-time should read absence as "no check possible", and must
+     * still expect {@link send} to refuse either way: the swap rails re-check
+     * validity there, which is the only point that can judge it against the
+     * moment of spending.
+     */
+    validUntil?: number;
+    /**
      * @experimental The asset shape is provisional. The v2 swap client models
      * assets as `give`/`take`/`amountOn` over `AssetRef`, and the two
      * vocabularies are expected to converge on v0.5; do not treat this field as
@@ -87,7 +99,9 @@ export interface RouterPreferences {
 }
 
 export interface RouterContext {
-    wallet: Wallet;
+    /** A rail needing more than this takes it as a constructor dep, rather than
+     *  narrowing the context every other rail shares. */
+    wallet: IWallet;
     /** Loosely typed in core to avoid a dependency on boltz-swap; swap rails cast it. */
     swaps?: unknown;
     prefs: RouterPreferences;

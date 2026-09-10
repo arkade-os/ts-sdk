@@ -2,6 +2,7 @@ export {
     createOffer,
     cancelOffer,
     fillOffer,
+    restoreOfferCoverage,
     encodeOffer,
     decodeOffer,
     offerVtxoScript,
@@ -20,6 +21,15 @@ export {
     type DiscoverMarketsOptions,
     type PlanError,
 } from "./markets";
+export {
+    MARKET_CORRIDORS,
+    isRfqMarket,
+    marketAssetId,
+    marketCorridor,
+    marketPairLabel,
+    type MarketCorridor,
+    type MarketLike,
+} from "./marketShape";
 export {
     BTC_ASSET_ID,
     getAssetSwaps,
@@ -98,6 +108,7 @@ export {
     LIGHTNING_SEND_PAIR,
     MIN_CLAIM_WINDOW_SECONDS,
     MIN_HEADROOM_SECONDS,
+    RFQ_REFUSAL_ERROR_CODES,
     RFQ_TERMINAL_STATES,
     SOLO_REFUND_HEADROOM_SECONDS,
     AddressMismatch,
@@ -109,6 +120,7 @@ export {
     deriveLightningReceive,
     deriveOnchainReceive,
     httpTransport,
+    isRfqRefusalErrorCode,
     lightningReceiveRequest,
     lightningSendRequest,
     lightningSendVtxoScript,
@@ -129,7 +141,10 @@ export {
     type LightningSendTreeParams,
     type RelaySocket,
     type RfqQuote,
+    type RfqRefusalDetail,
+    type RfqRefusalErrorCode,
     type RfqRefusalReason,
+    type RfqRefusalUnit,
     type RfqStatus,
     type RfqTransport,
 } from "./rfq";
@@ -171,6 +186,15 @@ export {
     requestOnchainSend,
 } from "./rfq";
 export { sealClaimPacket, type ClaimPacketInput, type SealedClaimPacket } from "./claimPacket";
+export {
+    CovclaimdRevealError,
+    covclaimdClient,
+    revealClaimPacket,
+    revealFieldsFromScript,
+    type CovclaimdClient,
+    type CovclaimdInfo,
+    type RevealParams,
+} from "./reveal";
 export {
     LockupAmountMismatchError,
     awaitLockupFunding,

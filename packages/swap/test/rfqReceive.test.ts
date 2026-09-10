@@ -220,6 +220,44 @@ describe("receive request builders", () => {
             },
         });
     });
+
+    // Absence, not falsiness: the solver keeps `.min(1)`, so `""` is refused and
+    // `null` is no packet either — an omitted key is the only way to say absent.
+    it("omits claim_packet from the lightning profile when there is none", () => {
+        const { profile } = lightningReceiveRequest({
+            rfqId: RFQ_ID,
+            paymentHash: PAYMENT_HASH,
+            payoutAddress: "tark1q...",
+            payoutPubkey: TRADER_PAYOUT_PUBKEY,
+            amount: 5_000,
+            amountSide: "to",
+        }) as { profile: Record<string, unknown> };
+        expect(Object.keys(profile)).not.toContain("claim_packet");
+        expect(profile).toEqual({
+            payment_hash: PAYMENT_HASH,
+            payout_address: "tark1q...",
+            payout_pubkey: hex.encode(TRADER_PAYOUT_PUBKEY),
+        });
+    });
+
+    it("omits claim_packet from the onchain profile when there is none", () => {
+        const { profile } = onchainReceiveRequest({
+            rfqId: RFQ_ID,
+            paymentHash: PAYMENT_HASH,
+            payoutAddress: "tark1q...",
+            payoutPubkey: TRADER_PAYOUT_PUBKEY,
+            refundPubkey: L1_REFUND_PUBKEY,
+            amount: 100_000,
+            amountSide: "from",
+        }) as { profile: Record<string, unknown> };
+        expect(Object.keys(profile)).not.toContain("claim_packet");
+        expect(profile).toEqual({
+            payment_hash: PAYMENT_HASH,
+            refund_pubkey: hex.encode(L1_REFUND_PUBKEY),
+            payout_address: "tark1q...",
+            payout_pubkey: hex.encode(TRADER_PAYOUT_PUBKEY),
+        });
+    });
 });
 
 /** A quote whose covenant fields derive the lockup the maker will derive. */
@@ -1121,5 +1159,87 @@ describe("requestOnchainReceive on an HD wallet", () => {
             stored: result.secrets.preimage,
         });
         expect(seen.paymentHash).toBe(paymentHashOf(preimage));
+    });
+});
+
+/** Captures the profile that actually went out, then aborts the flow. Rejecting
+ * on the sentinel is load-bearing: a seal against an absent key throws first. */
+const capturedProfile = async (
+    send: (transport: RfqTransport) => Promise<unknown>,
+): Promise<Record<string, unknown>> => {
+    const seen: { profile?: Record<string, unknown> } = {};
+    const transport: RfqTransport = {
+        async requestQuote(payload) {
+            seen.profile = (payload as { profile: Record<string, unknown> }).profile;
+            throw new Error("captured");
+        },
+        async status() {
+            return null;
+        },
+        async close() {},
+    };
+    await expect(send(transport)).rejects.toThrow("captured");
+    return seen.profile!;
+};
+
+const decodeStub = (raw: string): InvoiceFacts => ({
+    raw,
+    paymentHash: "",
+    amountSats: 5_000,
+    expiresAt: INVOICE_EXPIRES_AT,
+});
+
+describe("a receive with no covclaimd to seal to", () => {
+    it("sends no claim_packet on the lightning leg", async () => {
+        const wallet = await hdWallet();
+        const profile = await capturedProfile((transport) =>
+            requestLightningReceive(wallet, "http://ark", transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 5_000,
+                amountSide: "from",
+                decodeInvoice: decodeStub,
+            }),
+        );
+        expect(Object.keys(profile)).not.toContain("claim_packet");
+    });
+
+    it("sends no claim_packet on the onchain leg", async () => {
+        const wallet = await hdWallet();
+        const profile = await capturedProfile((transport) =>
+            requestOnchainReceive(wallet, "http://ark", transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 100_000,
+                amountSide: "from",
+                refundPubkey: L1_REFUND_PUBKEY,
+            }),
+        );
+        expect(Object.keys(profile)).not.toContain("claim_packet");
+    });
+
+    it("still seals on both legs when covclaimd IS configured", async () => {
+        const wallet = await hdWallet();
+        const lightning = await capturedProfile((transport) =>
+            requestLightningReceive(wallet, "http://ark", transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 5_000,
+                amountSide: "from",
+                covclaimdPubkey: COVCLAIMD_PK,
+                decodeInvoice: decodeStub,
+            }),
+        );
+        expect(typeof lightning.claim_packet).toBe("string");
+        expect(lightning.claim_packet).not.toBe("");
+
+        const onchain = await capturedProfile((transport) =>
+            requestOnchainReceive(wallet, "http://ark", transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 100_000,
+                amountSide: "from",
+                refundPubkey: L1_REFUND_PUBKEY,
+                covclaimdPubkey: COVCLAIMD_PK,
+            }),
+        );
+        expect(typeof onchain.claim_packet).toBe("string");
+        expect(onchain.claim_packet).not.toBe("");
     });
 });
