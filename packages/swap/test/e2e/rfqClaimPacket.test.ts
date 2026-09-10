@@ -12,6 +12,7 @@ import {
     Extension,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    RestArkProvider,
     RestIndexerProvider,
     SingleKey,
     Transaction,
@@ -69,7 +70,7 @@ let covclaimdPubkey: Uint8Array;
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: ARK_URL,
+        arkProvider: new RestArkProvider(ARK_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,

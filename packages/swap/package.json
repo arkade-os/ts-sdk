@@ -95,8 +95,8 @@
         "prepack": "pnpm run build",
         "test": "vitest run --exclude test/e2e",
         "test:unit": "vitest run --exclude test/e2e",
-        "test:integration": "vitest run --exclude \"test/e2e/rfq*.test.ts\" test/e2e/",
-        "test:integration:rfq": "vitest run test/e2e/rfq",
+        "test:integration": "vitest run --no-file-parallelism --exclude \"test/e2e/rfq*.test.ts\" test/e2e/",
+        "test:integration:rfq": "vitest run --no-file-parallelism test/e2e/rfq",
         "smoke:dist": "node scripts/smoke-dist.mjs"
     },
     "engines": {
