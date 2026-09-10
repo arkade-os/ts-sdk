@@ -288,18 +288,35 @@ export interface LightningReceiveSwap extends RfqSwapCommon {
  * `receiveVtxoScript` / `onchainHtlcScript` over the quote's binding fields —
  * and hands the result to {@link RfqSwapManager.start}.
  *
- * **`onchain:BTC->arkade:BTC` is deliberately not a member yet.** Its Arkade
- * half is the same solver-funded lockup as {@link LightningReceiveSwap}'s, but
- * it also has an L1 half the trader funds and must take back itself
- * (`buildHtlcRefund` at the HTLC's own `htlc_locktime`), which is a second
- * deadline, a second observation seam and a second action callback. Adding the
- * lockup half alone would produce a manager that silently lets that L1 refund
- * window pass — the one failure mode {@link RfqSwapManager} refuses elsewhere
- * by name (see `driveOnchain`'s missing-`ChainSource` check). Until the L1
- * refund is driven too, that corridor is better served by the request and claim
- * functions directly than by a monitor that covers half of it.
  */
-export type RfqSwap = LightningSendSwap | OnchainSendSwap | LightningReceiveSwap;
+export type RfqSwap =
+    | LightningSendSwap
+    | OnchainSendSwap
+    | LightningReceiveSwap
+    | OnchainReceiveSwap;
+
+/**
+ * `onchain:BTC->arkade:BTC`. A {@link LightningReceiveSwap}'s lockup plus an L1
+ * HTLC the trader funds and must take back itself. That refund leaf does not
+ * expire, so the failure to drive against is the manager finishing the swap
+ * while the output still holds the trader's money.
+ */
+export interface OnchainReceiveSwap extends RfqSwapCommon {
+    kind: "onchain_receive";
+    expectedAmount: number;
+    /** Its `refundLocktime` is the trader's own, NOT {@link RfqSwapCommon}'s. */
+    htlc: OnchainHtlc;
+    minConfirmations: number;
+    /** Required, unlike the send leg's optional `payoutPkScript`: without it
+     * the refund cannot be built at all. */
+    refundPkScript: Uint8Array;
+    funding?: { txid: string; vout: number };
+    claimArkTxid?: string;
+    refundTxid?: string;
+}
+
+/** The two legs sharing one claim path, `expectedAmount` gate included. */
+export type ReceiveLockupSwap = LightningReceiveSwap | OnchainReceiveSwap;
 
 // ── The onchain state machine ───────────────────────────────────────────────
 
@@ -361,6 +378,34 @@ export function nextOnchainAction(input: {
     }
 }
 
+/** {@link OnchainSendAction}'s mirror, minus `refund_window_closed`: an
+ * `nLockTime` refund leaf does not close. */
+export type OnchainReceiveAction = "wait" | "refund" | "refunded" | "taken";
+
+/**
+ * Off the SAME phases the send leg reads (see {@link OnchainHtlcPhase}); no
+ * clock or margin, `refundable` being the median-time-past verdict itself. */
+export function nextOnchainReceiveAction(input: {
+    phase: OnchainHtlcPhase;
+    settled: boolean;
+}): OnchainReceiveAction {
+    switch (input.phase.phase) {
+        case "unfunded":
+        case "awaiting_confirmations":
+        case "claimable":
+            return "wait";
+        case "claimed":
+            return "taken";
+        case "swept":
+            return "refunded";
+        case "refundable":
+            // Refusal, not an omission: the trader took the lockup, so this
+            // output is the solver's payment and refunding it too would be
+            // taking both sides of the trade.
+            return input.settled ? "taken" : "refund";
+    }
+}
+
 // ── Callbacks, events, configuration ─────────────────────────────────────────
 
 /** What the trader's own `refundWithoutReceiver` push returned, or `null` when
@@ -388,6 +433,12 @@ export interface RfqSwapManagerCallbacks {
     /** Build and broadcast the L1 claim. See `claimOnchainFill`. */
     claimOnchain: (swap: OnchainSendSwap, utxo: ChainUtxo) => Promise<{ txid: string }>;
     /**
+     * `buildHtlcRefund` over `swap.refundPkScript`, then `chain.broadcast`.
+     * Required for {@link claimOnchain}'s reason: monitoring one of these
+     * unwired strands the trader's funding. A throw is retried indefinitely.
+     */
+    refundOnchain: (swap: OnchainReceiveSwap, utxo: ChainUtxo) => Promise<{ txid: string }>;
+    /**
      * Claim the solver-funded lockup on a receive leg, revealing `P`. Wire it
      * to `pushClaim` — the outputs are supplied, so `findLockupVtxos` has
      * already been called and `claimReceiveLockup`'s wait would only sit on a
@@ -408,7 +459,7 @@ export interface RfqSwapManagerCallbacks {
      * refusal in its place.
      */
     claimLockup: (
-        swap: LightningReceiveSwap,
+        swap: ReceiveLockupSwap,
         vtxos: readonly LockupVtxo[],
         options: {
             /** A claim of ours is already out, so `P` is public and the value
@@ -488,12 +539,14 @@ export interface RfqSwapManagerCallbacks {
  */
 export type AvailableRfqSwapManagerCallbacks = Omit<
     RfqSwapManagerCallbacks,
-    "claimOnchain" | "claimLockup" | "saveSwap"
+    "claimOnchain" | "claimLockup" | "refundOnchain" | "saveSwap"
 > &
-    Partial<Pick<RfqSwapManagerCallbacks, "claimOnchain" | "claimLockup" | "saveSwap">>;
+    Partial<
+        Pick<RfqSwapManagerCallbacks, "claimOnchain" | "claimLockup" | "refundOnchain" | "saveSwap">
+    >;
 
 /** The actions the manager executes on a caller's behalf. */
-export type RfqSwapActionName = "claimOnchain" | "claimLockup" | "refundArkade";
+export type RfqSwapActionName = "claimOnchain" | "claimLockup" | "refundArkade" | "refundOnchain";
 
 export interface RfqSwapManagerEvents {
     /** Every state change, including ones that read as going backwards.
@@ -585,6 +638,22 @@ export class RfqSwapOriginRequired extends Error {
                 `written`,
         );
         this.name = "RfqSwapOriginRequired";
+        this.rfqId = rfqId;
+    }
+}
+
+/** An `onchain_receive` swap reached a manager with no
+ * {@link RfqSwapManagerDeps.chain}, so it could watch only half the corridor.
+ * Thrown from `addSwap` — normally the last moment before the trader funds. */
+export class OnchainReceiveNeedsChainSource extends Error {
+    readonly rfqId: string;
+    constructor(rfqId: string) {
+        super(
+            `rfq swap ${rfqId} is an onchain_receive swap and this manager has no ChainSource; ` +
+                `its L1 refund could be neither seen nor made, so it is refused rather than ` +
+                `monitored blind`,
+        );
+        this.name = "OnchainReceiveNeedsChainSource";
         this.rfqId = rfqId;
     }
 }
@@ -920,6 +989,10 @@ export class RfqSwapManager {
             let swap: RfqSwap;
             try {
                 swap = rebuildRfqSwap(record, await params(record));
+                // Inside the try so it lands in `failed` and the record stays.
+                if (swap.kind === "onchain_receive" && !this.deps.chain) {
+                    throw new OnchainReceiveNeedsChainSource(swap.rfqId);
+                }
             } catch (error) {
                 failed.push({
                     rfqId: record.rfqId,
@@ -1108,6 +1181,9 @@ export class RfqSwapManager {
      * and only when the first two are absent.
      */
     private async admit(swap: RfqSwap, origin?: RfqSwapOrigin): Promise<void> {
+        if (swap.kind === "onchain_receive" && !this.deps.chain) {
+            throw new OnchainReceiveNeedsChainSource(swap.rfqId);
+        }
         if (origin) {
             // Checked here, not left to the first write. A `kind` or
             // `lockupAddress` that disagrees is a programming error either way,
@@ -1456,6 +1532,12 @@ export class RfqSwapManager {
             // that do not care whether the indexer is up.
             fate = { fate: "unknown" };
         }
+        // Before the terminal shortcut, and that order is the whole safety
+        // argument: `returned` means the SOLVER took the lockup back, which is
+        // when the trader's L1 funding must come home. Ending there would
+        // unwatch a funded HTLC forever.
+        if (swap.kind === "onchain_receive") return this.driveOnchainReceive(swap, fate);
+
         if (fate.fate === "claimed" || fate.fate === "returned") {
             // Stamped before the state change, so the write that `setState`
             // makes dirty carries the spend with it — one write, not two, and
@@ -1540,7 +1622,7 @@ export class RfqSwapManager {
      * back, so once the window shuts the swap is the solver's to resolve and
      * this manager's job is to watch it happen and then stop.
      */
-    private async driveReceiveClaim(swap: LightningReceiveSwap): Promise<void> {
+    private async driveReceiveClaim(swap: ReceiveLockupSwap): Promise<void> {
         const now = this.config.now();
 
         if (now < swap.refundLocktime) {
@@ -1600,7 +1682,7 @@ export class RfqSwapManager {
      * relax it.
      */
     private async claimIfFunded(
-        swap: LightningReceiveSwap,
+        swap: ReceiveLockupSwap,
         vtxos: readonly LockupVtxo[],
     ): Promise<void> {
         if (vtxos.length === 0) return this.unblock(swap);
@@ -1691,6 +1773,128 @@ export class RfqSwapManager {
             this.lastClaimError.set(swap.rfqId, errorMessage(error));
             this.emitFailed(swap, error);
         }
+    }
+
+    /** `settled` ends the swap; `returned` does NOT, signalling their L1
+     * funding is stranded. */
+    private async driveOnchainReceive(swap: OnchainReceiveSwap, fate: LockupFate): Promise<void> {
+        const settled = fate.fate === "claimed";
+        if (settled || fate.fate === "returned") this.stampLockupSpends(swap, fate.spends);
+
+        if (settled) {
+            this.setState(swap, "settled");
+            return;
+        }
+
+        const l1 = await this.driveOnchainRefund(swap, swap.claimArkTxid !== undefined);
+
+        if (fate.fate === "returned") {
+            if (l1.verdict === "resolved") this.setState(swap, "refunded");
+            else if (l1.blocked) this.block(swap, l1.blocked);
+            return;
+        }
+        if (fate.fate === "exited") return this.blockExitedLockup(swap, fate);
+        // `driveReceiveClaim` ends a receive swap at its own deadline, which
+        // this leg cannot afford: the trader's refund leaf opens AFTER it, and
+        // an unfunded lockup — what a defaulting solver leaves — reaches here.
+        if (
+            l1.verdict === "live" &&
+            this.config.now() >= swap.refundLocktime + REFUND_MTP_LAG_SECONDS
+        ) {
+            return this.block(
+                swap,
+                l1.blocked ??
+                    "the Arkade claim window closed unclaimed and the L1 HTLC is still funded — " +
+                        "holding the swap open until its refund leaf opens",
+            );
+        }
+        // The mirror of the `settled` refusal: whichever leg the trader takes
+        // first forecloses the other. Reachable only when the quote leaves both
+        // legs live at once, which `assertFundable` does not gate here.
+        if (swap.refundTxid || l1.attempted) {
+            return this.block(
+                swap,
+                "the L1 funding was refunded, so claiming the lockup too would take both " +
+                    "sides of the trade — the solver's reclaim ends this swap",
+            );
+        }
+        await this.driveReceiveClaim(swap);
+        // After that arm, never before: it `unblock`s an empty lockup, which
+        // would erase the refusal the L1 half just reported.
+        if (l1.blocked && !isRfqSwapTerminal(swap.state)) this.block(swap, l1.blocked);
+    }
+
+    /** `resolved`: the HTLC can hold nothing more. `blocked` is a refusal the
+     * caller applies once the Arkade arm has run. No give-up branch. */
+    private async driveOnchainRefund(
+        swap: OnchainReceiveSwap,
+        /** A claim of ours is out, so this output is the solver's. Cannot ride
+         * on `settled`, whose early return would skip the refund entirely. */
+        claimSubmitted: boolean,
+    ): Promise<{ verdict: "resolved" | "live"; blocked?: string; attempted?: boolean }> {
+        // `admit` refuses this kind without one; never drive blind if that changes.
+        if (!this.deps.chain) return { verdict: "live" };
+
+        let phase: OnchainHtlcPhase;
+        try {
+            phase = await classifyOnchainHtlc(this.deps.chain, {
+                htlc: swap.htlc,
+                minConfirmations: swap.minConfirmations,
+                funding: swap.funding,
+            });
+        } catch {
+            return { verdict: "live" };
+        }
+        if ("utxo" in phase && !swap.funding) {
+            swap.funding = { txid: phase.utxo.txid, vout: phase.utxo.vout };
+            this.touch(swap);
+        }
+        if (phase.phase === "unfunded" && !swap.funding) return { verdict: "resolved" };
+
+        switch (nextOnchainReceiveAction({ phase, settled: claimSubmitted })) {
+            case "taken":
+                return { verdict: "resolved" };
+            case "refunded":
+                if (phase.phase === "swept" && !swap.refundTxid) {
+                    swap.refundTxid = phase.txid;
+                    this.touch(swap);
+                }
+                return { verdict: "resolved" };
+            case "wait":
+                return { verdict: "live" };
+            case "refund":
+                break;
+        }
+        if (phase.phase !== "refundable") return { verdict: "live" };
+        if (swap.refundTxid) return { verdict: "live" };
+
+        // Reported, not silent: no `claimable` manual mode exists here.
+        if (!this.callbacks?.refundOnchain) {
+            return {
+                verdict: "live",
+                blocked: this.callbacks
+                    ? "no refundOnchain callback is wired, so this wallet cannot take the L1 funding back"
+                    : "no callbacks are wired, so this wallet cannot take the L1 funding back",
+            };
+        }
+        if (!this.config.enableAutoActions) {
+            return {
+                verdict: "live",
+                blocked:
+                    "automatic actions are disabled, so this wallet will not push the L1 refund",
+            };
+        }
+        try {
+            const { txid } = await this.callbacks.refundOnchain(swap, phase.utxo);
+            swap.refundTxid = txid;
+            this.touch(swap);
+            this.emitAction(swap, "refundOnchain");
+        } catch (error) {
+            this.emitFailed(swap, error);
+        }
+        // `attempted`, not just `refundTxid`: a callback that broadcast then
+        // threw leaves no txid, and claiming this pass would take both legs.
+        return { verdict: "live", attempted: true };
     }
 
     /** `handled` ends the pass; `continue` falls through to the refund gate. */
@@ -2130,6 +2334,7 @@ const traderClaimTxid = (swap: RfqSwap): string | undefined => {
         case "onchain_send":
             return swap.claimTxid;
         case "lightning_receive":
+        case "onchain_receive":
             return swap.claimArkTxid;
         default:
             return undefined;
@@ -2158,6 +2363,9 @@ const outcomeOf = (swap: RfqSwap): RfqSwapOutcome => {
     // has nothing — the single combination in which `txid` present would not
     // mean an action that landed. The record still carries it for diagnosis.
     const lostReceive = swap.kind === "lightning_receive" && swap.state === "refunded";
+    if (swap.kind === "onchain_receive" && swap.state === "refunded") {
+        return { state: swap.state, txid: swap.refundTxid };
+    }
     return {
         state: swap.state,
         txid: lostReceive ? swap.refundArkTxid : (traderClaimTxid(swap) ?? swap.refundArkTxid),
