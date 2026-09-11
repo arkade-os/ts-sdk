@@ -25,7 +25,6 @@ export const SOLVER_ONCHAIN_RAIL = "solver-onchain";
 /** What a record needs. Pass the whole object to `onchainSendProfile()`: only
  *  this carries `payoutPkScript`.
  *
- * @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export type SolverOnchainSend = Awaited<ReturnType<typeof requestOnchainSend>> & {
     rendezvous: SolverRendezvous;
@@ -35,7 +34,6 @@ export type SolverOnchainSend = Awaited<ReturnType<typeof requestOnchainSend>> &
     payoutPkScript: Uint8Array;
 };
 
-/** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface SolverOnchainRailDeps {
     l1Network: OnchainNetwork;
     /** x-only L1 key that AUTHORISES the claim — not where it pays. */
@@ -57,7 +55,6 @@ export interface SolverOnchainRailDeps {
     fallbackEmulatorPubkey?: Uint8Array;
 }
 
-/** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const solverOnchainRendezvous = (
     markets: DiscoveredMarket[],
     amountSats: number,
@@ -68,7 +65,6 @@ export const solverOnchainRendezvous = (
 /** Register alongside the core `onchain` rail, ranked first:
  *  `priority: ["ark", "solver-onchain", "onchain"]`. Both stay registered.
  *
- * @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function solverOnchainRail(deps: SolverOnchainRailDeps): PaymentRail {
     const rendezvousFor = async (

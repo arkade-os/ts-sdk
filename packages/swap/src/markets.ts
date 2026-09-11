@@ -34,8 +34,6 @@ import { BTC_ASSET_ID } from "./store";
 /** Shared quote options so every quote path agrees.
  * No safety margin on top of the market fee: pricing drift between quote
  * and fill is the solver's risk to manage, not the user's to prepay.
- *
- * @deprecated Internal to the pricing path behind `client.quote()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const QUOTE_OPTIONS = { safetyBps: 0 } as const;
 
@@ -50,8 +48,6 @@ export const QUOTE_OPTIONS = { safetyBps: 0 } as const;
  * Keyed on the request URL, so it assumes a market's feed URL is stable and
  * amount-invariant (true today); a cache-busting nonce would silently make it
  * a no-op — the flat-feedCalls swap test guards against that regressing.
- *
- * @deprecated Internal to the pricing path behind `client.quote()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const makeCachedFeedFetch = (
     ttlMs = 30_000,
@@ -148,7 +144,6 @@ const readMarketsCache = async (
     }
 };
 
-/** @deprecated Use `client.markets()`; pricing is internal to `client.quote()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface DiscoverMarketsOptions {
     network: Network;
     /** The network's solver registry index URL; no registry means no markets. */
@@ -175,8 +170,6 @@ export interface DiscoverMarketsOptions {
  * Markets from the network's solver registry; [] when none is configured.
  * Registry content changes rarely, so results are cached for an hour and a
  * stale cache backstops an unreachable registry (quotes stay live either way).
- *
- * @deprecated Use `client.markets()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const discoverMarkets = async (
     options: DiscoverMarketsOptions,
@@ -221,8 +214,6 @@ export const discoverMarkets = async (
 /** Best market for a from/to pair, in either orientation. `give` is the side
  * the sender deposits; `wantSide` skips markets whose receive side is
  * disabled (max = "0").
- *
- * @deprecated Use `client.markets()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const findMarket = (
     markets: DiscoveredMarket[],
@@ -274,10 +265,7 @@ export type PlanError =
     | "above-max"
     | "below-dust";
 
-/** Validate a plan against the user's balance and the server dust limit.
- *
- * @deprecated Internal to the pricing path behind `client.quote()`. Moved off the package root to `@arkade-os/swap/protocol`.
- */
+/** Validate a plan against the user's balance and the server dust limit.*/
 export const validatePlan = (
     plan: OfferPlan,
     giveBalance: bigint,

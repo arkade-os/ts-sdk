@@ -20,8 +20,6 @@ export type AssetSwapStatus =
 /** The sentinel asset id for BTC itself, as opposed to a 68-hex asset id.
  * Lives here with the {@link AssetSwap} fields it describes so the market and
  * restore layers share one spelling instead of re-typing the literal.
- *
- * @deprecated A record-local sentinel, not a public id. The v2 asset id is `btcOn(rail, network)`, and `client.swaps()` projects records that carry it. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const BTC_ASSET_ID = "btc";
 
@@ -49,8 +47,6 @@ export const BTC_ASSET_ID = "btc";
  * **Only `preimageHex` is secret.** `signingDescriptor` and `preimageSaltHex`
  * are public derivation inputs — they must survive a field-mapped backend, but
  * they leak nothing without the seed.
- *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface SwapSecretsProjection {
     /**
@@ -137,8 +133,6 @@ export const getAssetSwapsOrThrow = async (
  * a history view. Mutations must use {@link getAssetSwapsOrThrow} instead —
  * swallowing the read there would let "the backend is gone" masquerade as "no
  * such swap" and skip the write silently.
- *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const getAssetSwaps = async (repository: AssetSwapRepository): Promise<AssetSwap[]> => {
     try {
@@ -236,8 +230,6 @@ export const updateAssetSwapBestEffort = async (
  * signer. Then at most one of: `preimageHex`, when the wallet says it cannot
  * re-derive P and it becomes the swap's only claim secret; or
  * `preimageSaltHex`, the public input a derivable-but-repeating key needs.
- *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const swapSecretsToRecord = (
     secrets: ProvisionedKey | ProvisionedClaimSecret,
@@ -260,10 +252,7 @@ const decodeHex32 = (value: string, field: string): Uint8Array => {
     return bytes;
 };
 
-/** Why a wallet cannot produce a swap's preimage.
- *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
- */
+/** Why a wallet cannot produce a swap's preimage. */
 export type PreimageBlockedReason =
     /** The record carries no `signingDescriptor`. */
     | "no-secrets"
@@ -291,8 +280,6 @@ export type PreimageBlockedReason =
  * `needs_counterparty`. A claim-path read failure is a different verdict, and
  * borrowing the refund error would have the manager announce one for the
  * other.
- *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export class PreimageNotRecoverableError extends Error {
     override readonly name = "PreimageNotRecoverableError";
@@ -323,8 +310,6 @@ export class PreimageNotRecoverableError extends Error {
  * Every refusal is a {@link PreimageNotRecoverableError} carrying a `reason`,
  * so a caller can tell "this record predates the descriptor" from "the salt is
  * corrupt" without reading message text.
- *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const preimageForSwapRecord = async (
     wallet: IWallet,

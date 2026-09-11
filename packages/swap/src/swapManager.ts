@@ -246,17 +246,12 @@ interface RfqSwapCommon {
 /** `arkade:BTC->lightning:BTC`. Nothing for the trader to claim: the solver
  * claims the lockup with the preimage it learns by paying the invoice — which
  * is exactly why that spend's witness is proof the payment landed.
- *
- * @deprecated Use `createSwapClient` and `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface LightningSendSwap extends RfqSwapCommon {
     kind: "lightning_send";
 }
 
-/** `arkade:BTC->onchain:BTC`. Carries the L1 half the trader must claim.
- *
- * @deprecated Use `createSwapClient` and `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
- */
+/** `arkade:BTC->onchain:BTC`. Carries the L1 half the trader must claim. */
 export interface OnchainSendSwap extends RfqSwapCommon {
     kind: "onchain_send";
     /** The locally derived HTLC from `requestOnchainSend` — the manager reads
@@ -291,8 +286,6 @@ export interface OnchainSendSwap extends RfqSwapCommon {
  * - **The claim is the whole swap, and it is on a deadline.** The trader must
  *   be online for it: covclaimd cannot claim this covenant today, so the claim
  *   packet's offline path does not run.
- *
- * @deprecated Use `createSwapClient` and `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface LightningReceiveSwap extends RfqSwapCommon {
     kind: "lightning_receive";
@@ -336,8 +329,6 @@ export interface LightningReceiveSwap extends RfqSwapCommon {
  * by name (see `driveOnchain`'s missing-`ChainSource` check). Until the L1
  * refund is driven too, that corridor is better served by the request and claim
  * functions directly than by a monitor that covers half of it.
- *
- * @deprecated Use `Swap`, projected by `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export type RfqSwap = LightningSendSwap | OnchainSendSwap | LightningReceiveSwap;
 
@@ -378,9 +369,6 @@ export type OnchainSendAction =
  * losing the race AND giving away the preimage. Driving straight off the phase
  * would therefore spend that whole margin throwing `claim_window_closed` at
  * every poll and never fall back. This function applies the margin, so
- * "claimable" here means claimable by `claimOnchainFill` too.
- *
- * @deprecated Use `createSwapClient` and `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function nextOnchainAction(input: {
     phase: OnchainHtlcPhase;
@@ -410,8 +398,6 @@ export function nextOnchainAction(input: {
 
 /** What the trader's own `refundWithoutReceiver` push returned, or `null` when
  * the lockup held nothing to return.
- *
- * @deprecated Use `createSwapClient` and `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export type ArkadeRefundResult = { txid: string; amount: number } | null;
 
@@ -431,8 +417,6 @@ export type ArkadeRefundResult = { txid: string; amount: number } | null;
  * what turns "this wallet cannot sign this swap" into
  * {@link RefundNotLocallyPossibleError}, which the manager reports as
  * `needs_counterparty` instead of retrying for the whole refund window.
- *
- * @deprecated Use `createSwapClient` and `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface RfqSwapManagerCallbacks {
     /** Build and broadcast the L1 claim. See `claimOnchainFill`. */
@@ -535,8 +519,6 @@ export interface RfqSwapManagerCallbacks {
  * The compile-time guarantee this trades away is bought back at runtime: a
  * kind whose claim is missing blocks — non-terminal, re-evaluated every pass,
  * and lifted the moment `setCallbacks` supplies it.
- *
- * @deprecated Use `createSwapClient` and `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export type AvailableRfqSwapManagerCallbacks = Omit<
     RfqSwapManagerCallbacks,
@@ -544,10 +526,7 @@ export type AvailableRfqSwapManagerCallbacks = Omit<
 > &
     Partial<Pick<RfqSwapManagerCallbacks, "claimOnchain" | "claimLockup" | "saveSwap">>;
 
-/** The actions the manager executes on a caller's behalf.
- *
- * @deprecated Use `createSwapClient` and `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
- */
+// The actions the manager executes on a caller's behalf.
 export type RfqSwapActionName = "claimOnchain" | "claimLockup" | "refundArkade";
 
 /**
@@ -650,8 +629,6 @@ export type SwapContractRegistry = Pick<
  * own edit to a record's origin half must not be overwritten by a copy the
  * manager took at boot — but a backend where a keyed read is expensive should
  * know it is on the write path, not just the restore path.
- *
- * @deprecated Use `createSwapClient` and `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface RfqSwapRecordStore {
     saveRfqSwap(record: RfqSwapRecord): Promise<void>;
@@ -732,8 +709,6 @@ export interface RfqRestoreResult {
  * same philosophy as `onchainHtlc.ts`'s `ChainSource`. There is no
  * `RfqTransport` here on purpose: nothing this manager decides depends on the
  * solver answering (see the module doc).
- *
- * @deprecated Use `createSwapClient` and `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface RfqSwapManagerDeps {
     /** Arkade access. Required: this is how a swap's resolution is determined,

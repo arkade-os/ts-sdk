@@ -27,7 +27,6 @@ import { rfqSignerOf } from "./rfqProfileParts";
 import type { AssetSwapRepository } from "./repository";
 import type { ArkadeRefundResult, RfqSwap } from "./swapManager";
 
-/** @deprecated The drive refunds; `client.recover()` settles a swept lockup. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface ArkadeRefunderDeps {
     operator: SwapOperator;
     indexer: RefundIndexer;
@@ -49,8 +48,6 @@ export interface ArkadeRefunderDeps {
  *     refundArkade: arkadeRefunder({ operator, indexer, wallet, repository }),
  *     saveSwap,
  * });
- *
- * @deprecated The drive refunds; `client.recover()` settles a swept lockup. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function arkadeRefunder(
     deps: ArkadeRefunderDeps,

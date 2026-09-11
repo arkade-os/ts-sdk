@@ -119,7 +119,6 @@ const assertFiniteAmount = (value: number, reason: string, label: string): void 
  * server at submit — but it turns "reported claimed, nothing landed, the
  * solver refunds hours later" into an immediate failure.
  *
- * @deprecated The claim path is internal to the drive; watch `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function pushClaim(
     operator: SwapOperator,
@@ -217,8 +216,6 @@ export async function pushClaim(
  * Same conventions as `awaitRfqResolution`: a `pollMs` interval, an optional
  * unix-seconds `deadline`, and a thrown error carrying a stable `reason` when
  * the deadline passes.
- *
- * @deprecated The claim path is internal to the drive; watch `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function awaitLockupFunding(
     indexer: RefundIndexer,
@@ -252,8 +249,6 @@ export async function awaitLockupFunding(
  * {@link LockupAmountMismatchError}. Nothing was signed, so retrying once the
  * rest lands is safe — and that is also the answer to a genuinely underfunded
  * lockup, which never gets past the gate at all.
- *
- * @deprecated The claim path is internal to the drive; watch it with `client.onUpdate()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function claimReceiveLockup(
     indexer: RefundIndexer,

@@ -55,7 +55,6 @@ import "./rfqCorridors";
  * that corridor's {@link RfqSwapOrigin.profile}, and without them a restored
  * swap would let its L1 refund window pass unwatched.
  *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export type PersistableRfqSwap = LightningSendSwap | LightningReceiveSwap | OnchainSendSwap;
 
@@ -66,7 +65,6 @@ export type PersistableRfqSwap = LightningSendSwap | LightningReceiveSwap | Onch
  * `createScript` reads — which is exactly what a lockup's contract row stores
  * under `params`.
  *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export type LockupParams = Record<string, string>;
 
@@ -82,15 +80,14 @@ export type LockupParams = Record<string, string>;
  * "wall clock, in unix seconds". Comparing it against `Date.now()` would drop
  * every terminal record after ~43 minutes.
  *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
+/** @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const RFQ_SWAP_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 
 /** The immutable request-time half, and only what EVERY corridor has. Hex for
  * everything binary, so the record is plain JSON and survives any
  * structured-clone backend unchanged.
  *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface RfqSwapOrigin {
     /**
@@ -146,10 +143,7 @@ export interface RfqSwapOrigin {
     fundingTxid?: string;
 }
 
-/** The stored record: the origin plus the manager's mutable state.
- *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
- */
+/** The stored record: the origin plus the manager's mutable state. */
 export interface RfqSwapRecord extends RfqSwapOrigin {
     rfqId: string;
     state: RfqSwapState;
@@ -210,7 +204,6 @@ function renameLegacyClaimTxid(profile: Record<string, unknown>): Record<string,
  * re-refund fix — `refunded` is terminal, and `restoreFromRepository` puts a
  * terminal record straight into `finished` without ever driving it.
  *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function normalizeRfqSwapRecord(record: RfqSwapRecord): RfqSwapRecord {
     const { fundingArkTxid, refundArkTxid, lockupSpendArkTxids, ...rest } =
@@ -294,7 +287,6 @@ export function assertSameSwap(origin: RfqSwapOrigin, swap: PersistableRfqSwap):
 
 /** First write, at the moment the caller hands the swap to the manager.
  *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function createRfqSwapRecord(
     origin: RfqSwapOrigin,
@@ -321,7 +313,6 @@ export function createRfqSwapRecord(
  * `claimFailure` when a swap becomes terminal, precisely because stale mutable
  * reasons read as live refusal or retry state.
  *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function updateRfqSwapRecord(
     record: RfqSwapRecord,
@@ -367,7 +358,6 @@ export function updateRfqSwapRecord(
  * What `RfqSwapManager.restoreFromRepository` remembers for each record it
  * rebuilds, so a later write can create the record again if the store lost it.
  *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function rfqSwapOriginOf(record: RfqSwapRecord): RfqSwapOrigin {
     const stored = normalizeRfqSwapRecord(record);
@@ -415,7 +405,6 @@ function lockupScript(
  * was actually funded, so the `lockupPkScript` this produces is the one the
  * funded lockup is keyed by.
  *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): PersistableRfqSwap {
     const stored = normalizeRfqSwapRecord(record);
@@ -470,7 +459,6 @@ export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): Per
  * `Date.now()`: milliseconds against a seconds window would retire every
  * terminal record after ~43 minutes.
  *
- * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function shouldRetainRfqSwap(record: RfqSwapRecord, now: number): boolean {
     if (!isRfqSwapTerminal(record.state)) return true;

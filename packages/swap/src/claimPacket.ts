@@ -22,7 +22,6 @@ import { sha256 } from "@noble/hashes/sha2.js";
 
 const HKDF_INFO = new TextEncoder().encode("covclaimd/preimage/v1");
 
-/** @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface SealedClaimPacket {
     /** `ephPub(33) ‖ nonce(12) ‖ ciphertext`, base64 — the bare sealed bytes,
      * 93 decoded. The older of the two `claim_packet` shapes: a solver holding
@@ -48,7 +47,6 @@ export interface SealedClaimPacket {
     packet: string;
 }
 
-/** @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface ClaimPacketInput {
     preimage: Uint8Array;
     /** covclaimd's public key, 33-byte compressed (from its /v1 info). */
@@ -64,8 +62,6 @@ export interface ClaimPacketInput {
  * degradation — so an optional `nonce` on a production export is a loaded gun
  * whatever the doc comment says. Deterministic sealing lives in the test
  * helper, where no consumer reaches it by accident.
- *
- * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function sealClaimPacket(input: ClaimPacketInput): Promise<SealedClaimPacket> {
     return sealWithEntropy(

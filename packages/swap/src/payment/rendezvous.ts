@@ -13,7 +13,6 @@ const XONLY_HEX = /^[0-9a-f]{64}$/;
  *  No `emulatorPubkey`: the card's key only FILTERS here — the covenant is
  *  built from `deps.emulatorPubkey` or the pinned default, never from it.
  *
- * @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface SolverRendezvous {
     solverPubkey: string;
@@ -57,7 +56,6 @@ const rendezvousOf = (market: DiscoveredMarket, pinned?: string): SolverRendezvo
  *  is refused anyway. A card that serves the corridor but not the size is
  *  skipped, not fatal — another may take it.
  *
- * @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const solverRendezvous = (
     markets: DiscoveredMarket[],
