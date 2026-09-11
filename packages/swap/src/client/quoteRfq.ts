@@ -352,7 +352,7 @@ const quoteLightningReceive = async (
                 paymentHash,
                 payoutAddress,
                 payoutPubkey: secrets.pubkey,
-                claimPacket: claimPacket?.ciphertext,
+                claimPacket: claimPacket?.packet,
                 // Placeholder: the v1 builders type this field `number`, and the
                 // wire adapter re-encodes it as the canonical decimal string.
                 // Encoding it here as well would put the decision in two places.

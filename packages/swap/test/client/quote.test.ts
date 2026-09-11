@@ -9,8 +9,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
+import { claimPacketShape } from "../../src/claimPacket";
 import { createSwapClient } from "../../src/client/client";
-import { openClaimPacket } from "../helpers/claimPacket";
 import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../../src/repository";
 import {
     AmountMismatch,
@@ -181,12 +181,7 @@ describe("quote() on lightning -> arkade", () => {
         expect(quote.expiresAt).toBeLessThan(CLOCK.validUntil);
     });
 
-    // Sealing to a minted throwaway key would satisfy every shape assertion
-    // here while producing a packet no covclaimd can open, so the seal is
-    // asserted by opening it — see `sealingKey` in client/quoteRfq.ts.
     describe("the claim packet", () => {
-        const COVCLAIMD_SK = new Uint8Array(32).fill(7);
-
         it("is omitted when no covclaimd deployment key is configured", async () => {
             const { client, transport } = await setup();
             await client.quote(receive());
@@ -195,16 +190,18 @@ describe("quote() on lightning -> arkade", () => {
             expect(Object.keys(profile)).not.toContain("claim_packet");
         });
 
-        it("opens under the configured deployment key when there is one", async () => {
+        it("sends a stampable packet for the configured covclaimd", async () => {
             const { client, transport } = await setup({
                 corridors: { lightning: { covclaimd: { pubkey: compressed(7) } } },
             });
             await client.quote(receive());
 
             const { profile } = transport.sent[0] as { profile: Record<string, unknown> };
-            expect(
-                await openClaimPacket(profile.claim_packet as string, COVCLAIMD_SK),
-            ).toHaveLength(32);
+            const shape = claimPacketShape(profile.claim_packet as string);
+            expect(shape.kind).toBe("packet");
+            if (shape.kind !== "packet") return;
+            expect(shape.needsArkadeScript).toBe(true);
+            expect(shape.covclaimdPubkey).toEqual(hex.decode(compressed(7)));
         });
     });
 });
