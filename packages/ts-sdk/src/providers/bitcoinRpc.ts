@@ -17,7 +17,6 @@
  */
 
 import { base64 } from "@scure/base";
-import { type VerificationOnchainProvider } from "../tree/vtxoDAGVerification.js";
 
 /** Simplified Bitcoin RPC Result. */
 export interface RpcResult<T> {
@@ -60,7 +59,7 @@ export class BitcoinRpcError extends Error {
     }
 }
 
-export class BitcoinRpcProvider implements VerificationOnchainProvider {
+export class BitcoinRpcProvider {
     private rpcId = 1;
     private txIndexChecked: boolean | null = null;
 
@@ -202,13 +201,16 @@ export class BitcoinRpcProvider implements VerificationOnchainProvider {
     async getTxStatus(
         txid: string,
         blockhash?: string,
-    ): Promise<{
-        confirmed: boolean;
-        blockHeight?: number;
-        blockTime?: number;
-        blockHash?: string;
-        confirmations?: number;
-    }> {
+    ): Promise<
+        | { confirmed: false }
+        | {
+              confirmed: true;
+              blockHeight: number;
+              blockTime: number;
+              blockHash?: string;
+              confirmations?: number;
+          }
+    > {
         try {
             // getrawtransaction txid [verbose=true] [blockhash]
             const params: (string | boolean)[] = [txid, true];
@@ -232,8 +234,12 @@ export class BitcoinRpcProvider implements VerificationOnchainProvider {
                 }
             }
 
+            if (!confirmed || blockHeight === undefined || tx.blocktime === undefined) {
+                return { confirmed: false };
+            }
+
             return {
-                confirmed,
+                confirmed: true,
                 blockHeight,
                 blockTime: tx.blocktime,
                 blockHash: tx.blockhash,
@@ -248,7 +254,7 @@ export class BitcoinRpcProvider implements VerificationOnchainProvider {
                         -5,
                     );
                 }
-                return { confirmed: false, confirmations: 0 };
+                return { confirmed: false };
             }
             throw e;
         }

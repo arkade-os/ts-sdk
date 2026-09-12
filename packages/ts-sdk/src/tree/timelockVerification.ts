@@ -424,6 +424,12 @@ export function validateTimelockSatisfiability(
 
         // BIP 68 / BIP 112: Relative timelock is satisfied if depth >= delay
         if (chainState.commitmentHeight !== undefined) {
+            // Note: Using commitmentHeight here is a conservative approximation.
+            // BIP 68 CSV is evaluated relative to when the spending input's parent was confirmed,
+            // not when the commitment transaction itself was confirmed. For virtual transactions
+            // deeper in the DAG, this approximation understates the elapsed depth.
+            // This means a deeply nested VTXO might temporarily be marked broadcastable: false
+            // even if its actual CSV condition is satisfied, which is safe but slightly pessimistic.
             const depth = chainState.currentHeight - chainState.commitmentHeight;
             if (maxCsv > depth) {
                 if (maxCsv > 0xffff) {

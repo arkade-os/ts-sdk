@@ -34,15 +34,15 @@ import { verifyDAGTimelocks } from "./timelockVerification.js";
 import { verifyDAGHashPreimages } from "./hashPreimageVerification.js";
 import { ConcurrencyLimiter } from "../utils/performanceUtils.js";
 import type { Outpoint } from "../wallet/index.js";
-import { ChainTxType, type ChainTx, type VtxoChain } from "../providers/indexer.js";
+import {
+    ChainTxType,
+    type ChainTx,
+    type VtxoChain,
+    type IndexerProvider,
+} from "../providers/indexer.js";
+import type { OnchainProvider } from "../providers/onchain.js";
 
 export { ChainTxType, type ChainTx, type VtxoChain, type Outpoint };
-
-// ─── Performance Buffers ───────────────────────────────────────────────────
-//
-// Concurrency limiter to bound parallel on-chain queries.
-//
-const globalOnchainLimiter = new ConcurrencyLimiter(10); // Max 10 concurrent RPCs
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -66,43 +66,35 @@ export function computeTxid(tx: Transaction): string {
 /**
  * Interface for the IndexerService in verification context.
  */
-export interface VerificationIndexerProvider {
+export interface VerificationIndexerProvider extends IndexerProvider {
     /** Get all VTXO chains associated with a specific commitment batch (Privacy Mode). */
     getBatchVtxos?(commitmentTxid: string): Promise<VtxoChain[]>;
-
-    /** Get the specific chain for a VTXO outpoint. */
-    getVtxoChain?(vtxo: Outpoint): Promise<VtxoChain>;
-
-    /** Fetch raw virtual transaction PSBTs (base64-encoded). */
-    getVirtualTxs(txids: string[]): Promise<{ txs: string[] }>;
 }
-
-export type IndexerProvider = VerificationIndexerProvider;
 
 /**
  * Interface for an on-chain explorer/node in verification context.
  */
-export interface VerificationOnchainProvider {
+export interface VerificationOnchainProvider extends OnchainProvider {
     /** Get a raw transaction by txid (hex-encoded), optionally specifying blockhash if txindex is disabled. */
     getRawTransaction(txid: string, blockhash?: string): Promise<string>;
-    /** Check if a transaction is confirmed and at what depth. */
+    /** Get current blockchain tip info (optional — needed for timelock validation). */
+    getBlockchainInfo?(): Promise<{ height: number; medianTime: number }>;
+    /** Get transaction confirmation status, optionally providing a known block hash for providers without txindex. */
+    /** Get transaction confirmation status, optionally providing a known block hash for providers without txindex. */
     getTxStatus(
         txid: string,
         blockhash?: string,
-    ): Promise<{
-        confirmed: boolean;
-        blockHeight?: number;
-        blockTime?: number;
-        blockHash?: string;
-        confirmations?: number;
-    }>;
-    /** Get current blockchain tip info (optional — needed for timelock validation). */
-    getBlockchainInfo?(): Promise<{ height: number; medianTime: number }>;
-    /** Orchestrate and push a signed raw transaction completely to the Bitcoin network. */
-    broadcastTransaction(txHex: string): Promise<string>;
+    ): Promise<
+        | { confirmed: false }
+        | {
+              confirmed: true;
+              blockHeight: number;
+              blockTime: number;
+              blockHash?: string;
+              confirmations?: number;
+          }
+    >;
 }
-
-export type OnchainProvider = VerificationOnchainProvider;
 
 /**
  * Interface for the Storage Adapter in verification context.
@@ -172,6 +164,9 @@ export interface DAGValidationResult {
 
     /** The batch output index on the commitment tx. */
     batchOutputIndex: number;
+
+    /** The raw transaction hex for the commitment tx. */
+    commitmentTxHex?: string;
 
     /** Details of checkpoint validations performed. */
     checkpointValidations: CheckpointValidation[];
@@ -318,8 +313,8 @@ export const MAX_VTXO_CHAIN_NODES = 10_000;
  */
 export async function reconstructAndValidateVtxoDAG(
     vtxoRootOutpoint: Outpoint,
-    indexer: IndexerProvider,
-    onchain: OnchainProvider,
+    indexer: VerificationIndexerProvider,
+    onchain: VerificationOnchainProvider,
     witnessPreimages?: Map<string, Uint8Array>,
     commitmentTxid?: string,
 ): Promise<DAGValidationResult> {
@@ -403,7 +398,7 @@ export async function reconstructAndValidateVtxoDAG(
     // ── Step 3: Fetch all virtual transaction PSBTs ──────────────────────────
     diagnostics.push(`[3/6] Fetching virtual transaction PSBTs from ASP`);
     const virtualTxids = virtualLinks.map((l) => l.txid);
-    const rawPsbts = await fetchAllVirtualTxs(indexer, virtualTxids);
+    const rawPsbts = await fetchAllVirtualTxs(virtualTxids, indexer);
 
     const txMap = new Map<string, { tx: Transaction; rawPsbt: string; chainTx: ChainTx }>();
     for (const link of virtualLinks) {
@@ -456,7 +451,7 @@ export async function reconstructAndValidateVtxoDAG(
     }
 
     // 4b. Wire relationships with Cycle Detection
-    diagnostics.push(`[4/6] Reconstructing functional DAG (max ${MAX_VTXO_CHAIN_NODES} nodes)`);
+    diagnostics.push(`[4b/6] Reconstructing functional DAG (max ${MAX_VTXO_CHAIN_NODES} nodes)`);
     if (allNodes.size > MAX_VTXO_CHAIN_NODES) {
         throw new VtxoVerificationError(
             `Chain length ${allNodes.size} exceeds max allowed (${MAX_VTXO_CHAIN_NODES})`,
@@ -551,11 +546,9 @@ export async function reconstructAndValidateVtxoDAG(
 
     diagnostics.push(`[5/9] Fetching on-chain anchoring status`);
     const onchainStatus = await onchain.getTxStatus(actualCommitmentTxid);
-    const commitmentBlockHash = onchainStatus.blockHash;
-    const commitmentRaw = await onchain.getRawTransaction(
-        actualCommitmentTxid,
-        commitmentBlockHash,
-    );
+    const commitmentBlockHash = onchainStatus.confirmed ? onchainStatus.blockHash : undefined;
+    const blockHash = commitmentBlockHash;
+    const commitmentRaw = await onchain.getRawTransaction(actualCommitmentTxid, blockHash);
     let commitmentTx: Transaction;
     try {
         commitmentTx = Transaction.fromRaw(hex.decode(commitmentRaw), {
@@ -631,6 +624,7 @@ export async function reconstructAndValidateVtxoDAG(
         anchoringLeaf: anchoringLeaf,
         commitmentTxid: actualCommitmentTxid,
         commitmentBlockHash,
+        commitmentTxHex: commitmentRaw,
         batchOutputIndex: anchoringLeaf.ancestorOutputIndex ?? BATCH_OUTPUT_VTXO_INDEX,
         checkpointValidations,
         diagnostics,
@@ -640,8 +634,8 @@ export async function reconstructAndValidateVtxoDAG(
 // ─── Internal: Fetch all virtual txs (with batching for large chains) ────────
 
 async function fetchAllVirtualTxs(
-    indexer: IndexerProvider,
     txids: string[],
+    indexer: VerificationIndexerProvider,
 ): Promise<Map<string, string>> {
     const result = new Map<string, string>();
 
@@ -658,23 +652,12 @@ async function fetchAllVirtualTxs(
             );
         }
 
-        // Zero-trust: map raw PSBTs by their computed txid rather than assuming positional 1-to-1 array alignment
-        for (let j = 0; j < txs.length; j++) {
-            const rawPsbt = txs[j];
+        for (const rawPsbt of txs) {
             if (!rawPsbt) continue;
             try {
                 const txBytes = typeof rawPsbt === "string" ? base64.decode(rawPsbt) : rawPsbt;
                 const tx = Transaction.fromPSBT(txBytes, { allowUnknownOutputs: true });
                 const computedId = computeTxid(tx);
-
-                // Assert positional order to catch misbehaving indexers
-                if (computedId !== batch[j]) {
-                    throw new VtxoVerificationError(
-                        `Indexer returned txid ${computedId} at index ${j}, but requested txid was ${batch[j]}`,
-                        "TXID_MISMATCH",
-                    );
-                }
-
                 result.set(computedId, rawPsbt);
             } catch (e: any) {
                 // If decoding fails here, it will be caught when validating requested batch txids below
@@ -1025,20 +1008,21 @@ function parseExpiry(expiresAt?: string): number {
  * sufficient confirmations and the expected output amount/script.
  *
  * @param commitmentTxid  Txid of the commitment transaction.
- * @param outputIndex     The batch output index (usually 0).
- * @param expectedAmount  The expected amount in satoshis.
- * @param expectedScript  The expected output script (Taproot).
+ * @param batchOutputIndex The batch output index (usually 0).
+ * @param expectedVtxoAmount  The expected amount in satoshis.
+ * @param expectedVtxoScript  The expected output script (Taproot).
  * @param onchain         OnchainProvider.
  * @param minConfirmations Minimum required confirmations.
  */
-async function verifyOnchainAnchoring(
+export async function verifyOnchainAnchoring(
     commitmentTxid: string,
-    outputIndex: number,
-    expectedAmount: bigint,
-    expectedScript: Uint8Array,
+    batchOutputIndex: number,
+    expectedVtxoAmount: bigint,
+    expectedVtxoScript: Uint8Array,
     onchain: VerificationOnchainProvider,
     minConfirmations: number = 1,
     commitmentBlockHash?: string,
+    commitmentRawTxHex?: string,
 ): Promise<{ confirmed: boolean; blockHeight?: number; blockTime?: number; blockHash?: string }> {
     // 1. Check confirmation status
     const status = await onchain.getTxStatus(commitmentTxid, commitmentBlockHash);
@@ -1046,10 +1030,10 @@ async function verifyOnchainAnchoring(
     await checkCommitmentDepth(commitmentTxid, minConfirmations, status, onchain);
 
     // 2. Fetch raw transaction to verify output script and amount
-    const rawTxHex = await onchain.getRawTransaction(
-        commitmentTxid,
-        commitmentBlockHash ?? status.blockHash,
-    );
+    const statusBlockHash = status.confirmed ? status.blockHash : undefined;
+    const blockHash = commitmentBlockHash ?? statusBlockHash;
+    const rawTxHex =
+        commitmentRawTxHex ?? (await onchain.getRawTransaction(commitmentTxid, blockHash));
     let onchainTx: Transaction;
     try {
         onchainTx = Transaction.fromRaw(hex.decode(rawTxHex), { allowUnknownOutputs: true });
@@ -1062,41 +1046,51 @@ async function verifyOnchainAnchoring(
     }
 
     // 3. Verify output index exists
-    if (outputIndex >= onchainTx.outputsLength) {
+    if (batchOutputIndex >= onchainTx.outputsLength) {
         throw new VtxoVerificationError(
-            `Commitment ${commitmentTxid} has no output at index ${outputIndex} (total: ${onchainTx.outputsLength})`,
+            `Commitment ${commitmentTxid} has no output at index ${batchOutputIndex} (total: ${onchainTx.outputsLength})`,
             "ANCHOR_OUTPUT_NOT_FOUND",
-            { commitmentTxid, outputIndex, totalOutputs: onchainTx.outputsLength },
+            { commitmentTxid, batchOutputIndex, totalOutputs: onchainTx.outputsLength },
         );
     }
 
-    const output = onchainTx.getOutput(outputIndex);
+    const output = onchainTx.getOutput(batchOutputIndex);
 
     // 4. Verify amount matches
-    if (output.amount !== expectedAmount) {
+    if (output.amount !== expectedVtxoAmount) {
         throw new VtxoVerificationError(
-            `On-chain commitment output amount mismatch: expected ${expectedAmount}, found ${output.amount}`,
+            `On-chain commitment output amount mismatch: expected ${expectedVtxoAmount}, found ${output.amount}`,
             "ANCHOR_AMOUNT_MISMATCH",
-            { commitmentTxid, outputIndex, expected: expectedAmount, actual: output.amount },
+            {
+                commitmentTxid,
+                batchOutputIndex,
+                expected: expectedVtxoAmount,
+                actual: output.amount,
+            },
         );
     }
 
     // 5. Verify scriptPubKey matches
     if (!output.script) {
         throw new VtxoVerificationError(
-            `Commitment ${commitmentTxid} output ${outputIndex} is missing scriptPubKey`,
+            `Commitment ${commitmentTxid} output ${batchOutputIndex} is missing scriptPubKey`,
             "MALFORMED_ANCHOR_OUTPUT",
-            { commitmentTxid, outputIndex },
+            { commitmentTxid, batchOutputIndex },
         );
     }
 
     const actualScriptHex = hex.encode(output.script);
-    const expectedScriptHex = hex.encode(expectedScript);
+    const expectedScriptHex = hex.encode(expectedVtxoScript);
     if (actualScriptHex !== expectedScriptHex) {
         throw new VtxoVerificationError(
-            `On-chain script mismatch for commitment ${commitmentTxid} at vout ${outputIndex}`,
+            `On-chain script mismatch for commitment ${commitmentTxid} at vout ${batchOutputIndex}`,
             "ANCHOR_SCRIPT_MISMATCH",
-            { commitmentTxid, outputIndex, expected: expectedScriptHex, actual: actualScriptHex },
+            {
+                commitmentTxid,
+                batchOutputIndex,
+                expected: expectedScriptHex,
+                actual: actualScriptHex,
+            },
         );
     }
 
@@ -1147,9 +1141,11 @@ export async function verifyVtxoComplete(
         );
     }
 
+    const onchainLimiter = new ConcurrencyLimiter(10);
+
     // Phase 2: On-chain anchoring verification (throttled)
     // COMPLIANCE TASK 3.1: Live verification of depth, scripts, and amounts against on-chain data.
-    const onchainStatus = await globalOnchainLimiter.run(async () => {
+    const onchainStatus = await onchainLimiter.run(async () => {
         const anchor = dagResult.anchoringLeaf.prevOutContext;
         if (!anchor || anchor.amount === undefined || anchor.script === undefined) {
             // Fallback to confirmation check if structural data is missing
@@ -1169,11 +1165,14 @@ export async function verifyVtxoComplete(
             onchain,
             minConfirmations,
             dagResult.commitmentBlockHash,
+            dagResult.commitmentTxHex,
         );
     });
 
     const blockMsg =
-        onchainStatus.blockHeight !== undefined ? ` at block ${onchainStatus.blockHeight}` : "";
+        onchainStatus.confirmed && onchainStatus.blockHeight !== undefined
+            ? ` at block ${onchainStatus.blockHeight}`
+            : "";
     dagResult.diagnostics.push(`✓ Commitment tx ${dagResult.commitmentTxid} confirmed${blockMsg}`);
 
     return {

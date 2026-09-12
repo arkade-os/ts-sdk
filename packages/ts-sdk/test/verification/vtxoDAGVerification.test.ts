@@ -8,12 +8,6 @@
  * ============================================================================
  */
 
-import { webcrypto } from "node:crypto";
-if (!globalThis.crypto) {
-    // @ts-ignore
-    globalThis.crypto = webcrypto;
-}
-
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Transaction } from "@scure/btc-signer/transaction.js";
 import { hex, base64 } from "@scure/base";
@@ -178,7 +172,7 @@ export class MockIndexerProvider implements IndexerProvider {
         const txs: string[] = [];
         for (const txid of txids) {
             const psbt = this.virtualTxs.get(txid);
-            if (psbt) txs.push(psbt);
+            txs.push(psbt || "");
         }
         return { txs };
     }

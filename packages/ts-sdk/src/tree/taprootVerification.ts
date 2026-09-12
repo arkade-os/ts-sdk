@@ -335,16 +335,6 @@ function isArkStandardExitTemplate(decoded: (string | number | bigint | Uint8Arr
  */
 function isSwapClaimTemplate(decoded: (string | number | bigint | Uint8Array)[]): boolean {
     if (decoded.length === 5) {
-        // [hash_bytes, HASH_OP, "EQUALVERIFY", pubkey, "CHECKSIG"]
-        if (
-            decoded[0] instanceof Uint8Array &&
-            isHashOpcode(decoded[1]) &&
-            decoded[2] === "EQUALVERIFY" &&
-            isKey(decoded[3]) &&
-            decoded[4] === "CHECKSIG"
-        ) {
-            return true;
-        }
         // [HASH_OP, hash_bytes, "EQUALVERIFY", pubkey, "CHECKSIG"] (standard Bitcoin script)
         if (
             isHashOpcode(decoded[0]) &&
@@ -352,16 +342,6 @@ function isSwapClaimTemplate(decoded: (string | number | bigint | Uint8Array)[])
             decoded[2] === "EQUALVERIFY" &&
             isKey(decoded[3]) &&
             decoded[4] === "CHECKSIG"
-        ) {
-            return true;
-        }
-        // [pubkey, "CHECKSIGVERIFY", hash_bytes, HASH_OP, "EQUAL"]
-        if (
-            isKey(decoded[0]) &&
-            decoded[1] === "CHECKSIGVERIFY" &&
-            decoded[2] instanceof Uint8Array &&
-            isHashOpcode(decoded[3]) &&
-            decoded[4] === "EQUAL"
         ) {
             return true;
         }
@@ -378,16 +358,6 @@ function isSwapClaimTemplate(decoded: (string | number | bigint | Uint8Array)[])
     }
 
     if (decoded.length === 6) {
-        if (
-            decoded[0] instanceof Uint8Array &&
-            isHashOpcode(decoded[1]) &&
-            decoded[2] === "EQUAL" &&
-            decoded[3] === "VERIFY" &&
-            isKey(decoded[4]) &&
-            decoded[5] === "CHECKSIG"
-        ) {
-            return true;
-        }
         if (
             isHashOpcode(decoded[0]) &&
             decoded[1] instanceof Uint8Array &&

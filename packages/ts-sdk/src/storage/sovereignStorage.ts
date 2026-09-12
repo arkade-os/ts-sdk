@@ -160,7 +160,12 @@ export async function getBroadcastSequence(
     const encrypted = base64.decode(encryptedB64);
     const decrypted = await StorageCrypto.decrypt(encrypted, masterKey);
 
-    const data: SovereignExitData = JSON.parse(decrypted);
+    const data = JSON.parse(decrypted);
+    if (!data || typeof data !== "object" || !Array.isArray(data.broadcastSequence)) {
+        throw new Error(
+            `Sovereign Exit Failed: Invalid data schema for VTXO Root ${vtxoRootTxid}.`,
+        );
+    }
     return data.broadcastSequence;
 }
 

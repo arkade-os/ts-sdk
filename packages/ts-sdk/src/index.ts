@@ -1062,4 +1062,3 @@ export * from "./storage/sovereignStorage.js";
 export * from "./providers/bitcoinRpc.js";
 export * from "./utils/cryptoUtils.js";
 export * from "./utils/authenticator.js";
-export * from "./utils/performanceUtils.js";
