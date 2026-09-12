@@ -34,14 +34,7 @@ import { verifyDAGTimelocks } from "./timelockVerification.js";
 import { verifyDAGHashPreimages } from "./hashPreimageVerification.js";
 import { ConcurrencyLimiter } from "../utils/performanceUtils.js";
 import type { Outpoint } from "../wallet/index.js";
-import {
-    ChainTxType,
-    type ChainTx,
-    type VtxoChain,
-    type IndexerProvider,
-} from "../providers/indexer.js";
-import type { OnchainProvider } from "../providers/onchain.js";
-
+import { ChainTxType, type ChainTx, type VtxoChain } from "../providers/indexer.js";
 export { ChainTxType, type ChainTx, type VtxoChain, type Outpoint };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -66,20 +59,21 @@ export function computeTxid(tx: Transaction): string {
 /**
  * Interface for the IndexerService in verification context.
  */
-export interface VerificationIndexerProvider extends IndexerProvider {
+export interface VerificationIndexerProvider {
     /** Get all VTXO chains associated with a specific commitment batch (Privacy Mode). */
     getBatchVtxos?(commitmentTxid: string): Promise<VtxoChain[]>;
+    getVtxoChain?(outpoint: Outpoint): Promise<VtxoChain>;
+    getVirtualTxs(virtualTxids: string[]): Promise<{ txs: string[] }>;
 }
 
 /**
  * Interface for an on-chain explorer/node in verification context.
  */
-export interface VerificationOnchainProvider extends OnchainProvider {
+export interface VerificationOnchainProvider {
     /** Get a raw transaction by txid (hex-encoded), optionally specifying blockhash if txindex is disabled. */
     getRawTransaction(txid: string, blockhash?: string): Promise<string>;
     /** Get current blockchain tip info (optional — needed for timelock validation). */
     getBlockchainInfo?(): Promise<{ height: number; medianTime: number }>;
-    /** Get transaction confirmation status, optionally providing a known block hash for providers without txindex. */
     /** Get transaction confirmation status, optionally providing a known block hash for providers without txindex. */
     getTxStatus(
         txid: string,
@@ -94,6 +88,8 @@ export interface VerificationOnchainProvider extends OnchainProvider {
               confirmations?: number;
           }
     >;
+    /** Broadcast a raw transaction hex to the network. */
+    broadcastTransaction(txHex: string): Promise<string>;
 }
 
 /**
@@ -1032,8 +1028,26 @@ export async function verifyOnchainAnchoring(
     // 2. Fetch raw transaction to verify output script and amount
     const statusBlockHash = status.confirmed ? status.blockHash : undefined;
     const blockHash = commitmentBlockHash ?? statusBlockHash;
-    const rawTxHex =
-        commitmentRawTxHex ?? (await onchain.getRawTransaction(commitmentTxid, blockHash));
+    let rawTxHex: string;
+    if (commitmentRawTxHex) {
+        rawTxHex = commitmentRawTxHex;
+        let tempTx: Transaction;
+        try {
+            tempTx = Transaction.fromRaw(hex.decode(rawTxHex), { allowUnknownOutputs: true });
+        } catch (e: any) {
+            throw new VtxoVerificationError(
+                `Failed to parse supplied commitment transaction ${commitmentTxid}: ${e.message}`,
+                "ANCHOR_PARSE_ERROR",
+                { commitmentTxid },
+            );
+        }
+        const actualTxid = computeTxid(tempTx);
+        if (actualTxid !== commitmentTxid) {
+            throw Errors.TXID_MISMATCH(commitmentTxid, actualTxid);
+        }
+    } else {
+        rawTxHex = await onchain.getRawTransaction(commitmentTxid, blockHash);
+    }
     let onchainTx: Transaction;
     try {
         onchainTx = Transaction.fromRaw(hex.decode(rawTxHex), { allowUnknownOutputs: true });
@@ -1099,6 +1113,8 @@ export async function verifyOnchainAnchoring(
 
 // ─── Convenience: Full verification pipeline ─────────────────────────────────
 
+const onchainLimiter = new ConcurrencyLimiter(10);
+
 /**
  * Complete Tier 1 verification pipeline:
  *   1. Reconstruct + validate the DAG (this module).
@@ -1140,8 +1156,6 @@ export async function verifyVtxoComplete(
             { vtxoOutpoint, checkpointValidations: dagResult.checkpointValidations },
         );
     }
-
-    const onchainLimiter = new ConcurrencyLimiter(10);
 
     // Phase 2: On-chain anchoring verification (throttled)
     // COMPLIANCE TASK 3.1: Live verification of depth, scripts, and amounts against on-chain data.

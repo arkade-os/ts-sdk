@@ -218,24 +218,25 @@ export class BitcoinRpcProvider {
             const tx = await this.call<VerboseTx>("getrawtransaction", params);
 
             const confirmations = tx.confirmations ?? 0;
-            const confirmed = confirmations > 0;
-
-            let blockHeight: number | undefined;
-            if (confirmed && tx.blockhash) {
-                try {
-                    const header = await this.call<{ height: number }>("getblockheader", [
-                        tx.blockhash,
-                    ]);
-                    if (typeof header?.height === "number") {
-                        blockHeight = header.height;
-                    }
-                } catch {
-                    // if getblockheader is unavailable, leave blockHeight undefined
-                }
+            if (confirmations === 0) {
+                return { confirmed: false };
+            }
+            if (tx.blocktime === undefined) {
+                return { confirmed: false };
             }
 
-            if (!confirmed || blockHeight === undefined || tx.blocktime === undefined) {
-                return { confirmed: false };
+            let blockHeight: number | undefined;
+            if (tx.blockhash) {
+                const header = await this.call<{ height: number }>("getblockheader", [
+                    tx.blockhash,
+                ]);
+                if (typeof header?.height === "number") {
+                    blockHeight = header.height;
+                } else {
+                    throw new Error(`Failed to get block height for block ${tx.blockhash}`);
+                }
+            } else {
+                throw new Error(`Transaction ${txid} is confirmed but missing blockhash`);
             }
 
             return {
