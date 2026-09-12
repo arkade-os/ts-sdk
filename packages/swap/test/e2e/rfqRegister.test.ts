@@ -106,12 +106,14 @@ const stubTransport = (): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
         const refundLocktime = NOW() + 24 * 3600;
+        const refundWithoutReceiverDelay = Math.ceil((24 * 3600) / 512) * 512;
         const contract = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime,
             operatorPubkey,
             paymentHash: PAYMENT_HASH,
             claimDelay,
+            refundWithoutReceiverDelay,
             emulatorPubkey,
             senderPubkey: hex.decode(profile.client_refund_pubkey as string),
             receiverPkScript: RECEIVER_PK_SCRIPT,
@@ -130,6 +132,7 @@ const stubTransport = (): RfqTransport => ({
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
                 lockup_address: contract.address(hrp, operatorPubkey).encode(),
+                refund_without_receiver_delay: refundWithoutReceiverDelay,
             },
         } satisfies RfqQuote;
     },
