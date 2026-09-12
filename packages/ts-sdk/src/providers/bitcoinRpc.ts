@@ -233,10 +233,16 @@ export class BitcoinRpcProvider {
                 if (typeof header?.height === "number") {
                     blockHeight = header.height;
                 } else {
-                    throw new Error(`Failed to get block height for block ${tx.blockhash}`);
+                    throw new BitcoinRpcError(
+                        `Failed to get block height for block ${tx.blockhash}`,
+                        -1,
+                    );
                 }
             } else {
-                throw new Error(`Transaction ${txid} is confirmed but missing blockhash`);
+                throw new BitcoinRpcError(
+                    `Transaction ${txid} is confirmed but missing blockhash`,
+                    -1,
+                );
             }
 
             return {
