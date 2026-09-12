@@ -142,9 +142,11 @@ const stubTransport = (): AttestingRfqTransport => ({
         // Far enough out to clear the send leg's headroom gate against the
         // invoice's own expiry.
         const refundLocktime = NOW() + 200 * 3600;
+        const refundWithoutReceiverDelay = Math.ceil((refundLocktime - NOW()) / 512) * 512;
         const contract = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime,
+            refundWithoutReceiverDelay,
             operatorPubkey,
             paymentHash: PAYMENT_HASH,
             claimDelay,
@@ -166,6 +168,7 @@ const stubTransport = (): AttestingRfqTransport => ({
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
                 lockup_address: contract.address(hrp, operatorPubkey).encode(),
+                refund_without_receiver_delay: refundWithoutReceiverDelay,
             },
         } satisfies RfqQuote;
     },
