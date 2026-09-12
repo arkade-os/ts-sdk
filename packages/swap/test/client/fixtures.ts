@@ -243,12 +243,14 @@ export const lightningSendAnswer = (
     over: { quote?: Partial<RfqQuote>; profile?: Profile; invoiceAmount?: number } = {},
 ): RfqQuote => {
     const profile = profileOf(payload);
+    const refundWithoutReceiverDelay = Math.ceil((clock.refundLocktime - clock.now) / 512) * 512;
     const script = lightningSendContract({
         solverPubkey: SOLVER_PUBKEY,
         refundLocktime: clock.refundLocktime,
         operatorPubkey: OPERATOR_PUBKEY,
         paymentHash: PAYMENT_HASH,
         claimDelay: CLAIM_DELAY,
+        refundWithoutReceiverDelay,
         emulatorPubkey: EMULATOR_PUBKEY,
         senderPubkey: hex.decode(profile.client_refund_pubkey as string),
         receiverPkScript: RECEIVER_PK_SCRIPT,
@@ -262,6 +264,7 @@ export const lightningSendAnswer = (
         profile: {
             lockup_address: script.address(NETWORK.hrp, OPERATOR_PUBKEY).encode(),
             receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
+            refund_without_receiver_delay: refundWithoutReceiverDelay,
             ...over.profile,
         },
         ...over.quote,

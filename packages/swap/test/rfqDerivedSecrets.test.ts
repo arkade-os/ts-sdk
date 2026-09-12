@@ -63,6 +63,7 @@ const ARK_INFO = {
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
 const REFUND_LOCKTIME = NOW + 60 * 24 * 3600;
+const REFUND_WITHOUT_RECEIVER_DELAY = REFUND_LOCKTIME - NOW;
 const HTLC_LOCKTIME = NOW + 30 * 24 * 3600;
 
 /** A wallet backed by the real allocator and the real deterministic signer. */
@@ -105,7 +106,7 @@ const staticWallet = (rows: { params: Record<string, string> }[] = []): IWallet 
     }) as unknown as IWallet;
 
 /** Quotes back whatever the maker derived, so the flow reaches its gates. */
-const lightningTransport = (): RfqTransport => ({
+const lightningTransport = (profileOverrides: Record<string, unknown> = {}): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
         const contract = lightningSendContract({
@@ -114,6 +115,7 @@ const lightningTransport = (): RfqTransport => ({
             operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
+            refundWithoutReceiverDelay: REFUND_WITHOUT_RECEIVER_DELAY,
             emulatorPubkey: EMULATOR_PUBKEY,
             senderPubkey: hex.decode(profile.client_refund_pubkey as string),
             receiverPkScript: RECEIVER_PK_SCRIPT,
@@ -132,6 +134,8 @@ const lightningTransport = (): RfqTransport => ({
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
                 lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
+                refund_without_receiver_delay: REFUND_WITHOUT_RECEIVER_DELAY,
+                ...profileOverrides,
             },
         } satisfies RfqQuote;
     },
@@ -212,6 +216,7 @@ describe("requestLightningSend and the corridor spread", () => {
                 operatorPubkey: OPERATOR_PUBKEY,
                 paymentHash: PAYMENT_HASH,
                 claimDelay: 4096,
+                refundWithoutReceiverDelay: REFUND_WITHOUT_RECEIVER_DELAY,
                 emulatorPubkey: EMULATOR_PUBKEY,
                 senderPubkey: hex.decode(profile.client_refund_pubkey as string),
                 receiverPkScript: RECEIVER_PK_SCRIPT,
@@ -230,6 +235,7 @@ describe("requestLightningSend and the corridor spread", () => {
                 profile: {
                     receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
                     lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
+                    refund_without_receiver_delay: REFUND_WITHOUT_RECEIVER_DELAY,
                 },
             } satisfies RfqQuote;
         },
@@ -237,6 +243,26 @@ describe("requestLightningSend and the corridor spread", () => {
             return null;
         },
         async close() {},
+    });
+
+    it("refuses an old solver quote with no negotiated solo-refund delay", async () => {
+        await expect(
+            requestLightningSend(
+                await hdWallet(),
+                lightningTransport({ refund_without_receiver_delay: undefined }),
+                { emulatorPubkey: EMULATOR_PUBKEY_HEX, invoice: INVOICE },
+            ),
+        ).rejects.toThrow(/missing profile\.refund_without_receiver_delay/);
+    });
+
+    it("refuses a solo-refund delay that opens before the absolute refund", async () => {
+        await expect(
+            requestLightningSend(
+                await hdWallet(),
+                lightningTransport({ refund_without_receiver_delay: 8192 }),
+                { emulatorPubkey: EMULATOR_PUBKEY_HEX, invoice: INVOICE },
+            ),
+        ).rejects.toThrow(/solo refund open before refund_locktime/);
     });
 
     it("funds from_amount — the invoice PLUS the fee, never the bare invoice", async () => {

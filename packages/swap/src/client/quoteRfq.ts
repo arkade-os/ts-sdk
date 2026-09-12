@@ -277,6 +277,7 @@ const quoteLightningSend = async (
             paymentHash: invoice.paymentHash,
             senderPubkey: secrets.pubkey,
             refundPkScript: secrets.pkScript,
+            now: input.now,
             ...covenant,
         }),
     );

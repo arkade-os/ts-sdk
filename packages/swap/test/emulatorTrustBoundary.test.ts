@@ -84,6 +84,7 @@ const VALID_UNTIL = NOW + 3600;
 // gate (all bounded in hours) — the fixture never needs tuning against those
 // margins.
 const REFUND_LOCKTIME = NOW + 60 * 24 * 3600;
+const REFUND_WITHOUT_RECEIVER_DELAY = REFUND_LOCKTIME - NOW;
 const HTLC_LOCKTIME = NOW + 30 * 24 * 3600;
 
 const wallet = {
@@ -124,6 +125,7 @@ const lightningTransport = (forEmulatorPubkey: Uint8Array): RfqTransport => ({
             operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
+            refundWithoutReceiverDelay: REFUND_WITHOUT_RECEIVER_DELAY,
             emulatorPubkey: forEmulatorPubkey,
             senderPubkey,
             receiverPkScript: RECEIVER_PK_SCRIPT,
@@ -142,6 +144,7 @@ const lightningTransport = (forEmulatorPubkey: Uint8Array): RfqTransport => ({
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
                 lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
+                refund_without_receiver_delay: REFUND_WITHOUT_RECEIVER_DELAY,
             },
         } satisfies RfqQuote;
     },

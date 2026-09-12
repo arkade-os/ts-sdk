@@ -34,7 +34,8 @@
  *
  * Trust model, identical to the offer side: from a quote the user uses only
  * the binding fields — `solver_pubkey`, `refund_locktime`, `valid_until`, the
- * amounts. Every other contract parameter is the user's own data (its
+ * amounts, and `profile.refund_without_receiver_delay` on Lightning sends.
+ * Every other contract parameter is the user's own data (its
  * invoice, its Ark server connection, its refund address) or a trusted
  * constant — the emulator key defaults to the SDK's per-network pin (see
  * `resolveEmulatorPubkey`). Anything address-shaped the solver sends is
@@ -289,7 +290,12 @@ export interface RfqQuote {
     valid_until: number;
     /** HTLC-class quotes only; absent for arkade↔arkade. */
     refund_locktime?: number;
-    profile: { [key: string]: unknown; payment_hash?: string; lockup_address?: string };
+    profile: {
+        [key: string]: unknown;
+        payment_hash?: string;
+        lockup_address?: string;
+        refund_without_receiver_delay?: number;
+    };
     [key: string]: unknown;
 }
 
@@ -995,6 +1001,8 @@ export function lightningSendContract(params: {
      * {@link unilateralRefundDelay} and {@link unilateralRefundWithoutReceiverDelay}
      * derive from this same value — one rounding, shared across all three tiers. */
     claimDelay: number;
+    /** Binding quote field. Optional only for rebuilding pre-upgrade scripts. */
+    refundWithoutReceiverDelay?: number;
     /** Emulator x-only key (32 bytes). */
     emulatorPubkey: Uint8Array;
     /** Where a refund must pay: the trader's P2TR pkScript (34 bytes). Also
@@ -1028,7 +1036,8 @@ export function lightningSendContract(params: {
         unilateralClaimDelay: seconds(params.claimDelay),
         unilateralRefundDelay: seconds(unilateralRefundDelay(params.claimDelay)),
         unilateralRefundWithoutReceiverDelay: seconds(
-            unilateralRefundWithoutReceiverDelay(params.claimDelay),
+            params.refundWithoutReceiverDelay ??
+                unilateralRefundWithoutReceiverDelay(params.claimDelay),
         ),
         nonInteractiveParameters: {
             receiverPkScript: params.receiverPkScript,
@@ -1089,6 +1098,8 @@ export function deriveLightningSend(input: {
     emulatorPubkey: Uint8Array;
     claimDelay: number;
     hrp: string;
+    /** Unix seconds used to prove the negotiated CSV covers the absolute refund. */
+    now: number;
 }): {
     /** The trader's OWN derivation — the only address to fund. */
     address: string;
@@ -1103,6 +1114,21 @@ export function deriveLightningSend(input: {
     if (quote.refund_locktime === undefined) {
         throw new Error("lightning-send quote is missing refund_locktime");
     }
+    const refundWithoutReceiverDelay = quote.profile?.refund_without_receiver_delay;
+    if (refundWithoutReceiverDelay === undefined) {
+        throw new Error("lightning-send quote is missing profile.refund_without_receiver_delay");
+    }
+    if (
+        !Number.isSafeInteger(refundWithoutReceiverDelay) ||
+        refundWithoutReceiverDelay < input.claimDelay ||
+        refundWithoutReceiverDelay % SEQUENCE_GRANULARITY_SECONDS !== 0 ||
+        refundWithoutReceiverDelay > 0xffff * SEQUENCE_GRANULARITY_SECONDS
+    ) {
+        throw new Error("lightning-send quote carries an invalid refund_without_receiver_delay");
+    }
+    if (refundWithoutReceiverDelay < quote.refund_locktime - input.now) {
+        throw new Error("lightning-send quote lets the solo refund open before refund_locktime");
+    }
     const receiverPkScriptHex = quote.profile?.receiver_pk_script as string | undefined;
     if (receiverPkScriptHex === undefined) {
         throw new Error("lightning-send quote is missing profile.receiver_pk_script");
@@ -1115,6 +1141,7 @@ export function deriveLightningSend(input: {
         operatorPubkey: input.operatorPubkey,
         paymentHash: input.paymentHash,
         claimDelay: input.claimDelay,
+        refundWithoutReceiverDelay,
         emulatorPubkey: input.emulatorPubkey,
         senderPubkey: input.senderPubkey,
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
@@ -1234,6 +1261,8 @@ export async function requestLightningSend(
     const quote = await transport.requestQuote(
         lightningSendRequest({ rfqId, invoice: params.invoice.raw, refundAddress, senderPubkey }),
     );
+    const now = Math.floor(Date.now() / 1000);
+    const claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     // The BOLT11 profile is exact-out: `to_amount` is the invoice, verbatim,
     // and `from_amount` adds the corridor's fee on top. Funding anything but
     // `from_amount` underfunds by exactly the fee and is refused — and a quote
@@ -1261,14 +1290,15 @@ export async function requestLightningSend(
             hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
             "emulator signer key",
         ),
-        claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
+        claimDelay,
         hrp: network.hrp,
+        now,
     });
     const { address, script, contractParams } = derived;
     assertFundable({
         quote,
         invoiceExpiresAt: params.invoice.expiresAt,
-        now: Math.floor(Date.now() / 1000),
+        now,
     });
 
     // Last, so a refused quote leaves no row behind, but still before the

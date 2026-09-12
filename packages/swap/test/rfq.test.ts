@@ -59,6 +59,7 @@ const quoteFixture = (over: Partial<RfqQuote> = {}): RfqQuote => ({
     profile: {
         payment_hash: "da".repeat(32),
         lockup_address: "ark1qexample",
+        refund_without_receiver_delay: 277_504,
         receiver_pk_script: hex.encode(p2tr(key(1))),
     },
     ...over,
@@ -276,6 +277,7 @@ describe("deriveLightningSend", () => {
                 profile: {
                     lockup_address: lockupAddress,
                     receiver_pk_script: hex.encode(p2tr(key(1))),
+                    refund_without_receiver_delay: 8192,
                 },
             }),
             paymentHash: PAYMENT_HASH,
@@ -285,6 +287,7 @@ describe("deriveLightningSend", () => {
             emulatorPubkey: key(9),
             claimDelay: 4096,
             hrp: "tark",
+            now: 1_800_000_000 - 8192,
         });
 
     it("a nine-leaf-quoting solver matches the FULL-suite candidate, not the legacy one", () => {
