@@ -58,6 +58,7 @@ const quoteFixture = (over: Partial<RfqQuote> = {}): RfqQuote => ({
     profile: {
         payment_hash: "da".repeat(32),
         lockup_address: "ark1qexample",
+        refund_without_receiver_delay: 277_504,
         receiver_pk_script: hex.encode(p2tr(key(1))),
     },
     ...over,

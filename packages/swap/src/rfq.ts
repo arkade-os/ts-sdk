@@ -34,7 +34,8 @@
  *
  * Trust model, identical to the offer side: from a quote the user uses only
  * the binding fields — `solver_pubkey`, `refund_locktime`, `valid_until`, the
- * amounts. Every other contract parameter is the user's own data (its
+ * amounts, and `profile.refund_without_receiver_delay` on Lightning sends.
+ * Every other contract parameter is the user's own data (its
  * invoice, its Ark server connection, its refund address) or a trusted
  * constant — the emulator key defaults to the SDK's per-network pin (see
  * `resolveEmulatorPubkey`). Anything address-shaped the solver sends is
@@ -288,7 +289,12 @@ export interface RfqQuote {
     valid_until: number;
     /** HTLC-class quotes only; absent for arkade↔arkade. */
     refund_locktime?: number;
-    profile: { [key: string]: unknown; payment_hash?: string; lockup_address?: string };
+    profile: {
+        [key: string]: unknown;
+        payment_hash?: string;
+        lockup_address?: string;
+        refund_without_receiver_delay?: number;
+    };
     [key: string]: unknown;
 }
 
@@ -974,6 +980,8 @@ export function lightningSendVtxoScript(params: {
      * {@link unilateralRefundDelay} and {@link unilateralRefundWithoutReceiverDelay}
      * derive from this same value — one rounding, shared across all three tiers. */
     claimDelay: number;
+    /** Binding quote field. Optional only for rebuilding pre-upgrade scripts. */
+    refundWithoutReceiverDelay?: number;
     /** Emulator x-only key (32 bytes). */
     emulatorPubkey: Uint8Array;
     /** Where a refund must pay: the trader's P2TR pkScript (34 bytes). Also
@@ -1007,7 +1015,8 @@ export function lightningSendVtxoScript(params: {
         unilateralClaimDelay: seconds(params.claimDelay),
         unilateralRefundDelay: seconds(unilateralRefundDelay(params.claimDelay)),
         unilateralRefundWithoutReceiverDelay: seconds(
-            unilateralRefundWithoutReceiverDelay(params.claimDelay),
+            params.refundWithoutReceiverDelay ??
+                unilateralRefundWithoutReceiverDelay(params.claimDelay),
         ),
         nonInteractiveParameters: {
             receiverPkScript: params.receiverPkScript,
@@ -1133,6 +1142,23 @@ export async function requestLightningSend(
     if (quote.refund_locktime === undefined) {
         throw new Error("lightning-send quote is missing refund_locktime");
     }
+    const now = Math.floor(Date.now() / 1000);
+    const claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
+    const refundWithoutReceiverDelay = quote.profile?.refund_without_receiver_delay;
+    if (refundWithoutReceiverDelay === undefined) {
+        throw new Error("lightning-send quote is missing profile.refund_without_receiver_delay");
+    }
+    if (
+        !Number.isSafeInteger(refundWithoutReceiverDelay) ||
+        refundWithoutReceiverDelay < claimDelay ||
+        refundWithoutReceiverDelay % SEQUENCE_GRANULARITY_SECONDS !== 0 ||
+        refundWithoutReceiverDelay > 0xffff * SEQUENCE_GRANULARITY_SECONDS
+    ) {
+        throw new Error("lightning-send quote carries an invalid refund_without_receiver_delay");
+    }
+    if (refundWithoutReceiverDelay < quote.refund_locktime - now) {
+        throw new Error("lightning-send quote lets the solo refund open before refund_locktime");
+    }
     const receiverPkScriptHex = quote.profile?.receiver_pk_script as string | undefined;
     if (receiverPkScriptHex === undefined) {
         throw new Error("lightning-send quote is missing profile.receiver_pk_script");
@@ -1161,7 +1187,8 @@ export async function requestLightningSend(
         refundLocktime: quote.refund_locktime,
         serverPubkey,
         paymentHash: params.invoice.paymentHash,
-        claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
+        claimDelay,
+        refundWithoutReceiverDelay,
         emulatorPubkey: toXOnly(
             hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
             "emulator signer key",
@@ -1186,7 +1213,7 @@ export async function requestLightningSend(
     assertFundable({
         quote,
         invoiceExpiresAt: params.invoice.expiresAt,
-        now: Math.floor(Date.now() / 1000),
+        now,
     });
 
     // Last, so a refused quote leaves no row behind, but still before the
