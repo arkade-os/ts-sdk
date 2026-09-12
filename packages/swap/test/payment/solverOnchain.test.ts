@@ -66,7 +66,6 @@ const ctxWith = (send = vi.fn(async () => "funding-txid")): RouterContext =>
     ({ wallet: { send } as never, prefs: {} }) as RouterContext;
 
 const depsWith = (over: Partial<SolverOnchainRailDeps> = {}): SolverOnchainRailDeps => ({
-    arkServerUrl: "http://ark",
     l1Network: "regtest",
     payoutPubkey: PAYOUT_PUBKEY,
     discover: vi.fn(async () => [card("1000", "1000000")]),
@@ -330,7 +329,7 @@ describe("solverOnchainRail.quote", () => {
         rfqStub = spy;
         await solverOnchainRail(depsWith()).quote({ raw: BTC_ADDR, amount: 100_000 }, ctxWith());
 
-        expect(spy.mock.calls[0][3]).toMatchObject({ amount: 100_000, amountSide: "to" });
+        expect(spy.mock.calls[0][2]).toMatchObject({ amount: 100_000, amountSide: "to" });
     });
 
     it("negotiates through the rendezvous the size chose", async () => {

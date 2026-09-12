@@ -10,6 +10,7 @@ import {
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
+import type { SwapRecord } from "../../client/record";
 
 const DEFAULT_PREFIX = "arkade_";
 // SQLite's default parameter ceiling is 999; stay well under it per statement.
@@ -38,11 +39,12 @@ const INSERT_CHUNK = 500;
  * write chain is keyed by that object, and a per-repository literal splits it.
  */
 export class SQLiteAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 4 as const;
+    readonly version = 5 as const;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly swaps: string;
     private readonly rfqSwaps: string;
+    private readonly swapRecords: string;
     private readonly scanned: string;
     private readonly markets: string;
 
@@ -53,6 +55,7 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         this.prefix = sanitizeTablePrefix(options?.prefix ?? DEFAULT_PREFIX);
         this.swaps = `${this.prefix}asset_swaps`;
         this.rfqSwaps = `${this.prefix}rfq_swaps`;
+        this.swapRecords = `${this.prefix}swap_records`;
         this.scanned = `${this.prefix}asset_swap_scanned_txids`;
         this.markets = `${this.prefix}asset_swap_markets`;
     }
@@ -99,6 +102,21 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
             )`);
             await this.db.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_state ON ${this.rfqSwaps} (state)`,
+            );
+            // The v2 client's accept records. Its own table for the reason
+            // the one above has one, plus the v1 read predicate: a row with
+            // neither `offerHex` nor `paymentHash` is dropped as corrupt by
+            // `getAssetSwapsOrThrow`, so sharing `asset_swaps` would pin the v2
+            // shape to a v1 filter. `family` and `updated_at` are mapped out
+            // for querying; the record goes in whole.
+            await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.swapRecords} (
+                id TEXT PRIMARY KEY,
+                family TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                data TEXT NOT NULL
+            )`);
+            await this.db.run(
+                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}swap_records_family ON ${this.swapRecords} (family)`,
             );
             await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.scanned} (txid TEXT PRIMARY KEY)`);
             await this.db.run(
@@ -167,6 +185,39 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         });
     }
 
+    async saveSwapRecord(record: SwapRecord): Promise<void> {
+        await this.ensureInit();
+        await this.withTx(async () => {
+            await this.db.run(
+                `INSERT OR REPLACE INTO ${this.swapRecords} (id, family, updated_at, data)
+                 VALUES (?, ?, ?, ?)`,
+                [record.id, record.family, record.updatedAt, JSON.stringify(record)],
+            );
+        });
+    }
+
+    async getSwapRecord(id: string): Promise<SwapRecord | undefined> {
+        await this.ensureInit();
+        const row = await this.db.get<{ data: string }>(
+            `SELECT data FROM ${this.swapRecords} WHERE id = ?`,
+            [id],
+        );
+        return row ? (JSON.parse(row.data) as SwapRecord) : undefined;
+    }
+
+    async getAllSwapRecords(): Promise<SwapRecord[]> {
+        await this.ensureInit();
+        const rows = await this.db.all<{ data: string }>(`SELECT data FROM ${this.swapRecords}`);
+        return rows.map((r) => JSON.parse(r.data) as SwapRecord);
+    }
+
+    async removeSwapRecord(id: string): Promise<void> {
+        await this.ensureInit();
+        await this.withTx(async () => {
+            await this.db.run(`DELETE FROM ${this.swapRecords} WHERE id = ?`, [id]);
+        });
+    }
+
     async getScannedTxids(): Promise<Set<string>> {
         await this.ensureInit();
         const rows = await this.db.all<{ txid: string }>(`SELECT txid FROM ${this.scanned}`);
@@ -224,6 +275,7 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         await this.withTx(async () => {
             await this.db.run(`DELETE FROM ${this.swaps}`);
             await this.db.run(`DELETE FROM ${this.rfqSwaps}`);
+            await this.db.run(`DELETE FROM ${this.swapRecords}`);
             await this.db.run(`DELETE FROM ${this.scanned}`);
             await this.db.run(`DELETE FROM ${this.markets}`);
         });

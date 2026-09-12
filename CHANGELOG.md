@@ -9,22 +9,233 @@ style and have not been backfilled.
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **`@arkade-os/boltz-swap` is removed from the repo and will not be
+  published on the 0.5 line.** The package's Boltz-routed rails are
+  superseded by the `@arkade-os/swap` v2 client (`createSwapClient` on the
+  package root). There is no in-tree replacement for `ArkadeSwaps`,
+  `BoltzSwapProvider`, or `ArkadeLightning` as drop-in APIs — consumers
+  migrate to the v2 corridors. Known pinned consumers that need a coordinated
+  migration before or with this release: **BlueWallet**
+  (`@arkade-os/boltz-swap@0.3.26`), **arkade-wdk** (`0.3.40`), **coinflip**
+  (`0.3.60`), and **checkout** (`@latest`). See the boltz-swap section of
+  [`packages/swap/MIGRATION.md`](packages/swap/MIGRATION.md) for the mapping.
+
+- **`@arkade-os/swap`: the root export is the v2 client, and the v1
+  building blocks moved to `@arkade-os/swap/protocol`.** `createSwapClient`
+  and `SwapClient` on the root are now the v2 declarations, not the facade
+  `0.1.0-rc.1` published: the factory takes a `SwapClientConfig`,
+  `quote(market, input)` became `quote(input)`, `cancel` takes a swap id
+  rather than a funding txid, `onUpdate` delivers `{ swap, outcome, detail }`,
+  and `client.manager` is gone. `quote`'s arity change fails loudly;
+  `SwapQuoteInput.give: "base" | "quote"` is the quiet one, since `AssetId` is
+  a string alias — it still compiles and is refused at runtime with
+  `UnsupportedRoute`, so grep for `give: "base"` before upgrading. 192 further
+  names — requests, covenants, records, the RFQ manager, the restore scan, the
+  v1 solver rails — move to `@arkade-os/swap/protocol`, one specifier edit
+  each, under `@deprecated` pointers naming their v2 replacement. Eight v1
+  names the v2 surface references stay on the root instead — `InvoiceFacts`,
+  `ChainSource`, `AssetSwap`, `LockupSpendIndexer`, `SwapContractRegistry`,
+  `LockupRegistrationFailed`, `RfqSwapState`, `isRfqSwapTerminal` — because a
+  root-exported declaration its consumer cannot name is unusable without the
+  deprecated barrel. There is
+  deliberately **no window** in which both spellings work: this release breaks
+  regardless, so re-exporting them from the root would split one migration into
+  two and leave 200 v1 names on a root whose claim is to be the v2 surface. The
+  subpath is a permanent floor and nothing on it is scheduled for removal.
+  Removed outright, with no floor: the rest of the facade (`SwapQuoteInput`,
+  `UnifiedSwap`, `SwapClientDeps`, `SwapQuote`, `SpotQuote`,
+  `LightningSendQuote`, `LightningReceiveQuote`, `OnchainSendQuote`),
+  `ARKADE_ASSET`, and seventeen internals the client absorbed. The
+  `@arkade-os/swap/client` subpath is gone — it never shipped in a published
+  version, only on the release branch, and the client is the root now. Full table, including every name with no floor and why, in
+  [`packages/swap/MIGRATION.md`](packages/swap/MIGRATION.md).
+
+- **`@arkade-os/swap`: `AssetSwapRepository.version` is `5`, adding a v2
+  swap-record store.** Four methods land beside the existing ones —
+  `saveSwapRecord`, `getSwapRecord`, `getAllSwapRecords`,
+  `removeSwapRecord` — keyed by the client-minted quote id rather than a
+  funding txid, which is what lets a swap record exist *before* its
+  money does. An out-of-tree implementor of the interface fails to
+  compile until it adds them, which is what the version literal is for.
+  The four in-tree backends are updated; the IndexedDB one bumps
+  `DB_VERSION` to 3 and the migration is additive, so existing rows come
+  through untouched. Realm consumers gain a fifth schema,
+  `ArkadeSwapRecord` — spread `AssetSwapRealmSchemas` into your config
+  and bump your `schemaVersion`. The v1 readers are unchanged and keep
+  reading v1 rows; the two record families are deliberately invisible to
+  each other, while the restore-scan cursor and the markets cache stay
+  shared.
+
+- **`@arkade-os/swap`: the `arkServerUrl` positional is gone from the
+  five covenant-deriving entrypoints.** `createOffer(wallet, params)`,
+  and `requestLightningSend` / `requestLightningReceive` /
+  `requestOnchainSend` / `requestOnchainReceive` as
+  `request*(wallet, transport, params)`. Each reads the server's
+  network and signer key — and, for the four `request*` calls, its
+  unilateral-exit delay — from `wallet.getArkadeInfo()`
+  instead of building a `RestArkProvider` from a URL, so a caller
+  holding a wallet holds everything these need and pays no second
+  `/v1/info` round-trip per call (each entrypoint still performs its own
+  live read — deliberately, see the `requireLive` entry below). Drop the argument at every call site; nothing
+  else about these calls changed. (#734)
+- **`@arkade-os/swap`: the solver payment rails drop their
+  `arkServerUrl` dep.** `SolverLightningRailDeps` and
+  `SolverOnchainRailDeps` carried the URL for the one reason above — to
+  hand it to `requestLightningSend` / `requestOnchainSend` — so with the
+  positional gone the field has no reader. Remove it from the object you
+  pass `solverLightningRail` / `solverOnchainRail`; both rails already
+  take the wallet from the `RouterContext` they are quoted with. (#734)
+- **`@arkade-os/swap`: `cancelOffer` and `watchOfferSwaps` lose their
+  server URL too.** `cancelOffer(wallet, offerHex, opts)` and
+  `watchOfferSwaps({ wallet, repository })`. These two need more than
+  server info — cancel broadcasts and falls back to the indexer for a
+  deposit made before contract registration existed, and the watcher
+  reads spending transactions — so they now take those from the wallet
+  as well, through the two seams below. No *offer* entrypoint takes a
+  server URL now. The RFQ restore/refund/claim helpers still take
+  provider instances: an `ArkadeReader` satisfies their *indexer*
+  parameter structurally, while their ark-provider parameter wants
+  `getInfo` plus the broadcast pair — buildable from
+  `wallet.getArkadeInfo()` and `wallet.getArkadeBroadcaster()`.
+  Converting their callers is follow-up work. (#734)
+- **`Arkade.arkProvider` narrowed to `ArkadeServerProvider`.** The
+  provider a connected client exposes now types `submitTx`/`finalizeTx`
+  as optional, mirroring what `Arkade.connect` accepts. Reaching
+  through the field to broadcast — `client.arkProvider.submitTx(...)`
+  — no longer compiles. Broadcast through the transaction builder's
+  `.send()`, which runs the same submit/finalize behind an explicit
+  capability check, or keep your own reference to the provider you
+  handed `connect`. Type-only: the field still holds that provider
+  untouched, so there is no runtime or on-disk effect. (#734)
+
+### Features
+
+- **`@arkade-os/swap/node`: the Node storage default.**
+  `nodeSwapRepository({ network })` opens a file-backed SQLite database
+  under the platform config directory (XDG /
+  `~/Library/Application Support` / `%APPDATA%`) at
+  `arkade/swaps/swaps-<network>.sqlite`, and is the one backend whose
+  `[Symbol.asyncDispose]` closes the connection — because it is the one
+  that opened it. `createNodeSqlExecutor(path)` and
+  `swapDatabasePath(network)` are exported beside it. A separate subpath
+  rather than a conditional import, so the browser bundle never sees
+  `node:sqlite`.
+
+- **`assertRecipientArkadeAddress` and `RecipientArkadeAddressContext` are
+  root-exported.** The rotation-aware recipient check — hrp, then
+  `classifyAgainstSignerSet`, refusing `UNKNOWN_SIGNER` and `EXPIRED`
+  distinctly — was reachable only from inside core, while every
+  ingredient it needs already was. A plugin classifying a destination
+  address had to hand-roll a `serverPubKey ===` comparison, which
+  rejects valid addresses mid-rotation. Nothing about the function
+  changed.
+- **`IReadonlyWallet.getArkadeInfo()`.** The wallet is the single place
+  that knows which Arkade server it speaks to, so a plugin needs only
+  the wallet, never a server URL of its own. It answers with the live
+  `ArkadeInfo` and falls back to the snapshot persisted at wallet
+  construction when the server is unreachable, so an offline wallet
+  still answers; implemented across the standard, service-worker and
+  Expo wallets. Additive for consumers, but **third-party `IWallet` /
+  `IReadonlyWallet` implementations must add the method** — a
+  compile-time break for external implementers only, with no runtime
+  or on-disk effect. (#734)
+- **`IReadonlyWallet.getArkadeReader()` and
+  `IWallet.getArkadeBroadcaster()`.** Chain reads and broadcast, taken
+  from the wallet rather than from a URL a caller carries. `ArkadeReader`
+  is `getVtxos` + `getVirtualTxs`; `ArkadeBroadcaster` is
+  `submitTx` + `finalizeTx`.
+  The split is the readonly/full line: reading is a readonly capability,
+  broadcasting is not. On the typed surface a readonly wallet — and
+  every `toReadonly()` view — exposes no way to submit (`protected` is
+  erased at runtime, so this is a compile-time boundary, not a
+  sandbox); the readonly service-worker enforces it at runtime too,
+  refusing `SUBMIT_TX`/`FINALIZE_TX` outright.
+  `ArkadeReader.getVtxos()` queries the server for arbitrary scripts and
+  is distinct from `IReadonlyWallet.getVtxos()`, which answers the
+  wallet's own outputs from repositories. It is shaped as
+  `getNormalizedVtxos`, so everything leaving the seam carries its
+  canonical facts — the guarantee `check-provider-boundary.mjs` enforces
+  inside the SDK, now extended to consumers. Deliberately not the whole
+  `IndexerProvider`/`ArkProvider`: a caller reaching further would be
+  talking to the server behind the wallet's back, which a service-worker
+  wallet cannot even express.
+  Implemented across the standard, service-worker and Expo wallets; on a
+  service-worker wallet both are proxied to the worker, so a plugin
+  shares the wallet's connection instead of opening a second one outside
+  its rate gate and caches. Additive for consumers, but **third-party
+  `IWallet` / `IReadonlyWallet` implementations must add both methods**
+  — a compile-time break for external implementers only, with no runtime
+  or on-disk effect. (#734)
+- **`getArkadeInfo({ requireLive: true })`, and honest freshness.** The
+  snapshot fallback is now opt-out for callers that must not derive from
+  a cache: with `requireLive` the read throws when the operator is
+  unreachable. The five covenant-deriving swap entrypoints and
+  `cancelOffer` use it, restoring their pre-#734 fail-closed behaviour —
+  a stale snapshot there binds a covenant to a key the operator may no
+  longer co-sign for. Every read now also updates
+  `getProviderConnectionState()`, so a wallet that booted offline and
+  recovered stops reporting `degraded` (and the inverse stops claiming
+  `online`). (#803 review)
+- **An info read is now a rotation signal, not its suppressor.**
+  `RestArkProvider.getInfo()` caches the digest that rides `X-Digest`;
+  previously a read after the operator rotated advanced it silently, so
+  arkd stopped answering `DIGEST_MISMATCH` and `onServerInfoChanged`
+  never fired. `getInfo()` now emits `onServerInfoChanged` when the
+  digest *moved* (boot read and the mismatch path's own refresh stay
+  silent), so the wallet re-derives instead of spending on a stale
+  epoch. The live `/v1/info` fetch also carries a 12s budget where the
+  runtime has `AbortSignal.timeout`, keeping the service-worker snapshot
+  fallback reachable on a black-holed connection. (#803 review)
+- **Typed error names survive the service-worker boundary for real.**
+  The structured-clone algorithm normalizes a custom `Error.name`
+  (`ProviderUnavailableError`, `ReadonlyWalletError`, …) to `"Error"` —
+  the earlier claim that `cause.name` survived was certified by a test
+  stub that copied `name` verbatim. The worker now sends the name beside
+  the error as plain data (`ResponseEnvelope.errorName`) and the page
+  restores it before rejecting, so `cause.name` genuinely is the thing
+  a page can branch on. Wire-compatible in both directions; against an
+  older worker the page sees the clone-normalized name, as it always
+  did. (#803 review)
+- **`ArkInfo` renamed to `ArkadeInfo`.** The type name now matches the
+  product and the accessor that returns it. `ArkInfo` is kept as a
+  deprecated alias (`export type ArkInfo = ArkadeInfo`), both are
+  exported from `@arkade-os/sdk`, and every existing import keeps
+  resolving — nothing to change today. (#734)
+- **`ArkadeConnectOptions.arkade` widened: only `getInfo` is
+  required.** `submitTx` / `finalizeTx` are optional now — `getInfo` is
+  what resolves the server key and checkpoint closure, which is all a
+  client needs to derive, register and inspect contracts. A client
+  built without the two broadcast methods throws at `.send()` on the
+  pure-tapscript path — the same deferred, explicit failure an absent
+  `indexer` gives `getUtxos()` and an absent `emulator` gives a covenant
+  spend.
+  That lets a caller already holding the server info connect with
+  `arkade: { getInfo: async () => info }` and no provider of its own,
+  and without a second `/v1/info` round-trip. A widening on the input,
+  so every existing `Arkade.connect` call still type-checks; the
+  matching narrowing on the `Arkade.arkProvider` field it hands back is
+  listed under Breaking Changes above. The shape is exported as
+  `ArkadeServerProvider`, so a caller building a derivation-only client
+  has a name to import. (#734)
+
 ### Bug Fixes
 
-- **A `vtxo_spent` from the failsafe poll now carries the row that records
-  the spend.** `ContractWatcher.pollContracts` reported the difference
-  using its *cached* rows, and those were unspent when cached — so a
-  poll-derived `vtxo_spent` stated `isSpent: false`, `spentBy: ""` and no
-  `arkTxId` on an event whose whole meaning is that the output was spent.
-  Anything reading a spend txid off these events saw nothing to bind the
-  spend to, including `Wallet`'s own subscription, which forwards them as
-  `spentVtxos`. The poll now takes spent rows from the repository query it
-  was already making — no extra read — and emits the stored row, falling
-  back to the cached one when storage has nothing fresher. **Grep your
-  `vtxo_spent` handlers for `spentBy`, `arkTxId` and `isSpent`**: fields
-  that were always empty on the poll path are now populated, and a handler
-  branching on `!vtxo.isSpent` inside a spend handler now takes the other
-  branch. (#864)
+- **`BIP21.parse` no longer lowercases the address in a URI, and
+  `BIP21.create` no longer lowercases the one it writes.** Base58 is
+  case-sensitive, so `bitcoin:mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn` parsed
+  as a *different* address — and silently, because `isBtcAddress` admits
+  a lowercase base58 string, so the corrupted address passed
+  classification and whatever it decoded to is what a rail would have
+  funded. Bech32 is unaffected either way: BIP173 forbids a case *mix*,
+  not upper case, and every decoder here takes an all-upper address.
+- **The `ark=` BIP21 parameter is matched case-insensitively.** Bech32m
+  permits an all-upper address and `ArkAddress.decode` accepts one, so a
+  case-sensitive prefix test dropped — with a `console.warn` — an
+  address that `arkTarget` claims happily when it arrives bare. Same fix
+  in `BIP21.create`. One destination classifying differently bare than
+  as a parameter was the defect; both forms now agree.
 
 ## [0.4.23] - 2026-05-04
 

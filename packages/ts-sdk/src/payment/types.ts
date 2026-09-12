@@ -40,16 +40,15 @@ export interface PaymentHandle {
  * never chooses, and flags that instead: see `claimFeeDeductedFromPayout`.
  *
  * `fee` is a pre-send estimate wherever the true cost is only fixed later: the
- * swap rails quote from Boltz's advertised pricing and are superseded by the
- * amount Boltz returns at swap creation, and the collaborative exit does not
- * include the per-input intent fees, which depend on the VTXO selection made at
- * settlement. Treat it as a display and ranking figure, not a guarantee.
+ * collaborative exit does not include the per-input intent fees, which depend
+ * on the VTXO selection made at settlement. Treat it as a display and ranking
+ * figure, not a guarantee.
  */
 export interface RouteQuote {
     railId: string;
     /** Sats delivered to the recipient. */
     amount: number;
-    /** Sats charged on top of {@link amount}; an estimate on the swap rails. */
+    /** Sats charged on top of {@link amount}; an estimate where the cost is fixed later. */
     fee: number;
     /** `amount + fee` — what leaves the wallet. */
     total: number;

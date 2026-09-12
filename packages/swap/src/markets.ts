@@ -33,7 +33,8 @@ import { BTC_ASSET_ID } from "./store";
 
 /** Shared quote options so every quote path agrees.
  * No safety margin on top of the market fee: pricing drift between quote
- * and fill is the solver's risk to manage, not the user's to prepay. */
+ * and fill is the solver's risk to manage, not the user's to prepay.
+ */
 export const QUOTE_OPTIONS = { safetyBps: 0 } as const;
 
 /** Feed fetcher with a short per-URL TTL cache. A quote UI refetches the
@@ -46,7 +47,8 @@ export const QUOTE_OPTIONS = { safetyBps: 0 } as const;
  * the covenant floor, so an old price must never price a real offer).
  * Keyed on the request URL, so it assumes a market's feed URL is stable and
  * amount-invariant (true today); a cache-busting nonce would silently make it
- * a no-op — the flat-feedCalls swap test guards against that regressing. */
+ * a no-op — the flat-feedCalls swap test guards against that regressing.
+ */
 export const makeCachedFeedFetch = (
     ttlMs = 30_000,
     fetchImpl: typeof fetch = fetch,
@@ -104,7 +106,11 @@ export const makeCachedFeedFetch = (
     };
 };
 
-const MARKETS_CACHE_TTL_MS = 60 * 60 * 1000;
+/** How long a discovered market set is reused before the registry is asked
+ * again. Exported so the v2 discovery module reuses one number rather than
+ * restating it — registry content changes rarely, and two TTLs that drifted
+ * apart would serve two different answers to the same question. */
+export const MARKETS_CACHE_TTL_MS = 60 * 60 * 1000;
 
 const isMarketShaped = (m: unknown): m is DiscoveredMarket => {
     const market = m as Partial<DiscoveredMarket> | null;
@@ -207,7 +213,8 @@ export const discoverMarkets = async (
 
 /** Best market for a from/to pair, in either orientation. `give` is the side
  * the sender deposits; `wantSide` skips markets whose receive side is
- * disabled (max = "0"). */
+ * disabled (max = "0").
+ */
 export const findMarket = (
     markets: DiscoveredMarket[],
     fromId: string,
@@ -250,6 +257,7 @@ export const findMarket = (
 // ponytail: no preFeeDisplayRate here — the pre-fee Rate-row derivation is
 // display-only; lift it from the wallet if a second consumer needs it
 
+/** @deprecated Use `client.markets()`; pricing is internal to `client.quote()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export type PlanError =
     | "insufficient-balance"
     | "side-disabled"
@@ -257,7 +265,7 @@ export type PlanError =
     | "above-max"
     | "below-dust";
 
-/** Validate a plan against the user's balance and the server dust limit. */
+/** Validate a plan against the user's balance and the server dust limit.*/
 export const validatePlan = (
     plan: OfferPlan,
     giveBalance: bigint,

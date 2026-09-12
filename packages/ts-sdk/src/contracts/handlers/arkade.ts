@@ -9,7 +9,7 @@ import {
 } from "../types";
 import { isCltvSatisfied, isCsvSpendable } from "./helpers";
 import { timelockToSequence } from "../../utils/timelock";
-import { extractPubKey, isDescriptor } from "../../identity/descriptor";
+import { extractPubKey } from "../../identity/descriptor";
 import {
     ArkadeProgramScript,
     deserializeArkadeContractParams,
@@ -25,22 +25,12 @@ import {
  * context, best-effort (mirrors the VHTLC handler's role resolution).
  */
 function walletKeyFrom(context: PathContext): string | undefined {
-    const extract = (value: string): string | undefined => {
-        if (!isDescriptor(value)) return value.toLowerCase();
-        try {
-            return extractPubKey(value).toLowerCase();
-        } catch {
-            return undefined;
-        }
-    };
-    if (context.walletDescriptor) {
-        const key = extract(context.walletDescriptor);
-        if (key) return key;
+    if (!context.walletDescriptor) return undefined;
+    try {
+        return extractPubKey(context.walletDescriptor).toLowerCase();
+    } catch {
+        return undefined;
     }
-    if (context.walletPubKey) {
-        return extract(context.walletPubKey);
-    }
-    return undefined;
 }
 
 /**

@@ -1,11 +1,11 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
-import { ArkProvider, Output, SettlementEvent } from "../providers/ark";
+import { ArkadeInfo, ArkProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity, ReadonlyIdentity } from "../identity";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
-import { RenewalConfig, SettlementConfig } from "./vtxo-manager";
-import { IndexerProvider } from "../providers/indexer";
+import { SettlementConfig } from "./vtxo-manager";
+import { GetVtxosOptions, IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import {
@@ -117,47 +117,15 @@ export interface NewAddress {
 /**
  * Base configuration options shared by all wallet types.
  *
- * Supports URL-based and provider-based configuration.
- *
- * @deprecated URL-based configuration starts from `arkServerUrl` and can optionally override
- * derived service URLs such as `indexerUrl` and `esploraUrl`.
- *
- * Provider-based configuration supplies concrete provider instances directly,
- * including the ArkProvider, IndexerProvider, OnchainProvider, and DelegateProvider.
- *
- * The wallet will use provided URLs to create default providers if custom provider
- * instances are not supplied. If optional parameters are not provided, the wallet
- * will fetch configuration from the Arkade server.
- *
- * @remarks
- * URL-based and provider-based configuration can be mixed, but provider instances
- * always take precedence over URLs for the corresponding service.
+ * Provider instances are the supported way to connect a wallet to Arkade,
+ * indexer, onchain, and delegation services. If a provider is omitted, the
+ * wallet constructs the default implementation for that service.
  *
  * @see WalletConfig
  * @see ReadonlyWalletConfig
  * @see StorageConfig
  */
 export interface BaseWalletConfig {
-    /**
-     * Base URL of the Arkade server.
-     *
-     * @deprecated Pass an explicit `arkProvider` instance instead. URL-based
-     * configuration will be removed in a future major version.
-     */
-    arkServerUrl?: string;
-    /**
-     * Optional override for the indexer URL.
-     *
-     * @deprecated Pass an explicit `indexerProvider` instance instead.
-     */
-    indexerUrl?: string;
-    /**
-     * Optional override for the Esplora API URL.
-     *
-     * @deprecated Pass an explicit `onchainProvider` instance instead.
-     */
-    esploraUrl?: string;
-
     /** Optional Arkade server public key used to construct and validate Arkade addresses. */
     arkServerPublicKey?: string;
     /** Relative timelock applied to boarding scripts. */
@@ -171,7 +139,7 @@ export interface BaseWalletConfig {
      */
     minBatchExpirySeconds?: bigint;
     /**
-     * Minimum accepted checkpoint exit delay decoded from `ArkInfo.checkpointTapscript`,
+     * Minimum accepted checkpoint exit delay decoded from `ArkadeInfo.checkpointTapscript`,
      * as wall-clock seconds. Defaults per network — see
      * `defaultCheckpointExitDelayPolicy`, which already carries the value the
      * hosted signet and mutinynet Arkade Services advertise, so neither needs
@@ -192,8 +160,6 @@ export interface BaseWalletConfig {
     onchainProvider?: OnchainProvider;
     /** Optional delegation service instance. */
     delegateProvider?: DelegateProvider;
-    /** @deprecated alias for @see BaseWalletConfig.delegateProvider */
-    delegatorProvider?: DelegateProvider;
 }
 
 /**
@@ -265,16 +231,6 @@ export interface WalletConfig extends ReadonlyWalletConfig {
     /** Signing identity used to authorize transactions. */
     identity: Identity;
 
-    /**
-     * Legacy renewal configuration.
-     *
-     * @remarks
-     * This field is still accepted for backwards compatibility, but `settlementConfig`
-     * is the source of truth for new code.
-     *
-     * @deprecated Use `settlementConfig` instead.
-     */
-    renewalConfig?: RenewalConfig;
     /**
      * Configuration for automatic settlement and renewal.
      * `false` = explicitly disabled, `undefined` or `{}` = enabled with defaults.
@@ -482,9 +438,6 @@ export interface WalletBalance {
  * Parameters accepted by `OnchainWallet.send`.
  *
  * @remarks
- * This shape was also used by the deprecated `Wallet.sendBitcoin` method.
- * New wallet sends should use `Recipient` via `IWallet.send`.
- *
  * @see Recipient
  */
 export interface SendBitcoinParams {
@@ -498,13 +451,7 @@ export interface SendBitcoinParams {
     feeRate?: number;
 
     /**
-     * Optional memo associated with the transaction.
-     * @deprecated Does not appear to have ever been used.
-     */
-    memo?: string;
-
-    /**
-     * Optional explicit virtual output selection used by `Wallet.sendBitcoin`.
+     * Optional explicit virtual output selection.
      * Ungated, like `settle({ inputs })`: whatever is named here is spent, even
      * if generic selection would skip it.
      *
@@ -729,48 +676,6 @@ export interface Status {
     block_time?: number;
 }
 
-/**
- * Virtual output status.
- *
- * @deprecated Use the canonical facts on {@link VirtualCoin} — `isSwept`, `isPreconfirmed`,
- * `isSpent`, `expiresAt`, `expiresAtHeight`, `commitmentTxIds`, `spentBy`, `settledBy` — and the
- * capability predicates {@link canSpendOffchain}, {@link canRecoverOnchain},
- * {@link hasTerminalSpend}, {@link isPastExpiry}. `state` collapses independent facts into one
- * lossy label; this object is retained only as a backward-compatible projection.
- */
-export interface VirtualStatus {
-    /**
-     * Extended output status.
-     *
-     * - `preconfirmed`: not yet finalized in a batch
-     * - `settled`: finalized in a batch
-     * - `swept`: expired/swept and recoverable in a new batch
-     * - `spent`: destroyed by a later transaction
-     *
-     * @deprecated Lossy: the states are not orthogonal and collapse with precedence
-     * `spent` > `swept` > `preconfirmed` > `settled`, so a spent VTXO that was also swept reports
-     * only `spent`. Read `isSpent`/`isSwept`/`isPreconfirmed` instead, or a capability predicate.
-     */
-    state: "preconfirmed" | "settled" | "swept" | "spent";
-
-    /**
-     * Which batch commitment transaction(s) this virtual output depends on.
-     *
-     * @deprecated Use {@link VirtualCoin.commitmentTxIds}.
-     */
-    commitmentTxIds?: string[];
-
-    /**
-     * The earliest point at which this virtual output stops being safely preconfirmed,
-     * in milliseconds.
-     *
-     * @deprecated Unit-ambiguous: the server returns a single scalar that is either unix seconds or
-     * a block height, and both land here multiplied by 1000. Use {@link VirtualCoin.expiresAt} and
-     * {@link VirtualCoin.expiresAtHeight}, which disambiguate the two.
-     */
-    batchExpiry?: number;
-}
-
 /** Onchain output location data. */
 export interface Outpoint {
     /** Transaction ID where the output was created */
@@ -846,12 +751,6 @@ export interface VirtualCoin extends Coin {
      * deployments). Evaluating it needs a chain tip — see {@link isPastExpiry}.
      */
     expiresAtHeight?: number;
-    /**
-     * Virtual output status.
-     *
-     * @deprecated See {@link VirtualStatus}.
-     */
-    virtualStatus: VirtualStatus;
     /** Assets carried by this virtual output, if any. */
     assets?: Asset[];
 }
@@ -964,7 +863,7 @@ export type ExtendedVirtualCoin = TapLeaves &
     EncodedVtxoScript &
     VirtualCoin & { extraWitness?: Bytes[] };
 
-import type { NormalizedExtendedVirtualCoin } from "./vtxo";
+import type { NormalizedExtendedVirtualCoin, NormalizedVtxoPage } from "./vtxo";
 
 export {
     canRecoverOnchain,
@@ -974,15 +873,12 @@ export {
     getAllNormalizedVtxos,
     getNormalizedVtxos,
     hasTerminalSpend,
-    isExpired,
     isPastExpiry,
-    isRecoverable,
-    isSpendable,
     isVirtualCoin,
     normalizeVtxo,
-    toVirtualStatus,
     type NormalizedExtendedVirtualCoin,
     type NormalizedVirtualCoin,
+    type NormalizedVtxoPage,
     type TimeHeight,
     type VtxoScriptQuery,
 } from "./vtxo";
@@ -994,7 +890,7 @@ export {
  * @param dust - dust threshold in satoshis
  * @returns `true` when the virtual output value is below `dust`
  *
- * @see isRecoverable
+ * @see canRecoverOnchain
  */
 export function isSubdust(vtxo: { value: number } | bigint, dust: bigint): boolean {
     if (typeof vtxo === "bigint") return vtxo < dust;
@@ -1073,6 +969,65 @@ export interface IAssetManager extends IReadonlyAssetManager {
     burn(params: BurnParams): Promise<string>;
 }
 
+/** Options for {@link IReadonlyWallet.getArkadeInfo}. */
+export type GetArkadeInfoOptions = {
+    /** Throw when the operator is unreachable instead of answering from the
+     * persisted snapshot — for callers binding the answer into a covenant. */
+    requireLive?: boolean;
+};
+
+/**
+ * Chain reads a caller needs beyond its own wallet's VTXOs: an arbitrary
+ * script's virtual outputs, and the transactions that spent them.
+ *
+ * Shaped as {@link getNormalizedVtxos} rather than as `IndexerProvider`, for
+ * two reasons. Every VTXO leaving this seam carries its canonical facts —
+ * the guarantee `scripts/check-provider-boundary.mjs` enforces inside the SDK
+ * and that a plugin holding a raw provider could otherwise skip. And because
+ * `NormalizedVirtualCoin` is assignable to `VirtualCoin`, an `ArkadeReader`
+ * satisfies `Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">` structurally,
+ * so existing narrow seams accept one unchanged. Passing a reader to something
+ * that normalizes again — `getNormalizedVtxos`, `Arkade.connect`'s `indexer` —
+ * is harmless: `normalizeVtxo` is idempotent. Do not "fix" that by stripping
+ * the normalization here; it is the whole point of the seam.
+ *
+ * Deliberately not the whole provider: a caller that could reach
+ * `getVtxoChain` or `getSubscription` through the wallet would be talking to
+ * the server behind the wallet's back, which the service-worker wallet cannot
+ * even express.
+ */
+// `getVirtualTxs` note: txids ride the URL *path*, one request per call — the
+// reader chunks nothing, and a `page` in the answer is the caller's to follow.
+// `swap`'s restore scan chunks at 50 txids for exactly this reason.
+export type ArkadeReader = Pick<IndexerProvider, "getVirtualTxs"> & {
+    /**
+     * Required `opts`, unlike the `IndexerProvider` method it mirrors: this
+     * seam reads for *named* foreign scripts (or outpoints). The type stops a
+     * bare `getVtxos()` at compile time; the runtime defence is the provider's
+     * own "Either scripts or outpoints must be provided" throw — the message
+     * boundary adds no validation of its own.
+     *
+     * One logical query — the reader chunks nothing. `scripts` travel in the
+     * query string, so a wide list can `414`; {@link getAllNormalizedVtxos}
+     * accepts a reader and chunks and pages to exhaustion. Whether a single
+     * call pages internally is the provider's business: when a `page` comes
+     * back, following it is yours.
+     *
+     * @see getNormalizedVtxos
+     */
+    getVtxos(opts: GetVtxosOptions): Promise<NormalizedVtxoPage>;
+};
+
+/**
+ * Submitting a signed Arkade transaction, and finalizing it.
+ *
+ * On {@link IWallet} rather than {@link IReadonlyWallet}: broadcasting is the
+ * one thing a readonly wallet must not do. That is the same line
+ * `IReadonlyAssetManager` draws, and the invariant behind
+ * `ReadonlyWallet.arkProvider` being protected.
+ */
+export type ArkadeBroadcaster = Pick<ArkProvider, "submitTx" | "finalizeTx">;
+
 /**
  * Core wallet interface for Bitcoin transactions with Arkade protocol support.
  *
@@ -1084,6 +1039,15 @@ export interface IAssetManager extends IReadonlyAssetManager {
  */
 export interface IWallet extends IReadonlyWallet {
     /**
+     * Broadcast access to this wallet's Arkade server, so a plugin needs only
+     * the wallet — never a server URL of its own.
+     *
+     * @returns A submit/finalize pair bound to this wallet's server
+     * @see ArkadeBroadcaster
+     */
+    getArkadeBroadcaster(): Promise<ArkadeBroadcaster>;
+
+    /**
      * Signing identity associated with the wallet.
      *
      * A real signer, not a `ReadonlyIdentity` that structurally fits: contract
@@ -1094,17 +1058,6 @@ export interface IWallet extends IReadonlyWallet {
      * than at the push that discovers there is no signer.
      */
     identity: Identity;
-
-    /**
-     * Send bitcoin to a single Arkade address.
-     *
-     * @param params - Destination, amount, fee rate override, etc
-     * @returns Arkade transaction id
-     * @deprecated Use `send`
-     * @see send
-     * @see Recipient
-     */
-    sendBitcoin(params: SendBitcoinParams): Promise<string>;
 
     /**
      * Settle boarding inputs and/or preconfirmed virtual outputs into settled virtual outputs.
@@ -1146,9 +1099,6 @@ export interface IWallet extends IReadonlyWallet {
 
     /** @returns Delegation manager, when configured. */
     getDelegateManager(): Promise<IDelegateManager | undefined>;
-
-    /** @deprecated alias for @see IWallet.getDelegateManager */
-    getDelegatorManager(): Promise<IDelegateManager | undefined>;
 }
 
 /**
@@ -1169,6 +1119,37 @@ export interface IReadonlyWallet {
 
     /** @returns Onchain boarding address used to move funds into Arkade. */
     getBoardingAddress(): Promise<string>;
+
+    /**
+     * Server info for the Arkade server this wallet is connected to — network,
+     * signer key, delays, dust, fees and limits.
+     *
+     * The wallet is the single place that knows which server it speaks to, so
+     * a plugin needs only the wallet, never a server URL of its own. Live info
+     * wins; when the server is unreachable this falls back to the snapshot
+     * persisted at construction, so an offline wallet still answers.
+     *
+     * With `requireLive`, that fallback is off: the read throws when the
+     * operator is unreachable instead of answering from cache. For callers
+     * about to bind `signerPubkey` or a delay into a covenant — a stale
+     * snapshot there derives an address the operator may no longer co-sign
+     * for, so failing closed is the correct shape.
+     *
+     * @returns The Arkade server's info
+     * @see ArkadeInfo
+     */
+    getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo>;
+
+    /**
+     * Chain reads against this wallet's Arkade server, for scripts the wallet
+     * does not own — a plugin's covenant, say. {@link getVtxos} answers for the
+     * wallet's own outputs and reads from repositories; this one goes to the
+     * server.
+     *
+     * @returns A normalized reader bound to this wallet's server
+     * @see ArkadeReader
+     */
+    getArkadeReader(): Promise<ArkadeReader>;
 
     /** @returns The wallet's combined onchain and offchain balance. */
     getBalance(): Promise<WalletBalance>;

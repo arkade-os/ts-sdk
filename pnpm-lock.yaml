@@ -52,43 +52,6 @@ importers:
         specifier: 3.2.7
         version: 3.2.7(@types/node@24.3.1)(lightningcss@1.32.0)(terser@5.48.0)(yaml@2.9.0)
 
-  packages/boltz-swap:
-    dependencies:
-      '@arkade-os/sdk':
-        specifier: workspace:*
-        version: link:../ts-sdk
-      '@noble/curves':
-        specifier: 2.0.1
-        version: 2.0.1
-      '@noble/hashes':
-        specifier: 2.0.1
-        version: 2.0.1
-      '@scure/base':
-        specifier: 2.0.0
-        version: 2.0.0
-      '@scure/btc-signer':
-        specifier: 2.0.1
-        version: 2.0.1
-      bip68:
-        specifier: 1.0.4
-        version: 1.0.4
-      expo-background-task:
-        specifier: '>=0.1.0'
-        version: 1.0.10(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.7)(react@19.2.4))
-      expo-task-manager:
-        specifier: '>=3.0.0'
-        version: 14.0.9(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.7)(react@19.2.4))
-      light-bolt11-decoder:
-        specifier: 3.2.0
-        version: 3.2.0
-    devDependencies:
-      '@types/ws':
-        specifier: ^8.18.1
-        version: 8.18.1
-      vite:
-        specifier: ^7.3.6
-        version: 7.3.6(@types/node@25.9.2)(lightningcss@1.32.0)(terser@5.48.0)(yaml@2.9.0)
-
   packages/swap:
     dependencies:
       '@arkade-os/sdk':
@@ -112,6 +75,9 @@ importers:
       '@scure/btc-signer':
         specifier: 2.0.1
         version: 2.0.1
+      light-bolt11-decoder:
+        specifier: 3.2.0
+        version: 3.2.0
     devDependencies:
       fake-indexeddb:
         specifier: 6.2.5
@@ -1604,9 +1570,6 @@ packages:
 
   '@types/unist@3.0.3':
     resolution: {integrity: sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==}
-
-  '@types/ws@8.18.1':
-    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@types/yargs-parser@21.0.3':
     resolution: {integrity: sha512-I4q9QU9MQv4oEOz4tAHJtNz1cwuLxn2F3xcc2iV5WdqLPpUnj30aUuxt1mAxYTG+oe8CZMV/+6rU4S4gRDzqtQ==}
@@ -5575,10 +5538,6 @@ snapshots:
   '@types/stack-utils@2.0.3': {}
 
   '@types/unist@3.0.3': {}
-
-  '@types/ws@8.18.1':
-    dependencies:
-      '@types/node': 24.3.1
 
   '@types/yargs-parser@21.0.3': {}
 

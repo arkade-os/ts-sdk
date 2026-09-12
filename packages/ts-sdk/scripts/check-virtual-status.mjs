@@ -12,22 +12,13 @@ import { fileURLToPath } from "node:url";
 const pkgRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const srcRoot = join(pkgRoot, "src");
 
-// Only these may mention `virtualStatus`: the type declaration and its deprecation notices, the
-// module that owns the compatibility projection, and the repository (de)serialization that has to
-// keep reading and writing the legacy blob.
+// Only the storage migrations may mention `virtualStatus`: the module that recovers canonical facts
+// from the legacy blob, and the IndexedDB read path that applies it to rows no column migration can
+// reach. The projection is gone from the domain, so anything else naming it is a regression.
 const ALLOWLIST = [
-    "src/wallet/index.ts",
-    "src/wallet/vtxo.ts",
-    "src/repositories/serialization.ts",
-    "src/repositories/sqlite/walletRepository.ts",
-    "src/repositories/realm/walletRepository.ts",
-    "src/repositories/realm/schemas.ts",
-    "src/repositories/indexedDB/schema.ts",
+    "src/repositories/legacyVtxoFacts.ts",
+    "src/repositories/indexedDB/walletRepository.ts",
 ];
-
-// `toVirtualStatus(...)` is the sanctioned way to synthesize the projection on a write, so calling
-// it is not a dependency on the legacy shape. Matching the bare identifier would flag every caller.
-const SANCTIONED = /\btoVirtualStatus\b/;
 
 function* walk(dir) {
     for (const entry of readdirSync(dir)) {
@@ -46,7 +37,6 @@ for (const file of walk(srcRoot)) {
     const lines = readFileSync(file, "utf8").split("\n");
     lines.forEach((line, i) => {
         if (!/\bvirtualStatus\b/.test(line)) return;
-        if (SANCTIONED.test(line)) return;
         findings.push(`${rel}:${i + 1}: ${line.trim()}`);
     });
 }

@@ -33,10 +33,10 @@ import {
     createTestIdentity,
     execCommand,
     faucetOffchain,
+    faucetOnchain,
     mineBlocks,
     waitFor,
 } from "./utils";
-import { execSync } from "child_process";
 import { beforeAll } from "vitest";
 
 describe("vhtlc", () => {
@@ -44,8 +44,8 @@ describe("vhtlc", () => {
 
     let X_ONLY_PUBLIC_KEY: Uint8Array;
     beforeAll(() => {
-        const info = execSync("curl -fsS --max-time 5 http://localhost:7070/v1/info");
-        const signerPubkey = JSON.parse(info.toString()).signerPubkey;
+        const info = execCommand("curl -fsS --max-time 5 http://localhost:7070/v1/info");
+        const signerPubkey = JSON.parse(info).signerPubkey;
         X_ONLY_PUBLIC_KEY = hex.decode(signerPubkey).slice(1);
     });
 
@@ -374,7 +374,7 @@ describe("vhtlc", () => {
         const vtxo = spendableVtxosResponse.vtxos[0];
         const onchainBob = await OnchainWallet.create(bob, "regtest");
 
-        execSync(`node regtest/regtest.mjs faucet ${onchainBob.address} 0.001 --confirm`);
+        faucetOnchain(onchainBob.address, 100_000);
 
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -389,9 +389,9 @@ describe("vhtlc", () => {
             switch (done.type) {
                 case Unroll.StepType.WAIT:
                 case Unroll.StepType.UNROLL:
-                    execSync(`node regtest/regtest.mjs mine 1`);
+                    mineBlocks(1);
                     await new Promise((resolve) => setTimeout(resolve, 2000)); // give time for the checkpoint to be created
-                    execSync(`node regtest/regtest.mjs mine 1`);
+                    mineBlocks(1);
                     break;
             }
         }
@@ -420,7 +420,7 @@ describe("vhtlc", () => {
         await expect(onchainBob.provider.broadcastTransaction(signedTx.hex)).rejects.toThrow();
 
         // generate 10 blocks to make the exit path available
-        execSync(`node regtest/regtest.mjs mine 10`);
+        mineBlocks(10);
 
         const txid = await onchainBob.provider.broadcastTransaction(signedTx.hex);
         expect(txid).toBeDefined();

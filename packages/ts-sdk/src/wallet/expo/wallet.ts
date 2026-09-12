@@ -2,11 +2,13 @@ import { hex } from "@scure/base";
 import { Wallet, extractArkProviderUrl, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
 import type {
+    ArkadeBroadcaster,
+    ArkadeReader,
+    GetArkadeInfoOptions,
     IWallet,
     IAssetManager,
     WalletBalance,
     WalletConfig,
-    SendBitcoinParams,
     SettleParams,
     GetVtxosFilter,
     GetNewAddressesOptions,
@@ -16,7 +18,7 @@ import type {
     Recipient,
     SendParams,
 } from "..";
-import type { SettlementEvent } from "../../providers/ark";
+import type { ArkadeInfo, SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
 import type {
     AddressAllocationCapable,
@@ -180,9 +182,9 @@ export class ExpoWallet
         // Persist wallet params so the background handler can rehydrate
         // without a network call. Only works with AsyncStorageTaskQueue.
         if ("persistConfig" in taskQueue) {
-            const arkServerUrl = config.arkServerUrl || extractArkProviderUrl(wallet.arkProvider);
+            const arkServerUrl = extractArkProviderUrl(wallet.arkProvider);
 
-            if (arkServerUrl) {
+            if (typeof arkServerUrl === "string" && arkServerUrl.length > 0) {
                 const timelock = wallet.offchainTapscript.options.csvTimelock;
 
                 const bgConfig: PersistedBackgroundConfig = {
@@ -305,6 +307,18 @@ export class ExpoWallet
         return this.wallet.getBoardingAddress();
     }
 
+    getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
+        return this.wallet.getArkadeInfo(opts);
+    }
+
+    getArkadeReader(): Promise<ArkadeReader> {
+        return this.wallet.getArkadeReader();
+    }
+
+    getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
+        return this.wallet.getArkadeBroadcaster();
+    }
+
     getBalance(): Promise<WalletBalance> {
         return this.wallet.getBalance();
     }
@@ -380,15 +394,6 @@ export class ExpoWallet
 
     getDelegateManager(): Promise<IDelegateManager | undefined> {
         return this.wallet.getDelegateManager();
-    }
-
-    /** @deprecated alias for @see ExpoWallet.getDelegateManager */
-    getDelegatorManager(): Promise<IDelegateManager | undefined> {
-        return this.wallet.getDelegateManager();
-    }
-
-    sendBitcoin(params: SendBitcoinParams): Promise<string> {
-        return this.wallet.sendBitcoin(params);
     }
 
     settle(

@@ -132,7 +132,6 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
                     intentTapLeafScript: arkadeLeaf,
                     status: vtxo.status,
                     isSpent: vtxo.isSpent,
-                    virtualStatus: vtxo.virtualStatus,
                 },
             ],
             indexerProvider,
@@ -199,7 +198,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
                 spendableOnly: true,
             });
             const refreshed = resp.vtxos.find(
-                (v) => v.value === DELEGATE_AMOUNT && v.virtualStatus?.state !== "preconfirmed",
+                (v) => v.value === DELEGATE_AMOUNT && !v.isPreconfirmed,
             );
             if (refreshed) {
                 foundRefreshed = true;

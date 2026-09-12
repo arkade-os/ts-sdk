@@ -14,7 +14,7 @@ import { rotatedReceiveMetadata } from "./helpers";
  * (`pubKey` / `serverPubKey` / `csvTimelock`) rather than inventing
  * boarding-specific names — the boarding semantics come from the
  * contract type and from populating `csvTimelock` with the server's
- * boarding-exit delay (`ArkInfo.boardingExitDelay`) instead of the
+ * boarding-exit delay (`ArkadeInfo.boardingExitDelay`) instead of the
  * offchain unilateral-exit delay.
  */
 export type BoardingContractParams = DefaultContractParams;
@@ -31,8 +31,8 @@ export type BoardingContractParams = DefaultContractParams;
  *
  * Boarding semantics come entirely from the contract type and from
  * sourcing the CSV timelock from the server's boarding-exit delay
- * (`ArkInfo.boardingExitDelay`), not from renamed parameters. The
- * offchain `default` contract is built from `ArkInfo.unilateralExitDelay`
+ * (`ArkadeInfo.boardingExitDelay`), not from renamed parameters. The
+ * offchain `default` contract is built from `ArkadeInfo.unilateralExitDelay`
  * instead, so the two share a script shape but differ in their CSV
  * timelock value. Parameters round-trip through the same
  * `timelockToSequence` / `sequenceToTimelock` helpers and BIP68 sequence

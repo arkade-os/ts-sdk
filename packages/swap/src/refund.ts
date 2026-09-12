@@ -45,7 +45,7 @@ import {
     CSVMultisigTapscript,
     ConditionWitness,
     type Identity,
-    RestArkProvider,
+    type ArkProvider,
     RestIndexerProvider,
     Transaction,
     VHTLC,
@@ -54,13 +54,17 @@ import {
     getArkPsbtFields,
     hasTerminalSpend,
     matchServerCheckpoints,
+    type IWallet,
 } from "@arkade-os/sdk";
 
 import { RFQ_TERMINAL_STATES, type RfqStatus, type RfqTransport } from "./rfq";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** True for the states after which the solver will report nothing further. */
+/** True for the states after which the solver will report nothing further.
+ *
+ * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const isRfqTerminal = (state: string): boolean =>
     (RFQ_TERMINAL_STATES as readonly string[]).includes(state);
 
@@ -99,6 +103,8 @@ const isResolved = (state: string): boolean =>
  * restart it after a network blip — nothing is lost by doing so, since the
  * refund path this feeds is gated on an absolute timelock that does not
  * expire.
+ *
+ * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function awaitRfqResolution(
     transport: RfqTransport,
@@ -122,14 +128,44 @@ export async function awaitRfqResolution(
 
 // ── The refundWithoutReceiver push ───────────────────────────────────────────
 
-/** The Ark surface the refund push needs — narrower than a full provider, and
- * satisfied by {@link RestArkProvider}. Same seam style as `RestoreIndexer`. */
-export type RefundArkProvider = Pick<RestArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
-
 /** The indexer surface the lockup lookup needs. */
+/**
+ * What a push needs from the operator: the broadcast pair, plus the info read
+ * that supplies `checkpointTapscript`.
+ *
+ * Narrow on purpose. A wallet's own connection satisfies it —
+ * `getArkadeBroadcaster()` for the pair and `getArkadeInfo()` for the read — so
+ * a plugin composes one from the wallet it already has and never opens a second
+ * connection of its own (#734). A full `ArkProvider` still fits, structurally.
+ */
+export type SwapOperator = Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+
+/**
+ * A wallet's own connection, as a {@link SwapOperator}.
+ *
+ * The broadcaster is resolved on first use and then held, so building one costs
+ * nothing and a client that never pushes never opens a connection. `getInfo` is
+ * deliberately NOT held: it backs the `checkpointTapscript` read on every push,
+ * and a stale one derives a checkpoint the operator will not co-sign. It is also
+ * the live read every covenant derivation needs, which is the same reason.
+ */
+export const walletOperator = (wallet: IWallet): SwapOperator => {
+    let broadcaster: Promise<Awaited<ReturnType<IWallet["getArkadeBroadcaster"]>>> | undefined;
+    const broadcasting = () => (broadcaster ??= wallet.getArkadeBroadcaster());
+    return {
+        getInfo: () => wallet.getArkadeInfo({ requireLive: true }),
+        submitTx: async (...args) => (await broadcasting()).submitTx(...args),
+        finalizeTx: async (...args) => (await broadcasting()).finalizeTx(...args),
+    };
+};
+
+/** @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export type RefundIndexer = Pick<RestIndexerProvider, "getVtxos">;
 
-/** A still-refundable virtual output sitting at the swap lockup. */
+/** A still-refundable virtual output sitting at the swap lockup.
+ *
+ * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export interface LockupVtxo {
     txid: string;
     vout: number;
@@ -151,12 +187,6 @@ export interface LockupVtxo {
      * Opposite, but not exhaustive: an unrolled output satisfies neither, and
      * {@link findLockupVtxos} drops those before they reach this type at all.
      *
-     * `packages/boltz-swap` splits on exactly this fact rather than working
-     * around it: `settleRefundWithoutReceiver` sends a live VTXO through an
-     * offchain tx and a recoverable one through `joinBatch` — "a swept
-     * (recoverable) VTXO is no longer a live leaf, so it can only be reclaimed
-     * by re-registering it into a batch".
-     *
      * So the remedy is recovery (renewing the output into a fresh batch),
      * after which the ordinary CLTV refund works again. This package does not
      * build that round — see {@link pushRefundWithoutReceiver}, which refuses
@@ -175,8 +205,7 @@ export interface LockupVtxo {
  *
  * **The remedy already exists; this package does not reimplement it.** The SDK
  * recovers swept outputs by re-registering them into a fresh batch, through
- * `IVtxoManager.recoverVtxos()` — the same batch round `packages/boltz-swap`
- * reaches via its own `joinBatch`. It reads the wallet's registered-contract
+ * `IVtxoManager.recoverVtxos()`. It reads the wallet's registered-contract
  * snapshot (`recoverVtxos` → `wallet.getVtxos({ withRecoverable: true })` →
  * `contractSnapshot()` → `contractManager.getContractsWithVtxos()`), so it
  * covers a swap lockup as soon as that lockup is registered as a contract —
@@ -193,8 +222,9 @@ export interface LockupVtxo {
  *   recovery round including this VTXO earlier is rejected. `recoverVtxos`
  *   sweeps every recoverable output in ONE settlement and has no CLTV
  *   awareness, so recovering early can fail the whole batch rather than just
- *   this output. `packages/boltz-swap` encodes the same rule as "pre-CLTV
- *   recoverable → skipped".
+ *   this output.
+ *
+ * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export class LockupNeedsRecoveryError extends Error {
     readonly name = "LockupNeedsRecoveryError";
@@ -207,11 +237,10 @@ export class LockupNeedsRecoveryError extends Error {
      * into one settlement with no CLTV awareness, so an early attempt can fail
      * the whole batch — including unrelated outputs that were otherwise fine.
      *
-     * Exposed as a value, not only inside the message, so a caller can encode
-     * `packages/boltz-swap`'s "pre-CLTV recoverable → skipped" rule without
-     * parsing prose. Seconds-based locktimes mature against the chain tip's
-     * timestamp rather than wall clock, so treat this as a floor to wait past,
-     * not an exact alarm.
+     * Exposed as a value, not only inside the message, so a caller can skip
+     * pre-CLTV recoverable outputs without parsing prose. Seconds-based
+     * locktimes mature against the chain tip's timestamp rather than wall
+     * clock, so treat this as a floor to wait past, not an exact alarm.
      */
     readonly recoverableAfter: bigint;
 
@@ -242,8 +271,7 @@ export class LockupNeedsRecoveryError extends Error {
  * sat unresolved — which are precisely the ones most likely to have got there.
  * Reading only the spendable set would report `nothing_to_refund` over money
  * that is still sitting at the script, which is worse than an error: it looks
- * like a resolved swap. `packages/boltz-swap` merges the same two queries for
- * the same reason (`arkade-swaps.ts`'s `refundableVtxos`).
+ * like a resolved swap.
  *
  * **Visible is not the same as refundable.** A `recoverable` output cannot be
  * spent offchain at all — see {@link LockupVtxo.recoverable} — so this set is
@@ -278,6 +306,8 @@ export class LockupNeedsRecoveryError extends Error {
  * module does not have. The two queries below ask the indexer itself and need
  * neither. Ask-the-indexer, don't-trust-local-state — the same posture
  * {@link readLockupFate} takes, and for the same reason: this decides money.
+ *
+ * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function findLockupVtxos(
     indexer: RefundIndexer,
@@ -323,12 +353,17 @@ export async function findLockupVtxos(
  * raw transactions those vtxos were spent by. Same narrow-seam style as
  * {@link RefundIndexer} and `restore.ts`'s `RestoreIndexer`, and satisfied by
  * {@link RestIndexerProvider}.
+ *
+ * A root export because `SwapDriveConfig.indexer` takes it — and because
+ * `walletLockupIndexer()` returns it.
  */
 export type LockupSpendIndexer = Pick<RestIndexerProvider, "getVtxos" | "getVirtualTxs">;
 
 /**
  * What chain data says became of a swap lockup — the whole answer, with no
  * solver involvement and nothing taken on the solver's word.
+ *
+ * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface LockupSpend {
     /** What the vtxo's `spentBy` names — the checkpoint, never the ark
@@ -336,9 +371,10 @@ export interface LockupSpend {
     checkpointTxid: string;
     /** The ark transaction that spent the above checkpoint output. What
      * history correlation matches on; absent when the indexer omitted it. */
-    arkTxid?: string;
+    txid?: string;
 }
 
+/** @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export type LockupFate =
     /** At least one output at the lockup is still unspent. Not over. */
     | { fate: "open" }
@@ -432,6 +468,8 @@ const candidateWitnessItems = (tx: Transaction, inputIndex: number): Uint8Array[
  *
  * Ask-the-indexer, don't-trust-local-state: read fresh on every poll, never
  * cached, the same posture {@link findLockupVtxos} already establishes.
+ *
+ * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function readLockupFate(
     indexer: LockupSpendIndexer,
@@ -472,7 +510,7 @@ export async function readLockupFate(
         if (vtxo.spentBy)
             spentBy.set(vtxo.spentBy, {
                 checkpointTxid: vtxo.spentBy,
-                arkTxid: vtxo.arkTxId,
+                txid: vtxo.arkTxId,
             });
         // Spent, but by nothing this can go and read. No witness to verify, so
         // this output can never contribute proof either way.
@@ -553,11 +591,13 @@ export async function readLockupFate(
  * so the whole push is refused with {@link LockupNeedsRecoveryError} naming the
  * outpoints, rather than submitted and rejected. Filtering them out silently
  * would be worse still: it would report success over money that never moved.
+ *
+ * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function pushRefundWithoutReceiver(
-    ark: RefundArkProvider,
+    operator: SwapOperator,
     input: {
-        script: InstanceType<typeof VHTLC.ScriptV2>;
+        contract: InstanceType<typeof VHTLC.ScriptV2>;
         /** The `sender` signer. Build it from the swap record with
          * {@link senderIdentityForSwapRecord} — on an HD wallet that resolves
          * from the seed, with no stored key bytes anywhere, and every way the
@@ -569,41 +609,41 @@ export async function pushRefundWithoutReceiver(
         /** Defaults to the contract's own committed refund destination. */
         refundPkScript?: Uint8Array;
     },
-): Promise<{ arkTxid: string; amount: number }> {
+): Promise<{ txid: string; amount: number }> {
     if (input.vtxos.length === 0) throw new Error("nothing to refund: no funded outputs");
 
     const swept = input.vtxos.filter((vtxo) => vtxo.recoverable);
     if (swept.length > 0) {
         throw new LockupNeedsRecoveryError(
             swept.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
-            input.script.options.refundLocktime,
+            input.contract.options.refundLocktime,
         );
     }
 
     const refundPkScript =
-        input.refundPkScript ?? input.script.options.nonInteractiveParameters?.senderPkScript;
+        input.refundPkScript ?? input.contract.options.nonInteractiveParameters?.senderPkScript;
     if (!refundPkScript) {
         throw new Error(
             "no refund destination: the contract carries no emulator covenant suite, so pass refundPkScript explicitly",
         );
     }
 
-    const info = await ark.getInfo();
-    let serverUnrollScript: CSVMultisigTapscript.Type;
+    const info = await operator.getInfo();
+    let operatorUnrollScript: CSVMultisigTapscript.Type;
     try {
-        serverUnrollScript = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
+        operatorUnrollScript = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
     } catch {
-        throw new Error("invalid checkpointTapscript from the Arkade server");
+        throw new Error("invalid checkpointTapscript from the operator");
     }
 
-    const leaf = input.script.refundWithoutReceiver();
-    const tapTree = input.script.encode();
+    const leaf = input.contract.refundWithoutReceiver();
+    const tapTree = input.contract.encode();
     const amount = input.vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
 
     // buildOffchainTx reads the CLTV out of this leaf and sets the ark tx's
     // nLockTime and input sequence itself, on the checkpoints too — nothing
     // here has to restate `refundLocktime`.
-    const { arkTx, checkpoints } = buildOffchainTx(
+    const { arkTx: tx, checkpoints } = buildOffchainTx(
         input.vtxos.map((vtxo) => ({
             txid: vtxo.txid,
             vout: vtxo.vout,
@@ -612,16 +652,16 @@ export async function pushRefundWithoutReceiver(
             tapTree,
         })),
         [{ script: refundPkScript, amount: BigInt(amount) }],
-        serverUnrollScript,
+        operatorUnrollScript,
     );
 
     // No index list: every input spends the same leaf, so all are signed.
-    const signedArkTx = await input.sender.sign(arkTx);
-    const submitted = await ark.submitTx(
-        base64.encode(signedArkTx.toPSBT()),
+    const signedTx = await input.sender.sign(tx);
+    const submitted = await operator.submitTx(
+        base64.encode(signedTx.toPSBT()),
         checkpoints.map((c) => base64.encode(c.toPSBT())),
     );
-    assertSubmittedArkTxid(submitted, signedArkTx, "refundWithoutReceiver");
+    assertSubmittedArkTxid(submitted, signedTx, "refundWithoutReceiver");
 
     // Only checkpoints we built ourselves get signed: the server's response is
     // matched against the local set first, so a substituted checkpoint is
@@ -637,8 +677,8 @@ export async function pushRefundWithoutReceiver(
         ),
     );
 
-    await ark.finalizeTx(submitted.arkTxid, finalCheckpoints);
-    return { arkTxid: submitted.arkTxid, amount };
+    await operator.finalizeTx(submitted.arkTxid, finalCheckpoints);
+    return { txid: submitted.arkTxid, amount };
 }
 
 // ── Ask first, then fall back ────────────────────────────────────────────────
@@ -654,11 +694,12 @@ export async function pushRefundWithoutReceiver(
  */
 export const REFUND_MTP_LAG_SECONDS = 2 * 60 * 60;
 
+/** @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export type RefundOutcome =
     /** The solver resolved it — claimed (`settled`) or returned it (`refunded`). */
     | { outcome: "resolved"; status: RfqStatus }
     /** The trader took it back via `refundWithoutReceiver`. */
-    | { outcome: "refunded"; arkTxid: string; amount: number; status: RfqStatus | null }
+    | { outcome: "refunded"; txid: string; amount: number; status: RfqStatus | null }
     /** The refund window opened but the lockup holds nothing to return. */
     | { outcome: "nothing_to_refund"; status: RfqStatus | null }
     /**
@@ -678,7 +719,18 @@ export type RefundOutcome =
      * The lockup was unilaterally exited: its outputs sit onchain under the VHTLC
      * script, where no offchain refund can reach them. Returned rather than
      * retried: no amount of waiting changes where the money lives. Complete the
-     * unroll and spend the outputs onchain — then there is nothing left to refund.
+     * unroll and spend the named outputs onchain.
+     *
+     * **`outpoints` is not necessarily the whole lockup, and `exited` does not
+     * mean "nothing left to refund".** A lockup funded by more than one UTXO
+     * reports `exited` as soon as ANY of them has been exited, and `outpoints`
+     * names only those; a still-live sibling is left unrefunded, and this call
+     * will not come back for it — the outcome is terminal, so the caller's retry
+     * loop ends here. That is deliberate rather than an oversight: `RfqSwapManager`
+     * reports the same lockup `exited` on the same any-output rule, and the two
+     * must not disagree. It does make the surviving outputs the caller's to
+     * pursue, through an independent onchain or offchain recovery path that this
+     * function will not reach.
      *
      * Distinct from {@link RefundOutcome} `needs_recovery` on purpose: that
      * variant's remedy is recovery into a fresh batch, which is a spend no batch
@@ -731,14 +783,16 @@ export type RefundOutcome =
  * Safe to call late, and safe to call again: a caller recovering from a crash
  * well past the deadline skips straight to the push, and a lockup that is
  * already empty comes back as `nothing_to_refund` instead of an error.
+ *
+ * @deprecated Use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function refundIfUnresolved(
     transport: RfqTransport,
-    ark: RefundArkProvider,
+    operator: SwapOperator,
     indexer: LockupSpendIndexer,
     input: {
         rfqId: string;
-        script: InstanceType<typeof VHTLC.ScriptV2>;
+        contract: InstanceType<typeof VHTLC.ScriptV2>;
         /** @see pushRefundWithoutReceiver */
         sender: Identity;
         /**
@@ -779,7 +833,7 @@ export async function refundIfUnresolved(
             let fate: LockupFate = { fate: "unknown" };
             try {
                 fate = await readLockupFate(indexer, {
-                    swapPkScript: input.script.pkScript,
+                    swapPkScript: input.contract.pkScript,
                     paymentHash: input.paymentHash,
                 });
             } catch {
@@ -793,11 +847,11 @@ export async function refundIfUnresolved(
                 };
             }
 
-            const vtxos = await findLockupVtxos(indexer, input.script.pkScript);
+            const vtxos = await findLockupVtxos(indexer, input.contract.pkScript);
             if (vtxos.length === 0) return { outcome: "nothing_to_refund", status };
             try {
-                const pushed = await pushRefundWithoutReceiver(ark, {
-                    script: input.script,
+                const pushed = await pushRefundWithoutReceiver(operator, {
+                    contract: input.contract,
                     sender: input.sender,
                     vtxos,
                     refundPkScript: input.refundPkScript,

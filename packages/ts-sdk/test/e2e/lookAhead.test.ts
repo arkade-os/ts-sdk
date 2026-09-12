@@ -8,6 +8,7 @@ import {
     EsploraProvider,
     HDDescriptorProvider,
     MnemonicIdentity,
+    RestArkProvider,
     RestDelegateProvider,
     RestIndexerProvider,
     Wallet,
@@ -42,7 +43,7 @@ describe("HD look-ahead band", () => {
         const wallet = await Wallet.create({
             identity,
             walletMode: "hd",
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
                 forcePolling: true,
                 pollingInterval: 2000,

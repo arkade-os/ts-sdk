@@ -11,10 +11,8 @@ export interface DelegateInfo {
     pubkey: string;
     /** Delegate fee amount or expression returned by the delegate. */
     fee: string;
-    /** Address for delegate fee collection. Sourced from `delegatorAddress` in Fulmine response, for now. */
+    /** Address for delegate fee collection. */
     delegateAddress: string;
-    /** @deprecated alias for @see DelegateInfo.delegateAddress */
-    delegatorAddress?: string;
 }
 
 /**
@@ -55,9 +53,6 @@ export interface DelegateProvider {
      */
     getDelegateInfo(): Promise<DelegateInfo>;
 }
-
-/** @deprecated alias for @see DelegateProvider */
-export type DelegatorProvider = DelegateProvider;
 
 /**
  * REST-based delegate provider implementation.
@@ -133,28 +128,11 @@ export class RestDelegateProvider implements DelegateProvider {
         if (!isDelegateInfo(data)) {
             throw new Error("Invalid delegate info");
         }
-        // Select by type, not truthiness: isDelegateInfo only guarantees that one
-        // of the two is a non-empty string, so `a || b` could surface a non-string
-        // value when the preferred field is present but not a string.
-        const delegateAddress =
-            typeof data.delegateAddress === "string" && data.delegateAddress !== ""
-                ? data.delegateAddress
-                : typeof data.delegatorAddress === "string" && data.delegatorAddress !== ""
-                  ? data.delegatorAddress
-                  : "";
-        return { ...data, delegateAddress };
+        return data;
     }
 }
 
-/** @deprecated alias for @see RestDelegateProvider */
-export const RestDelegatorProvider = RestDelegateProvider;
-export type RestDelegatorProvider = RestDelegateProvider;
-
-/**
- * Validates the raw delegate-info payload. `delegateAddress` is preferred and
- * `delegatorAddress` is its deprecated alias, so at least one must be a
- * non-empty string (Fulmine currently returns only `delegatorAddress`).
- */
+/** Validates the raw delegate-info payload. */
 function isDelegateInfo(data: unknown): data is DelegateInfo {
     return (
         !!data &&
@@ -165,9 +143,7 @@ function isDelegateInfo(data: unknown): data is DelegateInfo {
         typeof (data as DelegateInfo).fee === "string" &&
         (data as DelegateInfo).pubkey !== "" &&
         (data as DelegateInfo).fee !== "" &&
-        ((typeof (data as DelegateInfo).delegateAddress === "string" &&
-            (data as DelegateInfo).delegateAddress !== "") ||
-            (typeof (data as DelegateInfo).delegatorAddress === "string" &&
-                (data as DelegateInfo).delegatorAddress !== ""))
+        typeof (data as DelegateInfo).delegateAddress === "string" &&
+        (data as DelegateInfo).delegateAddress !== ""
     );
 }

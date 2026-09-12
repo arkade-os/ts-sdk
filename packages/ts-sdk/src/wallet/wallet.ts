@@ -5,10 +5,15 @@ import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, equalBytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
-import { DEFAULT_ARKADE_SERVER_URL, getNetwork, Network, NetworkName } from "../networks";
+import {
+    DEFAULT_ARKADE_SERVER_URL,
+    Network,
+    NetworkName,
+    networkFromArkadeInfo,
+} from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
-    ArkInfo,
+    ArkadeInfo,
     ArkProvider,
     BatchFinalizationEvent,
     BatchStartedEvent,
@@ -37,17 +42,17 @@ import {
     hasTerminalSpend,
     isVirtualCoin,
     normalizeVtxo,
-    parseLegacyExpiry,
     resolveTimeHeight,
-    toBatchExpiry,
     toOffchainInputFeeParams,
-    toVirtualStatus,
     type NormalizedExtendedVirtualCoin,
     type NormalizedVirtualCoin,
     type TimeHeight,
 } from "./vtxo";
 import {
     ArkTransaction,
+    ArkadeBroadcaster,
+    ArkadeReader,
+    GetArkadeInfoOptions,
     Asset,
     Coin,
     ExtendedCoin,
@@ -64,7 +69,6 @@ import {
     Outpoint,
     ReadonlyWalletConfig,
     Recipient,
-    SendBitcoinParams,
     SendParams,
     SettleParams,
     TxType,
@@ -89,7 +93,6 @@ import {
     assertCheckpointsMatchInputs,
     buildOffchainTx,
     hasBoardingTxExpired,
-    isValidArkAddress,
     signAndSubmitOffchainTx,
     submitOffchainTx,
     type OffchainTxSigner,
@@ -97,7 +100,6 @@ import {
 import { toXOnly } from "../utils/keys";
 import {
     byValueDescending,
-    DEFAULT_RENEWAL_CONFIG,
     DEFAULT_SETTLEMENT_CONFIG,
     MAX_INPUTS_PER_INTENT,
     MAX_VTXOS_PER_SETTLEMENT,
@@ -117,10 +119,10 @@ import { isTerminalIntentState } from "../repositories/intentRepository";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import {
-    assertRecipientArkAddress,
+    assertRecipientArkadeAddress,
     extendCoinWithTapscript,
     validateRecipients,
-    type RecipientAddressContext,
+    type RecipientArkadeAddressContext,
 } from "./utils";
 import {
     captureExitBranch,
@@ -196,9 +198,6 @@ import {
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./signingErrors";
-
-export const getArkadeServerUrl = ({ arkServerUrl }: { arkServerUrl?: string }) =>
-    arkServerUrl || DEFAULT_ARKADE_SERVER_URL;
 
 // Build per-input jobs for an intent proof. Index 0 of the proof is a
 // synthetic BIP-322 toSpend reference whose witnessUtxo.script mirrors
@@ -709,15 +708,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
     protected _arkServerPublicKey: Bytes;
 
     /**
-     * Whether this wallet was constructed from live operator server-info
-     * (`"live"`) or from a cached snapshot because the operator was unreachable
-     * (`"cache"`). Freshness signal for {@link getProviderConnectionState}.
+     * Whether the LATEST server-info resolution answered live (`"live"`) or
+     * from the cached snapshot because the operator was unreachable
+     * (`"cache"`). Seeded at construction and updated by every
+     * {@link getArkadeInfo} read, so a wallet that booted offline and
+     * recovered stops reporting degraded — and one that just fell back stops
+     * claiming online. Freshness signal for
+     * {@link getProviderConnectionState}.
      */
     protected _serverInfoSource: ServerInfoSource = "live";
 
     /**
-     * Epoch-ms of the last known live operator contact: construction time on the
-     * `live` boot path, the cached snapshot's `savedAt` on the `cache` path.
+     * Epoch-ms of the last known live operator contact: the most recent live
+     * resolution (construction or a later {@link getArkadeInfo}), or the
+     * cached snapshot's `savedAt` when the latest resolution fell back.
      */
     protected _serverInfoLastOnlineAt?: number;
 
@@ -727,13 +731,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Composed provider-connection freshness: the boot server-info source
-     * (Arkade) combined with the contract-manager's indexer-sync health, if the
-     * manager has been initialized. Reads no live provider state — it never
-     * forces a `ContractManager` to construct — so it is safe for readonly
-     * callers that only use address/balance APIs.
+     * Composed provider-connection freshness: the LATEST server-info
+     * resolution (boot, or any later {@link getArkadeInfo} read) combined with
+     * the contract-manager's indexer-sync health, if the manager has been
+     * initialized. Reads no live provider state — it never forces a
+     * `ContractManager` to construct — so it is safe for readonly callers
+     * that only use address/balance APIs.
      *
-     *  - Boot fell back to a cached snapshot → degraded on `arkade` (`cache`).
+     *  - Latest resolution fell back to the cached snapshot → degraded on
+     *    `arkade` (`cache`).
      *  - Otherwise, if the contract manager has degraded to repository data →
      *    degraded on `indexer` (`repository`).
      *  - Otherwise online.
@@ -783,6 +789,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly identity: ReadonlyIdentity,
         readonly network: Network,
         readonly onchainProvider: OnchainProvider,
+        /**
+         * Narrowed to what a readonly wallet legitimately needs — the only use
+         * here is {@link getArkadeInfo}. `protected` stops an outside caller
+         * reaching it; the `Pick` stops this class growing a use for
+         * `submitTx`. `Wallet` re-widens both below.
+         */
+        protected readonly arkProvider: Pick<ArkProvider, "getInfo">,
         readonly indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -824,7 +837,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * x-only hex of the operator's deprecated signer keys (from
-     * `ArkInfo.deprecatedSigners`), cached for the OFFLINE read/watch paths.
+     * `ArkadeInfo.deprecatedSigners`), cached for the OFFLINE read/watch paths.
      * The boarding watch/history surfaces ({@link getBoardingAddresses},
      * {@link getBoardingTxs}) fan out over {current} ∪ this set so a deposit at
      * a boarding address minted under a now-rotated operator signer keeps being
@@ -882,7 +895,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     protected recipientAddressContext(
         serverPubKey: Bytes = this._arkServerPublicKey,
-    ): RecipientAddressContext {
+    ): RecipientArkadeAddressContext {
         return {
             hrp: this.network.hrp,
             signerSet: {
@@ -910,6 +923,72 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     get arkServerPublicKey(): Bytes {
         return this._arkServerPublicKey;
+    }
+
+    /**
+     * Server info for the Arkade server this wallet is connected to, resolved
+     * exactly as construction resolves it: live wins, a retryable failure
+     * falls back to the snapshot persisted at boot, a terminal one propagates.
+     *
+     * Live rather than the pinned boot snapshot because the fields callers
+     * come here for — `signerPubkey`, `checkpointTapscript`, `fees` — are the
+     * ones a mid-session rotation moves, and a covenant built against a
+     * superseded signer is unspendable.
+     *
+     * One rotation caveat: reading does NOT re-pin the wallet —
+     * {@link arkServerPublicKey}, {@link dustAmount} and the tapscripts move
+     * only through `handleServerInfoChanged`/`rotateServerSigner` — so inside
+     * a rotation window this can report epoch N+1 while the wallet still
+     * spends on N. The window closes on its own: a read that observes a moved
+     * digest makes the provider emit `onServerInfoChanged`, which is what
+     * drives that rotation. A caller about to bind the answer into a covenant
+     * passes `{ requireLive: true }` and fails closed instead of receiving
+     * the boot snapshot.
+     *
+     * @returns The Arkade server's info
+     * @see ArkadeInfo
+     */
+    async getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
+        const { info, source, lastOnlineAt } = await resolveArkInfo(
+            this.arkProvider,
+            this.walletRepository,
+            opts,
+        );
+        // The resolution just learned whether the operator is reachable, so
+        // {@link getProviderConnectionState} tracks the LATEST resolution
+        // rather than staying pinned to the boot-time verdict — a wallet that
+        // booted offline and recovered stops reporting "degraded", and one
+        // that just fell back to the snapshot stops claiming "online". This is
+        // also what makes fail-closed expressible: read, then check the state.
+        this._serverInfoSource = source;
+        if (source === "live") {
+            this._serverInfoLastOnlineAt = Date.now();
+        } else if (lastOnlineAt !== undefined) {
+            this._serverInfoLastOnlineAt = lastOnlineAt;
+        }
+        return info;
+    }
+
+    /**
+     * Chain reads against this wallet's server for scripts it does not own.
+     *
+     * Binds the wallet's own `indexerProvider` — which may be an Expo or
+     * injected one that a caller's hand-built `RestIndexerProvider` would
+     * silently bypass. `getVtxos` goes through
+     * {@link getNormalizedVtxos}, which is what makes every VTXO leaving the
+     * seam carry its canonical facts.
+     *
+     * A bound object rather than the provider itself, so an `IReadonlyWallet`
+     * holder gets `getVtxos`/`getVirtualTxs` and nothing else at runtime.
+     * (`indexerProvider` is still public on the concrete classes, unlike
+     * `arkProvider`, so this narrows the interface rather than the field.)
+     */
+    async getArkadeReader(): Promise<ArkadeReader> {
+        const indexer = this.indexerProvider;
+        return {
+            getVtxos: (opts) => getNormalizedVtxos(indexer, opts),
+            getVirtualTxs: (txids, opts) => indexer.getVirtualTxs(txids, opts),
+        };
     }
 
     /**
@@ -967,34 +1046,19 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Extracts common logic used by both ReadonlyWallet.create() and Wallet.create().
      */
     protected static async setupWalletConfig(config: ReadonlyWalletConfig, pubKey: Uint8Array) {
-        const arkadeServerUrl = getArkadeServerUrl(config);
-
-        // Use provided arkProvider instance or create a new one from arkServerUrl
-        const arkProvider = config.arkProvider || new RestArkProvider(arkadeServerUrl);
-
-        // Resolve the indexer provider. If a full instance is supplied, use it
-        // directly. Otherwise pick a URL with priority:
-        //   1. explicit config.indexerUrl
-        //   2. URL derived from the injected arkProvider (so a custom
-        //      arkProvider does not silently pair with the public default)
-        //   3. arkadeServerUrl (only when no custom arkProvider was injected)
+        const arkProvider = config.arkProvider || new RestArkProvider();
         let indexerProvider = config.indexerProvider;
         if (!indexerProvider) {
-            let indexerUrl = config.indexerUrl;
-            if (!indexerUrl) {
-                if (config.arkProvider) {
-                    const derived = extractArkProviderUrl(config.arkProvider);
-                    if (!derived) {
-                        throw new Error(
-                            "indexerUrl is required when arkProvider is provided without a discoverable serverUrl",
-                        );
-                    }
-                    indexerUrl = derived;
-                } else {
-                    indexerUrl = arkadeServerUrl;
-                }
+            const derived = extractArkProviderUrl(arkProvider);
+            // Refuse to pair a caller's own ark provider with the public default: the wallet would
+            // read its VTXOs from a server that has never seen them, and report phantom coins and
+            // missed receipts rather than an error.
+            if (!derived && config.arkProvider) {
+                throw new Error(
+                    "indexerProvider is required when arkProvider is provided without a discoverable serverUrl",
+                );
             }
-            indexerProvider = new RestIndexerProvider(indexerUrl);
+            indexerProvider = new RestIndexerProvider(derived ?? DEFAULT_ARKADE_SERVER_URL);
         }
 
         // Instantiate the repositories BEFORE the first required server-info
@@ -1018,7 +1082,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             lastOnlineAt: serverInfoLastOnlineAt,
         } = await resolveArkInfo(arkProvider, walletRepository);
 
-        const network = getNetwork(info.network as NetworkName);
+        const network = networkFromArkadeInfo(info);
 
         // Guard: detect identity/server network mismatch for seed-based identities.
         // A mainnet descriptor (xpub, coin type 0) connected to a testnet server
@@ -1043,11 +1107,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
 
-        // Extract esploraUrl from provider if not explicitly provided
-        const esploraUrl = config.esploraUrl || ESPLORA_URL[info.network as NetworkName];
-
-        // Use provided onchainProvider instance or create a new one
-        const onchainProvider = config.onchainProvider || new EsploraProvider(esploraUrl);
+        const onchainProvider =
+            config.onchainProvider || new EsploraProvider(ESPLORA_URL[info.network as NetworkName]);
 
         // validate unilateral exit timelock passed in config if any
         if (config.exitTimelock) {
@@ -1093,12 +1154,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                   .getDelegateInfo()
                   .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
                   .catch(() => undefined)
-            : config.delegatorProvider
-              ? await config.delegatorProvider
-                    .getDelegateInfo()
-                    .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
-                    .catch(() => undefined)
-              : undefined;
+            : undefined;
 
         const offchainOptions = {
             pubKey,
@@ -1137,9 +1193,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             info,
             serverInfoSource,
             serverInfoLastOnlineAt,
-            delegateProvider: config.delegateProvider || config.delegatorProvider,
-            /** @deprecated alias for `delegateProvider` */
-            delegatorProvider: config.delegateProvider || config.delegatorProvider,
+            delegateProvider: config.delegateProvider,
             walletContractTimelocks,
         };
     }
@@ -1162,6 +1216,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             config.identity,
             setup.network,
             setup.onchainProvider,
+            setup.arkProvider,
             setup.indexerProvider,
             setup.serverPubKey,
             setup.offchainTapscript,
@@ -1169,7 +1224,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.dustAmount,
             setup.walletRepository,
             setup.contractRepository,
-            setup.delegateProvider || setup.delegatorProvider,
+            setup.delegateProvider,
             config.watcherConfig,
             setup.walletContractTimelocks,
         );
@@ -1275,7 +1330,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * The raw reporting/recovery read: escrowed, locked and awaiting-recovery
      * funds are all present. Coin selection must use
      * {@link getSpendableVtxos} instead — feeding this straight into
-     * `settle({ inputs })` or `sendBitcoin({ selectedVtxos })` bypasses the
+     * `settle({ inputs })` or `send({ selectedVtxos })` bypasses the
      * generic-spending gate.
      *
      * @param filter - Optional flags controlling whether recoverable or unrolled VTXOs are included
@@ -1628,7 +1683,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
                             },
                             isUnrolled: true,
                             ...boardingFacts,
-                            virtualStatus: toVirtualStatus(boardingFacts),
                             spentBy: "",
                             createdAt: tx.status.confirmed
                                 ? new Date(tx.status.block_time * 1000)
@@ -2405,7 +2459,7 @@ export class Wallet
             const newActive = toXOnlySignerHex(info.signerPubkey);
             const current = toXOnlySignerHex(hex.encode(this.arkServerPublicKey));
             if (newActive !== current) {
-                // `onServerInfoChanged` delivers the full refreshed `ArkInfo`, so
+                // `onServerInfoChanged` delivers the full refreshed `ArkadeInfo`, so
                 // the new epoch's checkpoint script is in hand — thread it
                 // through so the rotated wallet builds checkpoints against the
                 // new server signer. A bad/empty value throws here and is caught
@@ -2541,7 +2595,7 @@ export class Wallet
     /**
      * Output script for checkpoint transactions, decoded from the server's
      * `checkpointTapscript`. Server-controlled state: pinned at construction
-     * and re-sourced from a fresh `ArkInfo` on server-signer rotation. Read it
+     * and re-sourced from a fresh `ArkadeInfo` on server-signer rotation. Read it
      * through {@link serverUnrollScript}; write it only through
      * {@link setServerUnrollScriptForRotation}.
      */
@@ -2554,7 +2608,7 @@ export class Wallet
     /**
      * @internal Sole write path for `serverUnrollScript` after construction.
      * Called by {@link Wallet._doRotateServerSigner} with the checkpoint script
-     * sourced from the fresh `ArkInfo` that triggered the rotation, so the send
+     * sourced from the fresh `ArkadeInfo` that triggered the rotation, so the send
      * path builds checkpoints against the new server epoch. External code must
      * treat `serverUnrollScript` as read-only.
      */
@@ -3202,7 +3256,7 @@ export class Wallet
 
     /**
      * Async mutex that serializes all operations submitting VTXOs to the Arkade
-     * server (`settle`, `send`, `sendBitcoin`). This prevents VtxoManager's
+     * server (`settle`, `send`). This prevents VtxoManager's
      * background renewal from racing with user-initiated transactions for the
      * same VTXO inputs.
      */
@@ -3395,19 +3449,37 @@ export class Wallet
         }
     }
 
-    /** @deprecated Use settlementConfig instead */
-    public readonly renewalConfig: Required<Omit<WalletConfig["renewalConfig"], "enabled">> & {
-        enabled: boolean;
-        thresholdMs: number;
-    };
-
     public readonly settlementConfig: SettlementConfig | false;
+
+    /**
+     * Re-widened to public: a full wallet's provider is part of its API
+     * (`ExpoWallet` and the delegate manager read it), while `ReadonlyWallet`
+     * keeps it protected so a readonly view cannot hand out `submitTx`.
+     */
+    declare readonly arkProvider: ArkProvider;
+
+    /**
+     * Broadcast access bound to this wallet's server, so a plugin needs only
+     * the wallet.
+     *
+     * Defined here and not on {@link ReadonlyWallet} for the same reason
+     * `arkProvider` is protected there: a readonly wallet, and every
+     * `toReadonly()` view, must not be able to submit.
+     */
+    async getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
+        const ark = this.arkProvider;
+        return {
+            submitTx: (signedArkTx, checkpointTxs) => ark.submitTx(signedArkTx, checkpointTxs),
+            finalizeTx: (arkTxid, finalCheckpointTxs) =>
+                ark.finalizeTx(arkTxid, finalCheckpointTxs),
+        };
+    }
 
     protected constructor(
         identity: Identity,
         network: Network,
         onchainProvider: OnchainProvider,
-        readonly arkProvider: ArkProvider,
+        arkProvider: ArkProvider,
         indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -3418,8 +3490,6 @@ export class Wallet
         dustAmount: bigint,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
-        /** @deprecated Use settlementConfig */
-        renewalConfig?: WalletConfig["renewalConfig"],
         delegateProvider?: DelegateProvider,
         watcherConfig?: WalletConfig["watcherConfig"],
         settlementConfig?: WalletConfig["settlementConfig"],
@@ -3436,6 +3506,7 @@ export class Wallet
             identity,
             network,
             onchainProvider,
+            arkProvider,
             indexerProvider,
             arkServerPublicKey,
             offchainTapscript,
@@ -3449,29 +3520,8 @@ export class Wallet
         );
         this.identity = identity;
 
-        // Backwards-compatible: keep renewalConfig populated for any code reading it
-        this.renewalConfig = {
-            enabled: renewalConfig?.enabled ?? false,
-            ...DEFAULT_RENEWAL_CONFIG,
-            ...renewalConfig,
-        };
-
-        // Normalize: prefer settlementConfig, fall back to renewalConfig, default to enabled
-        if (settlementConfig !== undefined) {
-            this.settlementConfig = settlementConfig;
-        } else if (renewalConfig && this.renewalConfig.enabled) {
-            this.settlementConfig = {
-                vtxoThreshold: renewalConfig.thresholdMs
-                    ? renewalConfig.thresholdMs / 1000
-                    : undefined,
-            };
-        } else if (renewalConfig) {
-            // renewalConfig provided but not enabled → disabled
-            this.settlementConfig = false;
-        } else {
-            // No config at all → enabled by default
-            this.settlementConfig = { ...DEFAULT_SETTLEMENT_CONFIG };
-        }
+        this.settlementConfig =
+            settlementConfig !== undefined ? settlementConfig : { ...DEFAULT_SETTLEMENT_CONFIG };
         this._delegateManager = delegateProvider
             ? new DelegateManagerImpl(delegateProvider, arkProvider, identity)
             : undefined;
@@ -3502,7 +3552,7 @@ export class Wallet
         }
 
         this._vtxoManagerInitializing = Promise.resolve(
-            new VtxoManager(this, this.renewalConfig, this.settlementConfig),
+            new VtxoManager(this, this.settlementConfig),
         );
 
         try {
@@ -3661,8 +3711,7 @@ export class Wallet
             setup.dustAmount,
             setup.walletRepository,
             setup.contractRepository,
-            config.renewalConfig,
-            config.delegateProvider || config.delegatorProvider,
+            config.delegateProvider,
             config.watcherConfig,
             config.settlementConfig,
             setup.walletContractTimelocks,
@@ -3768,6 +3817,7 @@ export class Wallet
             readonlyIdentity,
             this.network,
             this.onchainProvider,
+            this.arkProvider,
             this.indexerProvider,
             this.arkServerPublicKey,
             this.offchainTapscript,
@@ -3789,106 +3839,6 @@ export class Wallet
     /** Returns the delegate manager when delegation support is configured. */
     async getDelegateManager(): Promise<IDelegateManager | undefined> {
         return this._delegateManager;
-    }
-
-    /** @deprecated alias for @see Wallet.getDelegateManager */
-    async getDelegatorManager(): Promise<IDelegateManager | undefined> {
-        return this.getDelegateManager();
-    }
-
-    /**
-     * Send bitcoin to an Arkade address.
-     *
-     * @deprecated Use `send`.
-     * @param params - Send parameters
-     */
-    async sendBitcoin(params: SendBitcoinParams): Promise<string> {
-        if (params.amount <= 0) {
-            throw new Error("Amount must be positive");
-        }
-
-        if (!isValidArkAddress(params.address)) {
-            throw new Error("Invalid Arkade address " + params.address);
-        }
-
-        if (params.selectedVtxos && params.selectedVtxos.length > 0) {
-            void this.logUngatedInputs("sendBitcoin({ selectedVtxos })", params.selectedVtxos);
-            return this._withTxLock(async () => {
-                // Snapshot the active receive tapscript synchronously
-                // before any `await` so the change output's pkScript and
-                // the change-VTXO metadata written later by
-                // `updateDbAfterOffchainTx` are bound to the same
-                // tapscript even if `WalletReceiveRotator.rotate` fires
-                // during the offchain round-trip. Pin the server key in the
-                // same step so the address derives from one rotation epoch
-                // (`rotateServerSigner` swaps `_arkServerPublicKey` too).
-                // Snapshot the checkpoint unroll script too: rotation also
-                // swaps `_serverUnrollScript`, which `buildAndSubmitOffchainTx`
-                // would otherwise read live when building checkpoint outputs.
-                const offchainTapscript = this.offchainTapscript;
-                const serverPubKey = this.arkServerPublicKey;
-                const serverUnrollScript = this.serverUnrollScript;
-                const arkAddress = offchainTapscript.address(this.network.hrp, serverPubKey);
-
-                const selectedVtxoSum = params
-                    .selectedVtxos!.map((v) => v.value)
-                    .reduce((a, b) => a + b, 0);
-                if (selectedVtxoSum < params.amount) {
-                    throw new Error("Selected VTXOs do not cover specified amount");
-                }
-                const changeAmount = selectedVtxoSum - params.amount;
-
-                const selected = {
-                    inputs: params.selectedVtxos!,
-                    changeAmount: BigInt(changeAmount),
-                };
-
-                const outputAddress = ArkAddress.decode(params.address);
-                assertRecipientArkAddress(
-                    params.address,
-                    outputAddress,
-                    this.recipientAddressContext(serverPubKey),
-                );
-                const outputScript =
-                    BigInt(params.amount) < this.dustAmount
-                        ? outputAddress.subdustPkScript
-                        : outputAddress.pkScript;
-
-                const outputs: TransactionOutput[] = [
-                    {
-                        script: outputScript,
-                        amount: BigInt(params.amount),
-                    },
-                ];
-
-                // add change output if needed
-                if (selected.changeAmount > 0n) {
-                    const changeOutputScript =
-                        selected.changeAmount < this.dustAmount
-                            ? arkAddress.subdustPkScript
-                            : arkAddress.pkScript;
-
-                    outputs.push({
-                        script: changeOutputScript,
-                        amount: BigInt(selected.changeAmount),
-                    });
-                }
-
-                return this._submitOffchainSpend(selected.inputs, outputs, {
-                    sentAmount: params.amount,
-                    changeAmount: selected.changeAmount,
-                    changeVout: selected.changeAmount > 0n ? outputs.length - 1 : 0,
-                    offchainTapscript,
-                    serverPubKey,
-                    serverUnrollScript,
-                });
-            });
-        }
-
-        return this.send({
-            address: params.address,
-            amount: params.amount,
-        });
     }
 
     /**
@@ -4059,7 +4009,7 @@ export class Wallet
         const outputs: TransactionOutput[] = [];
         let hasOffchainOutputs = false;
 
-        let recipientContext: RecipientAddressContext | undefined;
+        let recipientContext: RecipientArkadeAddressContext | undefined;
         for (const [index, output] of params.outputs.entries()) {
             let script: Bytes | undefined;
 
@@ -4074,7 +4024,7 @@ export class Wallet
 
             if (arkAddress) {
                 recipientContext ??= this.recipientAddressContext();
-                assertRecipientArkAddress(output.address, arkAddress, recipientContext);
+                assertRecipientArkadeAddress(output.address, arkAddress, recipientContext);
                 script = arkAddress.pkScript;
                 hasOffchainOutputs = true;
             } else {
@@ -5022,7 +4972,7 @@ export class Wallet
      * before a signer rotation was built under the old key, so rebuilding
      * against the current key alone would leave it pending forever.
      */
-    private checkpointUnrollCandidates(info: ArkInfo): CSVMultisigTapscript.Type[] {
+    private checkpointUnrollCandidates(info: ArkadeInfo): CSVMultisigTapscript.Type[] {
         const current = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
         const candidates = [this._serverUnrollScript, current];
         for (const deprecated of signerSetFromInfo(info).deprecated.keys()) {
@@ -5493,7 +5443,6 @@ export class Wallet
         }
         if (selectedVtxos) {
             // Naming inputs skips the generic-spending gate, as it does on
-            // `sendBitcoin`; report the crossing under this API's own label.
             void this.logUngatedInputs("send({ selectedVtxos })", selectedVtxos);
         }
 
@@ -5772,7 +5721,7 @@ export class Wallet
 
     /**
      * Shared tail of every Ark-transaction spend path (`send`, selected-VTXO
-     * `sendBitcoin`, and {@link sendSelectedVtxosToSelf}): hide the inputs from
+     * `send`, and {@link sendSelectedVtxosToSelf}): hide the inputs from
      * concurrent `getVtxos()`, build+submit the offchain tx, persist the spent
      * inputs and any wallet-owned (change / self) output, then release the
      * pending-spend hold. Callers own coin selection, output construction, and
@@ -6089,7 +6038,6 @@ export class Wallet
                 const spentBy = checkpointIdByOutpoint.get(`${vtxo.txid}:${vtxo.vout}`);
                 spentVtxos.push({
                     ...spentFacts,
-                    virtualStatus: toVirtualStatus(spentFacts),
                     ...(spentBy ? { spentBy } : {}),
                     arkTxId: arkTxid,
                 });
@@ -6097,7 +6045,7 @@ export class Wallet
                 for (const id of vtxo.commitmentTxIds) {
                     commitmentTxIds.add(id);
                 }
-                const vtxoExpiry = toBatchExpiry(vtxo);
+                const vtxoExpiry = vtxo.expiresAt?.getTime();
                 if (vtxoExpiry) {
                     batchExpiry = Math.min(batchExpiry, vtxoExpiry);
                 }
@@ -6114,7 +6062,7 @@ export class Wallet
                     isSwept: false,
                     isPreconfirmed: true,
                     commitmentTxIds: Array.from(commitmentTxIds),
-                    ...parseLegacyExpiry(batchExpiry),
+                    expiresAt: new Date(batchExpiry),
                 };
                 changeVtxo = {
                     txid: arkTxid,
@@ -6126,7 +6074,6 @@ export class Wallet
                     tapTree: offchainTapscript.encode(),
                     value: Number(changeAmount),
                     ...changeFacts,
-                    virtualStatus: toVirtualStatus(changeFacts),
                     spentBy: "",
                     status: {
                         confirmed: false,
@@ -6239,7 +6186,6 @@ export class Wallet
                     const settledFacts = { ...vtxo, isSpent: true };
                     spentVtxos.push({
                         ...settledFacts,
-                        virtualStatus: toVirtualStatus(settledFacts),
                         settledBy: commitmentTxid,
                     });
                 } else {
@@ -6340,8 +6286,8 @@ export function selectVirtualCoins(
     // front rather than per comparison, which would be O(n log n) normalizations.
     const sortedCoins = coins.map(normalizeVtxo).sort((a, b) => {
         // First sort by expiry if available
-        const expiryA = toBatchExpiry(a) || Number.MAX_SAFE_INTEGER;
-        const expiryB = toBatchExpiry(b) || Number.MAX_SAFE_INTEGER;
+        const expiryA = a.expiresAt?.getTime() || Number.MAX_SAFE_INTEGER;
+        const expiryB = b.expiresAt?.getTime() || Number.MAX_SAFE_INTEGER;
         if (expiryA !== expiryB) {
             return expiryA - expiryB; // Earlier expiry first
         }

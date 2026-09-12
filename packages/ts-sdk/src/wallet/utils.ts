@@ -224,7 +224,7 @@ type ValidatedRecipient = Required<Omit<Recipient, "extensions" | "tapTree">> & 
  * belongs to another network or operator, so this wallet's operator cannot
  * create the VTXO where the recipient's wallet expects it.
  */
-export type RecipientAddressContext = {
+export type RecipientArkadeAddressContext = {
     hrp: string;
     signerSet: SignerSet;
 };
@@ -233,10 +233,10 @@ export type RecipientAddressContext = {
  * The embedded server key may be the current signer or a deprecated signer
  * whose rotation cutoff has not passed.
  */
-export function assertRecipientArkAddress(
+export function assertRecipientArkadeAddress(
     encoded: string,
     address: ArkAddress,
-    context: RecipientAddressContext,
+    context: RecipientArkadeAddressContext,
 ): void {
     if (address.hrp !== context.hrp) {
         throw new Error(
@@ -286,7 +286,7 @@ function assertTapTreeDerivesAddress(encoded: string, tapTree: Bytes, address: A
 export function validateRecipients(
     recipients: Recipient[],
     dustAmount: number,
-    context: RecipientAddressContext,
+    context: RecipientArkadeAddressContext,
 ): ValidatedRecipient[] {
     const validatedRecipients: ValidatedRecipient[] = [];
 
@@ -298,7 +298,7 @@ export function validateRecipients(
             throw new Error(`Invalid Arkade address: ${recipient.address}`);
         }
 
-        assertRecipientArkAddress(recipient.address, address, context);
+        assertRecipientArkadeAddress(recipient.address, address, context);
 
         const amount = recipient.amount || dustAmount;
         if (amount <= 0) {

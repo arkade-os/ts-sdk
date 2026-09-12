@@ -59,7 +59,6 @@ const ctxWith = (send = vi.fn(async () => "funding-txid")): RouterContext =>
     ({ wallet: { send } as never, prefs: {} }) as RouterContext;
 
 const depsWith = (over: Partial<SolverLightningRailDeps> = {}): SolverLightningRailDeps => ({
-    arkServerUrl: "http://ark",
     decodeInvoice: vi.fn(() => facts()),
     discover: vi.fn(async () => [card("1000", "1000000")]),
     connect: vi.fn(async (_r, fn) => fn({} as never)),
@@ -217,7 +216,7 @@ describe("solverLightningRail.quote", () => {
         await solverLightningRail(depsWith()).quote({ raw: `lightning:${INVOICE}` }, ctxWith());
 
         // `invoiceTarget` strips the prefix before the decoder sees it.
-        expect(spy.mock.calls[0][3]).toMatchObject({
+        expect(spy.mock.calls[0][2]).toMatchObject({
             invoice: { raw: INVOICE, amountSats: 100_000 },
         });
     });

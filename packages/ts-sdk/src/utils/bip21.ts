@@ -25,6 +25,17 @@ export enum BIP21Error {
     INVALID_ADDRESS = "Invalid address",
 }
 
+/**
+ * The Arkade address prefixes, matched case-INSENSITIVELY.
+ *
+ * Bech32m forbids a case *mix*, not upper case, and `ArkAddress.decode`
+ * accepts an all-upper address — so a case-sensitive filter dropped, with a
+ * `console.warn`, an address the bare classifier (`arkTarget`) claims happily.
+ * One destination classifying differently bare than as an `ark=` param is the
+ * defect; this is the only place the two forms are told apart.
+ */
+const ARK_HRP = /^(?:t?ark|T?ARK)/;
+
 export class BIP21 {
     /**
      * Create a BIP21 URI from the provided parameters.
@@ -52,10 +63,7 @@ export class BIP21 {
                 queryParams[key] = value;
             } else if (key === "ark") {
                 // Validate Arkade address format
-                if (
-                    typeof value === "string" &&
-                    (value.startsWith("ark") || value.startsWith("tark"))
-                ) {
+                if (typeof value === "string" && ARK_HRP.test(value)) {
                     queryParams[key] = value;
                 } else {
                     console.warn("Invalid ARK address format");
@@ -82,7 +90,7 @@ export class BIP21 {
                   ).toString()
                 : "";
 
-        return `bitcoin:${address ? address.toLowerCase() : ""}${query}`;
+        return `bitcoin:${address ?? ""}${query}`;
     }
 
     /**
@@ -121,7 +129,14 @@ export class BIP21 {
 
         const params: BIP21Params = {};
         if (address) {
-            params.address = address.toLowerCase();
+            // Verbatim. Base58 is case-SENSITIVE, so lowercasing here produced a
+            // DIFFERENT address and did it silently: `isBtcAddress` admits a
+            // lowercase base58 string, so the corruption passed classification
+            // and the rail funded whatever the mangled string decoded to.
+            // Bech32 is unharmed either way — BIP173 forbids a case MIX, not
+            // upper case, and every decoder in this SDK takes an all-upper
+            // address.
+            params.address = address;
         }
 
         if (query) {
@@ -142,7 +157,7 @@ export class BIP21 {
                     params[key] = amount;
                 } else if (key === "ark") {
                     // Validate Arkade address format
-                    if (value.startsWith("ark") || value.startsWith("tark")) {
+                    if (ARK_HRP.test(value)) {
                         params[key] = value;
                     } else {
                         console.warn("Invalid ARK address format");

@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { Wallet, SingleKey, InMemoryWalletRepository, InMemoryContractRepository } from "../src";
+import {
+    Wallet,
+    SingleKey,
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
+    RestArkProvider,
+} from "../src";
 import { jsonResponse } from "./helpers/response";
 
 /**
@@ -90,7 +96,7 @@ describe("getBoardingTxs — sweep correlation without outspend txid", () => {
         const wallet = await Wallet.create({
             identity: SingleKey.fromHex(SINGLEKEY_HEX),
             walletMode: "static",
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             storage: {
                 walletRepository: new InMemoryWalletRepository(),
                 contractRepository: new InMemoryContractRepository(),

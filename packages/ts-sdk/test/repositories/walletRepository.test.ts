@@ -1,13 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { IndexedDBStorageAdapter } from "../../src/storage/indexedDB";
-import { WalletRepositoryImpl } from "../../src/repositories/migrations/walletRepositoryImpl";
 import {
     type ArkTransaction,
     type ExtendedCoin,
     type ExtendedVirtualCoin,
     IndexedDBWalletRepository,
     InMemoryWalletRepository,
-    migrateWalletRepository,
     type TapLeafScript,
     TxType,
 } from "../../src";
@@ -18,7 +15,7 @@ import {
     createMockUtxo,
     createMockVtxo,
     RepositoryTestItem,
-} from "../storage.test";
+} from "./helpers";
 import { WalletRepository, WalletState } from "../../src/repositories";
 
 const walletRepositoryImplementations: Array<RepositoryTestItem<WalletRepository>> = [

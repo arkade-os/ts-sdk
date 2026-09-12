@@ -84,7 +84,7 @@ export const VHTLCContractHandler: ContractHandler<VHTLCContractParams, VHTLC.Sc
      * Select spending path based on context.
      *
      * Role is determined from `context.role` or by matching
-     * `context.walletDescriptor` (preferred) / `context.walletPubKey`
+     * `context.walletDescriptor`
      * against sender/receiver in contract params.
      */
     selectPath(
@@ -144,7 +144,7 @@ export const VHTLCContractHandler: ContractHandler<VHTLCContractParams, VHTLC.Sc
      * Get all possible spending paths (no timelock checks).
      *
      * Role is determined from `context.role` or by matching
-     * `context.walletDescriptor` (preferred) / `context.walletPubKey`
+     * `context.walletDescriptor`
      * against sender/receiver in contract params.
      */
     getAllSpendingPaths(

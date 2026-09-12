@@ -1,5 +1,10 @@
-import { ArkProvider, SettlementEvent } from "../../providers/ark";
-import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
+import { ArkadeInfo, ArkProvider, SettlementEvent } from "../../providers/ark";
+import {
+    GetVtxosOptions,
+    IndexerProvider,
+    PaginationOptions,
+    RestIndexerProvider,
+} from "../../providers/indexer";
 import { WalletRepository } from "../../repositories";
 import type {
     Contract,
@@ -16,6 +21,9 @@ import type {
     GetSpendablePathsOptions,
 } from "../../contracts/contractManager";
 import {
+    ArkadeBroadcaster,
+    ArkadeReader,
+    GetArkadeInfoOptions,
     ArkTransaction,
     AssetDetails,
     BurnParams,
@@ -25,23 +33,22 @@ import {
     GetVtxosFilter,
     IssuanceParams,
     IssuanceResult,
-    isExpired,
-    isRecoverable,
     isSubdust,
     IWallet,
     NewAddress,
     Recipient,
     ReissuanceParams,
-    SendBitcoinParams,
     SettleParams,
     VirtualCoin,
     WalletBalance,
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
 import {
+    canSpendOffchain,
     fetchVtxoCreatedAtByTxid,
     hasTerminalSpend,
     type NormalizedExtendedVirtualCoin,
+    type NormalizedVtxoPage,
 } from "../vtxo";
 import {
     ReadonlyWallet,
@@ -136,24 +143,11 @@ export class DelegateNotConfiguredError extends Error {
     }
 }
 
-/** @deprecated alias for DelegateNotConfiguredError */
-export const DelegatorNotConfiguredError = DelegateNotConfiguredError;
-export type DelegatorNotConfiguredError = DelegateNotConfiguredError;
-
 export const DEFAULT_MESSAGE_TAG = "WALLET_UPDATER";
 
 export type RequestInitWallet = RequestEnvelope & {
     type: "INIT_WALLET";
     payload: {
-        /**
-         * Legacy per-request key material. Ignored by the current handler —
-         * identity hydration happens during INITIALIZE_MESSAGE_BUS. Retained
-         * for wire compatibility with older workers that may still read it.
-         * Slated for removal in the next major.
-         *
-         * @deprecated Identity is now carried by INITIALIZE_MESSAGE_BUS.
-         */
-        key?: { privateKey: string } | { publicKey: string } | {};
         arkServerUrl: string;
         arkServerPublicKey?: string;
     };
@@ -171,15 +165,6 @@ export type ResponseSettle = ResponseEnvelope & {
     payload: { txid: string };
 };
 
-export type RequestSendBitcoin = RequestEnvelope & {
-    type: "SEND_BITCOIN";
-    payload: SendBitcoinParams;
-};
-export type ResponseSendBitcoin = ResponseEnvelope & {
-    type: "SEND_BITCOIN_SUCCESS";
-    payload: { txid: string };
-};
-
 export type RequestGetAddress = RequestEnvelope & { type: "GET_ADDRESS" };
 export type ResponseGetAddress = ResponseEnvelope & {
     type: "ADDRESS";
@@ -193,6 +178,64 @@ export type ResponseGetBoardingAddress = ResponseEnvelope & {
     type: "BOARDING_ADDRESS";
     payload: { address: string };
 };
+
+// `payload` is optional and unknown to workers built before it existed — such
+// a worker serves the ordinary snapshot-fallback read. That skew lasts only a
+// rolling-upgrade window; a page needing a hard guarantee gets it once the
+// worker updates.
+export type RequestGetArkadeInfo = RequestEnvelope & {
+    type: "GET_ARKADE_INFO";
+    payload?: GetArkadeInfoOptions;
+};
+// `ArkadeInfo` is bigint-heavy and crosses the boundary raw: the channel is
+// `postMessage`/structuredClone, which is bigint-safe, and `GET_BALANCE` below
+// already relies on that for `Asset.amount`. Do NOT route it through the
+// `arkInfoSnapshot` serializer — that shape is the persistence cache and drops
+// `serviceStatus`.
+export type ResponseGetArkadeInfo = ResponseEnvelope & {
+    type: "ARKADE_INFO";
+    payload: { info: ArkadeInfo };
+};
+
+// `getArkadeReader()`/`getArkadeBroadcaster()` proxied to the worker, which
+// owns the providers. Named `INDEXER_*` rather than reusing `GET_VTXOS`: that
+// one answers the *wallet's own* outputs from repositories, while this is an
+// arbitrary-script query that reaches the server. Same verb, different
+// question — collapsing them would silently change which one a caller gets.
+export type RequestIndexerGetVtxos = RequestEnvelope & {
+    type: "INDEXER_GET_VTXOS";
+    payload: { opts: GetVtxosOptions };
+};
+// VTXOs cross the boundary raw — `assets[].amount` is bigint — relying on the
+// same bigint-safe structuredClone channel `ARKADE_INFO` documents above.
+export type ResponseIndexerGetVtxos = ResponseEnvelope & {
+    type: "INDEXER_VTXOS";
+    payload: NormalizedVtxoPage;
+};
+
+export type RequestIndexerGetVirtualTxs = RequestEnvelope & {
+    type: "INDEXER_GET_VIRTUAL_TXS";
+    payload: { txids: string[]; opts?: PaginationOptions };
+};
+export type ResponseIndexerGetVirtualTxs = ResponseEnvelope & {
+    type: "INDEXER_VIRTUAL_TXS";
+    payload: Awaited<ReturnType<ArkadeReader["getVirtualTxs"]>>;
+};
+
+export type RequestSubmitTx = RequestEnvelope & {
+    type: "SUBMIT_TX";
+    payload: { signedArkTx: string; checkpointTxs: string[] };
+};
+export type ResponseSubmitTx = ResponseEnvelope & {
+    type: "SUBMIT_TX_SUCCESS";
+    payload: Awaited<ReturnType<ArkadeBroadcaster["submitTx"]>>;
+};
+
+export type RequestFinalizeTx = RequestEnvelope & {
+    type: "FINALIZE_TX";
+    payload: { arkTxid: string; finalCheckpointTxs: string[] };
+};
+export type ResponseFinalizeTx = ResponseEnvelope & { type: "FINALIZE_TX_SUCCESS" };
 
 export type RequestGetBalance = RequestEnvelope & { type: "GET_BALANCE" };
 export type ResponseGetBalance = ResponseEnvelope & {
@@ -802,9 +845,13 @@ export type SerializedAggregateError = {
 export type WalletUpdaterRequest =
     | RequestInitWallet
     | RequestSettle
-    | RequestSendBitcoin
     | RequestGetAddress
     | RequestGetBoardingAddress
+    | RequestGetArkadeInfo
+    | RequestIndexerGetVtxos
+    | RequestIndexerGetVirtualTxs
+    | RequestSubmitTx
+    | RequestFinalizeTx
     | RequestGetBalance
     | RequestGetVtxos
     | RequestGetSpendableVtxos
@@ -856,9 +903,13 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseInitWallet
         | ResponseSettle
         | ResponseSettleEvent
-        | ResponseSendBitcoin
         | ResponseGetAddress
         | ResponseGetBoardingAddress
+        | ResponseGetArkadeInfo
+        | ResponseIndexerGetVtxos
+        | ResponseIndexerGetVirtualTxs
+        | ResponseSubmitTx
+        | ResponseFinalizeTx
         | ResponseGetBalance
         | ResponseGetVtxos
         | ResponseGetSpendableVtxos
@@ -1088,6 +1139,9 @@ export class WalletMessageHandler
     }
 
     private tagged(res: Partial<WalletUpdaterResponse>): WalletUpdaterResponse {
+        // `errorName` is stamped by the bus at its postMessage egress
+        // (`MessageBus.deliverResponse`), not here — one choke point for
+        // every handler and for the bus's own typed errors.
         return {
             ...res,
             tag: this.messageTag,
@@ -1142,13 +1196,6 @@ export class WalletMessageHandler
                     });
                 }
 
-                case "SEND_BITCOIN": {
-                    const response = await this.handleSendBitcoin(message);
-                    return this.tagged({
-                        id,
-                        ...response,
-                    });
-                }
                 case "GET_ADDRESS": {
                     const address = await this.readonlyWallet.getAddress();
                     return this.tagged({
@@ -1164,6 +1211,52 @@ export class WalletMessageHandler
                         type: "BOARDING_ADDRESS",
                         payload: { address },
                     });
+                }
+                case "GET_ARKADE_INFO": {
+                    const { payload } = message as RequestGetArkadeInfo;
+                    const info = await this.readonlyWallet.getArkadeInfo(payload);
+                    return this.tagged({
+                        id,
+                        type: "ARKADE_INFO",
+                        payload: { info },
+                    });
+                }
+                case "INDEXER_GET_VTXOS": {
+                    const { opts } = (message as RequestIndexerGetVtxos).payload;
+                    const reader = await this.readonlyWallet.getArkadeReader();
+                    return this.tagged({
+                        id,
+                        type: "INDEXER_VTXOS",
+                        payload: await reader.getVtxos(opts),
+                    });
+                }
+                case "INDEXER_GET_VIRTUAL_TXS": {
+                    const { txids, opts } = (message as RequestIndexerGetVirtualTxs).payload;
+                    const reader = await this.readonlyWallet.getArkadeReader();
+                    return this.tagged({
+                        id,
+                        type: "INDEXER_VIRTUAL_TXS",
+                        payload: await reader.getVirtualTxs(txids, opts),
+                    });
+                }
+                case "SUBMIT_TX": {
+                    const { signedArkTx, checkpointTxs } = (message as RequestSubmitTx).payload;
+                    // requireWallet, not readonlyWallet: a readonly worker must
+                    // refuse to broadcast rather than answer with someone
+                    // else's provider.
+                    const broadcaster = await this.requireWallet().getArkadeBroadcaster();
+                    const result = await broadcaster.submitTx(signedArkTx, checkpointTxs);
+                    return this.tagged({
+                        id,
+                        type: "SUBMIT_TX_SUCCESS",
+                        payload: result,
+                    });
+                }
+                case "FINALIZE_TX": {
+                    const { arkTxid, finalCheckpointTxs } = (message as RequestFinalizeTx).payload;
+                    const broadcaster = await this.requireWallet().getArkadeBroadcaster();
+                    await broadcaster.finalizeTx(arkTxid, finalCheckpointTxs);
+                    return this.tagged({ id, type: "FINALIZE_TX_SUCCESS" });
                 }
                 case "GET_BALANCE": {
                     const balance = await this.handleGetBalance();
@@ -1475,14 +1568,15 @@ export class WalletMessageHandler
                     });
                 }
                 case "SEND": {
+                    const wallet = this.requireWallet();
                     const { recipients, selectedVtxos } = (message as RequestSend).payload;
                     // Object form only when the client asked for it: the
                     // variadic form is what every existing client sends, and
                     // routing it through `{ recipients }` regardless would put
                     // a behaviour change behind a protocol field nobody set.
                     const txid = await (selectedVtxos
-                        ? (this.wallet as IWallet).send({ recipients, selectedVtxos })
-                        : (this.wallet as IWallet).send(...recipients));
+                        ? wallet.send({ recipients, selectedVtxos })
+                        : wallet.send(...recipients));
                     return this.tagged({
                         id,
                         type: "SEND_SUCCESS",
@@ -1501,7 +1595,7 @@ export class WalletMessageHandler
                 }
                 case "ISSUE": {
                     const { params } = (message as RequestIssue).payload;
-                    const result = await (this.wallet as IWallet).assetManager.issue(params);
+                    const result = await this.requireWallet().assetManager.issue(params);
                     return this.tagged({
                         id,
                         type: "ISSUE_SUCCESS",
@@ -1510,7 +1604,7 @@ export class WalletMessageHandler
                 }
                 case "REISSUE": {
                     const { params } = (message as RequestReissue).payload;
-                    const txid = await (this.wallet as IWallet).assetManager.reissue(params);
+                    const txid = await this.requireWallet().assetManager.reissue(params);
                     return this.tagged({
                         id,
                         type: "REISSUE_SUCCESS",
@@ -1519,7 +1613,7 @@ export class WalletMessageHandler
                 }
                 case "BURN": {
                     const { params } = (message as RequestBurn).payload;
-                    const txid = await (this.wallet as IWallet).assetManager.burn(params);
+                    const txid = await this.requireWallet().assetManager.burn(params);
                     return this.tagged({
                         id,
                         type: "BURN_SUCCESS",
@@ -1991,18 +2085,6 @@ export class WalletMessageHandler
         return { type: "SETTLE_SUCCESS", payload: { txid } } as ResponseSettle;
     }
 
-    private async handleSendBitcoin(message: RequestSendBitcoin) {
-        const wallet = this.requireWallet();
-        const txid = await wallet.sendBitcoin(message.payload);
-        if (!txid) {
-            throw new Error("Send bitcoin failed");
-        }
-        return {
-            type: "SEND_BITCOIN_SUCCESS",
-            payload: { txid },
-        } as ResponseSendBitcoin;
-    }
-
     private async handleSignTransaction(message: RequestSignTransaction) {
         const wallet = this.requireWallet();
         const { tx, inputIndexes } = message.payload;
@@ -2090,13 +2172,7 @@ export class WalletMessageHandler
             if (dustAmount != null && isSubdust(v, dustAmount)) {
                 return false;
             }
-            if (isRecoverable(v)) {
-                return false;
-            }
-            if (isExpired(v)) {
-                return false;
-            }
-            return true;
+            return canSpendOffchain(v, { timestamp: new Date() });
         });
     }
 

@@ -41,7 +41,6 @@ export async function resolveUnilateralPath(params: {
     scriptHex: string;
     contractRepository?: ContractRepository;
     walletDescriptor?: string;
-    walletPubKeyHex?: string;
     currentTime: number;
 }): Promise<ResolvedExitPath> {
     const { vtxo, scriptHex, contractRepository } = params;
@@ -64,7 +63,6 @@ export async function resolveUnilateralPath(params: {
                 collaborative: false,
                 currentTime: params.currentTime,
                 walletDescriptor: params.walletDescriptor,
-                walletPubKey: params.walletPubKeyHex,
             })
             .filter((p) => p.sequence !== undefined);
         if (paths.length === 0) {

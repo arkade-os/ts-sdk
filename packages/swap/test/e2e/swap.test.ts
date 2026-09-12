@@ -14,28 +14,29 @@ import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import {
     ArkAddress,
+    ArkNote,
     asset,
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    RestArkProvider,
     RestIndexerProvider,
     SingleKey,
     Wallet,
 } from "@arkade-os/sdk";
+import { type AssetSwap, InMemoryAssetSwapRepository } from "../../src";
 import {
     addAssetSwap,
     cancelOffer,
     createOffer,
     decodeOffer,
     getAssetSwaps,
-    InMemoryAssetSwapRepository,
     restoreAssetSwaps,
     watchOfferSwaps,
-    type AssetSwap,
     type Tx,
-} from "../../src";
+} from "../../src/protocol";
 
-const ARK_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 // mempool serves the Esplora REST API under `/api`; the root path is the HTML UI
 const ESPLORA_API_URL = "http://localhost:3000/api";
 const arkdExec = "docker exec -t arkd";
@@ -67,7 +68,7 @@ const waitFor = async (
     throw new Error("timeout in waitFor");
 };
 
-const indexer = new RestIndexerProvider(ARK_URL);
+const indexer = new RestIndexerProvider(OPERATOR_URL);
 const repository = new InMemoryAssetSwapRepository();
 let wallet: Wallet;
 // the key the covenants are funded against — restore classifies each spend by
@@ -77,7 +78,7 @@ let operatorPubkey: Uint8Array;
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: ARK_URL,
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -89,12 +90,12 @@ beforeAll(async () => {
         settlementConfig: false,
     });
 
-    // fund the maker offchain: mint a note to the arkd CLI wallet, redeem it,
-    // and send from there (the same faucet path the ts-sdk e2e suites use)
-    const note = execCommand(`${arkdExec} arkd note --amount 200000`);
-    execCommand(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
     const address = await wallet.getAddress();
-    execCommand(`${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`);
+    const note = execCommand(`${arkdExec} arkd note --amount ${FAUCET_SATS}`);
+    await wallet.settle({
+        inputs: [ArkNote.fromString(note)],
+        outputs: [{ address, amount: BigInt(FAUCET_SATS) }],
+    });
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
 
     operatorPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;
@@ -113,7 +114,7 @@ describe("maker-side swap loop (regtest)", () => {
 
     it("derives, funds, and restores a pending offer from chain data alone", async () => {
         // no override — asserts the default pin matches the regtest stack
-        offer = await createOffer(wallet, ARK_URL, {
+        offer = await createOffer(wallet, {
             wantAmount: WANT_AMOUNT,
             wantAsset,
         });
@@ -135,10 +136,10 @@ describe("maker-side swap loop (regtest)", () => {
             redeemTxid: fundingTxid,
             createdAt: Math.floor(Date.now() / 1000),
         });
-        // Pending deposits have no spend to classify; serverPubkey is required
+        // Pending deposits have no spend to classify; operatorPubkey is required
         // by the restore API but does not affect this assertion.
         const { restored, scannedTxids } = await restoreAssetSwaps(indexer, history, new Set(), {
-            serverPubkey: operatorPubkey,
+            operatorPubkey,
         });
 
         expect(scannedTxids).toEqual([fundingTxid]);
@@ -210,7 +211,7 @@ describe("maker-side swap loop (regtest)", () => {
 
         // and the deposit is still there to be cancelled below
         const { vtxos } = await indexer.getVtxos({ scripts: [hex.encode(offer.swapPkScript)] });
-        expect(vtxos.find((v) => v.txid === fundingTxid)?.virtualStatus.state).not.toBe("spent");
+        expect(vtxos.find((v) => v.txid === fundingTxid)?.isSpent).not.toBe(true);
     }, 120_000);
 
     it("cancels the deposit cooperatively and restores it as cancelled", async () => {
@@ -220,7 +221,7 @@ describe("maker-side swap loop (regtest)", () => {
         // outpoint, so the escrow marker must not close the one spend route the
         // maker actually owns. A future tightening that gates explicit inputs
         // would strand every offer deposit, and would fail here.
-        const cancelTxid = await cancelOffer(wallet, ARK_URL, restoredOfferHex, {
+        const cancelTxid = await cancelOffer(wallet, restoredOfferHex, {
             repository,
             fundingTxid,
             swapAddress: offer.address,
@@ -231,7 +232,7 @@ describe("maker-side swap loop (regtest)", () => {
         await waitFor(async () => {
             const { vtxos } = await indexer.getVtxos({ scripts: [script] });
             const vtxo = vtxos.find((v) => v.txid === fundingTxid);
-            return vtxo?.virtualStatus.state === "spent";
+            return vtxo?.isSpent === true;
         });
 
         // a fresh restore (empty store, as after a wallet wipe) must classify
@@ -243,7 +244,7 @@ describe("maker-side swap loop (regtest)", () => {
             createdAt: Math.floor(Date.now() / 1000),
         });
         const { restored } = await restoreAssetSwaps(indexer, history, new Set(), {
-            serverPubkey: operatorPubkey,
+            operatorPubkey,
         });
         expect(restored).toHaveLength(1);
         expect(restored[0]).toMatchObject({
@@ -275,13 +276,12 @@ describe("maker-side swap loop (regtest)", () => {
         const updates: AssetSwap[] = [];
         const watcher = await watchOfferSwaps({
             wallet,
-            arkServerUrl: ARK_URL,
             repository: swapRepository,
             onUpdate: (swap) => updates.push(swap),
         });
 
         try {
-            const second = await createOffer(wallet, ARK_URL, {
+            const second = await createOffer(wallet, {
                 wantAmount: WANT_AMOUNT + BigInt(1),
                 wantAsset,
             });
@@ -312,7 +312,7 @@ describe("maker-side swap loop (regtest)", () => {
                 createdAt: Date.now(),
             });
 
-            await cancelOffer(wallet, ARK_URL, second.offerHex, {
+            await cancelOffer(wallet, second.offerHex, {
                 repository: elsewhere,
                 fundingTxid: secondFundingTxid,
                 swapAddress: second.address,

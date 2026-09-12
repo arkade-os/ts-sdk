@@ -13,7 +13,7 @@ import {
     IntentFeeConfig,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    ArkInfo,
+    ArkadeInfo,
     ArkProvider,
     RestArkProvider,
     WalletRepository,
@@ -41,6 +41,46 @@ export const arkdExec = "docker exec -t arkd";
 // hitting the root path makes JSON parsing fail on the HTML frontend.
 export const ESPLORA_API_URL = "http://localhost:3000/api";
 
+/** Regtest arkd. Wallets take it as a provider — the URL is not wallet config. */
+export const ARK_URL = "http://localhost:7070";
+
+/**
+ * Default budget for a shell-out. Every `execSync` here MUST carry one:
+ * `execSync` blocks the worker's event loop, so vitest's `it`/hook timeouts
+ * cannot fire while one is stuck — an unbounded call hangs the whole run
+ * (`fileParallelism: false`, so every remaining file with it) and reports
+ * nothing. A timeout turns that into an ordinary test failure.
+ */
+const EXEC_TIMEOUT_MS = 120_000;
+
+/**
+ * Per-attempt budget and attempt count for {@link beforeEachFaucet}.
+ *
+ * Redeeming a note joins a round, and a round arkd aborts — a co-registered
+ * intent it cannot fund, another participant that never sends its forfeits —
+ * takes every intent in it down without telling the clients, so the CLI waits
+ * on a batch that will never come. Three tries at 30s each still fit inside the
+ * old single 120s budget, and a round is ~5s, so a healthy redeem never sees
+ * the deadline.
+ */
+const FAUCET_ATTEMPT_TIMEOUT_MS = 30_000;
+const FAUCET_ATTEMPTS = 3;
+
+/** Shell budget for `set-signers`: it recreates arkd-wallet and restarts arkd. */
+const ROTATE_EXEC_TIMEOUT_MS = 300_000;
+
+/** How long {@link rotateArkdSigner} polls `/v1/info` for the new signer set. */
+const ROTATE_POLL_TIMEOUT_MS = 90_000;
+
+/**
+ * Hook budget a caller must give any hook that calls {@link rotateArkdSigner}.
+ * Derived, not guessed: a vitest hook timeout below the shell budget fails a
+ * rotation that was merely slow, and `execSync` blocks the event loop so the
+ * hook timeout cannot even fire until the shell-out returns.
+ */
+export const ROTATE_SIGNER_HOOK_TIMEOUT_MS =
+    ROTATE_EXEC_TIMEOUT_MS + ROTATE_POLL_TIMEOUT_MS + 30_000;
+
 let arkCliInitialized = false;
 
 function ensureArkCliInitialized(): void {
@@ -48,10 +88,19 @@ function ensureArkCliInitialized(): void {
     try {
         execSync(
             `${arkdExec} ark init --password secret --server-url localhost:7070 --explorer http://mempool_web/api`,
-            { stdio: "pipe" },
+            { stdio: "pipe", timeout: EXEC_TIMEOUT_MS },
         );
-    } catch {
-        // already initialized — ignore
+    } catch (err) {
+        // `ark init` exits 0 when the wallet is already initialized, so a
+        // timeout here means the stack is wedged, not that there was nothing to
+        // do — swallowing it would let the run continue and fail downstream with
+        // an unrelated-looking error. Other failures stay tolerated: the next
+        // CLI call reports them with far better context than this one can.
+        if ((err as { code?: string }).code === "ETIMEDOUT") {
+            throw new Error(
+                `ensureArkCliInitialized: 'ark init' timed out after ${EXEC_TIMEOUT_MS}ms — arkd is unreachable or wedged`,
+            );
+        }
     }
     arkCliInitialized = true;
 }
@@ -66,8 +115,8 @@ export interface TestOnchainWallet {
     identity: Identity;
 }
 
-export function execCommand(command: string): string {
-    const result = execSync(command, { encoding: "utf8" })
+export function execCommand(command: string, timeoutMs = EXEC_TIMEOUT_MS): string {
+    const result = execSync(command, { encoding: "utf8", timeout: timeoutMs })
         .replace(/\r/g, "")
         .split("\n")
         .filter((line) => !line.includes("WARN"))
@@ -110,7 +159,7 @@ export async function createTestArkWallet(opts?: {
 
     const wallet = await Wallet.create({
         identity,
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider(ARK_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -135,7 +184,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
 
     const wallet = await Wallet.create({
         identity,
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider(ARK_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -162,7 +211,7 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
 
     const wallet = await Wallet.create({
         identity,
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider(ARK_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -209,7 +258,7 @@ export async function createTestArkWalletFromMnemonic(
         identity,
         ...(walletMode !== undefined ? { walletMode } : {}),
         ...(lookAheadWindow !== undefined ? { lookAheadWindow } : {}),
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider(ARK_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -286,8 +335,21 @@ export async function createVtxo(alice: TestArkWallet, amount: number): Promise<
 // ark send can't spend them), so we always redeem a fresh note.
 export async function beforeEachFaucet(): Promise<void> {
     ensureArkCliInitialized();
-    const noteStr = execCommand(`${arkdExec} arkd note --amount 200000`);
-    execCommand(`${arkdExec} ark redeem-notes -n ${noteStr} --password secret`);
+    for (let attempt = 1; attempt <= FAUCET_ATTEMPTS; attempt++) {
+        // A fresh note per attempt: the abandoned one is only a credit voucher,
+        // and reusing it would race whatever the dropped round did with it.
+        const noteStr = execCommand(`${arkdExec} arkd note --amount 200000`);
+        try {
+            execCommand(
+                `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`,
+                FAUCET_ATTEMPT_TIMEOUT_MS,
+            );
+            return;
+        } catch (err) {
+            const timedOut = (err as { code?: string }).code === "ETIMEDOUT";
+            if (!timedOut || attempt === FAUCET_ATTEMPTS) throw err;
+        }
+    }
 }
 
 export function setFees(fees: IntentFeeConfig): void {
@@ -331,7 +393,7 @@ export async function waitFor(
  */
 export function createOverrideInfoArkProvider(
     real: ArkProvider,
-    overrides: Partial<ArkInfo>,
+    overrides: Partial<ArkadeInfo>,
 ): ArkProvider {
     return new Proxy(real, {
         get(target, prop, receiver) {
@@ -354,8 +416,6 @@ export function createOverrideInfoArkProvider(
 // (`recreateArkdWallet` / `restartArkd` in
 // ../arkd/internal/test/e2e/utils_test.go), adapted to this repo's two-file,
 // profiled compose project (`arkade-regtest`) launched by `regtest.mjs`.
-
-const ARK_URL = "http://localhost:7070";
 
 export interface ServerSignerInfo {
     /** Active signer pubkey, hex exactly as arkd's `/v1/info` returns it. */
@@ -429,7 +489,9 @@ export async function rotateArkdSigner(params: {
         execSync(
             `node regtest/regtest.mjs set-signers --env .env.regtest --active ${activeSignerPriv}` +
                 (deprecatedArg ? ` --deprecated ${deprecatedArg}` : ""),
-            { stdio: "pipe" },
+            // Wider than EXEC_TIMEOUT_MS, but still a budget: an arkd that never
+            // comes back would otherwise wedge the run with no error.
+            { stdio: "pipe", timeout: ROTATE_EXEC_TIMEOUT_MS },
         );
     } catch (err) {
         const e = err as { stderr?: Buffer; stdout?: Buffer; message?: string };
@@ -450,14 +512,20 @@ export async function rotateArkdSigner(params: {
         ),
     );
 
-    const deadline = Date.now() + 90_000;
+    const deadline = Date.now() + ROTATE_POLL_TIMEOUT_MS;
     let lastInfo: ServerSignerInfo | undefined;
     while (Date.now() < deadline) {
         try {
             lastInfo = await getServerInfo(arkUrl);
             const activeOk = toXOnly(lastInfo.signerPubkey) === expectedActive;
             const advertised = new Set(lastInfo.deprecatedSigners.map((s) => toXOnly(s.pubkey)));
-            const deprecatedOk = expectedDeprecated.every((p) => advertised.has(p));
+            // Set equality, not containment: `every` is vacuously true for an
+            // empty expectation, which would report success for a reset to the
+            // baseline (`deprecatedSigners: []`) while arkd still advertised the
+            // old ones — the exact case the suite's cleanup depends on.
+            const deprecatedOk =
+                advertised.size === new Set(expectedDeprecated).size &&
+                expectedDeprecated.every((p) => advertised.has(p));
             if (activeOk && deprecatedOk) return lastInfo;
         } catch {
             // arkd not ready yet — keep polling.
@@ -495,8 +563,7 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
     repos: SharedRepos;
     unilateralExitDelay: bigint;
 }): Promise<TestArkWallet> {
-    const arkServerUrl = "http://localhost:7070";
-    const realProvider = new RestArkProvider(arkServerUrl);
+    const realProvider = new RestArkProvider(ARK_URL);
     const arkProvider = createOverrideInfoArkProvider(realProvider, {
         unilateralExitDelay: opts.unilateralExitDelay,
         // This fixture exercises the current-signer exit-delay change only. Pin a
@@ -510,7 +577,6 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
 
     const wallet = await Wallet.create({
         identity: opts.identity,
-        arkServerUrl,
         arkProvider,
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,

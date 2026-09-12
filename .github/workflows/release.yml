@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "@arkade-os/sdk/**"
-      - "@arkade-os/boltz-swap/**"
       - "@arkade-os/swap/**"
 
 permissions:

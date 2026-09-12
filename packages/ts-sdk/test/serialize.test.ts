@@ -333,38 +333,6 @@ describe("normalizeSerializedIdentity", () => {
         expect(normalizeSerializedIdentity(tagged)).toBe(tagged);
     });
 
-    it("maps legacy { privateKey } to a single-key envelope", () => {
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-        const normalized = normalizeSerializedIdentity({
-            privateKey: TEST_PRIVATE_KEY_HEX,
-        });
-        expect(normalized).toEqual({
-            type: "single-key",
-            privateKey: TEST_PRIVATE_KEY_HEX,
-        });
-        expect(warn).toHaveBeenCalled();
-    });
-
-    it("maps legacy { publicKey } to a readonly-single-key envelope", () => {
-        vi.spyOn(console, "warn").mockImplementation(() => {});
-        const publicKey = hex.encode(new Uint8Array(33).fill(0x02));
-        expect(normalizeSerializedIdentity({ publicKey })).toEqual({
-            type: "readonly-single-key",
-            publicKey,
-        });
-    });
-
-    it("maps legacy envelopes to hydrate-compatible output", async () => {
-        vi.spyOn(console, "warn").mockImplementation(() => {});
-        const legacyReadonly: SerializedReadonlyIdentity = normalizeSerializedIdentity({
-            publicKey: hex.encode(
-                await SingleKey.fromHex(TEST_PRIVATE_KEY_HEX).compressedPublicKey(),
-            ),
-        }) as SerializedReadonlyIdentity;
-        const rehydrated = hydrateIdentity(legacyReadonly);
-        expect(rehydrated).toBeInstanceOf(ReadonlySingleKey);
-    });
-
     it("rejects tagged envelopes with unknown type", () => {
         expect(() =>
             normalizeSerializedIdentity({

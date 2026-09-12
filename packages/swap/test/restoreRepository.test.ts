@@ -38,16 +38,15 @@ const pending = (id: string, overrides: Partial<AssetSwap> = {}): AssetSwap => (
 const wallet = { identity: {} } as IWallet;
 const indexer = {} as RestoreIndexer;
 const txs = [{ type: "sent", redeemTxid: "new" }] as Tx[];
-const serverPubkey = new Uint8Array(32);
+const operatorPubkey = new Uint8Array(32);
 
 const run = (repository: InMemoryAssetSwapRepository, overrides = {}) =>
     restoreAssetSwapRepository({
         wallet,
-        arkServerUrl: "https://ark.test",
         indexer,
         repository,
         txs,
-        serverPubkey,
+        operatorPubkey,
         ...overrides,
     });
 
@@ -72,7 +71,7 @@ describe("restoreAssetSwapRepository", () => {
             indexer,
             txs,
             new Set(["open", "settled"]),
-            { serverPubkey, scanned: new Set(["open", "settled"]), reopen: [open] },
+            { operatorPubkey, scanned: new Set(["open", "settled"]), reopen: [open] },
         );
     });
 
@@ -136,7 +135,7 @@ describe("restoreAssetSwapRepository", () => {
 
         const result = await run(repository);
 
-        expect(mocks.restoreOfferCoverage).toHaveBeenCalledWith(wallet, "https://ark.test", [open]);
+        expect(mocks.restoreOfferCoverage).toHaveBeenCalledWith(wallet, [open]);
         expect(result.coverageError).toBeUndefined();
     });
 
@@ -180,7 +179,7 @@ describe("restoreAssetSwapRepository", () => {
 
         await expect(run(repository)).rejects.toBe(scanError);
 
-        expect(mocks.restoreOfferCoverage).toHaveBeenCalledWith(wallet, "https://ark.test", [open]);
+        expect(mocks.restoreOfferCoverage).toHaveBeenCalledWith(wallet, [open]);
     });
 
     it("does not mutate the repository after cancellation", async () => {

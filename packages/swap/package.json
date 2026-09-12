@@ -1,8 +1,8 @@
 {
     "name": "@arkade-os/swap",
-    "version": "0.0.17",
+    "version": "0.1.0-rc.10",
     "type": "module",
-    "description": "Client-side Arkade Intents asset swaps: discover markets, quote, create/track/cancel offers, restore from chain.",
+    "description": "Client-side Arkade Intents asset swaps: state a route, get an outcome. Pay a bolt11 invoice, receive over Lightning, exchange assets, or withdraw onchain.",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/arkade-os/ts-sdk.git",
@@ -21,6 +21,16 @@
                 "default": "./dist/index.cjs"
             }
         },
+        "./advanced": {
+            "import": {
+                "types": "./dist/advanced.d.ts",
+                "default": "./dist/advanced.js"
+            },
+            "require": {
+                "types": "./dist/advanced.d.ts",
+                "default": "./dist/advanced.cjs"
+            }
+        },
         "./nostr": {
             "import": {
                 "types": "./dist/nostr.d.ts",
@@ -29,6 +39,26 @@
             "require": {
                 "types": "./dist/nostr.d.ts",
                 "default": "./dist/nostr.cjs"
+            }
+        },
+        "./protocol": {
+            "import": {
+                "types": "./dist/protocol.d.ts",
+                "default": "./dist/protocol.js"
+            },
+            "require": {
+                "types": "./dist/protocol.d.ts",
+                "default": "./dist/protocol.cjs"
+            }
+        },
+        "./node": {
+            "import": {
+                "types": "./dist/node/index.d.ts",
+                "default": "./dist/node/index.js"
+            },
+            "require": {
+                "types": "./dist/node/index.d.ts",
+                "default": "./dist/node/index.cjs"
             }
         },
         "./repositories/sqlite": {
@@ -56,16 +86,21 @@
         "dist"
     ],
     "scripts": {
-        "build": "tsup src/index.ts src/nostr.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
-        "typecheck": "tsc --noEmit",
+        "build": "pnpm run build:web && pnpm run build:node",
+        "build:web": "tsup src/index.ts src/advanced.ts src/nostr.ts src/protocol.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
+        "build:node": "tsup --config tsup.node.config.ts",
+        "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
         "format": "biome format --write src test",
         "lint": "biome format src test",
         "prepack": "pnpm run build",
         "test": "vitest run --exclude test/e2e",
         "test:unit": "vitest run --exclude test/e2e",
-        "test:integration": "vitest run --exclude \"test/e2e/rfq*.test.ts\" test/e2e/",
-        "test:integration:rfq": "vitest run test/e2e/rfq",
+        "test:integration": "vitest run --no-file-parallelism --exclude \"test/e2e/rfq*.test.ts\" test/e2e/",
+        "test:integration:rfq": "vitest run --no-file-parallelism test/e2e/rfq",
         "smoke:dist": "node scripts/smoke-dist.mjs"
+    },
+    "engines": {
+        "node": ">=22.12.0"
     },
     "keywords": [
         "arkade",
@@ -82,7 +117,8 @@
         "@noble/curves": "2.0.1",
         "@noble/hashes": "2.0.1",
         "@scure/base": "2.0.0",
-        "@scure/btc-signer": "2.0.1"
+        "@scure/btc-signer": "2.0.1",
+        "light-bolt11-decoder": "3.2.0"
     },
     "peerDependencies": {
         "nostr-tools": "^2.12.0"

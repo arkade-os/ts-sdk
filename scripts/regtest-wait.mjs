@@ -70,36 +70,6 @@ export async function waitForEmulator({
     throw new Error("emulator failed to be ready after maximum retries");
 }
 
-/**
- * Poll Boltz until the ARK/BTC submarine pair appears in the API response.
- */
-export async function waitForBoltzPairs({
-    url = "http://localhost:9069/v2/swap/submarine",
-    maxRetries = 30,
-    retryDelay = 2000,
-} = {}) {
-    console.log("Waiting for Boltz ARK/BTC pairs...");
-    for (let i = 0; i < maxRetries; i++) {
-        try {
-            const response = execSync(`curl -s ${url}`, {
-                encoding: "utf8",
-                stdio: "pipe",
-            });
-            if (response.includes('"ARK"')) {
-                console.log("  ✔ Boltz pairs ready");
-                return true;
-            }
-        } catch {
-            // Continue retrying
-        }
-        if (i < maxRetries - 1) {
-            console.log(`  Waiting... (${i + 1}/${maxRetries})`);
-            await sleep(retryDelay);
-        }
-    }
-    throw new Error("Boltz ARK/BTC pairs not available after maximum retries");
-}
-
 export function printSetupBanner() {
     console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     console.log("  ✓ regtest setup completed successfully");

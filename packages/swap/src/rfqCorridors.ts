@@ -27,6 +27,7 @@ import type { LightningReceiveSwap, OnchainSendSwap, RfqSwap } from "./swapManag
  *
  * The one leg with a hashlock it can never open — P belongs to the payee — so
  * `hashlock` here is `{ paymentHash }` alone and `signer` holds a REFUND key.
+ *
  */
 export interface LightningSendProfile extends Record<string, unknown> {
     signer: RfqSignerProjection;
@@ -42,7 +43,9 @@ export const LightningSendCorridor: RfqCorridorHandler<LightningSendProfile> = {
     // hash check — a `hash-mismatch` on a swap that was never broken.
 };
 
-/** `lightning:BTC->arkade:BTC`. */
+/** `lightning:BTC->arkade:BTC`.
+ *
+ */
 export interface LightningReceiveProfile extends Record<string, unknown> {
     signer: RfqSignerProjection;
     hashlock: RfqHashlockProjection;
@@ -61,7 +64,7 @@ export interface LightningReceiveProfile extends Record<string, unknown> {
      * preimage that is already public, and a swap that did claim is relabelled
      * `needs_counterparty` once its window shuts.
      */
-    claimArkTxid?: string;
+    claimTxid?: string;
 }
 
 export const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfile> = {
@@ -74,7 +77,7 @@ export const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfil
         const receive = swap as LightningReceiveSwap;
         return {
             expectedAmount: receive.expectedAmount,
-            ...(receive.claimArkTxid ? { claimArkTxid: receive.claimArkTxid } : {}),
+            ...(receive.claimTxid ? { claimTxid: receive.claimTxid } : {}),
         };
     },
 
@@ -93,7 +96,7 @@ export const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfil
         return {
             ...hydrateHashlock(profile),
             expectedAmount: profile.expectedAmount,
-            ...(profile.claimArkTxid ? { claimArkTxid: profile.claimArkTxid } : {}),
+            ...(profile.claimTxid ? { claimTxid: profile.claimTxid } : {}),
         };
     },
 
@@ -101,10 +104,16 @@ export const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfil
     // ours to use.
     claimSecret: (profile) => ({ ...profile.signer, ...profile.hashlock }),
 
-    activityTxids: (profile) => (profile.claimArkTxid ? [profile.claimArkTxid] : []),
+    // The other half of claiming: where it pays. Written once at request time
+    // and left alone by `project` above, so this hands back what was stored.
+    claimDestination: (profile) => profile.payoutAddress,
+
+    activityTxids: (profile) => (profile.claimTxid ? [profile.claimTxid] : []),
 };
 
-/** `arkade:BTC->onchain:BTC`. */
+/** `arkade:BTC->onchain:BTC`.
+ *
+ */
 export interface OnchainSendProfile extends Record<string, unknown> {
     signer: RfqSignerProjection;
     hashlock: RfqHashlockProjection;
@@ -166,6 +175,7 @@ export interface OnchainSendProfile extends Record<string, unknown> {
  * mapper the other two cannot have, and the uniform rule ("`rfqSecretsProfile`
  * first, then whatever the corridor adds") is what keeps the per-corridor
  * instructions short enough to follow.
+ *
  */
 export function onchainSendProfile(result: {
     htlc: Pick<OnchainHtlc, "address">;
