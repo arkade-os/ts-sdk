@@ -134,10 +134,35 @@ jobs:
       - name: Build ts-sdk
         run: pnpm -C packages/ts-sdk build
 
+      # The RFQ client and solver share a fail-closed quote contract. Until the
+      # matching solver change is released, exercising this SDK head against
+      # the last published image would only prove that mixed versions reject
+      # each other. Build the exact reviewed solver revision so this matrix
+      # continues to test the corridor itself, with no mutable branch or image
+      # tag hidden in the result.
+      - name: Check out matching intent solver
+        if: matrix.package == 'swap-rfq'
+        uses: actions/checkout@v6
+        with:
+          repository: arkade-os/intent-solver
+          ref: 173c5672216d3ed65baf428825bc0362f944a5be
+          path: .integration/intent-solver
+          persist-credentials: false
+
+      - name: Build matching intent solver image
+        if: matrix.package == 'swap-rfq'
+        run: >-
+          docker build
+          -f .integration/intent-solver/packages/solver-app/Dockerfile
+          -t intent-solver:refund-timing
+          .integration/intent-solver
+
       - name: Make regtest controller executable
         run: chmod +x scripts/regtest.sh
 
       - name: Start regtest environment
+        env:
+          INTENT_SOLVER_IMAGE: ${{ matrix.package == 'swap-rfq' && 'intent-solver:refund-timing' || '' }}
         run: pnpm run regtest:up:${{ matrix.package }}
 
       - name: Setup test wallets
