@@ -16,6 +16,7 @@ import {
     type OnchainProvider,
 } from "@arkade-os/sdk";
 import { createOffer, decodeOffer, OFFER_CONTRACT_KIND, OFFER_CONTRACT_LABEL } from "../src/offer";
+import { requestArkadeSwap, type RfqTransport } from "../src/rfq";
 
 // the covenant derivation, Arkade.connect, ArkadeContract and register() are
 // all real here — only the wallet's view of the server and the contract manager
@@ -111,6 +112,53 @@ beforeEach(() => {
 });
 
 describe("offer contract registration", () => {
+    it("requests an asset-to-asset RFQ and derives a want-asset-only offer", async () => {
+        const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
+        const expected = await createOffer(wallet, {
+            wantAmount: BigInt(50_000),
+            wantAsset: testAsset,
+            emulatorPubkey,
+        });
+        const rfqId = "11".repeat(32);
+        const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
+        const transport: RfqTransport = {
+            requestQuote: vi.fn(async () => ({
+                v: 1,
+                type: "rfq_quote",
+                rfq_id: rfqId,
+                pair,
+                from_amount: "700",
+                to_amount: "50000",
+                solver_pubkey: "22".repeat(32),
+                valid_until: 1_800_000_060,
+                profile: {
+                    offer_address: expected.address,
+                    offer_pk_script: hex.encode(expected.swapPkScript),
+                },
+            })),
+            status: vi.fn(async () => null),
+            close: vi.fn(async () => undefined),
+        };
+
+        const swap = await requestArkadeSwap(wallet, transport, {
+            offerAsset,
+            wantAsset: testAsset,
+            amount: 700n,
+            rfqId,
+            emulatorPubkey,
+            now: 1_800_000_000,
+        });
+
+        expect(transport.requestQuote).toHaveBeenCalledWith(
+            expect.objectContaining({ pair, amount: "700" }),
+        );
+        expect(swap).toMatchObject({ pair, fundAmount: 700n, carrierSats: 330n });
+        expect(swap.address).toBe(expected.address);
+        const encodedOffer = decodeOffer(hex.decode(swap.offerHex));
+        expect(encodedOffer.wantAsset?.toString()).toBe(testAsset.toString());
+        expect(encodedOffer.offerAsset).toBeUndefined();
+    });
+
     it("registers the funded covenant as an escrowed arkade contract", async () => {
         const offer = await create();
 

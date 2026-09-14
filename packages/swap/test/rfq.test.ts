@@ -396,24 +396,41 @@ describe("requests", () => {
         });
     });
 
-    it("names the asset id in the pair, in both directions", () => {
+    it("names the asset ids in BTC-to-asset, asset-to-BTC, and asset-to-asset pairs", () => {
         const usd = asset.AssetId.fromString(USD_ID);
+        const chf = asset.AssetId.fromString(CHF_ID);
+        const makerPkScript = p2tr(key(5));
+        const makerPublicKey = key(1);
         const wanting = arkadeSwapRequest({
             rfqId: RFQ_ID,
             wantAsset: usd,
-            amountSide: "from",
             amount: 5000,
+            makerPkScript,
+            makerPublicKey,
         }) as Record<string, unknown>;
         expect(wanting.pair).toBe(`arkade:BTC->arkade:${USD_ID}`);
-        expect(wanting.amount).toBe(5000);
+        expect(wanting.amount).toBe("5000");
+        expect(wanting.amount_side).toBe("from");
 
         const offering = arkadeSwapRequest({
             rfqId: RFQ_ID,
             offerAsset: usd,
-            amountSide: "to",
-            amount: 5000,
+            amount: 5000n,
+            makerPkScript,
+            makerPublicKey,
         }) as Record<string, unknown>;
         expect(offering.pair).toBe(`arkade:${USD_ID}->arkade:BTC`);
+        expect(offering.amount).toBe("5000");
+
+        const trading = arkadeSwapRequest({
+            rfqId: RFQ_ID,
+            offerAsset: usd,
+            wantAsset: chf,
+            amount: 5000n,
+            makerPkScript,
+            makerPublicKey,
+        }) as Record<string, unknown>;
+        expect(trading.pair).toBe(`arkade:${USD_ID}->arkade:${CHF_ID}`);
     });
 
     /** Solvers compare pair strings byte for byte, so an uppercase id reaching
@@ -423,8 +440,9 @@ describe("requests", () => {
         const request = arkadeSwapRequest({
             rfqId: RFQ_ID,
             wantAsset: asset.AssetId.fromString(USD_ID.toUpperCase()),
-            amountSide: "from",
             amount: 1,
+            makerPkScript: p2tr(key(5)),
+            makerPublicKey: key(1),
         }) as Record<string, unknown>;
         expect(request.pair).toBe(`arkade:BTC->arkade:${USD_ID}`);
     });
@@ -457,39 +475,45 @@ describe("requests", () => {
             });
     });
 
-    /** Each refusal names its own cause: neither set is degenerate, both set is
-     * a real corridor with no counterparty. One shared message would tell the
-     * BTC->BTC caller to wait for a solver that will never help it. */
-    it("refuses neither asset and both, for the reason that applies", () => {
-        const usd = asset.AssetId.fromString(USD_ID);
-        const chf = asset.AssetId.fromString(CHF_ID);
-        expect(() => arkadeSwapRequest({ rfqId: RFQ_ID, amountSide: "to", amount: 1 })).toThrow(
-            /exactly one.*not a swap/s,
+    it("refuses a directionless BTC-to-BTC request", () => {
+        const maker = { makerPkScript: p2tr(key(5)), makerPublicKey: key(1) };
+        expect(() => arkadeSwapRequest({ rfqId: RFQ_ID, amount: 1, ...maker })).toThrow(
+            /at least one.*not a swap/s,
         );
+    });
+
+    it("refuses exact-out client-side: the solver answers exact_out_unsupported", () => {
         expect(() =>
             arkadeSwapRequest({
                 rfqId: RFQ_ID,
-                offerAsset: usd,
-                wantAsset: chf,
+                wantAsset: asset.AssetId.fromString(USD_ID),
                 amountSide: "to",
                 amount: 1,
+                makerPkScript: p2tr(key(5)),
+                makerPublicKey: key(1),
             }),
-        ).toThrow(/no solver quotes it yet/);
+        ).toThrow(/exact-in only/);
     });
 
     /** Load-bearing against the solver's `.strict()` profile schema: a key it
      * does not declare refuses the whole request. */
-    it("sends an empty profile, with no asset keys left in it", () => {
+    it("sends the trader's covenant position in the profile, and nothing else", () => {
+        const makerPkScript = p2tr(key(5));
+        const makerPublicKey = key(1);
         const request = arkadeSwapRequest({
             rfqId: RFQ_ID,
             wantAsset: asset.AssetId.fromString(USD_ID),
-            amountSide: "from",
             amount: 5000,
+            makerPkScript,
+            makerPublicKey,
         }) as Record<string, unknown>;
-        expect(Object.keys(request.profile as Record<string, unknown>)).toHaveLength(0);
+        expect(request.profile).toEqual({
+            maker_pk_script: hex.encode(makerPkScript),
+            maker_public_key: hex.encode(makerPublicKey),
+        });
     });
 
-    it("mirrors the wire's pair-length cap, dormant until asset->asset lands", () => {
+    it("mirrors the wire's pair-length cap for asset-to-asset", () => {
         expect(MAX_PAIR_LENGTH).toBe(158);
         const both = rfqPair(
             arkadeAssetLeg(asset.AssetId.fromString(USD_ID)),
@@ -497,15 +521,15 @@ describe("requests", () => {
         );
         expect(both.length).toBe(152);
         expect(() => assertPairLength("x".repeat(MAX_PAIR_LENGTH + 1))).toThrow(/158/);
-        // What the builder can actually emit today — the number that makes the
-        // guard unreachable until the exactly-one-asset rule relaxes.
         const request = arkadeSwapRequest({
             rfqId: RFQ_ID,
             wantAsset: asset.AssetId.fromString(USD_ID),
-            amountSide: "from",
+            offerAsset: asset.AssetId.fromString(CHF_ID),
             amount: 1,
+            makerPkScript: p2tr(key(5)),
+            makerPublicKey: key(1),
         }) as Record<string, unknown>;
-        expect((request.pair as string).length).toBe(87);
+        expect((request.pair as string).length).toBe(152);
     });
 });
 
@@ -823,10 +847,17 @@ describe("relayTransport", () => {
 describe("offerTermsFromQuote", () => {
     it("binds the quoted to_amount as the offer's wantAmount", () => {
         const wantAsset = asset.AssetId.fromBytes(hex.decode(USD_ID));
+        const offerAsset = asset.AssetId.fromBytes(hex.decode(CHF_ID));
         const terms = offerTermsFromQuote(quoteFixture({ to_amount: 12_345 }), { wantAsset });
         expect(terms.wantAmount).toBe(12_345n);
         expect(terms.wantAsset).toBe(wantAsset);
-        expect(() => offerTermsFromQuote(quoteFixture(), {})).toThrow(/exactly one/);
+        expect(
+            offerTermsFromQuote(quoteFixture({ to_amount: "54321" }), {
+                wantAsset,
+                offerAsset,
+            }),
+        ).toEqual({ wantAmount: 54_321n, wantAsset });
+        expect(() => offerTermsFromQuote(quoteFixture(), {})).toThrow(/at least one/);
     });
 });
 
@@ -979,5 +1010,60 @@ describe("assertFundable — the max-fee gate, cross-asset", () => {
                 maxFee: { bps: 100, referenceRate: 0.5 },
             }),
         ).not.toThrow();
+    });
+});
+
+describe("arkade↔arkade wire compat", () => {
+    it("encodes bigint amounts as canonical strings", async () => {
+        const { canonicalAssetAmount } = await import("../src/rfq");
+        expect(canonicalAssetAmount(5000n)).toBe("5000");
+        expect(canonicalAssetAmount(5000)).toBe("5000");
+        expect(canonicalAssetAmount("5000")).toBe("5000");
+        expect(() => canonicalAssetAmount(0)).toThrow(/positive/);
+        expect(() => canonicalAssetAmount(0n)).toThrow(/positive/);
+        expect(() => canonicalAssetAmount("01")).toThrow(/canonical/);
+        expect(() => canonicalAssetAmount(1.5)).toThrow(/safe integer/);
+    });
+
+    it("refuses malformed maker keys", async () => {
+        const { normalizeMakerPkScript, normalizeMakerPublicKey } = await import("../src/rfq");
+        expect(() => normalizeMakerPkScript(key(1))).toThrow(/34 bytes/);
+        expect(() => normalizeMakerPublicKey(new Uint8Array(33).fill(2))).toThrow(/x-only/);
+        expect(normalizeMakerPublicKey(key(1))).toBe(hex.encode(key(1)));
+        expect(normalizeMakerPkScript(p2tr(key(5)))).toBe(hex.encode(p2tr(key(5))));
+    });
+
+    it("gates arkade quotes on valid_until only (no timelock)", async () => {
+        const { assertArkadeFundable } = await import("../src/rfq");
+        const now = 1_800_000_000;
+        const base = quoteFixture({
+            pair: `arkade:BTC->arkade:${USD_ID}`,
+            from_amount: "5000",
+            to_amount: "4900",
+            valid_until: now + 30,
+        });
+        expect(() => assertArkadeFundable({ quote: base, now })).not.toThrow();
+        expect(() => assertArkadeFundable({ quote: base, now: now + 30 })).toThrow(/lapsed/);
+    });
+
+    it("verifyOfferAddress matches both address and script", async () => {
+        const { verifyOfferAddress, AddressMismatch: Mismatch } = await import("../src/rfq");
+        const derived = { address: "ark1qmine", swapPkScript: p2tr(key(5)) };
+        const quote = quoteFixture({
+            profile: {
+                offer_address: "ark1qmine",
+                offer_pk_script: hex.encode(p2tr(key(5))),
+            },
+        });
+        expect(verifyOfferAddress(quote, derived)).toBe(derived);
+        expect(() =>
+            verifyOfferAddress(quoteFixture({ profile: { offer_address: "ark1qother" } }), derived),
+        ).toThrow(Mismatch);
+    });
+
+    it("offerTermsFromQuote binds string to_amount as bigint", () => {
+        const wantAsset = asset.AssetId.fromBytes(hex.decode(USD_ID));
+        const terms = offerTermsFromQuote(quoteFixture({ to_amount: "12345" }), { wantAsset });
+        expect(terms.wantAmount).toBe(12_345n);
     });
 });

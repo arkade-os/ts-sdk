@@ -168,6 +168,8 @@ export {
     ARKADE_BTC,
     arkadeAssetLeg,
     arkadeSwapRequest,
+    assertArkadeFundable,
+    canonicalAssetAmount,
     deriveLightningReceive,
     deriveOnchainReceive,
     deriveOnchainSend,
@@ -181,6 +183,8 @@ export {
     lightningSendContract,
     type LightningSendContractParams,
     lightningSendRequest,
+    normalizeMakerPkScript,
+    normalizeMakerPublicKey,
     ONCHAIN_BTC,
     ONCHAIN_RECEIVE_PAIR,
     ONCHAIN_SEND_PAIR,
@@ -190,6 +194,7 @@ export {
     relayTransport,
     requestLightningReceive,
     requestLightningSend,
+    requestArkadeSwap,
     requestOnchainReceive,
     requestOnchainSend,
     type RfqQuote,
@@ -200,6 +205,7 @@ export {
     unilateralRefundDelay,
     unilateralRefundWithoutReceiverDelay,
     verifyLockupAddress,
+    verifyOfferAddress,
     verifyReceiveInvoice,
 } from "./rfq";
 export {
