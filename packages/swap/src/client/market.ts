@@ -66,6 +66,13 @@ export const marketKeyOf = (card: DiscoveredMarket): string => {
 };
 
 /**
+ * Whether a card names a rendezvous a request can be addressed to: a signing
+ * key, and at least one relay to reach it on.
+ */
+const hasRendezvous = (card: DiscoveredMarket): boolean =>
+    typeof card.discovery_pubkey === "string" && (card.transports?.nostr?.relays?.length ?? 0) > 0;
+
+/**
  * Whether a corridor card can actually be addressed.
  *
  * A corridor market is negotiated per trade over the rendezvous the card names,
@@ -76,13 +83,27 @@ export const marketKeyOf = (card: DiscoveredMarket): string => {
  * error that reads like an outage.
  */
 export const isAddressable = (card: DiscoveredMarket): boolean =>
-    !isRfqMarket(card) ||
-    (typeof card.discovery_pubkey === "string" &&
-        (card.transports?.nostr?.relays?.length ?? 0) > 0);
+    !isRfqMarket(card) || hasRendezvous(card);
 
-/** Which backend a card selects — the card decides it, never the client. */
+/**
+ * Which backend a card selects — the card decides it, never the client.
+ *
+ * A card with a leg off arkade has no other option: that route's terms exist
+ * only once a solver has quoted them. A card with both legs on arkade is
+ * negotiated too **when it names a rendezvous**, which is the one thing that
+ * separates the two asset cards in the wild: the solver that publishes relays
+ * and a discovery key is asking to be asked, and its quote is the binding
+ * artifact — signed, size-aware, and the thing whose `offer_address` the
+ * client's own derivation is checked against. A card that names no rendezvous
+ * advertises a price and nothing to negotiate with, so its own feed is the only
+ * thing that can price it.
+ *
+ * Not a second execution model and not a client switch: one request-for-quote
+ * shape over every route, with the card saying whether the answer comes back
+ * over the wire or is computed from the formula the card advertises.
+ */
 export const marketBackendOf = (card: DiscoveredMarket): MarketBackend =>
-    isRfqMarket(card) ? "rfq" : "feed";
+    isRfqMarket(card) || hasRendezvous(card) ? "rfq" : "feed";
 
 /**
  * The cards on a snapshot this client may act on at all, before any pair is

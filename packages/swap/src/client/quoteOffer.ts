@@ -143,7 +143,10 @@ export const quoteFromFeed = async (
             take: { asset: input.endpoints.take.asset, amount: plan.receive.atomic },
             market: input.market,
             expiresAt,
-            fee: { amount: spreadOf(plan), asset: input.endpoints.take.asset },
+            fee: {
+                amount: feedSpread(plan, plan.receive.atomic),
+                asset: input.endpoints.take.asset,
+            },
         },
         preparation: { backend: "feed", card: candidate.card, plan, give: candidate.give },
     };
@@ -157,9 +160,17 @@ export const quoteFromFeed = async (
  * be this subtraction divided by the price — a rounding introduced for the sake
  * of a denomination nobody asked for. What it measures is the concession: what
  * the same deposit would have bought at the feed price with no fee at all,
- * minus what the plan actually pays out.
+ * minus what the trader is actually paid out.
+ *
+ * `take` is a parameter rather than read off the plan because the plan is the
+ * reference price on both asset backends and the payout is not: a feed-priced
+ * quote pays out what the plan computed, and a negotiated one pays out the
+ * solver's `to_amount`. Measuring the second against the first is what makes a
+ * cross-asset fee a number at all — subtracting the two legs is meaningless
+ * when they carry different assets, so the card's own advertised price is the
+ * only reference either backend has.
  */
-const spreadOf = (plan: OfferPlan): bigint => {
+export const feedSpread = (plan: OfferPlan, take: bigint): bigint => {
     const fair = computeWantAmount({
         deposit: plan.deposit.atomic,
         give: plan.give,
@@ -167,7 +178,7 @@ const spreadOf = (plan: OfferPlan): bigint => {
         feeBps: 0,
         safetyBps: 0,
     });
-    const spread = fair - plan.receive.atomic;
+    const spread = fair - take;
     return spread > 0n ? spread : 0n;
 };
 
@@ -181,7 +192,7 @@ const feedExpiry = (card: DiscoveredMarket, feed: FeedFetch, now: number): numbe
 };
 
 /** The plan prices the legs that were asked for, in the orientation asked for. */
-const verifyPlanLegs = (
+export const verifyPlanLegs = (
     plan: OfferPlan,
     legs: { give: DiscoveryLeg; take: DiscoveryLeg },
     give: Side,

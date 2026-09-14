@@ -17,10 +17,12 @@ import {
     HDDescriptorProvider,
     InMemoryWalletRepository,
     MnemonicIdentity,
+    asset,
     getNetwork,
     type IWallet,
 } from "@arkade-os/sdk";
-import type { DiscoveredMarket, NetworkIndex } from "@arkade-os/solver-discovery";
+import { planOffer, type DiscoveredMarket, type NetworkIndex } from "@arkade-os/solver-discovery";
+import { offerContract } from "../../src/offer";
 import {
     LIGHTNING_RECEIVE_PAIR,
     LIGHTNING_SEND_PAIR,
@@ -150,6 +152,8 @@ export const rivalLightningCard: DiscoveredMarket = {
 };
 
 export const USD_ASSET_ID = "f121ac9b7656797cc68d1e8fecacfbaa2069ec1461edf0bf2f3c37404cb9791a0000";
+/** A second arkade asset, for the pair no market prices. */
+export const EUR_ASSET_ID = "3c6b5f1d8ea47b2099c0d4e5f6a7b8c9dae1f2031425364758697a8b9cadbe0f0000";
 
 /** An arkade-to-arkade market: feed-priced, no rendezvous, no corridor. */
 export const spotCard: DiscoveredMarket = {
@@ -168,6 +172,32 @@ export const spotCard: DiscoveredMarket = {
     source: "https://registry.example/regtest.json",
     sourceType: "registry",
 };
+
+/**
+ * The same asset market, negotiated: the spot card plus the rendezvous that
+ * makes it one.
+ *
+ * The only difference from {@link spotCard} is the two fields a request can be
+ * addressed to, which is the whole of the backend choice — a solver publishing
+ * relays and a discovery key is asking to be asked.
+ */
+export const assetCard: DiscoveredMarket = {
+    ...spotCard,
+    discovery_pubkey: SOLVER_DISCOVERY_KEY,
+    transports: { nostr: { relays: ["wss://relay.example"] } },
+};
+
+/** A negotiated card for two assets: a pair no market prices. */
+export const assetPairCard: DiscoveredMarket = {
+    ...assetCard,
+    pair: "USD/EUR",
+    base_asset: { id: USD_ASSET_ID, name: "US Dollar", ticker: "USD", decimals: 2 },
+    quote_asset: { id: EUR_ASSET_ID, name: "Euro", ticker: "EUR", decimals: 2 },
+};
+
+/** The wire pair for each direction of the negotiated asset market. */
+export const ASSET_BUY_PAIR = `arkade:BTC->arkade:${USD_ASSET_ID}`;
+export const ASSET_SELL_PAIR = `arkade:${USD_ASSET_ID}->arkade:BTC`;
 
 /** What the registry publishes: the cards without discovery's own provenance. */
 export const indexOf = (markets: DiscoveredMarket[]): NetworkIndex => ({
@@ -364,6 +394,74 @@ export const onchainSendAnswer = (
     } as RfqQuote;
 };
 
+/**
+ * The solver's answer on a negotiated asset market.
+ *
+ * Two things a fixed reply could not stand in for. It prices from the card's own
+ * formula, through discovery's `planOffer` — so a test that changes the price or
+ * the direction gets the number the card promises rather than one hard-coded
+ * beside it. And it derives the offer covenant from the maker position the
+ * request actually carried, so the client's `offer_address` check passing means
+ * the two derivations agreed rather than that neither ran.
+ */
+export const arkadeAssetAnswer = (
+    payload: Payload,
+    clock: SolverClock,
+    over: {
+        quote?: Partial<RfqQuote>;
+        profile?: Profile;
+        price?: number;
+        /** Override the payout, to price the double off its own card. */
+        toAmount?: bigint;
+    } = {},
+): RfqQuote => {
+    const profile = profileOf(payload);
+    const from = BigInt(payload.amount as string);
+    const buying = payload.pair === ASSET_BUY_PAIR;
+    const plan = planOffer({
+        market: assetCard,
+        give: buying ? "base" : "quote",
+        giveAmount: from,
+        feedValue: over.price ?? 100_000,
+        safetyBps: 0,
+    });
+    const to = over.toAmount ?? plan.receive.atomic;
+    const usd = asset.AssetId.fromString(USD_ASSET_ID);
+    const script = offerContract(
+        {
+            // The covenant binds what the fill must DELIVER, so the wanted
+            // amount is this quote's own payout.
+            wantAmount: to,
+            ...(buying ? { wantAsset: usd } : { offerAsset: usd }),
+            makerPkScript: hex.decode(profile.maker_pk_script as string),
+            makerPublicKey: hex.decode(profile.maker_public_key as string),
+            emulatorPubkey: EMULATOR_PUBKEY,
+            exitDelay: { type: "seconds", value: ARK_INFO.unilateralExitDelay },
+        },
+        OPERATOR_PUBKEY,
+    );
+    return {
+        v: 1,
+        type: "rfq_quote",
+        rfq_id: payload.rfq_id as string,
+        pair: payload.pair as string,
+        // Strings, as the solver emits them: an asset's precision is not
+        // knowable client-side, so this wire carries no JSON numbers.
+        from_amount: from.toString(),
+        to_amount: to.toString(),
+        solver_pubkey: hex.encode(SOLVER_PUBKEY),
+        valid_until: clock.validUntil,
+        // No `refund_locktime`: an offer covenant carries no timelock, so
+        // `valid_until` is this route's only clock.
+        profile: {
+            offer_address: script.address(NETWORK.hrp, OPERATOR_PUBKEY).encode(),
+            offer_pk_script: hex.encode(script.pkScript),
+            ...over.profile,
+        },
+        ...over.quote,
+    } as RfqQuote;
+};
+
 export type SolverAnswer = (payload: Payload) => RfqQuote | Promise<RfqQuote>;
 
 export interface SolverTransport extends AttestingRfqTransport {
@@ -408,6 +506,9 @@ export const solverFor = (clock: SolverClock): SolverAnswer => {
                 return lightningReceiveAnswer(payload, clock);
             case ONCHAIN_SEND_PAIR:
                 return onchainSendAnswer(payload, clock);
+            case ASSET_BUY_PAIR:
+            case ASSET_SELL_PAIR:
+                return arkadeAssetAnswer(payload, clock);
             default:
                 throw new Error(`no solver double for ${String(payload.pair)}`);
         }

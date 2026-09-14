@@ -1490,6 +1490,12 @@ export const assertArkadeFundable = (input: { quote: RfqQuote; now?: number }): 
  * (closed reason), {@link AddressMismatch} (never fund), or a gate error with
  * a stable `reason`.
  *
+ * `client.exchange()` now covers this route end to end — it opens the card's
+ * Nostr rendezvous, sends this same request, runs the full verification set,
+ * and registers, persists and funds in one step — so there is nothing left here
+ * that it does not do. What it additionally refuses is a transport that cannot
+ * say who answered, which this function, taking one from its caller, cannot.
+ *
  * Funding (caller's job, immediately after, before `valid_until`):
  * - BTC->asset (`wantAsset`): `wallet.send({ address, amount: Number(fundAmount), extensions: [extension] })`
  * - asset->BTC or asset->asset (`offerAsset`): `wallet.send({ address, amount: Number(carrierSats), assets: [{ assetId: offerAsset, amount: fundAmount }], extensions: [extension] })`
