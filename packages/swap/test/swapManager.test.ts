@@ -1100,10 +1100,12 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         expect(swap.failure).toMatch(/FORFEIT_CLOSURE_LOCKED/);
     });
 
-    it("treats an empty lockup as nothing left to do", async () => {
-        // The one place the manager settles for less than proof: the chain read
-        // could not resolve the spend, the refund push finds nothing to return,
-        // and there is no further move available.
+    it("does not end an unreadable lockup as a refund before the lag window closes", async () => {
+        // A push that finds nothing to return is a fact about the lockup, not
+        // proof that the money came home: the indexer may simply not be able to
+        // show the spend yet. Ending here would write `refunded` over a
+        // settlement that is merely late, so the wait stays open for the same
+        // window the refused push below and the receive leg already use.
         const s = spies({ refund: async () => null });
         const swap = lightningSwap();
         const m = manager({
@@ -1114,7 +1116,53 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         await m.addSwap(swap);
         await m.poll();
 
+        expect(swap.state).toBe("pending");
+        expect(swap.refundArkTxid).toBeUndefined();
+    });
+
+    it("ends an unreadable lockup as a refund once the lag window closes", async () => {
+        // Nothing left to observe and no further move available: the deadline
+        // is what ends the wait, exactly as it does for the refused push.
+        const s = spies({ refund: async () => null });
+        const swap = lightningSwap();
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: [] }),
+            now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
         expect(swap.state).toBe("refunded");
+        expect(swap.refundArkTxid).toBeUndefined();
+    });
+
+    it("let the settlement show late instead of recording it as a refund", async () => {
+        // The reported bug, end to end: the solver claimed the lockup, so the
+        // Lightning send succeeded, but the indexer could not produce the spend
+        // transaction. The refund push then finds nothing to return. Read as
+        // `refunded`, the swap would end on the wrong outcome and drop out of
+        // monitoring, so the claim would never be seen.
+        const state = {
+            vtxos: spentBy(CLAIM_SPEND.txid),
+            txs: [] as { txid: string; psbt: string }[],
+        };
+        const indexer = fakeIndexer(state);
+        const s = spies({ refund: async () => null });
+        const swap = lightningSwap();
+        const m = manager({ indexer, now: REFUND_LOCKTIME + 1, spies: s });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("pending");
+        expect(s.refunds).toEqual([RFQ_ID]);
+
+        // The indexer catches up. The next pass re-reads the lockup, finds the
+        // hash-verified claim, and ends the swap on what actually happened.
+        state.txs = [CLAIM_SPEND];
+        await m.poll();
+
+        expect(swap.state).toBe("settled");
         expect(swap.refundArkTxid).toBeUndefined();
     });
 });

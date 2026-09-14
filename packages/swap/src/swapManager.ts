@@ -1865,18 +1865,24 @@ export class RfqSwapManager {
             if (pushed) {
                 swap.refundArkTxid = pushed.arkTxid;
                 this.touch(swap);
+            } else if (now < swap.refundLocktime + REFUND_MTP_LAG_SECONDS) {
+                // `null` is "the lockup held nothing to return" — a fact about
+                // the lockup, and NOT proof that the money came home. Something
+                // spent it, and step 1 could not say what: that is how the pass
+                // reached here at all. Ending now would write `refunded` over a
+                // settlement that is merely late, so the payment lands and the
+                // record tells the trader their own money came back. Hold the
+                // wait open to the same deadline the refused push below uses,
+                // and let step 1 — which re-reads the lockup every pass — end
+                // the swap on the spend the moment the indexer can produce it.
+                return;
             }
-            // An empty lockup lands here too, and this is the ONE place the
-            // manager settles for less than proof. Step 1 already ended the
-            // swap `settled` on a hash-verified claim and `refunded` on a spend
-            // it could fully see, so a lockup that reads empty this far down is
-            // one step 1 came back `unknown` for — the indexer produced no
-            // outputs, or no transaction for the spend. There is nothing left
-            // to recover and no further move available, so the swap ends
-            // `refunded`. A settlement that only becomes observable after this
-            // point will therefore have been recorded as a refund; that is the
-            // cost of ending the wait at all, and it takes an indexer that
-            // cannot answer for the whole span past `refundLocktime`.
+            // The deadline. Either the push moved the lockup, or the whole
+            // median-time-past window passed with an indexer that could not
+            // answer and nothing left to recover, so no further move is
+            // available and the wait ends here. That still costs the
+            // distinction for a settlement that only becomes observable after
+            // this point; it is the cost of ending the wait at all.
             this.setState(swap, "refunded");
             this.emitAction(swap, "refundArkade");
         } catch (error) {
