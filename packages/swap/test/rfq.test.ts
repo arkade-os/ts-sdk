@@ -315,8 +315,9 @@ describe("requests", () => {
         });
     });
 
-    it("names the asset id in the pair, in both directions", () => {
+    it("names the asset ids in BTC-to-asset, asset-to-BTC, and asset-to-asset pairs", () => {
         const usd = asset.AssetId.fromString(USD_ID);
+        const chf = asset.AssetId.fromString(CHF_ID);
         const makerPkScript = p2tr(key(5));
         const makerPublicKey = key(1);
         const wanting = arkadeSwapRequest({
@@ -339,6 +340,16 @@ describe("requests", () => {
         }) as Record<string, unknown>;
         expect(offering.pair).toBe(`arkade:${USD_ID}->arkade:BTC`);
         expect(offering.amount).toBe("5000");
+
+        const trading = arkadeSwapRequest({
+            rfqId: RFQ_ID,
+            offerAsset: usd,
+            wantAsset: chf,
+            amount: 5000n,
+            makerPkScript,
+            makerPublicKey,
+        }) as Record<string, unknown>;
+        expect(trading.pair).toBe(`arkade:${USD_ID}->arkade:${CHF_ID}`);
     });
 
     /** Solvers compare pair strings byte for byte, so an uppercase id reaching
@@ -383,25 +394,11 @@ describe("requests", () => {
             });
     });
 
-    /** Each refusal names its own cause: neither set is degenerate, both set is
-     * a real corridor with no counterparty. One shared message would tell the
-     * BTC->BTC caller to wait for a solver that will never help it. */
-    it("refuses neither asset and both, for the reason that applies", () => {
-        const usd = asset.AssetId.fromString(USD_ID);
-        const chf = asset.AssetId.fromString(CHF_ID);
+    it("refuses a directionless BTC-to-BTC request", () => {
         const maker = { makerPkScript: p2tr(key(5)), makerPublicKey: key(1) };
         expect(() => arkadeSwapRequest({ rfqId: RFQ_ID, amount: 1, ...maker })).toThrow(
-            /exactly one.*not a swap/s,
+            /at least one.*not a swap/s,
         );
-        expect(() =>
-            arkadeSwapRequest({
-                rfqId: RFQ_ID,
-                offerAsset: usd,
-                wantAsset: chf,
-                amount: 1,
-                ...maker,
-            }),
-        ).toThrow(/no solver quotes it yet/);
     });
 
     it("refuses exact-out client-side: the solver answers exact_out_unsupported", () => {
@@ -435,7 +432,7 @@ describe("requests", () => {
         });
     });
 
-    it("mirrors the wire's pair-length cap, dormant until asset->asset lands", () => {
+    it("mirrors the wire's pair-length cap for asset-to-asset", () => {
         expect(MAX_PAIR_LENGTH).toBe(158);
         const both = rfqPair(
             arkadeAssetLeg(asset.AssetId.fromString(USD_ID)),
@@ -443,16 +440,15 @@ describe("requests", () => {
         );
         expect(both.length).toBe(152);
         expect(() => assertPairLength("x".repeat(MAX_PAIR_LENGTH + 1))).toThrow(/158/);
-        // What the builder can actually emit today — the number that makes the
-        // guard unreachable until the exactly-one-asset rule relaxes.
         const request = arkadeSwapRequest({
             rfqId: RFQ_ID,
             wantAsset: asset.AssetId.fromString(USD_ID),
+            offerAsset: asset.AssetId.fromString(CHF_ID),
             amount: 1,
             makerPkScript: p2tr(key(5)),
             makerPublicKey: key(1),
         }) as Record<string, unknown>;
-        expect((request.pair as string).length).toBe(87);
+        expect((request.pair as string).length).toBe(152);
     });
 });
 
@@ -751,10 +747,17 @@ describe("relayTransport", () => {
 describe("offerTermsFromQuote", () => {
     it("binds the quoted to_amount as the offer's wantAmount", () => {
         const wantAsset = asset.AssetId.fromBytes(hex.decode(USD_ID));
+        const offerAsset = asset.AssetId.fromBytes(hex.decode(CHF_ID));
         const terms = offerTermsFromQuote(quoteFixture({ to_amount: 12_345 }), { wantAsset });
         expect(terms.wantAmount).toBe(12_345n);
         expect(terms.wantAsset).toBe(wantAsset);
-        expect(() => offerTermsFromQuote(quoteFixture(), {})).toThrow(/exactly one/);
+        expect(
+            offerTermsFromQuote(quoteFixture({ to_amount: "54321" }), {
+                wantAsset,
+                offerAsset,
+            }),
+        ).toEqual({ wantAmount: 54_321n, wantAsset });
+        expect(() => offerTermsFromQuote(quoteFixture(), {})).toThrow(/at least one/);
     });
 });
 

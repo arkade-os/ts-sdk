@@ -351,8 +351,8 @@ export const lightningSendRequest = (input: {
     },
 });
 
-/** The rfq_request for an arkade↔arkade swap. Exactly one side may name an
- * asset id per direction (BTC has none), and the id is the leg itself — see
+/** The rfq_request for an arkade↔arkade swap. At least one side names an asset
+ * id (BTC has none), and the id is the leg itself — see
  * {@link arkadeAssetLeg}.
  *
  * Wire-compatible with the reference solver (`AssetRfqRequest`, strict):
@@ -381,19 +381,10 @@ export const arkadeSwapRequest = (input: {
      * `cancel` path's `user` signer. */
     makerPublicKey: Uint8Array | string;
 }): Record<string, unknown> => {
-    // Both refusals say "exactly one", but the causes differ and so do the
-    // remedies: neither side named is a degenerate request, both sides named is
-    // a real corridor still waiting on a counterparty.
     if (!input.wantAsset && !input.offerAsset) {
         throw new Error(
-            "set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC) — " +
+            "set at least one of wantAsset or offerAsset — " +
                 "with neither set both legs are BTC, which is not a swap",
-        );
-    }
-    if (input.wantAsset && input.offerAsset) {
-        throw new Error(
-            "set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC) — " +
-                "asset->asset is nameable on the wire but no solver quotes it yet",
         );
     }
     if (input.amountSide !== undefined && input.amountSide !== "from") {
@@ -1337,15 +1328,21 @@ export async function requestLightningSend(
  * transaction that delivers the quoted want-amount to the trader, so the
  * solver fills or nothing moves. There is no rfq_fill message and no refund
  * timelock; an unfilled offer is cancelled cooperatively (`cancelOffer`).
+ *
+ * For asset-to-asset, the offer contract commits to the wanted asset only.
+ * The offered/deposit asset is carried by the funding VTXO and its asset
+ * packet; it is not part of the covenant derivation.
  */
 export const offerTermsFromQuote = (
     quote: RfqQuote,
     assets: { wantAsset?: asset.AssetId; offerAsset?: asset.AssetId },
 ): { wantAmount: bigint; wantAsset?: asset.AssetId; offerAsset?: asset.AssetId } => {
-    if (Boolean(assets.wantAsset) === Boolean(assets.offerAsset)) {
-        throw new Error("set exactly one of wantAsset or offerAsset");
+    if (!assets.wantAsset && !assets.offerAsset) {
+        throw new Error("set at least one of wantAsset or offerAsset");
     }
-    return { wantAmount: BigInt(quote.to_amount), ...assets };
+    const wantAmount = BigInt(quote.to_amount);
+    if (assets.wantAsset) return { wantAmount, wantAsset: assets.wantAsset };
+    return { wantAmount, offerAsset: assets.offerAsset };
 };
 
 /** Compare-only check of the solver's offer address against YOUR OWN
@@ -1402,7 +1399,7 @@ export const assertArkadeFundable = (input: { quote: RfqQuote; now?: number }): 
  *
  * Funding (caller's job, immediately after, before `valid_until`):
  * - BTC->asset (`wantAsset`): `wallet.send({ address, amount: Number(fundAmount), extensions: [extension] })`
- * - asset->BTC (`offerAsset`): `wallet.send({ address, amount: Number(carrierSats), assets: [{ assetId, amount: fundAmount }], extensions: [extension] })`
+ * - asset->BTC or asset->asset (`offerAsset`): `wallet.send({ address, amount: Number(carrierSats), assets: [{ assetId: offerAsset, amount: fundAmount }], extensions: [extension] })`
  */
 export async function requestArkadeSwap(
     wallet: IWallet,
@@ -1439,8 +1436,8 @@ export async function requestArkadeSwap(
     /** Ready for `wallet.send`'s `extensions`. */
     extension: { type: number; payload: Uint8Array };
 }> {
-    if (Boolean(params.wantAsset) === Boolean(params.offerAsset)) {
-        throw new Error("set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC)");
+    if (!params.wantAsset && !params.offerAsset) {
+        throw new Error("set at least one of wantAsset or offerAsset; BTC-to-BTC is not a swap");
     }
     const rfqId = params.rfqId ?? newRfqId();
     const [makerAddress, makerPublicKey] = await Promise.all([
