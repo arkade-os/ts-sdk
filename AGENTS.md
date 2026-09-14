@@ -5,10 +5,8 @@ This file provides guidance to AI coding assistants when working with code in th
 ## Reference Implementation & Technical Direction
 
 **The .NET Ark SDK (`NArk`, ArkLabsHQ) is the reference implementation for this TypeScript SDK** —
-for feature parity and, more broadly, for technical direction and architecture. When designing a new
-feature, refactoring, or resolving an ambiguity about how something *should* work, check how `NArk`
-does it and align with it unless there's a TypeScript- or platform-specific reason to diverge (and
-note the reason when you do). A local checkout typically lives alongside this repo at `../dotnet-sdk`.
+for feature parity and, more broadly, for technical direction and architecture. A local checkout
+typically lives alongside this repo at `../dotnet-sdk`.
 
 Context for why this matters: this TypeScript SDK began as a fairly literal port of the Go SDK. That
 origin left it carrying Go idioms and structural choices that don't fit TypeScript well, so parts of
