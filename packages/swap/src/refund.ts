@@ -362,8 +362,6 @@ export type LockupSpendIndexer = Pick<RestIndexerProvider, "getVtxos" | "getVirt
 /**
  * What chain data says became of a swap lockup — the whole answer, with no
  * solver involvement and nothing taken on the solver's word.
- *
- * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export interface LockupSpend {
     /** What the vtxo's `spentBy` names — the checkpoint, never the ark
@@ -374,7 +372,6 @@ export interface LockupSpend {
     txid?: string;
 }
 
-/** @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export type LockupFate =
     /** At least one output at the lockup is still unspent. Not over. */
     | { fate: "open" }
@@ -468,8 +465,6 @@ const candidateWitnessItems = (tx: Transaction, inputIndex: number): Uint8Array[
  *
  * Ask-the-indexer, don't-trust-local-state: read fresh on every poll, never
  * cached, the same posture {@link findLockupVtxos} already establishes.
- *
- * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function readLockupFate(
     indexer: LockupSpendIndexer,
@@ -591,8 +586,6 @@ export async function readLockupFate(
  * so the whole push is refused with {@link LockupNeedsRecoveryError} naming the
  * outpoints, rather than submitted and rejected. Filtering them out silently
  * would be worse still: it would report success over money that never moved.
- *
- * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function pushRefundWithoutReceiver(
     operator: SwapOperator,

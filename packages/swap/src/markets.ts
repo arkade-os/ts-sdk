@@ -257,7 +257,6 @@ export const findMarket = (
 // ponytail: no preFeeDisplayRate here — the pre-fee Rate-row derivation is
 // display-only; lift it from the wallet if a second consumer needs it
 
-/** @deprecated Use `client.markets()`; pricing is internal to `client.quote()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export type PlanError =
     | "insufficient-balance"
     | "side-disabled"
