@@ -61,10 +61,7 @@ import { RFQ_TERMINAL_STATES, type RfqStatus, type RfqTransport } from "./rfq";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** True for the states after which the solver will report nothing further.
- *
- * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
- */
+/** True for the states after which the solver will report nothing further. */
 export const isRfqTerminal = (state: string): boolean =>
     (RFQ_TERMINAL_STATES as readonly string[]).includes(state);
 
@@ -103,8 +100,6 @@ const isResolved = (state: string): boolean =>
  * restart it after a network blip — nothing is lost by doing so, since the
  * refund path this feeds is gated on an absolute timelock that does not
  * expire.
- *
- * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function awaitRfqResolution(
     transport: RfqTransport,
@@ -159,13 +154,9 @@ export const walletOperator = (wallet: IWallet): SwapOperator => {
     };
 };
 
-/** @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export type RefundIndexer = Pick<RestIndexerProvider, "getVtxos">;
 
-/** A still-refundable virtual output sitting at the swap lockup.
- *
- * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
- */
+/** A still-refundable virtual output sitting at the swap lockup. */
 export interface LockupVtxo {
     txid: string;
     vout: number;
@@ -223,8 +214,6 @@ export interface LockupVtxo {
  *   sweeps every recoverable output in ONE settlement and has no CLTV
  *   awareness, so recovering early can fail the whole batch rather than just
  *   this output.
- *
- * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export class LockupNeedsRecoveryError extends Error {
     readonly name = "LockupNeedsRecoveryError";
@@ -306,8 +295,6 @@ export class LockupNeedsRecoveryError extends Error {
  * module does not have. The two queries below ask the indexer itself and need
  * neither. Ask-the-indexer, don't-trust-local-state — the same posture
  * {@link readLockupFate} takes, and for the same reason: this decides money.
- *
- * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function findLockupVtxos(
     indexer: RefundIndexer,
@@ -687,7 +674,6 @@ export async function pushRefundWithoutReceiver(
  */
 export const REFUND_MTP_LAG_SECONDS = 2 * 60 * 60;
 
-/** @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export type RefundOutcome =
     /** The solver resolved it — claimed (`settled`) or returned it (`refunded`). */
     | { outcome: "resolved"; status: RfqStatus }

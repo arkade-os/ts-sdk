@@ -2752,7 +2752,10 @@ describe("RfqSwapManager — the lockup as a contract", () => {
         // reports which failure this is, unflattened, so the caller can act.
         const swept = [{ txid: "55".repeat(32), vout: 3, value: 8_000, recoverable: true }];
         const s = spies({
-            refund: () => Promise.reject(new LockupNeedsRecoveryError(["55".repeat(32) + ":3"])),
+            refund: () =>
+                Promise.reject(
+                    new LockupNeedsRecoveryError(["55".repeat(32) + ":3"], BigInt(REFUND_LOCKTIME)),
+                ),
         });
         const seen: unknown[] = [];
         const m = manager({ now: REFUND_LOCKTIME, spies: s });

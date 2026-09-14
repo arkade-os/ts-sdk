@@ -31,8 +31,6 @@ export type RefundBlockedReason =
 /**
  * The wallet cannot produce this swap's spending key, so no local refund is
  * possible: not a failure to retry, a capability this wallet does not have.
- *
- * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export class RefundNotLocallyPossibleError extends Error {
     override readonly name = "RefundNotLocallyPossibleError";
@@ -52,8 +50,6 @@ export class RefundNotLocallyPossibleError extends Error {
  * answers about a descriptor; only this knows that a record without one is a
  * permanent refusal rather than a `TypeError` at the push site — which the
  * manager would treat as retryable.
- *
- * @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function senderIdentityForSwapRecord(
     wallet: IWallet,
