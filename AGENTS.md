@@ -2,19 +2,6 @@
 
 This file provides guidance to AI coding assistants when working with code in this repository.
 
-## Reference Implementation & Technical Direction
-
-**The .NET Ark SDK (`NArk`, ArkLabsHQ) is the reference implementation for this TypeScript SDK** —
-for feature parity and, more broadly, for technical direction and architecture. A local checkout
-typically lives alongside this repo at `../dotnet-sdk`.
-
-Context for why this matters: this TypeScript SDK began as a fairly literal port of the Go SDK. That
-origin left it carrying Go idioms and structural choices that don't fit TypeScript well, so parts of
-the codebase are shaped by the translation rather than by what's idiomatic or best for this platform.
-Treat such patterns as legacy to be improved, not as precedent to extend. The `NArk` codebase is the
-better-architected, more deliberately designed expression of the same domain; prefer its structure
-and naming when they conflict with the inherited Go-shaped patterns here.
-
 ## Core Package, Plugins & Code Reuse
 
 `@arkade-os/sdk` is the core package. `@arkade-os/swap` should be treated as a plugin-style
