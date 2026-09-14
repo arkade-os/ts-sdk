@@ -1120,17 +1120,28 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         expect(swap.refundArkTxid).toBeUndefined();
     });
 
-    it("ends an unreadable lockup as a refund once the lag window closes", async () => {
-        // Nothing left to observe and no further move available: the deadline
-        // is what ends the wait, exactly as it does for the refused push.
+    it("holds the wait open through the lag window and ends it at the deadline", async () => {
+        // The window has to be a delay and not an endless one: every pass
+        // inside it re-asks and decides nothing, and the deadline is what ends
+        // the swap — so a lockup that never becomes readable cannot keep a swap
+        // monitored forever. Nothing left to observe, no further move
+        // available, same ending the refused push gets.
+        let now = REFUND_LOCKTIME + 1;
         const s = spies({ refund: async () => null });
         const swap = lightningSwap();
         const m = manager({
             indexer: fakeIndexer({ vtxos: [] }),
-            now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS,
+            now: () => now,
             spies: s,
         });
         await m.addSwap(swap);
+
+        while (now < REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS) {
+            await m.poll();
+            expect(swap.state).toBe("pending");
+            now += 600;
+        }
+
         await m.poll();
 
         expect(swap.state).toBe("refunded");
