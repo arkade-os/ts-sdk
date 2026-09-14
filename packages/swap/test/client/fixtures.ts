@@ -187,6 +187,28 @@ export const assetCard: DiscoveredMarket = {
     transports: { nostr: { relays: ["wss://relay.example"] } },
 };
 
+/**
+ * The same two markets, spelled the way a current registry publishes them:
+ * CAIP-19 ids on both sides, where the cards above carry the legacy `"btc"` and
+ * bare-68-hex pair.
+ *
+ * Both forms are live — the reducer still emits legacy cards and a solver
+ * emits canonical ones — so every step between the routing read and the plan's
+ * own pair check has to accept them equally. These exist because one of those
+ * steps did not.
+ */
+export const canonicalSpotCard: DiscoveredMarket = {
+    ...spotCard,
+    base_asset: { ...spotCard.base_asset, id: "arkade:regtest/slip44:0" },
+    quote_asset: { ...spotCard.quote_asset, id: `arkade:regtest/asset:${USD_ASSET_ID}` },
+};
+
+export const canonicalAssetCard: DiscoveredMarket = {
+    ...canonicalSpotCard,
+    discovery_pubkey: SOLVER_DISCOVERY_KEY,
+    transports: { nostr: { relays: ["wss://relay.example"] } },
+};
+
 /** A negotiated card for two assets: a pair no market prices. */
 export const assetPairCard: DiscoveredMarket = {
     ...assetCard,

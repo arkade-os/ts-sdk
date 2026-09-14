@@ -27,6 +27,7 @@
  */
 import {
     computeWantAmount,
+    marketLegKey,
     quoteOffer,
     type DiscoveredMarket,
     type OfferPlan,
@@ -191,15 +192,32 @@ const feedExpiry = (card: DiscoveredMarket, feed: FeedFetch, now: number): numbe
     return from + FEED_TTL_MS / 1000;
 };
 
-/** The plan prices the legs that were asked for, in the orientation asked for. */
+/**
+ * The plan prices the legs that were asked for, in the orientation asked for.
+ *
+ * Compared through `marketLegKey` rather than the raw `AssetInfo.id`, because a
+ * card spells its sides two ways and both reach here: the canonical CAIP-19 id
+ * a current registry publishes, and the legacy `"btc"`-or-68-hex form an older
+ * card carries beside a `*_corridor` field. That helper normalises the second
+ * into `<corridor>:<id>` and leaves the first alone, which is exactly the pair
+ * of spellings `eligibleMarkets` already selects by — so this check accepts the
+ * cards the routing read accepted, instead of refusing a canonical one as a
+ * pair mismatch it never was.
+ */
 export const verifyPlanLegs = (
     plan: OfferPlan,
     legs: { give: DiscoveryLeg; take: DiscoveryLeg },
     give: Side,
 ): void => {
-    const expected = `${legs.give.assetId}->${legs.take.assetId}`;
-    const priced = `${plan.deposit.asset.id}->${plan.receive.asset.id}`;
-    if (expected !== priced || plan.give !== give) {
-        throw new QuoteVerificationFailed("pair", expected, priced);
+    const take: Side = give === "base" ? "quote" : "base";
+    const spelled = (side: Side): string => marketLegKey(plan.market, side);
+    const names = (side: Side, leg: DiscoveryLeg): boolean =>
+        spelled(side) === leg.marketId || spelled(side) === `${leg.corridor}:${leg.assetId}`;
+    if (plan.give !== give || !names(give, legs.give) || !names(take, legs.take)) {
+        throw new QuoteVerificationFailed(
+            "pair",
+            `${legs.give.marketId}->${legs.take.marketId}`,
+            `${spelled(give)}->${spelled(take)}`,
+        );
     }
 };

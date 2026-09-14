@@ -37,6 +37,8 @@ import {
     arkadeAssetAnswer,
     assetCard,
     assetPairCard,
+    canonicalAssetCard,
+    canonicalSpotCard,
     clockAt,
     feedServing,
     hdWallet,
@@ -227,6 +229,26 @@ describe("quote() on a negotiated asset market", () => {
         expect(quote.take.amount).toBe(CARD_PAYOUT);
         expect(quote.solver).toBeUndefined();
         expect(transport.sent).toHaveLength(0);
+    });
+
+    it("quotes a card that names its legs in CAIP-19, on either backend", async () => {
+        // What a deployed solver publishes. The plan's pair check read the
+        // card's `AssetInfo.id` raw and compared it against the leg's short id,
+        // so a canonical card failed as a pair mismatch on both backends —
+        // after the request had already gone out on the negotiated one.
+        const negotiated = await setup({ snapshot: [canonicalAssetCard] });
+        const quote = await negotiated.client.quote(buy());
+
+        expect(quote.market.backend).toBe("rfq");
+        expect(quote.give).toEqual({ asset: BTC, amount: 10_000n });
+        expect(quote.take).toEqual({ asset: USD, amount: CARD_PAYOUT });
+        expect(negotiated.transport.sent[0]).toMatchObject({ pair: ASSET_BUY_PAIR });
+
+        const priced = await setup({ snapshot: [canonicalSpotCard] });
+        const fromFeed = await priced.client.quote(buy());
+
+        expect(fromFeed.market.backend).toBe("feed");
+        expect(fromFeed.take.amount).toBe(CARD_PAYOUT);
     });
 });
 
