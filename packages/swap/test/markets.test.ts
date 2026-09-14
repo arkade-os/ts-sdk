@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { planOffer, quoteOffer, type DiscoveredMarket } from "@arkade-os/solver-discovery";
+import {
+    planOffer,
+    quoteOffer,
+    registryIndexUrl,
+    type DiscoveredMarket,
+    type Network,
+} from "@arkade-os/solver-discovery";
 import {
     discoverMarkets,
     findMarket,
@@ -360,6 +366,50 @@ describe("discoverMarkets caching", () => {
         expect(await discoverMarkets(opts)).toHaveLength(1);
         expect(await discoverMarkets(opts)).toHaveLength(1);
         expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it("follows the network default when registryUrl is omitted, caching under the resolved URL", async () => {
+        const resolved = registryIndexUrl("mutinynet");
+        const fetchImpl = jsonFetch([registryIndex()]);
+        const markets = await discoverMarkets({ network: "mutinynet", repository, fetchImpl });
+        expect(markets).toHaveLength(1);
+        expect(fetchImpl.mock.calls[0][0]).toBe(resolved);
+        expect((await repository.getCachedMarkets("mutinynet", resolved))?.markets).toHaveLength(1);
+
+        // a second omitted-URL call serves that cache instead of refetching
+        const again = jsonFetch([registryIndex()]);
+        expect(
+            await discoverMarkets({ network: "mutinynet", repository, fetchImpl: again }),
+        ).toHaveLength(1);
+        expect(again).not.toHaveBeenCalled();
+    });
+
+    it("uses a caller-supplied registryUrl instead of the default", async () => {
+        const url = "https://solver-registry.example.test/mutinynet.json";
+        const fetchImpl = jsonFetch([registryIndex()]);
+        const markets = await discoverMarkets({
+            network: "mutinynet",
+            registryUrl: url,
+            repository,
+            fetchImpl,
+        });
+        expect(markets).toHaveLength(1);
+        expect(fetchImpl.mock.calls[0][0]).toBe(url);
+        expect((await repository.getCachedMarkets("mutinynet", url))?.markets).toHaveLength(1);
+        expect(
+            await repository.getCachedMarkets("mutinynet", registryIndexUrl("mutinynet")),
+        ).toBeUndefined();
+    });
+
+    it("yields no markets for an unrecognised network, without fetching", async () => {
+        const fetchImpl = jsonFetch([registryIndex()]);
+        const markets = await discoverMarkets({
+            network: "not-a-network" as Network,
+            repository,
+            fetchImpl,
+        });
+        expect(markets).toEqual([]);
+        expect(fetchImpl).not.toHaveBeenCalled();
     });
 });
 

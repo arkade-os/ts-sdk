@@ -80,7 +80,8 @@ funds an offer should keep cancelling within reach.
    offers always derive identical swap addresses — the program JSONs are hashed into the address,
    so their bytes are frozen (guarded by a golden test).
 2. **`markets`** — solver discovery and pricing guardrails: `discoverMarkets` (1-hour cached
-   registry fetch with stale-cache fallback), `findMarket`, `validatePlan` (balance, both-side
+   registry fetch with stale-cache fallback; it follows the network's published index unless
+   `registryUrl` overrides it), `findMarket`, `validatePlan` (balance, both-side
    limits, BTC-leg dust), `QUOTE_OPTIONS`, and `makeCachedFeedFetch` for rate-limited price feeds.
 3. **`store`** — the persisted `AssetSwap` records (`getAssetSwaps`/`addAssetSwap`/
    `updateAssetSwap`), thin helpers over an `AssetSwapRepository`. Read failures degrade to an

@@ -19,6 +19,7 @@ import {
     discover,
     isNetwork,
     marketLegKey,
+    registryIndexUrl,
     sideLimits,
     type DiscoveredMarket,
     type LocalCardInput,
@@ -140,7 +141,11 @@ const readMarketsCache = async (
 
 export interface DiscoverMarketsOptions {
     network: Network;
-    /** The network's solver registry index URL; no registry means no markets. */
+    /** Overrides the registry this network publishes by default. Omit (or pass
+     * `undefined`) to follow `@arkade-os/solver-discovery`'s per-network
+     * default index, which the library can move in a release without a client
+     * change; this package never hardcodes the URL. The markets cache is keyed
+     * by the URL actually followed, default included. */
     registryUrl: string | undefined;
     /** Backs the 1-hour markets cache and its stale fallback. Omit for a
      * one-shot discovery that always hits the registry. */
@@ -161,9 +166,11 @@ export interface DiscoverMarketsOptions {
 }
 
 /**
- * Markets from the network's solver registry; [] when none is configured.
- * Registry content changes rarely, so results are cached for an hour and a
- * stale cache backstops an unreachable registry (quotes stay live either way).
+ * Markets from this network's solver registry — the caller's `registryUrl` when
+ * given, else the network's published default. Only an unrecognised network
+ * yields []. Registry content changes rarely, so results are cached for an hour
+ * and a stale cache backstops an unreachable registry (quotes stay live either
+ * way).
  */
 export const discoverMarkets = async (
     options: DiscoverMarketsOptions,
@@ -177,12 +184,17 @@ export const discoverMarkets = async (
         fetchImpl,
         useCache = true,
     } = options;
-    if (!registry || !isNetwork(network)) return [];
-    const cached = repository && (await readMarketsCache(repository, network, registry));
+    if (!isNetwork(network)) return [];
+    // undefined follows the network's published default; [] would opt out of
+    // it. Derive the cache key from the same list, so a defaulted fetch is
+    // keyed by the URL `discover()` actually reads and never a second copy.
+    const registries = registry ? [registry] : undefined;
+    const registryKey = registries?.[0] ?? registryIndexUrl(network);
+    const cached = repository && (await readMarketsCache(repository, network, registryKey));
     if (useCache && cached && Date.now() - cached.fetchedAt < MARKETS_CACHE_TTL_MS)
         return cached.markets;
     const { markets, sources, warnings } = await discover({
-        registries: [registry],
+        registries,
         localCards,
         network,
         fetchImpl,
@@ -194,7 +206,7 @@ export const discoverMarkets = async (
     if (!reachable && cached) return cached.markets;
     if (reachable && repository) {
         try {
-            await repository.saveCachedMarkets(network, registry, {
+            await repository.saveCachedMarkets(network, registryKey, {
                 markets,
                 fetchedAt: Date.now(),
             });

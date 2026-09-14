@@ -72,7 +72,9 @@ localStorage adapter to write:
         useCache,
     });
     ```
-    (The `network`-card filtering and registry-URL lookup stay wallet concerns.)
+    (The `network`-card filtering stays a wallet concern. The registry URL is now optional:
+    `discoverMarkets` follows the network's published default unless `registryUrl` overrides it,
+    so a caller no longer has to supply one.)
     The markets cache moved out of localStorage into the repository, so the old
     `swapMarkets-*` entries are orphaned — one cold refetch, and the data migration in §3
     can delete them alongside the swap keys.
