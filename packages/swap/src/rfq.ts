@@ -86,6 +86,7 @@ import {
 } from "@arkade-os/sdk";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
+import { ASSET_CARRIER_SATS, createOffer } from "./offer";
 
 /** Decode a solver-supplied hex field, turning a malformed value (odd length,
  * non-hex chars) into a solver-blaming diagnostic instead of a bare
@@ -96,6 +97,16 @@ const solverHex = (value: string, field: string): Uint8Array => {
     } catch {
         throw new Error(`solver sent malformed hex for ${field}`);
     }
+};
+
+/** Sats amount off an HTLC-class quote. Asset-class quotes carry strings and
+ * must never reach an HTLC derivation — a string here is a misrouted quote,
+ * not a coercible one. */
+const quoteSats = (value: number | string, field: string): number => {
+    if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+        throw new Error(`HTLC quote carries a non-sats ${field}: ${String(value)}`);
+    }
+    return value;
 };
 
 // ── Pairs ────────────────────────────────────────────────────────────────────
@@ -283,8 +294,11 @@ export interface RfqQuote {
     type: "rfq_quote";
     rfq_id: string;
     pair: string;
-    from_amount: number;
-    to_amount: number;
+    /** Sats on HTLC-class corridors (number); canonical decimal string on
+     * arkade↔arkade asset legs (bigint range, see WIRE_ASSET_AMOUNT on the
+     * solver). */
+    from_amount: number | string;
+    to_amount: number | string;
     solver_pubkey: string;
     valid_until: number;
     /** HTLC-class quotes only; absent for arkade↔arkade. */
@@ -294,6 +308,8 @@ export interface RfqQuote {
         payment_hash?: string;
         lockup_address?: string;
         refund_without_receiver_delay?: number;
+        offer_address?: string;
+        offer_pk_script?: string;
     };
     [key: string]: unknown;
 }
@@ -335,33 +351,45 @@ export const lightningSendRequest = (input: {
     },
 });
 
-/** The rfq_request for an arkade↔arkade swap. Exactly one side may name an
- * asset id per direction (BTC has none), and the id is the leg itself — see
- * {@link arkadeAssetLeg}. Forward-looking: the wire shape is specified, the
- * reference solver does not serve it yet. */
+/** The rfq_request for an arkade↔arkade swap. At least one side names an asset
+ * id (BTC has none), and the id is the leg itself — see
+ * {@link arkadeAssetLeg}.
+ *
+ * Wire-compatible with the reference solver (`AssetRfqRequest`, strict):
+ * `amount` is a canonical decimal string of atomic units (never a JSON
+ * number — an Arkade asset's precision is not knowable client-side, so the
+ * losslessness carve-out cannot be checked), `amount_side` is exact-in only
+ * (`"from"`), and `profile` carries the trader's own covenant position
+ * (`maker_pk_script`, `maker_public_key`) — the fill pays that script, and
+ * `cancel` is signed by that key. */
 export const arkadeSwapRequest = (input: {
     rfqId: string;
     /** Asset the trader deposits; omit when depositing BTC. */
     offerAsset?: asset.AssetId;
     /** Asset the trader wants; omit when wanting BTC. */
     wantAsset?: asset.AssetId;
-    amountSide: "from" | "to";
-    /** Integer base units of the side named by `amountSide`. */
-    amount: number;
+    /** Exact-in only. `"to"` is refused client-side: the solver answers
+     * `exact_out_unsupported`, since the two legs are different assets. */
+    amountSide?: "from" | "to";
+    /** Atomic units of the deposit (`from`) leg. bigint-safe: encoded as a
+     * canonical decimal string on the wire. */
+    amount: bigint | number | string;
+    /** Trader's own taproot scriptPubKey (34 bytes, `OP_1 <32-byte program>`),
+     * as bytes or lowercase hex. The covenant's `makerWP` minus its prefix. */
+    makerPkScript: Uint8Array | string;
+    /** Trader's own x-only key (32 bytes), as bytes or lowercase hex. The
+     * `cancel` path's `user` signer. */
+    makerPublicKey: Uint8Array | string;
 }): Record<string, unknown> => {
-    // Both refusals say "exactly one", but the causes differ and so do the
-    // remedies: neither side named is a degenerate request, both sides named is
-    // a real corridor still waiting on a counterparty.
     if (!input.wantAsset && !input.offerAsset) {
         throw new Error(
-            "set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC) — " +
+            "set at least one of wantAsset or offerAsset — " +
                 "with neither set both legs are BTC, which is not a swap",
         );
     }
-    if (input.wantAsset && input.offerAsset) {
+    if (input.amountSide !== undefined && input.amountSide !== "from") {
         throw new Error(
-            "set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC) — " +
-                "asset->asset is nameable on the wire but no solver quotes it yet",
+            'arkade↔arkade quotes are exact-in only: use amountSide "from" with the deposit amount',
         );
     }
     const pair = rfqPair(
@@ -374,15 +402,71 @@ export const arkadeSwapRequest = (input: {
         type: "rfq_request",
         rfq_id: input.rfqId,
         pair,
-        amount_side: input.amountSide,
-        amount: input.amount,
-        // The pair is the only place the asset ids appear. Repeating them here
-        // would be a key the solver's `.strict()` profile schema does not
-        // declare, and an undeclared key is `unsupported_payload` — a refusal,
-        // not an ignored extra. Empty, not absent: `profile` is required on
-        // every other request shape this wire carries.
-        profile: {},
+        amount_side: "from",
+        amount: canonicalAssetAmount(input.amount),
+        // The pair names the assets; the profile names the trader. Both are
+        // covenant parameters, and the solver's `.strict()` schema refuses
+        // anything else — an undeclared key is `unsupported_payload`.
+        profile: {
+            maker_pk_script: normalizeMakerPkScript(input.makerPkScript),
+            maker_public_key: normalizeMakerPublicKey(input.makerPublicKey),
+        },
     };
+};
+
+/** Canonical decimal string of atomic units: ASCII digits, no sign, point,
+ * exponent, or leading zero (unless the value is exactly "0"). bigint passes
+ * through; number must be a safe integer; string must already be canonical. */
+export const canonicalAssetAmount = (amount: bigint | number | string): string => {
+    if (typeof amount === "bigint") {
+        if (amount <= 0n) throw new Error(`amount must be positive, got ${amount}`);
+        return amount.toString();
+    }
+    if (typeof amount === "number") {
+        if (!Number.isSafeInteger(amount) || amount <= 0) {
+            throw new Error(`amount must be a positive safe integer, got ${amount}`);
+        }
+        return String(amount);
+    }
+    if (!/^(0|[1-9][0-9]*)$/.test(amount) || BigInt(amount) <= 0n) {
+        throw new Error(`amount must be a canonical decimal string of atomic units, got ${amount}`);
+    }
+    return amount;
+};
+
+const normalizeHexBytes = (
+    value: Uint8Array | string,
+    expectedBytes: number,
+    label: string,
+): string => {
+    if (value === undefined || value === null) {
+        throw new Error(`${label} is required`);
+    }
+    const bytes = typeof value === "string" ? solverHex(value, label) : value;
+    if (!(bytes instanceof Uint8Array) || bytes.length !== expectedBytes) {
+        const got = bytes instanceof Uint8Array ? bytes.length : typeof bytes;
+        throw new Error(`${label} must be ${expectedBytes} bytes, got ${got}`);
+    }
+    return hex.encode(bytes);
+};
+
+/** 34-byte taproot scriptPubKey (`OP_1 <32-byte program>`), lowercase hex. */
+export const normalizeMakerPkScript = (value: Uint8Array | string): string => {
+    const encoded = normalizeHexBytes(value, 34, "maker_pk_script");
+    if (!encoded.startsWith("5100") && !encoded.startsWith("5120")) {
+        throw new Error("maker_pk_script must be a taproot scriptPubKey (OP_1 <32-byte program>)");
+    }
+    return encoded;
+};
+
+/** 32-byte x-only key, lowercase hex. Never a 33-byte compressed key. */
+export const normalizeMakerPublicKey = (value: Uint8Array | string): string => {
+    const raw = typeof value === "string" ? value : hex.encode(value);
+    const bytes = solverHex(raw, "maker_public_key");
+    if (bytes.length === 33) {
+        throw new Error("maker_public_key must be x-only (32 bytes), not compressed (33 bytes)");
+    }
+    return normalizeHexBytes(bytes, 32, "maker_public_key");
 };
 
 // ── Guardrails ───────────────────────────────────────────────────────────────
@@ -605,16 +689,14 @@ export const assertFundable = (input: {
             );
         }
         // Rounds UP: refuse a borderline quote, do not fund a rounding artefact.
+        const fromSats = quoteSats(input.quote.from_amount, "from_amount");
+        const toSats = quoteSats(input.quote.to_amount, "to_amount");
         const fee = sameAsset
-            ? input.quote.from_amount - input.quote.to_amount
+            ? fromSats - toSats
             : Math.ceil(
-                  (input.quote.from_amount * (referenceRate as number) - input.quote.to_amount) /
-                      (referenceRate as number),
+                  (fromSats * (referenceRate as number) - toSats) / (referenceRate as number),
               );
-        const allowed = Math.max(
-            sats ?? 0,
-            Math.floor((input.quote.from_amount * (bps ?? 0)) / 10_000),
-        );
+        const allowed = Math.max(sats ?? 0, Math.floor((fromSats * (bps ?? 0)) / 10_000));
         if (fee > allowed) {
             fail("fee_too_high", `fee ${fee} exceeds the ${allowed} this client allows`);
         }
@@ -1167,12 +1249,12 @@ export async function requestLightningSend(
     // and `from_amount` adds the corridor's fee on top. Funding anything but
     // `from_amount` underfunds by exactly the fee and is refused — and a quote
     // repricing the invoice itself is not a quote for this invoice at all.
-    if (quote.to_amount !== params.invoice.amountSats) {
+    if (quoteSats(quote.to_amount, "to_amount") !== params.invoice.amountSats) {
         throw new Error(
             `quote to_amount ${quote.to_amount} does not match the invoice's ${params.invoice.amountSats}`,
         );
     }
-    if (quote.from_amount < quote.to_amount) {
+    if (quoteSats(quote.from_amount, "from_amount") < quoteSats(quote.to_amount, "to_amount")) {
         throw new Error(
             `quote from_amount ${quote.from_amount} is below the invoice amount — a negative spread is not a quote`,
         );
@@ -1227,7 +1309,7 @@ export async function requestLightningSend(
         address,
         // What the lockup must carry: the quote's `from_amount` — the invoice
         // PLUS the corridor's fee, never the bare invoice amount.
-        fundAmount: quote.from_amount,
+        fundAmount: quoteSats(quote.from_amount, "from_amount"),
         swapPkScript: script.pkScript,
         script,
         refundAddress,
@@ -1246,16 +1328,170 @@ export async function requestLightningSend(
  * transaction that delivers the quoted want-amount to the trader, so the
  * solver fills or nothing moves. There is no rfq_fill message and no refund
  * timelock; an unfilled offer is cancelled cooperatively (`cancelOffer`).
+ *
+ * For asset-to-asset, the offer contract commits to the wanted asset only.
+ * The offered/deposit asset is carried by the funding VTXO and its asset
+ * packet; it is not part of the covenant derivation.
  */
 export const offerTermsFromQuote = (
     quote: RfqQuote,
     assets: { wantAsset?: asset.AssetId; offerAsset?: asset.AssetId },
 ): { wantAmount: bigint; wantAsset?: asset.AssetId; offerAsset?: asset.AssetId } => {
-    if (Boolean(assets.wantAsset) === Boolean(assets.offerAsset)) {
-        throw new Error("set exactly one of wantAsset or offerAsset");
+    if (!assets.wantAsset && !assets.offerAsset) {
+        throw new Error("set at least one of wantAsset or offerAsset");
     }
-    return { wantAmount: BigInt(quote.to_amount), ...assets };
+    const wantAmount = BigInt(quote.to_amount);
+    if (assets.wantAsset) return { wantAmount, wantAsset: assets.wantAsset };
+    return { wantAmount, offerAsset: assets.offerAsset };
 };
+
+/** Compare-only check of the solver's offer address against YOUR OWN
+ * derivation — never extends trust, only narrows it. Funds only on an exact
+ * match of both the address (what the wallet sends to) and the script (what
+ * `offerVtxoScript` compiles to). Throws {@link AddressMismatch} otherwise. */
+export const verifyOfferAddress = (
+    quote: RfqQuote,
+    derived: { address: string; swapPkScript: Uint8Array },
+): { address: string; swapPkScript: Uint8Array } => {
+    const quotedAddress = quote.profile?.offer_address as string | undefined;
+    const quotedScript = quote.profile?.offer_pk_script as string | undefined;
+    const derivedScript = hex.encode(derived.swapPkScript);
+    if (quotedAddress !== derived.address || quotedScript !== derivedScript) {
+        throw new AddressMismatch([derived.address], quotedAddress);
+    }
+    return derived;
+};
+
+/** Gate an arkade↔arkade quote immediately before funding. No timelock exists
+ * on this class (neither `fulfill` nor `cancel` carries one), so the only
+ * clock is `valid_until`: funding after it is a deposit the solver will
+ * refuse to fill, reclaimable only via cooperative `cancelOffer`. */
+export const assertArkadeFundable = (input: { quote: RfqQuote; now?: number }): void => {
+    const now = input.now ?? Math.floor(Date.now() / 1000);
+    if (!Number.isSafeInteger(input.quote.valid_until)) {
+        throw gateError("quote_expired", "quote carries no valid_until");
+    }
+    if (now >= input.quote.valid_until) {
+        throw gateError("quote_expired", `quote lapsed at ${input.quote.valid_until} (now ${now})`);
+    }
+    if (BigInt(input.quote.from_amount) <= 0n || BigInt(input.quote.to_amount) <= 0n) {
+        throw gateError("quote_expired", "quote carries a non-positive amount");
+    }
+};
+
+/**
+ * The arkade↔arkade user flow, mirroring `requestLightningSend`'s shape:
+ * quote → derive locally → verify → gate. Pure of funding on purpose — it
+ * returns the offer and the deposit it must carry, and the caller funds with
+ * its own wallet before `quote.valid_until`, after which the user may go
+ * offline: filling is non-interactive. An unfilled offer is cancelled
+ * cooperatively (`cancelOffer`); there is no timelock refund.
+ *
+ * Maker keys are the wallet's own (address script + identity x-only key), read
+ * here so the request profile and the local `createOffer` derivation cannot
+ * diverge. The quote's `offer_address`/`offer_pk_script` are compare-only:
+ * a mismatch throws {@link AddressMismatch} and must never be funded.
+ *
+ * Works over any {@link RfqTransport} — HTTP, dev relay, or Nostr — since the
+ * negotiation is one `rfq_request` round trip. Throws {@link SwapRefusal}
+ * (closed reason), {@link AddressMismatch} (never fund), or a gate error with
+ * a stable `reason`.
+ *
+ * Funding (caller's job, immediately after, before `valid_until`):
+ * - BTC->asset (`wantAsset`): `wallet.send({ address, amount: Number(fundAmount), extensions: [extension] })`
+ * - asset->BTC or asset->asset (`offerAsset`): `wallet.send({ address, amount: Number(carrierSats), assets: [{ assetId: offerAsset, amount: fundAmount }], extensions: [extension] })`
+ */
+export async function requestArkadeSwap(
+    wallet: IWallet,
+    arkServerUrl: string,
+    transport: RfqTransport,
+    params: {
+        /** Asset the trader deposits; omit when depositing BTC. */
+        offerAsset?: asset.AssetId;
+        /** Asset the trader wants; omit when wanting BTC. */
+        wantAsset?: asset.AssetId;
+        /** Deposit amount, in atomic units of the `from` leg. */
+        amount: bigint | number | string;
+        rfqId?: string;
+        /** Co-signer key override (33-byte compressed hex); see `createOffer`. */
+        emulatorPubkey?: string;
+        now?: number;
+    },
+): Promise<{
+    rfqId: string;
+    quote: RfqQuote;
+    pair: string;
+    /** The trader's OWN derivation — the only address to fund. */
+    address: string;
+    /** What the deposit must carry: the quote's `from_amount`. Sats for a BTC
+     * deposit, asset units for an asset deposit (plus a dust carrier). */
+    fundAmount: bigint;
+    /** Dust sats carrier for an asset deposit; 0n for a BTC deposit. */
+    carrierSats: bigint;
+    /** The covenant's scriptPubKey, for watching the deposit and its spend. */
+    swapPkScript: Uint8Array;
+    /** The encoded offer. Persist this — it is the only input `cancelOffer`
+     * needs, and the restore scan reads it back off the funding tx. */
+    offerHex: string;
+    /** Ready for `wallet.send`'s `extensions`. */
+    extension: { type: number; payload: Uint8Array };
+}> {
+    if (!params.wantAsset && !params.offerAsset) {
+        throw new Error("set at least one of wantAsset or offerAsset; BTC-to-BTC is not a swap");
+    }
+    const rfqId = params.rfqId ?? newRfqId();
+    const [makerAddress, makerPublicKey] = await Promise.all([
+        wallet.getAddress(),
+        wallet.identity.xOnlyPublicKey(),
+    ]);
+    const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
+    const pair = rfqPair(
+        params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
+        params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
+    );
+    const quote = await transport.requestQuote(
+        arkadeSwapRequest({
+            rfqId,
+            ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
+            ...(params.wantAsset !== undefined ? { wantAsset: params.wantAsset } : {}),
+            amount: params.amount,
+            makerPkScript,
+            makerPublicKey,
+        }),
+    );
+    if (quote.pair !== pair) {
+        throw new Error(`solver quoted ${JSON.stringify(quote.pair)}, not the requested ${pair}`);
+    }
+    assertArkadeFundable({ quote, ...(params.now !== undefined ? { now: params.now } : {}) });
+    const terms = offerTermsFromQuote(quote, {
+        ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
+        ...(params.wantAsset !== undefined ? { wantAsset: params.wantAsset } : {}),
+    });
+    if (BigInt(quote.from_amount).toString() !== canonicalAssetAmount(params.amount)) {
+        throw new Error(
+            `quote from_amount ${quote.from_amount} does not match the requested ${canonicalAssetAmount(params.amount)}`,
+        );
+    }
+    const offer = await createOffer(wallet, arkServerUrl, {
+        wantAmount: terms.wantAmount,
+        ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
+        ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),
+        ...(params.emulatorPubkey !== undefined ? { emulatorPubkey: params.emulatorPubkey } : {}),
+    });
+    verifyOfferAddress(quote, offer);
+    const fundAmount = BigInt(quote.from_amount);
+    return {
+        rfqId,
+        quote,
+        pair,
+        address: offer.address,
+        fundAmount,
+        carrierSats: params.offerAsset !== undefined ? ASSET_CARRIER_SATS : 0n,
+        swapPkScript: offer.swapPkScript,
+        offerHex: offer.offerHex,
+        extension: offer.extension,
+    };
+}
 
 // ── Onchain corridor: off-board (arkade->onchain) and on-board wire ─────────
 
@@ -1619,7 +1855,7 @@ export async function requestOnchainSend(
         rfqId,
         quote,
         address: derived.address,
-        fundAmount: quote.from_amount,
+        fundAmount: quoteSats(quote.from_amount, "from_amount"),
         swapPkScript: derived.swapPkScript,
         script: derived.script,
         refundAddress,
@@ -1638,7 +1874,10 @@ export async function requestOnchainSend(
  * not reach for it: a BOLT11 profile carries no `amountSide`, so it makes the
  * same two comparisons against the invoice instead. */
 const assertQuotedAmount = (quote: RfqQuote, amountSide: "from" | "to", amount: number): void => {
-    const quoted = amountSide === "from" ? quote.from_amount : quote.to_amount;
+    const quoted =
+        amountSide === "from"
+            ? quoteSats(quote.from_amount, "from_amount")
+            : quoteSats(quote.to_amount, "to_amount");
     if (quoted !== amount) {
         throw new Error(
             `quote ${amountSide === "from" ? "from_amount" : "to_amount"} ${quoted} ` +
@@ -1769,7 +2008,10 @@ export const assertReceivable = (input: {
             `a payment at the deadline would leave under ${minClaimWindow}s to claim before the solver's refund opens`,
         );
     }
-    if (input.maxPayAmount !== undefined && input.quote.from_amount > input.maxPayAmount) {
+    if (
+        input.maxPayAmount !== undefined &&
+        quoteSats(input.quote.from_amount, "from_amount") > input.maxPayAmount
+    ) {
         throw gateError(
             "price_too_high",
             `quote asks ${input.quote.from_amount} sats, above the ${input.maxPayAmount} ceiling`,
@@ -2066,8 +2308,8 @@ export async function requestLightningReceive(
         rfqId,
         quote,
         invoice: derived.invoice,
-        payAmount: quote.from_amount,
-        expectedAmount: quote.to_amount,
+        payAmount: quoteSats(quote.from_amount, "from_amount"),
+        expectedAmount: quoteSats(quote.to_amount, "to_amount"),
         invoiceExpiresAt: payDeadline,
         address: derived.address,
         swapPkScript: derived.swapPkScript,
@@ -2288,8 +2530,8 @@ export async function requestOnchainReceive(
         rfqId,
         quote,
         address: derived.address,
-        fundAmount: quote.from_amount,
-        expectedAmount: quote.to_amount,
+        fundAmount: quoteSats(quote.from_amount, "from_amount"),
+        expectedAmount: quoteSats(quote.to_amount, "to_amount"),
         swapPkScript: derived.swapPkScript,
         script: derived.script,
         htlc: derived.htlc,
