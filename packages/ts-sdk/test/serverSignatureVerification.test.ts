@@ -73,16 +73,39 @@ const provider = (
 
 const submit = (
     p: ReturnType<typeof provider>,
-    verifyServerSignatures?: { serverPubkey: Uint8Array },
+    verifyServerSignatures?: { serverPubkey: Uint8Array; deprecatedServerPubkeys?: Uint8Array[] },
+    ins: ArkTxInput[] = inputs(),
 ) =>
     signAndSubmitOffchainTx({
         identity: USER,
         provider: p,
-        inputs: inputs(),
+        inputs: ins,
         outputs: [{ script: P2TR, amount: 9_000n }],
         serverUnrollScript: SERVER_UNROLL,
         verifyServerSignatures,
     });
+
+/** A vtxo whose collaborative leaf names a signer the server has since
+ * retired — the leaf, not the current key, is what the signature answers to. */
+const RETIRED = SingleKey.fromPrivateKey(priv(4));
+const RETIRED_PUBKEY = key(4);
+const retiredLeaf = MultisigTapscript.encode({
+    pubkeys: [key(11), RETIRED_PUBKEY],
+}).script;
+const retiredVtxoScript = new VtxoScript([retiredLeaf, otherLeaf]);
+
+const retiredInputs = (): ArkTxInput[] => [
+    {
+        txid: "22".repeat(32),
+        vout: 0,
+        value: 10_000,
+        tapLeafScript: retiredVtxoScript.findLeaf(hex.encode(retiredLeaf)),
+        tapTree: retiredVtxoScript.encode(),
+    },
+];
+
+const cosignRetired = async (psbt: string): Promise<string> =>
+    base64.encode((await RETIRED.sign(Transaction.fromPSBT(base64.decode(psbt)))).toPSBT());
 
 describe("signAndSubmitOffchainTx server-signature verification", () => {
     it("finalizes when the server signed the ark tx and every checkpoint", async () => {
@@ -97,6 +120,24 @@ describe("signAndSubmitOffchainTx server-signature verification", () => {
         const p = provider();
         await submit(p, { serverPubkey: Uint8Array.from([0x02, ...SERVER_PUBKEY]) });
         expect(p.finalizeTx).toHaveBeenCalledTimes(1);
+    });
+
+    it("accepts a leaf signed by a retired signer the server still advertises", async () => {
+        const p = provider({ cosignArkTx: cosignRetired, cosignCheckpoint: cosignRetired });
+        await submit(
+            p,
+            { serverPubkey: SERVER_PUBKEY, deprecatedServerPubkeys: [RETIRED_PUBKEY] },
+            retiredInputs(),
+        );
+        expect(p.finalizeTx).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects a leaf naming a signer the server does not advertise", async () => {
+        const p = provider({ cosignArkTx: cosignRetired, cosignCheckpoint: cosignRetired });
+        await expect(submit(p, { serverPubkey: SERVER_PUBKEY }, retiredInputs())).rejects.toThrow(
+            /names no signer key the server advertises/,
+        );
+        expect(p.finalizeTx).not.toHaveBeenCalled();
     });
 
     it("rejects a response the server never signed, before finalizing", async () => {

@@ -6014,18 +6014,33 @@ export class Wallet
                 ),
         };
 
-        return submitOffchainTx(this.arkProvider, offchainTx, signer, {
-            // Mark pending before submitting — if we crash between submit and
-            // finalize, the next init recovers via finalizePendingTxs.
-            beforeSubmit: () => this.setPendingTxFlag(true),
-            afterFinalize: async () => {
-                try {
-                    await this.setPendingTxFlag(false);
-                } catch (error) {
-                    console.error("Failed to clear pending tx flag:", error);
-                }
+        return submitOffchainTx(
+            this.arkProvider,
+            offchainTx,
+            signer,
+            {
+                // Mark pending before submitting — if we crash between submit and
+                // finalize, the next init recovers via finalizePendingTxs.
+                beforeSubmit: () => this.setPendingTxFlag(true),
+                afterFinalize: async () => {
+                    try {
+                        await this.setPendingTxFlag(false);
+                    } catch (error) {
+                        console.error("Failed to clear pending tx flag:", error);
+                    }
+                },
             },
-        });
+            {
+                // Deprecated keys too: a vtxo built before a rotation is still
+                // spent under the signer its leaf names.
+                verifyServerSignatures: {
+                    serverPubkey: this._arkServerPublicKey,
+                    deprecatedServerPubkeys: [...this._deprecatedSigners.keys()].map((h) =>
+                        hex.decode(h),
+                    ),
+                },
+            },
+        );
     }
 
     // mark virtual outputs as spent, save change outputs if any.
