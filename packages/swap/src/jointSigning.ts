@@ -13,7 +13,7 @@ import {
     type PreparedJointSubmission,
     type SubmittedJointFill,
 } from "@arkade-os/sdk";
-import { OFFER_FILL_OWNERS, OFFER_FILL_ROLES, OFFER_FILL_TEMPLATE } from "./offerFillPlan";
+import { OFFER_FILL_TEMPLATE } from "./offerFillPlan";
 import type { FillInputOwner } from "./offer";
 
 export {
@@ -29,8 +29,6 @@ export type JointFundingOwner = FillInputOwner;
 
 export type JointOwnerKeys = Partial<Record<JointFundingOwner, readonly string[]>>;
 
-const vocab = { allowedOwners: OFFER_FILL_OWNERS, allowedRoles: OFFER_FILL_ROLES };
-
 const asCoreKeys = (ownerKeys: JointOwnerKeys): CoreOwnerKeys => ownerKeys as CoreOwnerKeys;
 
 export function signJointGraphForOwner(args: {
@@ -39,7 +37,7 @@ export function signJointGraphForOwner(args: {
     owner: JointFundingOwner;
     bindings: JointSignerBinding[];
 }): Promise<JointGraph> {
-    return signCore({ ...args, template: OFFER_FILL_TEMPLATE, ...vocab });
+    return signCore({ ...args, template: OFFER_FILL_TEMPLATE });
 }
 
 export function prepareJointSubmission(args: {
@@ -51,12 +49,11 @@ export function prepareJointSubmission(args: {
         ...args,
         ownerKeys: asCoreKeys(args.ownerKeys),
         template: OFFER_FILL_TEMPLATE,
-        ...vocab,
     });
 }
 
 export function providerCosignerKey(args: { expected: JointGraph; emulatorXOnly: string }): string {
-    return providerCore({ ...args, template: OFFER_FILL_TEMPLATE, ...vocab });
+    return providerCore({ ...args, template: OFFER_FILL_TEMPLATE });
 }
 
 export function submitJointFill(args: {
@@ -70,6 +67,5 @@ export function submitJointFill(args: {
         ...args,
         ownerKeys: asCoreKeys(args.ownerKeys),
         template: OFFER_FILL_TEMPLATE,
-        ...vocab,
     });
 }

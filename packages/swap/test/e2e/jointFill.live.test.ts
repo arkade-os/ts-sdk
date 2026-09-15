@@ -246,7 +246,10 @@ describe("two-owner fill against the regtest stack", () => {
 
         const solverSatsBefore = await satsOf(solver);
         const solverAssetBefore = await assetUnitsOf(solver, wantAsset.toString());
-        const solverPayoutSats = BigInt(expected.outputs.find((o) => o.role === "solver")!.sats);
+        const settled = Transaction.fromPSBT(base64.decode(expected.arkTx));
+        const solverPayoutSats = Array.from({ length: settled.outputsLength }, (_, i) =>
+            settled.getOutput(i),
+        ).find((o) => o.script && hex.encode(o.script) === hex.encode(solverScript))!.amount!;
         const solverInputSats = solverFund.reduce((sum, c) => sum + BigInt(c.value), 0n);
         const solverDelta = solverPayoutSats - solverInputSats;
 

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { sha256 } from "@noble/hashes/sha2.js";
 import {
     ArkAddress,
     CSVMultisigTapscript,
@@ -10,6 +9,7 @@ import {
     Transaction,
     VtxoScript,
     asset,
+    digestJointGraph,
     type IWallet,
 } from "@arkade-os/sdk";
 import { encodeOffer, fillOffer, offerVtxoScript, type Offer } from "../src/offer";
@@ -143,6 +143,18 @@ const reset = () => {
 };
 
 const built = () => Transaction.fromPSBT(base64.decode(state.arkTx!));
+
+const assetsAt = (tx: Transaction, vout: number) =>
+    (Extension.fromTx(tx).getAssetPacket()?.groups ?? []).flatMap((g) =>
+        g.outputs
+            .filter((o) => o.vout === vout)
+            .map((o) => ({ assetId: g.assetId!.toString(), units: o.amount.toString() })),
+    );
+
+const fundedBy = (checkpoint: string) => {
+    const spent = Transaction.fromPSBT(base64.decode(checkpoint)).getInput(0);
+    return { txid: hex.encode(spent.txid!), vout: spent.index };
+};
 
 describe("fillOffer against the REAL Arkade builder", () => {
     it("reaches the emulator instead of refusing to submit", async () => {
@@ -288,42 +300,39 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
         // Inputs 1000 + 1 + 1000 = 2001 sats; outputs 330 + 1 + 670 + 1000.
         // Solver supplies 201 units: 200 to the maker, 1 to the taxi fare.
         expect(plan.inputOwners).toEqual([null, "solver", "sponsor"]);
-        expect(plan.inputOutpoints).toEqual([
+        const ark = Transaction.fromPSBT(base64.decode(plan.arkTx));
+        expect(plan.checkpoints).toHaveLength(3);
+        expect(plan.checkpoints.map(fundedBy)).toEqual([
             { txid: deposit.txid, vout: deposit.vout },
             { txid: solver.txid, vout: solver.vout },
             { txid: taxi.txid, vout: taxi.vout },
         ]);
-        expect(plan.outputs).toEqual([
-            {
-                role: "receiver",
-                vout: 0,
-                script: MAKER_PK_SCRIPT,
-                sats: "330",
-                assets: [{ assetId: WANT_ASSET, units: "200" }],
-            },
-            {
-                role: "sponsor-fare",
-                vout: 1,
-                script: hex.encode(FARE_SCRIPT),
-                sats: "1",
-                assets: [{ assetId: WANT_ASSET, units: "1" }],
-            },
-            {
-                role: "sponsor-change",
-                vout: 2,
-                script: hex.encode(TAXI_CHANGE_SCRIPT),
-                sats: "670",
-                assets: [],
-            },
-            {
-                role: "solver",
-                vout: 3,
-                script: hex.encode(SOLVER_PAYOUT),
-                sats: "1000",
-                assets: [],
-            },
-        ]);
-        expect(plan.checkpoints).toHaveLength(3);
+        expect(ark.outputsLength).toBe(6);
+        const payment = (vout: number) => ({
+            script: hex.encode(ark.getOutput(vout).script!),
+            sats: ark.getOutput(vout).amount!.toString(),
+            assets: assetsAt(ark, vout),
+        });
+        expect(payment(0)).toEqual({
+            script: MAKER_PK_SCRIPT,
+            sats: "330",
+            assets: [{ assetId: WANT_ASSET, units: "200" }],
+        });
+        expect(payment(1)).toEqual({
+            script: hex.encode(FARE_SCRIPT),
+            sats: "1",
+            assets: [{ assetId: WANT_ASSET, units: "1" }],
+        });
+        expect(payment(2)).toEqual({
+            script: hex.encode(TAXI_CHANGE_SCRIPT),
+            sats: "670",
+            assets: [],
+        });
+        expect(payment(3)).toEqual({
+            script: hex.encode(SOLVER_PAYOUT),
+            sats: "1000",
+            assets: [],
+        });
         expect(plan.graphId).toMatch(/^[0-9a-f]{64}$/);
         expect(verifyOfferFillPlan(plan)).toBe(true);
     });
@@ -359,9 +368,9 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
         const planned = Transaction.fromPSBT(base64.decode(plan.arkTx));
         expect(txid).toBe(submitted.id);
         const payments = (tx: Transaction) =>
-            plan.outputs.map((o) => ({
-                script: hex.encode(tx.getOutput(o.vout).script!),
-                amount: tx.getOutput(o.vout).amount,
+            [0, 1].map((vout) => ({
+                script: hex.encode(tx.getOutput(vout).script!),
+                amount: tx.getOutput(vout).amount,
             }));
         expect(payments(submitted)).toEqual(payments(planned));
         const groups = (tx: Transaction) =>
@@ -388,13 +397,10 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
             .getAssetPacket()!
             .groups.map((g) => g.assetId!.toString());
         expect(groups).toEqual([WANT_ASSET, STRAY_ASSET]);
-        expect(plan.outputs[3]).toEqual({
-            role: "solver",
-            vout: 3,
-            script: hex.encode(SOLVER_PAYOUT),
-            sats: "1000",
-            assets: [{ assetId: STRAY_ASSET, units: "5" }],
-        });
+        const planned = Transaction.fromPSBT(base64.decode(plan.arkTx));
+        expect(hex.encode(planned.getOutput(3).script!)).toBe(hex.encode(SOLVER_PAYOUT));
+        expect(planned.getOutput(3).amount).toBe(BigInt(1000));
+        expect(assetsAt(planned, 3)).toEqual([{ assetId: STRAY_ASSET, units: "5" }]);
     });
 
     it("rejects sponsor funding that carries assets", async () => {
@@ -468,7 +474,7 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
             payoutScript: SOLVER_PAYOUT,
             fundingOutpoint: { txid: first.txid, vout: 1 },
         });
-        expect(plan.inputOutpoints[0]).toEqual({ txid: first.txid, vout: 1 });
+        expect(fundedBy(plan.checkpoints[0])).toEqual({ txid: first.txid, vout: 1 });
     });
 
     it("omits taxi change when the contribution spends every sat", async () => {
@@ -477,8 +483,12 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
         const plan = await sponsored(state.vtxos[0], solverCoin(), taxiCoin(), {
             netContributionSats: BigInt(1000),
         });
-        expect(plan.outputs.map((o) => o.role)).toEqual(["receiver", "sponsor-fare", "solver"]);
-        expect(plan.outputs[2]).toMatchObject({ vout: 2, sats: "1670" });
+        const ark = Transaction.fromPSBT(base64.decode(plan.arkTx));
+        expect(ark.outputsLength).toBe(5);
+        expect(hex.encode(ark.getOutput(0).script!)).toBe(MAKER_PK_SCRIPT);
+        expect(hex.encode(ark.getOutput(1).script!)).toBe(hex.encode(FARE_SCRIPT));
+        expect(hex.encode(ark.getOutput(2).script!)).toBe(hex.encode(SOLVER_PAYOUT));
+        expect(ark.getOutput(2).amount).toBe(BigInt(1670));
     });
 
     it("rejects a sponsor without a change script", async () => {
@@ -516,18 +526,20 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
         });
         expect(repriced.graphId).not.toBe(plan.graphId);
 
-        const retargeted = {
-            ...plan,
-            outputs: plan.outputs.map((o) => (o.role === "receiver" ? { ...o, sats: "331" } : o)),
+        const retarget = (mutate: (tx: Transaction) => void) => {
+            const tx = Transaction.fromPSBT(base64.decode(plan.arkTx));
+            mutate(tx);
+            return base64.encode(tx.toPSBT());
         };
-        expect(verifyOfferFillPlan(retargeted)).toBe(false);
-        const rescripted = {
-            ...plan,
-            outputs: plan.outputs.map((o) =>
-                o.role === "receiver" ? { ...o, script: hex.encode(SOLVER_PAYOUT) } : o,
-            ),
-        };
-        expect(verifyOfferFillPlan(rescripted)).toBe(false);
+        const repricedTx = retarget((tx) => {
+            const out = tx.getOutput(0);
+            tx.updateOutput(0, { script: out.script, amount: out.amount! + 1n });
+        });
+        expect(verifyOfferFillPlan({ ...plan, arkTx: repricedTx })).toBe(false);
+        const rescriptedTx = retarget((tx) => {
+            tx.updateOutput(0, { script: SOLVER_PAYOUT, amount: tx.getOutput(0).amount });
+        });
+        expect(verifyOfferFillPlan({ ...plan, arkTx: rescriptedTx })).toBe(false);
         expect(verifyOfferFillPlan(plan)).toBe(true);
     });
 
@@ -678,36 +690,33 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
                 changeScript: TAXI_CHANGE_SCRIPT,
             },
         });
-        expect(plan.outputs).toEqual([
-            {
-                role: "receiver",
-                vout: 0,
-                script: MAKER_PK_SCRIPT,
-                sats: "330",
-                assets: [{ assetId: WANT_ASSET, units: "200" }],
-            },
-            {
-                role: "sponsor-fare",
-                vout: 1,
-                script: hex.encode(FARE_SCRIPT),
-                sats: "330",
-                assets: [{ assetId: WANT_ASSET, units: "1" }],
-            },
-            {
-                role: "sponsor-change",
-                vout: 2,
-                script: hex.encode(TAXI_CHANGE_SCRIPT),
-                sats: "670",
-                assets: [],
-            },
-            {
-                role: "solver",
-                vout: 3,
-                script: hex.encode(SOLVER_PAYOUT),
-                sats: "671",
-                assets: [],
-            },
-        ]);
+        const fareArk = Transaction.fromPSBT(base64.decode(plan.arkTx));
+        expect(fareArk.outputsLength).toBe(6);
+        const farePayment = (vout: number) => ({
+            script: hex.encode(fareArk.getOutput(vout).script!),
+            sats: fareArk.getOutput(vout).amount!.toString(),
+            assets: assetsAt(fareArk, vout),
+        });
+        expect(farePayment(0)).toEqual({
+            script: MAKER_PK_SCRIPT,
+            sats: "330",
+            assets: [{ assetId: WANT_ASSET, units: "200" }],
+        });
+        expect(farePayment(1)).toEqual({
+            script: hex.encode(FARE_SCRIPT),
+            sats: "330",
+            assets: [{ assetId: WANT_ASSET, units: "1" }],
+        });
+        expect(farePayment(2)).toEqual({
+            script: hex.encode(TAXI_CHANGE_SCRIPT),
+            sats: "670",
+            assets: [],
+        });
+        expect(farePayment(3)).toEqual({
+            script: hex.encode(SOLVER_PAYOUT),
+            sats: "671",
+            assets: [],
+        });
         expect(verifyOfferFillPlan(plan)).toBe(true);
     });
 
@@ -732,39 +741,32 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
         });
 
         expect(plan.inputOwners).toEqual([null, "solver", "sponsor"]);
-        expect(plan.outputs).toEqual([
-            {
-                role: "receiver",
-                vout: 0,
-                script: MAKER_PK_SCRIPT,
-                sats: "50000",
-                assets: [],
-            },
-            {
-                role: "sponsor-fare",
-                vout: 1,
-                script: hex.encode(FARE_SCRIPT),
-                sats: "1",
-                assets: [{ assetId: STRAY_ASSET, units: "4" }],
-            },
-            {
-                role: "sponsor-change",
-                vout: 2,
-                script: hex.encode(TAXI_CHANGE_SCRIPT),
-                sats: "670",
-                assets: [],
-            },
-            {
-                role: "solver",
-                vout: 3,
-                script: hex.encode(TAKER_PAYOUT),
-                sats: "90329",
-                assets: [
-                    { assetId: STRAY_ASSET, units: "5" },
-                    { assetId: DEPOSIT_ASSET, units: "2000" },
-                ],
-            },
-        ]);
+        const btcArk = Transaction.fromPSBT(base64.decode(plan.arkTx));
+        expect(btcArk.outputsLength).toBe(6);
+        const btcPayment = (vout: number) => ({
+            script: hex.encode(btcArk.getOutput(vout).script!),
+            sats: btcArk.getOutput(vout).amount!.toString(),
+            assets: assetsAt(btcArk, vout),
+        });
+        expect(btcPayment(0)).toEqual({ script: MAKER_PK_SCRIPT, sats: "50000", assets: [] });
+        expect(btcPayment(1)).toEqual({
+            script: hex.encode(FARE_SCRIPT),
+            sats: "1",
+            assets: [{ assetId: STRAY_ASSET, units: "4" }],
+        });
+        expect(btcPayment(2)).toEqual({
+            script: hex.encode(TAXI_CHANGE_SCRIPT),
+            sats: "670",
+            assets: [],
+        });
+        expect(btcPayment(3)).toEqual({
+            script: hex.encode(TAKER_PAYOUT),
+            sats: "90329",
+            assets: [
+                { assetId: STRAY_ASSET, units: "5" },
+                { assetId: DEPOSIT_ASSET, units: "2000" },
+            ],
+        });
         const groups = Extension.fromTx(Transaction.fromPSBT(base64.decode(plan.arkTx)))
             .getAssetPacket()!
             .groups.map((g) => g.assetId!.toString());
@@ -779,61 +781,56 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
         // Recompute the binding id the same way the implementation does, so a
         // rejection below can only come from the shape gate, not the digest.
         const reid = (p: any) =>
-            hex.encode(
-                sha256(
-                    new TextEncoder().encode(
-                        JSON.stringify({
-                            template: OFFER_FILL_TEMPLATE,
-                            arkTx: p.arkTx,
-                            checkpoints: p.checkpoints,
-                            inputOwners: p.inputOwners,
-                            inputOutpoints: p.inputOutpoints,
-                            outputs: p.outputs,
-                        }),
-                    ),
-                ),
+            digestJointGraph(
+                {
+                    arkTx: p.arkTx,
+                    checkpoints: [...p.checkpoints],
+                    inputOwners: [...p.inputOwners],
+                },
+                OFFER_FILL_TEMPLATE,
             );
         expect(reid(plan)).toBe(plan.graphId);
         const tamper = (mutate: (p: any) => unknown) => {
             const copy = JSON.parse(JSON.stringify(plan));
             mutate(copy);
-            copy.graphId = reid(copy);
+            try {
+                copy.graphId = reid(copy);
+            } catch {
+                copy.graphId = "00".repeat(32);
+            }
             return copy;
         };
         expect(verifyOfferFillPlan(plan)).toBe(true);
         const malformed = [
             (p: any) => {
-                p.outputs[0].script = "";
-            },
-            (p: any) => {
-                p.outputs[0].script = "abc";
-            },
-            (p: any) => {
-                p.inputOutpoints[0].vout = 2 ** 32;
+                p.arkTx = p.arkTx.slice(0, -8);
             },
             (p: any) => {
                 p.checkpoints = p.checkpoints.slice(1);
             },
             (p: any) => {
                 p.inputOwners = [];
-                p.inputOutpoints = [];
                 p.checkpoints = [];
             },
             (p: any) => {
-                p.outputs = [];
+                p.inputOwners = [null, "solver", 42];
             },
             (p: any) => {
-                p.outputs[0].sats = "9007199254740992";
-            },
-            (p: any) => {
-                p.outputs[0].assets[0].units = "18446744073709551616";
-            },
-            (p: any) => {
-                p.outputs[0].assets[0].assetId = "aa";
+                p.inputOwners = [null, "", "sponsor"];
             },
         ];
         for (const mutate of malformed) {
             expect(verifyOfferFillPlan(tamper(mutate))).toBe(false);
         }
+        expect(verifyOfferFillPlan({ ...plan, graphId: "00".repeat(32) })).toBe(false);
+        const repriced = Transaction.fromPSBT(base64.decode(plan.arkTx));
+        const out = repriced.getOutput(0);
+        repriced.updateOutput(0, { script: out.script, amount: out.amount! + 1n });
+        expect(verifyOfferFillPlan({ ...plan, arkTx: base64.encode(repriced.toPSBT()) })).toBe(
+            false,
+        );
+        const relabeled = JSON.parse(JSON.stringify(plan));
+        relabeled.inputOwners = [null, "solver", "solver"];
+        expect(verifyOfferFillPlan(relabeled)).toBe(false);
     });
 });

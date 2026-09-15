@@ -20,7 +20,6 @@ import {
     type AssembledFillLayout,
     type FillFunding,
     type FillInputOwner,
-    type FillOutputRole,
     type FillOutpoint,
     type SponsorFillInput,
 } from "./offer";
@@ -30,28 +29,6 @@ export type { JointGraph };
 export const OFFER_FILL_TEMPLATE = "offer-fill/1";
 
 export const OFFER_FILL_OWNERS: readonly (FillInputOwner | null)[] = [null, "solver", "sponsor"];
-
-export const OFFER_FILL_ROLES: readonly FillOutputRole[] = [
-    "receiver",
-    "solver",
-    "sponsor-fare",
-    "sponsor-change",
-];
-
-/** Assets an output carries, parsed from the built transaction's packet. */
-export interface FillPlanAsset {
-    readonly assetId: string;
-    readonly units: string;
-}
-
-/** One payment output of the joint transaction, with its semantic role. */
-export interface FillPlanOutput {
-    readonly role: FillOutputRole;
-    readonly vout: number;
-    readonly script: string;
-    readonly sats: string;
-    readonly assets: readonly FillPlanAsset[];
-}
 
 /** Sponsor fare output: an asset amount on a sats host, paid from the joint inputs. */
 export interface FillSponsorFare {
@@ -117,6 +94,11 @@ export async function buildOfferFillPlan(
         sponsor: sponsorLeg,
     });
     const { arkTx, checkpoints } = await fill.build();
+    for (const [i, input] of layout.inputs.entries()) {
+        if (!OFFER_FILL_OWNERS.includes(input.owner)) {
+            throw new Error(`fill plan input ${i} names unknown owner ${input.owner}`);
+        }
+    }
     return toJointGraph(arkTx, checkpoints, layout, offer.wantAsset?.toString());
 }
 
@@ -196,7 +178,6 @@ function toJointGraph(
         throw new Error(`fill plan output ${payments + 1} is not the anchor`);
     }
 
-    const perVout: FillPlanAsset[][] = layout.outputs.map(() => []);
     const packet = Extension.fromTx(arkTx).getAssetPacket();
     for (const group of packet?.groups ?? []) {
         if (group.assetId === null) throw new Error("fill plan carries an issuance group");
@@ -217,7 +198,6 @@ function toJointGraph(
                     `fill plan asset ${assetId} pays nonexistent output ${output.vout}`,
                 );
             }
-            perVout[output.vout].push({ assetId, units: output.amount.toString() });
         }
     }
     if (wantedAssetId !== undefined && (packet?.groups.length ?? 0) > 0) {
@@ -231,39 +211,19 @@ function toJointGraph(
 
     const arkTxPsbt = base64.encode(arkTx.toPSBT());
     const checkpointPsbts = checkpoints.map((c) => base64.encode(c.toPSBT()));
-    const outputs: FillPlanOutput[] = layout.outputs.map((expected, vout) => ({
-        role: expected.role,
-        vout,
-        script: hex.encode(expected.script),
-        sats: expected.sats.toString(),
-        assets: perVout[vout],
-    }));
+    const inputOwners = layout.inputs.map((input) => input.owner);
     const graph: JointGraph = {
         arkTx: arkTxPsbt,
         checkpoints: checkpointPsbts,
         graphId: digestJointGraph(
-            {
-                arkTx: arkTxPsbt,
-                checkpoints: checkpointPsbts,
-                inputOwners: layout.inputs.map((input) => input.owner),
-                inputOutpoints: layout.inputs.map((input) => ({
-                    txid: input.txid,
-                    vout: input.vout,
-                })),
-                outputs,
-            },
+            { arkTx: arkTxPsbt, checkpoints: checkpointPsbts, inputOwners },
             OFFER_FILL_TEMPLATE,
         ),
-        inputOwners: layout.inputs.map((input) => input.owner),
-        inputOutpoints: layout.inputs.map((input) => ({ txid: input.txid, vout: input.vout })),
-        outputs,
+        inputOwners,
     };
     return deepFreeze(graph);
 }
 
 export function verifyOfferFillPlan(plan: JointGraph): boolean {
-    return verifyJointGraph(plan, OFFER_FILL_TEMPLATE, {
-        allowedOwners: OFFER_FILL_OWNERS,
-        allowedRoles: OFFER_FILL_ROLES,
-    });
+    return verifyJointGraph(plan, OFFER_FILL_TEMPLATE);
 }

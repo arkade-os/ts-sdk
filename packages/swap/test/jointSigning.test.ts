@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { bytesToNumberBE, numberToBytesBE } from "@noble/curves/utils.js";
-import { sha256 } from "@noble/hashes/sha2.js";
 import { SigHash } from "@scure/btc-signer";
 import {
     ArkAddress,
@@ -17,6 +16,7 @@ import {
     VtxoScript,
     arkade,
     asset,
+    digestJointGraph,
     getArkPsbtFields,
     setArkPsbtField,
     tapLeavesOfInput,
@@ -210,19 +210,13 @@ const extensionIndex = (tx: Transaction): number => {
 };
 
 const recomputeId = (g: JointGraph): string =>
-    hex.encode(
-        sha256(
-            new TextEncoder().encode(
-                JSON.stringify({
-                    template: OFFER_FILL_TEMPLATE,
-                    arkTx: g.arkTx,
-                    checkpoints: g.checkpoints,
-                    inputOwners: g.inputOwners,
-                    inputOutpoints: g.inputOutpoints,
-                    outputs: g.outputs,
-                }),
-            ),
-        ),
+    digestJointGraph(
+        {
+            arkTx: g.arkTx,
+            checkpoints: [...g.checkpoints],
+            inputOwners: [...g.inputOwners],
+        },
+        OFFER_FILL_TEMPLATE,
     );
 
 const addLeaf = (tx: Transaction, inputIndex: number, script: Uint8Array, fill: number): void => {
@@ -315,7 +309,7 @@ describe("signJointGraphForOwner", () => {
             bindings: [{ inputIndex: 1, identity: SingleKey.fromPrivateKey(SOLVER_SEED) }],
         });
         expect(afterSolver.graphId).toBe(expected.graphId);
-        expect(verifyOfferFillPlan(afterSolver)).toBe(false);
+        expect(verifyOfferFillPlan(afterSolver)).toBe(true);
         const afterArk = arkOf(afterSolver);
         expect([0, 1, 2].map((i) => sigCount(afterArk, i))).toEqual([0, 1, 0]);
         expect(sigCount(cpOf(afterSolver, 1), 0)).toBe(1);
@@ -327,6 +321,7 @@ describe("signJointGraphForOwner", () => {
             bindings: [{ inputIndex: 2, identity: SingleKey.fromPrivateKey(TAXI_SEED) }],
         });
         expect(complete.graphId).toBe(expected.graphId);
+        expect(verifyOfferFillPlan(complete)).toBe(true);
         const ark = arkOf(complete);
         expect([0, 1, 2].map((i) => sigCount(ark, i))).toEqual([0, 1, 1]);
         expect(sigCount(cpOf(complete, 2), 0)).toBe(1);
@@ -418,7 +413,7 @@ describe("signJointGraphForOwner", () => {
                 owner: "operator" as never,
                 bindings: [],
             }),
-        ).rejects.toThrow(/unknown funding owner/);
+        ).rejects.toThrow(/no inputs assigned to operator/);
     });
 
     it("rejects missing, duplicate and out-of-range bindings", async () => {
@@ -745,6 +740,38 @@ describe("signJointGraphForOwner", () => {
                 bindings: [{ inputIndex: 1, identity: SingleKey.fromPrivateKey(SOLVER_SEED) }],
             }),
         ).rejects.toThrow(/does not match the trusted graph/);
+    });
+
+    it("binds unsigned bytes, tap leaves and owners into the graph id", async () => {
+        const expected = await trustedGraph();
+        expect(recomputeId(expected)).toBe(expected.graphId);
+        const repriced = withArk(expected, (tx) => {
+            const out = tx.getOutput(0);
+            tx.updateOutput(0, { script: out.script, amount: out.amount! + 1n });
+        });
+        expect(recomputeId(repriced)).not.toBe(expected.graphId);
+        expect(verifyOfferFillPlan({ ...repriced, graphId: expected.graphId })).toBe(false);
+        const leafed = withArk(expected, (tx) => {
+            addLeaf(
+                tx,
+                1,
+                MultisigTapscript.encode({ pubkeys: [solverBKey, SERVER_KEY] }).script,
+                9,
+            );
+        });
+        expect(recomputeId(leafed)).not.toBe(expected.graphId);
+        const relabeled: JointGraph = {
+            ...structuredClone(expected),
+            inputOwners: [null, "solver", "solver"],
+        };
+        expect(recomputeId(relabeled)).not.toBe(expected.graphId);
+        expect(verifyOfferFillPlan({ ...relabeled, graphId: expected.graphId })).toBe(false);
+        const afterSolver = await signJointGraphForOwner({
+            expected,
+            owner: "solver",
+            bindings: [{ inputIndex: 1, identity: SingleKey.fromPrivateKey(SOLVER_SEED) }],
+        });
+        expect(recomputeId(afterSolver)).toBe(expected.graphId);
     });
 
     it("rejects an owner-label spoof", async () => {

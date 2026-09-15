@@ -18,7 +18,7 @@ import { Extension } from "./extension";
 import { computeArkadeScriptPublicKey } from "./arkade/tweak";
 import { toXOnly } from "./utils/keys";
 import type { EmulatorProvider } from "./providers/emulator";
-import { deepFreeze, verifyJointGraph, type JointGraph, type JointVocabulary } from "./jointGraph";
+import { deepFreeze, verifyJointGraph, type JointGraph } from "./jointGraph";
 
 export interface JointSignerBinding {
     readonly inputIndex: number;
@@ -65,8 +65,8 @@ const fail = (message: string, cause?: unknown): never => {
     throw new JointSigningError(message, cause === undefined ? undefined : { cause });
 };
 
-const checkIntegrity = (graph: JointGraph, template: string, vocab?: JointVocabulary): void => {
-    if (!verifyJointGraph(graph, template, vocab)) fail("trusted graph fails integrity");
+const checkIntegrity = (graph: JointGraph, template: string): void => {
+    if (!verifyJointGraph(graph, template)) fail("trusted graph fails integrity");
 };
 
 const parseTx = (psbt: string, what: string): Transaction => {
@@ -126,10 +126,8 @@ const keyHexOf = async (identity: Identity, what: string): Promise<string> => {
     }
 };
 
-const sameMetadata = (a: JointGraph, b: JointGraph): boolean =>
-    a.graphId === b.graphId &&
-    JSON.stringify([a.inputOwners, a.inputOutpoints, a.outputs]) ===
-        JSON.stringify([b.inputOwners, b.inputOutpoints, b.outputs]);
+const sameDeal = (a: JointGraph, b: JointGraph): boolean =>
+    a.graphId === b.graphId && JSON.stringify(a.inputOwners) === JSON.stringify(b.inputOwners);
 
 const entryId = (e: TapScriptSigEntry): string =>
     `${e.pubKeyHex}:${e.leafHashHex}:${hex.encode(e.signature)}`;
@@ -143,11 +141,7 @@ interface TrustedGraphs {
 const loadGraphs = (graph: JointGraph, what: string): TrustedGraphs => {
     const ark = parseTx(graph.arkTx, `${what} arkTx`);
     const checkpoints = graph.checkpoints.map((c, i) => parseTx(c, `${what} checkpoint ${i}`));
-    if (
-        graph.inputOwners.length !== ark.inputsLength ||
-        graph.inputOutpoints.length !== ark.inputsLength ||
-        checkpoints.length !== ark.inputsLength
-    ) {
+    if (graph.inputOwners.length !== ark.inputsLength || checkpoints.length !== ark.inputsLength) {
         fail(`${what} metadata does not match its transaction`);
     }
     return { ark, checkpoints, owners: [...graph.inputOwners] };
@@ -158,7 +152,6 @@ const loadTrustedForSigning = async (
     owner: string,
     bindings: readonly JointSignerBinding[],
     template: string,
-    vocab?: JointVocabulary,
 ): Promise<
     TrustedGraphs & {
         owned: number[];
@@ -167,14 +160,10 @@ const loadTrustedForSigning = async (
         boundLeafCp: Map<number, string>;
     }
 > => {
-    if (
-        typeof owner !== "string" ||
-        owner.length === 0 ||
-        (vocab?.allowedOwners !== undefined && !vocab.allowedOwners.includes(owner))
-    ) {
+    if (typeof owner !== "string" || owner.length === 0) {
         fail(`unknown funding owner ${owner}`);
     }
-    checkIntegrity(expected, template, vocab);
+    checkIntegrity(expected, template);
     const trusted = loadGraphs(expected, "trusted");
     const owned = trusted.owners.flatMap((o, i) => (o === owner ? [i] : []));
     if (owned.length === 0) fail(`no inputs assigned to ${owner}`);
@@ -202,7 +191,7 @@ const loadTrustedForSigning = async (
     } catch (error) {
         fail("trusted graph must be unsigned", error);
     }
-    assertEdges(expected, trusted);
+    assertEdges(trusted);
     const boundKeys = new Map<number, string>();
     const boundLeafArk = new Map<number, string>();
     const boundLeafCp = new Map<number, string>();
@@ -241,7 +230,7 @@ const selectedLeaf = (
     return candidates[0].leafHashHex;
 };
 
-const assertEdges = (expected: JointGraph, trusted: TrustedGraphs): void => {
+const assertEdges = (trusted: TrustedGraphs): void => {
     try {
         const seen = new Set<string>();
         for (let i = 0; i < trusted.ark.inputsLength; i++) {
@@ -253,9 +242,6 @@ const assertEdges = (expected: JointGraph, trusted: TrustedGraphs): void => {
             if (spentTxid === undefined || spentIndex === undefined) {
                 fail(`checkpoint ${i} has no outpoint`);
             }
-            const funded = `${hex.encode(spentTxid as Uint8Array)}:${spentIndex as number}`;
-            const want = `${expected.inputOutpoints[i].txid.toLowerCase()}:${expected.inputOutpoints[i].vout}`;
-            if (funded !== want) fail(`checkpoint ${i} spends ${funded}, metadata says ${want}`);
             const edge = `${trusted.checkpoints[i].id}:0`;
             const arkSpent = trusted.ark.getInput(i);
             const arkTxid: Uint8Array | undefined = arkSpent.txid as Uint8Array | undefined;
@@ -405,17 +391,11 @@ export async function signJointGraphForOwner(args: {
     owner: string;
     bindings: JointSignerBinding[];
     template: string;
-    allowedOwners?: readonly (string | null)[];
-    allowedRoles?: readonly string[];
 }): Promise<JointGraph> {
     const { expected, owner, bindings, template } = args;
-    const vocab: JointVocabulary | undefined =
-        args.allowedOwners === undefined && args.allowedRoles === undefined
-            ? undefined
-            : { allowedOwners: args.allowedOwners, allowedRoles: args.allowedRoles };
-    const trusted = await loadTrustedForSigning(expected, owner, bindings, template, vocab);
+    const trusted = await loadTrustedForSigning(expected, owner, bindings, template);
     const incoming = args.partial ?? expected;
-    if (!sameMetadata(expected, incoming)) {
+    if (!sameDeal(expected, incoming)) {
         fail("incoming partial does not match the trusted graph");
     }
     const acc = {
@@ -563,8 +543,6 @@ export async function signJointGraphForOwner(args: {
         checkpoints: acc.checkpoints.map((c) => base64.encode(c.toPSBT())),
         graphId: expected.graphId,
         inputOwners: [...expected.inputOwners],
-        inputOutpoints: expected.inputOutpoints.map((o) => ({ ...o })),
-        outputs: structuredClone(expected.outputs),
     });
 }
 
@@ -573,16 +551,10 @@ export function prepareJointSubmission(args: {
     partial: JointGraph;
     ownerKeys: JointOwnerKeys;
     template: string;
-    allowedOwners?: readonly (string | null)[];
-    allowedRoles?: readonly string[];
 }): PreparedJointSubmission {
     const { expected, partial, template } = args;
-    const vocab: JointVocabulary | undefined =
-        args.allowedOwners === undefined && args.allowedRoles === undefined
-            ? undefined
-            : { allowedOwners: args.allowedOwners, allowedRoles: args.allowedRoles };
-    if (!sameMetadata(expected, partial)) fail("partial does not match the trusted graph");
-    checkIntegrity(expected, template, vocab);
+    if (!sameDeal(expected, partial)) fail("partial does not match the trusted graph");
+    checkIntegrity(expected, template);
     const trusted = loadGraphs(expected, "trusted");
     const acc = {
         ark: parseTx(partial.arkTx, "partial arkTx"),
@@ -599,7 +571,7 @@ export function prepareJointSubmission(args: {
     }
     const required = [...new Set(trusted.owners)].filter((o): o is string => o !== null);
     if (required.length === 0) fail("trusted graph names no funding owner");
-    const ownerPins = normalizeOwnerKeys(args.ownerKeys, trusted.owners, vocab?.allowedOwners);
+    const ownerPins = normalizeOwnerKeys(args.ownerKeys, trusted.owners);
     for (let i = 0; i < trusted.ark.inputsLength; i++) {
         const owner = trusted.owners[i];
         if (owner === null) continue;
@@ -614,11 +586,10 @@ export function prepareJointSubmission(args: {
 const normalizeOwnerKeys = (
     ownerKeys: JointOwnerKeys | undefined,
     owners: readonly (string | null)[],
-    allowedOwners?: readonly (string | null)[],
 ): Map<string, Set<string>> => {
     const out = new Map<string, Set<string>>();
     for (const [owner, keys] of Object.entries(ownerKeys ?? {})) {
-        if (owner.length === 0 || (allowedOwners !== undefined && !allowedOwners.includes(owner))) {
+        if (owner.length === 0) {
             fail(`unknown funding owner ${owner}`);
         }
         const pinned: readonly string[] = Array.isArray(keys) ? keys : [];
@@ -651,14 +622,8 @@ export function providerCosignerKey(args: {
     expected: JointGraph;
     emulatorXOnly: string;
     template: string;
-    allowedOwners?: readonly (string | null)[];
-    allowedRoles?: readonly string[];
 }): string {
-    const vocab: JointVocabulary | undefined =
-        args.allowedOwners === undefined && args.allowedRoles === undefined
-            ? undefined
-            : { allowedOwners: args.allowedOwners, allowedRoles: args.allowedRoles };
-    checkIntegrity(args.expected, args.template, vocab);
+    checkIntegrity(args.expected, args.template);
     const ark = parseTx(args.expected.arkTx, "trusted arkTx");
     const vin = args.expected.inputOwners.findIndex((o) => o === null);
     if (vin === -1) fail("trusted graph names no provider-signed input");
@@ -682,21 +647,13 @@ export async function submitJointFill(args: {
     pins: JointPins;
     ownerKeys: JointOwnerKeys;
     template: string;
-    allowedOwners?: readonly (string | null)[];
-    allowedRoles?: readonly string[];
 }): Promise<SubmittedJointFill> {
     const { expected, prepared, provider, pins, template } = args;
-    const vocab: JointVocabulary | undefined =
-        args.allowedOwners === undefined && args.allowedRoles === undefined
-            ? undefined
-            : { allowedOwners: args.allowedOwners, allowedRoles: args.allowedRoles };
     const partial: JointGraph = {
         arkTx: prepared.arkTx,
         checkpoints: [...prepared.checkpointTxs],
         graphId: expected.graphId,
         inputOwners: [...expected.inputOwners],
-        inputOutpoints: expected.inputOutpoints.map((o) => ({ ...o })),
-        outputs: structuredClone(expected.outputs),
     };
     let staged: PreparedJointSubmission;
     try {
@@ -705,27 +662,19 @@ export async function submitJointFill(args: {
             partial,
             ownerKeys: args.ownerKeys,
             template,
-            allowedOwners: args.allowedOwners,
-            allowedRoles: args.allowedRoles,
         });
     } catch (error) {
         if (error instanceof JointSigningError) throw error;
         throw new JointSigningError("prepared bytes fail validation", { cause: error });
     }
     if (staged.txid !== prepared.txid) fail("prepared txid does not match its bytes");
-    const ownerPins = normalizeOwnerKeys(
-        args.ownerKeys,
-        expected.inputOwners,
-        vocab?.allowedOwners,
-    );
+    const ownerPins = normalizeOwnerKeys(args.ownerKeys, expected.inputOwners);
     const emulatorPin = pinHex(pins.emulatorXOnly, "emulator pin");
     const serverPin = pinHex(pins.serverXOnly, "server pin");
     const providerPin = providerCosignerKey({
         expected,
         emulatorXOnly: pins.emulatorXOnly,
         template,
-        allowedOwners: args.allowedOwners,
-        allowedRoles: args.allowedRoles,
     });
     let response: { signedArkTx: string; signedCheckpointTxs: string[] };
     try {

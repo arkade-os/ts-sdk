@@ -288,13 +288,7 @@ import {
 } from "./utils/arkTransaction";
 import { getRandomId } from "./wallet/utils";
 import { deepFreeze, digestJointGraph, verifyJointGraph } from "./jointGraph";
-import type {
-    JointGraph,
-    JointGraphAsset,
-    JointGraphOutput,
-    JointOutpoint,
-    JointVocabulary,
-} from "./jointGraph";
+import type { JointGraph } from "./jointGraph";
 import {
     JointSigningError,
     JointSubmissionAmbiguousError,
@@ -955,10 +949,6 @@ export type {
     TapLeaves,
     IncomingFunds,
     JointGraph,
-    JointGraphAsset,
-    JointGraphOutput,
-    JointOutpoint,
-    JointVocabulary,
     JointOwnerKeys,
     JointPins,
     JointSignerBinding,
