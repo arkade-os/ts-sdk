@@ -1101,11 +1101,10 @@ describe("RfqSwapManager — the lightning-send leg", () => {
     });
 
     it("does not end an unreadable lockup as a refund before the lag window closes", async () => {
-        // A push that finds nothing to return is a fact about the lockup, not
-        // proof that the money came home: the indexer may simply not be able to
-        // show the spend yet. Ending here would write `refunded` over a
-        // settlement that is merely late, so the wait stays open for the same
-        // window the refused push below and the receive leg already use.
+        // Nothing to return does not mean the money came back. The indexer may
+        // just not be able to show the spend yet, so ending here would record a
+        // late settlement as a refund. Keep watching for the same window the
+        // failed push and the receive leg already use.
         const s = spies({ refund: async () => null });
         const swap = lightningSwap();
         const m = manager({
@@ -1121,11 +1120,9 @@ describe("RfqSwapManager — the lightning-send leg", () => {
     });
 
     it("holds the wait open through the lag window and ends it at the deadline", async () => {
-        // The window has to be a delay and not an endless one: every pass
-        // inside it re-asks and decides nothing, and the deadline is what ends
-        // the swap — so a lockup that never becomes readable cannot keep a swap
-        // monitored forever. Nothing left to observe, no further move
-        // available, same ending the refused push gets.
+        // The wait has to end. Every pass inside the window re-asks and decides
+        // nothing, and the deadline is what closes it, so a lockup that never
+        // becomes readable cannot keep a swap monitored forever.
         let now = REFUND_LOCKTIME + 1;
         const s = spies({ refund: async () => null });
         const swap = lightningSwap();
@@ -1149,11 +1146,10 @@ describe("RfqSwapManager — the lightning-send leg", () => {
     });
 
     it("let the settlement show late instead of recording it as a refund", async () => {
-        // The reported bug, end to end: the solver claimed the lockup, so the
-        // Lightning send succeeded, but the indexer could not produce the spend
-        // transaction. The refund push then finds nothing to return. Read as
-        // `refunded`, the swap would end on the wrong outcome and drop out of
-        // monitoring, so the claim would never be seen.
+        // The reported bug: the solver claimed the lockup, so the Lightning send
+        // succeeded, but the indexer could not return the spend transaction, so
+        // the refund finds nothing to return. Called `refunded`, the swap stops
+        // being monitored and the claim is never seen.
         const state = {
             vtxos: spentBy(CLAIM_SPEND.txid),
             txs: [] as { txid: string; psbt: string }[],
@@ -1168,8 +1164,7 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         expect(swap.state).toBe("pending");
         expect(s.refunds).toEqual([RFQ_ID]);
 
-        // The indexer catches up. The next pass re-reads the lockup, finds the
-        // hash-verified claim, and ends the swap on what actually happened.
+        // The indexer catches up, so the next pass finds the claim and settles.
         state.txs = [CLAIM_SPEND];
         await m.poll();
 
