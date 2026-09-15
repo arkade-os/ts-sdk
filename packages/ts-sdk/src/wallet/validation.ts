@@ -1,4 +1,6 @@
 import { equalBytes } from "@scure/btc-signer/utils.js";
+import type { Bytes } from "@scure/btc-signer/utils.js";
+import { base64 } from "@scure/base";
 import { Recipient, Asset } from ".";
 import { ArkAddress } from "../script/address";
 import { Transaction } from "../utils/transaction";
@@ -28,6 +30,14 @@ export const ErrOnchainOutputNotFound = (address: string) =>
 export const ErrUnvalidatedOffchainOutput = (address: string) =>
     new ServerResponseMismatchError(
         `offchain output ${address} cannot be validated: virtual output tree signing did not run`,
+    );
+export const ErrIntentOutputNotFound = (index: number, kind: "onchain" | "offchain") =>
+    new ServerResponseMismatchError(
+        `${kind} output ${index} of the intent proof is not present in what the server built`,
+    );
+export const ErrUnvalidatedIntentOutput = (index: number) =>
+    new ServerResponseMismatchError(
+        `offchain output ${index} of the intent proof cannot be validated: virtual output tree signing did not run`,
     );
 
 // Malformed recipient list from the caller, not a server response: plain
@@ -132,6 +142,117 @@ export function validateBatchRecipientsWithoutTree(
 
         throw ErrUnvalidatedOffchainOutput(recipient.address);
     }
+}
+
+/** An output the user signed into the intent proof. */
+export interface DeclaredOutput {
+    index: number;
+    script: Bytes;
+    amount: bigint;
+    onchain: boolean;
+}
+
+/**
+ * The paying outputs a signed intent proof commits to. Zero-amount outputs are
+ * the proof's own placeholder and any extension packet, neither of which pays.
+ */
+export function declaredIntentOutputs(
+    signedProof: string,
+    onchainOutputIndexes: number[],
+): DeclaredOutput[] {
+    const proof = Transaction.fromPSBT(base64.decode(signedProof));
+    const onchain = new Set(onchainOutputIndexes);
+    const declared: DeclaredOutput[] = [];
+    for (let i = 0; i < proof.outputsLength; i++) {
+        const output = proof.getOutput(i);
+        if (!output?.script || output.script.length === 0 || !output.amount) continue;
+        declared.push({
+            index: i,
+            script: output.script,
+            amount: output.amount,
+            onchain: onchain.has(i),
+        });
+    }
+    return declared;
+}
+
+/**
+ * {@link validateBatchRecipients} against the outputs the user already signed
+ * into the intent proof. Assets are not covered: a packet carries no amount, so
+ * an intent whose asset assignment matters wants the explicit list.
+ */
+export function validateBatchAgainstIntent(
+    commitmentTx: Transaction,
+    vtxoTreeLeaves: Transaction[],
+    declared: DeclaredOutput[],
+): void {
+    const usedOnchain = new Set<number>();
+    const usedLeaf = new Set<string>();
+    for (const output of declared) {
+        if (output.onchain) {
+            if (!takeOnchainOutput(commitmentTx, output, usedOnchain)) {
+                throw ErrIntentOutputNotFound(output.index, "onchain");
+            }
+            continue;
+        }
+        if (!takeLeafOutput(vtxoTreeLeaves, output, usedLeaf)) {
+            throw ErrIntentOutputNotFound(output.index, "offchain");
+        }
+    }
+}
+
+/** {@link validateBatchAgainstIntent} for a batch whose tree was never
+ * validated; offchain outputs are refused rather than checked, as in
+ * {@link validateBatchRecipientsWithoutTree}. */
+export function validateBatchAgainstIntentWithoutTree(
+    commitmentTx: Transaction,
+    declared: DeclaredOutput[],
+): void {
+    const usedOnchain = new Set<number>();
+    for (const output of declared) {
+        if (!output.onchain) {
+            throw ErrUnvalidatedIntentOutput(output.index);
+        }
+        if (!takeOnchainOutput(commitmentTx, output, usedOnchain)) {
+            throw ErrIntentOutputNotFound(output.index, "onchain");
+        }
+    }
+}
+
+function takeOnchainOutput(
+    commitmentTx: Transaction,
+    declared: DeclaredOutput,
+    used: Set<number>,
+): boolean {
+    for (let i = 0; i < commitmentTx.outputsLength; i++) {
+        if (used.has(i)) continue;
+        const output = commitmentTx.getOutput(i);
+        if (!output?.script || output.amount !== declared.amount) continue;
+        if (!equalBytes(output.script, declared.script)) continue;
+        used.add(i);
+        return true;
+    }
+    return false;
+}
+
+function takeLeafOutput(
+    leaves: Transaction[],
+    declared: DeclaredOutput,
+    used: Set<string>,
+): boolean {
+    for (let leafIdx = 0; leafIdx < leaves.length; leafIdx++) {
+        const leaf = leaves[leafIdx];
+        for (let i = 0; i < leaf.outputsLength; i++) {
+            const key = `${leafIdx}:${i}`;
+            if (used.has(key)) continue;
+            const output = leaf.getOutput(i);
+            if (!output?.script || output.amount !== declared.amount) continue;
+            if (!equalBytes(output.script, declared.script)) continue;
+            used.add(key);
+            return true;
+        }
+    }
+    return false;
 }
 
 // validateOnchainRecipient verifies the given recipient is present in the commitment tx outputs list
