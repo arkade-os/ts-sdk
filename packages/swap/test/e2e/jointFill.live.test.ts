@@ -144,7 +144,10 @@ describe("two-owner fill against the regtest stack", () => {
         maker = await makeWallet(makerKey);
         solver = await makeWallet(solverKey);
         taxi = await makeWallet(taxiKey);
-        await Promise.all([faucet(maker), faucet(solver), faucet(taxi)]);
+        // Serial, not Promise.all: each faucet redeems a note, and concurrent
+        // redemptions land in one settlement round that then fails with
+        // "missing forfeit transactions".
+        for (const wallet of [maker, solver, taxi]) await faucet(wallet);
     }, 300_000);
 
     it("fills an asset want with solver and taxi signatures", async () => {
