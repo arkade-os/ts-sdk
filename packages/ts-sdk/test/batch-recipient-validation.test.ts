@@ -170,6 +170,22 @@ function finalizationEvent(outputs: { address: string; amount: bigint }[]): Batc
     return { id: "batch-1", commitmentTx: base64.encode(tx.toPSBT()) } as BatchFinalizationEvent;
 }
 
+/** The same, spending an outpoint that is not the one we registered. */
+function finalizationEventWithoutBoardingInput(
+    outputs: { address: string; amount: bigint }[],
+): BatchFinalizationEvent {
+    const tx = commitmentTx(outputs);
+    tx.addInput({
+        txid: hex.decode("bb".repeat(32)),
+        index: 0,
+        witnessUtxo: {
+            script: pkScript(ONCHAIN_ADDRESS),
+            amount: BigInt(BOARDING_INPUT.value),
+        },
+    });
+    return { id: "batch-1", commitmentTx: base64.encode(tx.toPSBT()) } as BatchFinalizationEvent;
+}
+
 /**
  * An onchain-only settle: `skipVtxoTreeSigning` means `onTreeSigningStarted`
  * never runs, so the handler reaches finalization with no validated commitment
@@ -259,5 +275,20 @@ describe("Wallet.createBatchHandler onchain-only finalization", () => {
         );
 
         expect(thisArg._signerRouter.sign).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not sign when the commitment tx leaves a boarding input out", async () => {
+        const { handler, thisArg } = onchainOnlyHandler([]);
+
+        await expect(
+            handler.onBatchFinalization(
+                finalizationEventWithoutBoardingInput([
+                    { address: OTHER_ONCHAIN_ADDRESS, amount: 1_000n },
+                ]),
+            ),
+        ).rejects.toThrow(/is not an input of the commitment tx/);
+
+        expect(thisArg._signerRouter.sign).not.toHaveBeenCalled();
+        expect(thisArg.arkProvider.submitSignedForfeitTxs).not.toHaveBeenCalled();
     });
 });

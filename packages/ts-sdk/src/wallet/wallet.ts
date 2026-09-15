@@ -4393,6 +4393,7 @@ export class Wallet
         for (const input of inputs) {
             // boarding input, we need to sign the settlement tx
             if (!isVirtualCoin(input)) {
+                let matched = false;
                 for (let i = 0; i < settlementPsbt.inputsLength; i++) {
                     const settlementInput = settlementPsbt.getInput(i);
 
@@ -4424,7 +4425,16 @@ export class Wallet
                         throw new Error(await this.unsignableBoardingInputError(input, script));
                     }
                     hasBoardingUtxos = true;
+                    matched = true;
                     break;
+                }
+
+                // Skipping it silently would settle the forfeits and leave this
+                // input behind.
+                if (!matched) {
+                    throw new Error(
+                        `boarding input ${input.txid}:${input.vout} is not an input of the commitment tx`,
+                    );
                 }
 
                 continue;
