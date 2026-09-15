@@ -949,7 +949,8 @@ export interface TaxiFillInput {
     netContributionSats: bigint | number;
     /** Optional fare output paid from the joint inputs. */
     fare?: { assetId: string; amount: bigint | number; script: Uint8Array; sats: bigint | number };
-    /** Where the sponsor's change lands (omitted when the contribution spends everything). */
+    /** Where the sponsor's change lands. Always required; unused when the
+     * contribution spends every sponsor sat. */
     changeScript: Uint8Array;
 }
 

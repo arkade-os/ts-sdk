@@ -134,6 +134,10 @@ describe("joint tx boundary primitives", () => {
         ]);
         expect(unsignedPsbtBytes(target)).toEqual(unsignedPsbtBytes(tx));
         expect(tapScriptSigEntries(target, 0)).toHaveLength(1);
+        // A shorter set must remove what it omits: an array alone merges, so
+        // this stays at 1 unless the helper clears first.
+        setTapScriptSigEntries(target, 0, []);
+        expect(tapScriptSigEntries(target, 0)).toEqual([]);
     });
 
     it("treats locktime as unsigned data", () => {

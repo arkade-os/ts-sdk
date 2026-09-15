@@ -477,6 +477,9 @@ export function setTapScriptSigEntries(
     inputIndex: number,
     entries: readonly { pubKey: Uint8Array; leafHash: Uint8Array; signature: Uint8Array }[],
 ): void {
+    // An array merges, so a shorter set would leave stale entries behind;
+    // `undefined` deletes, which is what makes this a replacement.
+    tx.updateInput(inputIndex, { tapScriptSig: undefined });
     tx.updateInput(inputIndex, {
         tapScriptSig: entries.map((e) => [{ pubKey: e.pubKey, leafHash: e.leafHash }, e.signature]),
     });
