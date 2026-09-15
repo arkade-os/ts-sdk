@@ -115,7 +115,13 @@ const faucet = async (wallet: Wallet): Promise<void> => {
         `${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`,
         "send",
     );
-    await waitFor(async () => (await wallet.getVtxos()).length > 0);
+    // Wait for SPENDABLE funds, not merely a visible vtxo: the test mints an
+    // asset immediately after funding, and an unsettled coin shows up in
+    // getVtxos long before it can be spent.
+    await waitFor(async () => {
+        const coins = await wallet.getSpendableVtxos();
+        return coins.reduce((sum, c) => sum + c.value, 0) >= FAUCET_SATS;
+    });
 };
 
 const toFunding = (coin: ExtendedVirtualCoin): FillFunding => ({
