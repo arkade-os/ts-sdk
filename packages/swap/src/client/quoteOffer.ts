@@ -1,11 +1,8 @@
 /**
- * The feed-priced backend: an arkade-to-arkade asset swap, priced from the
- * card's own feed with no round trip to anybody.
+ * The feed-priced backend: an arkade-to-arkade card that named no rendezvous.
  *
- * The market picks the backend — a card with both legs on arkade prices from
- * its feed, and one with a leg off it is negotiated over RFQ — so nothing here
- * is a client switch. What this module owns are the two things the offer path
- * has never had an answer for.
+ * A card with relays is RFQ (`quoteViaRfq`). This module is the leftover:
+ * the card's feed, no round trip, same offer covenant.
  *
  * **The margin.** `quoteOffer` defaults `safetyBps` to 50, the package exports
  * `QUOTE_OPTIONS = { safetyBps: 0 }` and the wallet passes it, and the v1 facade
