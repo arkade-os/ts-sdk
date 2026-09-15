@@ -48,7 +48,10 @@ const WANT_UNITS = 1_000n;
 const FARE_UNITS = 100n;
 const ISSUE_UNITS = 10_000n;
 const DEPOSIT_SATS = 5_000;
-const FAUCET_SATS = 100_000;
+// Funds each wallet. Only the faucet reads this; the fill economics use
+// DEPOSIT_SATS and the unit constants above. CI reached issuance with 100_000
+// spendable and still reported insufficient funds, so fund well clear of it.
+const FAUCET_SATS = 1_000_000;
 
 const execCommand = (command: string): string => {
     const result = execSync(command, { encoding: "utf8" })
@@ -122,6 +125,14 @@ const faucet = async (wallet: Wallet): Promise<void> => {
         const coins = await wallet.getSpendableVtxos();
         return coins.reduce((sum, c) => sum + c.value, 0) >= FAUCET_SATS;
     });
+    // Report what actually landed. Three guesses at this failure have been
+    // wrong; the next CI run should say what the wallet holds rather than
+    // leave it to be inferred from "Insufficient funds".
+    const funded = await wallet.getSpendableVtxos();
+    console.log(
+        `live fill funded ${await wallet.getAddress()}: ${funded.length} coins, ` +
+            `${funded.reduce((s, c) => s + c.value, 0)} sats spendable`,
+    );
 };
 
 const toFunding = (coin: ExtendedVirtualCoin): FillFunding => ({
