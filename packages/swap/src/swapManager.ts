@@ -1486,6 +1486,40 @@ export class RfqSwapManager {
         }, this.config.pollIntervalMs);
     }
 
+    /*
+     * Runs one serialized monitoring pass for a single swap.
+     *
+     * Flow
+     *
+     * 1. Prevents concurrent work
+     *   - Returns immediately if the swap is already in inProgress.
+     *   - Returns if the swap is no longer in monitored.
+     *   - Adds the swap ID to inProgress.
+     *
+     * 2. Runs the state machine
+     *   - Calls runPass(swap).
+     *   - runPass checks the lockup fate, drives claims, and may initiate refunds.
+     *
+     * 3. Persists changes
+     *   - If the pass marked the swap dirty, calls save(swap).
+     *   - A swap is considered persisted only if all configured sinks succeed:
+     *     - the repository, and
+     *     - callbacks.saveSwap, if provided.
+     *
+     * 4. Completes waiters and finalizes
+     *   - If persistence succeeds:
+     *     - clears the dirty flag,
+     *     - settles waitForSwapCompletion waiters,
+     *     - moves terminal swaps from monitored to finished,
+     *     - emits completion or failure notifications through finalize.
+     *
+     * 5. Releases the per-swap lock
+     *   - Deletes the swap ID from inProgress only after all asynchronous work completes.
+     *   - This prevents overlapping poll() calls from submitting duplicate claims or refunds.
+     *
+     * The important safety property is that terminal state is not finalized until its updated record has been
+     * successfully persisted. A failed save leaves the swap dirty and monitored so a later poll can retry.
+     */
     private async pollSwap(swap: RfqSwap): Promise<void> {
         if (this.inProgress.has(swap.rfqId)) return;
         if (!this.monitored.has(swap.rfqId)) return;
@@ -1521,6 +1555,43 @@ export class RfqSwapManager {
         }
     }
 
+    /*
+     * executes one monitoring/state-machine pass for a swap.
+     *
+     * Flow
+     * 1. Registers the lockup
+     *   - Calls ensureRegistered(swap).
+     *   - Registration is best effort and does not prevent the rest of the pass from running.
+     *
+     * 2. Reads the Arkade lockup fate
+     *   - Calls readLockupFate.
+     *   - A hash-verified claim is treated as claimed.
+     *   - A fully observed non-claim spend is treated as returned.
+     *   - Indexer errors become unknown, allowing deadline-driven logic to continue.
+     *   - For claimed or returned, it:
+     *     - records spend transaction IDs,
+     *     - records the settlement preimage when applicable,
+     *     - sets the swap state to settled or refunded,
+     *     - ends the pass.
+     *
+     * 3. Handles unilateral exits
+     *   - On receive swaps, an exited lockup is blocked immediately.
+     *   - On send swaps, the L1 half continues to be monitored because an exit only describes the Arkade side.
+     *
+     * 4. Drives the trader’s claim
+     *   - For lightning_receive, calls driveReceiveClaim and ends the pass.
+     *   - For onchain_send, calls driveOnchain to classify and potentially claim the L1 HTLC.
+     *   - A handled L1 action ends the pass; otherwise processing continues.
+     *
+     * 5. Drives an Arkade refund
+     *
+     *   - For send swaps whose lockup remains unresolved, calls driveArkadeRefund.
+     *   - This is gated by the refund timelock and local refund capability.
+     *   - Receive swaps never reach this step because their refund path belongs to the solver.
+     *
+     * runPass only decides and performs state-machine actions. Persistence, waiter settlement, terminal finalization,
+     * and the per-swap lock are handled by pollSwap.
+     */
     private async runPass(swap: RfqSwap): Promise<void> {
         // 0. Make sure the lockup is registered and pushing events. A no-op
         //    after the first pass, and never a reason to skip the rest — see
@@ -1942,6 +2013,7 @@ export class RfqSwapManager {
             // point will therefore have been recorded as a refund; that is the
             // cost of ending the wait at all, and it takes an indexer that
             // cannot answer for the whole span past `refundLocktime`.
+
             this.setState(swap, "refunded");
             this.emitAction(swap, "refundArkade");
         } catch (error) {
