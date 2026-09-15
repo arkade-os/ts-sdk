@@ -344,6 +344,7 @@ const onchainSwap = (over: Partial<OnchainSendSwap> = {}): OnchainSendSwap => ({
     updatedAt: 1,
     htlc: htlcOf(),
     minConfirmations: 2,
+    expectedAmount: LOCKUP_VALUE,
     ...over,
 });
 
@@ -756,6 +757,42 @@ describe("RfqSwapManager — the onchain-send L1 half", () => {
         expect(swap.state).toBe("claimed");
         expect(swap.claimTxid).toBe("dd".repeat(32));
         expect(s.actions).toEqual(["claimOnchain"]);
+    });
+
+    it("refuses to publish the preimage for a dust-funded fill", async () => {
+        const s = spies();
+        const swap = onchainSwap();
+        const m = manager({
+            chain: fakeChain({ utxos: [{ ...FILL, amount: 330n }], mtp: SAFE_NOW }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.claims).toHaveLength(0);
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/330 sats, below the agreed 100000/);
+        // not terminal: the solver can still top the fill up
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
+    });
+
+    it("refuses a record whose expectedAmount cannot be compared against", async () => {
+        for (const expectedAmount of [Number.NaN, undefined as unknown as number]) {
+            const s = spies();
+            const swap = onchainSwap({ expectedAmount });
+            const m = manager({
+                chain: fakeChain({ utxos: [{ ...FILL, amount: 1n }], mtp: SAFE_NOW }),
+                now: SAFE_NOW,
+                spies: s,
+            });
+            await m.addSwap(swap);
+            await m.poll();
+
+            expect(s.claims).toHaveLength(0);
+            expect(swap.state).toBe("needs_counterparty");
+            expect(swap.blockedReason).toMatch(/not a finite number/);
+        }
     });
 
     it("does not claim inside the margin, and does not refund early either", async () => {
@@ -1193,9 +1230,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
     });
 
     it("refuses to publish the preimage for a dust-funded lockup", async () => {
-        // THE attack this leg has and no other: the solver funds the correctly
-        // derived script with dust. Claiming makes `P` public, which is what
-        // lets the solver settle the payer's held HTLC in full.
+        // Claiming makes `P` public, which settles the payer's held HTLC in full.
         const s = spies();
         const swap = receiveSwap();
         const m = manager({ indexer: fundedIndexer(330), now: BEFORE_DEADLINE, spies: s });

@@ -132,6 +132,7 @@ export interface OnchainSendProfile extends Record<string, unknown> {
     htlcAddress: string;
     /** `profile.min_confirmations`; gates when the fill is claimable. */
     minConfirmations: number;
+    expectedAmount: number;
     /** Where the claim PAYS, hex. The spender's own choice, so nothing else
      * gives it back — and `buildHtlcClaim` needs it. */
     payoutPkScript: string;
@@ -172,6 +173,7 @@ export function onchainSendProfile(result: {
     htlcParams: OnchainHtlcParams;
     l1Network: OnchainNetwork;
     minConfirmations: number;
+    expectedAmount: number;
     payoutPkScript: Uint8Array;
 }): Omit<OnchainSendProfile, "signer" | "hashlock"> {
     return {
@@ -181,6 +183,7 @@ export function onchainSendProfile(result: {
         network: result.l1Network,
         htlcAddress: result.htlc.address,
         minConfirmations: result.minConfirmations,
+        expectedAmount: result.expectedAmount,
         payoutPkScript: hex.encode(result.payoutPkScript),
     };
 }
@@ -200,6 +203,7 @@ export const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
     project: (swap: RfqSwap) => {
         const send = swap as OnchainSendSwap;
         return {
+            expectedAmount: send.expectedAmount,
             ...(send.funding ? { funding: send.funding } : {}),
             ...(send.claimTxid ? { claimTxid: send.claimTxid } : {}),
         };
@@ -229,6 +233,16 @@ export const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
                     `checked — refusing to restore a swap that would claim an unconfirmed fill`,
             );
         }
+        if (
+            typeof profile.expectedAmount !== "number" ||
+            !Number.isFinite(profile.expectedAmount)
+        ) {
+            throw new Error(
+                `onchain_send record carries no usable expectedAmount ` +
+                    `(${String(profile.expectedAmount)}); the funded value cannot be checked — ` +
+                    `refusing to restore a swap that would claim an underfunded fill`,
+            );
+        }
         const htlc = onchainHtlcScript(
             {
                 // From the profile, not the covenant: the lockup commits to
@@ -256,6 +270,7 @@ export const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
             paymentHash,
             htlc,
             minConfirmations: profile.minConfirmations,
+            expectedAmount: profile.expectedAmount,
             // Optional here, required at the write: throwing on an older
             // record would strand the refund it is still owed.
             ...(profile.payoutPkScript

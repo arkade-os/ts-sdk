@@ -228,6 +228,9 @@ export interface OnchainSendSwap extends RfqSwapCommon {
     htlc: OnchainHtlc;
     /** `profile.min_confirmations` from the quote. */
     minConfirmations: number;
+    /** The quote's `to_amount`, captured at REQUEST time: read at claim time it
+     * would be whatever the solver funded. */
+    expectedAmount: number;
     /** Where {@link RfqSwapManagerCallbacks.claimOnchain} pays; optional only
      * so records predating its profile slot still restore. */
     payoutPkScript?: Uint8Array;
@@ -1746,6 +1749,23 @@ export class RfqSwapManager {
             // step 2 skipped this branch on it; a blocked swap keeps the txid
             // while the label defers, and re-broadcasting would publish P twice.
             if (swap.claimTxid) return "continue";
+            // Before the label, as the receive leg gates its lockup: the claim
+            // publishes `P`, and that is not recallable.
+            if (!Number.isFinite(swap.expectedAmount)) {
+                this.block(
+                    swap,
+                    `expectedAmount is not a finite number (${String(swap.expectedAmount)}), so the funded value cannot be checked — refusing to publish the preimage`,
+                );
+                return "handled";
+            }
+            const filled = Number(phase.utxo.amount);
+            if (!Number.isFinite(filled) || filled < swap.expectedAmount) {
+                this.block(
+                    swap,
+                    `fill holds ${filled} sats, below the agreed ${swap.expectedAmount} — refusing to publish the preimage`,
+                );
+                return "handled";
+            }
             // Half-wired: callbacks installed, this one absent. Blocked rather
             // than labelled `claimable`, for the reason `claimIfFunded` gives —
             // and NOT failed, unlike the missing-`ChainSource` case above:

@@ -1642,6 +1642,7 @@ export function deriveOnchainSend(input: {
     refundLocktime: number;
     htlcLocktime: number;
     minConfirmations: number;
+    expectedAmount: number;
 } {
     const { quote } = input;
     const profile = quote.profile ?? {};
@@ -1699,6 +1700,7 @@ export function deriveOnchainSend(input: {
         refundLocktime,
         htlcLocktime,
         minConfirmations,
+        expectedAmount: quoteSats(quote.to_amount, "to_amount"),
     };
 }
 
@@ -1746,6 +1748,8 @@ export async function requestOnchainSend(
     /** The user's OWN arkade lockup derivation — the only address to fund. */
     address: string;
     fundAmount: number;
+    /** What the solver's L1 fill must carry — persist it with the record. */
+    expectedAmount: number;
     swapPkScript: Uint8Array;
     /** The arkade covenant itself — the record's `lockup` for
      * `RfqSwapManager`, same role as {@link requestLightningSend}'s. */
@@ -1856,6 +1860,7 @@ export async function requestOnchainSend(
         quote,
         address: derived.address,
         fundAmount: quoteSats(quote.from_amount, "from_amount"),
+        expectedAmount: quoteSats(quote.to_amount, "to_amount"),
         swapPkScript: derived.swapPkScript,
         script: derived.script,
         refundAddress,

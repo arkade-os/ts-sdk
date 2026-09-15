@@ -302,6 +302,7 @@ describe("deriveOnchainSend", () => {
             network: "regtest",
             htlcAddress: derived.htlc.address,
             minConfirmations: 2,
+            expectedAmount: 99_000,
             payoutPkScript: hex.encode(PAYOUT),
         });
     });
@@ -331,6 +332,7 @@ describe("deriveOnchainSend", () => {
                 refundLocktime: derived.refundLocktime,
                 htlc: derived.htlc,
                 minConfirmations: derived.minConfirmations,
+                expectedAmount: derived.expectedAmount,
                 createdAt: NOW,
                 updatedAt: NOW,
             } as unknown as Parameters<typeof createRfqSwapRecord>[1],
@@ -376,6 +378,7 @@ describe("deriveOnchainSend", () => {
                 refundLocktime: derived.refundLocktime,
                 htlc: derived.htlc,
                 minConfirmations: derived.minConfirmations,
+                expectedAmount: derived.expectedAmount,
                 createdAt: NOW,
                 updatedAt: NOW,
             } as unknown as Parameters<typeof createRfqSwapRecord>[1],
