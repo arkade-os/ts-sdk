@@ -4430,8 +4430,10 @@ export class Wallet
                 }
 
                 // Skipping it silently would settle the forfeits and leave this
-                // input behind.
-                if (!matched) {
+                // input behind. Arknotes reach this branch too — they carry no
+                // vtxo script — but spend no commitment input, so they are not
+                // the omission this speaks about.
+                if (!matched && !(input instanceof ArkNote)) {
                     throw new Error(
                         `boarding input ${input.txid}:${input.vout} is not an input of the commitment tx`,
                     );

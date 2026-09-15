@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { Address, OutScript, TaprootControlBlock } from "@scure/btc-signer";
 
-import { Wallet } from "../src";
+import { ArkNote, Wallet } from "../src";
 import {
     validateBatchRecipientsWithoutTree,
     ErrOnchainOutputNotFound,
@@ -191,7 +191,7 @@ function finalizationEventWithoutBoardingInput(
  * never runs, so the handler reaches finalization with no validated commitment
  * txid and recipients that have never been checked.
  */
-function onchainOnlyHandler(recipients: Recipient[]) {
+function onchainOnlyHandler(recipients: Recipient[], inputs: ExtendedCoin[] = [BOARDING_INPUT]) {
     // Signing a boarding input replaces the psbt with the signer's return value;
     // a fake standing in for a signed one keeps the test off real key material.
     const signed = {
@@ -215,7 +215,7 @@ function onchainOnlyHandler(recipients: Recipient[]) {
     const handler = (Wallet.prototype as any).createBatchHandler.call(
         thisArg,
         "intent-1",
-        [BOARDING_INPUT],
+        inputs,
         recipients,
         undefined,
     );
@@ -275,6 +275,19 @@ describe("Wallet.createBatchHandler onchain-only finalization", () => {
         );
 
         expect(thisArg._signerRouter.sign).toHaveBeenCalledTimes(1);
+    });
+
+    it("settles an arknote, which spends no commitment input", async () => {
+        const note = new ArkNote(new Uint8Array(32).fill(9), 1_000);
+        const { handler, thisArg } = onchainOnlyHandler([], [note as unknown as ExtendedCoin]);
+
+        await handler.onBatchFinalization(
+            finalizationEventWithoutBoardingInput([
+                { address: OTHER_ONCHAIN_ADDRESS, amount: 1_000n },
+            ]),
+        );
+
+        expect(thisArg._signerRouter.sign).not.toHaveBeenCalled();
     });
 
     it("does not sign when the commitment tx leaves a boarding input out", async () => {
