@@ -33,6 +33,7 @@ export interface JointPins {
     readonly serverXOnly: string;
 }
 
+/** Funding-owner pins. "offer-covenant" is never a valid key: rejected at runtime, unrepresentable here. */
 export type JointOwnerKeys = Partial<Record<JointFundingOwner, readonly string[]>>;
 
 export interface PreparedJointSubmission {
@@ -79,20 +80,46 @@ const parseTx = (psbt: string, what: string): Transaction => {
     }
 };
 
-const containsBytes = (haystack: Uint8Array, needle: Uint8Array): boolean => {
-    if (needle.length === 0 || needle.length > haystack.length) return false;
-    for (let i = 0; i <= haystack.length - needle.length; i++) {
-        let found = true;
-        for (let j = 0; j < needle.length; j++) {
-            if (haystack[i + j] !== needle[j]) {
-                found = false;
-                break;
-            }
+const pushData32 = (script: Uint8Array): Uint8Array[] => {
+    const out: Uint8Array[] = [];
+    let i = 0;
+    while (i < script.length) {
+        const op = script[i] as number;
+        let size = -1;
+        let head = 1;
+        if (op >= 0x01 && op <= 0x4b) {
+            size = op;
+        } else if (op === 0x4c) {
+            if (i + 1 >= script.length) return out;
+            size = script[i + 1] as number;
+            head = 2;
+        } else if (op === 0x4d) {
+            if (i + 2 >= script.length) return out;
+            size = (script[i + 1] as number) + (script[i + 2] as number) * 256;
+            head = 3;
+        } else if (op === 0x4e) {
+            if (i + 4 >= script.length) return out;
+            size =
+                (script[i + 1] as number) +
+                (script[i + 2] as number) * 256 +
+                (script[i + 3] as number) * 65536 +
+                (script[i + 4] as number) * 16777216;
+            head = 5;
+        } else {
+            i += 1;
+            continue;
         }
-        if (found) return true;
+        if (i + head + size > script.length) return out;
+        if (size === 32) out.push(script.subarray(i + head, i + head + 32));
+        i += head + size;
     }
-    return false;
+    return out;
 };
+
+const scriptHasKey = (script: Uint8Array, key: Uint8Array): boolean =>
+    pushData32(script).some(
+        (push) => push.length === key.length && push.every((byte, at) => byte === key[at]),
+    );
 
 const keyHexOf = async (identity: Identity, what: string): Promise<string> => {
     try {
@@ -203,9 +230,7 @@ const selectedLeaf = (
     ownerIndex: number,
     what: string,
 ): string => {
-    const candidates = tapLeavesOfInput(tx, index).filter((leaf) =>
-        containsBytes(leaf.script, key),
-    );
+    const candidates = tapLeavesOfInput(tx, index).filter((leaf) => scriptHasKey(leaf.script, key));
     if (candidates.length === 0) fail(`binding key for input ${ownerIndex} is not in its ${what}`);
     if (candidates.length > 1) fail(`multiple candidate leaves for input ${ownerIndex} (${what})`);
     return candidates[0].leafHashHex;
@@ -245,6 +270,19 @@ const assertEdges = (expected: JointGraph, trusted: TrustedGraphs): void => {
     }
 };
 
+const leafForKey = (
+    leaves: readonly { leafHashHex: string; script: Uint8Array }[],
+    key: Uint8Array,
+    index: number,
+    context: string,
+): string => {
+    const hits = leaves.filter((leaf) => scriptHasKey(leaf.script, key));
+    const [only] = hits;
+    if (only === undefined) return fail(`${context} input ${index} key is not in its leaf`);
+    if (hits.length > 1) return fail(`${context} input ${index} has multiple candidate leaves`);
+    return only.leafHashHex;
+};
+
 const assertEntryValid = (
     tx: Transaction,
     trusted: Transaction,
@@ -257,7 +295,7 @@ const assertEntryValid = (
     }
     const leaf = tapLeavesOfInput(trusted, index).find((l) => l.leafHashHex === entry.leafHashHex);
     if (!leaf) return fail(`${context} input ${index} commits to an unknown leaf`);
-    if (!containsBytes(leaf.script, hex.decode(entry.pubKeyHex))) {
+    if (!scriptHasKey(leaf.script, hex.decode(entry.pubKeyHex))) {
         return fail(`${context} input ${index} key is not in its leaf`);
     }
     try {
@@ -279,6 +317,7 @@ const assertJointInputSigs = (
     trusted: Transaction,
     index: number,
     context: string,
+    expectedLeafHex?: string,
 ): void => {
     let entries: TapScriptSigEntry[];
     try {
@@ -296,8 +335,11 @@ const assertJointInputSigs = (
         }
         const leaf = leaves.find((l) => l.leafHashHex === entry.leafHashHex);
         if (!leaf) return fail(`${context} input ${index} commits to an unknown leaf`);
-        if (!containsBytes(leaf.script, hex.decode(entry.pubKeyHex))) {
-            return fail(`${context} input ${index} key is not in its leaf`);
+        if (entry.leafHashHex !== leafForKey(leaves, hex.decode(entry.pubKeyHex), index, context)) {
+            return fail(`${context} input ${index} signature is not on its selected leaf`);
+        }
+        if (expectedLeafHex !== undefined && entry.leafHashHex !== expectedLeafHex) {
+            return fail(`${context} input ${index} signature is not on its selected leaf`);
         }
     }
     try {
@@ -317,6 +359,8 @@ const assertAccumulatedSigs = (
     trusted: TrustedGraphs,
     acc: { ark: Transaction; checkpoints: Transaction[] },
     context: string,
+    expectedArkLeaves?: ReadonlyMap<number, string>,
+    expectedCpLeaves?: ReadonlyMap<number, string>,
 ): void => {
     for (let i = 0; i < trusted.ark.inputsLength; i++) {
         if (trusted.owners[i] === COVENANT_OWNER) {
@@ -328,12 +372,13 @@ const assertAccumulatedSigs = (
             }
             continue;
         }
-        assertJointInputSigs(acc.ark, trusted.ark, i, context);
+        assertJointInputSigs(acc.ark, trusted.ark, i, context, expectedArkLeaves?.get(i));
         assertJointInputSigs(
             acc.checkpoints[i],
             trusted.checkpoints[i],
             0,
             `${context} checkpoint ${i}`,
+            expectedCpLeaves?.get(i),
         );
     }
 };
@@ -374,7 +419,13 @@ export async function signJointGraphForOwner(args: {
         if (error instanceof JointSigningError) throw error;
         fail("incoming partial alters unsigned fields", error);
     }
-    assertAccumulatedSigs(trusted, acc, "incoming partial");
+    assertAccumulatedSigs(
+        trusted,
+        acc,
+        "incoming partial",
+        trusted.boundLeafArk,
+        trusted.boundLeafCp,
+    );
     const before: { ark: TapScriptSigEntry[][]; cps: TapScriptSigEntry[][] } = {
         ark: Array.from({ length: trusted.ark.inputsLength }, (_, i) =>
             tapScriptSigEntries(acc.ark, i),
@@ -494,7 +545,7 @@ export async function signJointGraphForOwner(args: {
             );
         }
     }
-    assertAccumulatedSigs(trusted, acc, "signed graph");
+    assertAccumulatedSigs(trusted, acc, "signed graph", trusted.boundLeafArk, trusted.boundLeafCp);
     return deepFreeze({
         arkTx: base64.encode(acc.ark.toPSBT()),
         checkpoints: acc.checkpoints.map((c) => base64.encode(c.toPSBT())),
@@ -573,6 +624,7 @@ const assertPinnedComplete = (
 };
 
 export function covenantCosignerKey(args: { expected: JointGraph; emulatorXOnly: string }): string {
+    if (!verifyOfferFillPlan(args.expected)) fail("trusted graph fails integrity");
     const ark = parseTx(args.expected.arkTx, "trusted arkTx");
     let script: Uint8Array | undefined;
     try {
@@ -756,7 +808,11 @@ const assertResponseSigs = (args: {
         const server = serverByTxid.get(local.id);
         if (!server) throw new Error(`emulator checkpoint ${i} is missing from the response`);
         if (owners[i] === COVENANT_OWNER) {
-            for (const entry of tapScriptSigEntries(server, 0)) {
+            const cpEntries = tapScriptSigEntries(server, 0);
+            if (cpEntries.length === 0) {
+                throw new Error(`emulator checkpoint ${i} carries no server or emulator signature`);
+            }
+            for (const entry of cpEntries) {
                 const cosigned =
                     entry.pubKeyHex === emulatorPin ||
                     entry.pubKeyHex === serverPin ||
