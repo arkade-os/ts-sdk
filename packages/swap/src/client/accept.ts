@@ -46,7 +46,7 @@
  */
 import { hex } from "@scure/base";
 import { asset, getAllNormalizedVtxos, type IWallet } from "@arkade-os/sdk";
-import { createOffer, OFFER_PACKET_TYPE } from "../offer";
+import { createOffer, OFFER_PACKET_TYPE, registerDerivedOffer } from "../offer";
 import { registerLockupContract } from "../lockupContract";
 import { onchainSendProfile } from "../rfqCorridors";
 import { rfqSecretsProfile } from "../rfqProfileParts";
@@ -62,7 +62,7 @@ import { fromAtomicDecimal } from "./amount";
 import { toSafeNumber } from "./rfqAmount";
 import type { Quote, QuoteId } from "./quote";
 import type { OfferPreparation } from "./quoteOffer";
-import type { RfqPreparation } from "./quoteRfq";
+import type { AssetRfqPreparation, CorridorRfqPreparation, RfqPreparation } from "./quoteRfq";
 import {
     fundsFromWallet,
     recordArtifact,
@@ -330,7 +330,7 @@ const commonOf = (quote: Quote, now: number) => ({
 /** The corridor record: the lockup, its clocks, its secrets and its profile. */
 const corridorRecord = (
     quote: Quote,
-    preparation: RfqPreparation,
+    preparation: CorridorRfqPreparation,
     now: number,
 ): CorridorSwapRecord => {
     if (quote.lock === undefined || quote.refundLocktime === undefined) {
@@ -354,7 +354,7 @@ const corridorRecord = (
 };
 
 /** The manager's own vocabulary for this route — a route pair, not a corridor. */
-const kindOf = (preparation: RfqPreparation): CorridorSwapRecord["kind"] => {
+const kindOf = (preparation: CorridorRfqPreparation): CorridorSwapRecord["kind"] => {
     switch (preparation.route) {
         case "arkade->lightning":
             return "lightning_send";
@@ -374,7 +374,10 @@ const kindOf = (preparation: RfqPreparation): CorridorSwapRecord["kind"] => {
  * before. The at-most-one-of `preimageHex`/`preimageSaltHex` rule comes with
  * it, since the provisioning result is what decides which arm exists.
  */
-const profileOf = (preparation: RfqPreparation, paymentHash: string): Record<string, unknown> => {
+const profileOf = (
+    preparation: CorridorRfqPreparation,
+    paymentHash: string,
+): Record<string, unknown> => {
     const secrets = rfqSecretsProfile(preparation.secrets, paymentHash);
     switch (preparation.route) {
         case "arkade->lightning":
@@ -471,7 +474,9 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
     const record =
         preparation.backend === "feed"
             ? await registeredOfferRecord(input, preparation)
-            : await registeredCorridorRecord(input, preparation);
+            : preparation.route === "arkade->arkade"
+              ? await registeredAssetRecord(input, preparation)
+              : await registeredCorridorRecord(input, preparation);
 
     // Throwing, deliberately: nothing past this line may happen if the record
     // is not durable, and that is the whole invariant.
@@ -514,10 +519,39 @@ const registeredOfferRecord = async (
     };
 };
 
+/**
+ * A negotiated asset swap's covenant, registered, and the record that describes
+ * it.
+ *
+ * The record is an `offer` record, identical in family to the feed-priced one:
+ * what differed was how the terms were reached, and the terms are already on the
+ * quote by the time this runs. Everything downstream — cancel, the restore scan,
+ * the classifier, the drive — therefore needs no arm of its own for this route.
+ *
+ * What registers is the derivation the quote was verified against, not a second
+ * one built from the same terms: `createOffer` would re-derive, and two
+ * derivations that can disagree is the failure the preparation hand-off exists
+ * to delete.
+ */
+const registeredAssetRecord = async (
+    input: AcceptInput,
+    preparation: AssetRfqPreparation,
+): Promise<OfferSwapRecord> => {
+    await registerDerivedOffer(input.wallet, preparation.offer);
+    return {
+        ...commonOf(input.quote, input.now),
+        family: "offer",
+        status: "pending",
+        offerHex: preparation.offer.offerHex,
+        swapAddress: preparation.offer.address,
+        swapPkScript: hex.encode(preparation.offer.swapPkScript),
+    };
+};
+
 /** The lockup's contract row, then the record that names it. */
 const registeredCorridorRecord = async (
     input: AcceptInput,
-    preparation: RfqPreparation,
+    preparation: CorridorRfqPreparation,
 ): Promise<CorridorSwapRecord> => {
     const contracts = await input.wallet.getContractManager();
     await registerLockupContract(contracts, preparation.lockup.script, preparation.lockup.address);
