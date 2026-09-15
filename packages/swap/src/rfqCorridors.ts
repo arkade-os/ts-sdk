@@ -233,10 +233,7 @@ export const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
                     `checked — refusing to restore a swap that would claim an unconfirmed fill`,
             );
         }
-        if (
-            typeof profile.expectedAmount !== "number" ||
-            !Number.isFinite(profile.expectedAmount)
-        ) {
+        if (!Number.isSafeInteger(profile.expectedAmount) || profile.expectedAmount <= 0) {
             throw new Error(
                 `onchain_send record carries no usable expectedAmount ` +
                     `(${String(profile.expectedAmount)}); the funded value cannot be checked — ` +

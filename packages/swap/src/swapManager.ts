@@ -1751,10 +1751,10 @@ export class RfqSwapManager {
             if (swap.claimTxid) return "continue";
             // Before the label, as the receive leg gates its lockup: the claim
             // publishes `P`, and that is not recallable.
-            if (!Number.isFinite(swap.expectedAmount)) {
+            if (!Number.isSafeInteger(swap.expectedAmount) || swap.expectedAmount <= 0) {
                 this.block(
                     swap,
-                    `expectedAmount is not a finite number (${String(swap.expectedAmount)}), so the funded value cannot be checked — refusing to publish the preimage`,
+                    `expectedAmount is not a positive number of sats (${String(swap.expectedAmount)}), so the funded value cannot be checked — refusing to publish the preimage`,
                 );
                 return "handled";
             }

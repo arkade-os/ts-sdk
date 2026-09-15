@@ -778,7 +778,7 @@ describe("RfqSwapManager — the onchain-send L1 half", () => {
     });
 
     it("refuses a record whose expectedAmount cannot be compared against", async () => {
-        for (const expectedAmount of [Number.NaN, undefined as unknown as number]) {
+        for (const expectedAmount of [Number.NaN, undefined as unknown as number, 0, -1]) {
             const s = spies();
             const swap = onchainSwap({ expectedAmount });
             const m = manager({
@@ -791,7 +791,7 @@ describe("RfqSwapManager — the onchain-send L1 half", () => {
 
             expect(s.claims).toHaveLength(0);
             expect(swap.state).toBe("needs_counterparty");
-            expect(swap.blockedReason).toMatch(/not a finite number/);
+            expect(swap.blockedReason).toMatch(/not a positive number of sats/);
         }
     });
 

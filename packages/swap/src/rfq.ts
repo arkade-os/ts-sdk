@@ -652,6 +652,14 @@ export const assertFundable = (input: {
     }
     if (input.now >= input.quote.valid_until)
         fail("quote_expired", "quote expired — request a fresh one");
+    // A value gate compares the fill against the quoted amount, so a
+    // non-positive quote is a gate that cannot fail.
+    if (
+        quoteSats(input.quote.from_amount, "from_amount") <= 0 ||
+        quoteSats(input.quote.to_amount, "to_amount") <= 0
+    ) {
+        fail("non_positive_amount", "quote carries a non-positive amount");
+    }
     if (
         input.quote.refund_locktime !== undefined &&
         input.quote.refund_locktime - input.now < MIN_HEADROOM_SECONDS
