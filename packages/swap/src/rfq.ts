@@ -652,6 +652,14 @@ export const assertFundable = (input: {
     }
     if (input.now >= input.quote.valid_until)
         fail("quote_expired", "quote expired — request a fresh one");
+    // A value gate compares the fill against the quoted amount, so a
+    // non-positive quote is a gate that cannot fail.
+    if (
+        quoteSats(input.quote.from_amount, "from_amount") <= 0 ||
+        quoteSats(input.quote.to_amount, "to_amount") <= 0
+    ) {
+        fail("non_positive_amount", "quote carries a non-positive amount");
+    }
     if (
         input.quote.refund_locktime !== undefined &&
         input.quote.refund_locktime - input.now < MIN_HEADROOM_SECONDS
@@ -1642,6 +1650,7 @@ export function deriveOnchainSend(input: {
     refundLocktime: number;
     htlcLocktime: number;
     minConfirmations: number;
+    expectedAmount: number;
 } {
     const { quote } = input;
     const profile = quote.profile ?? {};
@@ -1699,6 +1708,7 @@ export function deriveOnchainSend(input: {
         refundLocktime,
         htlcLocktime,
         minConfirmations,
+        expectedAmount: quoteSats(quote.to_amount, "to_amount"),
     };
 }
 
@@ -1746,6 +1756,8 @@ export async function requestOnchainSend(
     /** The user's OWN arkade lockup derivation — the only address to fund. */
     address: string;
     fundAmount: number;
+    /** What the solver's L1 fill must carry — persist it with the record. */
+    expectedAmount: number;
     swapPkScript: Uint8Array;
     /** The arkade covenant itself — the record's `lockup` for
      * `RfqSwapManager`, same role as {@link requestLightningSend}'s. */
@@ -1856,6 +1868,7 @@ export async function requestOnchainSend(
         quote,
         address: derived.address,
         fundAmount: quoteSats(quote.from_amount, "from_amount"),
+        expectedAmount: quoteSats(quote.to_amount, "to_amount"),
         swapPkScript: derived.swapPkScript,
         script: derived.script,
         refundAddress,
