@@ -105,7 +105,10 @@ const makeWallet = (identity: SingleKey) =>
 
 const faucet = async (wallet: Wallet): Promise<void> => {
     const arkdExec = `docker exec -t ${ARKD_CONTAINER}`;
-    const note = execCommand(`${arkdExec} arkd note --amount ${FAUCET_SATS}`);
+    // Mint more than we send, as the sibling swap e2e does: three wallets are
+    // funded in sequence from one CLI wallet, and minting exactly the send
+    // amount leaves nothing behind to cover the next round.
+    const note = execCommand(`${arkdExec} arkd note --amount ${FAUCET_SATS * 2}`);
     settle(`${arkdExec} ark redeem-notes -n ${note} --password secret`, "redeem-notes");
     const address = await wallet.getAddress();
     settle(
