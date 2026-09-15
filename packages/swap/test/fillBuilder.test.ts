@@ -13,7 +13,7 @@ import {
     type IWallet,
 } from "@arkade-os/sdk";
 import { encodeOffer, fillOffer, offerVtxoScript, type Offer } from "../src/offer";
-import { TAXI_FILL_TEMPLATE, buildOfferFillPlan, verifyOfferFillPlan } from "../src/offerFillPlan";
+import { OFFER_FILL_TEMPLATE, buildOfferFillPlan, verifyOfferFillPlan } from "../src/offerFillPlan";
 
 /**
  * `fill.test.ts` mocks `ArkadeContract`, so the real builder is never
@@ -287,7 +287,7 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
 
         // Inputs 1000 + 1 + 1000 = 2001 sats; outputs 330 + 1 + 670 + 1000.
         // Solver supplies 201 units: 200 to the maker, 1 to the taxi fare.
-        expect(plan.inputOwners).toEqual(["offer-covenant", "solver", "taxi"]);
+        expect(plan.inputOwners).toEqual([null, "solver", "sponsor"]);
         expect(plan.inputOutpoints).toEqual([
             { txid: deposit.txid, vout: deposit.vout },
             { txid: solver.txid, vout: solver.vout },
@@ -302,14 +302,14 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
                 assets: [{ assetId: WANT_ASSET, units: "200" }],
             },
             {
-                role: "taxi-fare",
+                role: "sponsor-fare",
                 vout: 1,
                 script: hex.encode(FARE_SCRIPT),
                 sats: "1",
                 assets: [{ assetId: WANT_ASSET, units: "1" }],
             },
             {
-                role: "taxi-change",
+                role: "sponsor-change",
                 vout: 2,
                 script: hex.encode(TAXI_CHANGE_SCRIPT),
                 sats: "670",
@@ -373,7 +373,7 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
                     outputs: g.outputs.map((o) => ({ vout: o.vout, amount: o.amount })),
                 }));
         expect(groups(submitted)).toEqual(groups(planned));
-        expect(plan.inputOwners).toEqual(["offer-covenant", "solver"]);
+        expect(plan.inputOwners).toEqual([null, "solver"]);
     });
 
     it("keeps the wanted asset first when the solver's coin carries more", async () => {
@@ -477,7 +477,7 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
         const plan = await sponsored(state.vtxos[0], solverCoin(), taxiCoin(), {
             netContributionSats: BigInt(1000),
         });
-        expect(plan.outputs.map((o) => o.role)).toEqual(["receiver", "taxi-fare", "solver"]);
+        expect(plan.outputs.map((o) => o.role)).toEqual(["receiver", "sponsor-fare", "solver"]);
         expect(plan.outputs[2]).toMatchObject({ vout: 2, sats: "1670" });
     });
 
@@ -687,14 +687,14 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
                 assets: [{ assetId: WANT_ASSET, units: "200" }],
             },
             {
-                role: "taxi-fare",
+                role: "sponsor-fare",
                 vout: 1,
                 script: hex.encode(FARE_SCRIPT),
                 sats: "330",
                 assets: [{ assetId: WANT_ASSET, units: "1" }],
             },
             {
-                role: "taxi-change",
+                role: "sponsor-change",
                 vout: 2,
                 script: hex.encode(TAXI_CHANGE_SCRIPT),
                 sats: "670",
@@ -731,7 +731,7 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
             },
         });
 
-        expect(plan.inputOwners).toEqual(["offer-covenant", "solver", "taxi"]);
+        expect(plan.inputOwners).toEqual([null, "solver", "sponsor"]);
         expect(plan.outputs).toEqual([
             {
                 role: "receiver",
@@ -741,14 +741,14 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
                 assets: [],
             },
             {
-                role: "taxi-fare",
+                role: "sponsor-fare",
                 vout: 1,
                 script: hex.encode(FARE_SCRIPT),
                 sats: "1",
                 assets: [{ assetId: STRAY_ASSET, units: "4" }],
             },
             {
-                role: "taxi-change",
+                role: "sponsor-change",
                 vout: 2,
                 script: hex.encode(TAXI_CHANGE_SCRIPT),
                 sats: "670",
@@ -783,7 +783,7 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
                 sha256(
                     new TextEncoder().encode(
                         JSON.stringify({
-                            template: TAXI_FILL_TEMPLATE,
+                            template: OFFER_FILL_TEMPLATE,
                             arkTx: p.arkTx,
                             checkpoints: p.checkpoints,
                             inputOwners: p.inputOwners,

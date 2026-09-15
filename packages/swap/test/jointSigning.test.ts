@@ -26,7 +26,7 @@ import {
 } from "@arkade-os/sdk";
 import { encodeOffer, offerVtxoScript, type Offer } from "../src/offer";
 import {
-    TAXI_FILL_TEMPLATE,
+    OFFER_FILL_TEMPLATE,
     buildOfferFillPlan,
     verifyOfferFillPlan,
     type JointGraph,
@@ -34,7 +34,7 @@ import {
 import {
     JointSigningError,
     JointSubmissionAmbiguousError,
-    covenantCosignerKey,
+    providerCosignerKey,
     prepareJointSubmission,
     signJointGraphForOwner,
     submitJointFill,
@@ -187,7 +187,7 @@ const signBoth = async (expected: JointGraph) => {
     return signJointGraphForOwner({
         expected,
         partial: afterSolver,
-        owner: "taxi",
+        owner: "sponsor",
         bindings: [{ inputIndex: 2, identity: SingleKey.fromPrivateKey(TAXI_SEED) }],
     });
 };
@@ -214,7 +214,7 @@ const recomputeId = (g: JointGraph): string =>
         sha256(
             new TextEncoder().encode(
                 JSON.stringify({
-                    template: TAXI_FILL_TEMPLATE,
+                    template: OFFER_FILL_TEMPLATE,
                     arkTx: g.arkTx,
                     checkpoints: g.checkpoints,
                     inputOwners: g.inputOwners,
@@ -237,11 +237,11 @@ const addLeaf = (tx: Transaction, inputIndex: number, script: Uint8Array, fill: 
     });
 };
 
-const covenantTweakPriv = (arkTx: string): Uint8Array => {
+const providerTweakPriv = (arkTx: string): Uint8Array => {
     const entry = Extension.fromTx(Transaction.fromPSBT(base64.decode(arkTx)))
         .getEmulatorPacket()
         ?.entries.find((e) => e.vin === 0);
-    if (!entry) throw new Error("fixture has no covenant script");
+    if (!entry) throw new Error("fixture has no provider script");
     const tweak = bytesToNumberBE(arkade.arkadeScriptHash(entry.script));
     return numberToBytesBE(
         (bytesToNumberBE(EMULATOR_SEED) + tweak) % secp256k1.Point.CURVE().n,
@@ -286,17 +286,17 @@ const pins = {
 
 const ownerKeys = {
     solver: [hex.encode(solverKey)],
-    taxi: [hex.encode(taxiKey)],
+    sponsor: [hex.encode(taxiKey)],
 };
 
 const honestEmulator = () => ({
     submitTx: async (arkTx: string, checkpointTxs: string[]) => {
         const ark = Transaction.fromPSBT(base64.decode(arkTx));
         const co = await SingleKey.fromPrivateKey(SERVER_SEED).sign(ark);
-        const covenantPriv = covenantTweakPriv(arkTx);
+        const providerPriv = providerTweakPriv(arkTx);
         const cps: string[] = [];
         for (let k = 0; k < checkpointTxs.length; k++) {
-            const seed = k === 0 ? covenantPriv : SERVER_SEED;
+            const seed = k === 0 ? providerPriv : SERVER_SEED;
             const signed = await SingleKey.fromPrivateKey(seed).sign(
                 Transaction.fromPSBT(base64.decode(checkpointTxs[k])),
             );
@@ -323,7 +323,7 @@ describe("signJointGraphForOwner", () => {
         const complete = await signJointGraphForOwner({
             expected,
             partial: afterSolver,
-            owner: "taxi",
+            owner: "sponsor",
             bindings: [{ inputIndex: 2, identity: SingleKey.fromPrivateKey(TAXI_SEED) }],
         });
         expect(complete.graphId).toBe(expected.graphId);
@@ -346,7 +346,7 @@ describe("signJointGraphForOwner", () => {
             [solverCoin(solverKey, 200), solverCoin(solverBKey, 1)],
             [{ ...fundingCoinFor(taxiKey, 1_000) }],
         );
-        expect(expected.inputOwners).toEqual(["offer-covenant", "solver", "solver", "taxi"]);
+        expect(expected.inputOwners).toEqual([null, "solver", "solver", "sponsor"]);
         const bindings: JointSignerBinding[] = [
             { inputIndex: 1, identity: SingleKey.fromPrivateKey(SOLVER_SEED) },
             { inputIndex: 2, identity: SingleKey.fromPrivateKey(SOLVER_B_SEED) },
@@ -360,18 +360,18 @@ describe("signJointGraphForOwner", () => {
         expect(hex.encode(d2.pubKey)).toBe(hex.encode(solverBKey));
     });
 
-    it("signs two taxi inputs with two descriptor identities", async () => {
+    it("signs two sponsor inputs with two descriptor identities", async () => {
         state.vtxos = [{ ...mintCoin(1_000) }];
         const expected = await sponsored(
             [solverCoin(solverKey, 201)],
             [{ ...fundingCoinFor(taxiKey, 1_000) }, { ...fundingCoinFor(taxiBKey, 1_000) }],
         );
-        expect(expected.inputOwners).toEqual(["offer-covenant", "solver", "taxi", "taxi"]);
+        expect(expected.inputOwners).toEqual([null, "solver", "sponsor", "sponsor"]);
         const bindings: JointSignerBinding[] = [
             { inputIndex: 2, identity: SingleKey.fromPrivateKey(TAXI_SEED) },
             { inputIndex: 3, identity: SingleKey.fromPrivateKey(TAXI_B_SEED) },
         ];
-        const afterTaxi = await signJointGraphForOwner({ expected, owner: "taxi", bindings });
+        const afterTaxi = await signJointGraphForOwner({ expected, owner: "sponsor", bindings });
         const ark = arkOf(afterTaxi);
         expect([0, 1, 2, 3].map((i) => sigCount(ark, i))).toEqual([0, 0, 1, 1]);
         const [[d2]] = ark.getInput(2).tapScriptSig!;
@@ -391,7 +391,7 @@ describe("signJointGraphForOwner", () => {
         const complete = await signJointGraphForOwner({
             expected,
             partial: afterSolver,
-            owner: "taxi",
+            owner: "sponsor",
             bindings: [{ inputIndex: 2, identity: taxi.identity }],
         });
         expect(taxi.calls()).toBe(1);
@@ -751,7 +751,7 @@ describe("signJointGraphForOwner", () => {
         const expected = await trustedGraph();
         const spoofed: JointGraph = {
             ...structuredClone(expected),
-            inputOwners: ["offer-covenant", "solver", "solver"],
+            inputOwners: [null, "solver", "solver"],
         };
         await expect(
             signJointGraphForOwner({
@@ -797,7 +797,7 @@ describe("signJointGraphForOwner", () => {
             signJointGraphForOwner({
                 expected,
                 partial: evil,
-                owner: "taxi",
+                owner: "sponsor",
                 bindings: [{ inputIndex: 2, identity: SingleKey.fromPrivateKey(TAXI_SEED) }],
             }),
         ).rejects.toThrow(/not in its leaf/);
@@ -824,7 +824,7 @@ describe("signJointGraphForOwner", () => {
             signJointGraphForOwner({
                 expected,
                 partial: evil,
-                owner: "taxi",
+                owner: "sponsor",
                 bindings: [{ inputIndex: 2, identity: SingleKey.fromPrivateKey(TAXI_SEED) }],
             }),
         ).rejects.toThrow(/invalid signature/);
@@ -852,7 +852,7 @@ describe("signJointGraphForOwner", () => {
             signJointGraphForOwner({
                 expected,
                 partial: evil,
-                owner: "taxi",
+                owner: "sponsor",
                 bindings: [{ inputIndex: 2, identity: SingleKey.fromPrivateKey(TAXI_SEED) }],
             }),
         ).rejects.toThrow(/65-byte/);
@@ -886,7 +886,7 @@ describe("signJointGraphForOwner", () => {
             signJointGraphForOwner({
                 expected,
                 partial: afterSolver,
-                owner: "taxi",
+                owner: "sponsor",
                 bindings: [{ inputIndex: 2, identity: dropper }],
             }),
         ).rejects.toThrow(/drops a signature/);
@@ -947,7 +947,7 @@ describe("signJointGraphForOwner", () => {
         ).rejects.toThrow(/added no signature/);
     });
 
-    it("rejects an incoming partial that signs the covenant input", async () => {
+    it("rejects an incoming partial that signs the provider input", async () => {
         const expected = await trustedGraph();
         const afterSolver = await signJointGraphForOwner({
             expected,
@@ -964,10 +964,10 @@ describe("signJointGraphForOwner", () => {
             signJointGraphForOwner({
                 expected,
                 partial: evil,
-                owner: "taxi",
+                owner: "sponsor",
                 bindings: [{ inputIndex: 2, identity: SingleKey.fromPrivateKey(TAXI_SEED) }],
             }),
-        ).rejects.toThrow(/covenant/);
+        ).rejects.toThrow(/provider/);
     });
 
     it("leaves the trusted snapshot untouched", async () => {
@@ -1002,11 +1002,11 @@ describe("prepareJointSubmission", () => {
             bindings: [{ inputIndex: 1, identity: SingleKey.fromPrivateKey(SOLVER_SEED) }],
         });
         expect(() => prepareJointSubmission({ expected, partial: afterSolver, ownerKeys })).toThrow(
-            /funding input 2 has no taxi signature/,
+            /funding input 2 has no sponsor signature/,
         );
     });
 
-    it("rejects a covenant-signed partial", async () => {
+    it("rejects a provider-signed partial", async () => {
         const expected = await trustedGraph();
         const complete = await signBoth(expected);
         const [[keyData, sig]] = arkOf(complete).getInput(1).tapScriptSig!;
@@ -1016,7 +1016,7 @@ describe("prepareJointSubmission", () => {
             });
         });
         expect(() => prepareJointSubmission({ expected, partial: evil, ownerKeys })).toThrow(
-            /covenant/,
+            /provider/,
         );
     });
 
@@ -1069,17 +1069,17 @@ describe("submitJointFill", () => {
         expect(outcome.signedCheckpointTxs).toHaveLength(3);
     });
 
-    it("accepts the tweak-derived emulator co-signature on the covenant input", async () => {
+    it("accepts the tweak-derived emulator co-signature on the provider input", async () => {
         const expected = await trustedGraph();
         const entry = Extension.fromTx(arkOf(expected))
             .getEmulatorPacket()
             ?.entries.find((e) => e.vin === 0);
-        if (!entry) throw new Error("fixture has no covenant script");
+        if (!entry) throw new Error("fixture has no provider script");
         const tweak = bytesToNumberBE(arkade.arkadeScriptHash(entry.script));
         const n = secp256k1.Point.CURVE().n;
         const tweakedPriv = numberToBytesBE((bytesToNumberBE(EMULATOR_SEED) + tweak) % n, 32);
         const tweakedHex = hex.encode(schnorr.getPublicKey(tweakedPriv));
-        expect(covenantCosignerKey({ expected, emulatorXOnly: hex.encode(EMULATOR_KEY) })).toBe(
+        expect(providerCosignerKey({ expected, emulatorXOnly: hex.encode(EMULATOR_KEY) })).toBe(
             tweakedHex,
         );
         const leaf = tapLeavesOfInput(arkOf(expected), 0)[0];
@@ -1136,7 +1136,7 @@ describe("submitJointFill", () => {
         ).rejects.toThrow(/ambiguous/);
     });
 
-    it("rejects a silent covenant checkpoint", async () => {
+    it("rejects a silent provider checkpoint", async () => {
         const expected = await trustedGraph();
         const prepared = prepareJointSubmission({
             expected,
@@ -1162,17 +1162,17 @@ describe("submitJointFill", () => {
         }
     });
 
-    it("accepts the tweaked covenant key on the covenant checkpoint", async () => {
+    it("accepts the tweaked provider key on the provider checkpoint", async () => {
         const expected = await trustedGraph();
         const prepared = prepareJointSubmission({
             expected,
             partial: await signBoth(expected),
             ownerKeys,
         });
-        const tweaked = covenantTweakPriv(prepared.arkTx);
+        const tweaked = providerTweakPriv(prepared.arkTx);
         const tweakedHex = hex.encode(schnorr.getPublicKey(tweaked));
         expect(tweakedHex).not.toBe(pins.serverXOnly);
-        const covenantOnly = {
+        const providerOnly = {
             submitTx: async (arkTx: string, cps: string[]) => {
                 const ark = Transaction.fromPSBT(base64.decode(arkTx));
                 const co = await SingleKey.fromPrivateKey(SERVER_SEED).sign(ark, [0]);
@@ -1189,7 +1189,7 @@ describe("submitJointFill", () => {
         const outcome = await submitJointFill({
             expected,
             prepared,
-            provider: covenantOnly,
+            provider: providerOnly,
             pins,
             ownerKeys,
         });
@@ -1238,7 +1238,7 @@ describe("submitJointFill", () => {
         } catch (e) {
             expect(String((e as Error).cause)).toMatch(/unpinned key/);
         }
-        const extraOnCovenant = {
+        const extraOnProvider = {
             submitTx: async (arkTx: string, cps: string[]) => {
                 const tx = Transaction.fromPSBT(base64.decode(arkTx));
                 const co = await SingleKey.fromPrivateKey(SERVER_SEED).sign(tx, [0]);
@@ -1255,13 +1255,13 @@ describe("submitJointFill", () => {
             },
         };
         await expect(
-            submitJointFill({ expected, prepared, provider: extraOnCovenant, pins, ownerKeys }),
+            submitJointFill({ expected, prepared, provider: extraOnProvider, pins, ownerKeys }),
         ).rejects.toThrow(JointSubmissionAmbiguousError);
         try {
             await submitJointFill({
                 expected,
                 prepared,
-                provider: extraOnCovenant,
+                provider: extraOnProvider,
                 pins,
                 ownerKeys,
             });
@@ -1351,13 +1351,13 @@ describe("submitJointFill", () => {
     });
 });
 
-describe("covenantCosignerKey", () => {
+describe("providerCosignerKey", () => {
     it("rejects an unverified graph", async () => {
         const expected = await trustedGraph();
         const tampered = { ...structuredClone(expected), graphId: "00".repeat(32) };
         expect(verifyOfferFillPlan(tampered)).toBe(false);
         expect(() =>
-            covenantCosignerKey({ expected: tampered, emulatorXOnly: pins.emulatorXOnly }),
+            providerCosignerKey({ expected: tampered, emulatorXOnly: pins.emulatorXOnly }),
         ).toThrow(/fails integrity/);
     });
 });

@@ -935,14 +935,14 @@ export interface FillOutpoint {
     readonly vout: number;
 }
 
-/** Who funds a fill input: the offer covenant (input 0), the solver, or the taxi sponsor. */
-export type FillInputOwner = "offer-covenant" | "solver" | "taxi";
+/** Who funds a fill input: the solver or the sponsor. A null owner marks the provider-signed deposit (input 0). */
+export type FillInputOwner = "solver" | "sponsor";
 
 /** Semantic role of a payment output in a fill. */
-export type FillOutputRole = "receiver" | "solver" | "taxi-fare" | "taxi-change";
+export type FillOutputRole = "receiver" | "solver" | "sponsor-fare" | "sponsor-change";
 
-/** Taxi sponsor leg, build-only. Sats-only and taxi-owned; `fillOffer` never accepts it. */
-export interface TaxiFillInput {
+/** Sponsor leg, build-only. Sats-only and sponsor-owned; `fillOffer` never accepts it. */
+export interface SponsorFillInput {
     /** Sponsor coins. Sats only — any declared asset is rejected. */
     fund: FillFunding[];
     /** Sats the sponsor approves spending; its change is inputs minus this. */
@@ -986,7 +986,7 @@ export interface TaxiFillInput {
  * `payoutScript` is where the taker's proceeds land — the deposit it just took,
  * plus any surplus over `wantAmount`. Defaults to the wallet's own address.
  *
- * Taxi sponsor funding belongs to the build-only `buildOfferFillPlan` and is
+ * Sponsor funding belongs to the build-only `buildOfferFillPlan` and is
  * not accepted here, so this never signs it.
  *
  * Racing a cancel is a NORMAL outcome, not a failure: cancel is a 2-of-2 of the
@@ -1166,14 +1166,14 @@ export type FillCoin = {
 
 /** Payment outputs an assembled fill intends, in vout order with resolved roles. */
 export interface AssembledFillLayout {
-    inputs: { owner: FillInputOwner; txid: string; vout: number }[];
+    inputs: { owner: FillInputOwner | null; txid: string; vout: number }[];
     outputs: { role: FillOutputRole; script: Uint8Array; sats: bigint }[];
 }
 
 /**
  * The canonical fill assembly, shared by `fillOffer` and the build-only plan.
- * Inputs run deposit (0), solver, taxi; output 0 is always the maker, then
- * fare and taxi change when present, solver proceeds last. Asset groups match
+ * Inputs run deposit (0), solver, sponsor; output 0 is always the maker, then
+ * fare and sponsor change when present, solver proceeds last. Asset groups match
  * with the wanted asset first. Returns the intended layout for checking
  * against the transaction the builder actually assembles.
  */
@@ -1185,7 +1185,7 @@ export function assembleOfferFill(
         solverFund: FillFunding[];
         solverPayout: Uint8Array;
         assetCarrierSats?: bigint;
-        taxi?: TaxiFillInput;
+        sponsor?: SponsorFillInput;
     },
 ): AssembledFillLayout {
     const {
@@ -1194,7 +1194,7 @@ export function assembleOfferFill(
         solverFund,
         solverPayout,
         assetCarrierSats = ASSET_CARRIER_SATS,
-        taxi,
+        sponsor,
     } = args;
     const wantedAssetId = offer.wantAsset?.toString();
 
@@ -1207,43 +1207,46 @@ export function assembleOfferFill(
     assertAssetEntries(vtxo.assets, "deposit");
     const carrier = toSatsAmount(assetCarrierSats, "assetCarrierSats", { min: BigInt(1) });
 
-    let taxiFund: FillFunding[] = [];
-    let taxiChange = BigInt(0);
+    let sponsorFund: FillFunding[] = [];
+    let sponsorChange = BigInt(0);
     let fareAsset = "";
     let fareAmount = BigInt(0);
     let fareSats = BigInt(0);
-    if (taxi !== undefined) {
-        if (taxi.fund.length === 0) {
+    if (sponsor !== undefined) {
+        if (sponsor.fund.length === 0) {
             throw new Error("sponsor needs coins to contribute with — `sponsor.fund` is empty");
         }
-        taxi.fund.forEach((coin, i) => {
+        sponsor.fund.forEach((coin, i) => {
             assertFillCoin(coin, `sponsor.fund[${i}]`, BigInt(1));
             if ((coin.assets?.length ?? 0) > 0) {
                 throw new Error(`sponsor.fund[${i}] carries assets — sponsor funding is sats-only`);
             }
         });
-        assertScript(taxi.changeScript, "sponsor.changeScript");
-        const contribution = toSatsAmount(taxi.netContributionSats, "sponsor.netContributionSats");
+        assertScript(sponsor.changeScript, "sponsor.changeScript");
+        const contribution = toSatsAmount(
+            sponsor.netContributionSats,
+            "sponsor.netContributionSats",
+        );
         if (contribution <= BigInt(0)) {
             throw new Error("sponsor.netContributionSats must be a positive amount of sats");
         }
-        if (taxi.fare !== undefined) {
-            fareAsset = assertAssetId(taxi.fare.assetId, "sponsor.fare.assetId");
-            fareAmount = toAssetUnits(taxi.fare.amount, "sponsor.fare.amount");
+        if (sponsor.fare !== undefined) {
+            fareAsset = assertAssetId(sponsor.fare.assetId, "sponsor.fare.assetId");
+            fareAmount = toAssetUnits(sponsor.fare.amount, "sponsor.fare.amount");
             if (fareAmount <= BigInt(0)) {
                 throw new Error("sponsor.fare.amount must be a positive amount of asset units");
             }
-            assertScript(taxi.fare.script, "sponsor.fare.script");
-            fareSats = toSatsAmount(taxi.fare.sats, "sponsor.fare.sats", { min: BigInt(1) });
+            assertScript(sponsor.fare.script, "sponsor.fare.script");
+            fareSats = toSatsAmount(sponsor.fare.sats, "sponsor.fare.sats", { min: BigInt(1) });
         }
-        const taxiInputs = taxi.fund.reduce((s, c) => s + BigInt(c.value), BigInt(0));
-        if (contribution > taxiInputs) {
+        const sponsorInputs = sponsor.fund.reduce((s, c) => s + BigInt(c.value), BigInt(0));
+        if (contribution > sponsorInputs) {
             throw new Error(
-                `sponsor.netContributionSats ${contribution} exceeds the sponsor inputs ${taxiInputs}`,
+                `sponsor.netContributionSats ${contribution} exceeds the sponsor inputs ${sponsorInputs}`,
             );
         }
-        taxiFund = taxi.fund;
-        taxiChange = taxiInputs - contribution;
+        sponsorFund = sponsor.fund;
+        sponsorChange = sponsorInputs - contribution;
     }
 
     // Refused here rather than by the emulator, which reports only that the
@@ -1252,7 +1255,7 @@ export function assembleOfferFill(
     if (wantedAssetId !== undefined) {
         const required =
             offer.wantAmount +
-            (taxi?.fare !== undefined && fareAsset === wantedAssetId ? fareAmount : BigInt(0));
+            (sponsor?.fare !== undefined && fareAsset === wantedAssetId ? fareAmount : BigInt(0));
         const supplied = solverFund.reduce(
             (sum, coin) => sum + amountOfAsset(coin.assets, wantedAssetId),
             BigInt(0),
@@ -1290,7 +1293,7 @@ export function assembleOfferFill(
     };
     claim(assertTxid(vtxo.txid, "deposit.txid"), assertVout(vtxo.vout, "deposit.vout"), "deposit");
     solverFund.forEach((coin, i) => claim(coin.txid, coin.vout, `fund[${i}]`));
-    taxiFund.forEach((coin, i) => claim(coin.txid, coin.vout, `sponsor.fund[${i}]`));
+    sponsorFund.forEach((coin, i) => claim(coin.txid, coin.vout, `sponsor.fund[${i}]`));
 
     // A BTC want is paid in sats at output 0; an asset want is paid through the
     // packet, so its sats leg is only the carrier the output needs to exist.
@@ -1300,23 +1303,24 @@ export function assembleOfferFill(
         { role: "receiver", script: offer.makerPkScript, sats: makerSats },
     ];
     const fareVout = outputs.length;
-    if (taxi?.fare !== undefined) {
-        outputs.push({ role: "taxi-fare", script: taxi.fare.script, sats: fareSats });
+    if (sponsor?.fare !== undefined) {
+        outputs.push({ role: "sponsor-fare", script: sponsor.fare.script, sats: fareSats });
     }
-    if (taxi !== undefined && taxiChange > BigInt(0)) {
-        outputs.push({ role: "taxi-change", script: taxi.changeScript, sats: taxiChange });
+    if (sponsor !== undefined && sponsorChange > BigInt(0)) {
+        outputs.push({ role: "sponsor-change", script: sponsor.changeScript, sats: sponsorChange });
     }
     const solverVout = outputs.length;
 
     fill.from({ txid: vtxo.txid, vout: vtxo.vout, value: vtxo.value })
         // Same array when there is no sponsor leg, so the call below reads
         // exactly what the caller passed.
-        .fund(taxiFund.length > 0 ? [...solverFund, ...taxiFund] : solverFund)
+        .fund(sponsorFund.length > 0 ? [...solverFund, ...sponsorFund] : solverFund)
         // Output 0, and the order is not cosmetic: the covenant inspects output
         // 0 specifically, so the maker must be the first `to`.
         .to(offer.makerPkScript, makerSats);
-    if (taxi?.fare !== undefined) fill.to(taxi.fare.script, fareSats);
-    if (taxi !== undefined && taxiChange > BigInt(0)) fill.to(taxi.changeScript, taxiChange);
+    if (sponsor?.fare !== undefined) fill.to(sponsor.fare.script, fareSats);
+    if (sponsor !== undefined && sponsorChange > BigInt(0))
+        fill.to(sponsor.changeScript, sponsorChange);
     // Solver proceeds are whatever the explicit outputs leave, landing last.
     fill.change(solverPayout);
 
@@ -1335,13 +1339,13 @@ export function assembleOfferFill(
     };
     hold(0, vtxo.assets);
     solverFund.forEach((coin, i) => hold(i + 1, coin.assets));
-    taxiFund.forEach((coin, i) => hold(1 + solverFund.length + i, coin.assets));
+    sponsorFund.forEach((coin, i) => hold(1 + solverFund.length + i, coin.assets));
 
     const explicitSats = outputs.reduce((s, o) => s + o.sats, BigInt(0));
     const inputsSum =
         BigInt(vtxo.value) +
         solverFund.reduce((s, c) => s + BigInt(c.value), BigInt(0)) +
-        taxiFund.reduce((s, c) => s + BigInt(c.value), BigInt(0));
+        sponsorFund.reduce((s, c) => s + BigInt(c.value), BigInt(0));
     if (inputsSum > MAX_SAFE_SATS) {
         throw new Error(`fill inputs total ${inputsSum} sats exceeds the safe integer domain`);
     }
@@ -1353,7 +1357,7 @@ export function assembleOfferFill(
     // a spend arkd will refuse for a reason the error will not explain.
     const hasPayoutOutput = inputsSum > explicitSats;
 
-    if (taxi?.fare !== undefined) {
+    if (sponsor?.fare !== undefined) {
         const carried = (held.get(fareAsset) ?? []).reduce((s, i) => s + i.amount, BigInt(0));
         if (carried < fareAmount) {
             throw new Error(
@@ -1376,7 +1380,7 @@ export function assembleOfferFill(
         const supplied = supplying.reduce((s, i) => s + i.amount, BigInt(0));
         const group = [{ vout: 0, amount: offer.wantAmount }];
         const farePart =
-            taxi?.fare !== undefined && fareAsset === wantedAssetId ? fareAmount : BigInt(0);
+            sponsor?.fare !== undefined && fareAsset === wantedAssetId ? fareAmount : BigInt(0);
         if (farePart > BigInt(0)) group.push({ vout: fareVout, amount: farePart });
         const surplus = supplied - offer.wantAmount - farePart;
         if (surplus > BigInt(0)) {
@@ -1388,7 +1392,7 @@ export function assembleOfferFill(
     }
 
     // A fare in any other asset gets its own group, remainder to the solver.
-    if (taxi?.fare !== undefined && fareAsset !== wantedAssetId) {
+    if (sponsor?.fare !== undefined && fareAsset !== wantedAssetId) {
         const supplying = held.get(fareAsset) ?? [];
         const carried = supplying.reduce((s, i) => s + i.amount, BigInt(0));
         const group = [{ vout: fareVout, amount: fareAmount }];
@@ -1415,14 +1419,14 @@ export function assembleOfferFill(
     }
     return {
         inputs: [
-            { owner: "offer-covenant", txid: vtxo.txid.toLowerCase(), vout: vtxo.vout },
+            { owner: null, txid: vtxo.txid.toLowerCase(), vout: vtxo.vout },
             ...solverFund.map((coin) => ({
                 owner: "solver" as const,
                 txid: coin.txid.toLowerCase(),
                 vout: coin.vout,
             })),
-            ...taxiFund.map((coin) => ({
-                owner: "taxi" as const,
+            ...sponsorFund.map((coin) => ({
+                owner: "sponsor" as const,
                 txid: coin.txid.toLowerCase(),
                 vout: coin.vout,
             })),

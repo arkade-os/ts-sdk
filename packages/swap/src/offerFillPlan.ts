@@ -1,7 +1,16 @@
 /** Build-only offer-fill plans: the unsigned joint spend as a serialized graph, never signed or submitted here. */
 import { base64, hex } from "@scure/base";
-import { sha256 } from "@noble/hashes/sha2.js";
-import { ArkAddress, Extension, P2A, Transaction, type IWallet } from "@arkade-os/sdk";
+import {
+    ArkAddress,
+    Extension,
+    P2A,
+    Transaction,
+    deepFreeze,
+    digestJointGraph,
+    verifyJointGraph,
+    type IWallet,
+    type JointGraph,
+} from "@arkade-os/sdk";
 import {
     ASSET_CARRIER_SATS,
     assembleOfferFill,
@@ -11,13 +20,23 @@ import {
     type AssembledFillLayout,
     type FillFunding,
     type FillInputOwner,
-    type FillOutpoint,
     type FillOutputRole,
-    type TaxiFillInput,
+    type FillOutpoint,
+    type SponsorFillInput,
 } from "./offer";
 
-/** Template version bound into every graph id. */
-export const TAXI_FILL_TEMPLATE = "taxi-fill/1";
+export type { JointGraph };
+
+export const OFFER_FILL_TEMPLATE = "offer-fill/1";
+
+export const OFFER_FILL_OWNERS: readonly (FillInputOwner | null)[] = [null, "solver", "sponsor"];
+
+export const OFFER_FILL_ROLES: readonly FillOutputRole[] = [
+    "receiver",
+    "solver",
+    "sponsor-fare",
+    "sponsor-change",
+];
 
 /** Assets an output carries, parsed from the built transaction's packet. */
 export interface FillPlanAsset {
@@ -34,21 +53,7 @@ export interface FillPlanOutput {
     readonly assets: readonly FillPlanAsset[];
 }
 
-/**
- * Serialized unsigned joint fill: transaction, checkpoints, semantics, binding
- * id. Readonly throughout to match the deep freeze applied at construction —
- * a plan is a snapshot, never a working object.
- */
-export interface JointGraph {
-    readonly arkTx: string;
-    readonly checkpoints: readonly string[];
-    readonly graphId: string;
-    readonly inputOwners: readonly FillInputOwner[];
-    readonly inputOutpoints: readonly FillOutpoint[];
-    readonly outputs: readonly FillPlanOutput[];
-}
-
-/** Taxi fare output: an asset amount on a sats host, paid from the joint inputs. */
+/** Sponsor fare output: an asset amount on a sats host, paid from the joint inputs. */
 export interface FillSponsorFare {
     assetId: string;
     amount: bigint | number;
@@ -57,7 +62,7 @@ export interface FillSponsorFare {
     sats?: bigint | number;
 }
 
-/** Taxi sponsor leg. Funding is sats-only and taxi-owned; the solver never signs it. */
+/** Sponsor leg. Funding is sats-only and sponsor-owned; the solver never signs it. */
 export interface FillSponsor {
     fund: FillFunding[];
     netContributionSats: bigint | number;
@@ -100,7 +105,8 @@ export async function buildOfferFillPlan(
     const vtxos = await contract.getUtxos();
     const vtxo = resolveDeposit(vtxos, { fundingTxid, fundingOutpoint });
     const solverPayout = payoutScript ?? ArkAddress.decode(await wallet.getAddress()).pkScript;
-    const taxi = sponsor !== undefined ? normalizeSponsor(sponsor, assetCarrierSats) : undefined;
+    const sponsorLeg =
+        sponsor !== undefined ? normalizeSponsor(sponsor, assetCarrierSats) : undefined;
     const fill = contract.functions.fulfill();
     const layout = assembleOfferFill(fill, {
         offer,
@@ -108,13 +114,13 @@ export async function buildOfferFillPlan(
         solverFund: fund,
         solverPayout,
         assetCarrierSats,
-        taxi,
+        sponsor: sponsorLeg,
     });
     const { arkTx, checkpoints } = await fill.build();
     return toJointGraph(arkTx, checkpoints, layout, offer.wantAsset?.toString());
 }
 
-function normalizeSponsor(sponsor: FillSponsor, assetCarrierSats: bigint): TaxiFillInput {
+function normalizeSponsor(sponsor: FillSponsor, assetCarrierSats: bigint): SponsorFillInput {
     return {
         fund: sponsor.fund,
         netContributionSats: sponsor.netContributionSats,
@@ -235,16 +241,19 @@ function toJointGraph(
     const graph: JointGraph = {
         arkTx: arkTxPsbt,
         checkpoints: checkpointPsbts,
-        graphId: digestPlan({
-            arkTx: arkTxPsbt,
-            checkpoints: checkpointPsbts,
-            inputOwners: layout.inputs.map((input) => input.owner),
-            inputOutpoints: layout.inputs.map((input) => ({
-                txid: input.txid,
-                vout: input.vout,
-            })),
-            outputs,
-        }),
+        graphId: digestJointGraph(
+            {
+                arkTx: arkTxPsbt,
+                checkpoints: checkpointPsbts,
+                inputOwners: layout.inputs.map((input) => input.owner),
+                inputOutpoints: layout.inputs.map((input) => ({
+                    txid: input.txid,
+                    vout: input.vout,
+                })),
+                outputs,
+            },
+            OFFER_FILL_TEMPLATE,
+        ),
         inputOwners: layout.inputs.map((input) => input.owner),
         inputOutpoints: layout.inputs.map((input) => ({ txid: input.txid, vout: input.vout })),
         outputs,
@@ -252,125 +261,9 @@ function toJointGraph(
     return deepFreeze(graph);
 }
 
-/** The binding id: template version, exact unsigned PSBTs, owners and semantics. */
-function digestPlan(plan: Omit<JointGraph, "graphId">): string {
-    return hex.encode(
-        sha256(
-            new TextEncoder().encode(
-                JSON.stringify({
-                    template: TAXI_FILL_TEMPLATE,
-                    arkTx: plan.arkTx,
-                    checkpoints: plan.checkpoints,
-                    inputOwners: plan.inputOwners,
-                    inputOutpoints: plan.inputOutpoints,
-                    outputs: plan.outputs,
-                }),
-            ),
-        ),
-    );
-}
-
-/**
- * Self-hash integrity ONLY, not authorization: `true` means the plan is
- * unaltered since its id was computed. Never sign on this alone — compare
- * against a trusted graph first.
- */
 export function verifyOfferFillPlan(plan: JointGraph): boolean {
-    try {
-        if (!plan || typeof plan !== "object") return false;
-        if (
-            !hasExactKeys(plan, [
-                "arkTx",
-                "checkpoints",
-                "graphId",
-                "inputOwners",
-                "inputOutpoints",
-                "outputs",
-            ])
-        )
-            return false;
-        if (typeof plan.arkTx !== "string" || plan.arkTx.length === 0) return false;
-        if (
-            !Array.isArray(plan.checkpoints) ||
-            plan.checkpoints.length < 1 ||
-            plan.checkpoints.some((c) => typeof c !== "string" || c.length === 0)
-        )
-            return false;
-        if (!/^[0-9a-f]{64}$/.test(plan.graphId)) return false;
-        const owners: readonly FillInputOwner[] = ["offer-covenant", "solver", "taxi"];
-        if (!Array.isArray(plan.inputOwners) || plan.inputOwners.some((o) => !owners.includes(o)))
-            return false;
-        if (!Array.isArray(plan.inputOutpoints) || plan.inputOutpoints.length < 1) return false;
-        if (
-            plan.inputOwners.length !== plan.inputOutpoints.length ||
-            plan.checkpoints.length !== plan.inputOutpoints.length
-        )
-            return false;
-        if (
-            plan.inputOutpoints.some(
-                (o) =>
-                    !hasExactKeys(o, ["txid", "vout"]) ||
-                    typeof o.txid !== "string" ||
-                    !/^[0-9a-f]{64}$/.test(o.txid) ||
-                    !isVout(o.vout),
-            )
-        )
-            return false;
-        const roles: readonly FillOutputRole[] = ["receiver", "solver", "taxi-fare", "taxi-change"];
-        if (!Array.isArray(plan.outputs) || plan.outputs.length < 1) return false;
-        if (
-            plan.outputs.some(
-                (o, i) =>
-                    !hasExactKeys(o, ["role", "vout", "script", "sats", "assets"]) ||
-                    !roles.includes(o.role) ||
-                    o.vout !== i ||
-                    typeof o.script !== "string" ||
-                    !isScriptHex(o.script) ||
-                    !isBoundedDecimal(o.sats, MAX_SAFE_SATS) ||
-                    !Array.isArray(o.assets) ||
-                    o.assets.some(
-                        (a: FillPlanAsset) =>
-                            !hasExactKeys(a, ["assetId", "units"]) ||
-                            !/^[0-9a-f]{68}$/.test(a.assetId) ||
-                            !isBoundedDecimal(a.units, U64_MAX),
-                    ),
-            )
-        )
-            return false;
-        return digestPlan(plan) === plan.graphId;
-    } catch {
-        return false;
-    }
-}
-
-const U64_MAX = (BigInt(1) << BigInt(64)) - BigInt(1);
-const MAX_SAFE_SATS = BigInt(Number.MAX_SAFE_INTEGER);
-
-/** A non-empty even-length hex script. */
-function isScriptHex(script: string): boolean {
-    return script.length > 0 && script.length % 2 === 0 && /^[0-9a-f]+$/.test(script);
-}
-
-/** A u32 output index. */
-function isVout(vout: unknown): vout is number {
-    return typeof vout === "number" && Number.isInteger(vout) && vout >= 0 && vout <= 0xffffffff;
-}
-
-/** A decimal integer string within `max`. */
-function isBoundedDecimal(value: unknown, max: bigint): value is string {
-    if (typeof value !== "string" || !/^\d+$/.test(value)) return false;
-    return BigInt(value) <= max;
-}
-
-function hasExactKeys(value: object, keys: string[]): boolean {
-    const actual = Object.keys(value);
-    return actual.length === keys.length && keys.every((k) => actual.includes(k));
-}
-
-export function deepFreeze<T>(value: T): T {
-    if (value !== null && typeof value === "object") {
-        for (const child of Object.values(value)) deepFreeze(child);
-        Object.freeze(value);
-    }
-    return value;
+    return verifyJointGraph(plan, OFFER_FILL_TEMPLATE, {
+        allowedOwners: OFFER_FILL_OWNERS,
+        allowedRoles: OFFER_FILL_ROLES,
+    });
 }

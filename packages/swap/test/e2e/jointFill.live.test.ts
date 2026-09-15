@@ -20,7 +20,7 @@ import {
 } from "@arkade-os/sdk";
 import {
     buildOfferFillPlan,
-    covenantCosignerKey,
+    providerCosignerKey,
     createOffer,
     decodeOffer,
     prepareJointSubmission,
@@ -240,7 +240,7 @@ describe("two-owner fill against the regtest stack", () => {
         const complete = await signJointGraphForOwner({
             expected,
             partial: afterSolver,
-            owner: "taxi",
+            owner: "sponsor",
             bindings: [{ inputIndex: taxiStart, identity: taxiKey }],
         });
 
@@ -255,7 +255,7 @@ describe("two-owner fill against the regtest stack", () => {
             partial: complete,
             ownerKeys: {
                 solver: [hex.encode(await solverKey.xOnlyPublicKey())],
-                taxi: [hex.encode(await taxiKey.xOnlyPublicKey())],
+                sponsor: [hex.encode(await taxiKey.xOnlyPublicKey())],
             },
         });
         const arkInfo = await new RestArkProvider(ARK_URL).getInfo();
@@ -270,7 +270,7 @@ describe("two-owner fill against the regtest stack", () => {
             pins,
             ownerKeys: {
                 solver: [hex.encode(await solverKey.xOnlyPublicKey())],
-                taxi: [hex.encode(await taxiKey.xOnlyPublicKey())],
+                sponsor: [hex.encode(await taxiKey.xOnlyPublicKey())],
             },
         });
         expect(txid).toBe(prepared.txid);
@@ -279,7 +279,7 @@ describe("two-owner fill against the regtest stack", () => {
         expect(Extension.fromTx(submitted).getAssetPacket()).toBeDefined();
 
         const norm = (keyHex: string) => hex.encode(toXOnly(hex.decode(keyHex), "pin"));
-        const tweaked = covenantCosignerKey({
+        const tweaked = providerCosignerKey({
             expected,
             emulatorXOnly: pins.emulatorXOnly,
         });
