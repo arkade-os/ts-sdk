@@ -114,7 +114,7 @@ function decodeCovenantLeaf<K extends string>(
 /**
  * Handler for {@link VHTLC.ScriptV2} — the VHTLC whose preimage leaves carry an
  * explicit `OP_SIZE 32 OP_EQUALVERIFY` before the hash check, and which the RFQ
- * swap corridor builds (`@arkade-os/swap`'s `lightningSendVtxoScript`).
+ * swap corridor builds (`@arkade-os/swap`'s `lightningSendContract`).
  *
  * **Why a separate type string rather than a flag on `vhtlc`.** A handler's
  * `type` names the script class it derives, the way every other registered type
@@ -281,16 +281,25 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                 "asset params are incomplete: assetTxid and assetGroupIndex must both be present or both absent",
             );
         }
-        // A row written by a strict-capable release (0.4.67 and earlier) carries
-        // a quoted bound compiled into its claim leaf. The option is gone, so
-        // that bound cannot be re-derived here — and reading the row as "not
-        // strict" would rebuild the DEFAULT covenant, a different pkScript, and
-        // die at `upsertContractRow` with an opaque `Script mismatch`. Name it.
+        // A row written by a strict-capable release (0.4.65 through 0.4.67)
+        // carries a quoted bound compiled into its claim leaf. The option is
+        // gone, so that bound cannot be re-derived here — and reading the row as
+        // "not strict" would rebuild the DEFAULT covenant, a different pkScript,
+        // and die at `upsertContractRow` with an opaque `Script mismatch`.
+        //
+        // This throw is permanent for such a row: it fires on every read, and no
+        // upgrade repairs it, so the message has to carry the way out rather
+        // than point back at a release the reader has already left. The order
+        // matters — 0.4.67 is the only build that can still rebuild the script,
+        // so the row is deleted after it is settled, never before.
         if (params.strictClaimAmount !== undefined || params.strictClaimAssetAmount !== undefined) {
             throw new Error(
-                "strict claim params on a stored row: the strict claim bound was removed " +
-                    "and this row's lockup cannot be re-derived without it — restore it with " +
-                    "the SDK version that wrote it",
+                "strict claim params on a stored row: the strict claim bound was removed in " +
+                    "0.4.68, so this row — written by 0.4.65-0.4.67 — locks to a script this " +
+                    "build cannot re-derive. To clear it: claim or refund the swap on 0.4.67, " +
+                    "then drop the settled row here with " +
+                    "`contractManager.deleteContract(script)`. Do not delete it first — any " +
+                    "balance it still holds is only reachable from 0.4.67.",
             );
         }
         // Same silent-drop shape as the two checks above, one flag further in:
@@ -350,7 +359,7 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
      * Select spending path based on context.
      *
      * Role is determined from `context.role` or by matching
-     * `context.walletDescriptor` (preferred) / `context.walletPubKey`
+     * `context.walletDescriptor`
      * against sender/receiver in contract params.
      */
     selectPath(
@@ -410,7 +419,7 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
      * Get all possible spending paths (no timelock checks).
      *
      * Role is determined from `context.role` or by matching
-     * `context.walletDescriptor` (preferred) / `context.walletPubKey`
+     * `context.walletDescriptor`
      * against sender/receiver in contract params.
      */
     getAllSpendingPaths(
@@ -565,10 +574,9 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
      *
      * **It carries a CLTV, and callers must respect it.** A settlement built on
      * this leaf is only valid once `refundLocktime` has matured, so a recovery
-     * round that sweeps this VTXO early is rejected by the server. That is the
-     * same constraint `packages/boltz-swap` encodes as "pre-CLTV recoverable →
-     * skipped"; nothing in this handler can enforce it, because the annotation
-     * is derived per contract and knows no clock. `recoverVtxos` filters on
+     * round that sweeps this VTXO early is rejected by the server. Nothing in
+     * this handler can enforce it, because the annotation is derived per
+     * contract and knows no clock. `recoverVtxos` filters on
      * {@link assertSpendableNow} for it.
      *
      * **Role-blind.** A receiver's row gets the same leaf, which names keys that

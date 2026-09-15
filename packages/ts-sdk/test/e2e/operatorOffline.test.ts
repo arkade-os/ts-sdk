@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { Wallet, EsploraProvider } from "../../src";
+import { Wallet, EsploraProvider, RestArkProvider } from "../../src";
 import {
     beforeEachFaucet,
     createSharedRepos,
@@ -25,11 +25,11 @@ describe("operator offline (e2e)", () => {
                 pollingInterval: 2000,
             });
 
-        // 1) Create online against the live operator: persists the ArkInfo
+        // 1) Create online against the live operator: persists the ArkadeInfo
         //    snapshot and (after funding) the VTXO set into the shared repos.
         const online = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider: onchain(),
             storage: {
                 walletRepository: repos.walletRepository,
@@ -64,7 +64,7 @@ describe("operator offline (e2e)", () => {
             //    SUCCEED from the cached snapshot.
             offline = await Wallet.create({
                 identity,
-                arkServerUrl: "http://127.0.0.1:9",
+                arkProvider: new RestArkProvider("http://127.0.0.1:9"),
                 onchainProvider: onchain(),
                 storage: {
                     walletRepository: repos.walletRepository,

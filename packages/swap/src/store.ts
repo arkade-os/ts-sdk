@@ -4,6 +4,7 @@ import { contractPreimage } from "@arkade-os/sdk";
 import type { IWallet, ProvisionedClaimSecret, ProvisionedKey } from "@arkade-os/sdk";
 import type { AssetSwapRepository } from "./repository";
 
+/** @deprecated Use `Outcome`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export type AssetSwapStatus =
     | "pending"
     | "cancelling"
@@ -18,7 +19,8 @@ export type AssetSwapStatus =
 
 /** The sentinel asset id for BTC itself, as opposed to a 68-hex asset id.
  * Lives here with the {@link AssetSwap} fields it describes so the market and
- * restore layers share one spelling instead of re-typing the literal. */
+ * restore layers share one spelling instead of re-typing the literal.
+ */
 export const BTC_ASSET_ID = "btc";
 
 // ponytail: records carry only chain-recoverable facts — no quote-time display
@@ -66,6 +68,11 @@ export interface SwapSecretsProjection {
     preimageSaltHex?: string;
 }
 
+/** The row {@link AssetSwapRepository} stores. A custom storage backend is
+ * written against this, which is why it is a root export rather than a
+ * `/protocol` one — the interface it appears in is part of the v2 surface.
+ * What it is NOT is the v2 client's own record: that is `SwapRecord`, and
+ * `client.swaps()` projects it as `Swap`. */
 export interface AssetSwap extends SwapSecretsProjection {
     /** Funding txid — the swap's identity. */
     id: string;
@@ -125,7 +132,8 @@ export const getAssetSwapsOrThrow = async (
 /** The consumer read: a broken backend reads as no swaps rather than crashing
  * a history view. Mutations must use {@link getAssetSwapsOrThrow} instead —
  * swallowing the read there would let "the backend is gone" masquerade as "no
- * such swap" and skip the write silently. */
+ * such swap" and skip the write silently.
+ */
 export const getAssetSwaps = async (repository: AssetSwapRepository): Promise<AssetSwap[]> => {
     try {
         return await getAssetSwapsOrThrow(repository);
@@ -146,7 +154,10 @@ const saveSwapOrThrow = async (repository: AssetSwapRepository, swap: AssetSwap)
 
 /** Add a swap; no-op if the id is already stored. Returns the updated list.
  * THROWS on a failed write — nothing irreversible may happen until this record
- * is durable, so the caller must not fund on a failure. */
+ * is durable, so the caller must not fund on a failure.
+ *
+ * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const addAssetSwap = async (
     repository: AssetSwapRepository,
     swap: AssetSwap,
@@ -165,7 +176,10 @@ export const addAssetSwap = async (
 /** Merge changes into a swap by id. Returns the updated list.
  * THROWS on a failed read or write, like {@link addAssetSwap} — use this for a
  * write that gates something irreversible. Transitions written *after* the
- * irreversible act belong on {@link updateAssetSwapBestEffort}. */
+ * irreversible act belong on {@link updateAssetSwapBestEffort}.
+ *
+ * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const updateAssetSwap = async (
     repository: AssetSwapRepository,
     id: string,

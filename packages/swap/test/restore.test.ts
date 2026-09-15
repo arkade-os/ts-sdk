@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { asset, Extension, Transaction, UnknownPacket } from "@arkade-os/sdk";
-import { encodeOffer, offerVtxoScript, Offer, OFFER_PACKET_TYPE } from "../src/offer";
+import { encodeOffer, offerContract, Offer, OFFER_PACKET_TYPE } from "../src/offer";
 import {
     classifyDepositSpend,
     classifySpend,
@@ -19,7 +19,7 @@ const OTHER_ASSET_ID = "a2".repeat(34);
 // real points: the covenant is compiled for every fixture, so the offer's
 // swapPkScript is the script the spends below are classified against
 const key = (seed: string) => schnorr.getPublicKey(hex.decode(seed.repeat(32)));
-const SERVER_KEY = key("11");
+const OPERATOR_KEY = key("11");
 const MAKER_KEY = key("22");
 const EMULATOR_KEY = key("33");
 // a real taproot output key: the spend psbts below pay it, and @scure rejects
@@ -42,7 +42,7 @@ const makeOffer = (
         emulatorPubkey: EMULATOR_KEY,
         ...(exitDelay ? { exitDelay } : {}),
     };
-    return { ...binding, swapPkScript: offerVtxoScript(binding, SERVER_KEY).pkScript };
+    return { ...binding, swapPkScript: offerContract(binding, OPERATOR_KEY).pkScript };
 };
 
 const scriptOf = (offer: Offer) => hex.encode(offer.swapPkScript);
@@ -72,7 +72,7 @@ const spendPsbt = (
 ): { psbt: string; txid: string } => {
     const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
     for (const { offer, deposit, via } of spends) {
-        const leaf = offerVtxoScript(offer, SERVER_KEY).functionByName(via)!.tapLeafScript;
+        const leaf = offerContract(offer, OPERATOR_KEY).functionByName(via)!.tapLeafScript;
         tx.addInput({
             txid: hex.decode(deposit.txid),
             index: deposit.vout,
@@ -115,19 +115,24 @@ const depositVtxo = (offer: Offer, txid: string, extra: Record<string, unknown> 
     script: scriptOf(offer),
     value: 10_000,
     createdAt: new Date(1_700_000_000_000),
-    virtualStatus: { state: "settled" },
+    isSpent: false,
+    isSwept: false,
+    isPreconfirmed: false,
+    spentBy: "",
+    arkTxId: "",
+    commitmentTxIds: [],
     ...extra,
 });
 
 const spentVtxo = (offer: Offer, txid: string, spentBy: string, extra = {}) =>
-    depositVtxo(offer, txid, { virtualStatus: { state: "spent" }, arkTxId: spentBy, ...extra });
+    depositVtxo(offer, txid, { isSpent: true, spentBy, ...extra });
 
 const scan = (
     indexer: RestoreIndexer,
     txs: Tx[],
     existingIds = new Set<string>(),
     scanned?: Set<string>,
-) => restoreAssetSwaps(indexer, txs, existingIds, { serverPubkey: SERVER_KEY, scanned });
+) => restoreAssetSwaps(indexer, txs, existingIds, { operatorPubkey: OPERATOR_KEY, scanned });
 
 describe("classifySpend", () => {
     it("reads the leaf, not what the transaction moved", async () => {
@@ -140,8 +145,8 @@ describe("classifySpend", () => {
         const fill = spendPsbt([{ offer, deposit, via: "fulfill" }]);
 
         const parse = (psbt: string) => Transaction.fromPSBT(base64.decode(psbt));
-        expect(classifySpend(offer, SERVER_KEY, parse(cancel.psbt), deposit)).toBe("cancelled");
-        expect(classifySpend(offer, SERVER_KEY, parse(fill.psbt), deposit)).toBe("fulfilled");
+        expect(classifySpend(offer, OPERATOR_KEY, parse(cancel.psbt), deposit)).toBe("cancelled");
+        expect(classifySpend(offer, OPERATOR_KEY, parse(fill.psbt), deposit)).toBe("fulfilled");
     });
 
     it("reports a unilateral exit as cancelled — the deposit came back either way", async () => {
@@ -154,13 +159,13 @@ describe("classifySpend", () => {
         const parse = (psbt: string) => Transaction.fromPSBT(base64.decode(psbt));
 
         const exit = spendPsbt([{ offer, deposit, via: "exit" }]);
-        expect(classifySpend(offer, SERVER_KEY, parse(exit.psbt), deposit)).toBe("cancelled");
+        expect(classifySpend(offer, OPERATOR_KEY, parse(exit.psbt), deposit)).toBe("cancelled");
 
         // the other two leaves still answer for themselves on a 3-leaf offer
         const cancel = spendPsbt([{ offer, deposit, via: "cancel" }]);
         const fill = spendPsbt([{ offer, deposit, via: "fulfill" }]);
-        expect(classifySpend(offer, SERVER_KEY, parse(cancel.psbt), deposit)).toBe("cancelled");
-        expect(classifySpend(offer, SERVER_KEY, parse(fill.psbt), deposit)).toBe("fulfilled");
+        expect(classifySpend(offer, OPERATOR_KEY, parse(cancel.psbt), deposit)).toBe("cancelled");
+        expect(classifySpend(offer, OPERATOR_KEY, parse(fill.psbt), deposit)).toBe("fulfilled");
     });
 
     it("leaves an exit-less offer with nothing to match the exit leaf against", async () => {
@@ -176,7 +181,7 @@ describe("classifySpend", () => {
             base64.decode(spendPsbt([{ offer: withExit, deposit, via: "exit" }]).psbt),
         );
         // the exit leaf of a DIFFERENT covenant is not this offer's route back
-        expect(classifySpend(withoutExit, SERVER_KEY, exitSpend, deposit)).toBe("indeterminate");
+        expect(classifySpend(withoutExit, OPERATOR_KEY, exitSpend, deposit)).toBe("indeterminate");
     });
 
     it("classifies each deposit by its own input when one tx spends several", async () => {
@@ -193,8 +198,8 @@ describe("classifySpend", () => {
         ]);
         const parsed = Transaction.fromPSBT(base64.decode(psbt));
 
-        expect(classifySpend(cancelled, SERVER_KEY, parsed, a)).toBe("cancelled");
-        expect(classifySpend(filled, SERVER_KEY, parsed, b)).toBe("fulfilled");
+        expect(classifySpend(cancelled, OPERATOR_KEY, parsed, a)).toBe("cancelled");
+        expect(classifySpend(filled, OPERATOR_KEY, parsed, b)).toBe("fulfilled");
     });
 
     it("classifies across both halves of a real spend, where only the checkpoint holds the outpoint", async () => {
@@ -212,15 +217,17 @@ describe("classifySpend", () => {
         ]);
         const parse = (psbt: string) => Transaction.fromPSBT(base64.decode(psbt));
 
-        expect(classifySpend(offer, SERVER_KEY, parse(arkTx.psbt), deposit)).toBe("indeterminate");
-        expect(classifyDepositSpend(offer, SERVER_KEY, [parse(arkTx.psbt)], deposit)).toBe(
+        expect(classifySpend(offer, OPERATOR_KEY, parse(arkTx.psbt), deposit)).toBe(
+            "indeterminate",
+        );
+        expect(classifyDepositSpend(offer, OPERATOR_KEY, [parse(arkTx.psbt)], deposit)).toBe(
             "indeterminate",
         );
         // given both, the checkpoint answers
         expect(
             classifyDepositSpend(
                 offer,
-                SERVER_KEY,
+                OPERATOR_KEY,
                 [parse(checkpoint.psbt), parse(arkTx.psbt)],
                 deposit,
             ),
@@ -243,7 +250,7 @@ describe("classifySpend", () => {
         // classify against a script the deposit was never funded to
         expect(classifySpend(offer, key("44"), parsed, deposit)).toBe("indeterminate");
         // right tx, wrong outpoint — the deposit is not among its inputs
-        expect(classifySpend(offer, SERVER_KEY, parsed, { txid: "ef".repeat(32), vout: 0 })).toBe(
+        expect(classifySpend(offer, OPERATOR_KEY, parsed, { txid: "ef".repeat(32), vout: 0 })).toBe(
             "indeterminate",
         );
     });
@@ -377,11 +384,11 @@ describe("restoreAssetSwaps", () => {
     it("keeps an unspent deposit pending and a swept one recoverable", async () => {
         const offer = makeOffer("want-asset", BigInt(992));
         const funding = fundingPsbt(offer);
-        for (const [state, status] of [
-            ["settled", "pending"],
-            ["swept", "recoverable"],
+        for (const [extra, status] of [
+            [{}, "pending"],
+            [{ isSwept: true }, "recoverable"],
         ]) {
-            const vtxo = depositVtxo(offer, funding.txid, { virtualStatus: { state } });
+            const vtxo = depositVtxo(offer, funding.txid, extra);
             const indexer = makeIndexer([funding], [vtxo]);
             const {
                 restored: [restored],
@@ -576,7 +583,7 @@ describe("restoreAssetSwaps — reopening records the scan left pending", () => 
      * txid has already been scanned, so only `reopen` can re-ask. */
     const reask = (indexer: RestoreIndexer, reopen: AssetSwap[], txs: Tx[] = []) =>
         restoreAssetSwaps(indexer, txs, new Set(reopen.map((s) => s.id)), {
-            serverPubkey: SERVER_KEY,
+            operatorPubkey: OPERATOR_KEY,
             scanned: new Set(reopen.map((s) => s.fundingTxid)),
             reopen,
         });
@@ -672,7 +679,7 @@ describe("restoreAssetSwaps — reopening records the scan left pending", () => 
             [walletTx(funding.txid, "sent")],
             new Set(),
             {
-                serverPubkey: SERVER_KEY,
+                operatorPubkey: OPERATOR_KEY,
                 reopen: [open],
             },
         );
@@ -684,10 +691,7 @@ describe("restoreAssetSwaps — reopening records the scan left pending", () => 
     it("reports a swept deposit as recoverable on the run that catches it", async () => {
         const offer = makeOffer("want-asset", BigInt(992));
         const funding = fundingPsbt(offer);
-        const indexer = makeIndexer(
-            [],
-            [depositVtxo(offer, funding.txid, { virtualStatus: { state: "swept" } })],
-        );
+        const indexer = makeIndexer([], [depositVtxo(offer, funding.txid, { isSwept: true })]);
 
         const result = await reask(indexer, [record(offer, funding.txid)]);
 

@@ -12,7 +12,7 @@ import {
     revealClaimPacket,
     revealFieldsFromScript,
 } from "../src/reveal";
-import { receiveVtxoScript } from "../src/rfq";
+import { lightningReceiveContract } from "../src/rfq";
 import { openClaimPacket } from "./helpers/claimPacket";
 
 const PREIMAGE = new Uint8Array(32).fill(7);
@@ -24,10 +24,10 @@ const p2tr = (fill: number): Uint8Array =>
     Uint8Array.from([0x51, 0x20, ...new Uint8Array(32).fill(fill)]);
 
 const covenant = (overrides: { payoutPkScript?: Uint8Array } = {}) =>
-    receiveVtxoScript({
+    lightningReceiveContract({
         solverPubkey: xonly(secp256k1.getPublicKey(new Uint8Array(32).fill(0x44), true)),
         refundLocktime: 1_800_000,
-        serverPubkey: xonly(secp256k1.getPublicKey(new Uint8Array(32).fill(0x55), true)),
+        operatorPubkey: xonly(secp256k1.getPublicKey(new Uint8Array(32).fill(0x55), true)),
         paymentHash: hex.encode(sha256(PREIMAGE)),
         claimDelay: 512,
         emulatorPubkey: xonly(EMULATOR_PK),

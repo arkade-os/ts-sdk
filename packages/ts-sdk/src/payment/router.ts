@@ -57,8 +57,8 @@ export class PaymentRouter {
                     try {
                         return ((await rail.available?.(req, ctx)) ?? true) ? rail : null;
                     } catch (e) {
-                        // An availability-check failure (e.g. Boltz unreachable
-                        // during a limits fetch) drops the rail, never the router.
+                        // An availability-check failure (e.g. a counterparty
+                        // unreachable) drops the rail, never the router.
                         // Warn so a rail broken by a bug does not vanish silently.
                         console.warn(`payment rail "${rail.id}": available() threw`, e);
                         return null;

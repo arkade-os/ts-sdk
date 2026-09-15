@@ -81,6 +81,10 @@ import {
     TxType,
     IWallet,
     IReadonlyWallet,
+    ArkadeReader,
+    ArkadeBroadcaster,
+    GetArkadeInfoOptions,
+    NormalizedVtxoPage,
     BaseWalletConfig,
     GetNewAddressesOptions,
     NewAddress,
@@ -97,17 +101,13 @@ import {
     SendBitcoinParams,
     SettleParams,
     Status,
-    VirtualStatus,
     Outpoint,
     VirtualCoin,
     TxKey,
     GetVtxosFilter,
     TapLeaves,
     StorageConfig,
-    isSpendable,
     isSubdust,
-    isRecoverable,
-    isExpired,
     // VTXO capability predicates
     canRecoverOnchain,
     canSpendOffchain,
@@ -133,6 +133,11 @@ import {
 export {
     ActivityRegistry,
     boardingResolver,
+    // The reader-compatible bulk read `ArkadeReader`'s doc points at, and the
+    // single-shot normalizer it wraps. Exported so a plugin holding only a
+    // wallet can follow the doc without re-implementing the chunk/page loop.
+    getAllNormalizedVtxos,
+    getNormalizedVtxos,
     collabExitResolver,
     assetMintResolver,
     createDefaultActivityRegistry,
@@ -225,7 +230,7 @@ import {
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
-    ArkInfo,
+    ArkadeInfo,
     SignedIntent,
     Output,
     TxNotification,
@@ -245,11 +250,9 @@ import {
 import { CachingArkProvider } from "./providers/cachingArk";
 import {
     DelegateProvider,
-    DelegatorProvider,
     DelegateInfo,
     DelegateOptions,
     RestDelegateProvider,
-    RestDelegatorProvider,
 } from "./providers/delegate";
 import {
     CLTVMultisigTapscript,
@@ -277,7 +280,8 @@ import {
     combineTapscriptSigs,
     isValidArkAddress,
 } from "./utils/arkTransaction";
-import { getRandomId } from "./wallet/utils";
+import { getRandomId, assertRecipientArkadeAddress } from "./wallet/utils";
+import type { RecipientArkadeAddressContext } from "./wallet/utils";
 import {
     VtxoTaprootTree,
     ConditionWitness,
@@ -307,6 +311,7 @@ import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
 import {
     getNetwork,
+    networkFromArkadeInfo,
     networks,
     Network,
     NetworkName,
@@ -321,6 +326,7 @@ import {
     IndexerProvider,
     IndexerTxType,
     ChainTxType,
+    GetVtxosOptions,
     PageResponse,
     BatchInfo,
     ChainTx,
@@ -443,24 +449,9 @@ import type {
     VtxoBranch,
 } from "./repositories/virtualTxRepository";
 import { ChainedTxType } from "./repositories/virtualTxRepository";
-import {
-    MIGRATION_KEY,
-    migrateWalletRepository,
-    requiresMigration,
-    getMigrationStatus,
-    rollbackMigration,
-} from "./repositories/migrations/fromStorageAdapter";
-import type { MigrationStatus } from "./repositories/migrations/fromStorageAdapter";
-import { WalletRepositoryImpl } from "./repositories/migrations/walletRepositoryImpl";
-import { ContractRepositoryImpl } from "./repositories/migrations/contractRepositoryImpl";
 import type { WalletRepository } from "./repositories/walletRepository";
 import type { ContractRepository } from "./repositories/contractRepository";
-import {
-    DelegateManagerImpl,
-    DelegatorManagerImpl,
-    IDelegateManager,
-    IDelegatorManager,
-} from "./wallet/delegate";
+import { DelegateManagerImpl, IDelegateManager } from "./wallet/delegate";
 
 export * from "./arkfee";
 export * from "./extension";
@@ -565,7 +556,6 @@ import {
     WalletNotInitializedError,
     ReadonlyWalletError,
     DelegateNotConfiguredError,
-    DelegatorNotConfiguredError,
 } from "./wallet/serviceWorker/wallet-message-handler";
 import {
     MESSAGE_BUS_INITIALIZING,
@@ -628,9 +618,7 @@ export {
     toXOnlySignerHex,
     HDDescriptorProvider,
     DelegateManagerImpl,
-    DelegatorManagerImpl,
     RestDelegateProvider,
-    RestDelegatorProvider,
     // Providers
     ESPLORA_URL,
     EsploraProvider,
@@ -666,7 +654,6 @@ export {
     WalletNotInitializedError,
     ReadonlyWalletError,
     DelegateNotConfiguredError,
-    DelegatorNotConfiguredError,
     MESSAGE_BUS_INITIALIZING,
     MESSAGE_BUS_NOT_INITIALIZED,
     MessageBusInitializingError,
@@ -717,6 +704,12 @@ export {
     combineTapscriptSigs,
     isVtxoExpiringSoon,
     isValidArkAddress,
+    // The rotation-aware recipient check: hrp plus `classifyAgainstSignerSet`,
+    // refusing an unknown or past-cutoff operator signer. Root-exported because
+    // its ingredients already are and a plugin deriving against another
+    // operator's address would otherwise hand-roll a `serverPubKey ===` that
+    // rejects valid addresses mid-rotation.
+    assertRecipientArkadeAddress,
     getRandomId,
     buildVersion,
     sdkVersion,
@@ -731,6 +724,7 @@ export {
     ArkadeCashCreateError,
     // Network
     getNetwork,
+    networkFromArkadeInfo,
     networks,
     defaultEmulatorPubkey,
     resolveEmulatorPubkey,
@@ -760,13 +754,6 @@ export {
     isTerminalIntentState,
     INTENT_TERMINAL_STATES,
     ChainedTxType,
-    MIGRATION_KEY,
-    migrateWalletRepository,
-    requiresMigration,
-    getMigrationStatus,
-    rollbackMigration,
-    WalletRepositoryImpl,
-    ContractRepositoryImpl,
     // Intent proof
     Intent,
     // BIP-322 message signing
@@ -820,10 +807,7 @@ export {
     SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
     type CheckpointExitDelayPolicy,
     buildForfeitTx,
-    isRecoverable,
-    isSpendable,
     isSubdust,
-    isExpired,
     getSequence,
     // VTXO capability predicates
     canRecoverOnchain,
@@ -867,12 +851,17 @@ export {
 
 export type {
     // Types and Interfaces
+    RecipientArkadeAddressContext,
     Identity,
     ReadonlyIdentity,
     BatchSignableIdentity,
     SignRequest,
     IWallet,
     IReadonlyWallet,
+    ArkadeReader,
+    ArkadeBroadcaster,
+    GetArkadeInfoOptions,
+    NormalizedVtxoPage,
     BaseWalletConfig,
     GetNewAddressesOptions,
     NewAddress,
@@ -889,7 +878,6 @@ export type {
     SendBitcoinParams,
     SettleParams,
     Status,
-    VirtualStatus,
     Outpoint,
     VirtualCoin,
     TimeHeight,
@@ -920,6 +908,7 @@ export type {
     ProvisionedKey,
     // Indexer types
     IndexerProvider,
+    GetVtxosOptions,
     PageResponse,
     BatchInfo,
     ChainTx,
@@ -937,7 +926,7 @@ export type {
     ArkProvider,
     SettlementEvent,
     FeeInfo,
-    ArkInfo,
+    ArkadeInfo,
     SignedIntent,
     Output,
     TxNotification,
@@ -1080,18 +1069,15 @@ export type {
     ArkadeBatchInput,
     ArkadeExtendedCoin,
     ArkadeExtendedVirtualCoin,
-    // Delegate types (Delegator* aliases deprecated)
+    // Delegate types
     IDelegateManager,
-    IDelegatorManager,
     DelegateProvider,
-    DelegatorProvider,
     DelegateInfo,
     DelegateOptions,
     // Repositories
     ManagedConnection,
     WalletRepository,
     ContractRepository,
-    MigrationStatus,
     IntentRepository,
     ArkIntent,
     ArkIntentState,

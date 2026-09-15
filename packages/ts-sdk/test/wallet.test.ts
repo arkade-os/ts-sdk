@@ -34,10 +34,14 @@ const { mockFetch } = vi.hoisted(() => ({
     mockFetch: vi.fn(),
 }));
 
-vi.mock("../src/utils/fetch", () => ({
-    fetch: mockFetch,
-    baseFetch: mockFetch,
-}));
+vi.mock("../src/utils/fetch", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../src/utils/fetch")>();
+    return {
+        ...actual,
+        fetch: mockFetch,
+        baseFetch: mockFetch,
+    };
+});
 
 vi.stubGlobal("EventSource", MockEventSource);
 
@@ -65,6 +69,23 @@ describe("Wallet", () => {
 
             expect(wallet.network.bech32).toBe("bc");
             expect(wallet.address.startsWith("bc1p")).toBe(true);
+        });
+
+        it("refuses a custom arkProvider whose server URL it cannot discover", async () => {
+            // Falling back to the public default here would point the indexer at a server that has
+            // never seen this wallet's VTXOs: phantom coins and missed receipts, no error.
+            await expect(
+                Wallet.create({
+                    identity: mockIdentity,
+                    arkProvider: {
+                        getInfo: vi.fn(),
+                    } as Partial<ArkProvider> as ArkProvider,
+                    storage: {
+                        walletRepository: new InMemoryWalletRepository(),
+                        contractRepository: new InMemoryContractRepository(),
+                    },
+                }),
+            ).rejects.toThrow(/indexerProvider is required when arkProvider is provided/);
         });
     });
 
@@ -161,7 +182,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
             });
 
             const balance = await wallet.getBalance();
@@ -470,7 +491,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
             });
 
             const address = await wallet.getAddress();
@@ -517,7 +538,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
             });
 
             const readonlyWallet = await wallet.toReadonly();
@@ -544,7 +565,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
             });
 
             const readonlyWallet = await wallet.toReadonly();
@@ -595,7 +616,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
             });
 
             const readonlyWallet = await wallet.toReadonly();
@@ -630,7 +651,6 @@ describe("Wallet", () => {
 
             const wallet = await ReadonlyWallet.create({
                 identity: readonlyIdentity,
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo),
                 } as Partial<ArkProvider> as ArkProvider,
@@ -664,11 +684,6 @@ describe("Wallet", () => {
                 status: {
                     confirmed: state !== "preconfirmed",
                     isLeaf: state !== "preconfirmed",
-                },
-                virtualStatus: {
-                    state,
-                    commitmentTxIds: ["22".repeat(32)],
-                    batchExpiry: mockBatchExpiry,
                 },
                 // `settledBy` is the commitment tx that *consumed* this vtxo, so a live batch leaf
                 // has none — arkd only ever writes it together with `spent = true`.
@@ -718,18 +733,18 @@ describe("Wallet", () => {
 
             const { wallet, walletRepository } = await createReadonlyTestWallet(getVtxos);
 
-            expect((await wallet.getVtxos())[0].virtualStatus.state).toBe("preconfirmed");
+            expect((await wallet.getVtxos())[0].isPreconfirmed).toBe(true);
 
             state = "settled";
 
             const vtxos = await wallet.getVtxos();
             expect(vtxos).toHaveLength(1);
-            expect(vtxos[0].virtualStatus.state).toBe("settled");
+            expect(vtxos[0].isPreconfirmed).toBe(false);
             expect(vtxos[0].isSpent).toBe(false);
 
             const cached = await walletRepository.getVtxos(await wallet.getAddress());
             expect(cached).toHaveLength(1);
-            expect(cached[0].virtualStatus.state).toBe("settled");
+            expect(cached[0].isPreconfirmed).toBe(false);
         });
 
         it("should mark a cached preconfirmed VTXO as spent when the full re-fetch no longer returns it", async () => {
@@ -777,7 +792,7 @@ describe("Wallet", () => {
 
             const vtxos = await wallet.getVtxos();
             expect(vtxos).toHaveLength(1);
-            expect(vtxos[0].virtualStatus.state).toBe("settled");
+            expect(vtxos[0].isPreconfirmed).toBe(false);
 
             markSpent = true;
 
@@ -788,9 +803,9 @@ describe("Wallet", () => {
             expect(cached[0].isSpent).toBe(true);
         });
 
-        it("normalizes VTXOs from a legacy-only custom indexer provider", async () => {
-            // A consumer-implemented provider is under no obligation to populate the canonical
-            // facts, so legacy-shaped coins enter through the front door, not just from old rows.
+        it("defaults missing canonical VTXO facts from a custom indexer provider", async () => {
+            // A consumer-implemented provider may omit canonical optional facts; the wallet
+            // normalizes those gaps to conservative defaults at the boundary.
             let walletScript = "";
             const getVtxos = vi
                 .fn<IndexerProvider["getVtxos"]>()
@@ -810,14 +825,14 @@ describe("Wallet", () => {
             const { wallet } = await createReadonlyTestWallet(getVtxos);
             const [vtxo] = await wallet.getVtxos();
 
-            expect(vtxo.isPreconfirmed).toBe(true);
+            expect(vtxo.isPreconfirmed).toBe(false);
             expect(vtxo.isSwept).toBe(false);
             expect(vtxo.isSpent).toBe(false);
-            expect(vtxo.commitmentTxIds).toEqual(["22".repeat(32)]);
-            expect(vtxo.expiresAt).toBeInstanceOf(Date);
+            expect(vtxo.commitmentTxIds).toEqual([]);
+            expect(vtxo.expiresAt).toBeUndefined();
         });
 
-        it("egress: Wallet.getVtxos returns virtualStatus and spentBy === '' on unspent coins", async () => {
+        it("egress: Wallet.getVtxos returns canonical facts and spentBy === '' on unspent coins", async () => {
             let walletScript = "";
             const getVtxos = vi
                 .fn<IndexerProvider["getVtxos"]>()
@@ -829,8 +844,8 @@ describe("Wallet", () => {
             const { wallet } = await createReadonlyTestWallet(getVtxos);
             const [vtxo] = await wallet.getVtxos();
 
-            expect(vtxo.virtualStatus).toBeDefined();
-            expect(vtxo.virtualStatus.state).toBe("preconfirmed");
+            expect((vtxo as any).virtualStatus).toBeUndefined();
+            expect(vtxo.isPreconfirmed).toBe(true);
             expect(vtxo.spentBy).toBe("");
         });
     });
@@ -856,11 +871,6 @@ describe("Wallet", () => {
                 vout: 0,
                 value: 50_000,
                 status: { confirmed: false, isLeaf: false },
-                virtualStatus: {
-                    state: "preconfirmed",
-                    commitmentTxIds: ["22".repeat(32)],
-                    batchExpiry: 1767225600000,
-                },
                 isSpent: false,
                 isSwept: false,
                 isPreconfirmed: true,
@@ -891,7 +901,6 @@ describe("Wallet", () => {
 
             const wallet = await ReadonlyWallet.create({
                 identity: readonlyIdentity,
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo),
                 } as Partial<ArkProvider> as ArkProvider,
@@ -954,7 +963,6 @@ describe("Wallet", () => {
 
             const wallet = await ReadonlyWallet.create({
                 identity: readonlyIdentity,
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo),
                 } as Partial<ArkProvider> as ArkProvider,
@@ -1020,11 +1028,6 @@ describe("Wallet", () => {
                 vout: 0,
                 value: 50_000,
                 status: { confirmed: false },
-                virtualStatus: {
-                    state: "preconfirmed",
-                    commitmentTxIds: ["22".repeat(32)],
-                    batchExpiry: 1767225600000,
-                },
                 isSpent: false,
                 isSwept: false,
                 isPreconfirmed: true,
@@ -1058,7 +1061,6 @@ describe("Wallet", () => {
 
             const wallet = await ReadonlyWallet.create({
                 identity: readonlyIdentity,
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo),
                 } as Partial<ArkProvider> as ArkProvider,
@@ -1234,7 +1236,6 @@ describe("Wallet", () => {
 
             const wallet = await ReadonlyWallet.create({
                 identity: readonlyIdentity,
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: vi
                         .fn()
@@ -1268,7 +1269,6 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo("bitcoin", ARKD_DELAY)),
                 } as Partial<ArkProvider> as ArkProvider,
@@ -1478,7 +1478,7 @@ describe("ReadonlyWallet", () => {
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
         });
 
         expect(readonlyWallet).toBeInstanceOf(ReadonlyWallet);
@@ -1507,7 +1507,12 @@ describe("ReadonlyWallet", () => {
         });
 
         expect(readonlyWallet).toBeInstanceOf(ReadonlyWallet);
-        expect(mockFetch).toHaveBeenCalledWith(`${DEFAULT_ARKADE_SERVER_URL}/v1/info`);
+        // the URL is the claim; the second argument carries the fetch's own
+        // timeout budget (an AbortSignal where the runtime has one)
+        expect(mockFetch).toHaveBeenCalledWith(
+            `${DEFAULT_ARKADE_SERVER_URL}/v1/info`,
+            expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        );
     });
 
     it("should query balance with ReadonlyWallet", async () => {
@@ -1552,7 +1557,7 @@ describe("ReadonlyWallet", () => {
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
         });
 
         const balance = await readonlyWallet.getBalance();
@@ -1571,7 +1576,7 @@ describe("ReadonlyWallet", () => {
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
         });
 
         // Should not have transaction methods
@@ -1907,10 +1912,6 @@ describe("Wallet._settleImpl", () => {
                 txid: `vtxo-${value}-${i}`,
                 vout: 0,
                 value,
-                virtualStatus: {
-                    state: "settled",
-                    batchExpiry: Date.now() + 60 * 60 * 1000,
-                },
                 isSpent: false,
                 isSwept: false,
                 isPreconfirmed: false,
@@ -2213,7 +2214,6 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         vout: 0,
         value: 5_000,
         status: { confirmed: true },
-        virtualStatus: { state: "preconfirmed", batchExpiry: 1_700_000_000 },
         createdAt: new Date(),
         isUnrolled: false,
         isSpent: false,
@@ -2221,6 +2221,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         isPreconfirmed: true,
         spentBy: "",
         commitmentTxIds: [],
+        expiresAt: new Date(1_700_000_000),
         expiresAtHeight: 1_700_000,
         script,
     });
@@ -2446,10 +2447,6 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             vout: 0,
             value: 5_000,
             status: { confirmed: true },
-            virtualStatus: {
-                state: "preconfirmed",
-                batchExpiry: 1_700_000_000,
-            },
             createdAt: new Date(),
             isUnrolled: false,
             isSpent: false,
@@ -2457,6 +2454,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             isPreconfirmed: true,
             spentBy: "",
             commitmentTxIds: [],
+            expiresAt: new Date(1_700_000_000),
             expiresAtHeight: 1_700_000,
             script: SPEND_SCRIPT,
         };
@@ -2612,10 +2610,14 @@ describe("Wallet.updateDbAfterSettle", () => {
             vout: 0,
             value: 5_000,
             status: { confirmed: true },
-            virtualStatus: { state: "preconfirmed" },
             createdAt: new Date(),
             isUnrolled: false,
             isSpent: false,
+            isSwept: false,
+            isPreconfirmed: true,
+            spentBy: "",
+            commitmentTxIds: [],
+            expiresAt: new Date(1_700_000_000),
             script,
             forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
             intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
@@ -2636,11 +2638,8 @@ describe("Wallet.updateDbAfterSettle", () => {
         const [addr, vtxos] = saveVtxos.mock.calls[0];
         expect(addr).toBe(PRIMARY_ADDR);
         expect(vtxos).toHaveLength(1);
-        // Consumed by settlement, so `isSpent`/`settledBy` are set and the legacy projection
-        // follows its precedence: "spent" outranks "settled". `settledBy` names the commitment
-        // tx that consumed this vtxo — it is not a live batch leaf. This is also what the
-        // indexer reports for the same vtxo on re-fetch.
-        expect(vtxos[0].virtualStatus.state).toBe("spent");
+        // Consumed by settlement, so `isSpent`/`settledBy` are set. `settledBy` names the
+        // commitment tx that consumed this vtxo — it is not a live batch leaf.
         expect(vtxos[0].settledBy).toBe("commitment-tx");
         expect(vtxos[0].isSpent).toBe(true);
     });

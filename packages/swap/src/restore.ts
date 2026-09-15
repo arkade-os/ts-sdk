@@ -10,7 +10,7 @@
  *
  * The scan is incremental: txids checked with an authoritative answer are
  * remembered, so late-synced history is picked up by later scans and nothing
- * is ever fetched twice. `reopen` re-asks one it left `pending`.
+ * is ever fetched twice.
  */
 import { base64, hex } from "@scure/base";
 import {
@@ -19,7 +19,7 @@ import {
     Transaction,
     scriptFromTapLeafScript,
 } from "@arkade-os/sdk";
-import { decodeOffer, Offer, OFFER_PACKET_TYPE, offerVtxoScript } from "./offer";
+import { decodeOffer, Offer, OFFER_PACKET_TYPE, offerContract } from "./offer";
 import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "./store";
 
 // ponytail: fixed request size; tune only if histories outgrow it
@@ -32,6 +32,7 @@ const TXS_PER_REQUEST = 50;
  * the spending transaction itself (see {@link classifySpend}). A wallet
  * record's asset field is a net delta — an asset offer's cancel moves the asset
  * out and back, netting to nothing — so it cannot answer the question.
+ *
  */
 export interface Tx {
     type: string;
@@ -43,8 +44,17 @@ export interface Tx {
     createdAt?: number;
 }
 
-/** The indexer surface the restore scan needs — narrower than a full provider. */
+/** The indexer surface the restore scan needs — narrower than a full provider.
+ *
+ */
 export type RestoreIndexer = Pick<RestIndexerProvider, "getVirtualTxs" | "getVtxos">;
+
+type Found = {
+    fundingTx: Tx;
+    offer: Offer;
+    offerHex: string;
+    existing?: AssetSwap;
+};
 
 /**
  * Fetch and parse virtual txs, keyed by the psbt's own unsigned txid rather
@@ -105,10 +115,9 @@ const unscannedSwapCandidates = (
  *
  * `indeterminate` is not a third outcome — it is the absence of one, and the
  * caller decides whether to retry or accept a default.
+ *
  */
 export type SpendKind = "cancelled" | "fulfilled" | "indeterminate";
-
-type Found = { fundingTx: Tx; offer: Offer; offerHex: string; existing?: AssetSwap };
 
 /**
  * Classify a spend by the covenant leaf it took.
@@ -145,20 +154,21 @@ type Found = { fundingTx: Tx; offer: Offer; offerHex: string; existing?: AssetSw
  * and they also survive batching: a solver filling several offers in one tx
  * gives each input its own leaf.
  *
- * `serverPubkey` must be the key the covenant was *funded* against. If it has
+ * `operatorPubkey` must be the key the covenant was *funded* against. If it has
  * rotated since, the rebuilt script will not match the offer's own
  * `swapPkScript` and this returns `indeterminate` rather than guessing —
  * `cancelOffer` diagnoses the same mismatch the same way.
+ *
  */
 export function classifySpend(
     offer: Offer,
-    serverPubkey: Uint8Array,
+    operatorPubkey: Uint8Array,
     spendTx: Transaction,
     deposit: { txid: string; vout: number },
 ): SpendKind {
     let leaves: { returned: Uint8Array[]; fulfill?: Uint8Array };
     try {
-        const script = offerVtxoScript(offer, serverPubkey);
+        const script = offerContract(offer, operatorPubkey);
         if (hex.encode(script.pkScript) !== hex.encode(offer.swapPkScript)) return "indeterminate";
         leaves = {
             // both routes that hand the deposit back; `exit` is absent on an
@@ -192,6 +202,7 @@ export function classifySpend(
 /**
  * The txids that may hold a deposit's spend, in the order worth trying: the
  * checkpoint first, since it is the one carrying the deposit outpoint.
+ *
  */
 export const spendTxidsOf = (vtxo: { spentBy?: string; arkTxId?: string }): string[] =>
     [vtxo.spentBy, vtxo.arkTxId].filter((id): id is string => Boolean(id));
@@ -204,15 +215,16 @@ export const spendTxidsOf = (vtxo: { spentBy?: string; arkTxId?: string }): stri
  * cannot tell from the outside which shape a given deployment produced: for a
  * settlement they may be the same id. Try each and take the first definite
  * answer, so the classification does not depend on that distinction.
+ *
  */
 export function classifyDepositSpend(
     offer: Offer,
-    serverPubkey: Uint8Array,
+    operatorPubkey: Uint8Array,
     spendTxs: Iterable<Transaction>,
     deposit: { txid: string; vout: number },
 ): SpendKind {
     for (const tx of spendTxs) {
-        const kind = classifySpend(offer, serverPubkey, tx, deposit);
+        const kind = classifySpend(offer, operatorPubkey, tx, deposit);
         if (kind !== "indeterminate") return kind;
     }
     return "indeterminate";
@@ -239,25 +251,31 @@ export function classifyDepositSpend(
  * does, so the `existingIds` escape hatch is no longer a correction mechanism
  * for a wrong label — it is only a skip list.
  *
- * `serverPubkey` must be the server key the covenants were funded against; a
+ * `operatorPubkey` must be the operator key the covenants were funded against; a
  * key that has rotated since makes every affected swap unclassifiable rather
  * than misclassified.
  *
- * ## `reopen`: re-asking a record this left pending
+ * ## `client.ready` is not a substitute for this
  *
- * A run finding the deposit unspent returns `pending` *and* marks the funding
- * txid scanned, so the natural call asks once and never again — `pending` is the
- * absence of an answer. Pass those records as `reopen`: re-answered from stored
- * `offerHex`, no funding fetch, skip lists unchanged, definite outcomes only.
+ * The drive's construction restore reads the repository and nothing else, so it
+ * revives the records a store still holds and rediscovers none that it lost. A
+ * store wiped after a deposit was funded therefore leaves the offer invisible to
+ * the client and the deposit escrowed out of generic coin selection — recovered
+ * only by running this scan, which the package deliberately never calls for you.
+ * Pinned in `test/e2e/offerCancel.test.ts`.
+ *
  */
 export async function restoreAssetSwaps(
     indexer: RestoreIndexer,
     txs: Tx[],
     existingIds: ReadonlySet<string>,
-    opts: { serverPubkey: Uint8Array; scanned?: ReadonlySet<string>; reopen?: AssetSwap[] },
+    opts: {
+        operatorPubkey: Uint8Array;
+        scanned?: ReadonlySet<string>;
+        reopen?: AssetSwap[];
+    },
 ): Promise<{ restored: AssetSwap[]; scannedTxids: string[] }> {
-    const { serverPubkey, scanned = new Set<string>(), reopen = [] } = opts;
-
+    const { operatorPubkey, scanned = new Set<string>(), reopen = [] } = opts;
     const reopened: Found[] = [];
     for (const swap of reopen) {
         try {
@@ -267,15 +285,11 @@ export async function restoreAssetSwaps(
                 offerHex: swap.offerHex,
                 existing: swap,
             });
-        } catch {
-            // an offerHex that will not decode names no covenant to look up
-        }
+        } catch {}
     }
-    // a reopened txid leaves the candidate set, or one funding tx is answered by
-    // both paths and returned twice, with two different records under one id
-    const reopenedTxids = new Set(reopened.map((f) => f.fundingTx.redeemTxid));
+    const reopenedTxids = new Set(reopened.map(({ fundingTx }) => fundingTx.redeemTxid));
     const candidates = unscannedSwapCandidates(txs, existingIds, scanned).filter(
-        (tx) => !reopenedTxids.has(tx.redeemTxid),
+        ({ redeemTxid }) => !reopenedTxids.has(redeemTxid),
     );
     if (candidates.length === 0 && reopened.length === 0) {
         return { restored: [], scannedTxids: [] };
@@ -339,7 +353,7 @@ export async function restoreAssetSwaps(
         const vtxo = vtxoByScriptAndTxid.get(
             `${hex.encode(offer.swapPkScript)}:${fundingTx.redeemTxid}`,
         );
-        if (vtxo?.virtualStatus.state !== "spent") continue;
+        if (!vtxo?.isSpent) continue;
         for (const txid of spendTxidsOf(vtxo)) spendTxids.add(txid);
     }
     const spendTxByTxid = await fetchParsedTxs(indexer, [...spendTxids]);
@@ -380,15 +394,14 @@ export async function restoreAssetSwaps(
         }
         const fromAmount = depositAmount.toString();
 
-        const state = vtxo.virtualStatus.state;
-        const spentTxid = state === "spent" ? vtxo.arkTxId || vtxo.spentBy : undefined;
+        const spentTxid = vtxo.isSpent ? vtxo.arkTxId || vtxo.spentBy : undefined;
         let status: AssetSwapStatus = "pending";
-        if (state === "swept") status = "recoverable";
-        else if (state === "spent") {
+        if (vtxo.isSwept) status = "recoverable";
+        else if (vtxo.isSpent) {
             const spendTxs = spendTxidsOf(vtxo)
                 .map((id) => spendTxByTxid.get(id))
                 .filter((tx): tx is Transaction => tx !== undefined);
-            const kind = classifyDepositSpend(offer, serverPubkey, spendTxs, {
+            const kind = classifyDepositSpend(offer, operatorPubkey, spendTxs, {
                 txid: vtxo.txid,
                 vout: vtxo.vout,
             });
@@ -409,8 +422,6 @@ export async function restoreAssetSwaps(
                 : {};
 
         if (existing) {
-            // writing `pending` back would overwrite a `cancelling` record —
-            // losing the cancel txid its exact classifier matches on
             if (status === "pending") continue;
             restored.push({ ...existing, status, spentTxid, ...completion });
             continue;
@@ -423,7 +434,7 @@ export async function restoreAssetSwaps(
             fromAmount,
             toAmount: offer.wantAmount.toString(),
             // ponytail(arkade-os/ts-sdk#680): empty address makes cancel fall back
-            // to the current server key; store the funded address if server-key
+            // to the current operator key; store the funded address if operator-key
             // rotations become real (cancelOffer now at least diagnoses the
             // mismatch instead of reporting a missing VTXO)
             swapAddress: "",
@@ -433,6 +444,8 @@ export async function restoreAssetSwaps(
             spentTxid,
             status,
             createdAt: fundingTx.createdAt ? fundingTx.createdAt * 1000 : vtxo.createdAt.getTime(),
+            // the completion time is the caller's record of the spend, if it
+            // has one — the psbt that classified it carries no timestamp
             ...completion,
         });
     }

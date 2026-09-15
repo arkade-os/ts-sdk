@@ -6,12 +6,10 @@ This file provides guidance to AI coding assistants when working with code in th
 
 `@arkade-os/sdk` is the core package. `@arkade-os/swap` should be treated as a plugin-style
 extension of that core, and as an example of the many integrations/plugins expected to exist over
-time. `@arkade-os/boltz-swap` is **deprecated and unmaintained** — it still builds and ships, but
-runs no integration suite; do not extend it or treat its patterns as precedent. Prefer reusing
-existing SDK utilities, types, primitives, and helper functions from `packages/ts-sdk` instead of
-duplicating equivalent logic in a plugin. When shared behavior is generally useful beyond one
-plugin and belongs to the wallet/protocol core, promote it into `ts-sdk` rather than copying it
-outward.
+time. Prefer reusing existing SDK utilities, types, primitives, and helper functions from
+`packages/ts-sdk` instead of duplicating equivalent logic in a plugin. When shared behavior is
+generally useful beyond one plugin and belongs to the wallet/protocol core, promote it into
+`ts-sdk` rather than copying it outward.
 
 Keep the dependency and ownership direction clear: plugins may depend on and consume `ts-sdk`, but
 `ts-sdk` must remain independent of plugin packages and must not import from or special-case any of
@@ -20,7 +18,7 @@ them. Core capabilities flow from `ts-sdk` outward to plugins.
 ## Commands
 
 ```bash
-pnpm run build       # Build all packages — ts-sdk must build before boltz-swap
+pnpm run build       # Build all packages — ts-sdk must build before the plugins
 pnpm run test:unit   # All unit tests
 pnpm run lint        # Check formatting (biome)
 pnpm -C packages/ts-sdk vitest run test/wallet.test.ts   # Single test file

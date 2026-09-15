@@ -3,6 +3,9 @@ import { base64, hex } from "@scure/base";
 import { p2tr } from "@scure/btc-signer";
 import { describe, expect, it } from "vitest";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
+import { VHTLCContractHandler } from "../src/contracts/handlers";
+import type { Contract } from "../src/contracts/types";
+import { VHTLC } from "../src/script/vhtlc";
 import { ChainTxType } from "../src/providers/indexer";
 import { SingleKey } from "../src/identity/singleKey";
 import { getNetwork } from "../src/networks";
@@ -98,10 +101,12 @@ const timelock = { type: "blocks", value: 144n } as const;
 async function estimateFixture(opts?: {
     coins?: { txid: string; vout: number; value: number; status: { confirmed: boolean } }[];
     vtxoValue?: number;
+    /** Contract row to register against the VTXO's script, with the script it locks. */
+    contract?: { script: { pkScript: Uint8Array; encode: () => Uint8Array }; row: Contract };
 }) {
     const owner = (await identity.xOnlyPublicKey())!;
     const exit = CSVMultisigTapscript.encode({ pubkeys: [owner], timelock });
-    const vtxoScript = new VtxoScript([exit.script]);
+    const vtxoScript = opts?.contract?.script ?? new VtxoScript([exit.script]);
     const pay = p2tr(owner, undefined, network);
 
     // Real TREE PSBTs (with anchor + tapKeySig) so vsizes are exact.
@@ -149,12 +154,14 @@ async function estimateFixture(opts?: {
     };
 
     const coins = opts?.coins ?? [];
+    const contractRepository = new InMemoryContractRepository();
+    if (opts?.contract) await contractRepository.saveContract(opts.contract.row);
     const wallet = {
         identity,
         network,
         indexerProvider: fakeIndexer(chains, psbts),
         onchainProvider: fakeOnchain(new Set([COMMIT])),
-        contractRepository: new InMemoryContractRepository(),
+        contractRepository,
         getVtxos: async () => [vtxo],
     };
     const onchainWallet = {
@@ -175,7 +182,50 @@ async function estimateFixture(opts?: {
     return { exitOpts, vtxo };
 }
 
+/**
+ * A VHTLC the wallet holds as *receiver*, with the preimage. Only the receiver's unilateral claim
+ * leaf is a path this wallet can sweep, and the handler offers it only once it can tell which side
+ * we are — so a quote that names it proves the wallet's key reached the contract handler.
+ */
+async function vhtlcReceiverFixture() {
+    const params = {
+        sender: schnorr.getPublicKey(new Uint8Array(32).fill(0xcc)),
+        receiver: (await identity.xOnlyPublicKey())!,
+        server: schnorr.getPublicKey(new Uint8Array(32).fill(0xbb)),
+        preimageHash: new Uint8Array(20).fill(7),
+        refundLocktime: 800_000n,
+        unilateralClaimDelay: timelock,
+        unilateralRefundDelay: timelock,
+        unilateralRefundWithoutReceiverDelay: timelock,
+    };
+    const script = new VHTLC.Script(params);
+    const serialized = VHTLCContractHandler.serializeParams(params);
+    serialized.preimage = hex.encode(new Uint8Array(32).fill(5));
+    const row: Contract = {
+        type: "vhtlc",
+        params: serialized,
+        script: hex.encode(script.pkScript),
+        address: "unused",
+        state: "active",
+        createdAt: 1,
+    };
+    return { script, row };
+}
+
 describe("estimate", () => {
+    it("carries the wallet's key into contract path resolution", async () => {
+        // Regression: with the identity dropped, `resolveRole` cannot place the wallet, the VHTLC
+        // handler offers no paths at all, and every contract VTXO is silently skipped as
+        // unexitable — the coins this whole path exists to rescue.
+        const { exitOpts } = await estimateFixture({ contract: await vhtlcReceiverFixture() });
+        const quote = await estimate(exitOpts);
+
+        expect(quote.vtxos).toHaveLength(1);
+        expect(quote.vtxos[0].skipped).toBeUndefined();
+        expect(quote.vtxos[0].path).toBe("vhtlc:unilateral");
+        expect(quote.vtxos[0].delay).toEqual({ type: "blocks", value: 144 });
+    });
+
     it("quotes txCount, fees, funding and shortfall for a 2-step chain", async () => {
         const { exitOpts } = await estimateFixture();
         const quote = await estimate(exitOpts);

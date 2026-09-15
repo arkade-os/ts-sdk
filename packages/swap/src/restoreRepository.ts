@@ -13,12 +13,11 @@ export interface AssetSwapRestoreChange {
 
 export interface RestoreAssetSwapRepositoryOptions {
     wallet: IWallet;
-    arkServerUrl: string;
     indexer: RestoreIndexer;
     repository: AssetSwapRepository;
     txs: Tx[];
-    /** The server key the restored covenants were funded against, x-only. */
-    serverPubkey: Uint8Array;
+    /** The operator key the restored covenants were funded against, x-only. */
+    operatorPubkey: Uint8Array;
     /** Add consumer-owned metadata to a newly rebuilt record before it is saved. */
     prepareNew?: (swap: AssetSwap) => AssetSwap | Promise<AssetSwap>;
     /** Stops repository writes and coverage work after an in-flight scan returns. */
@@ -42,13 +41,9 @@ const isOpen = (swap: AssetSwap) => swap.status === "pending" || swap.status ===
 const isOfferSwap = (swap: AssetSwap): boolean =>
     typeof (swap as { offerHex?: unknown }).offerHex === "string";
 
-const restoreCoverage = async (
-    wallet: IWallet,
-    arkServerUrl: string,
-    swaps: AssetSwap[],
-): Promise<void> => {
+const restoreCoverage = async (wallet: IWallet, swaps: AssetSwap[]): Promise<void> => {
     const offers = swaps.filter(isOfferSwap);
-    if (offers.length > 0) await restoreOfferCoverage(wallet, arkServerUrl, offers);
+    if (offers.length > 0) await restoreOfferCoverage(wallet, offers);
 };
 
 const aborted = (swaps: AssetSwap[]): RestoreAssetSwapRepositoryResult => ({
@@ -75,8 +70,7 @@ const aborted = (swaps: AssetSwap[]): RestoreAssetSwapRepositoryResult => ({
 export async function restoreAssetSwapRepository(
     opts: RestoreAssetSwapRepositoryOptions,
 ): Promise<RestoreAssetSwapRepositoryResult> {
-    const { wallet, arkServerUrl, indexer, repository, txs, serverPubkey, prepareNew, signal } =
-        opts;
+    const { wallet, indexer, repository, txs, operatorPubkey, prepareNew, signal } = opts;
     const [existing, scanned] = await Promise.all([
         getAssetSwapsOrThrow(repository),
         repository.getScannedTxids(),
@@ -86,7 +80,7 @@ export async function restoreAssetSwapRepository(
     let scan: Awaited<ReturnType<typeof restoreAssetSwaps>>;
     try {
         scan = await restoreAssetSwaps(indexer, txs, new Set(existing.map((swap) => swap.id)), {
-            serverPubkey,
+            operatorPubkey,
             scanned,
             reopen: existing.filter((swap) => isOpen(swap) && isOfferSwap(swap)),
         });
@@ -95,7 +89,7 @@ export async function restoreAssetSwapRepository(
         // succeeding. If both fail, preserve both causes for the caller.
         if (!signal?.aborted) {
             try {
-                await restoreCoverage(wallet, arkServerUrl, existing);
+                await restoreCoverage(wallet, existing);
             } catch (coverageError) {
                 throw new AggregateError(
                     [scanError, coverageError],
@@ -140,7 +134,7 @@ export async function restoreAssetSwapRepository(
 
     let coverageError: unknown;
     try {
-        await restoreCoverage(wallet, arkServerUrl, swaps);
+        await restoreCoverage(wallet, swaps);
     } catch (error) {
         coverageError = error;
     }

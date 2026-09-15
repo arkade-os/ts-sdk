@@ -6,7 +6,7 @@ import {
     InMemoryContractRepository,
 } from "../../src/repositories";
 import { Contract } from "../../src";
-import { RepositoryTestItem } from "../storage.test";
+import { RepositoryTestItem } from "./helpers";
 import { STORE_CONTRACTS } from "../../src/repositories/indexedDB/schema";
 
 const contractRepositoryImplementations: Array<RepositoryTestItem<ContractRepository>> = [

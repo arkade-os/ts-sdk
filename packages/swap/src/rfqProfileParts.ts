@@ -19,6 +19,12 @@
  * A corridor writes both with {@link rfqSecretsProfile} and never by hand — the
  * salt is what hand-mapping drops, and a static wallet's swap is unclaimable
  * without it.
+ *
+ * One reader here is about no key at all — {@link rfqClaimDestinationOf}, where a
+ * leg's claim pays. It sits beside {@link rfqClaimSecretOf} because the claim
+ * path reads the two in one breath, and because both are answered the same way:
+ * by the corridor's own handler, never by a cast or a `kind` switch at the call
+ * site.
  */
 import { rfqCorridorHandlers } from "./rfqCorridor";
 import {
@@ -119,6 +125,25 @@ const parseSigner = (value: unknown): RfqSignerProjection => {
         );
     }
     return { signingDescriptor };
+};
+
+/**
+ * Validate a stored claim destination.
+ *
+ * THROWS on a present-but-unusable value, the rule every parser here follows.
+ * The alternative is what this replaced: a cast to `{ payoutAddress?: string }`
+ * over a `Record<string, unknown>`, which typechecks against a shape nothing
+ * verified and lets a row carrying a number reach `ArkAddress.decode` as one —
+ * failing with the decoder's error, naming neither the record nor the field.
+ */
+const parsePayoutAddress = (value: unknown, kind: string): string => {
+    if (typeof value !== "string" || value.length === 0) {
+        throw new Error(
+            `this ${kind} record's claim destination is unusable: expected an Arkade ` +
+                `address, got ${JSON.stringify(value)}`,
+        );
+    }
+    return value;
 };
 
 /**
@@ -225,4 +250,19 @@ export const rfqClaimSecretOf = (record: RfqSwapRecord): RfqClaimSecretProjectio
             { cause },
         );
     }
+};
+
+/**
+ * Where this record's claim pays, or `undefined` when its corridor claims
+ * nothing — the same two answers, for the same reason, as {@link rfqClaimSecretOf},
+ * and a present-but-unusable value throws rather than reading as absent.
+ *
+ * Asked of the corridor's handler, not of a `kind` narrowing here: whether a leg
+ * claims is the corridor's fact, and so is the key it wrote the destination
+ * under. A corridor added later contributes both without touching this file.
+ */
+export const rfqClaimDestinationOf = (record: RfqSwapRecord): string | undefined => {
+    const handler = rfqCorridorHandlers.getOrThrow(record.kind);
+    if (!handler.claimDestination) return undefined;
+    return parsePayoutAddress(handler.claimDestination(record.profile), record.kind);
 };

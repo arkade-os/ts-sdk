@@ -4,10 +4,6 @@ export default defineConfig({
     entry: [
         "src/index.ts",
         "src/adapters/expo.ts",
-        "src/adapters/localStorage.ts",
-        "src/adapters/fileSystem.ts",
-        "src/adapters/indexedDB.ts",
-        "src/adapters/asyncStorage.ts",
         "src/repositories/sqlite/index.ts",
         "src/repositories/realm/index.ts",
         "src/worker/expo/index.ts",
