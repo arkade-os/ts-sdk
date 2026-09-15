@@ -160,10 +160,10 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         // Assets land on the payout output, which the builder only creates when
         // there is a sats surplus. With none, the asset would have no output to
         // go to and arkd would refuse the spend without explaining why.
-        state.utxos = [{ ...coin, value: 50_000, assets: [{ assetId: DEPOSIT_ASSET, amount: 7 }] }];
+        state.utxos = [{ ...coin, value: 45_000, assets: [{ assetId: DEPOSIT_ASSET, amount: 7 }] }];
         await expect(
             fillOffer(wallet, "http://ark", wantBtcHex, {
-                fund: fundingCoin({ value: 0 }),
+                fund: fundingCoin({ value: 5_000 }),
                 emulator: EMULATOR,
             }),
         ).rejects.toThrow(/no payout output/);
@@ -470,5 +470,74 @@ describe("fillOffer builds the spend the covenant inspects", () => {
             payoutScript: TAKER_PAYOUT,
         });
         expect(txid).toBe("ff".repeat(32));
+    });
+});
+
+describe("fillOffer deposit resolution by outpoint", () => {
+    const callsOf = (fn: string) => state.calls.filter((c) => c.fn === fn);
+    const twinDeposits = () => [coin, { ...coin, vout: 1 }];
+
+    it("selects the exact deposit by outpoint when one txid funds two", async () => {
+        reset(twinDeposits());
+        const txid = await fillOffer(wallet, "http://ark", wantBtcHex, {
+            fund,
+            emulator: EMULATOR,
+            fundingOutpoint: { txid: coin.txid, vout: 1 },
+            payoutScript: TAKER_PAYOUT,
+        });
+        expect(txid).toBe("ff".repeat(32));
+        expect((callsOf("from")[0].args[0] as { vout: number }).vout).toBe(1);
+    });
+
+    it("rejects a fundingTxid shared by two deposits instead of taking the first", async () => {
+        reset(twinDeposits());
+        await expect(
+            fillOffer(wallet, "http://ark", wantBtcHex, {
+                fund,
+                emulator: EMULATOR,
+                fundingTxid: coin.txid,
+                payoutScript: TAKER_PAYOUT,
+            }),
+        ).rejects.toThrow(/pass fundingOutpoint to select one/);
+        expect(state.sends).toBe(0);
+    });
+
+    it("rejects an outpoint that names no deposit", async () => {
+        reset();
+        await expect(
+            fillOffer(wallet, "http://ark", wantBtcHex, {
+                fund,
+                emulator: EMULATOR,
+                fundingOutpoint: { txid: "ab".repeat(32), vout: 0 },
+                payoutScript: TAKER_PAYOUT,
+            }),
+        ).rejects.toThrow(/no spendable VTXO at the swap address/);
+        expect(state.sends).toBe(0);
+    });
+
+    it("rejects a fundingTxid that disagrees with the outpoint", async () => {
+        reset();
+        await expect(
+            fillOffer(wallet, "http://ark", wantBtcHex, {
+                fund,
+                emulator: EMULATOR,
+                fundingTxid: "ab".repeat(32),
+                fundingOutpoint: { txid: coin.txid, vout: 0 },
+                payoutScript: TAKER_PAYOUT,
+            }),
+        ).rejects.toThrow(/does not match fundingOutpoint/);
+        expect(state.sends).toBe(0);
+    });
+
+    it("keeps resolving a lone deposit by fundingTxid", async () => {
+        reset();
+        const txid = await fillOffer(wallet, "http://ark", wantBtcHex, {
+            fund,
+            emulator: EMULATOR,
+            fundingTxid: coin.txid,
+            payoutScript: TAKER_PAYOUT,
+        });
+        expect(txid).toBe("ff".repeat(32));
+        expect((callsOf("from")[0].args[0] as { txid: string }).txid).toBe(coin.txid);
     });
 });

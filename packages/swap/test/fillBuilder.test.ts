@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import {
     ArkAddress,
     CSVMultisigTapscript,
+    Extension,
     MultisigTapscript,
     Transaction,
     VtxoScript,
@@ -11,6 +13,7 @@ import {
     type IWallet,
 } from "@arkade-os/sdk";
 import { encodeOffer, fillOffer, offerVtxoScript, type Offer } from "../src/offer";
+import { TAXI_FILL_TEMPLATE, buildOfferFillPlan, verifyOfferFillPlan } from "../src/offerFillPlan";
 
 /**
  * `fill.test.ts` mocks `ArkadeContract`, so the real builder is never
@@ -205,5 +208,632 @@ describe("fillOffer against the REAL Arkade builder", () => {
             }),
         ).rejects.toThrow(/33-byte compressed secp256k1 hex/);
         expect(state.emulatorSubmits).toBe(0);
+    });
+});
+
+describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
+    const WANT_ASSET = "12".repeat(32) + "0000";
+    const STRAY_ASSET = "34".repeat(32) + "0000";
+    // The builder decodes every output script as taproot, so these must be
+    // real curve points like the maker/taker keys above.
+    const trKey = (seed: number) =>
+        hex.decode(`5120${hex.encode(schnorr.getPublicKey(new Uint8Array(32).fill(seed)))}`);
+    const FARE_SCRIPT = trKey(0xa1);
+    const TAXI_CHANGE_SCRIPT = trKey(0xb2);
+    const SOLVER_PAYOUT = trKey(0xc3);
+
+    const planOffer: Omit<Offer, "swapPkScript"> = {
+        wantAmount: BigInt(200),
+        wantAsset: asset.AssetId.fromString(WANT_ASSET),
+        makerPkScript: hex.decode(MAKER_PK_SCRIPT),
+        makerPublicKey: hex.decode(MAKER_KEY),
+        emulatorPubkey: hex.decode(
+            "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+        ),
+    };
+    const planScript = offerVtxoScript(planOffer, SERVER_KEY);
+    const planOfferHex = hex.encode(
+        encodeOffer({ ...planOffer, swapPkScript: planScript.pkScript }),
+    );
+
+    const satsDeposit = () => ({ ...mintCoin(1_000) });
+    const solverCoin = () => ({
+        ...fundingCoin(1),
+        assets: [{ assetId: WANT_ASSET, amount: 201 }],
+    });
+    const taxiCoin = () => ({ ...fundingCoin(1_000) });
+
+    type FundCoin = {
+        txid: string;
+        vout: number;
+        value: number;
+        assets?: { assetId: string; amount: number }[];
+    };
+    const sponsored = (
+        deposit: FundCoin,
+        solver: FundCoin,
+        taxi: FundCoin,
+        sponsorOver: {
+            netContributionSats?: bigint;
+            fare?: { assetId: string; amount: number; script: Uint8Array; sats: number };
+            changeScript?: Uint8Array;
+            fund?: FundCoin[];
+        } = {},
+    ) =>
+        buildOfferFillPlan(wallet, "http://ark", planOfferHex, {
+            fund: [solver] as never,
+            payoutScript: SOLVER_PAYOUT,
+            assetCarrierSats: BigInt(330),
+            sponsor: {
+                fund: (sponsorOver.fund ?? [taxi]) as never,
+                netContributionSats: sponsorOver.netContributionSats ?? BigInt(330),
+                fare: sponsorOver.fare ?? {
+                    assetId: WANT_ASSET,
+                    amount: 1,
+                    script: FARE_SCRIPT,
+                    sats: 1,
+                },
+                changeScript: sponsorOver.changeScript ?? TAXI_CHANGE_SCRIPT,
+            },
+        });
+
+    it("builds the hand-checked joint graph", async () => {
+        reset();
+        const deposit = satsDeposit();
+        const solver = solverCoin();
+        const taxi = taxiCoin();
+        state.vtxos = [deposit];
+        const plan = await sponsored(deposit, solver, taxi);
+
+        // Inputs 1000 + 1 + 1000 = 2001 sats; outputs 330 + 1 + 670 + 1000.
+        // Solver supplies 201 units: 200 to the maker, 1 to the taxi fare.
+        expect(plan.inputOwners).toEqual(["offer-covenant", "solver", "taxi"]);
+        expect(plan.inputOutpoints).toEqual([
+            { txid: deposit.txid, vout: deposit.vout },
+            { txid: solver.txid, vout: solver.vout },
+            { txid: taxi.txid, vout: taxi.vout },
+        ]);
+        expect(plan.outputs).toEqual([
+            {
+                role: "receiver",
+                vout: 0,
+                script: MAKER_PK_SCRIPT,
+                sats: "330",
+                assets: [{ assetId: WANT_ASSET, units: "200" }],
+            },
+            {
+                role: "taxi-fare",
+                vout: 1,
+                script: hex.encode(FARE_SCRIPT),
+                sats: "1",
+                assets: [{ assetId: WANT_ASSET, units: "1" }],
+            },
+            {
+                role: "taxi-change",
+                vout: 2,
+                script: hex.encode(TAXI_CHANGE_SCRIPT),
+                sats: "670",
+                assets: [],
+            },
+            {
+                role: "solver",
+                vout: 3,
+                script: hex.encode(SOLVER_PAYOUT),
+                sats: "1000",
+                assets: [],
+            },
+        ]);
+        expect(plan.checkpoints).toHaveLength(3);
+        expect(plan.graphId).toMatch(/^[0-9a-f]{64}$/);
+        expect(verifyOfferFillPlan(plan)).toBe(true);
+    });
+
+    it("signs nothing and submits nothing", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        await sponsored(state.vtxos[0], solverCoin(), taxiCoin());
+        expect(identity.sign).not.toHaveBeenCalled();
+        expect(state.emulatorSubmits).toBe(0);
+    });
+
+    it("matches the spend fillOffer submits when there is no sponsor", async () => {
+        reset();
+        const deposit = satsDeposit();
+        const solver = solverCoin();
+        state.vtxos = [deposit];
+        const plan = await buildOfferFillPlan(wallet, "http://ark", planOfferHex, {
+            fund: [solver] as never,
+            payoutScript: SOLVER_PAYOUT,
+            assetCarrierSats: BigInt(330),
+        });
+        const txid = await fillOffer(wallet, "http://ark", planOfferHex, {
+            fund: [solver] as never,
+            payoutScript: SOLVER_PAYOUT,
+            assetCarrierSats: BigInt(330),
+            emulator: "http://emulator.test",
+        });
+
+        // Signing appends witnesses, so the PSBTs differ — the payments and
+        // the asset groups must not.
+        const submitted = Transaction.fromPSBT(base64.decode(state.arkTx!));
+        const planned = Transaction.fromPSBT(base64.decode(plan.arkTx));
+        expect(txid).toBe(submitted.id);
+        const payments = (tx: Transaction) =>
+            plan.outputs.map((o) => ({
+                script: hex.encode(tx.getOutput(o.vout).script!),
+                amount: tx.getOutput(o.vout).amount,
+            }));
+        expect(payments(submitted)).toEqual(payments(planned));
+        const groups = (tx: Transaction) =>
+            Extension.fromTx(tx)
+                .getAssetPacket()!
+                .groups.map((g) => ({
+                    assetId: g.assetId!.toString(),
+                    inputs: g.inputs.map((i) => ({ vin: i.vin, amount: i.amount })),
+                    outputs: g.outputs.map((o) => ({ vout: o.vout, amount: o.amount })),
+                }));
+        expect(groups(submitted)).toEqual(groups(planned));
+        expect(plan.inputOwners).toEqual(["offer-covenant", "solver"]);
+    });
+
+    it("keeps the wanted asset first when the solver's coin carries more", async () => {
+        reset();
+        const deposit = satsDeposit();
+        state.vtxos = [deposit];
+        const solver = { ...fundingCoin(1), assets: [{ assetId: WANT_ASSET, amount: 201 }] };
+        solver.assets.push({ assetId: STRAY_ASSET, amount: 5 });
+        const plan = await sponsored(deposit, solver, taxiCoin());
+
+        const groups = Extension.fromTx(Transaction.fromPSBT(base64.decode(plan.arkTx)))
+            .getAssetPacket()!
+            .groups.map((g) => g.assetId!.toString());
+        expect(groups).toEqual([WANT_ASSET, STRAY_ASSET]);
+        expect(plan.outputs[3]).toEqual({
+            role: "solver",
+            vout: 3,
+            script: hex.encode(SOLVER_PAYOUT),
+            sats: "1000",
+            assets: [{ assetId: STRAY_ASSET, units: "5" }],
+        });
+    });
+
+    it("rejects sponsor funding that carries assets", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const taxi = { ...taxiCoin(), assets: [{ assetId: WANT_ASSET, amount: 1 }] };
+        await expect(sponsored(state.vtxos[0], solverCoin(), taxi)).rejects.toThrow(/sats-only/);
+    });
+
+    it("rejects a fare no input carries", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        await expect(
+            sponsored(state.vtxos[0], solverCoin(), taxiCoin(), {
+                fare: { assetId: STRAY_ASSET, amount: 1, script: FARE_SCRIPT, sats: 1 },
+            }),
+        ).rejects.toThrow(/sponsor fare needs 1 of .* but the inputs carry 0/);
+    });
+
+    it("rejects a same-asset fare the solver cannot cover on top of wantAmount", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const solver = { ...fundingCoin(1), assets: [{ assetId: WANT_ASSET, amount: 200 }] };
+        await expect(sponsored(state.vtxos[0], solver, taxiCoin())).rejects.toThrow(
+            /needs 201 of .*`fund` declares 200/,
+        );
+    });
+
+    it("rejects a contribution above the sponsor inputs, and a non-positive one", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        await expect(
+            sponsored(state.vtxos[0], solverCoin(), taxiCoin(), {
+                netContributionSats: BigInt(1001),
+            }),
+        ).rejects.toThrow(/exceeds the sponsor inputs 1000/);
+        await expect(
+            sponsored(state.vtxos[0], solverCoin(), taxiCoin(), { netContributionSats: BigInt(0) }),
+        ).rejects.toThrow(/must be a positive amount of sats/);
+    });
+
+    it("rejects the same outpoint funding two legs", async () => {
+        reset();
+        const deposit = satsDeposit();
+        state.vtxos = [deposit];
+        const solver = solverCoin();
+        await expect(
+            buildOfferFillPlan(wallet, "http://ark", planOfferHex, {
+                fund: [solver, solver] as never,
+                payoutScript: SOLVER_PAYOUT,
+                assetCarrierSats: BigInt(330),
+            }),
+        ).rejects.toThrow(/duplicate fill input .* \(fund\[1\]\)/);
+    });
+
+    it("tells same-txid deposits apart only by outpoint", async () => {
+        reset();
+        const first = satsDeposit();
+        const second = { txid: first.txid, vout: 1, value: 500 };
+        state.vtxos = [first, second];
+        await expect(
+            buildOfferFillPlan(wallet, "http://ark", planOfferHex, {
+                fund: [solverCoin()] as never,
+                payoutScript: SOLVER_PAYOUT,
+                fundingTxid: first.txid,
+            }),
+        ).rejects.toThrow(/pass fundingOutpoint to select one/);
+
+        const plan = await buildOfferFillPlan(wallet, "http://ark", planOfferHex, {
+            fund: [solverCoin()] as never,
+            payoutScript: SOLVER_PAYOUT,
+            fundingOutpoint: { txid: first.txid, vout: 1 },
+        });
+        expect(plan.inputOutpoints[0]).toEqual({ txid: first.txid, vout: 1 });
+    });
+
+    it("omits taxi change when the contribution spends every sat", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const plan = await sponsored(state.vtxos[0], solverCoin(), taxiCoin(), {
+            netContributionSats: BigInt(1000),
+        });
+        expect(plan.outputs.map((o) => o.role)).toEqual(["receiver", "taxi-fare", "solver"]);
+        expect(plan.outputs[2]).toMatchObject({ vout: 2, sats: "1670" });
+    });
+
+    it("rejects a sponsor without a change script", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const { changeScript: _dropped, ...sponsor } = {
+            fund: [taxiCoin()] as never,
+            netContributionSats: BigInt(330),
+            fare: { assetId: WANT_ASSET, amount: 1, script: FARE_SCRIPT, sats: 1 },
+            changeScript: TAXI_CHANGE_SCRIPT,
+        };
+        await expect(
+            buildOfferFillPlan(wallet, "http://ark", planOfferHex, {
+                fund: [solverCoin()] as never,
+                payoutScript: SOLVER_PAYOUT,
+                sponsor: sponsor as never,
+            }),
+        ).rejects.toThrow(/sponsor\.changeScript/);
+    });
+
+    it("binds the graph id to the receiver's amount and script", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const plan = await sponsored(state.vtxos[0], solverCoin(), taxiCoin());
+        const repriced = await buildOfferFillPlan(wallet, "http://ark", planOfferHex, {
+            fund: [solverCoin()] as never,
+            payoutScript: SOLVER_PAYOUT,
+            assetCarrierSats: BigInt(331),
+            sponsor: {
+                fund: [taxiCoin()] as never,
+                netContributionSats: BigInt(330),
+                fare: { assetId: WANT_ASSET, amount: 1, script: FARE_SCRIPT, sats: 1 },
+                changeScript: TAXI_CHANGE_SCRIPT,
+            },
+        });
+        expect(repriced.graphId).not.toBe(plan.graphId);
+
+        const retargeted = {
+            ...plan,
+            outputs: plan.outputs.map((o) => (o.role === "receiver" ? { ...o, sats: "331" } : o)),
+        };
+        expect(verifyOfferFillPlan(retargeted)).toBe(false);
+        const rescripted = {
+            ...plan,
+            outputs: plan.outputs.map((o) =>
+                o.role === "receiver" ? { ...o, script: hex.encode(SOLVER_PAYOUT) } : o,
+            ),
+        };
+        expect(verifyOfferFillPlan(rescripted)).toBe(false);
+        expect(verifyOfferFillPlan(plan)).toBe(true);
+    });
+
+    it("rejects an unsafe funding value above MAX_SAFE_INTEGER", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const solver = { ...solverCoin(), value: Number.MAX_SAFE_INTEGER + 1 };
+        await expect(sponsored(state.vtxos[0], solver, taxiCoin())).rejects.toThrow(
+            /fund\[0\]\.value must be a safe integer amount of sats/,
+        );
+    });
+
+    it("rejects a zero-value funding coin", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const solver = { ...solverCoin(), value: 0 };
+        await expect(sponsored(state.vtxos[0], solver, taxiCoin())).rejects.toThrow(
+            /fund\[0\]\.value must be a positive amount of sats/,
+        );
+    });
+
+    it("rejects an unsafe or zero deposit value", async () => {
+        reset();
+        state.vtxos = [{ txid: "dd".repeat(32), vout: 0, value: Number.MAX_SAFE_INTEGER + 1 }];
+        await expect(sponsored(state.vtxos[0], solverCoin(), taxiCoin())).rejects.toThrow(
+            /deposit\.value must be a safe integer amount of sats/,
+        );
+        reset();
+        state.vtxos = [{ txid: "dd".repeat(32), vout: 0, value: 0 }];
+        await expect(sponsored(state.vtxos[0], solverCoin(), taxiCoin())).rejects.toThrow(
+            /deposit\.value must be a positive amount of sats/,
+        );
+    });
+
+    it("rejects a zero, negative or oversized asset carrier", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const base = {
+            fund: [solverCoin()] as never,
+            payoutScript: SOLVER_PAYOUT,
+            sponsor: {
+                fund: [taxiCoin()] as never,
+                netContributionSats: BigInt(330),
+                fare: { assetId: WANT_ASSET, amount: 1, script: FARE_SCRIPT, sats: 1 },
+                changeScript: TAXI_CHANGE_SCRIPT,
+            },
+        };
+        for (const carrier of [
+            { value: BigInt(0), pattern: /assetCarrierSats must be a positive amount of sats/ },
+            { value: BigInt(-1), pattern: /assetCarrierSats must be a safe integer amount/ },
+            {
+                value: BigInt(Number.MAX_SAFE_INTEGER) + BigInt(1),
+                pattern: /assetCarrierSats must be a safe integer amount/,
+            },
+        ]) {
+            await expect(
+                buildOfferFillPlan(wallet, "http://ark", planOfferHex, {
+                    ...base,
+                    assetCarrierSats: carrier.value,
+                }),
+            ).rejects.toThrow(carrier.pattern);
+        }
+    });
+
+    it("rejects unsafe contribution, fare amount and fare sats", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const over = Number.MAX_SAFE_INTEGER + 1;
+        await expect(
+            sponsored(state.vtxos[0], solverCoin(), taxiCoin(), {
+                netContributionSats: BigInt(over),
+            }),
+        ).rejects.toThrow(/netContributionSats must be a safe integer amount of sats/);
+        await expect(
+            sponsored(state.vtxos[0], solverCoin(), taxiCoin(), {
+                fare: { assetId: WANT_ASSET, amount: over, script: FARE_SCRIPT, sats: 1 },
+            }),
+        ).rejects.toThrow(/fare\.amount must be a safe integer amount of asset units/);
+        await expect(
+            sponsored(state.vtxos[0], solverCoin(), taxiCoin(), {
+                fare: { assetId: WANT_ASSET, amount: 1, script: FARE_SCRIPT, sats: over },
+            }),
+        ).rejects.toThrow(/fare\.sats must be a safe integer amount of sats/);
+    });
+
+    it("rejects a negative asset entry", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const solver = {
+            ...fundingCoin(1),
+            assets: [
+                { assetId: WANT_ASSET, amount: 201 },
+                { assetId: STRAY_ASSET, amount: -5 },
+            ],
+        };
+        await expect(sponsored(state.vtxos[0], solver, taxiCoin())).rejects.toThrow(
+            /fund\[0\]\.assets\[1\]\.amount must be a safe integer amount of asset units/,
+        );
+    });
+
+    it("ignores an explicitly zero asset entry", async () => {
+        reset();
+        const deposit = satsDeposit();
+        state.vtxos = [deposit];
+        const solver = {
+            ...fundingCoin(1),
+            assets: [
+                { assetId: WANT_ASSET, amount: 201 },
+                { assetId: STRAY_ASSET, amount: 0 },
+            ],
+        };
+        const plan = await sponsored(deposit, solver, taxiCoin());
+        const groups = Extension.fromTx(Transaction.fromPSBT(base64.decode(plan.arkTx)))
+            .getAssetPacket()!
+            .groups.map((g) => g.assetId!.toString());
+        expect(groups).toEqual([WANT_ASSET]);
+    });
+
+    it("rejects duplicate asset entries in one coin", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const solver = {
+            ...fundingCoin(1),
+            assets: [
+                { assetId: WANT_ASSET, amount: 100 },
+                { assetId: WANT_ASSET, amount: 101 },
+            ],
+        };
+        await expect(sponsored(state.vtxos[0], solver, taxiCoin())).rejects.toThrow(
+            /declares .* twice/,
+        );
+    });
+
+    it("defaults an omitted fare host to the asset carrier", async () => {
+        reset();
+        const deposit = satsDeposit();
+        const solver = solverCoin();
+        const taxi = taxiCoin();
+        state.vtxos = [deposit];
+        const plan = await buildOfferFillPlan(wallet, "http://ark", planOfferHex, {
+            fund: [solver] as never,
+            payoutScript: SOLVER_PAYOUT,
+            assetCarrierSats: BigInt(330),
+            sponsor: {
+                fund: [taxi] as never,
+                netContributionSats: BigInt(330),
+                fare: { assetId: WANT_ASSET, amount: 1, script: FARE_SCRIPT },
+                changeScript: TAXI_CHANGE_SCRIPT,
+            },
+        });
+        expect(plan.outputs).toEqual([
+            {
+                role: "receiver",
+                vout: 0,
+                script: MAKER_PK_SCRIPT,
+                sats: "330",
+                assets: [{ assetId: WANT_ASSET, units: "200" }],
+            },
+            {
+                role: "taxi-fare",
+                vout: 1,
+                script: hex.encode(FARE_SCRIPT),
+                sats: "330",
+                assets: [{ assetId: WANT_ASSET, units: "1" }],
+            },
+            {
+                role: "taxi-change",
+                vout: 2,
+                script: hex.encode(TAXI_CHANGE_SCRIPT),
+                sats: "670",
+                assets: [],
+            },
+            {
+                role: "solver",
+                vout: 3,
+                script: hex.encode(SOLVER_PAYOUT),
+                sats: "671",
+                assets: [],
+            },
+        ]);
+        expect(verifyOfferFillPlan(plan)).toBe(true);
+    });
+
+    it("builds a sponsored BTC-want graph with a solver-held fare asset", async () => {
+        reset();
+        const btcDeposit = deposit();
+        state.vtxos = [btcDeposit];
+        const solver = {
+            ...fundingCoin(80_000),
+            assets: [{ assetId: STRAY_ASSET, amount: 9 }],
+        };
+        const taxi = taxiCoin();
+        const plan = await buildOfferFillPlan(wallet, "http://ark", offerHex, {
+            fund: [solver] as never,
+            payoutScript: TAKER_PAYOUT,
+            sponsor: {
+                fund: [taxi] as never,
+                netContributionSats: BigInt(330),
+                fare: { assetId: STRAY_ASSET, amount: 4, script: FARE_SCRIPT, sats: 1 },
+                changeScript: TAXI_CHANGE_SCRIPT,
+            },
+        });
+
+        expect(plan.inputOwners).toEqual(["offer-covenant", "solver", "taxi"]);
+        expect(plan.outputs).toEqual([
+            {
+                role: "receiver",
+                vout: 0,
+                script: MAKER_PK_SCRIPT,
+                sats: "50000",
+                assets: [],
+            },
+            {
+                role: "taxi-fare",
+                vout: 1,
+                script: hex.encode(FARE_SCRIPT),
+                sats: "1",
+                assets: [{ assetId: STRAY_ASSET, units: "4" }],
+            },
+            {
+                role: "taxi-change",
+                vout: 2,
+                script: hex.encode(TAXI_CHANGE_SCRIPT),
+                sats: "670",
+                assets: [],
+            },
+            {
+                role: "solver",
+                vout: 3,
+                script: hex.encode(TAKER_PAYOUT),
+                sats: "90329",
+                assets: [
+                    { assetId: STRAY_ASSET, units: "5" },
+                    { assetId: DEPOSIT_ASSET, units: "2000" },
+                ],
+            },
+        ]);
+        const groups = Extension.fromTx(Transaction.fromPSBT(base64.decode(plan.arkTx)))
+            .getAssetPacket()!
+            .groups.map((g) => g.assetId!.toString());
+        expect(groups).toEqual([STRAY_ASSET, DEPOSIT_ASSET]);
+        expect(verifyOfferFillPlan(plan)).toBe(true);
+    });
+
+    it("rejects malformed plans even with a recomputed digest", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const plan = await sponsored(state.vtxos[0], solverCoin(), taxiCoin());
+        // Recompute the binding id the same way the implementation does, so a
+        // rejection below can only come from the shape gate, not the digest.
+        const reid = (p: any) =>
+            hex.encode(
+                sha256(
+                    new TextEncoder().encode(
+                        JSON.stringify({
+                            template: TAXI_FILL_TEMPLATE,
+                            arkTx: p.arkTx,
+                            checkpoints: p.checkpoints,
+                            inputOwners: p.inputOwners,
+                            inputOutpoints: p.inputOutpoints,
+                            outputs: p.outputs,
+                        }),
+                    ),
+                ),
+            );
+        expect(reid(plan)).toBe(plan.graphId);
+        const tamper = (mutate: (p: any) => unknown) => {
+            const copy = JSON.parse(JSON.stringify(plan));
+            mutate(copy);
+            copy.graphId = reid(copy);
+            return copy;
+        };
+        expect(verifyOfferFillPlan(plan)).toBe(true);
+        const malformed = [
+            (p: any) => {
+                p.outputs[0].script = "";
+            },
+            (p: any) => {
+                p.outputs[0].script = "abc";
+            },
+            (p: any) => {
+                p.inputOutpoints[0].vout = 2 ** 32;
+            },
+            (p: any) => {
+                p.checkpoints = p.checkpoints.slice(1);
+            },
+            (p: any) => {
+                p.inputOwners = [];
+                p.inputOutpoints = [];
+                p.checkpoints = [];
+            },
+            (p: any) => {
+                p.outputs = [];
+            },
+            (p: any) => {
+                p.outputs[0].sats = "9007199254740992";
+            },
+            (p: any) => {
+                p.outputs[0].assets[0].units = "18446744073709551616";
+            },
+            (p: any) => {
+                p.outputs[0].assets[0].assetId = "aa";
+            },
+        ];
+        for (const mutate of malformed) {
+            expect(verifyOfferFillPlan(tamper(mutate))).toBe(false);
+        }
     });
 });
