@@ -1584,7 +1584,6 @@ export class RfqSwapManager {
      *   - A handled L1 action ends the pass; otherwise processing continues.
      *
      * 5. Drives an Arkade refund
-     *
      *   - For send swaps whose lockup remains unresolved, calls driveArkadeRefund.
      *   - This is gated by the refund timelock and local refund capability.
      *   - Receive swaps never reach this step because their refund path belongs to the solver.
