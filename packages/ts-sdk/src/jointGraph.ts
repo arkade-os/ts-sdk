@@ -73,6 +73,9 @@ export function verifyJointGraph(plan: JointGraph, template: string): boolean {
         )
             return false;
         if (plan.inputOwners.length !== plan.checkpoints.length) return false;
+        const arkInputs = parseGraphTx(plan.arkTx).inputsLength;
+        if (plan.checkpoints.length !== arkInputs) return false;
+        if (plan.inputOwners.length !== arkInputs) return false;
         return (
             digestJointGraph(
                 {

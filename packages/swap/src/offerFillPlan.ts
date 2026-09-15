@@ -225,5 +225,8 @@ function toJointGraph(
 }
 
 export function verifyOfferFillPlan(plan: JointGraph): boolean {
+    if (!plan || typeof plan !== "object" || !Array.isArray(plan.inputOwners)) return false;
+    const allowed = OFFER_FILL_OWNERS as readonly (string | null)[];
+    if (!plan.inputOwners.every((owner) => allowed.includes(owner))) return false;
     return verifyJointGraph(plan, OFFER_FILL_TEMPLATE);
 }

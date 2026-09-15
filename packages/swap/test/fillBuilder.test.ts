@@ -833,4 +833,22 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
         relabeled.inputOwners = [null, "solver", "solver"];
         expect(verifyOfferFillPlan(relabeled)).toBe(false);
     });
+
+    it("rejects an unknown owner label even with a recomputed digest", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const plan = await sponsored(state.vtxos[0], solverCoin(), taxiCoin());
+        const spoofed = JSON.parse(JSON.stringify(plan));
+        spoofed.inputOwners = [null, "solver", "operator"];
+        spoofed.graphId = digestJointGraph(
+            {
+                arkTx: spoofed.arkTx,
+                checkpoints: [...spoofed.checkpoints],
+                inputOwners: [...spoofed.inputOwners],
+            },
+            OFFER_FILL_TEMPLATE,
+        );
+        expect(verifyOfferFillPlan(spoofed)).toBe(false);
+        expect(verifyOfferFillPlan(plan)).toBe(true);
+    });
 });
