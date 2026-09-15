@@ -61,6 +61,21 @@ const execCommand = (command: string): string => {
     return result;
 };
 
+// Funding drives real settlement rounds, and a round that loses a participant
+// fails the whole batch. Retry those, loudly: a silent retry would hide a
+// deterministic failure, and the printed cause is how CI tells us which it was.
+const settle = (command: string, label: string): string => {
+    for (let attempt = 1; ; attempt++) {
+        try {
+            return execCommand(command);
+        } catch (error) {
+            const cause = error instanceof Error ? error.message : String(error);
+            if (attempt === 3) throw new Error(`${label} failed after ${attempt}: ${cause}`);
+            console.log(`live fill ${label} attempt ${attempt} failed, retrying: ${cause}`);
+        }
+    }
+};
+
 const waitFor = async (
     fn: () => Promise<boolean>,
     { timeout = 120_000, interval = 1000 } = {},
@@ -91,9 +106,12 @@ const makeWallet = (identity: SingleKey) =>
 const faucet = async (wallet: Wallet): Promise<void> => {
     const arkdExec = `docker exec -t ${ARKD_CONTAINER}`;
     const note = execCommand(`${arkdExec} arkd note --amount ${FAUCET_SATS}`);
-    execCommand(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
+    settle(`${arkdExec} ark redeem-notes -n ${note} --password secret`, "redeem-notes");
     const address = await wallet.getAddress();
-    execCommand(`${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`);
+    settle(
+        `${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`,
+        "send",
+    );
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
 };
 
