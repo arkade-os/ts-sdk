@@ -241,6 +241,7 @@ describe("an onchain-send record carries its L1 half", () => {
         network: "regtest" as const,
         htlcAddress: L1_HTLC.address,
         minConfirmations: 2,
+        expectedAmount: 100_000,
     };
 
     const onchainOrigin: RfqSwapOrigin = {
@@ -264,6 +265,7 @@ describe("an onchain-send record carries its L1 half", () => {
             refundLocktime: REFUND_LOCKTIME,
             htlc: {},
             minConfirmations: 2,
+            expectedAmount: 100_000,
             createdAt: 1_000,
             updatedAt: 1_000,
             ...over,

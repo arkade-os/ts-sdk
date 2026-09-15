@@ -4343,6 +4343,7 @@ export class Wallet
         for (const input of inputs) {
             // boarding input, we need to sign the settlement tx
             if (!isVirtualCoin(input)) {
+                let matched = false;
                 for (let i = 0; i < settlementPsbt.inputsLength; i++) {
                     const settlementInput = settlementPsbt.getInput(i);
 
@@ -4374,7 +4375,18 @@ export class Wallet
                         throw new Error(await this.unsignableBoardingInputError(input, script));
                     }
                     hasBoardingUtxos = true;
+                    matched = true;
                     break;
+                }
+
+                // Skipping it silently would settle the forfeits and leave this
+                // input behind. Arknotes reach this branch too — they carry no
+                // vtxo script — but spend no commitment input, so they are not
+                // the omission this speaks about.
+                if (!matched && !(input instanceof ArkNote)) {
+                    throw new Error(
+                        `boarding input ${input.txid}:${input.vout} is not an input of the commitment tx`,
+                    );
                 }
 
                 continue;
@@ -5963,18 +5975,33 @@ export class Wallet
                 ),
         };
 
-        return submitOffchainTx(this.arkProvider, offchainTx, signer, {
-            // Mark pending before submitting — if we crash between submit and
-            // finalize, the next init recovers via finalizePendingTxs.
-            beforeSubmit: () => this.setPendingTxFlag(true),
-            afterFinalize: async () => {
-                try {
-                    await this.setPendingTxFlag(false);
-                } catch (error) {
-                    console.error("Failed to clear pending tx flag:", error);
-                }
+        return submitOffchainTx(
+            this.arkProvider,
+            offchainTx,
+            signer,
+            {
+                // Mark pending before submitting — if we crash between submit and
+                // finalize, the next init recovers via finalizePendingTxs.
+                beforeSubmit: () => this.setPendingTxFlag(true),
+                afterFinalize: async () => {
+                    try {
+                        await this.setPendingTxFlag(false);
+                    } catch (error) {
+                        console.error("Failed to clear pending tx flag:", error);
+                    }
+                },
             },
-        });
+            {
+                // Deprecated keys too: a vtxo built before a rotation is still
+                // spent under the signer its leaf names.
+                verifyServerSignatures: {
+                    serverPubkey: this._arkServerPublicKey,
+                    deprecatedServerPubkeys: [...this._deprecatedSigners.keys()].map((h) =>
+                        hex.decode(h),
+                    ),
+                },
+            },
+        );
     }
 
     // mark virtual outputs as spent, save change outputs if any.

@@ -47,6 +47,7 @@
  * functions here, nothing above them.
  */
 import { hex } from "@scure/base";
+import { isAmount } from "@arkade-os/solver-discovery";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import {
     ArkAddress,
@@ -105,6 +106,25 @@ const quoteSats = (value: number | string, field: string): number => {
         throw new Error(`HTLC quote carries a non-sats ${field}: ${String(value)}`);
     }
     return value;
+};
+
+/** A quoted amount in sats, reading the wire's canonical decimal string as well
+ * as the JSON number {@link quoteSats} is limited to. Solvers already emit
+ * strings on every corridor, so on the value-gate fields a string is an
+ * encoding, not the misrouted asset quote `quoteSats` infers from one. */
+const quoteAmountSats = (value: number | string, field: string): bigint => {
+    if (typeof value === "string" && isAmount(value)) return BigInt(value);
+    if (typeof value === "number" && Number.isSafeInteger(value)) return BigInt(value);
+    throw new Error(`HTLC quote carries an unreadable ${field}: ${String(value)}`);
+};
+
+/** The claim gate's `expectedAmount`: positive, and a safe integer. */
+const quoteExpectedSats = (value: number | string, field: string): number => {
+    const sats = quoteAmountSats(value, field);
+    if (sats <= 0n || sats > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error(`HTLC quote carries an unusable ${field}: ${String(value)}`);
+    }
+    return Number(sats);
 };
 
 // ── Pairs ────────────────────────────────────────────────────────────────────
@@ -668,6 +688,14 @@ export const assertFundable = (input: {
     }
     if (input.now >= input.quote.valid_until)
         fail("quote_expired", "quote expired — request a fresh one");
+    // A value gate compares the fill against the quoted amount, so a
+    // non-positive quote is a gate that cannot fail.
+    if (
+        quoteAmountSats(input.quote.from_amount, "from_amount") <= 0n ||
+        quoteAmountSats(input.quote.to_amount, "to_amount") <= 0n
+    ) {
+        fail("non_positive_amount", "quote carries a non-positive amount");
+    }
     if (
         input.quote.refund_locktime !== undefined &&
         input.quote.refund_locktime - input.now < MIN_HEADROOM_SECONDS
@@ -1751,6 +1779,7 @@ export function deriveOnchainSend(input: {
     refundLocktime: number;
     htlcLocktime: number;
     minConfirmations: number;
+    expectedAmount: number;
 } {
     const { quote } = input;
     const profile = quote.profile ?? {};
@@ -1812,6 +1841,7 @@ export function deriveOnchainSend(input: {
         refundLocktime,
         htlcLocktime,
         minConfirmations,
+        expectedAmount: quoteExpectedSats(quote.to_amount, "to_amount"),
     };
 }
 
@@ -1858,6 +1888,8 @@ export async function requestOnchainSend(
     /** The user's OWN arkade lockup derivation — the only address to fund. */
     address: string;
     fundAmount: number;
+    /** What the solver's L1 fill must carry — persist it with the record. */
+    expectedAmount: number;
     swapPkScript: Uint8Array;
     /** The arkade covenant itself — the record's `lockup` for
      * `RfqSwapManager`, same role as {@link requestLightningSend}'s. */
@@ -1973,6 +2005,7 @@ export async function requestOnchainSend(
         quote,
         address: derived.address,
         fundAmount: quoteSats(quote.from_amount, "from_amount"),
+        expectedAmount: quoteSats(quote.to_amount, "to_amount"),
         swapPkScript: derived.swapPkScript,
         script: derived.script,
         refundAddress,

@@ -344,6 +344,7 @@ const onchainSwap = (over: Partial<OnchainSendSwap> = {}): OnchainSendSwap => ({
     updatedAt: 1,
     htlc: htlcOf(),
     minConfirmations: 2,
+    expectedAmount: LOCKUP_VALUE,
     ...over,
 });
 
@@ -758,6 +759,42 @@ describe("RfqSwapManager — the onchain-send L1 half", () => {
         expect(s.actions).toEqual(["claimOnchain"]);
     });
 
+    it("refuses to publish the preimage for a dust-funded fill", async () => {
+        const s = spies();
+        const swap = onchainSwap();
+        const m = manager({
+            chain: fakeChain({ utxos: [{ ...FILL, amount: 330n }], mtp: SAFE_NOW }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.claims).toHaveLength(0);
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/330 sats, below the agreed 100000/);
+        // not terminal: the solver can still top the fill up
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
+    });
+
+    it("refuses a record whose expectedAmount cannot be compared against", async () => {
+        for (const expectedAmount of [Number.NaN, undefined as unknown as number, 0, -1]) {
+            const s = spies();
+            const swap = onchainSwap({ expectedAmount });
+            const m = manager({
+                chain: fakeChain({ utxos: [{ ...FILL, amount: 1n }], mtp: SAFE_NOW }),
+                now: SAFE_NOW,
+                spies: s,
+            });
+            await m.addSwap(swap);
+            await m.poll();
+
+            expect(s.claims).toHaveLength(0);
+            expect(swap.state).toBe("needs_counterparty");
+            expect(swap.blockedReason).toMatch(/not a positive number of sats/);
+        }
+    });
+
     it("does not claim inside the margin, and does not refund early either", async () => {
         const s = spies();
         const inside = HTLC_LOCKTIME - ONCHAIN_CLAIM_MARGIN_SECONDS + 60;
@@ -1063,10 +1100,11 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         expect(swap.failure).toMatch(/FORFEIT_CLOSURE_LOCKED/);
     });
 
-    it("treats an empty lockup as nothing left to do", async () => {
-        // The one place the manager settles for less than proof: the chain read
-        // could not resolve the spend, the refund push finds nothing to return,
-        // and there is no further move available.
+    it("does not end an unreadable lockup as a refund before the lag window closes", async () => {
+        // Nothing to return does not mean the money came back. The indexer may
+        // just not be able to show the spend yet, so ending here would record a
+        // late settlement as a refund. Keep watching for the same window the
+        // failed push and the receive leg already use.
         const s = spies({ refund: async () => null });
         const swap = lightningSwap();
         const m = manager({
@@ -1077,8 +1115,61 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         await m.addSwap(swap);
         await m.poll();
 
+        expect(swap.state).toBe("pending");
+        expect(swap.refundArkTxid).toBeUndefined();
+    });
+
+    it("holds the wait open through the lag window and ends it at the deadline", async () => {
+        // The wait has to end. Every pass inside the window re-asks and decides
+        // nothing, and the deadline is what closes it, so a lockup that never
+        // becomes readable cannot keep a swap monitored forever.
+        let now = REFUND_LOCKTIME + 1;
+        const s = spies({ refund: async () => null });
+        const swap = lightningSwap();
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: [] }),
+            now: () => now,
+            spies: s,
+        });
+        await m.addSwap(swap);
+
+        while (now < REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS) {
+            await m.poll();
+            expect(swap.state).toBe("pending");
+            now += 600;
+        }
+
+        await m.poll();
+
         expect(swap.state).toBe("refunded");
         expect(swap.refundTxid).toBeUndefined();
+    });
+
+    it("let the settlement show late instead of recording it as a refund", async () => {
+        // The reported bug: the solver claimed the lockup, so the Lightning send
+        // succeeded, but the indexer could not return the spend transaction, so
+        // the refund finds nothing to return. Called `refunded`, the swap stops
+        // being monitored and the claim is never seen.
+        const state = {
+            vtxos: spentBy(CLAIM_SPEND.txid),
+            txs: [] as { txid: string; psbt: string }[],
+        };
+        const indexer = fakeIndexer(state);
+        const s = spies({ refund: async () => null });
+        const swap = lightningSwap();
+        const m = manager({ indexer, now: REFUND_LOCKTIME + 1, spies: s });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("pending");
+        expect(s.refunds).toEqual([RFQ_ID]);
+
+        // The indexer catches up, so the next pass finds the claim and settles.
+        state.txs = [CLAIM_SPEND];
+        await m.poll();
+
+        expect(swap.state).toBe("settled");
+        expect(swap.refundArkTxid).toBeUndefined();
     });
 });
 
@@ -1193,9 +1284,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
     });
 
     it("refuses to publish the preimage for a dust-funded lockup", async () => {
-        // THE attack this leg has and no other: the solver funds the correctly
-        // derived script with dust. Claiming makes `P` public, which is what
-        // lets the solver settle the payer's held HTLC in full.
+        // Claiming makes `P` public, which settles the payer's held HTLC in full.
         const s = spies();
         const swap = receiveSwap();
         const m = manager({ indexer: fundedIndexer(330), now: BEFORE_DEADLINE, spies: s });

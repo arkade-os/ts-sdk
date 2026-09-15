@@ -123,6 +123,8 @@ export type RfqPreparation =
           readonly secrets: ProvisionedClaimSecret;
           readonly refundAddress: string;
           readonly fundAmount: bigint;
+          /** What the solver's HTLC must carry — the claim refuses less. */
+          readonly expectedAmount: bigint;
           /** The L1 claim key, provisioned by the wallet like every other key. */
           readonly payoutKey: ProvisionedKey;
           /** Where the claim PAYS — the take endpoint's own address, encoded.
@@ -634,6 +636,10 @@ const quoteOnchainSend = async (
             secrets,
             refundAddress: payoutKey.address,
             fundAmount: parsed.give,
+            // The gross wire leg, not `reportedTake`: the claim fee comes out of
+            // the HTLC output, so netting it here would accept an HTLC funded
+            // short by exactly that fee.
+            expectedAmount: parsed.take,
             payoutKey,
             payoutPkScript,
             htlc: derived.htlc,

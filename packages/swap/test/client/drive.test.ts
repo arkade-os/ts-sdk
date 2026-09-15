@@ -242,7 +242,9 @@ describe("the record bridge", () => {
         const record = signable({ fundingTxid: "aa".repeat(32) });
         const h = await build({
             records: [record],
-            now: AFTER,
+            // Past the empty-lockup wait, not just past the locktime: inside it
+            // the manager holds for a late settlement instead of settling.
+            now: AFTER + REFUND_MTP_LAG_SECONDS,
             vtxos: unspent(),
             // An empty lockup: the refunder answers `null` without signing, and
             // the manager settles the swap `refunded`. What is under test is

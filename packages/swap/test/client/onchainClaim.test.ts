@@ -250,6 +250,7 @@ const onchainSendRecord = async () => {
         network: "regtest",
         htlcAddress: htlc.address,
         minConfirmations: 1,
+        expectedAmount: 99_152,
         payoutPkScript: hex.encode(payoutPkScript),
     };
     return {

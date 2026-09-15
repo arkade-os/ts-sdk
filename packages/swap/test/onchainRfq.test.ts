@@ -146,6 +146,14 @@ describe("assertFundable — onchain gates", () => {
         }
     });
 
+    it("refuses a non-positive quoted amount", () => {
+        for (const over of [{ to_amount: 0 }, { to_amount: -1 }, { from_amount: 0 }]) {
+            expect(() => assertFundable({ quote: quote(over), now: NOW, onchain })).toThrow(
+                expect.objectContaining({ reason: "non_positive_amount" }),
+            );
+        }
+    });
+
     it("requires a safe claim window before the L1 refund leaf opens", () => {
         const tight = NOW + 2 * 600 + ONCHAIN_CLAIM_MARGIN_SECONDS; // exactly the bound
         expect(() =>
@@ -302,6 +310,7 @@ describe("deriveOnchainSend", () => {
             network: "regtest",
             htlcAddress: derived.htlc.address,
             minConfirmations: 2,
+            expectedAmount: 99_000,
             payoutPkScript: hex.encode(PAYOUT),
         });
     });
@@ -331,6 +340,7 @@ describe("deriveOnchainSend", () => {
                 refundLocktime: derived.refundLocktime,
                 htlc: derived.htlc,
                 minConfirmations: derived.minConfirmations,
+                expectedAmount: derived.expectedAmount,
                 createdAt: NOW,
                 updatedAt: NOW,
             } as unknown as Parameters<typeof createRfqSwapRecord>[1],
@@ -376,6 +386,7 @@ describe("deriveOnchainSend", () => {
                 refundLocktime: derived.refundLocktime,
                 htlc: derived.htlc,
                 minConfirmations: derived.minConfirmations,
+                expectedAmount: derived.expectedAmount,
                 createdAt: NOW,
                 updatedAt: NOW,
             } as unknown as Parameters<typeof createRfqSwapRecord>[1],
