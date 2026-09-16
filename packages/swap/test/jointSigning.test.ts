@@ -513,7 +513,9 @@ describe("signJointGraphForOwner", () => {
                 owner: "solver",
                 bindings: [{ inputIndex: 1, identity: SingleKey.fromPrivateKey(SOLVER_SEED) }],
             }),
-        ).rejects.toThrow(/selected leaf/);
+            // Bound, not selected: the canonical-leaf check passes here, so this
+            // pins that the binding check is what rejects a foreign-leaf signature.
+        ).rejects.toThrow(/bound leaf/);
     });
 
     it("ignores key bytes embedded in non-pushdata", async () => {
