@@ -155,13 +155,6 @@ jobs:
       - name: Run integration tests
         env:
           TEST_FILES: ${{ matrix.test_files }}
-          # The swap stack comes up from packages/swap/.env.regtest, which zeroes
-          # intent fees and disables automine — what the two-owner fill needs.
-          TAXI_FILL_LIVE: "1"
-          TAXI_FILL_LIVE_ARK_URL: http://localhost:7070
-          TAXI_FILL_LIVE_EMULATOR_URL: http://localhost:7073
-          TAXI_FILL_LIVE_ESPLORA_URL: http://localhost:3000/api
-          TAXI_FILL_LIVE_ARKD_CONTAINER: arkd
         run: |
           if [ -n "$TEST_FILES" ]; then
             pnpm run regtest:test:${{ matrix.package }} $TEST_FILES

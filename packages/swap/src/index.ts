@@ -7,6 +7,10 @@ export {
     decodeOffer,
     offerVtxoScript,
     swapPrograms,
+    // The pieces an out-of-tree fill planner assembles a spend from.
+    assembleOfferFill,
+    connectFillContract,
+    resolveDeposit,
     ASSET_CARRIER_SATS,
     OFFER_PACKET_TYPE,
     type AssembledFillLayout,
@@ -18,30 +22,6 @@ export {
     type Offer,
     type SponsorFillInput,
 } from "./offer";
-export {
-    buildOfferFillPlan,
-    verifyOfferFillPlan,
-    OFFER_FILL_TEMPLATE,
-    OFFER_FILL_OWNERS,
-    type BuildOfferFillPlanOpts,
-    type FillSponsor,
-    type FillSponsorFare,
-    type JointGraph,
-} from "./offerFillPlan";
-export {
-    prepareJointSubmission,
-    signJointGraphForOwner,
-    submitJointFill,
-    providerCosignerKey,
-    JointSigningError,
-    JointSubmissionAmbiguousError,
-    type JointFundingOwner,
-    type JointOwnerKeys,
-    type JointPins,
-    type JointSignerBinding,
-    type PreparedJointSubmission,
-    type SubmittedJointFill,
-} from "./jointSigning";
 export {
     discoverMarkets,
     findMarket,

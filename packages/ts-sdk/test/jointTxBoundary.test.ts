@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { base64, hex } from "@scure/base";
+import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { SigHash } from "@scure/btc-signer";
 import {
@@ -16,8 +16,6 @@ import {
     tapScriptSigEntries,
     unsignedPsbtBytes,
     buildOffchainTx,
-    digestJointGraph,
-    verifyJointGraph,
     type ArkTxInput,
 } from "../src";
 
@@ -140,47 +138,6 @@ describe("joint tx boundary primitives", () => {
         // this stays at 1 unless the helper clears first.
         setTapScriptSigEntries(target, 0, []);
         expect(tapScriptSigEntries(target, 0)).toEqual([]);
-    });
-
-    it("rejects metadata that does not match the ark input count", () => {
-        const ark = new Transaction({ version: 3 });
-        for (let i = 0; i < 3; i++) {
-            ark.addInput({
-                txid: "aa".repeat(32),
-                index: i,
-                witnessUtxo: { script: p2tr(userKey), amount: 5000n },
-            });
-        }
-        ark.addOutput({ script: p2tr(serverKey), amount: 14990n });
-        const checkpoint = () => {
-            const cp = new Transaction({ version: 3 });
-            cp.addInput({
-                txid: "bb".repeat(32),
-                index: 0,
-                witnessUtxo: { script: p2tr(userKey), amount: 5000n },
-            });
-            cp.addOutput({ script: p2tr(serverKey), amount: 4990n });
-            return base64.encode(cp.toPSBT());
-        };
-        const arkTx = base64.encode(ark.toPSBT());
-        const checkpoints = [checkpoint(), checkpoint()];
-        const inputOwners = ["alice", "bob"];
-        const graphId = digestJointGraph({ arkTx, checkpoints, inputOwners }, "test/1");
-        expect(verifyJointGraph({ arkTx, checkpoints, graphId, inputOwners }, "test/1")).toBe(
-            false,
-        );
-        const fullOwners = ["alice", "bob", "carol"];
-        const fullCheckpoints = [checkpoint(), checkpoint(), checkpoint()];
-        const fullId = digestJointGraph(
-            { arkTx, checkpoints: fullCheckpoints, inputOwners: fullOwners },
-            "test/1",
-        );
-        expect(
-            verifyJointGraph(
-                { arkTx, checkpoints: fullCheckpoints, graphId: fullId, inputOwners: fullOwners },
-                "test/1",
-            ),
-        ).toBe(true);
     });
 
     it("treats locktime as unsigned data", () => {

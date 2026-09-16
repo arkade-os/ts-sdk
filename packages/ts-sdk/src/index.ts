@@ -287,23 +287,6 @@ import {
     isValidArkAddress,
 } from "./utils/arkTransaction";
 import { getRandomId } from "./wallet/utils";
-import { deepFreeze, digestJointGraph, verifyJointGraph } from "./jointGraph";
-import type { JointGraph } from "./jointGraph";
-import {
-    JointSigningError,
-    JointSubmissionAmbiguousError,
-    prepareJointSubmission,
-    providerCosignerKey,
-    signJointGraphForOwner,
-    submitJointFill,
-} from "./jointSigning";
-import type {
-    JointOwnerKeys,
-    JointPins,
-    JointSignerBinding,
-    PreparedJointSubmission,
-    SubmittedJointFill,
-} from "./jointSigning";
 import {
     VtxoTaprootTree,
     ConditionWitness,
@@ -751,15 +734,6 @@ export {
     isVtxoExpiringSoon,
     isValidArkAddress,
     getRandomId,
-    deepFreeze,
-    digestJointGraph,
-    verifyJointGraph,
-    prepareJointSubmission,
-    signJointGraphForOwner,
-    submitJointFill,
-    providerCosignerKey,
-    JointSigningError,
-    JointSubmissionAmbiguousError,
     buildVersion,
     sdkVersion,
     // Asset utilities
@@ -948,12 +922,6 @@ export type {
     TapLeafRef,
     TapLeaves,
     IncomingFunds,
-    JointGraph,
-    JointOwnerKeys,
-    JointPins,
-    JointSignerBinding,
-    PreparedJointSubmission,
-    SubmittedJointFill,
     // Identity options
     SeedIdentityOptions,
     MnemonicOptions,
