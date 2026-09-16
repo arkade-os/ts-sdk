@@ -329,8 +329,10 @@ const assertJointInputSigs = (
         if (entry.leafHashHex !== leafForKey(leaves, hex.decode(entry.pubKeyHex), index, context)) {
             return fail(`${context} input ${index} signature is not on its selected leaf`);
         }
+        // The check above already pins the key's canonical leaf, so this fires only
+        // if a caller's binding disagrees with the tree it was derived from.
         if (expectedLeafHex !== undefined && entry.leafHashHex !== expectedLeafHex) {
-            return fail(`${context} input ${index} signature is not on its selected leaf`);
+            return fail(`${context} input ${index} signature is not on its bound leaf`);
         }
     }
     try {
