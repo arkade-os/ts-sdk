@@ -850,15 +850,9 @@ export async function cancelOffer(
     const contract = new arkade.ArkadeContract(client, program, args, keys);
 
     const [vtxos, makerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
-    if (!fundingTxid && vtxos.length > 1) {
-        // identical offers share one address: guessing here would cancel an
-        // arbitrary deposit while the caller believes it was a specific one
-        throw new Error(
-            "multiple spendable deposits at the swap address — pass fundingTxid to select one",
-        );
-    }
-    const vtxo = fundingTxid ? vtxos.find((v) => v.txid === fundingTxid) : vtxos[0];
-    if (!vtxo) throw new Error("no spendable VTXO at the swap address");
+    // Same selection fill uses: identical offers share one address, and a
+    // case-sensitive first-match would cancel an arbitrary deposit.
+    const vtxo = resolveDeposit(vtxos, { fundingTxid });
 
     const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
     const cancel = contract.functions
@@ -949,8 +943,11 @@ export interface SponsorFillInput {
     netContributionSats: bigint | number;
     /** Optional fare output paid from the joint inputs. */
     fare?: { assetId: string; amount: bigint | number; script: Uint8Array; sats: bigint | number };
-    /** Where the sponsor's change lands. Always required; unused when the
-     * contribution spends every sponsor sat. */
+    /** Where the sponsor's change lands. Required even when the contribution
+     * spends every sponsor sat and no change output is emitted: the caller
+     * always knows where its change belongs, and an optional field would push a
+     * "was change produced?" decision onto every caller. Validated either way so
+     * a bad script fails here, not on the one fill that happens to need it. */
     changeScript: Uint8Array;
 }
 
@@ -1402,6 +1399,8 @@ export function assembleOfferFill(
     }
 
     if (hasPayoutOutput) {
+        // Exact, not fee-adjusted: Ark pays fees through the P2A anchor, so
+        // VTXO values balance.
         outputs.push({ role: "solver", script: solverPayout, sats: inputsSum - explicitSats });
     }
     return {

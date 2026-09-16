@@ -129,6 +129,21 @@ describe("cancelOffer guards", () => {
         ).rejects.toThrow("pass fundingTxid");
     });
 
+    it("refuses to guess between deposits that share a fundingTxid", async () => {
+        state.serverKey = fundedServerKey;
+        const shared = "a".repeat(64);
+        state.utxos = [
+            { txid: shared, vout: 0, value: 10_000 },
+            { txid: shared, vout: 1, value: 20_000 },
+        ];
+        await expect(
+            cancelOffer(wallet, "http://ark", offerHex, {
+                repository: new InMemoryAssetSwapRepository(),
+                fundingTxid: shared,
+            }),
+        ).rejects.toThrow(/share fundingTxid/);
+    });
+
     it("does not broadcast when the in-flight marker cannot be written", async () => {
         // The `cancelling` marker is what keeps a crash between submit and
         // record from leaving a swap that still looks pending. It is written
