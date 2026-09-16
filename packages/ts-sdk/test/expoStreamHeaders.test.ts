@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildVersion, sdkVersion } from "../src/utils/fetch";
-import { getExpoFetch } from "../src/providers/expoUtils";
 
 /**
  * The Expo SSE providers reach two different origins: `ExpoArkProvider` talks to
@@ -54,15 +53,23 @@ function expoFetchTransport(): Transport {
 }
 
 /**
- * `expo/fetch` is left unmocked and does not resolve under vitest, so
- * `getExpoFetch` falls back to `baseFetch` — which reaches `globalThis.fetch`.
- * This is the branch the original report named.
+ * `expo/fetch` is made to fail its import, so `getExpoFetch` falls back to
+ * `baseFetch` — which reaches `globalThis.fetch`. This is the branch the
+ * original report named.
+ *
+ * The failure is forced rather than assumed. `expo` is an optional peer that is
+ * present in this workspace, and it only fails to load here by accident of the
+ * bundler; were it ever to resolve, these cases would silently exercise the
+ * expo/fetch branch again and cover nothing new.
  */
 function fallbackTransport(): Transport {
     const seen: RequestInit[] = [];
     let real: typeof globalThis.fetch;
     return {
         install: () => {
+            vi.doMock("expo/fetch", () => {
+                throw new Error("expo/fetch unavailable");
+            });
             real = globalThis.fetch;
             globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
                 seen.push(init ?? {});
@@ -87,9 +94,9 @@ describe.each([
         quiet = (["warn", "debug", "error"] as const).map((level) =>
             vi.spyOn(console, level).mockImplementation(() => undefined),
         );
+        vi.resetModules();
         transport = makeTransport();
         transport.install();
-        vi.resetModules();
     });
 
     afterEach(() => {
@@ -130,7 +137,7 @@ describe.each([
             const provider = await arkProvider();
 
             const init = await requestFrom(
-                provider.getEventStream(new AbortController().signal, []),
+                provider.getEventStream(new AbortController().signal, ["topic-a", "topic-b"]),
             );
 
             expect(arkHeadersOf(init)).toEqual(ARK_HEADERS);
@@ -144,6 +151,7 @@ describe.each([
             );
 
             expect(arkHeadersOf(init)).toEqual(ARK_HEADERS);
+            expect(init.signal).toBeInstanceOf(AbortSignal);
         });
     });
 
@@ -183,7 +191,19 @@ describe.each([
 });
 
 describe("getExpoFetch", () => {
+    afterEach(() => {
+        vi.doUnmock("expo/fetch");
+        vi.resetModules();
+    });
+
     it("requires expo/fetch when the caller says so, rather than falling back", async () => {
+        // Forced, not assumed: see `fallbackTransport`.
+        vi.resetModules();
+        vi.doMock("expo/fetch", () => {
+            throw new Error("expo/fetch unavailable");
+        });
+        const { getExpoFetch } = await import("../src/providers/expoUtils");
+
         await expect(getExpoFetch({ requireExpo: true })).rejects.toThrow(
             /expo\/fetch is unavailable/,
         );
