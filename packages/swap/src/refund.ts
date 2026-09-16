@@ -135,6 +135,12 @@ export interface LockupVtxo {
     vout: number;
     value: number;
     /**
+     * Assets the locked output carries. A cross-rail asset receive locks them
+     * behind the same preimage as the sats, and a claim that does not declare
+     * them is refused by arkd with ASSET_NOT_FOUND.
+     */
+    assets?: readonly { assetId: string; amount: bigint }[];
+    /**
      * The batch this output lived in expired and the operator swept it, so it
      * is no longer a live leaf — it can be RECOVERED, but not spent offchain.
      *
@@ -310,6 +316,14 @@ export async function findLockupVtxos(
                 vout: vtxo.vout,
                 value: Number(vtxo.value),
                 recoverable: isRecoverable,
+                ...(vtxo.assets?.length
+                    ? {
+                          assets: vtxo.assets.map((a) => ({
+                              assetId: String(a.assetId),
+                              amount: BigInt(a.amount),
+                          })),
+                      }
+                    : {}),
             });
         }
     }
