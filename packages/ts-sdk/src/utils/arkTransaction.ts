@@ -2,7 +2,6 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { base64, hex } from "@scure/base";
 import { DEFAULT_SEQUENCE, Script, SigHash } from "@scure/btc-signer";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
-import { equalBytes } from "@scure/btc-signer/utils.js";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { ExtendedCoin, VirtualCoin } from "../wallet";
 import { CLTVMultisigTapscript, decodeTapscript, RelativeTimelock } from "../script/tapscript";
@@ -383,147 +382,6 @@ export function combineTapscriptSigs(signedTx: Transaction, originalTx: Transact
     return originalTx;
 }
 
-/** One `tapScriptSig` entry: who signed, on which leaf, with what bytes. */
-export interface TapScriptSigEntry {
-    readonly pubKeyHex: string;
-    readonly leafHashHex: string;
-    readonly signature: Uint8Array;
-}
-
-/** Read the `tapScriptSig` entries of one input as plain data. */
-export function tapScriptSigEntries(tx: Transaction, inputIndex: number): TapScriptSigEntry[] {
-    const input = tx.getInput(inputIndex);
-    return (input.tapScriptSig ?? []).map(([data, signature]) => ({
-        pubKeyHex: hex.encode(data.pubKey),
-        leafHashHex: hex.encode(data.leafHash),
-        signature,
-    }));
-}
-
-/** One spend leaf carried by an input, with its hash precomputed. */
-export interface TapLeafRef {
-    readonly leafHashHex: string;
-    readonly script: Uint8Array;
-    readonly version: number;
-}
-
-/** Read the spend leaves carried by one input. */
-export function tapLeavesOfInput(tx: Transaction, inputIndex: number): TapLeafRef[] {
-    const input = tx.getInput(inputIndex);
-    return (input.tapLeafScript ?? []).map(([, scriptWithVersion]) => {
-        const script = scriptWithVersion.subarray(0, -1);
-        const version = scriptWithVersion[scriptWithVersion.length - 1];
-        return { leafHashHex: hex.encode(tapLeafHash(script, version)), script, version };
-    });
-}
-
-/** Reject any input carrying a signature, finalization, or non-DEFAULT declared sighash. */
-export function assertUnsignedPsbt(tx: Transaction, context: string): void {
-    for (let i = 0; i < tx.inputsLength; i++) {
-        const input = tx.getInput(i);
-        if (input.tapKeySig && input.tapKeySig.length > 0) {
-            throw new Error(`${context}: input ${i} carries a key-path signature`);
-        }
-        if (input.tapScriptSig && input.tapScriptSig.length > 0) {
-            throw new Error(`${context}: input ${i} carries script-path signatures`);
-        }
-        if (input.partialSig && input.partialSig.length > 0) {
-            throw new Error(`${context}: input ${i} carries partial signatures`);
-        }
-        if (input.finalScriptSig && input.finalScriptSig.length > 0) {
-            throw new Error(`${context}: input ${i} is finalized`);
-        }
-        if (input.finalScriptWitness && input.finalScriptWitness.length > 0) {
-            throw new Error(`${context}: input ${i} is finalized`);
-        }
-    }
-    assertAllowedSighashTypes(tx, [SigHash.DEFAULT]);
-}
-
-/** Serialize a transaction with all `tapScriptSig` entries stripped. */
-export function unsignedPsbtBytes(tx: Transaction): Uint8Array {
-    const stripped = tx.clone();
-    for (let i = 0; i < stripped.inputsLength; i++) {
-        // `[]` would merge (a no-op); an explicit `undefined` deletes.
-        stripped.updateInput(i, { tapScriptSig: undefined });
-    }
-    return stripped.toPSBT();
-}
-
-/** Reject a candidate whose unsigned bytes differ from the trusted transaction. */
-export function assertSameUnsignedTx(
-    candidate: Transaction,
-    trusted: Transaction,
-    context: string,
-): void {
-    if (candidate.inputsLength !== trusted.inputsLength) {
-        throw new Error(
-            `${context}: ${candidate.inputsLength} inputs, expected ${trusted.inputsLength}`,
-        );
-    }
-    if (candidate.outputsLength !== trusted.outputsLength) {
-        throw new Error(
-            `${context}: ${candidate.outputsLength} outputs, expected ${trusted.outputsLength}`,
-        );
-    }
-    if (!equalBytes(unsignedPsbtBytes(candidate), unsignedPsbtBytes(trusted))) {
-        throw new Error(`${context}: unsigned transaction differs from the trusted graph`);
-    }
-}
-
-/** Replace one input's `tapScriptSig` entries wholesale. */
-export function setTapScriptSigEntries(
-    tx: Transaction,
-    inputIndex: number,
-    entries: readonly { pubKey: Uint8Array; leafHash: Uint8Array; signature: Uint8Array }[],
-): void {
-    // An array merges, so a shorter set would leave stale entries behind;
-    // `undefined` deletes, which is what makes this a replacement.
-    tx.updateInput(inputIndex, { tapScriptSig: undefined });
-    tx.updateInput(inputIndex, {
-        tapScriptSig: entries.map((e) => [{ pubKey: e.pubKey, leafHash: e.leafHash }, e.signature]),
-    });
-}
-
-/** Reject non-64-byte, unexpected-key, or unexpected-leaf entries, then verify every signature. */
-export function assertDefaultTapScriptSigs(
-    tx: Transaction,
-    inputIndex: number,
-    opts: {
-        allowedPubKeys: readonly string[];
-        leafHash: Uint8Array;
-        requiredPubKeys?: readonly string[];
-        context: string;
-    },
-): void {
-    const leafHashHex = hex.encode(opts.leafHash);
-    for (const entry of tapScriptSigEntries(tx, inputIndex)) {
-        if (entry.signature.length !== 64) {
-            throw new Error(
-                `${opts.context}: input ${inputIndex} carries a ${entry.signature.length}-byte signature from ${entry.pubKeyHex}, expected 64-byte DEFAULT`,
-            );
-        }
-        if (entry.leafHashHex !== leafHashHex) {
-            throw new Error(
-                `${opts.context}: input ${inputIndex} signature from ${entry.pubKeyHex} commits to unexpected leaf ${entry.leafHashHex}`,
-            );
-        }
-        if (!opts.allowedPubKeys.includes(entry.pubKeyHex)) {
-            throw new Error(
-                `${opts.context}: input ${inputIndex} carries a signature from unexpected key ${entry.pubKeyHex}`,
-            );
-        }
-    }
-    verifyTapscriptSignatures(
-        tx,
-        inputIndex,
-        [...(opts.requiredPubKeys ?? opts.allowedPubKeys)],
-        [],
-        [SigHash.DEFAULT],
-        opts.leafHash,
-    );
-}
-
 /**
  * Validates if a given string is a valid Arkade address by attempting to decode it.
  * @param address The Arkade address to validate.
@@ -675,6 +533,9 @@ export function assertSubmittedArkTxid(
 export interface VerifyServerSignatures {
     /** The Ark server's key; x-only or compressed, both accepted. */
     serverPubkey: Uint8Array;
+    /** Retired signer keys the server still advertises: a leaf built before a
+     * rotation names one of these, and it is the leaf that decides. */
+    deprecatedServerPubkeys?: Uint8Array[];
 }
 
 /**
@@ -692,7 +553,7 @@ function assertServerSignedLeaf(
     serverTx: Transaction,
     localTx: Transaction,
     inputIndex: number,
-    serverPubkeyHex: string,
+    serverPubkeys: Set<string>,
     context: string,
 ): void {
     const leaf = localTx.getInput(inputIndex).tapLeafScript?.[0];
@@ -701,14 +562,34 @@ function assertServerSignedLeaf(
             `${context}: input ${inputIndex} carries no spend leaf to verify the server signature against`,
         );
     }
+    const script = scriptFromTapLeafScript(leaf);
+    let leafPubkeys: string[];
+    try {
+        leafPubkeys = decodeTapscript(script).params.pubkeys.map((key: Uint8Array) =>
+            hex.encode(toXOnly(key, "leaf key")),
+        );
+    } catch (error) {
+        throw new ServerResponseMismatchError(
+            `${context}: input ${inputIndex} spend leaf cannot be decoded ` +
+                `(${error instanceof Error ? error.message : String(error)})`,
+        );
+    }
+    // The leaf names the key that has to have signed it, which is the one the
+    // covenant was built with — possibly a since-retired signer.
+    const signer = leafPubkeys.find((key) => serverPubkeys.has(key));
+    if (!signer) {
+        throw new ServerResponseMismatchError(
+            `${context}: input ${inputIndex} spend leaf names no signer key the server advertises`,
+        );
+    }
     try {
         verifyTapscriptSignatures(
             serverTx,
             inputIndex,
-            [serverPubkeyHex],
+            [signer],
             undefined,
             undefined,
-            tapLeafHash(scriptFromTapLeafScript(leaf)),
+            tapLeafHash(script),
         );
     } catch (error) {
         throw new ServerResponseMismatchError(
@@ -853,25 +734,23 @@ export async function submitOffchainTx(
             );
         }
         const finalArkTx = Transaction.fromPSBT(base64.decode(response.finalArkTx));
-        const serverPubkeyHex = hex.encode(toXOnly(verify.serverPubkey, "server key"));
+        const serverPubkeys = new Set(
+            [verify.serverPubkey, ...(verify.deprecatedServerPubkeys ?? [])].map((key) =>
+                hex.encode(toXOnly(key, "server key")),
+            ),
+        );
         for (let i = 0; i < offchainTx.arkTx.inputsLength; i++) {
             assertServerSignedLeaf(
                 finalArkTx,
                 offchainTx.arkTx,
                 i,
-                serverPubkeyHex,
+                serverPubkeys,
                 "submitTx ark tx",
             );
         }
         // Each checkpoint carries exactly one input, the VTXO being spent.
         matched.forEach(({ server, local }, index) =>
-            assertServerSignedLeaf(
-                server,
-                local,
-                0,
-                serverPubkeyHex,
-                `submitTx checkpoint ${index}`,
-            ),
+            assertServerSignedLeaf(server, local, 0, serverPubkeys, `submitTx checkpoint ${index}`),
         );
     }
 

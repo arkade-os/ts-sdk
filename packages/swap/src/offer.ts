@@ -1063,9 +1063,8 @@ export async function fillOffer(
 }
 
 /**
- * Connect the client a fill assembles against and rebuild the offer's covenant.
- * Shared by `fillOffer` and the build-only plan; the contract derives from the
- * OFFER's keys so a rotated server key reads as a rotation, not a missing deposit.
+ * The contract derives from the OFFER's keys, so a rotated server key reads as
+ * a rotation rather than a missing deposit.
  */
 export async function connectFillContract(
     wallet: IWallet,
@@ -1076,7 +1075,6 @@ export async function connectFillContract(
         emulator?: EmulatorProvider | string;
         emulatorPubkey?: string;
     } = {},
-    // Public-namespace return: the inferred one is not a portable declaration.
 ): Promise<arkade.ArkadeContract> {
     const { swapAddress, emulator, emulatorPubkey } = opts;
     const contractManager = await wallet.getContractManager();
@@ -1085,9 +1083,7 @@ export async function connectFillContract(
         indexer: new RestIndexerProvider(arkServerUrl),
         identity: wallet.identity,
         contractManager,
-        // Only for submission: `fulfill` is a covenant path, so the emulator
-        // executes the arkade script and finalizes with arkd. A client without
-        // one builds the transaction and then refuses to submit it.
+        // Submission only: without an emulator the builder refuses to submit.
         ...(emulator !== undefined
             ? {
                   emulator:
@@ -1113,10 +1109,7 @@ export async function connectFillContract(
     return new arkade.ArkadeContract(client, program, args, keys);
 }
 
-/**
- * Select the exact deposit a fill spends. An outpoint always wins; a bare txid
- * is honored only when it names a single deposit, never first-match.
- */
+/** An outpoint always wins; a bare txid only when unambiguous, never first-match. */
 export function resolveDeposit<V extends { txid: string; vout: number }>(
     vtxos: readonly V[],
     sel: { fundingTxid?: string; fundingOutpoint?: FillOutpoint },
@@ -1156,7 +1149,6 @@ export function resolveDeposit<V extends { txid: string; vout: number }>(
     return vtxo;
 }
 
-/** A coin a fill spends: the deposit or one funding entry. */
 export type FillCoin = {
     txid: string;
     vout: number;
@@ -1164,18 +1156,14 @@ export type FillCoin = {
     assets?: readonly { assetId: string; amount: bigint | number }[] | undefined;
 };
 
-/** Payment outputs an assembled fill intends, in vout order with resolved roles. */
 export interface AssembledFillLayout {
     inputs: { owner: FillInputOwner | null; txid: string; vout: number }[];
     outputs: { role: FillOutputRole; script: Uint8Array; sats: bigint }[];
 }
 
 /**
- * The canonical fill assembly, shared by `fillOffer` and the build-only plan.
- * Inputs run deposit (0), solver, sponsor; output 0 is always the maker, then
- * fare and sponsor change when present, solver proceeds last. Asset groups match
- * with the wanted asset first. Returns the intended layout for checking
- * against the transaction the builder actually assembles.
+ * Inputs run deposit (0), solver, sponsor; outputs run maker (0), fare, sponsor
+ * change, solver. Returns the intended layout to check the built tx against.
  */
 export function assembleOfferFill(
     fill: arkade.ArkadeTransactionBuilder,
@@ -1249,9 +1237,7 @@ export function assembleOfferFill(
         sponsorChange = sponsorInputs - contribution;
     }
 
-    // Refused here rather than by the emulator, which reports only that the
-    // covenant said no. A same-asset fare rides the wanted group, so it is
-    // part of what the solver must supply.
+    // Refused here because the emulator reports only that the covenant said no.
     if (wantedAssetId !== undefined) {
         const required =
             offer.wantAmount +
@@ -1283,8 +1269,7 @@ export function assembleOfferFill(
         }
     }
 
-    // The same coin twice would double-spend within one transaction; the txid
-    // comparison is case-insensitive, the vout an exact integer.
+    // Case-insensitive txid, exact vout: the same coin twice self-double-spends.
     const seen = new Set<string>();
     const claim = (txid: string, vout: number, what: string) => {
         const key = `${txid.toLowerCase()}:${vout}`;
@@ -1312,23 +1297,18 @@ export function assembleOfferFill(
     const solverVout = outputs.length;
 
     fill.from({ txid: vtxo.txid, vout: vtxo.vout, value: vtxo.value })
-        // Same array when there is no sponsor leg, so the call below reads
-        // exactly what the caller passed.
         .fund(sponsorFund.length > 0 ? [...solverFund, ...sponsorFund] : solverFund)
-        // Output 0, and the order is not cosmetic: the covenant inspects output
-        // 0 specifically, so the maker must be the first `to`.
+        // Not cosmetic: the covenant inspects output 0.
         .to(offer.makerPkScript, makerSats);
     if (sponsor?.fare !== undefined) fill.to(sponsor.fare.script, fareSats);
     if (sponsor !== undefined && sponsorChange > BigInt(0))
         fill.to(sponsor.changeScript, sponsorChange);
-    // Solver proceeds are whatever the explicit outputs leave, landing last.
     fill.change(solverPayout);
 
     // Every asset in the spend, by the input holding it. The deposit is input 0
     // and the funding coins follow in `fund` order, matching the owner mapping.
-    // Zero entries are ignored by design — a coin may name an asset at 0
-    // without holding it. Negatives and duplicate entries never reach here;
-    // validation rejects them, so they cannot skew the holdings.
+    // A coin may name an asset at 0 without holding it; negatives and duplicates
+    // are rejected upstream, so they cannot skew the holdings.
     const held = new Map<string, { vin: number; amount: bigint }[]>();
     const hold = (vin: number, assets: FillFunding["assets"]) => {
         for (const a of assets ?? []) {
@@ -1413,9 +1393,8 @@ export function assembleOfferFill(
         held.delete(fareAsset);
     }
 
-    // Everything else goes to the solver: the deposit's own asset when the
-    // maker wanted sats, and anything a funding coin happened to carry.
-    // Declaring the latter is what keeps arkd from answering ASSET_NOT_FOUND.
+    // Declaring what funding coins happened to carry is what keeps arkd from
+    // answering ASSET_NOT_FOUND.
     for (const [assetId, inputs] of held) {
         const amount = inputs.reduce((s, i) => s + i.amount, BigInt(0));
         if (!hasPayoutOutput) throw stranded(assetId, amount);
@@ -1457,7 +1436,6 @@ const U64_MAX = (BigInt(1) << BigInt(64)) - BigInt(1);
 const MAX_SAFE_SATS = BigInt(Number.MAX_SAFE_INTEGER);
 const TXID_RE = /^[0-9a-fA-F]{64}$/;
 
-/** A 32-byte hex transaction id, lowercased. */
 function assertTxid(txid: unknown, what: string): string {
     if (typeof txid !== "string" || !TXID_RE.test(txid)) {
         throw new Error(`${what} must be a 32-byte hex transaction id`);
@@ -1465,7 +1443,6 @@ function assertTxid(txid: unknown, what: string): string {
     return txid.toLowerCase();
 }
 
-/** A non-negative output index. */
 function assertVout(vout: unknown, what: string): number {
     if (typeof vout !== "number" || !Number.isSafeInteger(vout) || vout < 0 || vout > 0xffffffff) {
         throw new Error(`${what} must be a non-negative output index`);
@@ -1473,12 +1450,7 @@ function assertVout(vout: unknown, what: string): number {
     return vout;
 }
 
-/**
- * Sats: safe integers only. Numbers go through `isSafeInteger`, never
- * `isInteger` — past 2^53 the parse is already rounded — and bigints stay in
- * the same domain, since SDK coin values are numbers. Nothing is coerced:
- * any other runtime type throws.
- */
+/** `isSafeInteger`, never `isInteger`: past 2^53 the parse is already rounded. */
 function toSatsAmount(value: unknown, what: string, opts: { min?: bigint } = {}): bigint {
     const min = opts.min ?? BigInt(0);
     let amount: bigint | undefined;
@@ -1510,14 +1482,12 @@ function toAssetUnits(value: unknown, what: string): bigint {
     return amount;
 }
 
-/** A non-empty output script. */
 function assertScript(script: unknown, what: string): asserts script is Uint8Array {
     if (!(script instanceof Uint8Array) || script.length === 0) {
         throw new Error(`${what} must be a non-empty output script`);
     }
 }
 
-/** An asset id in canonical string form. */
 function assertAssetId(assetId: unknown, what: string): string {
     if (typeof assetId !== "string") throw new Error(`${what} must be an asset id string`);
     try {
@@ -1527,7 +1497,6 @@ function assertAssetId(assetId: unknown, what: string): string {
     }
 }
 
-/** Declared assets of one coin: valid ids, safe units, no entry twice. */
 function assertAssetEntries(assets: FillFunding["assets"], what: string): void {
     const seen = new Set<string>();
     for (const [i, a] of (assets ?? []).entries()) {
@@ -1540,7 +1509,6 @@ function assertAssetEntries(assets: FillFunding["assets"], what: string): void {
     }
 }
 
-/** A caller-supplied funding coin: valid outpoint, positive safe value, known assets. */
 function assertFillCoin(coin: FillFunding, what: string, minValue: bigint): void {
     assertTxid(coin.txid, `${what}.txid`);
     assertVout(coin.vout, `${what}.vout`);
