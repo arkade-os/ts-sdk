@@ -533,9 +533,6 @@ export function assertSubmittedArkTxid(
 export interface VerifyServerSignatures {
     /** The Ark server's key; x-only or compressed, both accepted. */
     serverPubkey: Uint8Array;
-    /** Retired signer keys the server still advertises: a leaf built before a
-     * rotation names one of these, and it is the leaf that decides. */
-    deprecatedServerPubkeys?: Uint8Array[];
 }
 
 /**
@@ -553,7 +550,7 @@ function assertServerSignedLeaf(
     serverTx: Transaction,
     localTx: Transaction,
     inputIndex: number,
-    serverPubkeys: Set<string>,
+    serverPubkeyHex: string,
     context: string,
 ): void {
     const leaf = localTx.getInput(inputIndex).tapLeafScript?.[0];
@@ -562,34 +559,14 @@ function assertServerSignedLeaf(
             `${context}: input ${inputIndex} carries no spend leaf to verify the server signature against`,
         );
     }
-    const script = scriptFromTapLeafScript(leaf);
-    let leafPubkeys: string[];
-    try {
-        leafPubkeys = decodeTapscript(script).params.pubkeys.map((key: Uint8Array) =>
-            hex.encode(toXOnly(key, "leaf key")),
-        );
-    } catch (error) {
-        throw new ServerResponseMismatchError(
-            `${context}: input ${inputIndex} spend leaf cannot be decoded ` +
-                `(${error instanceof Error ? error.message : String(error)})`,
-        );
-    }
-    // The leaf names the key that has to have signed it, which is the one the
-    // covenant was built with — possibly a since-retired signer.
-    const signer = leafPubkeys.find((key) => serverPubkeys.has(key));
-    if (!signer) {
-        throw new ServerResponseMismatchError(
-            `${context}: input ${inputIndex} spend leaf names no signer key the server advertises`,
-        );
-    }
     try {
         verifyTapscriptSignatures(
             serverTx,
             inputIndex,
-            [signer],
+            [serverPubkeyHex],
             undefined,
             undefined,
-            tapLeafHash(script),
+            tapLeafHash(scriptFromTapLeafScript(leaf)),
         );
     } catch (error) {
         throw new ServerResponseMismatchError(
@@ -734,23 +711,25 @@ export async function submitOffchainTx(
             );
         }
         const finalArkTx = Transaction.fromPSBT(base64.decode(response.finalArkTx));
-        const serverPubkeys = new Set(
-            [verify.serverPubkey, ...(verify.deprecatedServerPubkeys ?? [])].map((key) =>
-                hex.encode(toXOnly(key, "server key")),
-            ),
-        );
+        const serverPubkeyHex = hex.encode(toXOnly(verify.serverPubkey, "server key"));
         for (let i = 0; i < offchainTx.arkTx.inputsLength; i++) {
             assertServerSignedLeaf(
                 finalArkTx,
                 offchainTx.arkTx,
                 i,
-                serverPubkeys,
+                serverPubkeyHex,
                 "submitTx ark tx",
             );
         }
         // Each checkpoint carries exactly one input, the VTXO being spent.
         matched.forEach(({ server, local }, index) =>
-            assertServerSignedLeaf(server, local, 0, serverPubkeys, `submitTx checkpoint ${index}`),
+            assertServerSignedLeaf(
+                server,
+                local,
+                0,
+                serverPubkeyHex,
+                `submitTx checkpoint ${index}`,
+            ),
         );
     }
 
