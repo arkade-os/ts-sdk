@@ -809,10 +809,12 @@ export async function cancelOffer(
     opts: {
         repository: AssetSwapRepository;
         fundingTxid?: string;
+        /** Names the exact deposit when several share a `fundingTxid`. */
+        fundingOutpoint?: FillOutpoint;
         swapAddress?: string;
     },
 ): Promise<string> {
-    const { repository, fundingTxid, swapAddress } = opts;
+    const { repository, fundingTxid, fundingOutpoint, swapAddress } = opts;
     const offer = decodeOffer(hex.decode(offerHex));
 
     const contractManager = await wallet.getContractManager();
@@ -852,7 +854,7 @@ export async function cancelOffer(
     const [vtxos, makerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
     // Same selection fill uses: identical offers share one address, and a
     // case-sensitive first-match would cancel an arbitrary deposit.
-    const vtxo = resolveDeposit(vtxos, { fundingTxid });
+    const vtxo = resolveDeposit(vtxos, { fundingTxid, fundingOutpoint });
 
     const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
     const cancel = contract.functions

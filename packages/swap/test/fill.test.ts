@@ -665,6 +665,14 @@ describe("assembleOfferFill routes the sponsor leg", () => {
         expect(ids).toContain(STRAY_ASSET);
     });
 
+    it("refuses the same coin funding the solver and the sponsor", async () => {
+        reset();
+        const shared = fundingCoin()[0] as { txid: string; vout: number; value: number };
+        await expect(assemble(wantBtcHex, sponsorLeg({ fund: [shared] as never }))).rejects.toThrow(
+            /duplicate fill input/,
+        );
+    });
+
     it("charges a fare in sats alone, opening no asset group for it", async () => {
         reset();
         const layout = await assemble(
