@@ -14,6 +14,7 @@ import {
     Transaction,
     Wallet,
     asset,
+    canSpendOffchain,
     tapScriptSigEntries,
     toXOnly,
     type ExtendedVirtualCoin,
@@ -48,9 +49,7 @@ const WANT_UNITS = 1_000n;
 const FARE_UNITS = 100n;
 const ISSUE_UNITS = 10_000n;
 const DEPOSIT_SATS = 5_000;
-// Funds each wallet. Only the faucet reads this; the fill economics use
-// DEPOSIT_SATS and the unit constants above. CI reached issuance with 100_000
-// spendable and still reported insufficient funds, so fund well clear of it.
+// Funds each wallet; amount was never the constraint here — see fundAll.
 const FAUCET_SATS = 1_000_000;
 
 const execCommand = (command: string): string => {
@@ -106,33 +105,59 @@ const makeWallet = (identity: SingleKey) =>
         settlementConfig: false,
     });
 
-const faucet = async (wallet: Wallet): Promise<void> => {
+// issue() and send() select with `withRecoverable: false`; the no-arg accessor
+// defaults to true, so it counts coins the spend path will refuse.
+const usableVtxos = (wallet: Wallet) => wallet.getSpendableVtxos({ withRecoverable: false });
+
+const explain = async (wallet: Wallet): Promise<string> => {
+    const now = { timestamp: new Date() };
+    const all = await wallet.getSpendableVtxos();
+    if (all.length === 0) return "no vtxos at all";
+    return all
+        .map(
+            (c) =>
+                `${c.txid.slice(0, 8)}:${c.vout}=${c.value}sat` +
+                ` spendable=${canSpendOffchain(c, now)}` +
+                ` swept=${c.isSwept ?? false} preconf=${c.isPreconfirmed ?? false}` +
+                ` expiresAt=${c.expiresAt?.toISOString() ?? "-"}` +
+                ` expiresAtHeight=${c.expiresAtHeight ?? "-"}`,
+        )
+        .join("; ");
+};
+
+// One redemption for all three: redeem-notes drives a settlement round, and
+// three serially stretched CI funding to 40s. `ark send` is offchain.
+const fundAll = async (wallets: readonly (readonly [string, Wallet])[]): Promise<void> => {
     const arkdExec = `docker exec -t ${ARKD_CONTAINER}`;
-    // Mint more than we send, as the sibling swap e2e does: three wallets are
-    // funded in sequence from one CLI wallet, and minting exactly the send
-    // amount leaves nothing behind to cover the next round.
-    const note = execCommand(`${arkdExec} arkd note --amount ${FAUCET_SATS * 2}`);
+    const note = execCommand(`${arkdExec} arkd note --amount ${FAUCET_SATS * wallets.length * 2}`);
     settle(`${arkdExec} ark redeem-notes -n ${note} --password secret`, "redeem-notes");
-    const address = await wallet.getAddress();
-    settle(
-        `${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`,
-        "send",
-    );
-    // Wait for SPENDABLE funds, not merely a visible vtxo: the test mints an
-    // asset immediately after funding, and an unsettled coin shows up in
-    // getVtxos long before it can be spent.
-    await waitFor(async () => {
-        const coins = await wallet.getSpendableVtxos();
-        return coins.reduce((sum, c) => sum + c.value, 0) >= FAUCET_SATS;
-    });
-    // Report what actually landed. Three guesses at this failure have been
-    // wrong; the next CI run should say what the wallet holds rather than
-    // leave it to be inferred from "Insufficient funds".
-    const funded = await wallet.getSpendableVtxos();
-    console.log(
-        `live fill funded ${await wallet.getAddress()}: ${funded.length} coins, ` +
-            `${funded.reduce((s, c) => s + c.value, 0)} sats spendable`,
-    );
+
+    for (const [, wallet] of wallets) {
+        const address = await wallet.getAddress();
+        settle(
+            `${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`,
+            "send",
+        );
+    }
+
+    for (const [name, wallet] of wallets) {
+        try {
+            await waitFor(async () => {
+                const coins = await usableVtxos(wallet);
+                return coins.reduce((sum, c) => sum + c.value, 0) >= FAUCET_SATS;
+            });
+        } catch (error) {
+            const cause = error instanceof Error ? error.message : String(error);
+            throw new Error(
+                `live fill ${name} never became usable (${cause}): ` + (await explain(wallet)),
+            );
+        }
+        const coins = await usableVtxos(wallet);
+        console.log(
+            `live fill ${name} ready: ${coins.length} coins, ` +
+                `${coins.reduce((s, c) => s + c.value, 0)} sats usable`,
+        );
+    }
 };
 
 const toFunding = (coin: ExtendedVirtualCoin): FillFunding => ({
@@ -182,28 +207,11 @@ describe("two-owner fill against the regtest stack", () => {
         maker = await makeWallet(makerKey);
         solver = await makeWallet(solverKey);
         taxi = await makeWallet(taxiKey);
-        // Serial, not Promise.all: each faucet redeems a note, and concurrent
-        // redemptions land in one settlement round that then fails with
-        // "missing forfeit transactions".
-        for (const wallet of [maker, solver, taxi]) await faucet(wallet);
-        // Funding the later wallets drives more settlement rounds, which can
-        // re-batch a coin funded earlier. Re-read every wallet once they are
-        // all funded, so nobody enters the test holding a stale outpoint.
-        for (const [name, wallet] of [
+        await fundAll([
             ["maker", maker],
             ["solver", solver],
             ["taxi", taxi],
-        ] as const) {
-            await waitFor(async () => {
-                const coins = await wallet.getSpendableVtxos();
-                return coins.reduce((sum, c) => sum + c.value, 0) >= FAUCET_SATS;
-            });
-            const coins = await wallet.getSpendableVtxos();
-            console.log(
-                `live fill ${name} ready: ${coins.length} coins, ` +
-                    `${coins.reduce((s, c) => s + c.value, 0)} sats`,
-            );
-        }
+        ]);
     }, 300_000);
 
     it("fills an asset want with solver and taxi signatures", async () => {
