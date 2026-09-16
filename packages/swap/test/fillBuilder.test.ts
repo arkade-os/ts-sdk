@@ -410,6 +410,23 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
         await expect(sponsored(state.vtxos[0], solverCoin(), taxi)).rejects.toThrow(/sats-only/);
     });
 
+    // Unreachable through the builder, which always emits the group. The check
+    // exists for a builder that stops doing so, so drive it from the packet.
+    it("rejects a wanted-asset plan that carries no asset group", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const spy = vi
+            .spyOn(Extension, "fromTx")
+            .mockReturnValue({ getAssetPacket: () => ({ groups: [] }) } as never);
+        try {
+            await expect(sponsored(state.vtxos[0], solverCoin(), taxiCoin())).rejects.toThrow(
+                /carries no asset group/,
+            );
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
     it("rejects a fare no input carries", async () => {
         reset();
         state.vtxos = [satsDeposit()];
@@ -454,6 +471,15 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
                 assetCarrierSats: BigInt(330),
             }),
         ).rejects.toThrow(/duplicate fill input .* \(fund\[1\]\)/);
+    });
+
+    it("rejects the deposit reused as sponsor funding", async () => {
+        reset();
+        const deposit = satsDeposit();
+        state.vtxos = [deposit];
+        await expect(
+            sponsored(deposit, solverCoin(), taxiCoin(), { fund: [deposit] }),
+        ).rejects.toThrow(/duplicate fill input/);
     });
 
     it("tells same-txid deposits apart only by outpoint", async () => {

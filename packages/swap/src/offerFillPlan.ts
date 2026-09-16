@@ -200,7 +200,12 @@ function toJointGraph(
             }
         }
     }
-    if (wantedAssetId !== undefined && (packet?.groups.length ?? 0) > 0) {
+    if (wantedAssetId !== undefined) {
+        // Absence is the failure, not a reason to skip: this verifier exists to
+        // catch a builder that stopped emitting the group the offer binds.
+        if ((packet?.groups.length ?? 0) === 0) {
+            throw new Error(`fill plan carries no asset group, expected ${wantedAssetId}`);
+        }
         const first = packet?.groups[0].assetId?.toString();
         if (first !== wantedAssetId) {
             throw new Error(
