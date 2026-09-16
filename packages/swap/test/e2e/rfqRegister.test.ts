@@ -17,6 +17,7 @@
  * transaction, the indexer sync and the spendability gate.
  */
 import { beforeAll, describe, expect, it } from "vitest";
+import { faucet } from "./harness";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
@@ -145,7 +146,8 @@ beforeAll(async () => {
         settlementConfig: false,
     });
 
-    faucet(arkdExec, [await wallet.getAddress()], FAUCET_SATS);
+    const address = await wallet.getAddress();
+    faucet(arkdExec, [address], FAUCET_SATS);
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
 
     // The stub solver has to derive the same script the maker will, so it needs

@@ -10,6 +10,7 @@
  * want-asset (no solver runs in this stack) and is scoped separately.
  */
 import { beforeAll, describe, expect, it } from "vitest";
+import { faucet } from "./harness";
 import { hex } from "@scure/base";
 import {
     ArkAddress,
