@@ -173,6 +173,7 @@ export const OFFER: Offer = {
 };
 
 export const OFFER_SCRIPT = hex.encode(OFFER.swapPkScript);
+export const OFFER_ADDRESS = offerContract(OFFER_BINDING, OPERATOR).address(HRP, OPERATOR).encode();
 
 /** The funding transaction: the covenant output plus the offer packet. */
 export const offerFunding = (): { psbt: string; txid: string } => {

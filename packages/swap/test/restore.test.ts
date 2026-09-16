@@ -557,6 +557,22 @@ describe("restoreAssetSwaps", () => {
         expect(result.scannedTxids).not.toContain(lastTxid);
         expect(new Set(result.scannedTxids)).toEqual(new Set(firstChunk.map((f) => f.txid)));
     });
+
+    it("names the covenant's own address when given the network prefix", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const txs = [walletTx(funding.txid, "sent")];
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+
+        const named = await restoreAssetSwaps(indexer, txs, new Set(), {
+            operatorPubkey: OPERATOR_KEY,
+            hrp: "tark",
+        });
+        expect(named.restored[0]?.swapAddress).toBe(
+            offerContract(offer, OPERATOR_KEY).address("tark", OPERATOR_KEY).encode(),
+        );
+        expect((await scan(indexer, txs)).restored[0]?.swapAddress).toBe("");
+    });
 });
 
 describe("restoreAssetSwaps — reopening records the scan left pending", () => {

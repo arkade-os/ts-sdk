@@ -410,6 +410,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             operator,
             ...(config.repository === undefined ? {} : { repository: config.repository }),
             corridors: async () => (await resolved()).corridors,
+            network: async () => (await resolved()).base.networkName,
             ...(config.policy?.drive === undefined ? {} : { mode: config.policy.drive }),
             indexer,
         }));

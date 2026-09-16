@@ -95,7 +95,7 @@ export interface SnapshotRef {
  * card-derived field is absent at once rather than one at a time. Sizing that
  * arm now costs a discriminant and keeps the addressed arm total.
  */
-export type MarketRef = CardMarketRef | AuctionMarketRef;
+export type MarketRef = CardMarketRef | AuctionMarketRef | RestoredMarketRef;
 
 export interface CardMarketRef {
     readonly kind: "card";
@@ -126,6 +126,12 @@ export interface AuctionMarketRef {
     readonly kind: "auction";
     readonly key: string;
     readonly backend: "rfq";
+}
+
+/** A record rebuilt from the funding tx after a restore: no card stands behind it. */
+export interface RestoredMarketRef {
+    readonly kind: "restored";
+    readonly backend: "feed";
 }
 
 /**

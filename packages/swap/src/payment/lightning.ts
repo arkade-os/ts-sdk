@@ -90,7 +90,7 @@ export function lightningRail(client: SwapRailClient): PaymentRail {
                         : { refundLocktime: quote.refundLocktime }),
                     ...(quote.solver === undefined ? {} : { solver: quote.solver }),
                     ...(quote.lock === undefined ? {} : { paymentHash: quote.lock.hash }),
-                    market: quote.market.key,
+                    ...(quote.market.kind === "restored" ? {} : { market: quote.market.key }),
                 },
                 send: () => swapHandle(LIGHTNING_RAIL, client, quote),
             };

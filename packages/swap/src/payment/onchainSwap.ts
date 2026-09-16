@@ -153,7 +153,7 @@ export function onchainSwapRail(client: SwapRailClient, deps: OnchainSwapRailDep
                         : { refundLocktime: quote.refundLocktime }),
                     ...(quote.solver === undefined ? {} : { solver: quote.solver }),
                     ...(quote.lock === undefined ? {} : { paymentHash: quote.lock.hash }),
-                    market: quote.market.key,
+                    ...(quote.market.kind === "restored" ? {} : { market: quote.market.key }),
                     // The estimate folded into `fee`, so a caller can see it.
                     claimFeeSats: Number(claimFee),
                     // What the solver locks on L1, before the claim's fee.

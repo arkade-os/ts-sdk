@@ -273,9 +273,11 @@ export async function restoreAssetSwaps(
         operatorPubkey: Uint8Array;
         scanned?: ReadonlySet<string>;
         reopen?: AssetSwap[];
+        /** Address prefix; given, a rebuilt record names the covenant's address (#680). */
+        hrp?: string;
     },
 ): Promise<{ restored: AssetSwap[]; scannedTxids: string[] }> {
-    const { operatorPubkey, scanned = new Set<string>(), reopen = [] } = opts;
+    const { operatorPubkey, scanned = new Set<string>(), reopen = [], hrp } = opts;
     const reopened: Found[] = [];
     for (const swap of reopen) {
         try {
@@ -433,11 +435,12 @@ export async function restoreAssetSwaps(
             toAsset,
             fromAmount,
             toAmount: offer.wantAmount.toString(),
-            // ponytail(arkade-os/ts-sdk#680): empty address makes cancel fall back
-            // to the current operator key; store the funded address if operator-key
-            // rotations become real (cancelOffer now at least diagnoses the
-            // mismatch instead of reporting a missing VTXO)
-            swapAddress: "",
+            // ponytail(arkade-os/ts-sdk#680): without the prefix the address is
+            // empty and cancel falls back to the current operator key
+            swapAddress:
+                hrp === undefined
+                    ? ""
+                    : offerContract(offer, operatorPubkey).address(hrp, operatorPubkey).encode(),
             swapPkScript,
             offerHex,
             fundingTxid: fundingTx.redeemTxid,

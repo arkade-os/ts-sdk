@@ -187,8 +187,10 @@ describe("markets()", () => {
         const quote = await h.client.quote(SPOT);
         const markets = await h.client.markets();
 
-        const cited = markets.find((m) => m.key === quote.market.key);
-        expect(cited).toEqual(quote.market);
+        const market = quote.market;
+        if (market.kind !== "card") throw new Error("a live quote cites no card");
+        const cited = markets.find((m) => m.key === market.key);
+        expect(cited).toEqual(market);
         // The escape hatch's own vocabulary: discovery's asset ids and display
         // labels never cross the v2 root.
         expect(markets.every((m) => m.kind === "card")).toBe(true);
