@@ -93,6 +93,8 @@ export async function buildOfferFillPlan(
         assetCarrierSats,
         sponsor: sponsorLeg,
     });
+    // build(), never send(): this path returns an unsigned graph for two owners
+    // to sign. The builder has no emulator, so a send() here would refuse anyway.
     const { arkTx, checkpoints } = await fill.build();
     for (const [i, input] of layout.inputs.entries()) {
         if (!OFFER_FILL_OWNERS.includes(input.owner)) {

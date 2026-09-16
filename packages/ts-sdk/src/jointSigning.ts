@@ -77,6 +77,9 @@ const parseTx = (psbt: string, what: string): Transaction => {
     }
 };
 
+// Only 32-byte push operands, which is every x-only key a tapscript can carry.
+// btc-signer's Script.decode throws on anything it cannot fully parse, and this
+// runs over attacker-supplied leaves where a partial read must not abort the scan.
 const pushData32 = (script: Uint8Array): Uint8Array[] => {
     const out: Uint8Array[] = [];
     let i = 0;
