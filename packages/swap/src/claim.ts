@@ -30,8 +30,10 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
+    Extension,
     type Identity,
     type VHTLC,
+    asset,
     claimWithPreimageIdentity,
     signAndSubmitOffchainTx,
 } from "@arkade-os/sdk";
@@ -120,6 +122,44 @@ const assertFiniteAmount = (value: number, reason: string, label: string): void 
  * server at submit — but it turns "reported claimed, nothing landed, the
  * solver refunds hours later" into an immediate failure.
  */
+/**
+ * The claim's outputs: the aggregate payment, plus an asset packet when the
+ * lockup carried assets.
+ *
+ * Every input vin feeds the single payment vout, so each group is a total
+ * rather than a routing decision — the claim leaf inspects no output, and
+ * splitting would only invent a policy the covenant does not have.
+ */
+function claimOutputs(
+    vtxos: readonly LockupVtxo[],
+    destinationPkScript: Uint8Array,
+    locked: bigint,
+): { script: Uint8Array; amount: bigint }[] {
+    const outputs = [{ script: destinationPkScript, amount: locked }];
+    const totals = new Map<string, { inputs: { vin: number; amount: bigint }[]; total: bigint }>();
+    vtxos.forEach((vtxo, vin) => {
+        for (const { assetId, amount } of vtxo.assets ?? []) {
+            if (amount <= BigInt(0)) continue;
+            const entry = totals.get(assetId) ?? { inputs: [], total: BigInt(0) };
+            entry.inputs.push({ vin, amount });
+            entry.total += amount;
+            totals.set(assetId, entry);
+        }
+    });
+    if (totals.size === 0) return outputs;
+    const groups = [...totals].map(([assetId, { inputs, total }]) =>
+        asset.AssetGroup.create(
+            asset.AssetId.fromString(assetId),
+            null,
+            inputs.map(({ vin, amount }) => asset.AssetInput.create(vin, amount)),
+            [asset.AssetOutput.create(0, total)],
+            [],
+        ),
+    );
+    outputs.push(Extension.create([asset.Packet.create(groups)]).txOut());
+    return outputs;
+}
+
 export async function pushClaim(
     ark: ClaimArkProvider,
     input: {
@@ -202,8 +242,10 @@ export async function pushClaim(
             tapTree,
         })),
         // One aggregate output: unlike the covenant refund, this leaf inspects
-        // nothing about the output set.
-        outputs: [{ script: input.destinationPkScript, amount: BigInt(locked) }],
+        // nothing about the output set. Any assets the lockup carried ride with
+        // it, declared in a packet — undeclared, arkd answers ASSET_NOT_FOUND
+        // and the claim fails after the preimage is already public.
+        outputs: claimOutputs(input.vtxos, input.destinationPkScript, BigInt(locked)),
         serverUnrollScript,
         verifyServerSignatures: { serverPubkey: input.script.options.server },
     });
