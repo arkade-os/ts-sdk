@@ -1,6 +1,7 @@
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 import { RestArkProvider, SettlementEvent, TxNotificationEvent, isFetchTimeoutError } from "./ark";
 import { getExpoFetch, sseStreamIterator } from "./expoUtils";
+import { ARK_VERSION_HEADERS } from "../utils/fetch";
 
 /**
  * Expo-compatible Arkade provider implementation using expo/fetch for SSE support.
@@ -33,18 +34,24 @@ export class ExpoArkProvider extends RestArkProvider {
 
         while (!signal?.aborted) {
             try {
-                yield* sseStreamIterator(url + queryParams, signal, expoFetch, {}, (data) => {
-                    // Handle different response structures
-                    // v8 mesh API might wrap in {result: ...} or send directly
-                    const eventData = data.result || data;
+                yield* sseStreamIterator(
+                    url + queryParams,
+                    signal,
+                    expoFetch,
+                    ARK_VERSION_HEADERS,
+                    (data) => {
+                        // Handle different response structures
+                        // v8 mesh API might wrap in {result: ...} or send directly
+                        const eventData = data.result || data;
 
-                    // Skip heartbeat messages
-                    if (eventData.heartbeat !== undefined) {
-                        return null;
-                    }
+                        // Skip heartbeat messages
+                        if (eventData.heartbeat !== undefined) {
+                            return null;
+                        }
 
-                    return this.parseSettlementEvent(eventData);
-                });
+                        return this.parseSettlementEvent(eventData);
+                    },
+                );
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") {
                     break;
@@ -71,7 +78,7 @@ export class ExpoArkProvider extends RestArkProvider {
 
         while (!signal?.aborted) {
             try {
-                yield* sseStreamIterator(url, signal, expoFetch, {}, (data) => {
+                yield* sseStreamIterator(url, signal, expoFetch, ARK_VERSION_HEADERS, (data) => {
                     return this.parseTransactionNotification(data.result);
                 });
             } catch (error) {
