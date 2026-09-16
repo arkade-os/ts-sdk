@@ -128,6 +128,9 @@ const explain = async (wallet: Wallet): Promise<string> => {
 // One redemption for all three: redeem-notes drives a settlement round, and
 // three serially stretched CI funding to 40s. `ark send` is offchain.
 const fundAll = async (wallets: readonly (readonly [string, Wallet])[]): Promise<void> => {
+    // One budget for every wait, not one each: three 120s waits overrun the
+    // 300s beforeAll and Vitest would kill the hook before explain() runs.
+    const deadline = Date.now() + 240_000;
     const arkdExec = `docker exec -t ${ARKD_CONTAINER}`;
     const note = execCommand(`${arkdExec} arkd note --amount ${FAUCET_SATS * wallets.length * 2}`);
     settle(`${arkdExec} ark redeem-notes -n ${note} --password secret`, "redeem-notes");
@@ -142,10 +145,13 @@ const fundAll = async (wallets: readonly (readonly [string, Wallet])[]): Promise
 
     for (const [name, wallet] of wallets) {
         try {
-            await waitFor(async () => {
-                const coins = await usableVtxos(wallet);
-                return coins.reduce((sum, c) => sum + c.value, 0) >= FAUCET_SATS;
-            });
+            await waitFor(
+                async () => {
+                    const coins = await usableVtxos(wallet);
+                    return coins.reduce((sum, c) => sum + c.value, 0) >= FAUCET_SATS;
+                },
+                { timeout: Math.max(1_000, deadline - Date.now()) },
+            );
         } catch (error) {
             const cause = error instanceof Error ? error.message : String(error);
             throw new Error(
