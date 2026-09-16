@@ -186,6 +186,24 @@ describe("two-owner fill against the regtest stack", () => {
         // redemptions land in one settlement round that then fails with
         // "missing forfeit transactions".
         for (const wallet of [maker, solver, taxi]) await faucet(wallet);
+        // Funding the later wallets drives more settlement rounds, which can
+        // re-batch a coin funded earlier. Re-read every wallet once they are
+        // all funded, so nobody enters the test holding a stale outpoint.
+        for (const [name, wallet] of [
+            ["maker", maker],
+            ["solver", solver],
+            ["taxi", taxi],
+        ] as const) {
+            await waitFor(async () => {
+                const coins = await wallet.getSpendableVtxos();
+                return coins.reduce((sum, c) => sum + c.value, 0) >= FAUCET_SATS;
+            });
+            const coins = await wallet.getSpendableVtxos();
+            console.log(
+                `live fill ${name} ready: ${coins.length} coins, ` +
+                    `${coins.reduce((s, c) => s + c.value, 0)} sats`,
+            );
+        }
     }, 300_000);
 
     it("fills an asset want with solver and taxi signatures", async () => {
