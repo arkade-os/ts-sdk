@@ -17,7 +17,6 @@
  * transaction, the indexer sync and the spendability gate.
  */
 import { beforeAll, describe, expect, it } from "vitest";
-import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
@@ -58,17 +57,6 @@ const xOnly = (key: Uint8Array): Uint8Array => {
         throw new Error("not a compressed or x-only public key");
     }
     return key.slice(1);
-};
-
-const execCommand = (command: string): string => {
-    const result = execSync(command, { encoding: "utf8" })
-        .replace(/\r/g, "")
-        .split("\n")
-        .filter((line) => !line.includes("WARN"))
-        .join("\n")
-        .trim();
-    if (result.startsWith("error:")) throw new Error(result);
-    return result;
 };
 
 const waitFor = async (
@@ -157,10 +145,7 @@ beforeAll(async () => {
         settlementConfig: false,
     });
 
-    const note = execCommand(`${arkdExec} arkd note --amount 200000`);
-    execCommand(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
-    const address = await wallet.getAddress();
-    execCommand(`${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`);
+    faucet(arkdExec, [await wallet.getAddress()], FAUCET_SATS);
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
 
     // The stub solver has to derive the same script the maker will, so it needs
