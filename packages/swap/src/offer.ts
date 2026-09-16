@@ -1352,6 +1352,14 @@ export function assembleOfferFill(
     if (explicitSats > MAX_SAFE_SATS) {
         throw new Error(`fill outputs total ${explicitSats} sats exceeds the safe integer domain`);
     }
+    // A sats-only underfund strands nothing, so the asset guards below never see
+    // it and the builder reports it in its own terms.
+    if (explicitSats > inputsSum) {
+        throw new Error(
+            `fill outputs total ${explicitSats} sats but the inputs carry ${inputsSum} — ` +
+                "increase solver or sponsor funding",
+        );
+    }
     // The solver's asset proceeds land on the change output — but `change` only
     // exists when there is a sats surplus, and an asset with nowhere to go is
     // a spend arkd will refuse for a reason the error will not explain.

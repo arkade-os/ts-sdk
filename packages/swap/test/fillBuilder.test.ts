@@ -482,6 +482,17 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
         ).rejects.toThrow(/duplicate fill input/);
     });
 
+    // Every asset balances, so no stranding guard sees this — only the sats do.
+    it("rejects a fill whose explicit outputs exceed its inputs", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        await expect(
+            sponsored(state.vtxos[0], solverCoin(), taxiCoin(), {
+                fare: { assetId: WANT_ASSET, amount: 1, script: FARE_SCRIPT, sats: 10_000_000 },
+            }),
+        ).rejects.toThrow(/outputs total \d+ sats but the inputs carry/);
+    });
+
     it("tells same-txid deposits apart only by outpoint", async () => {
         reset();
         const first = satsDeposit();
