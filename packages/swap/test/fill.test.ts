@@ -665,6 +665,41 @@ describe("assembleOfferFill routes the sponsor leg", () => {
         expect(ids).toContain(STRAY_ASSET);
     });
 
+    it("charges a fare in sats alone, opening no asset group for it", async () => {
+        reset();
+        const layout = await assemble(
+            wantBtcHex,
+            sponsorLeg({ fare: { script: FARE_SCRIPT, sats: BigInt(750) } }),
+        );
+        const fare = layout.outputs.find((o) => o.role === "sponsor-fare");
+        expect(fare?.sats).toBe(BigInt(750));
+        expect(hex.encode(fare!.script)).toBe(hex.encode(FARE_SCRIPT));
+        // The deposit asset still routes to the solver; the fare adds no group.
+        const ids = callsOf("withAsset").map((c) => (c.args[0] as { assetId: string }).assetId);
+        expect(ids).toEqual([DEPOSIT_ASSET]);
+    });
+
+    it("refuses a fare naming an asset without an amount, or the reverse", async () => {
+        reset();
+        await expect(
+            assemble(
+                wantBtcHex,
+                sponsorLeg({
+                    fare: { assetId: STRAY_ASSET, script: FARE_SCRIPT, sats: BigInt(330) },
+                }),
+            ),
+        ).rejects.toThrow(/assetId and amount together/);
+        reset();
+        await expect(
+            assemble(
+                wantBtcHex,
+                sponsorLeg({
+                    fare: { amount: BigInt(1), script: FARE_SCRIPT, sats: BigInt(330) },
+                }),
+            ),
+        ).rejects.toThrow(/assetId and amount together/);
+    });
+
     it("names a sats shortfall before the builder sees it", async () => {
         reset();
         await expect(

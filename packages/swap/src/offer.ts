@@ -941,8 +941,18 @@ export interface SponsorFillInput {
     fund: FillFunding[];
     /** Sats the sponsor approves spending; its change is inputs minus this. */
     netContributionSats: bigint | number;
-    /** Optional fare output paid from the joint inputs. */
-    fare?: { assetId: string; amount: bigint | number; script: Uint8Array; sats: bigint | number };
+    /**
+     * Optional fare output paid from the joint inputs. Give `assetId` and
+     * `amount` together to charge in an asset, or omit both to charge in `sats`
+     * alone — the sats output exists either way, so an asset fare still needs a
+     * host amount in `sats`.
+     */
+    fare?: {
+        assetId?: string;
+        amount?: bigint | number;
+        script: Uint8Array;
+        sats: bigint | number;
+    };
     /** Where the sponsor's change lands. Required even when the contribution
      * spends every sponsor sat and no change output is emitted: the caller
      * always knows where its change belongs, and an optional field would push a
@@ -1216,10 +1226,18 @@ export function assembleOfferFill(
             throw new Error("sponsor.netContributionSats must be a positive amount of sats");
         }
         if (sponsor.fare !== undefined) {
-            fareAsset = assertAssetId(sponsor.fare.assetId, "sponsor.fare.assetId");
-            fareAmount = toAssetUnits(sponsor.fare.amount, "sponsor.fare.amount");
-            if (fareAmount <= BigInt(0)) {
-                throw new Error("sponsor.fare.amount must be a positive amount of asset units");
+            const { assetId, amount } = sponsor.fare;
+            if ((assetId === undefined) !== (amount === undefined)) {
+                throw new Error(
+                    "sponsor.fare needs assetId and amount together, or neither for a sats fare",
+                );
+            }
+            if (assetId !== undefined) {
+                fareAsset = assertAssetId(assetId, "sponsor.fare.assetId");
+                fareAmount = toAssetUnits(amount, "sponsor.fare.amount");
+                if (fareAmount <= BigInt(0)) {
+                    throw new Error("sponsor.fare.amount must be a positive amount of asset units");
+                }
             }
             assertScript(sponsor.fare.script, "sponsor.fare.script");
             fareSats = toSatsAmount(sponsor.fare.sats, "sponsor.fare.sats", { min: BigInt(1) });
@@ -1342,7 +1360,7 @@ export function assembleOfferFill(
     // a spend arkd will refuse for a reason the error will not explain.
     const hasPayoutOutput = inputsSum > explicitSats;
 
-    if (sponsor?.fare !== undefined) {
+    if (sponsor?.fare !== undefined && fareAsset !== "") {
         const carried = (held.get(fareAsset) ?? []).reduce((s, i) => s + i.amount, BigInt(0));
         if (carried < fareAmount) {
             throw new Error(
@@ -1377,7 +1395,7 @@ export function assembleOfferFill(
     }
 
     // A fare in any other asset gets its own group, remainder to the solver.
-    if (sponsor?.fare !== undefined && fareAsset !== wantedAssetId) {
+    if (sponsor?.fare !== undefined && fareAsset !== "" && fareAsset !== wantedAssetId) {
         const supplying = held.get(fareAsset) ?? [];
         const carried = supplying.reduce((s, i) => s + i.amount, BigInt(0));
         const group = [{ vout: fareVout, amount: fareAmount }];
