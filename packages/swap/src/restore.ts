@@ -429,18 +429,27 @@ export async function restoreAssetSwaps(
             continue;
         }
 
+        // ponytail(arkade-os/ts-sdk#680): without the prefix the address is
+        // empty and cancel falls back to the current operator key. With it,
+        // only where that key still derives the funded script: a rotation makes
+        // `offerContract` a different covenant, and cancel rebuilds from this
+        // field, so an address disagreeing with `swapPkScript` is worse than
+        // none. `classifySpend` refuses the same mismatch on the spent path.
+        let swapAddress = "";
+        if (hrp !== undefined) {
+            const covenant = offerContract(offer, operatorPubkey);
+            if (hex.encode(covenant.pkScript) === swapPkScript) {
+                swapAddress = covenant.address(hrp, operatorPubkey).encode();
+            }
+        }
+
         restored.push({
             id: fundingTx.redeemTxid,
             fromAsset,
             toAsset,
             fromAmount,
             toAmount: offer.wantAmount.toString(),
-            // ponytail(arkade-os/ts-sdk#680): without the prefix the address is
-            // empty and cancel falls back to the current operator key
-            swapAddress:
-                hrp === undefined
-                    ? ""
-                    : offerContract(offer, operatorPubkey).address(hrp, operatorPubkey).encode(),
+            swapAddress,
             swapPkScript,
             offerHex,
             fundingTxid: fundingTx.redeemTxid,

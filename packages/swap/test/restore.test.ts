@@ -573,6 +573,24 @@ describe("restoreAssetSwaps", () => {
         );
         expect((await scan(indexer, txs)).restored[0]?.swapAddress).toBe("");
     });
+
+    it("leaves the address empty when the key no longer derives the funded script", async () => {
+        // A rotated operator key compiles a different covenant. `cancelOffer`
+        // rebuilds from `swapAddress`, so naming that one points it at a script
+        // the deposit was never funded against — worse than naming none.
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+
+        const rotated = await restoreAssetSwaps(
+            indexer,
+            [walletTx(funding.txid, "sent")],
+            new Set(),
+            { operatorPubkey: key("44"), hrp: "tark" },
+        );
+        expect(rotated.restored[0]?.swapPkScript).toBe(scriptOf(offer));
+        expect(rotated.restored[0]?.swapAddress).toBe("");
+    });
 });
 
 describe("restoreAssetSwaps — reopening records the scan left pending", () => {
