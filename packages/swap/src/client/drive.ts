@@ -794,7 +794,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
      * sees a spend that landed while no client ran. `existingIds` is empty so
      * every deposit is answered. A live offer's txid stays off the cursor:
      * its answer can still change. Returns the offer records as they stand,
-     * which is what arming reads.
+     * which is what arming reads on the `ready` path; `recover()` wants the
+     * write and drops the return.
      *
      * `reopen` names one funding txid to re-answer even though the cursor has
      * it. `recover()` needs that: a `recoverable` deposit is not `OFFER_LIVE`,
