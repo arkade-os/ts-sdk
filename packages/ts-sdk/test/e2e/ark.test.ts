@@ -22,6 +22,7 @@ import {
     InMemoryContractRepository,
     RestDelegateProvider,
 } from "../../src";
+import { prepareUnrollTransaction } from "../../src/wallet/unroll";
 import {
     arkdExec,
     beforeEachFaucet,
@@ -658,41 +659,24 @@ describe("Common", () => {
                 const txStatus = await alice.wallet.onchainProvider.getTxStatus(unrolled.txid);
                 expect(txStatus.confirmed).toBe(true);
 
-                // Keep this aligned with availableExitPath() selection logic,
-                // which currently returns the first mature exit path.
-                const exitTimelock = exits[0].params.timelock;
-                if (exitTimelock.type === "blocks") {
-                    const chainTip = await alice.wallet.onchainProvider.getChainTip();
-                    const requiredHeight = txStatus.blockHeight + Number(exitTimelock.value);
-                    const remainingBlocks = Math.max(0, requiredHeight - chainTip.height);
-                    if (remainingBlocks > 0) {
-                        execCommand(`node regtest/regtest.mjs mine ${remainingBlocks}`);
-                        // Wait for the onchain provider to observe the new
-                        // tip; freshly mined blocks are not always visible
-                        // to esplora the instant `regtest.mjs mine` returns.
-                        await waitFor(async () => {
-                            const tip = await alice.wallet.onchainProvider.getChainTip();
-                            return tip.height >= requiredHeight;
-                        });
-                    }
-                } else {
-                    const requiredTime = txStatus.blockTime + Number(exitTimelock.value);
-                    const initialTip = await alice.wallet.onchainProvider.getChainTip();
-                    let blocksMined = 0;
-                    for (let i = 0; i < 300; i += 1) {
-                        const chainTip = await alice.wallet.onchainProvider.getChainTip();
-                        if (chainTip.time >= requiredTime) {
-                            break;
+                // Recomputing maturity here can disagree with completeUnroll's and mine nothing.
+                await waitFor(
+                    async () => {
+                        try {
+                            await prepareUnrollTransaction(
+                                alice.wallet,
+                                [unrolled.txid],
+                                onchainAlice.address,
+                            );
+                            return true;
+                        } catch (err) {
+                            if (!/no available exit path found/i.test(String(err))) throw err;
+                            execCommand(`node regtest/regtest.mjs mine 1`);
+                            return false;
                         }
-                        execCommand(`node regtest/regtest.mjs mine 1`);
-                        blocksMined += 1;
-                    }
-                    const finalTip = await alice.wallet.onchainProvider.getChainTip();
-                    expect(finalTip.time).toBeGreaterThanOrEqual(requiredTime);
-                    if (initialTip.time < requiredTime) {
-                        expect(blocksMined).toBeGreaterThan(0);
-                    }
-                }
+                    },
+                    { timeout: 60_000, interval: 0 },
+                );
 
                 const beforeBalance = await onchainAlice.getBalance();
                 const completeTxid = await Unroll.completeUnroll(
