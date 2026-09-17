@@ -103,7 +103,7 @@ describe("ArkadeCash", () => {
 
         // A sync that beats the indexer to the first send re-offers its input as spendable.
         const funding = await selectable();
-        expect(funding.length).toBeGreaterThan(0);
+        expect(funding).toHaveLength(1);
         const cash1 = await alice.wallet.createCash(5000);
         await waitFor(async () => {
             const offered = new Set(await selectable());
