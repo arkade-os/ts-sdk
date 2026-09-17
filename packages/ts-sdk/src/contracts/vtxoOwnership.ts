@@ -90,15 +90,17 @@ export async function getVtxosForContract(
     return vtxos.map(normalizeVtxo);
 }
 
-function hasRecordedSpend(vtxo: Pick<ExtendedVirtualCoin, "isSpent" | "spentBy" | "arkTxId">) {
-    return vtxo.isSpent === true && (!!vtxo.spentBy || !!vtxo.arkTxId);
+function hasRecordedSpend(
+    vtxo: Pick<ExtendedVirtualCoin, "isSpent" | "spentBy" | "arkTxId" | "settledBy">,
+) {
+    return vtxo.isSpent === true && (!!vtxo.spentBy || !!vtxo.arkTxId || !!vtxo.settledBy);
 }
 
 /**
  * A spend is monotonic and is only recorded once the operator accepted the ark
- * tx, so a lagging indexer read is no evidence it was undone; writing one back
- * re-offers a spent coin to selection. Pinned to rows with local provenance, so
- * a bare stale row can still be corrected.
+ * tx or the batch committed, so a lagging indexer read is no evidence it was
+ * undone; writing one back re-offers a spent coin to selection. Pinned to rows
+ * with local provenance, so a bare stale row can still be corrected.
  */
 async function preserveRecordedSpends(
     repo: WalletRepository,
@@ -121,6 +123,7 @@ async function preserveRecordedSpends(
             isSpent: true,
             ...(spent.spentBy ? { spentBy: spent.spentBy } : {}),
             ...(spent.arkTxId ? { arkTxId: spent.arkTxId } : {}),
+            ...(spent.settledBy ? { settledBy: spent.settledBy } : {}),
         };
     });
 }

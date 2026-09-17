@@ -15,6 +15,7 @@ import { TEST_DEFAULT_SCRIPT } from "./helpers";
 
 const CHECKPOINT = "cc".repeat(32);
 const ARK_TX = "dd".repeat(32);
+const COMMITMENT = "ee".repeat(32);
 
 const contract: Pick<Contract, "script" | "address"> = {
     script: TEST_DEFAULT_SCRIPT,
@@ -105,6 +106,25 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
             spentBy: CHECKPOINT,
             arkTxId: ARK_TX,
         });
+    });
+
+    // `updateDbAfterSettle` records a settle-spent input with `settledBy` alone.
+    it("keeps a settle-spent row when a stale sync re-reports it unspent", async () => {
+        const settled: ExtendedVirtualCoin = {
+            ...spentDeposit(),
+            spentBy: "",
+            arkTxId: undefined,
+            settledBy: COMMITMENT,
+        };
+        await saveVtxosForContract(repository, contract, [settled]);
+
+        await saveVtxosForContract(repository, contract, [
+            { ...settled, virtualStatus: { state: "settled" }, isSpent: false, settledBy: "" },
+        ]);
+
+        const vtxos = await getVtxosForContract(repository, contract);
+        expect(vtxos).toHaveLength(1);
+        expect(vtxos[0]).toMatchObject({ isSpent: true, settledBy: COMMITMENT });
     });
 
     it("keeps the spent row alongside an unspent one at the same script", async () => {
