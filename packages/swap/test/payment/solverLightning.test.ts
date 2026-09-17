@@ -59,7 +59,7 @@ const ctxWith = (send = vi.fn(async () => "funding-txid")): RouterContext =>
     ({ wallet: { send } as never, prefs: {} }) as RouterContext;
 
 const depsWith = (over: Partial<SolverLightningRailDeps> = {}): SolverLightningRailDeps => ({
-    arkServerUrl: "http://ark",
+    arkServerUrl: "http://operator",
     decodeInvoice: vi.fn(() => facts()),
     discover: vi.fn(async () => [card("1000", "1000000")]),
     connect: vi.fn(async (_r, fn) => fn({} as never)),

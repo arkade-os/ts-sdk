@@ -206,13 +206,13 @@ const recordingWallet = (
 };
 
 const lightningSend = (wallet: IWallet) =>
-    requestLightningSend(wallet, "http://ark", lightningTransport(), {
+    requestLightningSend(wallet, "http://operator", lightningTransport(), {
         emulatorPubkey: EMULATOR_PUBKEY_HEX,
         invoice: INVOICE,
     });
 
 const onchainSend = (wallet: IWallet) =>
-    requestOnchainSend(wallet, "http://ark", onchainTransport(), {
+    requestOnchainSend(wallet, "http://operator", onchainTransport(), {
         emulatorPubkey: EMULATOR_PUBKEY_HEX,
         amount: 100_000,
         amountSide: "to",
@@ -334,7 +334,6 @@ const vtxo = (script: string, value: number): ExtendedVirtualCoin =>
         vout: 0,
         value,
         status: { confirmed: true },
-        virtualStatus: { state: "settled" },
         createdAt: new Date(),
         isUnrolled: false,
         isSpent: false,
@@ -348,7 +347,6 @@ const realWallet = async () => {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
     const wallet = await ReadonlyWallet.create({
-        arkServerUrl: "http://localhost:7070",
         arkProvider: { getInfo: async () => arkInfo() } as Partial<ArkProvider> as ArkProvider,
         indexerProvider: offlineIndexer(),
         onchainProvider: {
