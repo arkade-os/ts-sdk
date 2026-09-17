@@ -108,11 +108,12 @@ describe("Common", () => {
                 execCommand(
                     `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`,
                 );
+                await waitFor(async () => (await alice.wallet.getVtxos()).length > 0);
+
                 execCommand(
                     `${arkdExec} ark send --to ${bobOffchainAddress} --amount ${fundAmount} --password secret`,
                 );
-
-                await new Promise((resolve) => setTimeout(resolve, 1000));
+                await waitFor(async () => (await bob.wallet.getVtxos()).length > 0);
 
                 const virtualCoins = await alice.wallet.getVtxos();
                 expect(virtualCoins).toHaveLength(1);
