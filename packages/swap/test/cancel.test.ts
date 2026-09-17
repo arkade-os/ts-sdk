@@ -166,7 +166,9 @@ describe("cancelOffer guards", () => {
                 repository: new InMemoryAssetSwapRepository(),
             }),
         ).rejects.toThrow("no spendable VTXO");
-        expect((state.connectOptions ?? { contractManager: undefined })?.contractManager).toBe(contractManager);
+        expect((state.connectOptions ?? { contractManager: undefined })?.contractManager).toBe(
+            contractManager,
+        );
     });
 });
 
