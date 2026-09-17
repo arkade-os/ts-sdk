@@ -93,7 +93,9 @@ export interface SnapshotRef {
  * one place the sentence "the market picks the backend" stops: a quote closed
  * out of an open auction has a market *key* and no card behind it, so every
  * card-derived field is absent at once rather than one at a time. Sizing that
- * arm now costs a discriminant and keeps the addressed arm total.
+ * arm now costs a discriminant and keeps the addressed arm total. The restored
+ * arm is the same idea for a record rebuilt from chain: no card, no auction,
+ * every card-derived field absent at once.
  */
 export type MarketRef = CardMarketRef | AuctionMarketRef | RestoredMarketRef;
 
@@ -128,7 +130,14 @@ export interface AuctionMarketRef {
     readonly backend: "rfq";
 }
 
-/** A record rebuilt from the funding tx after a restore: no card stands behind it. */
+/**
+ * A record rebuilt from the funding tx after a restore: no card stands behind it.
+ *
+ * ponytail: no snapshot, solver, pair or key invented here — the chain carries
+ * the covenant and the deposit, not who priced it. `backend: "feed"` is the
+ * offer family's backend, not a claim that a feed was read. Add a snapshot
+ * only if a consumer must persist display metadata the scan cannot rebuild.
+ */
 export interface RestoredMarketRef {
     readonly kind: "restored";
     readonly backend: "feed";

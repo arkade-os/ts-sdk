@@ -225,4 +225,14 @@ describe("a deposit's fate on a record", () => {
         expect(written.spentTxid).toBe("bb".repeat(32));
         expect(written.status).toBe("recoverable");
     });
+
+    it("writes the chain's pending over a stored cancelling", () => {
+        // cancelling is the live cancel() gate, not a chain fact. A crash
+        // between the gate and the broadcast leaves an unspent deposit, which
+        // is pending; cancel() retries from there. Arkade txs land in <500ms,
+        // so the in-between is not a durable status (arkade-os/ts-sdk#930).
+        const stored = record({ status: "cancelling" });
+        expect(fateMoved(stored, { status: "pending" })).toBe(true);
+        expect(withDepositFate(stored, { status: "pending" }, 9_000).status).toBe("pending");
+    });
 });

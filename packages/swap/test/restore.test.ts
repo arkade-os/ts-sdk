@@ -574,22 +574,33 @@ describe("restoreAssetSwaps", () => {
         expect((await scan(indexer, txs)).restored[0]?.swapAddress).toBe("");
     });
 
-    it("leaves the address empty when the key no longer derives the funded script", async () => {
-        // A rotated operator key compiles a different covenant. `cancelOffer`
-        // rebuilds from `swapAddress`, so naming that one points it at a script
-        // the deposit was never funded against — worse than naming none.
+    it("leaves a deposit unresolved when the operator key does not rebuild the funded script", async () => {
+        // The packet names swapPkScript; compiling against a rotated operator
+        // key produces a different covenant. Persisting that key's address —
+        // or an empty one cancel would rebuild from the current key — strands
+        // cancel with a covenant it cannot spend. Leave unresolved so a later
+        // restore with the funded key can still answer.
         const offer = makeOffer("want-asset", BigInt(992));
         const funding = fundingPsbt(offer);
+        const txs = [walletTx(funding.txid, "sent")];
         const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+        const rotated = key("99");
 
-        const rotated = await restoreAssetSwaps(
-            indexer,
-            [walletTx(funding.txid, "sent")],
-            new Set(),
-            { operatorPubkey: key("44"), hrp: "tark" },
-        );
-        expect(rotated.restored[0]?.swapPkScript).toBe(scriptOf(offer));
-        expect(rotated.restored[0]?.swapAddress).toBe("");
+        const result = await restoreAssetSwaps(indexer, txs, new Set(), {
+            operatorPubkey: rotated,
+            hrp: "tark",
+        });
+        expect(result).toEqual({ restored: [], scannedTxids: [] });
+
+        // Swept is the same trap: recoverable would otherwise persist the
+        // wrong address, and recover() could not cancel or spend from it.
+        const swept = makeIndexer([funding], [depositVtxo(offer, funding.txid, { isSwept: true })]);
+        expect(
+            await restoreAssetSwaps(swept, txs, new Set(), {
+                operatorPubkey: rotated,
+                hrp: "tark",
+            }),
+        ).toEqual({ restored: [], scannedTxids: [] });
     });
 });
 

@@ -234,7 +234,10 @@ export interface SwapDrive {
     idle(): Promise<void>;
 }
 
-/** Offer statuses that still have something to drive. */
+/** Offer statuses that still have something to drive.
+ * ponytail: `recoverable` is not live — the deposit is swept, the answer
+ * cannot change off-chain — so its funding txid is marked scanned. That is
+ * why `recover()` bypasses the cursor after `recoverVtxos()` (#930). */
 const OFFER_LIVE = (status: OfferSwapRecord["status"]): boolean =>
     status === "pending" || status === "cancelling";
 
@@ -797,6 +800,11 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
      * it. `recover()` needs that: a `recoverable` deposit is not `OFFER_LIVE`,
      * so its txid was marked scanned, and the pass after `recoverVtxos()` would
      * otherwise skip the very record it exists to update.
+     *
+     * ponytail: this `reopen` is a cursor bypass for one funding txid, not
+     * v1's `restoreAssetSwaps({ reopen })` which takes `AssetSwap` rows. The
+     * v2 store is a different keyspace; matching after the scan is the
+     * equivalent.
      */
     const restoreOfferDeposits = async (reopen?: string): Promise<OfferSwapRecord[]> => {
         const store = storage();
@@ -817,6 +825,11 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }));
 
         const { hrp, serverPubKey: operatorPubkey } = ArkAddress.decode(address);
+        // ponytail(arkade-os/ts-sdk#930): `recover()` bypasses the cursor for
+        // the named funding txid after `recoverVtxos()`. A recoverable deposit
+        // is marked scanned (`OFFER_LIVE` is pending|cancelling), so without
+        // the bypass the next scan would skip it and keep reporting
+        // `needs_recovery` even when the round succeeded.
         const cursor =
             reopen === undefined
                 ? scanned
@@ -870,6 +883,9 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         for (const record of current.values()) {
             if (OFFER_LIVE(record.status) && record.fundingTxid) stillLive.add(record.fundingTxid);
         }
+        // Live funding txids stay off the cursor: pending can still be filled,
+        // swept, or cancelled. Everything else — recoverable included — is
+        // answered once, until `recover()` bypasses the cursor.
         await store.markTxidsScanned(scannedTxids.filter((txid) => !stillLive.has(txid)));
 
         const registry = managerDeps.contracts;

@@ -306,7 +306,13 @@ export interface DepositFate {
 }
 
 /** A deposit's fate written onto its record. The spend too: the watcher only
- * writes a spend it saw, and it sees nothing between two clients. */
+ * writes a spend it saw, and it sees nothing between two clients.
+ *
+ * ponytail(arkade-os/ts-sdk#930): restore writes chain fate only — an unspent
+ * deposit is `pending`, even when the stored row was `cancelling`. That gate is
+ * the live `cancel()` write, not a chain fact; a crash between it and the
+ * broadcast reappears as `pending`, which `cancel()` retries. Arkade txs land
+ * in <500ms, so the in-between is not a durable status. */
 export const withDepositFate = (
     record: OfferSwapRecord,
     fate: DepositFate,
@@ -331,6 +337,10 @@ export const fateMoved = (record: OfferSwapRecord, fate: DepositFate): boolean =
  * it. The chain carries the covenant and the deposit; the market, solver,
  * spread and deadline it does not, hence `market.kind: "restored"` and a
  * zero fee.
+ *
+ * ponytail: `expiresAt` is the funding time, not a quote deadline — an offer
+ * covenant never expires. `fee` is zero because the scan cannot recompute the
+ * spread. Do not invent a solver pubkey from the operator key.
  */
 export const restoredOfferRecord = (
     swap: AssetSwap,

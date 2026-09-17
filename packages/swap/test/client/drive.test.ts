@@ -861,6 +861,29 @@ describe("the offer half", () => {
         expect(drive.swap("o1")?.outcome).toBe("open");
         await drive.dispose();
     });
+
+    it("writes pending over a stored cancelling when the deposit is still unspent", async () => {
+        // Restore has no in-between: the chain's unspent deposit is pending,
+        // and cancel() retries from there. The live cancel() gate is not a
+        // chain fact (arkade-os/ts-sdk#930).
+        const funding = offerFunding();
+        const { drive, repository } = await restoreOver(
+            [
+                offerRecord({
+                    fundingTxid: funding.txid,
+                    swapPkScript: OFFER_SCRIPT,
+                    status: "cancelling",
+                }),
+            ],
+            funding,
+            offerDeposit(funding.txid),
+        );
+        expect((await repository.getSwapRecord("o1")) as OfferSwapRecord).toMatchObject({
+            status: "pending",
+        });
+        expect(drive.swap("o1")?.outcome).toBe("open");
+        await drive.dispose();
+    });
 });
 
 describe("recover()", () => {
