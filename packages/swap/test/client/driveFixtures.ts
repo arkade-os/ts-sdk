@@ -190,7 +190,7 @@ export const offerFunding = (): { psbt: string; txid: string } => {
 /** The deposit at the offer's script, in whatever state the scan should read. */
 export const offerDeposit = (
     txid: string,
-    facts: Pick<FakeVtxo, "isSwept" | "isSpent"> = {},
+    facts: Partial<Pick<FakeVtxo, "isSwept" | "isSpent" | "spentBy" | "arkTxId">> = {},
 ): FakeVtxo => ({
     txid,
     vout: 0,
@@ -202,6 +202,27 @@ export const offerDeposit = (
     isSwept: false,
     ...facts,
 });
+
+/**
+ * A spend of the offer deposit, carrying the covenant leaf it took.
+ *
+ * The leaf is what `classifySpend` reads — `cancel` and `exit` hand the deposit
+ * back, `fulfill` is the solver paying for it — so a spend without one is
+ * `indeterminate` and the scan writes nothing.
+ */
+export const offerSpend = (
+    deposit: { txid: string; vout: number },
+    via: "cancel" | "fulfill" | "exit" = "cancel",
+): { psbt: string; txid: string } => {
+    const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
+    tx.addInput({
+        txid: hex.decode(deposit.txid),
+        index: deposit.vout,
+        tapLeafScript: [offerContract(OFFER_BINDING, OPERATOR).functionByName(via)!.tapLeafScript],
+    });
+    tx.addOutput({ script: PAYOUT, amount: 90_000n });
+    return { psbt: base64.encode(tx.toPSBT()), txid: tx.id };
+};
 
 /** A v2 offer record. `offerHex` is never decoded by anything under test here —
  * only the watcher's spend classifier reads it, and these tests drive the

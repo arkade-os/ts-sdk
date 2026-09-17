@@ -792,8 +792,13 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
      * every deposit is answered. A live offer's txid stays off the cursor:
      * its answer can still change. Returns the offer records as they stand,
      * which is what arming reads.
+     *
+     * `reopen` names one funding txid to re-answer even though the cursor has
+     * it. `recover()` needs that: a `recoverable` deposit is not `OFFER_LIVE`,
+     * so its txid was marked scanned, and the pass after `recoverVtxos()` would
+     * otherwise skip the very record it exists to update.
      */
-    const restoreOfferDeposits = async (): Promise<OfferSwapRecord[]> => {
+    const restoreOfferDeposits = async (reopen?: string): Promise<OfferSwapRecord[]> => {
         const store = storage();
         const [history, scanned, address, network] = await Promise.all([
             wallet.getTransactionHistory(),
@@ -812,9 +817,13 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }));
 
         const { hrp, serverPubKey: operatorPubkey } = ArkAddress.decode(address);
+        const cursor =
+            reopen === undefined
+                ? scanned
+                : new Set([...scanned].filter((txid) => txid !== reopen));
         const { restored, scannedTxids } = await restoreAssetSwaps(indexer, txs, new Set(), {
             operatorPubkey,
-            scanned,
+            scanned: cursor,
             hrp,
         });
 
@@ -1123,7 +1132,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             );
         }
         const txid = await track((await recoverer()).recoverVtxos());
-        await restoreOfferDeposits();
+        await restoreOfferDeposits(record.fundingTxid);
         const after = records.get(id);
         const recovered = after?.family === "offer" && after.status !== "recoverable";
         return { recovered, txid, swap: swapView(id) };

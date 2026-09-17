@@ -51,6 +51,7 @@ import {
     offerDeposit,
     offerFunding,
     offerRecord,
+    offerSpend,
     type FakeContracts,
     type FakeFunded,
     type FakeVtxo,
@@ -928,6 +929,34 @@ describe("recover()", () => {
     it("refuses an id it holds no record for", async () => {
         const h = await build();
         await expect(h.drive.recover("nope")).rejects.toMatchObject({ reason: "unknown-swap" });
+        await h.drive.dispose();
+    });
+
+    it("re-answers a recovered offer deposit the cursor had already answered", async () => {
+        // `recoverable` is not OFFER_LIVE, so the construction restore marks the
+        // funding txid scanned. The pass after `recoverVtxos()` has to read it
+        // anyway: skipping it reports failure over a deposit that did come back.
+        const funding = offerFunding();
+        const vtxos = [offerDeposit(funding.txid, { isSwept: true })];
+        const txs = [funding];
+        const h = await build({
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            vtxos,
+            txs,
+            contracts: fakeContracts([]),
+        });
+        expect(h.drive.swap(funding.txid)?.outcome).toBe("needs_recovery");
+        expect(await h.repository.getScannedTxids()).toEqual(new Set([funding.txid]));
+
+        // The recovery round settles the swept deposit back; the cancel leaf on
+        // the spend is what lets the scan say so.
+        const spend = offerSpend({ txid: funding.txid, vout: 0 });
+        txs.push(spend);
+        vtxos[0] = offerDeposit(funding.txid, { isSpent: true, spentBy: spend.txid });
+
+        const result = await h.drive.recover(funding.txid);
+        expect(result.recovered).toBe(true);
+        expect(h.drive.swap(funding.txid)?.outcome).toBe("cancelled");
         await h.drive.dispose();
     });
 });
