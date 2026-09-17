@@ -115,12 +115,11 @@ const depositVtxo = (offer: Offer, txid: string, extra: Record<string, unknown> 
     script: scriptOf(offer),
     value: 10_000,
     createdAt: new Date(1_700_000_000_000),
-    virtualStatus: { state: "settled" },
     ...extra,
 });
 
 const spentVtxo = (offer: Offer, txid: string, spentBy: string, extra = {}) =>
-    depositVtxo(offer, txid, { virtualStatus: { state: "spent" }, arkTxId: spentBy, ...extra });
+    depositVtxo(offer, txid, { isSpent: true, arkTxId: spentBy, ...extra });
 
 const scan = (
     indexer: RestoreIndexer,
@@ -377,11 +376,13 @@ describe("restoreAssetSwaps", () => {
     it("keeps an unspent deposit pending and a swept one recoverable", async () => {
         const offer = makeOffer("want-asset", BigInt(992));
         const funding = fundingPsbt(offer);
-        for (const [state, status] of [
-            ["settled", "pending"],
-            ["swept", "recoverable"],
-        ]) {
-            const vtxo = depositVtxo(offer, funding.txid, { virtualStatus: { state } });
+        for (const [extra, status] of [
+            [{
+                settledBy: "a".repeat(64)
+            }, "pending"],
+            [{ isSwept: true }, "recoverable"],
+        ] as const) {
+            const vtxo = depositVtxo(offer, funding.txid, extra);
             const indexer = makeIndexer([funding], [vtxo]);
             const {
                 restored: [restored],
@@ -684,10 +685,7 @@ describe("restoreAssetSwaps — reopening records the scan left pending", () => 
     it("reports a swept deposit as recoverable on the run that catches it", async () => {
         const offer = makeOffer("want-asset", BigInt(992));
         const funding = fundingPsbt(offer);
-        const indexer = makeIndexer(
-            [],
-            [depositVtxo(offer, funding.txid, { virtualStatus: { state: "swept" } })],
-        );
+        const indexer = makeIndexer([], [depositVtxo(offer, funding.txid, { isSwept: true })]);
 
         const result = await reask(indexer, [record(offer, funding.txid)]);
 
