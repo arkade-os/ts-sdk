@@ -96,22 +96,11 @@ describe("ArkadeCash", () => {
         const alice = await fundedWallet(30000);
         const bob = await createTestArkWallet();
 
-        const selectable = async () =>
-            (await alice.wallet.getSpendableVtxos({ withRecoverable: false })).map(
-                (v) => `${v.txid}:${v.vout}`,
-            );
-
-        // A sync that beats the indexer to the first send re-offers its input as spendable.
-        const funding = await selectable();
-        expect(funding).toHaveLength(1);
         const cash1 = await alice.wallet.createCash(5000);
-        await waitFor(async () => {
-            const offered = new Set(await selectable());
-            return funding.every((outpoint) => !offered.has(outpoint));
-        });
+        // Until this tx is indexed the second send re-picks its input, or its change.
+        await waitForCashFunded(cash1);
         const cash2 = await alice.wallet.createCash(3000);
 
-        await waitForCashFunded(cash1);
         await waitForCashFunded(cash2);
 
         expect((await bob.wallet.claimCash(cash1)).swept).toBe(5000);
