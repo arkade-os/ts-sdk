@@ -143,6 +143,32 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         expect(vtxos[0]).toMatchObject({ isSpent: true, spentBy: CHECKPOINT, arkTxId: ARK_TX });
     });
 
+    it("fills missing provenance when the indexer confirms the spend", async () => {
+        const other: ExtendedVirtualCoin = {
+            ...spentDeposit(),
+            txid: "ef".repeat(32),
+            virtualStatus: { state: "settled" },
+            isSpent: false,
+            spentBy: "",
+            arkTxId: undefined,
+        };
+        await saveVtxosForContract(repository, contract, [spentDeposit(), other]);
+
+        await saveVtxosForContract(repository, contract, [
+            { ...spentDeposit(), spentBy: "", arkTxId: undefined },
+            other,
+        ]);
+
+        const vtxos = await getVtxosForContract(repository, contract);
+        expect(vtxos).toHaveLength(2);
+        expect(vtxos.find((v) => v.txid === "ab".repeat(32))).toMatchObject({
+            isSpent: true,
+            spentBy: CHECKPOINT,
+            arkTxId: ARK_TX,
+        });
+        expect(vtxos.find((v) => v.txid === "ef".repeat(32))?.isSpent).toBe(false);
+    });
+
     it("keeps the spent row alongside an unspent one at the same script", async () => {
         const unspent: ExtendedVirtualCoin = {
             ...spentDeposit(),
