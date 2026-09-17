@@ -377,9 +377,12 @@ describe("restoreAssetSwaps", () => {
         const offer = makeOffer("want-asset", BigInt(992));
         const funding = fundingPsbt(offer);
         for (const [extra, status] of [
-            [{
-                settledBy: "a".repeat(64)
-            }, "pending"],
+            [
+                {
+                    settledBy: "a".repeat(64),
+                },
+                "pending",
+            ],
             [{ isSwept: true }, "recoverable"],
         ] as const) {
             const vtxo = depositVtxo(offer, funding.txid, extra);
