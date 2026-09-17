@@ -159,6 +159,46 @@ describe("offer contract registration", () => {
         expect(encodedOffer.offerAsset).toBeUndefined();
     });
 
+    /** A solver whose dust is not 330 prices against its own; the constant would misfund. */
+    it("funds the carrier the solver published, not the SDK constant", async () => {
+        const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
+        const expected = await create();
+        const rfqId = "33".repeat(32);
+        const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
+        const quoteWith = (carrier?: string): RfqTransport => ({
+            requestQuote: vi.fn(async () => ({
+                v: 1,
+                type: "rfq_quote",
+                rfq_id: rfqId,
+                pair,
+                from_amount: "700",
+                to_amount: "50000",
+                ...(carrier === undefined ? {} : { carrier_sats: carrier }),
+                solver_pubkey: "22".repeat(32),
+                valid_until: 1_800_000_060,
+                profile: {
+                    offer_address: expected.address,
+                    offer_pk_script: hex.encode(expected.swapPkScript),
+                },
+            })),
+            status: vi.fn(async () => null),
+            close: vi.fn(async () => undefined),
+        });
+        const request = (transport: RfqTransport) =>
+            requestArkadeSwap(wallet, "http://ark", transport, {
+                offerAsset,
+                wantAsset: testAsset,
+                amount: 700n,
+                rfqId,
+                emulatorPubkey,
+                now: 1_800_000_000,
+            });
+
+        expect((await request(quoteWith("1000"))).carrierSats).toBe(1000n);
+        expect((await request(quoteWith(undefined))).carrierSats).toBe(330n);
+        expect((await request(quoteWith("0"))).carrierSats).toBe(330n);
+    });
+
     it("registers the funded covenant as an escrowed arkade contract", async () => {
         const offer = await create();
 
