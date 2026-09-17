@@ -93,9 +93,10 @@ export interface SnapshotRef {
  * one place the sentence "the market picks the backend" stops: a quote closed
  * out of an open auction has a market *key* and no card behind it, so every
  * card-derived field is absent at once rather than one at a time. Sizing that
- * arm now costs a discriminant and keeps the addressed arm total.
+ * arm now costs a discriminant and keeps the addressed arm total. The restored
+ * arm is the same idea for a record rebuilt from chain.
  */
-export type MarketRef = CardMarketRef | AuctionMarketRef;
+export type MarketRef = CardMarketRef | AuctionMarketRef | RestoredMarketRef;
 
 export interface CardMarketRef {
     readonly kind: "card";
@@ -126,6 +127,12 @@ export interface AuctionMarketRef {
     readonly kind: "auction";
     readonly key: string;
     readonly backend: "rfq";
+}
+
+/** A record rebuilt from the funding tx after a restore: no card stands behind it. */
+export interface RestoredMarketRef {
+    readonly kind: "restored";
+    readonly backend: "feed";
 }
 
 /**

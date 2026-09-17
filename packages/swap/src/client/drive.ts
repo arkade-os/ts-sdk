@@ -34,7 +34,7 @@ import {
 import { hex } from "@scure/base";
 import { pushClaim } from "../claim";
 import { claimOnchainFill } from "../onchainHtlc";
-import { RETIRABLE, retireSettledOfferContracts } from "../coverage";
+import { retireSettledOfferContracts } from "../coverage";
 import { lockupContractParams } from "../lockupContract";
 import { arkadeRefunder } from "../arkadeRefunder";
 import {
@@ -63,13 +63,16 @@ import {
 import { watchOfferSwaps, type OfferSwapWatcher } from "../watch";
 import type { CorridorSet } from "./corridors/registry";
 import { ClientDisposed } from "./errors";
+import type { NetworkRef } from "./assetId";
 import {
     corridorRecordStore,
+    fateMoved,
     offerFactsOf,
     offerRecordSource,
+    restoredOfferRecord,
     rfqRecordOf,
     splitRecords,
-    withOfferStatus,
+    withDepositFate,
     type CorridorRecordStore,
 } from "./driveRecords";
 import {
@@ -170,6 +173,8 @@ export interface SwapDriveConfig {
      * note requires.
      */
     readonly corridors: () => Promise<CorridorSet>;
+    /** The operator's network, for a rebuilt offer record's asset ids. Lazy like `corridors`. */
+    readonly network: () => Promise<NetworkRef>;
     readonly mode?: DriveMode;
     /**
      * How often the fallback poll pass runs. Default 5000 ms — the same
@@ -778,35 +783,27 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     const offers = () => (offerSource ??= offerRecordSource(storage(), remember, now));
 
     /**
-     * The offer half of the construction restore, and the only producer of a
-     * swept offer deposit's `recoverable`.
+     * The offer half of the construction restore: scan the wallet's sent txs
+     * and reconcile every deposit against the store. A deposit no record
+     * claims becomes a record (the store dies with its browser, the funding
+     * tx does not); a funded record `accept()` never stamped gets its txid;
+     * a known deposit gets its fate, spend included, since the watcher never
+     * sees a spend that landed while no client ran. `existingIds` is empty so
+     * every deposit is answered. A live offer's txid stays off the cursor:
+     * its answer can still change. Returns the offer records as they stand,
+     * which is what arming reads.
      *
-     * `restoreAssetSwaps` is the sole writer of that status and has no call site
-     * in this package — it is a root export consumers run on their own schedule
-     * — and the watcher cannot stand in for it: `spendUpdate` writes only
-     * `cancelled` or `fulfilled`, and a sweep is not a spend, so no contract
-     * event ever names one. Without this a swept deposit — the case `RETIRABLE`
-     * exists to keep watched — reports `open` forever.
-     *
-     * `existingIds` is empty ON PURPOSE. That parameter exists to skip deposits
-     * a caller already has a record for, which is right when the scan is
-     * REBUILDING v1 records; here the scan is answering what became of deposits
-     * whose v2 record already exists, so skipping them would skip everything.
-     * The cursor is what keeps it cheap, with one exception: a txid belonging to
-     * a still-live offer is never marked answered, because the answer can change
-     * and a scan that never looks again would be the same gap in a new place.
+     * `reopen` names one funding txid to re-answer even though the cursor has
+     * it: a `recoverable` deposit is not live, so its txid was marked scanned,
+     * and the pass after `recoverVtxos()` would otherwise skip it.
      */
-    const sweepOfferDeposits = async (offer: readonly OfferSwapRecord[]): Promise<void> => {
-        const funded = offer.filter(
-            (record) => record.fundingTxid !== undefined && !RETIRABLE.includes(record.status),
-        );
-        if (funded.length === 0) return;
-
+    const restoreOfferDeposits = async (reopen?: string): Promise<OfferSwapRecord[]> => {
         const store = storage();
-        const [history, scanned, address] = await Promise.all([
+        const [history, scanned, address, network] = await Promise.all([
             wallet.getTransactionHistory(),
             store.getScannedTxids(),
             wallet.getAddress(),
+            config.network(),
         ]);
         const txs: Tx[] = history.map((tx) => ({
             // `TxType` is `"SENT"`/`"RECEIVED"`; the scan filters on `"sent"`.
@@ -818,31 +815,67 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             ...(tx.createdAt ? { createdAt: Math.floor(tx.createdAt / 1000) } : {}),
         }));
 
+        const { hrp, serverPubKey: operatorPubkey } = ArkAddress.decode(address);
+        const cursor =
+            reopen === undefined
+                ? scanned
+                : new Set([...scanned].filter((txid) => txid !== reopen));
         const { restored, scannedTxids } = await restoreAssetSwaps(indexer, txs, new Set(), {
-            operatorPubkey: ArkAddress.decode(address).serverPubKey,
-            scanned,
+            operatorPubkey,
+            scanned: cursor,
+            hrp,
         });
-        const byDeposit = new Map(restored.map((s) => [`${s.swapPkScript}:${s.fundingTxid}`, s]));
 
-        const stillLive = new Set<string>();
-        for (const record of funded) {
-            const found = byDeposit.get(`${record.swapPkScript}:${record.fundingTxid}`);
-            const status = found?.status ?? record.status;
-            if (status !== record.status) {
-                const updated = withOfferStatus(record, status, now());
-                await store.saveSwapRecord(updated);
-                remember(updated);
-            }
-            if (OFFER_LIVE(status) && record.fundingTxid) stillLive.add(record.fundingTxid);
+        // After the scan: a record `accept()` persisted meanwhile is matched, not rebuilt.
+        const { offer } = splitRecords(await store.getAllSwapRecords());
+        const current = new Map(offer.map((record) => [record.id, record]));
+        const byDeposit = new Map(
+            offer
+                .filter((record) => record.fundingTxid !== undefined)
+                .map((record) => [`${record.swapPkScript}:${record.fundingTxid}`, record]),
+        );
+        // Identical offers derive one script, so each unstamped record is matched once.
+        const unstamped = new Map<string, OfferSwapRecord[]>();
+        for (const record of offer) {
+            if (record.fundingTxid !== undefined || !OFFER_LIVE(record.status)) continue;
+            unstamped.set(record.swapPkScript, [
+                ...(unstamped.get(record.swapPkScript) ?? []),
+                record,
+            ]);
         }
 
+        const write = async (record: OfferSwapRecord): Promise<void> => {
+            await store.saveSwapRecord(record);
+            current.set(record.id, record);
+            remember(record);
+        };
+        for (const found of restored) {
+            const known = byDeposit.get(`${found.swapPkScript}:${found.fundingTxid}`);
+            if (known !== undefined) {
+                if (fateMoved(known, found)) await write(withDepositFate(known, found, now()));
+                continue;
+            }
+            const orphan = unstamped.get(found.swapPkScript)?.shift();
+            if (orphan !== undefined) {
+                await write(
+                    withDepositFate({ ...orphan, fundingTxid: found.fundingTxid }, found, now()),
+                );
+                continue;
+            }
+            await write(restoredOfferRecord(found, network, now()));
+        }
+
+        const stillLive = new Set<string>();
+        for (const record of current.values()) {
+            if (OFFER_LIVE(record.status) && record.fundingTxid) stillLive.add(record.fundingTxid);
+        }
         await store.markTxidsScanned(scannedTxids.filter((txid) => !stillLive.has(txid)));
 
         const registry = managerDeps.contracts;
         if (registry) {
-            const { offer: current } = splitRecords(await store.getAllSwapRecords());
-            await retireSettledOfferContracts(registry, current.map(offerFactsOf));
+            await retireSettledOfferContracts(registry, [...current.values()].map(offerFactsOf));
         }
+        return [...current.values()];
     };
 
     // ── lifecycle ────────────────────────────────────────────────────────────
@@ -969,14 +1002,15 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }
 
         // After the corridor half, because it is what resolves the contract
-        // registry this needs to retire settled scripts.
+        // registry this needs to retire settled scripts. Its answer is what
+        // arming reads: a rebuilt or moved record is live work.
+        let offers = offer;
         try {
-            await sweepOfferDeposits(offer);
+            offers = await restoreOfferDeposits();
         } catch (error) {
-            // The offer sweep reads the wallet's history and the indexer, and
-            // neither is the repository: an outage there costs a swept deposit
-            // its label until the next construction, never `ready`.
-            console.warn("[swap] the offer deposit sweep did not complete", error);
+            // History and the indexer, not the repository: an outage costs a
+            // deposit its record or label until the next construction, never `ready`.
+            console.warn("[swap] the offer deposit restore did not complete", error);
         }
 
         // Before arming, so the stream carries what the READ found and not only
@@ -984,7 +1018,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         // that the very first pass unblocks would otherwise appear as one
         // `funded` and the refusal would never have been visible.
         emitAll();
-        if (mode === "auto" && (await hasLiveWork(offer))) {
+        if (mode === "auto" && (await hasLiveWork(offers))) {
             try {
                 await arm();
             } catch (error) {
@@ -1097,7 +1131,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             );
         }
         const txid = await track((await recoverer()).recoverVtxos());
-        await sweepOfferDeposits([records.get(id) as OfferSwapRecord]);
+        await restoreOfferDeposits(record.fundingTxid);
         const after = records.get(id);
         const recovered = after?.family === "offer" && after.status !== "recoverable";
         return { recovered, txid, swap: swapView(id) };

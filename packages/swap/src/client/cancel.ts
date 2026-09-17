@@ -33,6 +33,10 @@
  * classified by the watcher, and a `cancelling` record with no spend and an
  * intact deposit is a cancel that never broadcast — a second `cancel()` resumes
  * it, the same idempotence-absorbing retry `accept()` already gives.
+ * ponytail(arkade-os/ts-sdk#930): construction restore writes that unspent
+ * deposit as `pending` (chain fate, not the gate); `cancel()` retries from
+ * pending the same way. Arkade txs land in <500ms, so the in-between is not a
+ * durable status.
  */
 import { base64, hex } from "@scure/base";
 import { ArkAddress, Transaction, type IWallet } from "@arkade-os/sdk";

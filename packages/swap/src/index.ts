@@ -116,6 +116,7 @@ export type {
     QuoteId,
     QuoteInput,
     QuoteLeg,
+    RestoredMarketRef,
     RankedBid,
     ResolvedEndpoint,
     RouteResolution,

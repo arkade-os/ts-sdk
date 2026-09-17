@@ -266,8 +266,8 @@ const recordedFacts = (quote: Quote): RecordedFacts => ({
  * `CardMarketRef.source` and not `snapshot.registry`: `source` is the field the
  * policy allowlist already matches on and the one a locally pinned card carries
  * a label in, while `snapshot.registry` is absent on an injected snapshot. The
- * auction arm has no source at all, which reads as "absent on both sides" and
- * therefore never conflicts.
+ * auction and restored arms have no source at all, which reads as "absent on
+ * both sides" and therefore never conflicts.
  */
 const marketSourceOf = (market: Quote["market"]): string | undefined =>
     market.kind === "card" ? market.source : undefined;

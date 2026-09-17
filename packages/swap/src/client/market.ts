@@ -228,7 +228,7 @@ export const cardMarketOf = (
     snapshot,
 });
 
-/** Narrow a `MarketRef` to the card arm — the only one minted today. */
+/** Narrow a `MarketRef` to the card arm — the only one `quote()` mints. */
 export const isCardMarket = (market: MarketRef): market is CardMarketRef => market.kind === "card";
 
 /**

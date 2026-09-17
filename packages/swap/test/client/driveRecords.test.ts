@@ -12,10 +12,17 @@
  */
 import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
-import { rfqRecordOf, withRfqState } from "../../src/client/driveRecords";
+import {
+    fateMoved,
+    restoredOfferRecord,
+    rfqRecordOf,
+    withDepositFate,
+    withRfqState,
+} from "../../src/client/driveRecords";
 import type { RfqSwapRecord } from "../../src/rfqRecord";
-import type { CorridorSwapRecord } from "../../src/client/record";
-import { PREIMAGE, corridorRecord } from "./driveFixtures";
+import type { CorridorSwapRecord, OfferSwapRecord } from "../../src/client/record";
+import type { AssetSwap } from "../../src/store";
+import { OFFER_SCRIPT, PREIMAGE, corridorRecord, offerRecord } from "./driveFixtures";
 
 /** What the solver revealed in the witness that claimed the send lockup. */
 const RECEIPT = hex.encode(PREIMAGE);
@@ -38,8 +45,6 @@ describe("the settlement receipt across the bridge", () => {
     });
 
     it("is absent, not undefined, on a swap that never settled", () => {
-        // The record is asserted JSON-safe, so an explicitly-undefined key is
-        // noise that survives one serialization round trip and not the next.
         const record = corridorRecord();
         const state = rfqRecordOf(record);
         expect("settlementPreimageHex" in state).toBe(false);
@@ -100,5 +105,130 @@ describe("withRfqState replaces the mutable half", () => {
         // And the mutable half is the state's, not the record's.
         expect(written.state).toBe("settled");
         expect(written.updatedAt).toBe(2_000);
+    });
+});
+
+describe("a record rebuilt from the chain", () => {
+    const FUNDING = "aa".repeat(32);
+    const ASSET = "f1".repeat(34);
+    /** What `restoreAssetSwaps` hands the drive for one deposit. */
+    const found = (over: Partial<AssetSwap> = {}): AssetSwap => ({
+        id: FUNDING,
+        fromAsset: "btc",
+        toAsset: ASSET,
+        fromAmount: "100000",
+        toAmount: "5000",
+        swapAddress: "tark1qrestored",
+        swapPkScript: OFFER_SCRIPT,
+        offerHex: "00",
+        fundingTxid: FUNDING,
+        spentTxid: undefined,
+        status: "pending",
+        createdAt: 1_700_000_000_000,
+        ...over,
+    });
+
+    it("keys on the funding txid and spells both legs as arkade ids", () => {
+        const record = restoredOfferRecord(found(), "regtest", 3_000);
+        expect(record).toMatchObject({
+            id: FUNDING,
+            family: "offer",
+            status: "pending",
+            fundingTxid: FUNDING,
+            route: {
+                give: { corridor: "arkade", asset: "arkade:regtest/slip44:0" },
+                take: { corridor: "arkade", asset: `arkade:regtest/asset:${ASSET}` },
+            },
+            give: { asset: "arkade:regtest/slip44:0", amount: "100000" },
+            take: { asset: `arkade:regtest/asset:${ASSET}`, amount: "5000" },
+            swapAddress: "tark1qrestored",
+            swapPkScript: OFFER_SCRIPT,
+            offerHex: "00",
+            updatedAt: 3_000,
+        });
+        const inverse = restoredOfferRecord(
+            found({ fromAsset: ASSET, toAsset: "btc" }),
+            "regtest",
+            0,
+        );
+        expect(inverse.give.asset).toBe(`arkade:regtest/asset:${ASSET}`);
+        expect(inverse.take.asset).toBe("arkade:regtest/slip44:0");
+    });
+
+    it("names no market it never saw", () => {
+        const record = restoredOfferRecord(found(), "regtest", 0);
+        expect(record.market).toEqual({ kind: "restored", backend: "feed" });
+        expect(record.fee).toEqual({ asset: `arkade:regtest/asset:${ASSET}`, amount: "0" });
+        expect(record.solver).toBeUndefined();
+    });
+
+    it("carries seconds where AssetSwap carries milliseconds", () => {
+        const record = restoredOfferRecord(
+            found({
+                status: "fulfilled",
+                spentTxid: "bb".repeat(32),
+                completedAt: 1_700_000_100_000,
+            }),
+            "regtest",
+            0,
+        );
+        expect(record.createdAt).toBe(1_700_000_000);
+        expect(record.expiresAt).toBe(1_700_000_000);
+        expect(record.completedAt).toBe(1_700_000_100);
+        expect(record.spentTxid).toBe("bb".repeat(32));
+    });
+
+    it("writes an unspent deposit's spend absent, not undefined", () => {
+        const record = restoredOfferRecord(found(), "regtest", 0);
+        expect("spentTxid" in record).toBe(false);
+        expect("completedAt" in record).toBe(false);
+    });
+});
+
+describe("a deposit's fate on a record", () => {
+    const record = (over: Partial<OfferSwapRecord> = {}) =>
+        offerRecord({ fundingTxid: "aa".repeat(32), ...over });
+
+    it("is quiet for a deposit that has not moved", () => {
+        expect(fateMoved(record(), { status: "pending" })).toBe(false);
+        expect(
+            fateMoved(
+                record({ status: "fulfilled", spentTxid: "bb".repeat(32), completedAt: 1_700 }),
+                {
+                    status: "fulfilled",
+                    spentTxid: "bb".repeat(32),
+                    completedAt: 1_700_000,
+                },
+            ),
+        ).toBe(false);
+    });
+
+    it("moves on a spend the status alone would hide", () => {
+        const fate = {
+            status: "fulfilled" as const,
+            spentTxid: "bb".repeat(32),
+            completedAt: 1_700_000,
+        };
+        expect(fateMoved(record({ status: "fulfilled" }), fate)).toBe(true);
+        const written = withDepositFate(record({ status: "fulfilled" }), fate, 9_000);
+        expect(written).toMatchObject({
+            status: "fulfilled",
+            spentTxid: "bb".repeat(32),
+            completedAt: 1_700,
+            updatedAt: 9_000,
+        });
+    });
+
+    it("leaves a spend the fate does not name alone", () => {
+        const stamped = record({ spentTxid: "bb".repeat(32) });
+        const written = withDepositFate(stamped, { status: "recoverable" }, 9_000);
+        expect(written.spentTxid).toBe("bb".repeat(32));
+        expect(written.status).toBe("recoverable");
+    });
+
+    it("writes the chain's pending over a stored cancelling", () => {
+        const stored = record({ status: "cancelling" });
+        expect(fateMoved(stored, { status: "pending" })).toBe(true);
+        expect(withDepositFate(stored, { status: "pending" }, 9_000).status).toBe("pending");
     });
 });

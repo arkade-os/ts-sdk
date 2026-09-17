@@ -33,9 +33,11 @@ import type { AssetSwapRepository } from "../repository";
 import type { RfqSwapRecord } from "../rfqRecord";
 import type { RfqSwapRecordStore } from "../swapManager";
 import type { LockupSpendIndexer } from "../refund";
-import type { AssetSwapStatus } from "../store";
+import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "../store";
 import type { OfferSpendChanges, OfferSwapFacts, OfferSwapSource } from "../watch";
-import type { IWallet } from "@arkade-os/sdk";
+import { asset, type IWallet } from "@arkade-os/sdk";
+import { toAtomicDecimal } from "./amount";
+import { arkadeAsset, btcOn, type AssetId, type NetworkRef } from "./assetId";
 import type { QuoteId } from "./quote";
 import type { CorridorSwapRecord, OfferSwapRecord, SwapRecord } from "./record";
 
@@ -295,12 +297,80 @@ export const applyOfferSpend = (
     updatedAt: now,
 });
 
-/** A restored deposit's status, written onto a v2 offer record. */
-export const withOfferStatus = (
+/** What the restore scan learned about one deposit. */
+export interface DepositFate {
+    readonly status: AssetSwapStatus;
+    readonly spentTxid?: string;
+    /** Unix milliseconds, as `AssetSwap` carries it. */
+    readonly completedAt?: number;
+}
+
+/** A deposit's fate written onto its record. The spend too: the watcher only
+ * writes a spend it saw, and it sees nothing between two clients. */
+export const withDepositFate = (
     record: OfferSwapRecord,
-    status: AssetSwapStatus,
+    fate: DepositFate,
     now: number,
-): OfferSwapRecord => ({ ...record, status, updatedAt: now });
+): OfferSwapRecord => ({
+    ...record,
+    status: fate.status,
+    ...(fate.spentTxid === undefined ? {} : { spentTxid: fate.spentTxid }),
+    ...(fate.completedAt === undefined ? {} : { completedAt: Math.floor(fate.completedAt / 1000) }),
+    updatedAt: now,
+});
+
+/** Whether the fate says anything the record does not; the write it gates re-emits the swap. */
+export const fateMoved = (record: OfferSwapRecord, fate: DepositFate): boolean =>
+    record.status !== fate.status ||
+    (fate.spentTxid !== undefined && record.spentTxid !== fate.spentTxid) ||
+    (fate.completedAt !== undefined && record.completedAt !== Math.floor(fate.completedAt / 1000));
+
+/**
+ * An offer record for a deposit the restore scan found and no record claims.
+ * Keyed on the funding txid so a re-scan updates it rather than duplicating
+ * it. The chain carries the covenant and the deposit; the market, solver,
+ * spread and deadline it does not, hence `market.kind: "restored"` and a
+ * zero fee.
+ */
+export const restoredOfferRecord = (
+    swap: AssetSwap,
+    network: NetworkRef,
+    now: number,
+): OfferSwapRecord => {
+    const give = restoredAssetId(network, swap.fromAsset);
+    const take = restoredAssetId(network, swap.toAsset);
+    const createdAt = Math.floor(swap.createdAt / 1000);
+    return withDepositFate(
+        {
+            id: swap.fundingTxid,
+            family: "offer",
+            route: {
+                give: { corridor: "arkade", asset: give, instrument: { kind: "wallet" } },
+                take: { corridor: "arkade", asset: take, instrument: { kind: "wallet" } },
+            },
+            give: { asset: give, amount: toAtomicDecimal(BigInt(swap.fromAmount)) },
+            take: { asset: take, amount: toAtomicDecimal(BigInt(swap.toAmount)) },
+            fee: { asset: take, amount: toAtomicDecimal(BigInt(0)) },
+            market: { kind: "restored", backend: "feed" },
+            expiresAt: createdAt,
+            status: swap.status,
+            offerHex: swap.offerHex,
+            swapAddress: swap.swapAddress,
+            swapPkScript: swap.swapPkScript,
+            fundingTxid: swap.fundingTxid,
+            createdAt,
+            updatedAt: now,
+        },
+        swap,
+        now,
+    );
+};
+
+/** v1's asset spelling — `btc`, or the 68-hex identity — as an arkade id. */
+const restoredAssetId = (network: NetworkRef, id: string): AssetId<"arkade"> =>
+    id === BTC_ASSET_ID
+        ? btcOn("arkade", network)
+        : arkadeAsset(network, asset.AssetId.fromString(id));
 
 /**
  * The wallet's own reader, as the manager's one required observation seam.

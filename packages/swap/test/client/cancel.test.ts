@@ -157,6 +157,7 @@ const build = async (
         repository,
         contracts,
         corridors: fakeCorridors(),
+        network: async () => "regtest",
         operator: fakeOperator(),
         indexer,
         mode: "readonly",

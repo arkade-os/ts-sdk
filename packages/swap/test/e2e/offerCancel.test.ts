@@ -275,18 +275,11 @@ describe("the v2 cancel (regtest)", () => {
         await client[Symbol.asyncDispose]();
     }, 240_000);
 
-    it("loses a funded offer to a wiped store, and takes the chain scan to get it back", async () => {
+    it("rebuilds a funded offer from the chain when the store is wiped", async () => {
         // A wallet restored onto a second device: same seed, same VTXOs, empty
-        // swap store. The v2 construction restore reads records and nothing
-        // else, so the offer is invisible to the client — while the deposit
-        // stays escrowed, so generic spending cannot reach it either. Both
-        // halves are asserted because either one alone is survivable and
-        // together they are a deposit with no route out through this API.
-        //
-        // `restoreAssetSwaps` is the route out, and it has no call site in this
-        // package by design — a consumer runs it on their own schedule. That is
-        // the contract this test pins; a drive that ever learns to scan for
-        // itself should fail here and be rewritten, not deleted.
+        // swap store. The construction restore rebuilds the offer from the
+        // funding tx, keyed on its txid, so the accepted swap's own id still
+        // answers `NotCancellable`.
         const store = new InMemoryAssetSwapRepository();
         const client = clientOn({ repository: store });
         const quote = await client.quote({
@@ -306,20 +299,18 @@ describe("the v2 cancel (regtest)", () => {
 
         const wiped = clientOn({ repository: new InMemoryAssetSwapRepository() });
         await wiped.ready;
-        expect(await wiped.swaps()).toEqual([]);
+        const rebuilt = (await wiped.swaps()).find(
+            (s) => quoteIdOfSwapId(s.id) === record.fundingTxid,
+        );
+        expect(rebuilt).toBeDefined();
+        expect(rebuilt?.market.kind).toBe("restored");
+        expect(rebuilt?.outcome).toBe("open");
         await expect(wiped.cancel(swap.id)).rejects.toBeInstanceOf(NotCancellable);
         expect((await wallet.getBalance()).gated).toBeGreaterThanOrEqual(DEPOSIT_SATS);
         await wiped[Symbol.asyncDispose]();
 
-        // The scan rebuilds the offer from the funding transaction alone, and
-        // the bytes it hands back are the ones the covenant was funded against.
-        //
-        // The txid is named here rather than read from `getTransactionHistory`,
-        // and that is not a shortcut: `createOffer` registers the covenant as a
-        // contract of this wallet, so the deposit output counts as CHANGE in the
-        // history builder. A BTC-give funding tx therefore nets to zero and is
-        // dropped as a pure self-transfer (`transactionHistory.ts`), and the
-        // wallet's history never carries the one txid this scan needs.
+        // The same scan as a root export. The txid is named rather than read
+        // from history so this half stays hermetic.
         const history: Tx[] = [
             {
                 type: "sent",

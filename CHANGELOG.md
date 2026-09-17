@@ -109,6 +109,15 @@ style and have not been backfilled.
   capability check, or keep your own reference to the provider you
   handed `connect`. Type-only: the field still holds that provider
   untouched, so there is no runtime or on-disk effect. (#734)
+- **`@arkade-os/swap`: `MarketRef` gains a `"restored"` member, and
+  `withOfferStatus` is now `withDepositFate`.** A record the client rebuilds
+  from chain carries `market: { kind: "restored" }`, which has no `.key` —
+  reaching through an unnarrowed `MarketRef` to read `swap.market.key` stops
+  compiling and wants a `kind` check first. The advanced export
+  `withOfferStatus` is replaced by `withDepositFate`, which writes a
+  deposit's spend and completion time alongside its status. Type-only in
+  both cases: nothing on disk changes, and a record written before the
+  upgrade reads back unchanged. (#930)
 
 ### Features
 

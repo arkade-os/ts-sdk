@@ -253,16 +253,11 @@ export function classifyDepositSpend(
  *
  * `operatorPubkey` must be the operator key the covenants were funded against; a
  * key that has rotated since makes every affected swap unclassifiable rather
- * than misclassified.
+ * than misclassified, and a newly rebuilt record is left unresolved rather than
+ * persisted with that key's address.
  *
- * ## `client.ready` is not a substitute for this
- *
- * The drive's construction restore reads the repository and nothing else, so it
- * revives the records a store still holds and rediscovers none that it lost. A
- * store wiped after a deposit was funded therefore leaves the offer invisible to
- * the client and the deposit escrowed out of generic coin selection — recovered
- * only by running this scan, which the package deliberately never calls for you.
- * Pinned in `test/e2e/offerCancel.test.ts`.
+ * `client.ready` runs this scan for the v2 store (`restoreOfferDeposits`); the
+ * root export remains for a consumer running it on their own schedule.
  *
  */
 export async function restoreAssetSwaps(
@@ -273,9 +268,11 @@ export async function restoreAssetSwaps(
         operatorPubkey: Uint8Array;
         scanned?: ReadonlySet<string>;
         reopen?: AssetSwap[];
+        /** Address prefix; given, a rebuilt record names the covenant's address (#680). */
+        hrp?: string;
     },
 ): Promise<{ restored: AssetSwap[]; scannedTxids: string[] }> {
-    const { operatorPubkey, scanned = new Set<string>(), reopen = [] } = opts;
+    const { operatorPubkey, scanned = new Set<string>(), reopen = [], hrp } = opts;
     const reopened: Found[] = [];
     for (const swap of reopen) {
         try {
@@ -395,6 +392,8 @@ export async function restoreAssetSwaps(
         const fromAmount = depositAmount.toString();
 
         const spentTxid = vtxo.isSpent ? vtxo.arkTxId || vtxo.spentBy : undefined;
+        // Chain fate only: a stored `cancelling` reads back as `pending`, and
+        // cancel() retries from there.
         let status: AssetSwapStatus = "pending";
         if (vtxo.isSwept) status = "recoverable";
         else if (vtxo.isSpent) {
@@ -427,17 +426,32 @@ export async function restoreAssetSwaps(
             continue;
         }
 
+        let swapAddress = "";
+        try {
+            const compiled = offerContract(offer, operatorPubkey);
+            // A mismatch is a rotated operator key: leave the deposit unresolved
+            // rather than persist an address cancel cannot spend from.
+            if (hex.encode(compiled.pkScript) !== swapPkScript) {
+                unresolved.add(fundingTx.redeemTxid);
+                continue;
+            }
+            // ponytail(arkade-os/ts-sdk#680): without the prefix the address is
+            // empty and cancel falls back to the current operator key
+            if (hrp !== undefined) {
+                swapAddress = compiled.address(hrp, operatorPubkey).encode();
+            }
+        } catch {
+            unresolved.add(fundingTx.redeemTxid);
+            continue;
+        }
+
         restored.push({
             id: fundingTx.redeemTxid,
             fromAsset,
             toAsset,
             fromAmount,
             toAmount: offer.wantAmount.toString(),
-            // ponytail(arkade-os/ts-sdk#680): empty address makes cancel fall back
-            // to the current operator key; store the funded address if operator-key
-            // rotations become real (cancelOffer now at least diagnoses the
-            // mismatch instead of reporting a missing VTXO)
-            swapAddress: "",
+            swapAddress,
             swapPkScript,
             offerHex,
             fundingTxid: fundingTx.redeemTxid,
