@@ -863,9 +863,6 @@ describe("the offer half", () => {
     });
 
     it("writes pending over a stored cancelling when the deposit is still unspent", async () => {
-        // Restore has no in-between: the chain's unspent deposit is pending,
-        // and cancel() retries from there. The live cancel() gate is not a
-        // chain fact (arkade-os/ts-sdk#930).
         const funding = offerFunding();
         const { drive, repository } = await restoreOver(
             [
@@ -956,9 +953,6 @@ describe("recover()", () => {
     });
 
     it("re-answers a recovered offer deposit the cursor had already answered", async () => {
-        // `recoverable` is not OFFER_LIVE, so the construction restore marks the
-        // funding txid scanned. The pass after `recoverVtxos()` has to read it
-        // anyway: skipping it reports failure over a deposit that did come back.
         const funding = offerFunding();
         const vtxos = [offerDeposit(funding.txid, { isSwept: true })];
         const txs = [funding];
@@ -971,8 +965,6 @@ describe("recover()", () => {
         expect(h.drive.swap(funding.txid)?.outcome).toBe("needs_recovery");
         expect(await h.repository.getScannedTxids()).toEqual(new Set([funding.txid]));
 
-        // The recovery round settles the swept deposit back; the cancel leaf on
-        // the spend is what lets the scan say so.
         const spend = offerSpend({ txid: funding.txid, vout: 0 });
         txs.push(spend);
         vtxos[0] = offerDeposit(funding.txid, { isSpent: true, spentBy: spend.txid });

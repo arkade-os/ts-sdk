@@ -277,14 +277,9 @@ describe("the v2 cancel (regtest)", () => {
 
     it("rebuilds a funded offer from the chain when the store is wiped", async () => {
         // A wallet restored onto a second device: same seed, same VTXOs, empty
-        // swap store. The construction restore scans the wallet's sent txs and
-        // rebuilds a record for every deposit none claims, so the offer is
-        // reachable through this API alone — where it used to be a deposit with
-        // no route out, which is what this test pinned before the drive learned
-        // to scan.
-        //
-        // The id does not survive: a rebuilt record is keyed on the funding
-        // txid, so the accepted swap's own id still answers `NotCancellable`.
+        // swap store. The construction restore rebuilds the offer from the
+        // funding tx, keyed on its txid, so the accepted swap's own id still
+        // answers `NotCancellable`.
         const store = new InMemoryAssetSwapRepository();
         const client = clientOn({ repository: store });
         const quote = await client.quote({
@@ -314,12 +309,8 @@ describe("the v2 cancel (regtest)", () => {
         expect((await wallet.getBalance()).gated).toBeGreaterThanOrEqual(DEPOSIT_SATS);
         await wiped[Symbol.asyncDispose]();
 
-        // The same scan as a root export, which is still the supported route
-        // for a consumer running it on their own schedule. The txid is named
-        // rather than read from `getTransactionHistory` so this half stays
-        // hermetic: what it pins is that the offer rebuilds from the funding
-        // transaction alone, and the bytes it hands back are the ones the
-        // covenant was funded against.
+        // The same scan as a root export. The txid is named rather than read
+        // from history so this half stays hermetic.
         const history: Tx[] = [
             {
                 type: "sent",

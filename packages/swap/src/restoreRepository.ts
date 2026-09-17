@@ -38,9 +38,6 @@ export interface RestoreAssetSwapRepositoryResult {
 }
 
 const isOpen = (swap: AssetSwap) => swap.status === "pending" || swap.status === "cancelling";
-// ponytail(arkade-os/ts-sdk#930): v1 reopen still treats cancelling as live so a
-// consumer-held in-flight cancel is re-asked without being clobbered; the v2
-// drive writes chain fate instead and never passes `reopen`
 const isOfferSwap = (swap: AssetSwap): boolean =>
     typeof (swap as { offerHex?: unknown }).offerHex === "string";
 

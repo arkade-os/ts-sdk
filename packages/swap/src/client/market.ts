@@ -228,9 +228,7 @@ export const cardMarketOf = (
     snapshot,
 });
 
-/** Narrow a `MarketRef` to the card arm — `quote()` still mints only this one.
- * ponytail: the restored arm is minted by construction restore, never by
- * `quote()`, so a caller filtering `client.markets()` does not see it. */
+/** Narrow a `MarketRef` to the card arm — the only one `quote()` mints. */
 export const isCardMarket = (market: MarketRef): market is CardMarketRef => market.kind === "card";
 
 /**

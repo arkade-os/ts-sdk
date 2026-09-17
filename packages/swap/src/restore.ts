@@ -254,18 +254,10 @@ export function classifyDepositSpend(
  * `operatorPubkey` must be the operator key the covenants were funded against; a
  * key that has rotated since makes every affected swap unclassifiable rather
  * than misclassified, and a newly rebuilt record is left unresolved rather than
- * persisted with that key's address next to the funded script (#930).
+ * persisted with that key's address.
  *
- * ## `client.ready` runs this for the v2 store
- *
- * The drive's construction restore used to read the repository and nothing else,
- * so a store wiped after a deposit was funded left the offer invisible and the
- * deposit escrowed out of generic coin selection. `client.ready` now calls this
- * scan itself (`restoreOfferDeposits`): a second device with the same seed and
- * an empty store rebuilds a record keyed on the funding txid
- * (`market.kind: "restored"`). The root export remains the supported route for
- * a consumer running the scan on their own schedule — pinned in
- * `test/e2e/offerCancel.test.ts`.
+ * `client.ready` runs this scan for the v2 store (`restoreOfferDeposits`); the
+ * root export remains for a consumer running it on their own schedule.
  *
  */
 export async function restoreAssetSwaps(
@@ -400,11 +392,8 @@ export async function restoreAssetSwaps(
         const fromAmount = depositAmount.toString();
 
         const spentTxid = vtxo.isSpent ? vtxo.arkTxId || vtxo.spentBy : undefined;
-        // ponytail(arkade-os/ts-sdk#930): chain fate only — pending, cancelled,
-        // fulfilled, recoverable. `cancelling` is the live cancel() gate, not a
-        // chain fact; a crash between the gate and the broadcast reappears as
-        // pending, which cancel() retries. Arkade txs land in <500ms, so the
-        // in-between is not a durable status.
+        // Chain fate only: a stored `cancelling` reads back as `pending`, and
+        // cancel() retries from there.
         let status: AssetSwapStatus = "pending";
         if (vtxo.isSwept) status = "recoverable";
         else if (vtxo.isSpent) {
@@ -432,10 +421,6 @@ export async function restoreAssetSwaps(
                 : {};
 
         if (existing) {
-            // ponytail: v1 `restoreAssetSwaps({ reopen })` skips an unspent
-            // deposit so a consumer-held in-flight cancel is not clobbered;
-            // the v2 drive writes chain fate instead (see `withDepositFate`)
-            // and never passes that `reopen` list
             if (status === "pending") continue;
             restored.push({ ...existing, status, spentTxid, ...completion });
             continue;
@@ -444,13 +429,8 @@ export async function restoreAssetSwaps(
         let swapAddress = "";
         try {
             const compiled = offerContract(offer, operatorPubkey);
-            // ponytail(arkade-os/ts-sdk#930): a compiled script that disagrees
-            // with the packet's swapPkScript is a rotated operator key, not a
-            // covenant cancel can spend — leave unresolved rather than persist
-            // an empty-or-wrong address next to the funded script. Empty still
-            // lets cancel fall back to the current key; unresolved retries if a
-            // later restore has the funded one. `classifySpend` refuses the
-            // same mismatch on the spent path.
+            // A mismatch is a rotated operator key: leave the deposit unresolved
+            // rather than persist an address cancel cannot spend from.
             if (hex.encode(compiled.pkScript) !== swapPkScript) {
                 unresolved.add(fundingTx.redeemTxid);
                 continue;

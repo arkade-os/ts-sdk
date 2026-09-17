@@ -218,8 +218,6 @@ export const corridorOutcome = (kind: CorridorKind, state: RfqSwapState): Outcom
  * Two of the five live rows are not the drive's to produce. Nothing in M5's
  * loop writes `cancelling` or `cancelled`; both come from the awaited cancel
  * call M6 owns. The mapping is declared here; M6 supplies the transitions.
- * ponytail(arkade-os/ts-sdk#930): construction restore writes chain fate, so an
- * unspent `cancelling` becomes `pending`/`open` and cancel() retries from there.
  */
 const OFFER_OUTCOME: Record<AssetSwapStatus, Outcome> = {
     pending: "open",

@@ -175,10 +175,6 @@ export interface SwapRecordCommon {
      * is restated as read at accept rather than restamped — a past `fetchedAt`
      * beside the recorded `live` is the honest answer about how fresh the card
      * was when this swap was accepted.
-     *
-     * ponytail: a restored record has no card to store whole, so this is the
-     * {@link RestoredMarketRef} discriminant instead — do not synthesize a
-     * snapshot the scan never saw.
      */
     readonly market: MarketRef;
     /**

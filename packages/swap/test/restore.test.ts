@@ -575,11 +575,6 @@ describe("restoreAssetSwaps", () => {
     });
 
     it("leaves a deposit unresolved when the operator key does not rebuild the funded script", async () => {
-        // The packet names swapPkScript; compiling against a rotated operator
-        // key produces a different covenant. Persisting that key's address —
-        // or an empty one cancel would rebuild from the current key — strands
-        // cancel with a covenant it cannot spend. Leave unresolved so a later
-        // restore with the funded key can still answer.
         const offer = makeOffer("want-asset", BigInt(992));
         const funding = fundingPsbt(offer);
         const txs = [walletTx(funding.txid, "sent")];
@@ -592,8 +587,6 @@ describe("restoreAssetSwaps", () => {
         });
         expect(result).toEqual({ restored: [], scannedTxids: [] });
 
-        // Swept is the same trap: recoverable would otherwise persist the
-        // wrong address, and recover() could not cancel or spend from it.
         const swept = makeIndexer([funding], [depositVtxo(offer, funding.txid, { isSwept: true })]);
         expect(
             await restoreAssetSwaps(swept, txs, new Set(), {

@@ -203,13 +203,7 @@ export const offerDeposit = (
     ...facts,
 });
 
-/**
- * A spend of the offer deposit, carrying the covenant leaf it took.
- *
- * The leaf is what `classifySpend` reads — `cancel` and `exit` hand the deposit
- * back, `fulfill` is the solver paying for it — so a spend without one is
- * `indeterminate` and the scan writes nothing.
- */
+/** A spend of the offer deposit via the named covenant leaf, which is what `classifySpend` reads. */
 export const offerSpend = (
     deposit: { txid: string; vout: number },
     via: "cancel" | "fulfill" | "exit" = "cancel",
