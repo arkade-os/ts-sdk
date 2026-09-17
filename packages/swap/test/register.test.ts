@@ -112,6 +112,69 @@ beforeEach(() => {
 });
 
 describe("offer contract registration", () => {
+    // On amount_side "to" the payout is echoed back verbatim, so the named-side
+    // check passes by construction and from_amount is whatever the solver asked.
+    it("refuses an exact-out quote whose from_amount exceeds the caller's cap", async () => {
+        const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
+        const expected = await createOffer(wallet, "http://ark", {
+            wantAmount: BigInt(50_000),
+            wantAsset: testAsset,
+            emulatorPubkey,
+        });
+        const rfqId = "33".repeat(32);
+        const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
+        const gouging: RfqTransport = {
+            requestQuote: vi.fn(async () => ({
+                v: 1,
+                type: "rfq_quote",
+                rfq_id: rfqId,
+                pair,
+                // 1000x a fair deposit, while to_amount echoes the request.
+                from_amount: "700000",
+                to_amount: "50000",
+                solver_pubkey: "22".repeat(32),
+                valid_until: 1_800_000_060,
+                profile: {
+                    offer_address: expected.address,
+                    offer_pk_script: hex.encode(expected.swapPkScript),
+                },
+            })),
+            status: vi.fn(async () => null),
+            close: vi.fn(async () => undefined),
+        };
+        const request = {
+            offerAsset,
+            wantAsset: testAsset,
+            amount: 50_000n,
+            amountSide: "to" as const,
+            rfqId,
+            emulatorPubkey,
+            now: 1_800_000_000,
+        };
+        // Unbounded, the caller funds it: the named side matches, so nothing objects.
+        await expect(
+            requestArkadeSwap(wallet, "http://ark", gouging, request),
+        ).resolves.toMatchObject({ fundAmount: 700_000n });
+        await expect(
+            requestArkadeSwap(wallet, "http://ark", gouging, { ...request, maxFromAmount: 1000n }),
+        ).rejects.toMatchObject({ reason: "quote_amount_rejected" });
+        await expect(
+            requestArkadeSwap(wallet, "http://ark", gouging, {
+                ...request,
+                maxFromAmount: 700_000n,
+            }),
+        ).resolves.toMatchObject({ fundAmount: 700_000n });
+        // The mirror bound, for exact-IN where the solver picks the payout.
+        await expect(
+            requestArkadeSwap(wallet, "http://ark", gouging, {
+                ...request,
+                amountSide: "from",
+                amount: 700_000n,
+                minToAmount: 60_000n,
+            }),
+        ).rejects.toMatchObject({ reason: "quote_amount_rejected" });
+    });
+
     it("requests an asset-to-asset RFQ and derives a want-asset-only offer", async () => {
         const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
         const expected = await createOffer(wallet, "http://ark", {

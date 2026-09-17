@@ -1422,6 +1422,10 @@ export async function requestArkadeSwap(
         /** Atomic units of whichever leg `amountSide` names. */
         amount: bigint | number | string;
         amountSide?: "from" | "to";
+        /** Bounds the side the SOLVER chose — the named side is echoed back verbatim,
+         * so asserting it proves nothing and an unbounded caller funds what it is asked. */
+        maxFromAmount?: bigint | number | string;
+        minToAmount?: bigint | number | string;
         rfqId?: string;
         /** Co-signer key override (33-byte compressed hex); see `createOffer`. */
         emulatorPubkey?: string;
@@ -1484,6 +1488,24 @@ export async function requestArkadeSwap(
         throw new Error(
             `quote ${amountSide}_amount ${quoted} does not match the requested ${canonicalAssetAmount(params.amount)}`,
         );
+    }
+    if (params.maxFromAmount !== undefined) {
+        const cap = BigInt(canonicalAssetAmount(params.maxFromAmount));
+        if (BigInt(quote.from_amount) > cap) {
+            throw gateError(
+                "quote_amount_rejected",
+                `quote from_amount ${quote.from_amount} exceeds maxFromAmount ${cap}`,
+            );
+        }
+    }
+    if (params.minToAmount !== undefined) {
+        const floorAmount = BigInt(canonicalAssetAmount(params.minToAmount));
+        if (BigInt(quote.to_amount) < floorAmount) {
+            throw gateError(
+                "quote_amount_rejected",
+                `quote to_amount ${quote.to_amount} is under minToAmount ${floorAmount}`,
+            );
+        }
     }
     const offer = await createOffer(wallet, arkServerUrl, {
         wantAmount: terms.wantAmount,
