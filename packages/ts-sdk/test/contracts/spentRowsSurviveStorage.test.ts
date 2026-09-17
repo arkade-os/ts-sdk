@@ -127,6 +127,22 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         expect(vtxos[0]).toMatchObject({ isSpent: true, settledBy: COMMITMENT });
     });
 
+    // A sync for a fully-spent contract writes an all-spent batch, which may
+    // carry none of the provenance the pin is keyed on.
+    it("keeps the spend when an all-spent sync strips its provenance first", async () => {
+        await saveVtxosForContract(repository, contract, [spentDeposit()]);
+        const bare = { ...spentDeposit(), spentBy: "", arkTxId: undefined, settledBy: "" };
+
+        await saveVtxosForContract(repository, contract, [bare]);
+        await saveVtxosForContract(repository, contract, [
+            { ...bare, virtualStatus: { state: "settled" } as const, isSpent: false },
+        ]);
+
+        const vtxos = await getVtxosForContract(repository, contract);
+        expect(vtxos).toHaveLength(1);
+        expect(vtxos[0]).toMatchObject({ isSpent: true, spentBy: CHECKPOINT, arkTxId: ARK_TX });
+    });
+
     it("keeps the spent row alongside an unspent one at the same script", async () => {
         const unspent: ExtendedVirtualCoin = {
             ...spentDeposit(),

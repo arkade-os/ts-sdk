@@ -107,8 +107,6 @@ async function preserveRecordedSpends(
     contract: Pick<Contract, "script" | "address">,
     vtxos: ExtendedVirtualCoin[],
 ): Promise<ExtendedVirtualCoin[]> {
-    if (vtxos.every((vtxo) => vtxo.isSpent === true)) return vtxos;
-
     const recorded = new Map<string, NormalizedExtendedVirtualCoin>();
     for (const existing of await getVtxosForContract(repo, contract)) {
         if (hasRecordedSpend(existing)) recorded.set(vtxoOutpoint(existing), existing);
@@ -116,14 +114,18 @@ async function preserveRecordedSpends(
     if (recorded.size === 0) return vtxos;
 
     return vtxos.map((incoming) => {
-        const spent = incoming.isSpent === true ? undefined : recorded.get(vtxoOutpoint(incoming));
+        const spent = recorded.get(vtxoOutpoint(incoming));
         if (!spent) return incoming;
+        // Fresher incoming provenance wins; the record only fills what is missing.
+        const spentBy = incoming.spentBy || spent.spentBy;
+        const arkTxId = incoming.arkTxId || spent.arkTxId;
+        const settledBy = incoming.settledBy || spent.settledBy;
         return {
             ...incoming,
             isSpent: true,
-            ...(spent.spentBy ? { spentBy: spent.spentBy } : {}),
-            ...(spent.arkTxId ? { arkTxId: spent.arkTxId } : {}),
-            ...(spent.settledBy ? { settledBy: spent.settledBy } : {}),
+            ...(spentBy ? { spentBy } : {}),
+            ...(arkTxId ? { arkTxId } : {}),
+            ...(settledBy ? { settledBy } : {}),
         };
     });
 }

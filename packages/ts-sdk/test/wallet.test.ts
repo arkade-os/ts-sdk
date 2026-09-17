@@ -2581,6 +2581,7 @@ describe("Wallet.updateDbAfterSettle", () => {
         return {
             thisArg: {
                 walletRepository: {
+                    getVtxos: vi.fn().mockResolvedValue([]),
                     saveVtxos,
                     saveUtxos,
                     deleteUtxos,
