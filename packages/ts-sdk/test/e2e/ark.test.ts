@@ -1439,23 +1439,31 @@ describe("Cross-contract spending", () => {
         });
         expect(txid).toBeDefined();
 
-        // Verify delegate VTXOs were consumed
-        const contractsAfter = await manager.getContractsWithVtxos({
-            type: ["delegate"],
+        // Verify delegate VTXOs were consumed. arkd commits the spend to its
+        // indexer after FinalizeTx returns, so a single read can predate it.
+        let spentDelegateVtxos: typeof delegateVtxosBefore = [];
+        await waitFor(async () => {
+            const contractsAfter = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
+            spentDelegateVtxos = delegateVtxosBefore.filter(
+                (before) =>
+                    !delegateVtxosAfterUnspent.some(
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
+            );
+            return spentDelegateVtxos.length > 0;
         });
-        const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
-        const spentDelegateVtxos = delegateVtxosBefore.filter(
-            (before) =>
-                !delegateVtxosAfterUnspent.some(
-                    (after) => after.txid === before.txid && after.vout === before.vout,
-                ),
-        );
         expect(spentDelegateVtxos.length).toBeGreaterThan(0);
 
         // Step 4 — Verify change landed on the delegate address
+        // Named outpoint: "some VTXO is unspent" is already true pre-send.
         await waitFor(async () => {
-            const vtxos = await wallet2.getVtxos();
-            return vtxos.some((v) => !v.isSpent);
+            const delegateNow = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            return delegateNow[0].vtxos.some((v) => v.txid === txid && !v.isSpent);
         });
 
         const vtxosAfter = await wallet2.getVtxos();
@@ -1556,22 +1564,28 @@ describe("Cross-contract spending", () => {
         expect(txid).toBeDefined();
 
         // Verify delegate VTXOs were consumed
-        const contractsAfter = await manager.getContractsWithVtxos({
-            type: ["delegate"],
+        let spentDelegateVtxos: typeof delegateVtxosBefore = [];
+        await waitFor(async () => {
+            const contractsAfter = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
+            spentDelegateVtxos = delegateVtxosBefore.filter(
+                (before) =>
+                    !delegateVtxosAfterUnspent.some(
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
+            );
+            return spentDelegateVtxos.length > 0;
         });
-        const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
-        const spentDelegateVtxos = delegateVtxosBefore.filter(
-            (before) =>
-                !delegateVtxosAfterUnspent.some(
-                    (after) => after.txid === before.txid && after.vout === before.vout,
-                ),
-        );
         expect(spentDelegateVtxos.length).toBeGreaterThan(0);
 
         // Step 4 — Verify change landed on the delegate address
         await waitFor(async () => {
-            const vtxos = await wallet2.getVtxos();
-            return vtxos.some((v) => !v.isSpent);
+            const delegateNow = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            return delegateNow[0].vtxos.some((v) => v.txid === txid && !v.isSpent);
         });
 
         const vtxosAfter = await wallet2.getVtxos();
