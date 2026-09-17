@@ -73,7 +73,7 @@ function pathsFor(
     opts: { checkTimelocks: boolean },
 ): PathSelection[] {
     const walletKey = walletKeyFrom(context);
-    const serverHex = hex.encode(script.keys.serverKey);
+    const serverHex = script.keys.serverKey ? hex.encode(script.keys.serverKey) : undefined;
     const paths: PathSelection[] = [];
 
     for (const fn of script.compiled) {
@@ -83,8 +83,8 @@ function pathsFor(
         if (witness === null) continue;
 
         const signerHexes = fn.signerKeys.map((s) => hex.encode(s));
-        const requiresServer = signerHexes.includes(serverHex);
-        const nonServer = signerHexes.filter((s) => s !== serverHex);
+        const requiresServer = serverHex !== undefined && signerHexes.includes(serverHex);
+        const nonServer = serverHex ? signerHexes.filter((s) => s !== serverHex) : signerHexes;
 
         // If we know who the wallet is and the path needs non-server
         // signatures, the wallet must be one of those signers.

@@ -42,6 +42,11 @@ export {
     type ArkadeExtendedVirtualCoin,
 } from "./batch";
 export {
+    compileOnchainHtlc,
+    ONCHAIN_HTLC_PROGRAM,
+    type OnchainHtlcProgramParams,
+} from "./onchainHtlc";
+export {
     ArkadeProgramScript,
     stringifyArtifact,
     serializeArkadeContractParams,

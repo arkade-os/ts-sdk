@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { hex } from "@scure/base";
-import { RelativeTimelock, VHTLC } from "../../src";
+import { RelativeTimelock, VHTLC, arkade } from "../../src";
 import fixture from "../fixtures/vhtlc-v2-nine-leaf.json";
 
 /**
@@ -105,5 +105,29 @@ describe("VHTLC.ScriptV2 cross-SDK vectors", () => {
     it("pins the serialized taptree the Go decoder consumes", () => {
         const script = new VHTLC.ScriptV2(optionsFromFixture(fixture.options));
         expect(hex.encode(script.encode())).toBe(fixture.tapTree);
+    });
+
+    it("is a Program: the class, the binding, and a JSON round-trip share one pkScript", () => {
+        const options = optionsFromFixture(fixture.options);
+        const script = new VHTLC.ScriptV2(options);
+        const { program, args, keys } = VHTLC.binding(options, "v2");
+        const compiled = new arkade.ArkadeProgramScript(program, args, keys);
+        const roundTripped = arkade.parseArtifact(JSON.parse(arkade.stringifyArtifact(program)));
+        const fromJson = new arkade.ArkadeProgramScript(roundTripped, args, keys);
+
+        expect(script).toBeInstanceOf(arkade.ArkadeProgramScript);
+        expect(hex.encode(compiled.pkScript)).toBe(fixture.pkScript);
+        expect(hex.encode(fromJson.pkScript)).toBe(fixture.pkScript);
+        expect(compiled.compiled.map((f) => f.name)).toEqual([
+            "claim",
+            "refund",
+            "refundWithoutReceiver",
+            "unilateralClaim",
+            "unilateralRefund",
+            "unilateralRefundWithoutReceiver",
+            "nonInteractiveClaim",
+            "nonInteractiveRefund",
+            "nonInteractiveRefundWithoutReceiver",
+        ]);
     });
 });

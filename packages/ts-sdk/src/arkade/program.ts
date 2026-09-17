@@ -16,6 +16,12 @@
  *   {@link stringifyArtifact}) and the string-keyed contract params used to
  *   persist a program contract through the `src/contracts` pipeline.
  *
+ * Built-in contracts compile through this same path: VHTLC (script/vhtlc.ts)
+ * and the L1 HTLC (./onchainHtlc.ts) are Program bindings, not parallel
+ * script builders. `serverKey` is optional so an L1-only program (no Arkade
+ * Service co-signer) still compiles; the `"arkade"` handler uses it only to
+ * detect collaborative paths.
+ *
  * Keeping this free of provider/transaction imports lets the generic
  * `arkade` contract handler (src/contracts/handlers/arkade.ts) and the
  * high-level `ArkadeContract` client share one compilation path.
@@ -32,8 +38,8 @@ import {
     CLTVMultisigTapscript,
     ConditionMultisigTapscript,
     ConditionCSVMultisigTapscript,
+    TapscriptType,
     type ArkTapscript,
-    type TapscriptType,
 } from "../script/tapscript";
 import { VtxoScript, type TapLeafScript } from "../script/base";
 import { ArkadeScript } from "./script";
@@ -101,6 +107,13 @@ export interface TapscriptSegment {
      * ConditionMultisig leaf — or ConditionCSVMultisig when combined with `csv`.
      */
     asm?: AsmToken[];
+    /**
+     * When `false`, `asm` is concatenated with the signer checks as-is.
+     * Default `true` wraps the condition with VERIFY (arkd's ConditionMultisig).
+     * BOLT3 HTLC claim leaves end in EQUALVERIFY and must not wrap — a second
+     * VERIFY would pop an empty stack.
+     */
+    verify?: boolean;
     /**
      * Relative timelock (CSV). The value is a literal or a `"$param"` reference
      * resolved against the constructor args (same convention as {@link SignerRef}).
@@ -251,6 +264,9 @@ export function validateTapscript(seg: TapscriptSegment): void {
     if (!seg.signers || seg.signers.length === 0) {
         throw new Error("tapscript: at least one signer is required");
     }
+    if (seg.verify === false && !seg.asm) {
+        throw new Error("tapscript: verify: false requires asm");
+    }
     if (seg.asm !== undefined && seg.cltv !== undefined) {
         throw new Error(
             "tapscript: `asm` and `cltv` conflict — arkd has no condition+CLTV closure",
@@ -347,8 +363,12 @@ export function validateProgram(program: Program, args: Record<string, ArkadePar
 
 /** The signer keys a program is compiled against. */
 export interface ProgramKeys {
-    /** The Arkade Service signer key (x-only) — used for address derivation and collaborative-path detection, not for `$param` resolution. */
-    serverKey: Uint8Array;
+    /**
+     * The Arkade Service signer key (x-only) — used for Arkade address
+     * derivation and collaborative-path detection, not for `$param` resolution.
+     * Absent on L1-only programs (no Arkade co-signer).
+     */
+    serverKey?: Uint8Array;
     /** The wallet's x-only key — identifies which inputs the wallet signs. */
     userKey?: Uint8Array;
     /** The co-signer (emulator) key — required only for covenant (`arkadeScript`) functions. */
@@ -394,9 +414,20 @@ function encodeTapscriptSegment(
     if (seg.csv) {
         const timelock = { type: seg.csv.type, value: resolveTimelockValue(seg.csv.value, args) };
         if (seg.asm) {
+            const conditionScript = resolveAsm(seg.asm, args);
             // The fifth arkd closure: condition + CSV.
+            if (seg.verify === false) {
+                return {
+                    type: TapscriptType.ConditionCSVMultisig,
+                    params: { conditionScript, timelock, pubkeys },
+                    script: new Uint8Array([
+                        ...conditionScript,
+                        ...CSVMultisigTapscript.encode({ timelock, pubkeys }).script,
+                    ]),
+                };
+            }
             return ConditionCSVMultisigTapscript.encode({
-                conditionScript: resolveAsm(seg.asm, args),
+                conditionScript,
                 timelock,
                 pubkeys,
             });
@@ -410,8 +441,19 @@ function encodeTapscriptSegment(
         });
     }
     if (seg.asm) {
+        const conditionScript = resolveAsm(seg.asm, args);
+        if (seg.verify === false) {
+            return {
+                type: TapscriptType.ConditionMultisig,
+                params: { conditionScript, pubkeys },
+                script: new Uint8Array([
+                    ...conditionScript,
+                    ...MultisigTapscript.encode({ pubkeys }).script,
+                ]),
+            };
+        }
         return ConditionMultisigTapscript.encode({
-            conditionScript: resolveAsm(seg.asm, args),
+            conditionScript,
             pubkeys,
         });
     }
@@ -520,6 +562,7 @@ export function parseArtifact(artifact: {
             signers: (tap.signers ?? []).map(hexToken),
             ...(tap.asm ? { asm: tap.asm.map(hexToken) } : {}),
             ...(tap.witness ? { witness: tap.witness.map(hexToken) } : {}),
+            ...(tap.verify === false ? { verify: false } : {}),
             ...(tap.csv
                 ? { csv: { type: tap.csv.type, value: timelockValue(tap.csv.value) } }
                 : {}),
@@ -578,6 +621,7 @@ export function stringifyArtifact(program: Program): string {
                 signers: tap.signers.map(token),
                 ...(tap.asm ? { asm: tap.asm.map(token) } : {}),
                 ...(tap.witness ? { witness: tap.witness.map(token) } : {}),
+                ...(tap.verify === false ? { verify: false } : {}),
                 ...(tap.csv
                     ? { csv: { type: tap.csv.type, value: tap.csv.value.toString() } }
                     : {}),
