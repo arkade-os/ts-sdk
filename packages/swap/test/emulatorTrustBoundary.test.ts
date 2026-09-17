@@ -167,7 +167,7 @@ describe("requestLightningSend never touches the emulator", () => {
     it("funds using the caller-supplied emulatorPubkey, without constructing RestEmulatorProvider", async () => {
         const result = await requestLightningSend(
             wallet,
-            "http://ark",
+            "http://operator",
             lightningTransport(EMULATOR_PUBKEY),
             {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
@@ -187,7 +187,7 @@ describe("requestLightningSend never touches the emulator", () => {
         // than the caller passes in — proving emulatorPubkey is load-bearing
         // in the derivation, not a dead parameter
         await expect(
-            requestLightningSend(wallet, "http://ark", lightningTransport(key(29)), {
+            requestLightningSend(wallet, "http://operator", lightningTransport(key(29)), {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 invoice: {
                     raw: "lnbc1...",
@@ -257,7 +257,7 @@ describe("requestOnchainSend never touches the emulator", () => {
     it("funds using the caller-supplied emulatorPubkey, without constructing RestEmulatorProvider", async () => {
         const result = await requestOnchainSend(
             wallet,
-            "http://ark",
+            "http://operator",
             onchainTransport(EMULATOR_PUBKEY),
             {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
@@ -278,7 +278,7 @@ describe("requestOnchainSend never touches the emulator", () => {
         // `emulatorPubkey` on this entrypoint would pass the success case above
         // and only be caught by whoever funded a lockup they cannot spend.
         await expect(
-            requestOnchainSend(wallet, "http://ark", onchainTransport(key(29)), {
+            requestOnchainSend(wallet, "http://operator", onchainTransport(key(29)), {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 100_000,
                 amountSide: "to",
@@ -292,7 +292,7 @@ describe("requestOnchainSend never touches the emulator", () => {
 describe("createOffer never touches the emulator", () => {
     it("embeds the caller-supplied emulatorPubkey, without constructing RestEmulatorProvider", async () => {
         const wantAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
-        const offer = await createOffer(wallet, "http://ark", {
+        const offer = await createOffer(wallet, "http://operator", {
             wantAmount: 1000n,
             wantAsset,
             emulatorPubkey: EMULATOR_PUBKEY_HEX,

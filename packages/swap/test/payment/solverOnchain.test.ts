@@ -66,7 +66,7 @@ const ctxWith = (send = vi.fn(async () => "funding-txid")): RouterContext =>
     ({ wallet: { send } as never, prefs: {} }) as RouterContext;
 
 const depsWith = (over: Partial<SolverOnchainRailDeps> = {}): SolverOnchainRailDeps => ({
-    arkServerUrl: "http://ark",
+    arkServerUrl: "http://operator",
     l1Network: "regtest",
     payoutPubkey: PAYOUT_PUBKEY,
     discover: vi.fn(async () => [card("1000", "1000000")]),

@@ -96,7 +96,7 @@ const wallet = {
 const emulatorPubkey = "02466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27";
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
 const create = (maker: IWallet = wallet) =>
-    createOffer(maker, "http://ark", {
+    createOffer(maker, "http://operator", {
         wantAmount: BigInt(50_000),
         wantAsset: testAsset,
         emulatorPubkey,
@@ -114,7 +114,7 @@ beforeEach(() => {
 describe("offer contract registration", () => {
     it("requests an asset-to-asset RFQ and derives a want-asset-only offer", async () => {
         const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
-        const expected = await createOffer(wallet, "http://ark", {
+        const expected = await createOffer(wallet, "http://operator", {
             wantAmount: BigInt(50_000),
             wantAsset: testAsset,
             emulatorPubkey,
@@ -140,7 +140,7 @@ describe("offer contract registration", () => {
             close: vi.fn(async () => undefined),
         };
 
-        const swap = await requestArkadeSwap(wallet, "http://ark", transport, {
+        const swap = await requestArkadeSwap(wallet, "http://operator", transport, {
             offerAsset,
             wantAsset: testAsset,
             amount: 700n,
@@ -240,7 +240,7 @@ describe("a new offer's unilateral exit", () => {
     });
 
     it("takes an explicit delay over the server's", async () => {
-        const created = await createOffer(wallet, "http://ark", {
+        const created = await createOffer(wallet, "http://operator", {
             wantAmount: BigInt(50_000),
             wantAsset: testAsset,
             emulatorPubkey,
@@ -254,7 +254,7 @@ describe("a new offer's unilateral exit", () => {
 
     it("is omitted on noExit, which also moves the swap address", async () => {
         const withExit = await create();
-        const without = await createOffer(wallet, "http://ark", {
+        const without = await createOffer(wallet, "http://operator", {
             wantAmount: BigInt(50_000),
             wantAsset: testAsset,
             emulatorPubkey,
@@ -266,7 +266,7 @@ describe("a new offer's unilateral exit", () => {
     });
 
     const withExitDelay = (exitDelay: RelativeTimelock) =>
-        createOffer(wallet, "http://ark", {
+        createOffer(wallet, "http://operator", {
             wantAmount: BigInt(50_000),
             wantAsset: testAsset,
             emulatorPubkey,

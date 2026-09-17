@@ -115,7 +115,7 @@ const quoting = (fromAmount: number, toAmount: number): RfqTransport => ({
 });
 
 const send = (transport: RfqTransport, amount: number, amountSide: "from" | "to") =>
-    requestOnchainSend(wallet(), "http://ark", transport, {
+    requestOnchainSend(wallet(), "http://operator", transport, {
         amount,
         amountSide,
         payoutPubkey: PAYOUT_PUBKEY,
@@ -163,7 +163,7 @@ describe("requestOnchainSend prices the trade that was asked for", () => {
         } as unknown as IWallet;
 
         await expect(
-            requestOnchainSend(registering, "http://ark", quoting(100_000, 99_000), {
+            requestOnchainSend(registering, "http://operator", quoting(100_000, 99_000), {
                 amount: 100_000,
                 amountSide: "to",
                 payoutPubkey: PAYOUT_PUBKEY,
