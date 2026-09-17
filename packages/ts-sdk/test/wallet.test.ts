@@ -2198,7 +2198,11 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             thisArg: {
                 network: { hrp: "ark" },
                 arkServerPublicKey: new Uint8Array(32),
-                walletRepository: { saveVtxos, saveTransactions },
+                walletRepository: {
+                    getVtxos: vi.fn().mockResolvedValue([]),
+                    saveVtxos,
+                    saveTransactions,
+                },
                 getContractManager,
             } as any,
             offchainTapscript,
@@ -2491,7 +2495,11 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             // snapshot.
             offchainTapscript: tapscriptOld,
             arkAddress: tapscriptOld.address("ark", TEST_SERVER_PUB_KEY),
-            walletRepository: { saveVtxos, saveTransactions },
+            walletRepository: {
+                getVtxos: vi.fn().mockResolvedValue([]),
+                saveVtxos,
+                saveTransactions,
+            },
             getContractManager,
         } as any;
 

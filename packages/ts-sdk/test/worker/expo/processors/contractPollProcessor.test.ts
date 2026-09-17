@@ -40,6 +40,7 @@ describe("contractPollProcessor", () => {
             getContracts: vi.fn().mockResolvedValue([contractA, contractB]),
         };
         const walletRepository = {
+            getVtxos: vi.fn().mockResolvedValue([]),
             saveVtxos: vi.fn().mockResolvedValue(undefined),
         };
         const indexerProvider = {

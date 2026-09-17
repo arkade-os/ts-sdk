@@ -90,17 +90,53 @@ export async function getVtxosForContract(
     return vtxos.map(normalizeVtxo);
 }
 
+function hasRecordedSpend(vtxo: Pick<ExtendedVirtualCoin, "isSpent" | "spentBy" | "arkTxId">) {
+    return vtxo.isSpent === true && (!!vtxo.spentBy || !!vtxo.arkTxId);
+}
+
+/**
+ * A spend is monotonic and is only recorded once the operator accepted the ark
+ * tx, so a lagging indexer read is no evidence it was undone; writing one back
+ * re-offers a spent coin to selection. Pinned to rows with local provenance, so
+ * a bare stale row can still be corrected.
+ */
+async function preserveRecordedSpends(
+    repo: WalletRepository,
+    contract: Pick<Contract, "script" | "address">,
+    vtxos: ExtendedVirtualCoin[],
+): Promise<ExtendedVirtualCoin[]> {
+    if (vtxos.every((vtxo) => vtxo.isSpent === true)) return vtxos;
+
+    const recorded = new Map<string, NormalizedExtendedVirtualCoin>();
+    for (const existing of await getVtxosForContract(repo, contract)) {
+        if (hasRecordedSpend(existing)) recorded.set(vtxoOutpoint(existing), existing);
+    }
+    if (recorded.size === 0) return vtxos;
+
+    return vtxos.map((incoming) => {
+        const spent = incoming.isSpent === true ? undefined : recorded.get(vtxoOutpoint(incoming));
+        if (!spent) return incoming;
+        return {
+            ...incoming,
+            isSpent: true,
+            ...(spent.spentBy ? { spentBy: spent.spentBy } : {}),
+            ...(spent.arkTxId ? { arkTxId: spent.arkTxId } : {}),
+        };
+    });
+}
+
 export async function saveVtxosForContract(
     repo: WalletRepository,
     contract: Pick<Contract, "script" | "address">,
     vtxos: ExtendedVirtualCoin[],
 ): Promise<void> {
+    const rows = await preserveRecordedSpends(repo, contract, vtxos);
     if (repo.saveVtxosForScript) {
         return repo.saveVtxosForScript(
             { script: contract.script, address: contract.address },
-            vtxos,
+            rows,
         );
     }
-    validateVtxosForScript(vtxos, contract.script, "saveVtxosForContract");
-    return repo.saveVtxos(contract.address, vtxos);
+    validateVtxosForScript(rows, contract.script, "saveVtxosForContract");
+    return repo.saveVtxos(contract.address, rows);
 }

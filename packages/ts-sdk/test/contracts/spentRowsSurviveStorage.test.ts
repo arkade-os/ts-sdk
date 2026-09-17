@@ -86,6 +86,27 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         });
     });
 
+    it("keeps the spend when a stale sync re-reports the row unspent", async () => {
+        await saveVtxosForContract(repository, contract, [spentDeposit()]);
+        const stale: ExtendedVirtualCoin = {
+            ...spentDeposit(),
+            virtualStatus: { state: "settled" },
+            isSpent: false,
+            spentBy: "",
+            arkTxId: undefined,
+        };
+
+        await saveVtxosForContract(repository, contract, [stale]);
+
+        const vtxos = await getVtxosForContract(repository, contract);
+        expect(vtxos).toHaveLength(1);
+        expect(vtxos[0]).toMatchObject({
+            isSpent: true,
+            spentBy: CHECKPOINT,
+            arkTxId: ARK_TX,
+        });
+    });
+
     it("keeps the spent row alongside an unspent one at the same script", async () => {
         const unspent: ExtendedVirtualCoin = {
             ...spentDeposit(),
