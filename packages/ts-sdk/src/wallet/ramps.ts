@@ -68,8 +68,7 @@ const CHANGE_FEE_MAX_ROUNDS = 8;
 /**
  * Settle a change output against the fee charged on its own size — the two define each
  * other, so one subtraction is only right for a flat schedule. Shared because writing it
- * twice is how the unpriced-change bug reached both ramps. `0n` when the fee outruns the
- * change; throws when the schedule never settles, since arkd prices what is emitted.
+ * twice is how the unpriced-change bug reached both ramps. `0n` when the fee outruns it.
  */
 function settleChangeAgainstFee(change: bigint, feeOn: (amount: bigint) => bigint): bigint {
     let net = change;
@@ -182,6 +181,12 @@ export class Ramps {
             change = settleChangeAgainstFee(change, (amt) =>
                 BigInt(estimator.evalOnchainOutput({ amount: amt, script: changeScript }).satoshis),
             );
+            // Post-fee, as `offboard`: arkd's sub-dust exception covers OP_RETURN VTXO
+            // outputs, not a boarding one, so below the floor it is rejected server-side.
+            const dustAmount = getDustAmount(this.wallet);
+            if (change > 0n && change < dustAmount) {
+                throw new DustChangeError(change, dustAmount);
+            }
         }
 
         amount = amount ?? totalAmount;

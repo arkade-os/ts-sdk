@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Ramps } from "../src/wallet/ramps";
+import { DustChangeError, Ramps } from "../src/wallet/ramps";
 
 const BOARDING_ADDR = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 const ARK_ADDR =
@@ -60,6 +60,16 @@ describe("Ramps.onboard pays for the change it creates", () => {
 
         await expect(new Ramps(w).onboard(absurd, undefined, 50_000n)).rejects.toThrow(
             /change fee/i,
+        );
+        expect(w.settle).not.toHaveBeenCalled();
+    });
+
+    it("judges the dust floor on the change that survives the fee", async () => {
+        // 50_360 - 50_000 = 360 before the fee, 310 after: over the 330 floor, then under it.
+        const w = wallet({ getBoardingUtxos: vi.fn().mockResolvedValue([utxo("11", 50_360)]) });
+
+        await expect(new Ramps(w).onboard(priced, undefined, 50_000n)).rejects.toThrow(
+            DustChangeError,
         );
         expect(w.settle).not.toHaveBeenCalled();
     });
