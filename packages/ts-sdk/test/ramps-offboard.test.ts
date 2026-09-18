@@ -166,6 +166,17 @@ describe("Ramps.offboard pays for the change it creates", () => {
         ]);
     });
 
+    it("refuses a change fee that never settles, instead of underfunding the exit", async () => {
+        // Charging the whole output oscillates change → 0 → change, never reaching a fixpoint.
+        const absurd = { intentFee: { offchainOutput: "amount" } } as any;
+        const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]) });
+
+        await expect(new Ramps(w).offboard(BTC_ADDR, absurd, 50_000n)).rejects.toThrow(
+            /change fee/i,
+        );
+        expect(w.settle).not.toHaveBeenCalled();
+    });
+
     it("judges the dust floor on the change that survives the fee", async () => {
         // 50_360 - 7 input - 50_000 = 353 before the fee, 303 after: under the 330 floor.
         const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 50_360)]) });

@@ -63,7 +63,6 @@ export function offboardDestinationScript(destinationAddress: string): Uint8Arra
     throw new Error(`Failed to decode destination address: ${destinationAddress}`);
 }
 
-/** Rounds allowed to settle the change against its own fee; the cap only bounds a pathological schedule. */
 const CHANGE_FEE_MAX_ROUNDS = 8;
 
 /** `logUngatedInputs` is on the concrete wallet, not `IWallet` — probed like `dustAmount`. */
@@ -275,13 +274,25 @@ export class Ramps {
             changeAddress = await this.wallet.getAddress();
             const changeScript = hex.encode(ArkAddress.decode(changeAddress).pkScript);
             let net = change;
+            let settled = false;
             for (let i = 0; i < CHANGE_FEE_MAX_ROUNDS; i++) {
                 const fee = BigInt(
                     estimator.evalOffchainOutput({ amount: net, script: changeScript }).satoshis,
                 );
                 const next = change - fee;
-                if (next === net) break;
+                if (next === net) {
+                    settled = true;
+                    break;
+                }
                 net = next;
+            }
+            // Unlike `onchainRail`'s gross-up, an unsettled value is not merely imprecise: arkd
+            // prices the fee against the amount emitted, so shipping one underfunds the exit.
+            if (!settled && net > 0n) {
+                throw new Error(
+                    `change fee does not settle after ${CHANGE_FEE_MAX_ROUNDS} rounds ` +
+                        `(${change} sats of change); offboard the full balance instead`,
+                );
             }
             // Below zero the fee outruns the change: emit none, as an exact sweep does.
             change = net > 0n ? net : 0n;
