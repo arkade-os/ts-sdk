@@ -401,17 +401,26 @@ describe("requests", () => {
         );
     });
 
-    it("refuses exact-out client-side: the solver answers exact_out_unsupported", () => {
-        expect(() =>
-            arkadeSwapRequest({
-                rfqId: RFQ_ID,
-                wantAsset: asset.AssetId.fromString(USD_ID),
-                amountSide: "to",
-                amount: 1,
-                makerPkScript: p2tr(key(5)),
-                makerPublicKey: key(1),
-            }),
-        ).toThrow(/exact-in only/);
+    /** Refused client-side until the solver stopped answering `exact_out_unsupported`. */
+    it("names the leg the caller asked for, so exact-out reaches the solver", () => {
+        const exactOut = arkadeSwapRequest({
+            rfqId: RFQ_ID,
+            wantAsset: asset.AssetId.fromString(USD_ID),
+            amountSide: "to",
+            amount: 1,
+            makerPkScript: p2tr(key(5)),
+            makerPublicKey: key(1),
+        }) as Record<string, unknown>;
+        expect(exactOut.amount_side).toBe("to");
+
+        const exactIn = arkadeSwapRequest({
+            rfqId: RFQ_ID,
+            wantAsset: asset.AssetId.fromString(USD_ID),
+            amount: 1,
+            makerPkScript: p2tr(key(5)),
+            makerPublicKey: key(1),
+        }) as Record<string, unknown>;
+        expect(exactIn.amount_side).toBe("from");
     });
 
     /** Load-bearing against the solver's `.strict()` profile schema: a key it
