@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import {
     type Contract,
@@ -9,12 +9,17 @@ import {
 } from "../../src";
 import { SQLiteWalletRepository } from "../../src/repositories/sqlite/walletRepository";
 import type { WalletRepository } from "../../src/repositories";
-import { getVtxosForContract, saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
+import {
+    getVtxosForContract,
+    resetRecordedSpends,
+    saveVtxosForContract,
+} from "../../src/contracts/vtxoOwnership";
 import { createMockSQLExecutor } from "../helpers/mockSqlExecutor";
 import { TEST_DEFAULT_SCRIPT } from "./helpers";
 
 const CHECKPOINT = "cc".repeat(32);
 const ARK_TX = "dd".repeat(32);
+const COMMITMENT = "ee".repeat(32);
 
 const contract: Pick<Contract, "script" | "address"> = {
     script: TEST_DEFAULT_SCRIPT,
@@ -84,6 +89,128 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
             spentBy: CHECKPOINT,
             arkTxId: ARK_TX,
         });
+    });
+
+    it("keeps the spend when a stale sync re-reports the row unspent", async () => {
+        await saveVtxosForContract(repository, contract, [spentDeposit()]);
+        const stale: ExtendedVirtualCoin = {
+            ...spentDeposit(),
+            virtualStatus: { state: "settled" },
+            isSpent: false,
+            spentBy: "",
+            arkTxId: undefined,
+        };
+
+        await saveVtxosForContract(repository, contract, [stale]);
+
+        const vtxos = await getVtxosForContract(repository, contract);
+        expect(vtxos).toHaveLength(1);
+        expect(vtxos[0]).toMatchObject({
+            isSpent: true,
+            spentBy: CHECKPOINT,
+            arkTxId: ARK_TX,
+        });
+    });
+
+    // `updateDbAfterSettle` records a settle-spent input with `settledBy` alone.
+    it("keeps a settle-spent row when a stale sync re-reports it unspent", async () => {
+        const settled: ExtendedVirtualCoin = {
+            ...spentDeposit(),
+            spentBy: "",
+            arkTxId: undefined,
+            settledBy: COMMITMENT,
+        };
+        await saveVtxosForContract(repository, contract, [settled]);
+
+        await saveVtxosForContract(repository, contract, [
+            { ...settled, virtualStatus: { state: "settled" }, isSpent: false, settledBy: "" },
+        ]);
+
+        const vtxos = await getVtxosForContract(repository, contract);
+        expect(vtxos).toHaveLength(1);
+        expect(vtxos[0]).toMatchObject({ isSpent: true, settledBy: COMMITMENT });
+    });
+
+    // A sync for a fully-spent contract writes an all-spent batch, which may
+    // carry none of the provenance the pin is keyed on.
+    it("keeps the spend when an all-spent sync strips its provenance first", async () => {
+        await saveVtxosForContract(repository, contract, [spentDeposit()]);
+        const bare = { ...spentDeposit(), spentBy: "", arkTxId: undefined, settledBy: "" };
+
+        await saveVtxosForContract(repository, contract, [bare]);
+        await saveVtxosForContract(repository, contract, [
+            { ...bare, virtualStatus: { state: "settled" } as const, isSpent: false },
+        ]);
+
+        const vtxos = await getVtxosForContract(repository, contract);
+        expect(vtxos).toHaveLength(1);
+        expect(vtxos[0]).toMatchObject({ isSpent: true, spentBy: CHECKPOINT, arkTxId: ARK_TX });
+    });
+
+    it("fills missing provenance when the indexer confirms the spend", async () => {
+        const other: ExtendedVirtualCoin = {
+            ...spentDeposit(),
+            txid: "ef".repeat(32),
+            virtualStatus: { state: "settled" },
+            isSpent: false,
+            spentBy: "",
+            arkTxId: undefined,
+        };
+        await saveVtxosForContract(repository, contract, [spentDeposit(), other]);
+
+        await saveVtxosForContract(repository, contract, [
+            { ...spentDeposit(), spentBy: "", arkTxId: undefined },
+            other,
+        ]);
+
+        const vtxos = await getVtxosForContract(repository, contract);
+        expect(vtxos).toHaveLength(2);
+        expect(vtxos.find((v) => v.txid === "ab".repeat(32))).toMatchObject({
+            isSpent: true,
+            spentBy: CHECKPOINT,
+            arkTxId: ARK_TX,
+        });
+        expect(vtxos.find((v) => v.txid === "ef".repeat(32))?.isSpent).toBe(false);
+    });
+
+    const staleRow = (): ExtendedVirtualCoin => ({
+        ...spentDeposit(),
+        virtualStatus: { state: "settled" },
+        isSpent: false,
+        spentBy: "",
+        arkTxId: undefined,
+    });
+
+    it("lets the indexer correct the spend once the record outlives its TTL", async () => {
+        const now = vi.spyOn(Date, "now");
+        try {
+            now.mockReturnValue(1_000_000);
+            await saveVtxosForContract(repository, contract, [spentDeposit()]);
+            now.mockReturnValue(1_000_000 + 60_000);
+            await saveVtxosForContract(repository, contract, [staleRow()]);
+        } finally {
+            now.mockRestore();
+        }
+
+        const vtxos = await getVtxosForContract(repository, contract);
+        expect(vtxos).toHaveLength(1);
+        expect(vtxos[0]?.isSpent).toBe(false);
+        // Provenance must go too: `hasTerminalSpend` hides on it alone.
+        expect(vtxos[0]?.spentBy).toBeFalsy();
+        expect(vtxos[0]?.arkTxId).toBeFalsy();
+    });
+
+    it("lets the indexer correct a spend recorded before a restart", async () => {
+        await saveVtxosForContract(repository, contract, [spentDeposit()]);
+        // A restart keeps storage but loses the records; the row must not stay pinned.
+        resetRecordedSpends(repository);
+
+        await saveVtxosForContract(repository, contract, [staleRow()]);
+
+        const vtxos = await getVtxosForContract(repository, contract);
+        expect(vtxos).toHaveLength(1);
+        expect(vtxos[0]?.isSpent).toBe(false);
+        expect(vtxos[0]?.spentBy).toBeFalsy();
     });
 
     it("keeps the spent row alongside an unspent one at the same script", async () => {

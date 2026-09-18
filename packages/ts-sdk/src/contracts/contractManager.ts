@@ -50,6 +50,7 @@ import {
     getSyncCursor,
 } from "../utils/syncCursors";
 import {
+    applyRecordedSpends,
     getVtxosForContract,
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
@@ -2186,7 +2187,12 @@ export class ContractManager implements IContractManager {
             if (contract) {
                 await saveVtxosForContract(this.config.walletRepository, contract, addressVtxos);
             } else {
-                await this.config.walletRepository.saveVtxos(address, addressVtxos);
+                // Unreachable today: every `address` came from `contracts`. Guarded
+                // so it cannot become a silent bypass if that mapping is loosened.
+                await this.config.walletRepository.saveVtxos(
+                    address,
+                    applyRecordedSpends(this.config.walletRepository, addressVtxos),
+                );
             }
         }
     }
