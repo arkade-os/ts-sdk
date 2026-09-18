@@ -128,3 +128,51 @@ describe("Ramps.offboard with a named input set", () => {
         expect(w.logUngatedInputs).not.toHaveBeenCalled();
     });
 });
+
+describe("Ramps.offboard pays for the change it creates", () => {
+    // 7 per input, 100 for the exit output, 50 for the change output.
+    const priced = {
+        intentFee: { offchainInput: "7.0", onchainOutput: "100.0", offchainOutput: "50.0" },
+    } as any;
+
+    it("funds the change output's own fee, so the settlement balances", async () => {
+        const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]) });
+
+        await new Ramps(w).offboard(BTC_ADDR, priced, 50_000n);
+
+        const { inputs, outputs } = w.settle.mock.calls[0]![0];
+        expect(outputs).toEqual([
+            { address: BTC_ADDR, amount: 49_900n },
+            { address: ARK_ADDR, amount: 49_943n },
+        ]);
+        const spent: bigint = inputs.reduce(
+            (s: bigint, i: { value: number }) => s + BigInt(i.value),
+            0n,
+        );
+        const claimed: bigint = outputs.reduce(
+            (s: bigint, o: { amount: bigint }) => s + o.amount,
+            0n,
+        );
+        expect(spent - claimed).toBe(157n);
+    });
+
+    it("leaves a full sweep alone — no change output means no change fee", async () => {
+        const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]) });
+
+        await new Ramps(w).offboard(BTC_ADDR, priced);
+
+        expect(w.settle.mock.calls[0]![0].outputs).toEqual([
+            { address: BTC_ADDR, amount: 99_893n },
+        ]);
+    });
+
+    it("judges the dust floor on the change that survives the fee", async () => {
+        // 50_360 - 7 input - 50_000 = 353 before the fee, 303 after: under the 330 floor.
+        const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 50_360)]) });
+
+        await expect(new Ramps(w).offboard(BTC_ADDR, priced, 50_000n)).rejects.toThrow(
+            DustChangeError,
+        );
+        expect(w.settle).not.toHaveBeenCalled();
+    });
+});
