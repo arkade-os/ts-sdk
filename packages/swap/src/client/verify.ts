@@ -371,14 +371,7 @@ export const verifyQuotedAmount = (input: {
     readonly give: bigint;
     readonly take: bigint;
 }): void => {
-    const quoted = input.pinned.on === "give" ? input.give : input.take;
-    if (quoted !== input.pinned.value) {
-        throw new QuoteVerificationFailed(
-            "pair",
-            `${input.pair} ${input.pinned.on}=${input.pinned.value}`,
-            `${input.pair} ${input.pinned.on}=${quoted}`,
-        );
-    }
+    verifyPinnedAmount(input);
     if (input.take > input.give) {
         // A quote that pays out more than it takes in is not a quote to fund:
         // on every corridor these two legs are the same asset.
@@ -386,6 +379,54 @@ export const verifyQuotedAmount = (input: {
             "pair",
             `${input.pair} give >= take`,
             `give=${input.give} take=${input.take}`,
+        );
+    }
+};
+
+/**
+ * The quote answers the request, on a pair whose two legs carry **different
+ * assets**.
+ *
+ * Everything {@link verifyQuotedAmount} establishes except the one check that
+ * does not survive the change of asset: `take > give` is a mispricing when both
+ * legs are BTC and is the normal shape of a trade when they are not — 10_000
+ * sats for 1_000 cents reads one way round, and the reverse trade reads the
+ * other. Comparing them would refuse a correct quote on one direction of every
+ * asset market, which is why this is a separate function rather than a flag.
+ *
+ * What replaces it is positivity on both legs: a zero payout is not a trade,
+ * and it is the only cross-asset statement about the two numbers that means
+ * anything without a price.
+ */
+export const verifyCrossAssetAmount = (input: {
+    readonly pair: string;
+    readonly pinned: { on: "give" | "take"; value: bigint };
+    readonly give: bigint;
+    readonly take: bigint;
+}): void => {
+    verifyPinnedAmount(input);
+    if (input.give <= 0n || input.take <= 0n) {
+        throw new QuoteVerificationFailed(
+            "pair",
+            `${input.pair} give > 0 take > 0`,
+            `give=${input.give} take=${input.take}`,
+        );
+    }
+};
+
+/** The quote priced the side the request pinned, at the size it pinned. */
+const verifyPinnedAmount = (input: {
+    readonly pair: string;
+    readonly pinned: { on: "give" | "take"; value: bigint };
+    readonly give: bigint;
+    readonly take: bigint;
+}): void => {
+    const quoted = input.pinned.on === "give" ? input.give : input.take;
+    if (quoted !== input.pinned.value) {
+        throw new QuoteVerificationFailed(
+            "pair",
+            `${input.pair} ${input.pinned.on}=${input.pinned.value}`,
+            `${input.pair} ${input.pinned.on}=${quoted}`,
         );
     }
 };
