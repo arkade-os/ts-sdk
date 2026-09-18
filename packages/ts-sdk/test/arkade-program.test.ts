@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { hex } from "@scure/base";
-import { ScriptNum } from "@scure/btc-signer";
+import { Script, ScriptNum } from "@scure/btc-signer";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     arkade,
     CSVMultisigTapscript,
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
+    ConditionMultisigTapscript,
+    MultisigTapscript,
 } from "../src";
 
 const MinimalScriptNum = ScriptNum(undefined, true);
@@ -320,6 +322,54 @@ describe("Program name & full-feature artifact round-trip", () => {
         const a = new arkade.ArkadeProgramScript(base, { user }, keys);
         const b = new arkade.ArkadeProgramScript(named, { user }, keys);
         expect(hex.encode(b.pkScript)).toBe(hex.encode(a.pkScript));
+    });
+
+    it("wraps EQUAL with VERIFY by default and skips the wrap when verify: false", () => {
+        const hash = new Uint8Array(20).fill(7);
+        const equalProgram: arkade.Program = {
+            version: 0,
+            functions: {
+                claim: {
+                    tapscript: {
+                        signers: ["$user"],
+                        asm: ["HASH160", "$h", "EQUAL"],
+                    },
+                },
+            },
+        };
+        const bolt3Program: arkade.Program = {
+            version: 0,
+            functions: {
+                claim: {
+                    tapscript: {
+                        signers: ["$user"],
+                        asm: ["SIZE", 32, "EQUALVERIFY", "HASH160", "$h", "EQUALVERIFY"],
+                        verify: false,
+                    },
+                },
+            },
+        };
+        const equal = new arkade.ArkadeProgramScript(equalProgram, { user, h: hash }, keys);
+        const bolt3 = new arkade.ArkadeProgramScript(bolt3Program, { user, h: hash }, keys);
+
+        const wrapped = ConditionMultisigTapscript.encode({
+            conditionScript: Script.encode(["HASH160", hash, "EQUAL"]),
+            pubkeys: [user],
+        });
+        expect(hex.encode(equal.compiled[0].leafScript)).toBe(hex.encode(wrapped.script));
+
+        const l1 = new Uint8Array([
+            ...Script.encode(["SIZE", 32, "EQUALVERIFY", "HASH160", hash, "EQUALVERIFY"]),
+            ...MultisigTapscript.encode({ pubkeys: [user] }).script,
+        ]);
+        expect(hex.encode(bolt3.compiled[0].leafScript)).toBe(hex.encode(l1));
+        const rt = arkade.parseArtifact(JSON.parse(arkade.stringifyArtifact(bolt3Program)));
+        expect(rt.functions.claim.tapscript.verify).toBe(false);
+        expect(
+            hex.encode(
+                new arkade.ArkadeProgramScript(rt, { user, h: hash }, keys).compiled[0].leafScript,
+            ),
+        ).toBe(hex.encode(l1));
     });
 
     it("a program exercising every feature survives the artifact round-trip", () => {
