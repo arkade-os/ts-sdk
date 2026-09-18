@@ -1,4 +1,4 @@
-import type { Asset, IWallet, Recipient } from "../index";
+import type { Asset, IWallet, NormalizedExtendedVirtualCoin, Recipient } from "../index";
 
 export type PaymentStatus = "pending" | "sent" | "settled" | "failed";
 
@@ -40,9 +40,10 @@ export interface PaymentHandle {
  * never chooses, and flags that instead: see `claimFeeDeductedFromPayout`.
  *
  * `fee` is a pre-send estimate wherever the true cost is only fixed later: the
- * collaborative exit does not include the per-input intent fees, which depend
- * on the VTXO selection made at settlement. Treat it as a display and ranking
- * figure, not a guarantee.
+ * collaborative exit omits the per-input intent fees whenever the request left
+ * the VTXO selection to settlement — naming {@link PaymentRequest.selectedVtxos}
+ * fixes them, and they are priced in. Treat it as a display and ranking figure,
+ * not a guarantee.
  */
 export interface RouteQuote {
     railId: string;
@@ -118,6 +119,17 @@ export interface PaymentRequest {
      *  Additive: an asset transfer also moves sats, so a 500 USDX request
      *  legitimately has both. A rail that cannot deliver assets must REFUSE. */
     assets?: Asset[];
+    /**
+     * Spend exactly these virtual outputs, with the meaning
+     * {@link SendParams.selectedVtxos} already gives it: taken as given, so a
+     * shortfall is an error rather than a top-up, and ungated like
+     * `settle({ inputs })`. Normalized, i.e. what `getSpendableVtxos()` returns.
+     *
+     * Only the rails spending the wallet's own coins can honour it (`ark`,
+     * `ark-asset`, `onchain`). A rail funding its payment through a counterparty
+     * picks its own inputs, so it must REFUSE rather than ignore the selection.
+     */
+    selectedVtxos?: NormalizedExtendedVirtualCoin[];
 }
 
 /** A payment rail — registered by id, mirrors the ActivityRegistry resolver shape. */
