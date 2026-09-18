@@ -90,17 +90,93 @@ export async function getVtxosForContract(
     return vtxos.map(normalizeVtxo);
 }
 
+function hasRecordedSpend(
+    vtxo: Pick<ExtendedVirtualCoin, "isSpent" | "spentBy" | "arkTxId" | "settledBy">,
+) {
+    return vtxo.isSpent === true && (!!vtxo.spentBy || !!vtxo.arkTxId || !!vtxo.settledBy);
+}
+
+/**
+ * Only a write THIS process made can be raced by its own read; arkd indexes a
+ * spend just after `FinalizeTx` returns. Persisting this would instead make a
+ * wrong spend permanent — nothing clears `isSpent` — so expiry is the way back.
+ */
+const RECORDED_SPEND_TTL_MS = 60_000;
+
+interface RecordedSpend {
+    at: number;
+    spentBy?: string;
+    arkTxId?: string;
+    settledBy?: string;
+}
+
+/** Keyed by repository so records die with the storage they describe. */
+const recordedSpends = new WeakMap<WalletRepository, Map<string, RecordedSpend>>();
+
+function registryFor(repo: WalletRepository): Map<string, RecordedSpend> {
+    const existing = recordedSpends.get(repo);
+    if (existing) return existing;
+    const created = new Map<string, RecordedSpend>();
+    recordedSpends.set(repo, created);
+    return created;
+}
+
+export function resetRecordedSpends(repo: WalletRepository): void {
+    recordedSpends.delete(repo);
+}
+
+export function applyRecordedSpends(
+    repo: WalletRepository,
+    vtxos: ExtendedVirtualCoin[],
+): ExtendedVirtualCoin[] {
+    const registry = registryFor(repo);
+    const now = Date.now();
+    for (const [key, spend] of registry) {
+        if (now - spend.at >= RECORDED_SPEND_TTL_MS) registry.delete(key);
+    }
+    for (const incoming of vtxos) {
+        const key = vtxoOutpoint(incoming);
+        if (!hasRecordedSpend(incoming) || registry.has(key)) continue;
+        // `at` is first sighting, so re-reporting a spend cannot extend the pin.
+        registry.set(key, {
+            at: now,
+            spentBy: incoming.spentBy,
+            arkTxId: incoming.arkTxId,
+            settledBy: incoming.settledBy,
+        });
+    }
+    if (registry.size === 0) return vtxos;
+
+    return vtxos.map((incoming) => {
+        if (hasRecordedSpend(incoming)) return incoming;
+        const spent = registry.get(vtxoOutpoint(incoming));
+        if (!spent) return incoming;
+        // Fresher incoming provenance wins; the record only fills what is missing.
+        const spentBy = incoming.spentBy || spent.spentBy;
+        const arkTxId = incoming.arkTxId || spent.arkTxId;
+        const settledBy = incoming.settledBy || spent.settledBy;
+        return {
+            ...incoming,
+            isSpent: true,
+            ...(spentBy ? { spentBy } : {}),
+            ...(arkTxId ? { arkTxId } : {}),
+            ...(settledBy ? { settledBy } : {}),
+        };
+    });
+}
+
 export async function saveVtxosForContract(
     repo: WalletRepository,
     contract: Pick<Contract, "script" | "address">,
     vtxos: ExtendedVirtualCoin[],
 ): Promise<void> {
+    const rows = applyRecordedSpends(repo, vtxos);
     if (repo.saveVtxosForScript) {
         return repo.saveVtxosForScript(
             { script: contract.script, address: contract.address },
-            vtxos,
+            rows,
         );
     }
-    validateVtxosForScript(vtxos, contract.script, "saveVtxosForContract");
-    return repo.saveVtxos(contract.address, vtxos);
+    validateVtxosForScript(rows, contract.script, "saveVtxosForContract");
+    return repo.saveVtxos(contract.address, rows);
 }
