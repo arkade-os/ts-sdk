@@ -300,6 +300,8 @@ export interface RfqQuote {
      * solver). */
     from_amount: number | string;
     to_amount: number | string;
+    /** Dust an asset rides on. NOT a fee — already netted into the amounts above. */
+    carrier_sats?: number | string;
     solver_pubkey: string;
     valid_until: number;
     /** HTLC-class quotes only; absent for arkade↔arkade. */
@@ -360,8 +362,8 @@ export const lightningSendRequest = (input: {
  * Wire-compatible with the reference solver (`AssetRfqRequest`, strict):
  * `amount` is a canonical decimal string of atomic units (never a JSON
  * number — an Arkade asset's precision is not knowable client-side, so the
- * losslessness carve-out cannot be checked), `amount_side` is exact-in only
- * (`"from"`), and `profile` carries the trader's own covenant position
+ * losslessness carve-out cannot be checked), `amount_side` is `"from"` or
+ * `"to"`, and `profile` carries the trader's own covenant position
  * (`maker_pk_script`, `maker_public_key`) — the fill pays that script, and
  * `cancel` is signed by that key. */
 export const arkadeSwapRequest = (input: {
@@ -370,8 +372,6 @@ export const arkadeSwapRequest = (input: {
     offerAsset?: asset.AssetId;
     /** Asset the trader wants; omit when wanting BTC. */
     wantAsset?: asset.AssetId;
-    /** Exact-in only. `"to"` is refused client-side: the solver answers
-     * `exact_out_unsupported`, since the two legs are different assets. */
     amountSide?: "from" | "to";
     /** Atomic units of the deposit (`from`) leg. bigint-safe: encoded as a
      * canonical decimal string on the wire. */
@@ -389,11 +389,6 @@ export const arkadeSwapRequest = (input: {
                 "with neither set both legs are BTC, which is not a swap",
         );
     }
-    if (input.amountSide !== undefined && input.amountSide !== "from") {
-        throw new Error(
-            'arkade↔arkade quotes are exact-in only: use amountSide "from" with the deposit amount',
-        );
-    }
     const pair = rfqPair(
         input.offerAsset ? arkadeAssetLeg(input.offerAsset) : ARKADE_BTC,
         input.wantAsset ? arkadeAssetLeg(input.wantAsset) : ARKADE_BTC,
@@ -404,7 +399,7 @@ export const arkadeSwapRequest = (input: {
         type: "rfq_request",
         rfq_id: input.rfqId,
         pair,
-        amount_side: "from",
+        amount_side: input.amountSide ?? "from",
         amount: canonicalAssetAmount(input.amount),
         // The pair names the assets; the profile names the trader. Both are
         // covenant parameters, and the solver's `.strict()` schema refuses
@@ -1472,6 +1467,12 @@ export const assertArkadeFundable = (input: { quote: RfqQuote; now?: number }): 
     }
 };
 
+/** Falls back on absent AND non-positive: zero would fund an asset with no carrier. */
+const quoteCarrierSats = (quote: RfqQuote): bigint => {
+    const published = quote.carrier_sats === undefined ? 0n : BigInt(quote.carrier_sats);
+    return published > 0n ? published : ASSET_CARRIER_SATS;
+};
+
 /**
  * The arkade↔arkade user flow, mirroring `requestLightningSend`'s shape:
  * quote → derive locally → verify → gate. Pure of funding on purpose — it
@@ -1510,8 +1511,13 @@ export async function requestArkadeSwap(
         offerAsset?: asset.AssetId;
         /** Asset the trader wants; omit when wanting BTC. */
         wantAsset?: asset.AssetId;
-        /** Deposit amount, in atomic units of the `from` leg. */
+        /** Atomic units of whichever leg `amountSide` names. */
         amount: bigint | number | string;
+        amountSide?: "from" | "to";
+        /** Bounds the side the SOLVER chose — the named side is echoed back verbatim,
+         * so asserting it proves nothing and an unbounded caller funds what it is asked. */
+        maxFromAmount?: bigint | number | string;
+        minToAmount?: bigint | number | string;
         rfqId?: string;
         /** Co-signer key override (33-byte compressed hex); see `createOffer`. */
         emulatorPubkey?: string;
@@ -1526,7 +1532,7 @@ export async function requestArkadeSwap(
     /** What the deposit must carry: the quote's `from_amount`. Sats for a BTC
      * deposit, asset units for an asset deposit (plus a dust carrier). */
     fundAmount: bigint;
-    /** Dust sats carrier for an asset deposit; 0n for a BTC deposit. */
+    /** Dust sats to attach to an asset deposit; 0n for a BTC deposit. */
     carrierSats: bigint;
     /** The covenant's scriptPubKey, for watching the deposit and its spend. */
     swapPkScript: Uint8Array;
@@ -1540,6 +1546,7 @@ export async function requestArkadeSwap(
         throw new Error("set at least one of wantAsset or offerAsset; BTC-to-BTC is not a swap");
     }
     const rfqId = params.rfqId ?? newRfqId();
+    const amountSide = params.amountSide ?? "from";
     const [makerAddress, makerPublicKey] = await Promise.all([
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
@@ -1555,6 +1562,7 @@ export async function requestArkadeSwap(
             ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
             ...(params.wantAsset !== undefined ? { wantAsset: params.wantAsset } : {}),
             amount: params.amount,
+            amountSide,
             makerPkScript,
             makerPublicKey,
         }),
@@ -1567,10 +1575,29 @@ export async function requestArkadeSwap(
         ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
         ...(params.wantAsset !== undefined ? { wantAsset: params.wantAsset } : {}),
     });
-    if (BigInt(quote.from_amount).toString() !== canonicalAssetAmount(params.amount)) {
+    const quoted = amountSide === "from" ? quote.from_amount : quote.to_amount;
+    if (BigInt(quoted).toString() !== canonicalAssetAmount(params.amount)) {
         throw new Error(
-            `quote from_amount ${quote.from_amount} does not match the requested ${canonicalAssetAmount(params.amount)}`,
+            `quote ${amountSide}_amount ${quoted} does not match the requested ${canonicalAssetAmount(params.amount)}`,
         );
+    }
+    if (params.maxFromAmount !== undefined) {
+        const cap = BigInt(canonicalAssetAmount(params.maxFromAmount));
+        if (BigInt(quote.from_amount) > cap) {
+            throw gateError(
+                "quote_amount_rejected",
+                `quote from_amount ${quote.from_amount} exceeds maxFromAmount ${cap}`,
+            );
+        }
+    }
+    if (params.minToAmount !== undefined) {
+        const floorAmount = BigInt(canonicalAssetAmount(params.minToAmount));
+        if (BigInt(quote.to_amount) < floorAmount) {
+            throw gateError(
+                "quote_amount_rejected",
+                `quote to_amount ${quote.to_amount} is under minToAmount ${floorAmount}`,
+            );
+        }
     }
     const offer = await createOffer(wallet, {
         wantAmount: terms.wantAmount,
@@ -1586,7 +1613,7 @@ export async function requestArkadeSwap(
         pair,
         address: offer.address,
         fundAmount,
-        carrierSats: params.offerAsset !== undefined ? ASSET_CARRIER_SATS : 0n,
+        carrierSats: params.offerAsset !== undefined ? quoteCarrierSats(quote) : 0n,
         swapPkScript: offer.swapPkScript,
         offerHex: offer.offerHex,
         extension: offer.extension,
