@@ -1285,16 +1285,21 @@ describe("Delegate Lifecycle", () => {
         expect(txid2).toBeDefined();
 
         // Verify delegate VTXOs were spent
-        const contractsAfter = await manager2.getContractsWithVtxos({
-            type: ["delegate"],
+        // arkd commits the spend to its indexer after FinalizeTx returns.
+        let spentDelegateOutpoints: typeof delegateVtxosBefore = [];
+        await waitFor(async () => {
+            const contractsAfter = await manager2.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosAfter = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
+            spentDelegateOutpoints = delegateVtxosBefore.filter(
+                (before) =>
+                    !delegateVtxosAfter.some(
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
+            );
+            return spentDelegateOutpoints.length > 0;
         });
-        const delegateVtxosAfter = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
-        const spentDelegateOutpoints = delegateVtxosBefore.filter(
-            (before) =>
-                !delegateVtxosAfter.some(
-                    (after) => after.txid === before.txid && after.vout === before.vout,
-                ),
-        );
         expect(spentDelegateOutpoints.length).toBeGreaterThan(0);
 
         // Phase 3 — Remove delegate
@@ -1324,7 +1329,8 @@ describe("Delegate Lifecycle", () => {
             type: ["delegate"],
         });
         expect(contracts3Before).toHaveLength(1);
-        const delegateVtxos3Before = contracts3Before[0].vtxos;
+        // Unspent only: phase 2's spend would satisfy the diff below on its own.
+        const delegateVtxos3Before = contracts3Before[0].vtxos.filter((v) => !v.isSpent);
         expect(delegateVtxos3Before.length).toBeGreaterThan(0);
 
         // Send more than any single VTXO so delegate pool must be consumed
@@ -1340,16 +1346,20 @@ describe("Delegate Lifecycle", () => {
         expect(txid3).toBeDefined();
 
         // Verify delegate VTXOs were consumed via forfeit path
-        const contracts3After = await manager3.getContractsWithVtxos({
-            type: ["delegate"],
+        let spentDelegate3: typeof delegateVtxos3Before = [];
+        await waitFor(async () => {
+            const contracts3After = await manager3.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxos3After = contracts3After[0].vtxos.filter((v) => !v.isSpent);
+            spentDelegate3 = delegateVtxos3Before.filter(
+                (before) =>
+                    !delegateVtxos3After.some(
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
+            );
+            return spentDelegate3.length > 0;
         });
-        const delegateVtxos3After = contracts3After[0].vtxos.filter((v) => !v.isSpent);
-        const spentDelegate3 = delegateVtxos3Before.filter(
-            (before) =>
-                !delegateVtxos3After.some(
-                    (after) => after.txid === before.txid && after.vout === before.vout,
-                ),
-        );
         expect(spentDelegate3.length).toBeGreaterThan(0);
     });
 });
