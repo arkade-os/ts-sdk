@@ -33,27 +33,28 @@ describe("Settlement - Auto-settle boarding UTXOs", () => {
             },
         });
 
-        const boardingAddress = await wallet.getBoardingAddress();
-        execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
+        try {
+            const boardingAddress = await wallet.getBoardingAddress();
+            execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
 
-        // Wait for boarding UTXOs to appear
-        await waitFor(async () => (await wallet.getBoardingUtxos()).length > 0);
+            await waitFor(async () => (await wallet.getBoardingUtxos()).length > 0);
 
-        // The poll loop should auto-settle the boarding UTXO into Ark.
-        // Wait for a VTXO to appear (meaning settle succeeded).
-        await waitFor(
-            async () => {
-                const vtxos = await wallet.getVtxos();
-                return vtxos.length > 0;
-            },
-            { timeout: 60000, interval: 2000 },
-        );
+            // getVtxos() hides an in-flight intent's inputs, so assert the snapshot the wait saw.
+            let vtxos: Awaited<ReturnType<typeof wallet.getVtxos>> = [];
+            await waitFor(
+                async () => {
+                    vtxos = await wallet.getVtxos();
+                    return vtxos.length > 0 && vtxos[0].virtualStatus.state === "settled";
+                },
+                { timeout: 60000, interval: 2000 },
+            );
 
-        const vtxos = await wallet.getVtxos();
-        expect(vtxos.length).toBeGreaterThan(0);
-        expect(vtxos[0].virtualStatus.state).toBe("settled");
-
-        await wallet.dispose();
+            expect(vtxos.length).toBeGreaterThan(0);
+            expect(vtxos[0].virtualStatus.state).toBe("settled");
+        } finally {
+            // A failed assertion must not leave the poll loop settling on the shared regtest.
+            await wallet.dispose().catch(() => undefined);
+        }
     });
 });
 
