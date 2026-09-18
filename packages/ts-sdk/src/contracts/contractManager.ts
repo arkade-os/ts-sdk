@@ -50,6 +50,7 @@ import {
     getSyncCursor,
 } from "../utils/syncCursors";
 import {
+    applyRecordedSpends,
     getVtxosForContract,
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
@@ -2186,7 +2187,12 @@ export class ContractManager implements IContractManager {
             if (contract) {
                 await saveVtxosForContract(this.config.walletRepository, contract, addressVtxos);
             } else {
-                await this.config.walletRepository.saveVtxos(address, addressVtxos);
+                // No contract to key the script guard on, but this leg runs
+                // when the address mapping is already off — guard it anyway.
+                await this.config.walletRepository.saveVtxos(
+                    address,
+                    applyRecordedSpends(this.config.walletRepository, addressVtxos),
+                );
             }
         }
     }
