@@ -1285,16 +1285,21 @@ describe("Delegate Lifecycle", () => {
         expect(txid2).toBeDefined();
 
         // Verify delegate VTXOs were spent
-        const contractsAfter = await manager2.getContractsWithVtxos({
-            type: ["delegate"],
+        // arkd commits the spend to its indexer after FinalizeTx returns.
+        let spentDelegateOutpoints: typeof delegateVtxosBefore = [];
+        await waitFor(async () => {
+            const contractsAfter = await manager2.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosAfter = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
+            spentDelegateOutpoints = delegateVtxosBefore.filter(
+                (before) =>
+                    !delegateVtxosAfter.some(
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
+            );
+            return spentDelegateOutpoints.length > 0;
         });
-        const delegateVtxosAfter = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
-        const spentDelegateOutpoints = delegateVtxosBefore.filter(
-            (before) =>
-                !delegateVtxosAfter.some(
-                    (after) => after.txid === before.txid && after.vout === before.vout,
-                ),
-        );
         expect(spentDelegateOutpoints.length).toBeGreaterThan(0);
 
         // Phase 3 — Remove delegate
