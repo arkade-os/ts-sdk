@@ -97,10 +97,10 @@ describe("ArkadeCash", () => {
         const bob = await createTestArkWallet();
 
         const cash1 = await alice.wallet.createCash(5000);
-        await waitFor(async () => (await alice.wallet.getVtxos()).length > 0);
+        // Until this tx is indexed the second send re-picks its input, or its change.
+        await waitForCashFunded(cash1);
         const cash2 = await alice.wallet.createCash(3000);
 
-        await waitForCashFunded(cash1);
         await waitForCashFunded(cash2);
 
         expect((await bob.wallet.claimCash(cash1)).swept).toBe(5000);
