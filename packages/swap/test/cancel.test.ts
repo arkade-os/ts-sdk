@@ -129,6 +129,21 @@ describe("cancelOffer guards", () => {
         ).rejects.toThrow("pass fundingTxid");
     });
 
+    it("refuses to guess between deposits that share a fundingTxid", async () => {
+        state.serverKey = fundedServerKey;
+        const shared = "a".repeat(64);
+        state.utxos = [
+            { txid: shared, vout: 0, value: 10_000 },
+            { txid: shared, vout: 1, value: 20_000 },
+        ];
+        await expect(
+            cancelOffer(wallet, "http://ark", offerHex, {
+                repository: new InMemoryAssetSwapRepository(),
+                fundingTxid: shared,
+            }),
+        ).rejects.toThrow(/share fundingTxid/);
+    });
+
     it("does not broadcast when the in-flight marker cannot be written", async () => {
         // The `cancelling` marker is what keeps a crash between submit and
         // record from leaving a swap that still looks pending. It is written
@@ -153,6 +168,29 @@ describe("cancelOffer guards", () => {
         ).rejects.toThrow(/quota exceeded/);
         expect(state.sends).toBe(0);
         vi.restoreAllMocks();
+    });
+
+    // Refusing an ambiguous txid is only safe if there is a way to be exact.
+    it("cancels the named outpoint when deposits share a fundingTxid", async () => {
+        state.serverKey = fundedServerKey;
+        const shared = "a".repeat(64);
+        state.utxos = [
+            { txid: shared, vout: 0, value: 10_000 },
+            { txid: shared, vout: 1, value: 20_000 },
+        ];
+        state.sends = 0;
+        const repository = new InMemoryAssetSwapRepository();
+        await addAssetSwap(repository, pendingSwap());
+        const funded = { ...wallet, getAddress: async () => fundedAddress } as unknown as IWallet;
+
+        await expect(
+            cancelOffer(funded, "http://ark", offerHex, {
+                repository,
+                fundingTxid: shared,
+                fundingOutpoint: { txid: shared, vout: 1 },
+            }),
+        ).resolves.toBe("cc".repeat(32));
+        expect(state.sends).toBe(1);
     });
 
     // without this the contract takes the direct-indexer fallback and a

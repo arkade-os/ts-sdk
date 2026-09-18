@@ -7,10 +7,20 @@ export {
     decodeOffer,
     offerVtxoScript,
     swapPrograms,
+    // The pieces an out-of-tree fill planner assembles a spend from.
+    assembleOfferFill,
+    connectFillContract,
+    resolveDeposit,
     ASSET_CARRIER_SATS,
     OFFER_PACKET_TYPE,
+    type AssembledFillLayout,
+    type FillCoin,
     type FillFunding,
+    type FillInputOwner,
+    type FillOutpoint,
+    type FillOutputRole,
     type Offer,
+    type SponsorFillInput,
 } from "./offer";
 export {
     discoverMarkets,

@@ -3,10 +3,15 @@ import { hex } from "@scure/base";
 import { ArkAddress, asset, type IWallet } from "@arkade-os/sdk";
 import {
     ASSET_CARRIER_SATS,
+    assembleOfferFill,
+    connectFillContract,
+    decodeOffer,
     fillOffer,
     encodeOffer,
     offerVtxoScript,
+    resolveDeposit,
     type Offer,
+    type SponsorFillInput,
 } from "../src/offer";
 
 /**
@@ -160,10 +165,10 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         // Assets land on the payout output, which the builder only creates when
         // there is a sats surplus. With none, the asset would have no output to
         // go to and arkd would refuse the spend without explaining why.
-        state.utxos = [{ ...coin, value: 50_000, assets: [{ assetId: DEPOSIT_ASSET, amount: 7 }] }];
+        state.utxos = [{ ...coin, value: 45_000, assets: [{ assetId: DEPOSIT_ASSET, amount: 7 }] }];
         await expect(
             fillOffer(wallet, "http://ark", wantBtcHex, {
-                fund: fundingCoin({ value: 0 }),
+                fund: fundingCoin({ value: 5_000 }),
                 emulator: EMULATOR,
             }),
         ).rejects.toThrow(/no payout output/);
@@ -470,5 +475,289 @@ describe("fillOffer builds the spend the covenant inspects", () => {
             payoutScript: TAKER_PAYOUT,
         });
         expect(txid).toBe("ff".repeat(32));
+    });
+});
+
+describe("fillOffer deposit resolution by outpoint", () => {
+    const callsOf = (fn: string) => state.calls.filter((c) => c.fn === fn);
+    const twinDeposits = () => [coin, { ...coin, vout: 1 }];
+
+    it("selects the exact deposit by outpoint when one txid funds two", async () => {
+        reset(twinDeposits());
+        const txid = await fillOffer(wallet, "http://ark", wantBtcHex, {
+            fund,
+            emulator: EMULATOR,
+            fundingOutpoint: { txid: coin.txid, vout: 1 },
+            payoutScript: TAKER_PAYOUT,
+        });
+        expect(txid).toBe("ff".repeat(32));
+        expect((callsOf("from")[0].args[0] as { vout: number }).vout).toBe(1);
+    });
+
+    it("rejects a fundingTxid shared by two deposits instead of taking the first", async () => {
+        reset(twinDeposits());
+        await expect(
+            fillOffer(wallet, "http://ark", wantBtcHex, {
+                fund,
+                emulator: EMULATOR,
+                fundingTxid: coin.txid,
+                payoutScript: TAKER_PAYOUT,
+            }),
+        ).rejects.toThrow(/pass fundingOutpoint to select one/);
+        expect(state.sends).toBe(0);
+    });
+
+    it("rejects an outpoint that names no deposit", async () => {
+        reset();
+        await expect(
+            fillOffer(wallet, "http://ark", wantBtcHex, {
+                fund,
+                emulator: EMULATOR,
+                fundingOutpoint: { txid: "ab".repeat(32), vout: 0 },
+                payoutScript: TAKER_PAYOUT,
+            }),
+        ).rejects.toThrow(/no spendable VTXO at the swap address/);
+        expect(state.sends).toBe(0);
+    });
+
+    it("rejects a fundingTxid that disagrees with the outpoint", async () => {
+        reset();
+        await expect(
+            fillOffer(wallet, "http://ark", wantBtcHex, {
+                fund,
+                emulator: EMULATOR,
+                fundingTxid: "ab".repeat(32),
+                fundingOutpoint: { txid: coin.txid, vout: 0 },
+                payoutScript: TAKER_PAYOUT,
+            }),
+        ).rejects.toThrow(/does not match fundingOutpoint/);
+        expect(state.sends).toBe(0);
+    });
+
+    it("keeps resolving a lone deposit by fundingTxid", async () => {
+        reset();
+        const txid = await fillOffer(wallet, "http://ark", wantBtcHex, {
+            fund,
+            emulator: EMULATOR,
+            fundingTxid: coin.txid,
+            payoutScript: TAKER_PAYOUT,
+        });
+        expect(txid).toBe("ff".repeat(32));
+        expect((callsOf("from")[0].args[0] as { txid: string }).txid).toBe(coin.txid);
+    });
+});
+
+/**
+ * `fillOffer` refuses sponsor funding, so the sponsor leg is only reachable
+ * through `assembleOfferFill`. It routes other people's money, so the shape it
+ * asks the builder for is asserted here rather than left to the live fill.
+ */
+describe("assembleOfferFill routes the sponsor leg", () => {
+    const callsOf = (fn: string) => state.calls.filter((c) => c.fn === fn);
+    const TAXI_CHANGE = hex.decode("5120" + "33".repeat(32));
+    const FARE_SCRIPT = hex.decode("5120" + "44".repeat(32));
+    const taxiCoin = (over: Record<string, unknown> = {}) =>
+        [{ txid: "77".repeat(32), vout: 3, value: 10_000, ...over }] as never;
+
+    const assemble = async (
+        offerHex: string,
+        sponsor: SponsorFillInput | undefined,
+        solverFund: never = fund,
+    ) => {
+        const offer = decodeOffer(hex.decode(offerHex));
+        const contract = await connectFillContract(wallet, "http://ark", offer, {});
+        const vtxo = resolveDeposit(await contract.getUtxos(), {});
+        return assembleOfferFill(contract.functions.fulfill(), {
+            offer,
+            vtxo,
+            solverFund,
+            solverPayout: TAKER_PAYOUT,
+            assetCarrierSats: ASSET_CARRIER_SATS,
+            sponsor,
+        });
+    };
+
+    const sponsorLeg = (over: Partial<SponsorFillInput> = {}): SponsorFillInput => ({
+        fund: taxiCoin(),
+        netContributionSats: BigInt(1_000),
+        changeScript: TAXI_CHANGE,
+        ...over,
+    });
+
+    it("refuses sponsor funding that carries an asset", async () => {
+        reset();
+        await expect(
+            assemble(
+                wantBtcHex,
+                sponsorLeg({ fund: taxiCoin({ assets: [{ assetId: STRAY_ASSET, amount: 1 }] }) }),
+            ),
+        ).rejects.toThrow(/sats-only/);
+    });
+
+    it("refuses a contribution larger than the sponsor put in", async () => {
+        reset();
+        await expect(
+            assemble(wantBtcHex, sponsorLeg({ netContributionSats: BigInt(50_000) })),
+        ).rejects.toThrow(/netContributionSats 50000 exceeds/);
+    });
+
+    it("emits no change output when the contribution spends every sponsor sat", async () => {
+        reset();
+        const layout = await assemble(
+            wantBtcHex,
+            sponsorLeg({ netContributionSats: BigInt(10_000) }),
+        );
+        expect(layout.outputs.map((o) => o.role)).not.toContain("sponsor-change");
+        expect(callsOf("to")).toHaveLength(1);
+    });
+
+    it("pays sponsor change back to the sponsor's own script", async () => {
+        reset();
+        const layout = await assemble(wantBtcHex, sponsorLeg());
+        const change = layout.outputs.find((o) => o.role === "sponsor-change");
+        expect(change?.sats).toBe(BigInt(9_000));
+        expect(hex.encode(change!.script)).toBe(hex.encode(TAXI_CHANGE));
+    });
+
+    it("folds a same-asset fare into the wanted group, not a second one", async () => {
+        reset([satsDeposit]);
+        await assemble(
+            wantAssetHex,
+            sponsorLeg({
+                fare: {
+                    assetId: WANTED_ASSET,
+                    amount: BigInt(5),
+                    script: FARE_SCRIPT,
+                    sats: ASSET_CARRIER_SATS,
+                },
+            }),
+            fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 50_005 }] }),
+        );
+        const groups = callsOf("withAsset");
+        expect(groups).toHaveLength(1);
+        const g = groups[0].args[0] as { assetId: string; outputs: { amount: bigint }[] };
+        expect(g.assetId).toBe(WANTED_ASSET);
+        // maker's 50_000 and the taxi's 5 both ride group 0.
+        expect(g.outputs.reduce((s, o) => s + o.amount, BigInt(0))).toBe(BigInt(50_005));
+    });
+
+    it("gives a cross-asset fare its own group behind the wanted one", async () => {
+        reset([satsDeposit]);
+        await assemble(
+            wantAssetHex,
+            sponsorLeg({
+                fare: {
+                    assetId: STRAY_ASSET,
+                    amount: BigInt(2),
+                    script: FARE_SCRIPT,
+                    sats: ASSET_CARRIER_SATS,
+                },
+            }),
+            fundingCoin({
+                assets: [
+                    { assetId: WANTED_ASSET, amount: 50_000 },
+                    { assetId: STRAY_ASSET, amount: 2 },
+                ],
+            }),
+        );
+        const ids = callsOf("withAsset").map((c) => (c.args[0] as { assetId: string }).assetId);
+        expect(ids[0]).toBe(WANTED_ASSET);
+        expect(ids).toContain(STRAY_ASSET);
+    });
+
+    it("refuses the same coin funding the solver and the sponsor", async () => {
+        reset();
+        const shared = fundingCoin()[0] as { txid: string; vout: number; value: number };
+        await expect(assemble(wantBtcHex, sponsorLeg({ fund: [shared] as never }))).rejects.toThrow(
+            /duplicate fill input/,
+        );
+    });
+
+    it("charges a fare in sats alone, opening no asset group for it", async () => {
+        reset();
+        const layout = await assemble(
+            wantBtcHex,
+            sponsorLeg({ fare: { script: FARE_SCRIPT, sats: BigInt(750) } }),
+        );
+        const fare = layout.outputs.find((o) => o.role === "sponsor-fare");
+        expect(fare?.sats).toBe(BigInt(750));
+        expect(hex.encode(fare!.script)).toBe(hex.encode(FARE_SCRIPT));
+        // The deposit asset still routes to the solver; the fare adds no group.
+        const ids = callsOf("withAsset").map((c) => (c.args[0] as { assetId: string }).assetId);
+        expect(ids).toEqual([DEPOSIT_ASSET]);
+    });
+
+    it("refuses a fare naming an asset without an amount, or the reverse", async () => {
+        reset();
+        await expect(
+            assemble(
+                wantBtcHex,
+                sponsorLeg({
+                    fare: { assetId: STRAY_ASSET, script: FARE_SCRIPT, sats: BigInt(330) },
+                }),
+            ),
+        ).rejects.toThrow(/assetId and amount together/);
+        reset();
+        await expect(
+            assemble(
+                wantBtcHex,
+                sponsorLeg({
+                    fare: { amount: BigInt(1), script: FARE_SCRIPT, sats: BigInt(330) },
+                }),
+            ),
+        ).rejects.toThrow(/assetId and amount together/);
+    });
+
+    it("names a sats shortfall before the builder sees it", async () => {
+        reset();
+        await expect(
+            assemble(
+                wantBtcHex,
+                sponsorLeg({
+                    fare: {
+                        assetId: DEPOSIT_ASSET,
+                        amount: BigInt(1),
+                        script: FARE_SCRIPT,
+                        sats: BigInt(10_000_000),
+                    },
+                }),
+            ),
+        ).rejects.toThrow(/outputs total \d+ sats but the inputs carry/);
+    });
+});
+
+describe("resolveDeposit picks one deposit or refuses", () => {
+    const at = (txid: string, vout: number) => ({ txid, vout, value: 10_000 });
+
+    it("matches a txid the indexer returned in a different case", () => {
+        expect(resolveDeposit([at("A".repeat(64), 0)], { fundingTxid: "a".repeat(64) }).vout).toBe(
+            0,
+        );
+    });
+
+    it("refuses deposits sharing a txid rather than taking the first", () => {
+        const shared = "a".repeat(64);
+        expect(() =>
+            resolveDeposit([at(shared, 0), at(shared, 1)], { fundingTxid: shared }),
+        ).toThrow(/share fundingTxid/);
+    });
+
+    it("takes the outpoint when both references are given and agree", () => {
+        const shared = "a".repeat(64);
+        expect(
+            resolveDeposit([at(shared, 0), at(shared, 1)], {
+                fundingTxid: shared,
+                fundingOutpoint: { txid: shared, vout: 1 },
+            }).value,
+        ).toBe(10_000);
+    });
+
+    it("refuses a txid and outpoint that disagree", () => {
+        expect(() =>
+            resolveDeposit([at("a".repeat(64), 0)], {
+                fundingTxid: "b".repeat(64),
+                fundingOutpoint: { txid: "a".repeat(64), vout: 0 },
+            }),
+        ).toThrow(/pass one deposit reference/);
     });
 });
