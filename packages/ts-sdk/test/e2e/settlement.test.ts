@@ -34,28 +34,33 @@ describe("Settlement - Auto-settle boarding UTXOs", () => {
             },
         });
 
-        const boardingAddress = await wallet.getBoardingAddress();
-        execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
+        try {
+            const boardingAddress = await wallet.getBoardingAddress();
+            execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
 
-        // Wait for boarding UTXOs to appear
-        await waitFor(async () => (await wallet.getBoardingUtxos()).length > 0);
+            await waitFor(async () => (await wallet.getBoardingUtxos()).length > 0);
 
-        // The poll loop should auto-settle the boarding UTXO into Ark.
-        // Wait for a VTXO to appear (meaning settle succeeded).
-        await waitFor(
-            async () => {
-                const vtxos = await wallet.getVtxos();
-                return vtxos.length > 0;
-            },
-            { timeout: 60000, interval: 2000 },
-        );
+            // getVtxos() hides an in-flight intent's inputs, so assert the snapshot the wait saw.
+            let vtxos: Awaited<ReturnType<typeof wallet.getVtxos>> = [];
+            await waitFor(
+                async () => {
+                    vtxos = await wallet.getVtxos();
+                    // This branch dropped `virtualStatus`; not-preconfirmed is the
+                    // canonical-facts equivalent of the "settled" state it carried.
+                    return vtxos.length > 0 && !vtxos[0].isPreconfirmed;
+                },
+                { timeout: 60000, interval: 2000 },
+            );
 
-        const vtxos = await wallet.getVtxos();
-        expect(vtxos.length).toBeGreaterThan(0);
-        expect(vtxos[0].isPreconfirmed).toBe(false);
-        expect(vtxos[0].isSwept).toBe(false);
-
-        await wallet.dispose();
+            expect(vtxos.length).toBeGreaterThan(0);
+            // The canonical facts this branch asserts on, against the snapshot the
+            // wait saw — a second read would reintroduce the race #939 removed.
+            expect(vtxos[0].isPreconfirmed).toBe(false);
+            expect(vtxos[0].isSwept).toBe(false);
+        } finally {
+            // A failed assertion must not leave the poll loop settling on the shared regtest.
+            await wallet.dispose().catch(() => undefined);
+        }
     });
 });
 

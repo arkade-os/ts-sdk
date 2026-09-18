@@ -8,6 +8,17 @@ export const buildVersion = "0.9.9";
 export const sdkVersion = `ts-sdk/${version}`;
 
 /**
+ * The version headers arkd's compatibility guard reads, for callers that need
+ * them as data rather than as a wrapper — {@link fetch} sets the same pair, so
+ * a header added to one belongs in the other. They go to the Arkade server and
+ * nowhere else: another origin rejects them in the CORS preflight.
+ */
+export const ARKADE_VERSION_HEADERS: Readonly<Record<string, string>> = {
+    "X-Build-Version": buildVersion,
+    "X-SDK-VERSION": sdkVersion,
+};
+
+/**
  * Wraps a transport-level `fetch` rejection (DNS failure, connection refused,
  * TLS or CORS error) with the request method and URL, preserving the original
  * as {@link Error.cause}.
