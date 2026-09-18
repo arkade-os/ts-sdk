@@ -145,7 +145,7 @@ describe("fillOffer against the REAL Arkade builder", () => {
     it("reaches the emulator instead of refusing to submit", async () => {
         reset();
         state.vtxos = [deposit()];
-        const txid = await fillOffer(wallet, "http://ark", offerHex, {
+        const txid = await fillOffer(wallet, "http://operator", offerHex, {
             fund: [fundingCoin(80_000)] as never,
             emulator: "http://emulator.test",
             payoutScript: TAKER_PAYOUT,
@@ -160,7 +160,7 @@ describe("fillOffer against the REAL Arkade builder", () => {
     it("puts the maker at output 0 and the taker's payout at output 1", async () => {
         reset();
         state.vtxos = [deposit()];
-        await fillOffer(wallet, "http://ark", offerHex, {
+        await fillOffer(wallet, "http://operator", offerHex, {
             fund: [fundingCoin(80_000)] as never,
             emulator: "http://emulator.test",
             payoutScript: TAKER_PAYOUT,
@@ -182,7 +182,7 @@ describe("fillOffer against the REAL Arkade builder", () => {
             getContracts: async () => [{ script: hex.encode(script.pkScript) }],
             getContractsWithVtxos: async () => [{ vtxos: [registered] }],
         };
-        await fillOffer(wallet, "http://ark", offerHex, {
+        await fillOffer(wallet, "http://operator", offerHex, {
             fund: [fundingCoin(80_000)] as never,
             emulator: "http://emulator.test",
             payoutScript: TAKER_PAYOUT,
@@ -197,7 +197,7 @@ describe("fillOffer against the REAL Arkade builder", () => {
         reset();
         state.vtxos = [deposit()];
         await expect(
-            fillOffer(wallet, "http://ark", offerHex, {
+            fillOffer(wallet, "http://operator", offerHex, {
                 fund: [fundingCoin(80_000)] as never,
                 emulator: "http://emulator.test",
                 emulatorPubkey: "not-a-pubkey",

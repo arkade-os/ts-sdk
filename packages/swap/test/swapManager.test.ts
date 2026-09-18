@@ -1486,7 +1486,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         let fail = false;
         const s = spies({
             claimLockup: async () => {
-                if (fail) throw new Error("ark server unreachable");
+                if (fail) throw new Error("operator unreachable");
                 return { arkTxid: CLAIM_ARK_TXID, amount: LOCKUP_VALUE };
             },
         });
@@ -1591,7 +1591,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         let now = BEFORE_DEADLINE;
         const s = spies({
             claimLockup: async () => {
-                throw new Error("ark server unreachable");
+                throw new Error("operator unreachable");
             },
         });
         const swap = receiveSwap();
@@ -1607,8 +1607,8 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         await m.poll();
 
         expect(swap.state).toBe("failed");
-        expect(swap.failure).toMatch(/ark server unreachable/);
-        await expect(m.waitForSwapCompletion(RFQ_ID)).rejects.toThrow(/ark server unreachable/);
+        expect(swap.failure).toMatch(/operator unreachable/);
+        await expect(m.waitForSwapCompletion(RFQ_ID)).rejects.toThrow(/operator unreachable/);
     });
 
     it("reports without acting when auto-actions are off", async () => {

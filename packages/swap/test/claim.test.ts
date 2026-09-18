@@ -76,11 +76,11 @@ type FakeOperator = ClaimArkProvider & {
     finalized: { arkTxid: string; checkpoints: string[] }[];
 };
 
-/** The Ark server's own key — key(3) in the covenant above. */
-const SERVER_SIGNER = SingleKey.fromPrivateKey(priv(3));
+/** The operator's own key — key(3) in the covenant above. */
+const OPERATOR_SIGNER = SingleKey.fromPrivateKey(priv(3));
 
-const serverCosign = async (psbt: string): Promise<string> =>
-    base64.encode((await SERVER_SIGNER.sign(Transaction.fromPSBT(base64.decode(psbt)))).toPSBT());
+const operatorCosign = async (psbt: string): Promise<string> =>
+    base64.encode((await OPERATOR_SIGNER.sign(Transaction.fromPSBT(base64.decode(psbt)))).toPSBT());
 
 /** A scripted arkd that countersigns like the real one — `pushClaim` verifies
  * those signatures before finalizing, so a mute fake would prove nothing. */
@@ -102,12 +102,12 @@ const fakeOperator = (
         submitTx: async (arkTx: string, checkpoints: string[]) => {
             submitted.push({ arkTx, checkpoints });
             const answered = over.checkpointsFor ? over.checkpointsFor(checkpoints) : checkpoints;
-            const finalArkTx = cosign ? await serverCosign(arkTx) : arkTx;
+            const finalArkTx = cosign ? await operatorCosign(arkTx) : arkTx;
             return {
                 arkTxid: Transaction.fromPSBT(base64.decode(arkTx)).id,
                 finalArkTx: over.finalArkTx ? over.finalArkTx(finalArkTx) : finalArkTx,
                 signedCheckpointTxs: cosign
-                    ? await Promise.all(answered.map(serverCosign))
+                    ? await Promise.all(answered.map(operatorCosign))
                     : answered,
             };
         },
@@ -229,7 +229,7 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(LockupAmountMismatchError);
-        // `P` reaches the Ark server at submit, so this is the whole guarantee.
+        // `P` reaches the operator at submit, so this is the whole guarantee.
         expect(operator.submitted).toHaveLength(0);
     });
 

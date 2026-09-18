@@ -43,7 +43,7 @@ const serverPubkey = new Uint8Array(32);
 const run = (repository: InMemoryAssetSwapRepository, overrides = {}) =>
     restoreAssetSwapRepository({
         wallet,
-        arkServerUrl: "https://ark.test",
+        arkServerUrl: "https://operator.test",
         indexer,
         repository,
         txs,
@@ -136,7 +136,9 @@ describe("restoreAssetSwapRepository", () => {
 
         const result = await run(repository);
 
-        expect(mocks.restoreOfferCoverage).toHaveBeenCalledWith(wallet, "https://ark.test", [open]);
+        expect(mocks.restoreOfferCoverage).toHaveBeenCalledWith(wallet, "https://operator.test", [
+            open,
+        ]);
         expect(result.coverageError).toBeUndefined();
     });
 
@@ -163,7 +165,7 @@ describe("restoreAssetSwapRepository", () => {
         } as unknown as AssetSwap;
         await repository.saveSwap(onchain);
         mocks.restoreAssetSwaps.mockResolvedValue({ restored: [], scannedTxids: [] });
-        mocks.restoreOfferCoverage.mockRejectedValue(new Error("Ark server unavailable"));
+        mocks.restoreOfferCoverage.mockRejectedValue(new Error("operator unavailable"));
 
         const result = await run(repository);
 
@@ -180,7 +182,9 @@ describe("restoreAssetSwapRepository", () => {
 
         await expect(run(repository)).rejects.toBe(scanError);
 
-        expect(mocks.restoreOfferCoverage).toHaveBeenCalledWith(wallet, "https://ark.test", [open]);
+        expect(mocks.restoreOfferCoverage).toHaveBeenCalledWith(wallet, "https://operator.test", [
+            open,
+        ]);
     });
 
     it("does not mutate the repository after cancellation", async () => {

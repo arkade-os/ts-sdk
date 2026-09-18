@@ -44,7 +44,7 @@ import {
     type RfqTransport,
 } from "../../src";
 
-const ARK_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";
 const arkdExec = "docker exec -t arkd";
 
@@ -83,7 +83,7 @@ const waitFor = async (
     throw new Error("timeout in waitFor");
 };
 
-const indexer = new RestIndexerProvider(ARK_URL);
+const indexer = new RestIndexerProvider(OPERATOR_URL);
 let wallet: Wallet;
 let emulatorPubkey: Uint8Array;
 let operatorPubkey: Uint8Array;
@@ -145,7 +145,7 @@ const stubTransport = (): RfqTransport => ({
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: ARK_URL,
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -165,7 +165,7 @@ beforeAll(async () => {
 
     // The stub solver has to derive the same script the maker will, so it needs
     // the same server-derived inputs `requestLightningSend` reads for itself.
-    const info = await new RestArkProvider(ARK_URL).getInfo();
+    const info = await new RestArkProvider(OPERATOR_URL).getInfo();
     operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     hrp = ArkAddress.decode(address).hrp;
@@ -180,7 +180,7 @@ describe("RFQ lockup registration (regtest)", () => {
     let lockupScript: string;
 
     it("registers the lockup before the maker can fund it", async () => {
-        swap = await requestLightningSend(wallet, ARK_URL, stubTransport(), {
+        swap = await requestLightningSend(wallet, OPERATOR_URL, stubTransport(), {
             invoice: {
                 raw: "lnbcrt10u1p",
                 paymentHash: PAYMENT_HASH,

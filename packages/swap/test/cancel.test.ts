@@ -97,7 +97,7 @@ describe("cancelOffer guards", () => {
     it("diagnoses a rotated server key instead of reporting a missing VTXO", async () => {
         state.serverKey = rotatedServerKey;
         await expect(
-            cancelOffer(wallet, "http://ark", offerHex, {
+            cancelOffer(wallet, "http://operator", offerHex, {
                 repository: new InMemoryAssetSwapRepository(),
             }),
         ).rejects.toThrow("signing key has likely rotated");
@@ -109,7 +109,7 @@ describe("cancelOffer guards", () => {
         state.serverKey = rotatedServerKey;
         state.utxos = [];
         await expect(
-            cancelOffer(wallet, "http://ark", offerHex, {
+            cancelOffer(wallet, "http://operator", offerHex, {
                 repository: new InMemoryAssetSwapRepository(),
                 swapAddress: fundedAddress,
             }),
@@ -123,7 +123,7 @@ describe("cancelOffer guards", () => {
             { txid: "b".repeat(64), vout: 0, value: 10_000 },
         ];
         await expect(
-            cancelOffer(wallet, "http://ark", offerHex, {
+            cancelOffer(wallet, "http://operator", offerHex, {
                 repository: new InMemoryAssetSwapRepository(),
             }),
         ).rejects.toThrow("pass fundingTxid");
@@ -146,7 +146,7 @@ describe("cancelOffer guards", () => {
         const funded = { ...wallet, getAddress: async () => fundedAddress } as unknown as IWallet;
 
         await expect(
-            cancelOffer(funded, "http://ark", offerHex, {
+            cancelOffer(funded, "http://operator", offerHex, {
                 repository,
                 fundingTxid: "a".repeat(64),
             }),
@@ -162,11 +162,13 @@ describe("cancelOffer guards", () => {
         state.utxos = [];
         state.connectOptions = undefined;
         await expect(
-            cancelOffer(wallet, "http://ark", offerHex, {
+            cancelOffer(wallet, "http://operator", offerHex, {
                 repository: new InMemoryAssetSwapRepository(),
             }),
         ).rejects.toThrow("no spendable VTXO");
-        expect(state.connectOptions?.contractManager).toBe(contractManager);
+        expect((state.connectOptions ?? { contractManager: undefined })?.contractManager).toBe(
+            contractManager,
+        );
     });
 });
 
@@ -182,7 +184,10 @@ describe("cancelOffer coverage", () => {
         setContractWatchState.mockClear();
     };
     const cancel = (repository: InMemoryAssetSwapRepository) =>
-        cancelOffer(funded, "http://ark", offerHex, { repository, fundingTxid: "a".repeat(64) });
+        cancelOffer(funded, "http://operator", offerHex, {
+            repository,
+            fundingTxid: "a".repeat(64),
+        });
 
     it("retires the offer contract once the cancel is recorded", async () => {
         cancellable();

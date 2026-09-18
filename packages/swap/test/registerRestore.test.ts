@@ -86,7 +86,7 @@ describe("registerAssetSwapRestore", () => {
         const prepareNew = vi.fn((swap) => swap);
         const onResult = vi.fn(async () => undefined);
         registerAssetSwapRestore(wallet, {
-            arkServerUrl: "https://ark.test",
+            arkServerUrl: "https://operator.test",
             repository: repository as never,
             prepareNew,
             onResult,
@@ -96,7 +96,7 @@ describe("registerAssetSwapRestore", () => {
 
         expect(restoreAssetSwapRepository).toHaveBeenCalledWith({
             wallet,
-            arkServerUrl: "https://ark.test",
+            arkServerUrl: "https://operator.test",
             indexer: indexerProvider,
             repository,
             txs: [
@@ -121,7 +121,7 @@ describe("registerAssetSwapRestore", () => {
         const indexer = { getVtxos: vi.fn() };
         const serverPubkey = new Uint8Array(32).fill(0xcd);
         registerAssetSwapRestore(wallet, {
-            arkServerUrl: "https://ark.test",
+            arkServerUrl: "https://operator.test",
             repository: {} as never,
             indexer: indexer as never,
             serverPubkey,
@@ -139,12 +139,12 @@ describe("registerAssetSwapRestore", () => {
         const first = vi.fn();
         const second = vi.fn();
         registerAssetSwapRestore(wallet, {
-            arkServerUrl: "https://first.test",
+            arkServerUrl: "https://operator-1.test",
             repository: {} as never,
             onResult: first,
         });
         registerAssetSwapRestore(wallet, {
-            arkServerUrl: "https://second.test",
+            arkServerUrl: "https://operator-2.test",
             repository: {} as never,
             onResult: second,
         });
@@ -155,14 +155,14 @@ describe("registerAssetSwapRestore", () => {
         expect(second).toHaveBeenCalledWith(result);
         expect(restoreAssetSwapRepository).toHaveBeenCalledOnce();
         expect(restoreAssetSwapRepository).toHaveBeenCalledWith(
-            expect.objectContaining({ arkServerUrl: "https://second.test" }),
+            expect.objectContaining({ arkServerUrl: "https://operator-2.test" }),
         );
     });
 
     it("propagates an onResult failure from the restore hook", async () => {
         const { wallet } = makeWallet();
         registerAssetSwapRestore(wallet, {
-            arkServerUrl: "https://ark.test",
+            arkServerUrl: "https://operator.test",
             repository: {} as never,
             onResult: async () => {
                 throw new Error("presentation failed");

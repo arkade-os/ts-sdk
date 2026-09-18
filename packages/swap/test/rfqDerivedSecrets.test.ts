@@ -256,7 +256,7 @@ describe("requestLightningSend and the corridor spread", () => {
         await expect(
             requestLightningSend(
                 await hdWallet(),
-                "http://ark",
+                "http://operator",
                 lightningTransport({ refund_without_receiver_delay: undefined }),
                 { emulatorPubkey: EMULATOR_PUBKEY_HEX, invoice: INVOICE },
             ),
@@ -267,7 +267,7 @@ describe("requestLightningSend and the corridor spread", () => {
         await expect(
             requestLightningSend(
                 await hdWallet(),
-                "http://ark",
+                "http://operator",
                 lightningTransport({ refund_without_receiver_delay: 8192 }),
                 { emulatorPubkey: EMULATOR_PUBKEY_HEX, invoice: INVOICE },
             ),
@@ -278,7 +278,7 @@ describe("requestLightningSend and the corridor spread", () => {
         const wallet = await hdWallet();
         const result = await requestLightningSend(
             wallet,
-            "http://ark",
+            "http://operator",
             spreadTransport(1072, 1000),
             { emulatorPubkey: EMULATOR_PUBKEY_HEX, invoice: INVOICE },
         );
@@ -288,7 +288,7 @@ describe("requestLightningSend and the corridor spread", () => {
     it("refuses a quote whose to_amount reprices the invoice", async () => {
         const wallet = await hdWallet();
         await expect(
-            requestLightningSend(wallet, "http://ark", spreadTransport(1000, 999), {
+            requestLightningSend(wallet, "http://operator", spreadTransport(1000, 999), {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 invoice: INVOICE,
             }),
@@ -298,7 +298,7 @@ describe("requestLightningSend and the corridor spread", () => {
     it("refuses a quote whose from_amount is below the invoice — a negative spread is not a quote", async () => {
         const wallet = await hdWallet();
         await expect(
-            requestLightningSend(wallet, "http://ark", spreadTransport(999, 1000), {
+            requestLightningSend(wallet, "http://operator", spreadTransport(999, 1000), {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 invoice: INVOICE,
             }),
@@ -318,7 +318,7 @@ describe("treeParams round-trips to the funded script", () => {
     ] as const)("on a %s wallet", async (_kind, makeWallet) => {
         const result = await requestLightningSend(
             await makeWallet(),
-            "http://ark",
+            "http://operator",
             lightningTransport(),
             { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
         );
@@ -338,7 +338,7 @@ describe("treeParams round-trips to the funded script", () => {
         const rows: { params: Record<string, string> }[] = [];
         const result = await requestLightningSend(
             staticWallet(rows),
-            "http://ark",
+            "http://operator",
             lightningTransport(),
             { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
         );
@@ -372,7 +372,7 @@ describe("treeParams round-trips to the funded script", () => {
     it("carries the inputs no quote and no second round trip could supply", async () => {
         const result = await requestLightningSend(
             staticWallet(),
-            "http://ark",
+            "http://operator",
             lightningTransport(),
             { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
         );
@@ -390,7 +390,7 @@ describe("treeParams round-trips to the funded script", () => {
 describe("requestLightningSend on an HD wallet", () => {
     it("returns a descriptor and no key material", async () => {
         const wallet = await hdWallet();
-        const result = await requestLightningSend(wallet, "http://ark", lightningTransport(), {
+        const result = await requestLightningSend(wallet, "http://operator", lightningTransport(), {
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
             invoice: INVOICE,
         });
@@ -432,7 +432,7 @@ describe("requestLightningSend on an HD wallet", () => {
             async close() {},
         };
 
-        const result = await requestLightningSend(rotating, "http://ark", transport, {
+        const result = await requestLightningSend(rotating, "http://operator", transport, {
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
             invoice: INVOICE,
         });
@@ -452,7 +452,7 @@ describe("requestOnchainSend on an HD wallet", () => {
     it("commits to the derived preimage and returns neither it nor the key", async () => {
         const wallet = await hdWallet();
         const seen: { paymentHash?: string; senderPubkey?: string } = {};
-        const result = await requestOnchainSend(wallet, "http://ark", onchainTransport(seen), {
+        const result = await requestOnchainSend(wallet, "http://operator", onchainTransport(seen), {
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
             amount: 100_000,
             amountSide: "to",
@@ -481,8 +481,8 @@ describe("requestOnchainSend on an HD wallet", () => {
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
         };
 
-        await requestOnchainSend(wallet, "http://ark", onchainTransport(first), params);
-        await requestOnchainSend(wallet, "http://ark", onchainTransport(second), params);
+        await requestOnchainSend(wallet, "http://operator", onchainTransport(first), params);
+        await requestOnchainSend(wallet, "http://operator", onchainTransport(second), params);
 
         expect(second.senderPubkey).not.toBe(first.senderPubkey);
         expect(second.paymentHash).not.toBe(first.paymentHash);
@@ -493,13 +493,18 @@ describe("requestOnchainSend on an HD wallet", () => {
         const preimage = new Uint8Array(32).fill(7);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         try {
-            const result = await requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
-                emulatorPubkey: EMULATOR_PUBKEY_HEX,
-                amount: 100_000,
-                amountSide: "to",
-                payoutPubkey: PAYOUT_PUBKEY,
-                preimage,
-            });
+            const result = await requestOnchainSend(
+                wallet,
+                "http://operator",
+                onchainTransport({}),
+                {
+                    emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                    amount: 100_000,
+                    amountSide: "to",
+                    payoutPubkey: PAYOUT_PUBKEY,
+                    preimage,
+                },
+            );
 
             expect(result.secrets.preimage).toEqual(preimage);
             expect(
@@ -530,13 +535,18 @@ describe("requestOnchainSend on an HD wallet", () => {
         const preimage = new Uint8Array(32).fill(8);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         try {
-            const result = await requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
-                emulatorPubkey: EMULATOR_PUBKEY_HEX,
-                amount: 100_000,
-                amountSide: "to",
-                payoutPubkey: PAYOUT_PUBKEY,
-                preimage,
-            });
+            const result = await requestOnchainSend(
+                wallet,
+                "http://operator",
+                onchainTransport({}),
+                {
+                    emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                    amount: 100_000,
+                    amountSide: "to",
+                    payoutPubkey: PAYOUT_PUBKEY,
+                    preimage,
+                },
+            );
 
             expect(result.secrets.descriptor).toBe(
                 `tr(${hex.encode(await wallet.identity.xOnlyPublicKey())})`,
@@ -564,7 +574,7 @@ describe("requestOnchainSend on an HD wallet", () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         try {
             const send = () =>
-                requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+                requestOnchainSend(wallet, "http://operator", onchainTransport({}), {
                     emulatorPubkey: EMULATOR_PUBKEY_HEX,
                     amount: 100_000,
                     amountSide: "to",
@@ -611,7 +621,7 @@ describe("requestOnchainSend on an HD wallet", () => {
         // and the difference between it and `preimageHex` is what they mean,
         // not what they look like.
         const send = (wallet: IWallet) =>
-            requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+            requestOnchainSend(wallet, "http://operator", onchainTransport({}), {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 100_000,
                 amountSide: "to",
@@ -641,7 +651,7 @@ const stringLeaves = (value: unknown): string[] => {
 
 describe("what an RFQ record stores about its corridor's keys", () => {
     const onchainSend = (wallet: IWallet) =>
-        requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+        requestOnchainSend(wallet, "http://operator", onchainTransport({}), {
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
             amount: 100_000,
             amountSide: "to",
@@ -649,7 +659,7 @@ describe("what an RFQ record stores about its corridor's keys", () => {
         });
 
     const send = (wallet: IWallet) =>
-        requestLightningSend(wallet, "http://ark", lightningTransport(), {
+        requestLightningSend(wallet, "http://operator", lightningTransport(), {
             invoice: INVOICE,
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
         });
@@ -757,7 +767,7 @@ describe("a corridor with no hashlock at all", () => {
     it("round-trips a signer with no hashlock and no preimage anywhere", async () => {
         const result = await requestLightningSend(
             staticWallet(),
-            "http://ark",
+            "http://operator",
             lightningTransport(),
             { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
         );

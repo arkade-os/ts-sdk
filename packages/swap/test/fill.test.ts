@@ -150,7 +150,7 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         // leaves the emulator to refuse it, reporting nothing more than that the
         // covenant said no — so name the shortfall here instead.
         await expect(
-            fillOffer(wallet, "http://ark", wantAssetHex, { fund, emulator: EMULATOR }),
+            fillOffer(wallet, "http://operator", wantAssetHex, { fund, emulator: EMULATOR }),
         ).rejects.toThrow(/needs 50000 of .*`fund` declares 0/);
         expect(state.sends).toBe(0);
     });
@@ -162,7 +162,7 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         // go to and arkd would refuse the spend without explaining why.
         state.utxos = [{ ...coin, value: 50_000, assets: [{ assetId: DEPOSIT_ASSET, amount: 7 }] }];
         await expect(
-            fillOffer(wallet, "http://ark", wantBtcHex, {
+            fillOffer(wallet, "http://operator", wantBtcHex, {
                 fund: fundingCoin({ value: 0 }),
                 emulator: EMULATOR,
             }),
@@ -173,7 +173,7 @@ describe("fillOffer refuses what it cannot build correctly", () => {
     it("refuses an empty fund, since nothing would pay wantAmount", async () => {
         reset();
         await expect(
-            fillOffer(wallet, "http://ark", wantBtcHex, { fund: [], emulator: EMULATOR }),
+            fillOffer(wallet, "http://operator", wantBtcHex, { fund: [], emulator: EMULATOR }),
         ).rejects.toThrow(/`fund` is empty/);
         expect(state.sends).toBe(0);
     });
@@ -184,7 +184,7 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         // Same failure mode cancelOffer names: a mismatched rebuild makes
         // getUtxos return nothing, and "no deposit" is the wrong diagnosis.
         await expect(
-            fillOffer(wallet, "http://ark", wantBtcHex, { fund, emulator: EMULATOR }),
+            fillOffer(wallet, "http://operator", wantBtcHex, { fund, emulator: EMULATOR }),
         ).rejects.toThrow(/signing key has likely rotated/);
     });
 
@@ -192,7 +192,7 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         reset();
         state.utxos = [coin, { ...coin, txid: "ab".repeat(32) }];
         await expect(
-            fillOffer(wallet, "http://ark", wantBtcHex, { fund, emulator: EMULATOR }),
+            fillOffer(wallet, "http://operator", wantBtcHex, { fund, emulator: EMULATOR }),
         ).rejects.toThrow(/pass fundingTxid/);
         expect(state.sends).toBe(0);
     });
@@ -204,7 +204,7 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         // JSDoc uses this wording for the mirror case; a caller should read it
         // as "the offer is gone", not as a fault.
         await expect(
-            fillOffer(wallet, "http://ark", wantBtcHex, { fund, emulator: EMULATOR }),
+            fillOffer(wallet, "http://operator", wantBtcHex, { fund, emulator: EMULATOR }),
         ).rejects.toThrow(/no spendable VTXO at the swap address/);
     });
 
@@ -218,7 +218,7 @@ describe("fillOffer refuses what it cannot build correctly", () => {
     ])("refuses a deposit %s the offer says it sells", async (_label, assets) => {
         reset([{ ...satsDeposit, ...(assets ? { assets } : {}) }]);
         await expect(
-            fillOffer(wallet, "http://ark", wantBtcHex, { fund, emulator: EMULATOR }),
+            fillOffer(wallet, "http://operator", wantBtcHex, { fund, emulator: EMULATOR }),
         ).rejects.toThrow(/carries no aa+0000, which this offer sells/);
         expect(state.sends).toBe(0);
     });
@@ -229,7 +229,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
 
     it("pays the maker at OUTPUT 0, which is the output the covenant checks", async () => {
         reset();
-        const txid = await fillOffer(wallet, "http://ark", wantBtcHex, {
+        const txid = await fillOffer(wallet, "http://operator", wantBtcHex, {
             fund,
             emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
@@ -248,7 +248,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
 
     it("pays an ASSET want through the packet, with only a carrier at output 0", async () => {
         reset([satsDeposit]);
-        const txid = await fillOffer(wallet, "http://ark", wantAssetHex, {
+        const txid = await fillOffer(wallet, "http://operator", wantAssetHex, {
             fund: fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }),
             emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
@@ -277,7 +277,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
 
     it("returns the taker's surplus of the wanted asset, in the same group", async () => {
         reset([satsDeposit]);
-        await fillOffer(wallet, "http://ark", wantAssetHex, {
+        await fillOffer(wallet, "http://operator", wantAssetHex, {
             fund: fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 80_000 }] }),
             emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
@@ -301,7 +301,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         // asset; whatever else those coins hold comes along, and undeclared it
         // takes the whole fill down.
         state.utxos = [{ ...coin, assets: [{ assetId: DEPOSIT_ASSET, amount: 900 }] }];
-        await fillOffer(wallet, "http://ark", wantBtcHex, {
+        await fillOffer(wallet, "http://operator", wantBtcHex, {
             fund: fundingCoin({ assets: [{ assetId: STRAY_ASSET, amount: 7 }] }),
             emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
@@ -327,7 +327,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         // unrelated asset added ahead of the wanted one makes the covenant
         // inspect the wrong group and refuse.
         state.utxos = [{ ...coin, assets: [{ assetId: STRAY_ASSET, amount: 3 }] }];
-        await fillOffer(wallet, "http://ark", wantAssetHex, {
+        await fillOffer(wallet, "http://operator", wantAssetHex, {
             fund: fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }),
             emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
@@ -339,7 +339,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
 
     it("lets the caller raise the carrier for a higher dust threshold", async () => {
         reset([satsDeposit]);
-        await fillOffer(wallet, "http://ark", wantAssetHex, {
+        await fillOffer(wallet, "http://operator", wantAssetHex, {
             fund: fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }),
             emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
@@ -356,7 +356,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         // per-network default to fall back on, so it has to come from the caller
         // — and every other test here mocks the builder, so nothing else would
         // notice a client built without one.
-        await fillOffer(wallet, "http://ark", wantBtcHex, {
+        await fillOffer(wallet, "http://operator", wantBtcHex, {
             fund,
             emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
@@ -367,7 +367,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
 
     it("takes the deposit as input 0 and the taker's coins as inputs 1..n", async () => {
         reset();
-        await fillOffer(wallet, "http://ark", wantBtcHex, {
+        await fillOffer(wallet, "http://operator", wantBtcHex, {
             fund,
             emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
@@ -382,7 +382,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
 
     it("sends the taker's proceeds to the payout script it was given", async () => {
         reset();
-        await fillOffer(wallet, "http://ark", wantBtcHex, {
+        await fillOffer(wallet, "http://operator", wantBtcHex, {
             fund,
             emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
@@ -394,7 +394,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
 
     it("defaults the payout to the wallet's own address when none is given", async () => {
         reset();
-        await fillOffer(wallet, "http://ark", wantBtcHex, { fund, emulator: EMULATOR });
+        await fillOffer(wallet, "http://operator", wantBtcHex, { fund, emulator: EMULATOR });
         const expected = ArkAddress.decode(await wallet.getAddress()).pkScript;
         expect(hex.encode(callsOf("change")[0].args[0] as Uint8Array)).toBe(hex.encode(expected));
     });
@@ -403,7 +403,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         reset();
         const assetId = "aa".repeat(32) + "0000";
         state.utxos = [{ ...coin, assets: [{ assetId, amount: 2_000 }] }];
-        await fillOffer(wallet, "http://ark", wantBtcHex, {
+        await fillOffer(wallet, "http://operator", wantBtcHex, {
             fund,
             emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
@@ -431,7 +431,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
                 ],
             },
         ]);
-        await fillOffer(wallet, "http://ark", wantBtcHex, {
+        await fillOffer(wallet, "http://operator", wantBtcHex, {
             fund,
             emulator: EMULATOR,
             payoutScript: TAKER_PAYOUT,
@@ -451,7 +451,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         reset();
         const wanted = { ...coin, txid: "ab".repeat(32) };
         state.utxos = [coin, wanted];
-        await fillOffer(wallet, "http://ark", wantBtcHex, {
+        await fillOffer(wallet, "http://operator", wantBtcHex, {
             fund,
             emulator: EMULATOR,
             fundingTxid: wanted.txid,
@@ -463,7 +463,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
     it("pins the funded server key when swapAddress is given, past a rotation", async () => {
         reset();
         state.serverKey = rotatedServerKey;
-        const txid = await fillOffer(wallet, "http://ark", wantBtcHex, {
+        const txid = await fillOffer(wallet, "http://operator", wantBtcHex, {
             fund,
             emulator: EMULATOR,
             swapAddress: fundedAddress,
