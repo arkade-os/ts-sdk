@@ -1,5 +1,5 @@
 import { ExtendedCoin, IWallet } from ".";
-import { toOffchainInputFeeParams } from "./vtxo";
+import { toOffchainInputFeeParams, type NormalizedExtendedVirtualCoin } from "./vtxo";
 import { FeeInfo, SettlementEvent } from "../providers/ark";
 import { Estimator } from "../arkfee";
 import { Address, OutScript } from "@scure/btc-signer";
@@ -61,6 +61,15 @@ export function offboardDestinationScript(destinationAddress: string): Uint8Arra
     }
 
     throw new Error(`Failed to decode destination address: ${destinationAddress}`);
+}
+
+/** `logUngatedInputs` is on the concrete wallet, not `IWallet` — probed like `dustAmount`. */
+function reportUngatedInputs(wallet: IWallet, inputs: readonly ExtendedCoin[]): void {
+    if (!("logUngatedInputs" in wallet)) return;
+    const logger = wallet as {
+        logUngatedInputs(source: string, inputs: readonly ExtendedCoin[]): Promise<void>;
+    };
+    void logger.logUngatedInputs("Ramps.offboard({ vtxos })", inputs);
 }
 
 /**
@@ -192,6 +201,10 @@ export class Ramps {
      * @param feeInfo - The fee info to deduct from the offboard amount.
      * @param amount - The amount to offboard. If not provided, the total amount of virtual outputs will be offboarded.
      * @param eventCallback - Optional callback that receives settlement events
+     * @param vtxos - Specific virtual outputs to spend, mirroring {@link onboard}'s
+     * `boardingUtxos`. Omitted, every spendable one is spent — merging the whole
+     * off-chain balance into a single change output. Taken as given like
+     * `settle({ inputs })`: an `amount` these cannot cover is an error, not a top-up.
      * @returns The Arkade transaction id created by settlement
      * @throws Error if no virtual outputs remain after fee deduction or the destination address cannot be decoded
      * @see IWallet.getSpendableVtxos
@@ -208,8 +221,11 @@ export class Ramps {
         feeInfo: FeeInfo,
         amount?: bigint,
         eventCallback?: (event: SettlementEvent) => void,
+        vtxos?: NormalizedExtendedVirtualCoin[],
     ): ReturnType<IWallet["settle"]> {
-        const vtxos = await this.wallet.getSpendableVtxos({
+        // Explicit inputs skip the generic-spending gate; report the crossing.
+        if (vtxos) reportUngatedInputs(this.wallet, vtxos);
+        vtxos ??= await this.wallet.getSpendableVtxos({
             withRecoverable: true,
             withUnrolled: false,
         });

@@ -1,8 +1,9 @@
 import type { PaymentRail, RouterContext } from "../types";
 import { btcTarget } from "../targets";
-import { assertNoAssets, assetsOf, resolveSendAmount } from "../amount";
+import { assertNoAssets, assetsOf, resolveSendAmount, selectionOf } from "../amount";
 import { makeHandle } from "../handle";
 import { Ramps, offboardDestinationScript } from "../../wallet/ramps";
+import { toOffchainInputFeeParams, type NormalizedExtendedVirtualCoin } from "../../wallet/vtxo";
 import { Estimator } from "../../arkfee";
 import type { FeeInfo } from "../../providers/ark";
 import type { Wallet } from "../../index";
@@ -48,6 +49,16 @@ function grossUpOffboard(
     return { gross, fee: gross - net };
 }
 
+/** What spending each named input costs, priced with the program `offboard` settles on. */
+function offchainInputFees(vtxos: readonly NormalizedExtendedVirtualCoin[], fees: FeeInfo): number {
+    const estimator = new Estimator(fees?.intentFee ?? {});
+    return vtxos.reduce(
+        (total, vtxo) =>
+            total + estimator.evalOffchainInput(toOffchainInputFeeParams(vtxo)).satoshis,
+        0,
+    );
+}
+
 /**
  * On-chain BTC send via collaborative exit — the Wallet-only on-chain path (no
  * swap). Matches a bare BTC address or the on-chain part of a unified BIP21 URI
@@ -57,9 +68,10 @@ function grossUpOffboard(
  * `offboard` deducts its fee from the amount it is handed, so the rail grosses
  * the amount up first: the recipient receives exactly `quote.amount`, matching
  * the receiver-exact semantics of every other rail (see {@link RouteQuote}).
- * `quote.total` is the offboard amount; the per-input intent fees `offboard`
- * shaves off the selected VTXOs are additional and depend on the selection, so
- * they are not part of the quote.
+ * A request naming `selectedVtxos` offboards exactly those — so the exit need not
+ * sweep the whole off-chain balance into one change output — and only then does
+ * the quote carry the per-input intent fees: unselected, the coins are chosen
+ * later at settlement and there is nothing here to price.
  *
  * An explicit amount is mandatory. To sweep the full balance, call
  * `Ramps.offboard(address, feeInfo)` directly — the router has no amountless path.
@@ -90,18 +102,26 @@ export function onchainRail(deps: { feeInfo: () => Promise<FeeInfo> }): PaymentR
             const fees = await deps.feeInfo();
             const script = hex.encode(offboardDestinationScript(address));
             const { gross, fee } = grossUpOffboard(amt, fees, script);
+            const selectedVtxos = selectionOf(req);
+            const inputFee = selectedVtxos ? offchainInputFees(selectedVtxos, fees) : 0;
             return {
                 railId: "onchain",
                 amount: amt,
-                fee,
-                total: gross,
+                fee: fee + inputFee,
+                total: gross + inputFee,
                 send: async () =>
                     makeHandle("onchain", async (emit) => {
-                        const txid = await new Ramps(ctx.wallet).offboard(
-                            address,
-                            fees,
-                            BigInt(gross),
-                        );
+                        const ramps = new Ramps(ctx.wallet);
+                        // Omitted, not passed as undefined: the unselected call is unchanged.
+                        const txid = selectedVtxos
+                            ? await ramps.offboard(
+                                  address,
+                                  fees,
+                                  BigInt(gross),
+                                  undefined,
+                                  selectedVtxos,
+                              )
+                            : await ramps.offboard(address, fees, BigInt(gross));
                         const result = { railId: "onchain", txid };
                         emit({ status: "settled", result });
                         return result;

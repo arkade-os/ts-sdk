@@ -42,6 +42,18 @@ describe("arkRail", () => {
         expect(send).toHaveBeenCalledWith({ address: arkAddr, amount: 10000 });
     });
 
+    it("spends exactly the inputs the request names", async () => {
+        const send = vi.fn().mockResolvedValue("tx");
+        const selectedVtxos = [{ txid: "aa".repeat(32), vout: 0, value: 5000 }] as any;
+        const q = await arkRail().quote({ raw: arkAddr, amount: 1000, selectedVtxos }, ctx(send));
+        await q.send().then((h) => h.settled());
+
+        expect(send).toHaveBeenCalledWith({
+            recipients: [{ address: arkAddr, amount: 1000 }],
+            selectedVtxos,
+        });
+    });
+
     it("rejects a missing, zero, or fractional amount at quote time", async () => {
         await expect(arkRail().quote({ raw: arkAddr }, ctx())).rejects.toThrow(
             /amount is required/i,

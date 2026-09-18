@@ -81,6 +81,41 @@ describe("onchainRail (collaborative exit)", () => {
         expect(offboard).toHaveBeenCalledWith(btcAddr, feeInfo, 1200n);
     });
 
+    it("offboards exactly the inputs the request names", async () => {
+        const selectedVtxos = [{ txid: "aa".repeat(32), vout: 0, value: 5000 }] as any;
+        const q = await rail().quote({ raw: btcAddr, amount: 1000, selectedVtxos }, ctx());
+        await q.send().then((h) => h.settled());
+
+        expect(offboard).toHaveBeenCalledWith(btcAddr, fees, 1000n, undefined, selectedVtxos);
+    });
+
+    it("prices the per-input intent fees once the request names its inputs", async () => {
+        const feeInfo = {
+            intentFee: { onchainOutput: "200.0", offchainInput: "7.0" },
+            txFeeRate: "1",
+        };
+        const selectedVtxos = [
+            { txid: "aa".repeat(32), vout: 0, value: 5000, createdAt: new Date(0) },
+            { txid: "bb".repeat(32), vout: 0, value: 5000, createdAt: new Date(0) },
+        ] as any;
+
+        const q = await rail(feeInfo).quote({ raw: btcAddr, amount: 1000, selectedVtxos }, ctx());
+
+        expect(q.amount).toBe(1000); // what the recipient receives
+        expect(q.fee).toBe(214); // 200 output + 7 per input
+        expect(q.total).toBe(1214); // what leaves the wallet
+    });
+
+    it("leaves the input fees out of the quote when no inputs are named", async () => {
+        const feeInfo = {
+            intentFee: { onchainOutput: "200.0", offchainInput: "7.0" },
+            txFeeRate: "1",
+        };
+        const q = await rail(feeInfo).quote({ raw: btcAddr, amount: 1000 }, ctx());
+
+        expect(q).toMatchObject({ amount: 1000, fee: 200, total: 1200 });
+    });
+
     it("rejects a non-positive or fractional amount up front", async () => {
         await expect(rail().quote({ raw: btcAddr, amount: 0 }, ctx())).rejects.toThrow(
             /invalid amount/i,
