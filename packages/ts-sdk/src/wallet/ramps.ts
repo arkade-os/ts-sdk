@@ -223,7 +223,7 @@ export class Ramps {
         eventCallback?: (event: SettlementEvent) => void,
         vtxos?: NormalizedExtendedVirtualCoin[],
     ): ReturnType<IWallet["settle"]> {
-        // Explicit inputs skip the generic-spending gate; report the crossing.
+        const named = vtxos !== undefined;
         if (vtxos) reportUngatedInputs(this.wallet, vtxos);
         vtxos ??= await this.wallet.getSpendableVtxos({
             withRecoverable: true,
@@ -238,6 +238,13 @@ export class Ramps {
         for (const vtxo of vtxos) {
             const inputFee = estimator.evalOffchainInput(toOffchainInputFeeParams(vtxo));
             if (inputFee.satoshis >= vtxo.value) {
+                // Dropping a NAMED input would silently spend a subset of the choice.
+                if (named) {
+                    throw new Error(
+                        `selected vtxo ${vtxo.txid}:${vtxo.vout} costs ${inputFee.satoshis} sats ` +
+                            `to spend and is worth ${vtxo.value} — drop it from the selection`,
+                    );
+                }
                 // Skip virtual outputs where spending fees are greater than or equal to the output value.
                 continue;
             }

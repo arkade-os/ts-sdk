@@ -86,6 +86,31 @@ describe("Ramps.offboard with a named input set", () => {
         expect(w.settle).not.toHaveBeenCalled();
     });
 
+    const pricedFees = { intentFee: { offchainInput: "1000.0" }, txFeeRate: "1" } as any;
+    const uneconomic = () => vtxo("44", 500);
+
+    it("refuses a named input worth less than it costs to spend", async () => {
+        const w = wallet();
+
+        await expect(
+            new Ramps(w).offboard(BTC_ADDR, pricedFees, 5_000n, undefined, [
+                uneconomic(),
+                vtxo("33", 50_000),
+            ] as any),
+        ).rejects.toThrow(/4{64}:0 costs 1000 sats to spend and is worth 500/);
+        expect(w.settle).not.toHaveBeenCalled();
+    });
+
+    it("still drops an uneconomic coin silently when it chose the coins itself", async () => {
+        const w = wallet({
+            getSpendableVtxos: vi.fn().mockResolvedValue([uneconomic(), vtxo("33", 50_000)]),
+        });
+
+        await new Ramps(w).offboard(BTC_ADDR, pricedFees, 5_000n);
+
+        expect(w.settle.mock.calls[0][0].inputs).toEqual([vtxo("33", 50_000)]);
+    });
+
     it("reports the ungated crossing, as the other explicit-input APIs do", async () => {
         const w = wallet();
         const chosen = [vtxo("33", 50_000)];
