@@ -177,6 +177,28 @@ describe("Ramps.offboard pays for the change it creates", () => {
         expect(w.settle).not.toHaveBeenCalled();
     });
 
+    it("refuses a super-linear schedule that diverges instead of oscillating", async () => {
+        // Overshoots every round, alternating sign — so the refusal cannot depend on the last one's.
+        const superLinear = { intentFee: { offchainOutput: "amount * 1.5" } } as any;
+        const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]) });
+
+        await expect(new Ramps(w).offboard(BTC_ADDR, superLinear, 50_000n)).rejects.toThrow(
+            /change fee/i,
+        );
+        expect(w.settle).not.toHaveBeenCalled();
+    });
+
+    it("emits no change when a flat fee outruns it, rather than refusing", async () => {
+        const steep = { intentFee: { offchainOutput: "100000.0" } } as any;
+        const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]) });
+
+        await new Ramps(w).offboard(BTC_ADDR, steep, 50_000n);
+
+        expect(w.settle.mock.calls[0]![0].outputs).toEqual([
+            { address: BTC_ADDR, amount: 50_000n },
+        ]);
+    });
+
     it("judges the dust floor on the change that survives the fee", async () => {
         // 50_360 - 7 input - 50_000 = 353 before the fee, 303 after: under the 330 floor.
         const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 50_360)]) });

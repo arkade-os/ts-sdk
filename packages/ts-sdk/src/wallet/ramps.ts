@@ -276,8 +276,12 @@ export class Ramps {
             let net = change;
             let settled = false;
             for (let i = 0; i < CHANGE_FEE_MAX_ROUNDS; i++) {
+                // A diverging schedule drives `net` negative, and a fee on a negative amount is meaningless.
                 const fee = BigInt(
-                    estimator.evalOffchainOutput({ amount: net, script: changeScript }).satoshis,
+                    estimator.evalOffchainOutput({
+                        amount: net > 0n ? net : 0n,
+                        script: changeScript,
+                    }).satoshis,
                 );
                 const next = change - fee;
                 if (next === net) {
@@ -288,7 +292,8 @@ export class Ramps {
             }
             // Unlike `onchainRail`'s gross-up, an unsettled value is not merely imprecise: arkd
             // prices the fee against the amount emitted, so shipping one underfunds the exit.
-            if (!settled && net > 0n) {
+            // Sign-blind: which round a divergence ends on is an accident of the round count.
+            if (!settled) {
                 throw new Error(
                     `change fee does not settle after ${CHANGE_FEE_MAX_ROUNDS} rounds ` +
                         `(${change} sats of change); offboard the full balance instead`,
