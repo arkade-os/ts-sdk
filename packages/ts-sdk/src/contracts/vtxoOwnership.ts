@@ -90,17 +90,17 @@ export async function getVtxosForContract(
     return vtxos.map(normalizeVtxo);
 }
 
+/** Provenance is required, so a bare `isSpent: true` records nothing and stays
+ * correctable. Every local write sets `arkTxId` (send) or `settledBy` (settle). */
 function hasRecordedSpend(
     vtxo: Pick<ExtendedVirtualCoin, "isSpent" | "spentBy" | "arkTxId" | "settledBy">,
 ) {
     return vtxo.isSpent === true && (!!vtxo.spentBy || !!vtxo.arkTxId || !!vtxo.settledBy);
 }
 
-/**
- * Only a write THIS process made can be raced by its own read; arkd indexes a
+/** Only a write THIS process made can be raced by its own read; arkd indexes a
  * spend just after `FinalizeTx` returns. Persisting this would instead make a
- * wrong spend permanent — nothing clears `isSpent` — so expiry is the way back.
- */
+ * wrong spend permanent — nothing clears `isSpent` — so expiry is the way back. */
 const RECORDED_SPEND_TTL_MS = 60_000;
 
 interface RecordedSpend {
@@ -121,6 +121,7 @@ function registryFor(repo: WalletRepository): Map<string, RecordedSpend> {
     return created;
 }
 
+/** @internal Test-only: simulates the restart that drops these records. */
 export function resetRecordedSpends(repo: WalletRepository): void {
     recordedSpends.delete(repo);
 }
