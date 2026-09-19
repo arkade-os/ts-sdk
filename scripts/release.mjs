@@ -520,10 +520,18 @@ function gitHeadSha() {
     return execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT_DIR, encoding: "utf8" }).trim();
 }
 
+// On Windows pnpm and npm exist only as .cmd shims, and since CVE-2024-27980
+// Node refuses to execute one directly (EINVAL) — a shell is the sanctioned
+// way. Scoped to those two so git and tar keep spawning as plain executables.
+function needsShell(cmd) {
+    return process.platform === "win32" && (cmd === "pnpm" || cmd === "npm");
+}
+
 function run(cmd, cmdArgs, options = {}) {
     const result = spawnSync(cmd, cmdArgs, {
         cwd: options.cwd ?? ROOT_DIR,
         stdio: "inherit",
+        shell: needsShell(cmd),
         ...options,
     });
     if (result.status !== 0) die(`Command failed: ${cmd} ${cmdArgs.join(" ")}`);
@@ -533,6 +541,7 @@ function runCapture(cmd, cmdArgs, options = {}) {
     const result = spawnSync(cmd, cmdArgs, {
         cwd: options.cwd ?? ROOT_DIR,
         encoding: "utf8",
+        shell: needsShell(cmd),
         ...options,
     });
     if (result.status !== 0) {
@@ -747,6 +756,7 @@ function release(args) {
             const published = spawnSync("npm", ["view", `${pkg.name}@${version}`, "version"], {
                 cwd: ROOT_DIR,
                 stdio: "ignore",
+                shell: needsShell("npm"),
             });
             if (published.status === 0) {
                 console.log(`${pkg.name}@${version} is already published; skipping.`);
