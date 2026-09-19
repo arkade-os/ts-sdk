@@ -1297,6 +1297,9 @@ export class WalletMessageHandler
                 }
                 case "GET_STORED_VTXOS_FOR_CONTRACT": {
                     const manager = await this.readonlyWallet.getContractManager();
+                    if (!manager.getStoredVtxosForContract) {
+                        throw unsupportedByManager("getStoredVtxosForContract");
+                    }
                     const vtxos = await manager.getStoredVtxosForContract(message.payload.contract);
                     return this.tagged({
                         id,

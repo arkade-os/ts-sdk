@@ -2312,6 +2312,7 @@ export class ContractManager implements IContractManager {
         this.emitEvent(event);
     }
 
+    // Reads through public getStoredVtxosForContract, so overriding it changes this path too.
     private async getVtxosForContracts(contracts: Contract[]): Promise<ExtendedContractVtxo[]> {
         const res = await Promise.all(
             contracts.map((contract) => this.getStoredVtxosForContract(contract)),

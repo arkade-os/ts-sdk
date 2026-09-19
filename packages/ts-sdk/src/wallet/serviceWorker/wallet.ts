@@ -1315,6 +1315,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
+            /** Asks the worker for one contract's stored VTXOs; never syncs, spends included. */
             async getStoredVtxosForContract(
                 contract: Pick<Contract, "script" | "address">,
             ): Promise<ExtendedContractVtxo[]> {
