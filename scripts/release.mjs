@@ -95,7 +95,10 @@ function writePackageVersion(pkgJsonPath, version) {
 }
 
 function headPackageVersion(repoRelativePath) {
-    const result = spawnSync("git", ["show", `HEAD:${repoRelativePath}`], {
+    // git wants forward slashes in a HEAD:<path> revspec; path.relative hands back
+    // backslashes on Windows, where this failed silently and left cleanup thinking
+    // every manifest already matched HEAD.
+    const result = spawnSync("git", ["show", `HEAD:${repoRelativePath.split(path.sep).join("/")}`], {
         cwd: ROOT_DIR,
         encoding: "utf8",
     });
@@ -658,13 +661,18 @@ function cleanup({ target }) {
         const current = readPackageVersion(pkg.pkgJson);
         const head = headPackageVersion(path.relative(ROOT_DIR, pkg.pkgJson));
         if (head && current !== head) {
-            run("git", ["checkout", "--", pkg.pkgJson]);
+            // From HEAD, not the index: the release stages these before committing,
+            // so a plain `checkout --` would restore the bumped version over itself.
+            run("git", ["checkout", "HEAD", "--", pkg.pkgJson]);
             console.log(`Restored ${pkg.name} manifest to ${head}`);
         }
         const candidates = new Set();
         if (state?.tags?.[key]) candidates.add(state.tags[key]);
         candidates.add(`${pkg.tagPrefix}${current}`);
-        if (head) candidates.add(`${pkg.tagPrefix}${head}`);
+        // Never the version HEAD sits on: that tag belongs to the last release and is
+        // already published. Dropped after the fact so a stale state file naming it
+        // cannot smuggle it back in either.
+        if (head) candidates.delete(`${pkg.tagPrefix}${head}`);
         for (const tag of candidates) {
             if (gitTagExists(tag)) {
                 run("git", ["tag", "-d", tag]);
