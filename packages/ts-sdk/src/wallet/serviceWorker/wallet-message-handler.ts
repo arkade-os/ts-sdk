@@ -5,6 +5,7 @@ import type {
     Contract,
     ContractEvent,
     ContractWithVtxos,
+    ExtendedContractVtxo,
     GetContractsFilter,
     PathSelection,
     WatchedScript,
@@ -302,6 +303,15 @@ export type RequestGetContractsWithVtxos = RequestEnvelope & {
 export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     type: "CONTRACTS_WITH_VTXOS";
     payload: { contracts: ContractWithVtxos[] };
+};
+
+export type RequestGetStoredVtxosForContract = RequestEnvelope & {
+    type: "GET_STORED_VTXOS_FOR_CONTRACT";
+    payload: { contract: Pick<Contract, "script" | "address"> };
+};
+export type ResponseGetStoredVtxosForContract = ResponseEnvelope & {
+    type: "STORED_VTXOS_FOR_CONTRACT";
+    payload: { vtxos: ExtendedContractVtxo[] };
 };
 
 function unsupportedByManager(method: string): Error {
@@ -818,6 +828,7 @@ export type WalletUpdaterRequest =
     | RequestCreateContract
     | RequestGetContracts
     | RequestGetContractsWithVtxos
+    | RequestGetStoredVtxosForContract
     | RequestWatchScript
     | RequestUnwatchScript
     | RequestGetWatchedScripts
@@ -874,6 +885,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseCreateContract
         | ResponseGetContracts
         | ResponseGetContractsWithVtxos
+        | ResponseGetStoredVtxosForContract
         | ResponseWatchScript
         | ResponseUnwatchScript
         | ResponseGetWatchedScripts
@@ -1281,6 +1293,15 @@ export class WalletMessageHandler
                         id,
                         type: "CONTRACTS_WITH_VTXOS",
                         payload: { contracts },
+                    });
+                }
+                case "GET_STORED_VTXOS_FOR_CONTRACT": {
+                    const manager = await this.readonlyWallet.getContractManager();
+                    const vtxos = await manager.getStoredVtxosForContract(message.payload.contract);
+                    return this.tagged({
+                        id,
+                        type: "STORED_VTXOS_FOR_CONTRACT",
+                        payload: { vtxos },
                     });
                 }
                 case "WATCH_SCRIPT": {
