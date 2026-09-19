@@ -561,7 +561,7 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
-    it("refuses watch-only messages when the manager cannot serve them", async () => {
+    it("refuses watch-only and stored-VTXO messages when the manager cannot serve them", async () => {
         (updater as any).readonlyWallet = {
             getContractManager: vi.fn().mockResolvedValue({}),
         };
@@ -570,6 +570,7 @@ describe("WalletMessageHandler handleMessage", () => {
             ["WATCH_SCRIPT", { script: "aa" }],
             ["UNWATCH_SCRIPT", { script: "aa" }],
             ["GET_WATCHED_SCRIPTS", {}],
+            ["GET_STORED_VTXOS_FOR_CONTRACT", { contract: { script: "aa", address: "a" } }],
         ] as const) {
             const response = await updater.handleMessage({
                 ...baseMessage(`x-${type}`),

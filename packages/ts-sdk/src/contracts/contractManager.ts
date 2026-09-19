@@ -346,6 +346,15 @@ export interface IContractManager extends Disposable {
     getContractsWithVtxos(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
 
     /**
+     * One contract's Vtxos from the repository alone: never reaches
+     * the indexer, and keeps terminally spent outputs. Optional so adding it
+     * breaks no implementer of this public interface — fall back when absent.
+     */
+    getStoredVtxosForContract?(
+        contract: Pick<Contract, "script" | "address">,
+    ): Promise<ExtendedContractVtxo[]>;
+
+    /**
      * Latest provider-sync health (online vs. degraded to repository data).
      * See {@link ContractSyncState}.
      */
@@ -1734,6 +1743,19 @@ export class ContractManager implements IContractManager {
         }));
     }
 
+    /** @inheritdoc */
+    async getStoredVtxosForContract(
+        contract: Pick<Contract, "script" | "address">,
+    ): Promise<ExtendedContractVtxo[]> {
+        const vtxos = await getVtxosForContract(this.config.walletRepository, contract);
+        return vtxos.map(
+            (vtxo): ExtendedContractVtxo => ({
+                ...vtxo,
+                contractScript: contract.script,
+            }),
+        );
+    }
+
     async annotateVtxos(
         vtxos: VirtualCoin[],
         tapscripts?: ContractTapscriptCache,
@@ -2296,18 +2318,10 @@ export class ContractManager implements IContractManager {
         this.emitEvent(event);
     }
 
+    // Reads through public getStoredVtxosForContract, so overriding it changes this path too.
     private async getVtxosForContracts(contracts: Contract[]): Promise<ExtendedContractVtxo[]> {
         const res = await Promise.all(
-            contracts.map((contract) =>
-                getVtxosForContract(this.config.walletRepository, contract).then((vtxos) =>
-                    vtxos.map(
-                        (vtxo): ExtendedContractVtxo => ({
-                            ...vtxo,
-                            contractScript: contract.script,
-                        }),
-                    ),
-                ),
-            ),
+            contracts.map((contract) => this.getStoredVtxosForContract(contract)),
         );
         return res.flat();
     }
