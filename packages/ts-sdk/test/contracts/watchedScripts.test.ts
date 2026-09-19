@@ -307,7 +307,12 @@ describe("ContractWatcher watch-only scripts", () => {
         expect(subscribeMock).toHaveBeenCalledTimes(1);
         expect(getVtxosMock.mock.calls.length).toBeGreaterThan(0);
         for (const [query] of getVtxosMock.mock.calls) {
-            expect(query.scripts).toEqual([FOREIGN_SCRIPT, OTHER_FOREIGN_SCRIPT]);
+            // Membership, not order: what matters is that no read is per-script,
+            // which stays true if the batch is ever sorted or de-duplicated.
+            expect(query.scripts).toEqual(
+                expect.arrayContaining([FOREIGN_SCRIPT, OTHER_FOREIGN_SCRIPT]),
+            );
+            expect(query.scripts).toHaveLength(2);
         }
 
         expect(
