@@ -69,7 +69,14 @@ const BUMP_TYPES = new Set([
 const VALID_PREIDS = new Set(["alpha", "beta", "rc", "next"]);
 const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?$/;
 
-const STATE_FILE = path.join(ROOT_DIR, ".git", "arkade-release-state.json");
+// Asking git rather than joining ".git": in a worktree that is a FILE pointing at
+// the real gitdir, so the old path made `mkdirSync` throw EEXIST before a release
+// could write its first byte. Per-worktree by design — recovery state belongs to
+// the checkout that crashed, not to its siblings.
+const STATE_FILE = path.join(
+    path.resolve(ROOT_DIR, execFileSync("git", ["rev-parse", "--git-dir"], { cwd: ROOT_DIR, encoding: "utf8" }).trim()),
+    "arkade-release-state.json",
+);
 const RELEASE_BRANCH = "master";
 
 function die(message) {
