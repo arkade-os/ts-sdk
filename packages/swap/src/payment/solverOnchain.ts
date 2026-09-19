@@ -19,10 +19,13 @@ import { assertFundable, requestOnchainSend, type RfqTransport } from "../rfq";
 import { l1ScriptForAddress, type OnchainNetwork } from "../onchainHtlc";
 import { solverRendezvous, type SolverRendezvous } from "./rendezvous";
 
+/** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const SOLVER_ONCHAIN_RAIL = "solver-onchain";
 
 /** What a record needs. Pass the whole object to `onchainSendProfile()`: only
- *  this carries `payoutPkScript`. */
+ *  this carries `payoutPkScript`.
+ *
+ */
 export type SolverOnchainSend = Awaited<ReturnType<typeof requestOnchainSend>> & {
     rendezvous: SolverRendezvous;
     /** Where the claim pays. Named nowhere else — the claim's output is the
@@ -32,7 +35,6 @@ export type SolverOnchainSend = Awaited<ReturnType<typeof requestOnchainSend>> &
 };
 
 export interface SolverOnchainRailDeps {
-    arkServerUrl: string;
     l1Network: OnchainNetwork;
     /** x-only L1 key that AUTHORISES the claim — not where it pays. */
     payoutPubkey: Uint8Array;
@@ -61,7 +63,9 @@ export const solverOnchainRendezvous = (
     solverRendezvous(markets, "onchain", amountSats, fallbackEmulatorPubkey);
 
 /** Register alongside the core `onchain` rail, ranked first:
- *  `priority: ["ark", "solver-onchain", "onchain"]`. Both stay registered. */
+ *  `priority: ["ark", "solver-onchain", "onchain"]`. Both stay registered.
+ *
+ */
 export function solverOnchainRail(deps: SolverOnchainRailDeps): PaymentRail {
     const rendezvousFor = async (
         amount: number | undefined,
@@ -113,7 +117,7 @@ export function solverOnchainRail(deps: SolverOnchainRailDeps): PaymentRail {
             // `"to"` keeps the quote receiver-exact: the user's number is the
             // L1 payout and the fee sits on top.
             const negotiated = await deps.connect(rendezvous, (transport) =>
-                requestOnchainSend(ctx.wallet, deps.arkServerUrl, transport, {
+                requestOnchainSend(ctx.wallet, transport, {
                     amount,
                     amountSide: "to",
                     payoutPubkey: deps.payoutPubkey,

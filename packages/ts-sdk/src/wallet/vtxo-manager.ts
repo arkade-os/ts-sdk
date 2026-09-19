@@ -14,12 +14,11 @@ import {
     isPastExpiry,
     normalizeVtxo,
     resolveTimeHeight,
-    toBatchExpiry,
     toOffchainInputFeeParams,
     type NormalizedExtendedVirtualCoin,
     type TimeHeight,
 } from "./vtxo";
-import { ArkInfo, ArkProvider, SettlementEvent } from "../providers/ark";
+import { ArkadeInfo, ArkProvider, SettlementEvent } from "../providers/ark";
 import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
 import type { ExtendedContractVtxo } from "../contracts/types";
@@ -271,7 +270,7 @@ export function byExpiryAscending(
  * Select inputs from `sorted` that fit in a single settlement: at most
  * {@link MAX_VTXOS_PER_SETTLEMENT} inputs AND a cumulative `value` no greater
  * than `maxAmount`. `maxAmount < 0` disables the amount bound — it is the
- * server's `-1` "no limit" sentinel for `ArkInfo.vtxoMaxAmount`.
+ * server's `-1` "no limit" sentinel for `ArkadeInfo.vtxoMaxAmount`.
  *
  * Each settlement path builds a single output equal to the (fee-adjusted) sum
  * of its inputs, and the server rejects any virtual output above `vtxoMaxAmount`
@@ -417,32 +416,6 @@ export const DEFAULT_THRESHOLD_SECONDS = 259_200;
 export const DEFAULT_THRESHOLD_MS = DEFAULT_THRESHOLD_SECONDS * 1000;
 
 /**
- * Configuration options for automatic virtual output renewal
- *
- * @see DEFAULT_RENEWAL_CONFIG
- * @deprecated Leave `renewalConfig` undefined and use `settlementConfig` instead.
- * @see SettlementConfig
- */
-export interface RenewalConfig {
-    /**
-     * Enable automatic renewal monitoring
-     *
-     * @defaultValue `false`
-     * @deprecated Explicitly set `settlementConfig` to `false` to disable VTXO renewal.
-     */
-    enabled?: boolean;
-
-    /**
-     * Threshold in milliseconds to use as threshold for renewal
-     * E.g., 86_400_000 means renew when 24 hours until expiry remains
-     *
-     * @defaultValue `259_200_000` (3 days).
-     * @deprecated Use `SettlementConfig.vtxoThreshold` (in seconds) instead.
-     */
-    thresholdMs?: number;
-}
-
-/**
  * Configuration for automatic settlement and renewal.
  *
  * Controls two behaviors:
@@ -534,17 +507,6 @@ export interface SettlementConfig {
      */
     deprecatedSignerMigration?: boolean;
 }
-
-/**
- * Default renewal configuration values.
- *
- * @see RenewalConfig
- * @deprecated Leave `renewalConfig` undefined and use `settlementConfig` instead.
- * @see SettlementConfig
- */
-export const DEFAULT_RENEWAL_CONFIG: Required<Omit<RenewalConfig, "enabled">> = {
-    thresholdMs: DEFAULT_THRESHOLD_MS, // 3 days
-};
 
 /**
  * Default settlement configuration values.
@@ -750,7 +712,7 @@ export interface MigrationVtxoRef {
 /**
  * Machine-readable status for a single deprecated signer the wallet holds
  * funds under (Section 6). Derived at read time from contract params plus a
- * fresh {@link ArkInfo} snapshot — never persisted.
+ * fresh {@link ArkadeInfo} snapshot — never persisted.
  */
 export interface DeprecatedSignerReport {
     /** Deprecated signer key (x-only hex). */
@@ -901,8 +863,8 @@ interface MigrationCapableWallet {
     arkServerPublicKey: Uint8Array;
     onchainProvider: OnchainProvider;
     rotateServerSigner(newServerPubKey: Uint8Array, checkpointTapscript: string): Promise<void>;
-    /** Refresh the wallet's cached deprecated-signer set from a fresh {@link ArkInfo} snapshot. */
-    refreshDeprecatedSigners(info: ArkInfo): void;
+    /** Refresh the wallet's cached deprecated-signer set from a fresh {@link ArkadeInfo} snapshot. */
+    refreshDeprecatedSigners(info: ArkadeInfo): void;
     /**
      * Drain a rotation the wallet is applying off an `onServerInfoChanged`
      * emit, so this pass classifies against a settled signer snapshot instead
@@ -1164,26 +1126,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     constructor(
         readonly wallet: IWallet,
-        /** @deprecated Use settlementConfig instead */
-        readonly renewalConfig?: RenewalConfig,
         settlementConfig?: SettlementConfig | false,
     ) {
-        // Normalize: prefer settlementConfig, fall back to renewalConfig, default to enabled
-        if (settlementConfig !== undefined) {
-            this.settlementConfig = settlementConfig;
-        } else if (renewalConfig && renewalConfig.enabled) {
-            this.settlementConfig = {
-                vtxoThreshold: renewalConfig.thresholdMs
-                    ? renewalConfig.thresholdMs / 1000
-                    : undefined,
-            };
-        } else if (renewalConfig) {
-            // renewalConfig provided but not enabled → disabled
-            this.settlementConfig = false;
-        } else {
-            // No config at all → enabled by default
-            this.settlementConfig = { ...DEFAULT_SETTLEMENT_CONFIG };
-        }
+        this.settlementConfig =
+            settlementConfig !== undefined ? settlementConfig : { ...DEFAULT_SETTLEMENT_CONFIG };
 
         this.contractEventsSubscriptionReady = this.initializeSubscription();
     }
@@ -1583,7 +1529,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const vtxos = await this.wallet.getSpendableVtxos({ withRecoverable: true });
 
-        // Resolve threshold: method param > settlementConfig (seconds→ms) > renewalConfig > default
+        // Resolve threshold: method param > settlementConfig (seconds→ms) > default
         let threshold: number;
         if (thresholdMs !== undefined) {
             threshold = thresholdMs;
@@ -1594,7 +1540,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         ) {
             threshold = this.settlementConfig.vtxoThreshold * 1000;
         } else {
-            threshold = this.renewalConfig?.thresholdMs ?? DEFAULT_RENEWAL_CONFIG.thresholdMs;
+            threshold = DEFAULT_THRESHOLD_MS;
         }
 
         return getExpiringAndRecoverableVtxos(
@@ -1676,7 +1622,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             ) {
                 threshold = this.settlementConfig.vtxoThreshold * 1000;
             } else {
-                threshold = DEFAULT_RENEWAL_CONFIG.thresholdMs;
+                threshold = DEFAULT_THRESHOLD_MS;
             }
             // One chain tip for the whole pass — see `selectExpiringVtxos`.
             const now = await fetchTimeHeight(this.wallet);
@@ -2033,7 +1979,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     /**
      * Core migration routine shared by the manual API and the automatic poll
-     * pass. Fetches a fresh {@link ArkInfo}, applies a mid-session signer
+     * pass. Fetches a fresh {@link ArkadeInfo}, applies a mid-session signer
      * rotation when the wallet's own snapshot signer has been deprecated,
      * selects spendable VTXOs under deprecated-signer contracts (cutoff-first),
      * and settles them to the active-signer Ark address.
@@ -2317,7 +2263,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * recovery path — but are still counted on EXPIRED report rows
      * (`recoverableCount`) so post-cutoff funds in flight stay visible.
      */
-    private async classifyDeprecatedSignerContracts(info: ArkInfo): Promise<{
+    private async classifyDeprecatedSignerContracts(info: ArkadeInfo): Promise<{
         reports: DeprecatedSignerReport[];
         migratable: ClassifiedVtxo[];
         expired: ClassifiedVtxo[];
@@ -2372,7 +2318,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 awaitingSweepCount = spendable.length;
                 awaitingSweepValue = value;
                 for (const v of spendable) {
-                    const exp = toBatchExpiry(v);
+                    const exp = v.expiresAt?.getTime();
                     if (exp !== undefined && (nextSweepEta === undefined || exp < nextSweepEta)) {
                         nextSweepEta = exp;
                     }
@@ -2450,7 +2396,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * coins are classified `CURRENT` and ignored; foreign-ASP rows are excluded
      * because their keys are not in the signer set.
      */
-    private async classifyDeprecatedSignerBoarding(info: ArkInfo): Promise<{
+    private async classifyDeprecatedSignerBoarding(info: ArkadeInfo): Promise<{
         reports: DeprecatedSignerReport[];
         migratable: ClassifiedBoarding[];
         expired: ClassifiedBoarding[];
@@ -2600,7 +2546,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * idempotent and serializes itself against HD receive rotation, so repeated
      * calls across passes are safe.
      */
-    private async ensureReceiveOnActiveSigner(info: ArkInfo): Promise<boolean> {
+    private async ensureReceiveOnActiveSigner(info: ArkadeInfo): Promise<boolean> {
         const wallet = this.requireMigrationCapableWallet();
         const signerSet = signerSetFromInfo(info);
         const nowSeconds = Math.floor(Date.now() / 1000);
@@ -2636,7 +2582,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      */
     private async rotateForRecoverableInputs(
         inputs: { txid: string; vout: number }[],
-        info: ArkInfo,
+        info: ArkadeInfo,
     ): Promise<boolean> {
         if (!isMigrationCapable(this.wallet)) return false;
 
@@ -2917,7 +2863,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }
         // Re-select from the now-fresh local cache. Anything previously
         // selected but spent gets filtered out by the standard
-        // `isSpendable`/`isSpent` checks inside getVtxos / getExpiringVtxos.
+        // spendability checks inside getVtxos / getExpiringVtxos.
         try {
             const refreshed = await this.selectExpiringVtxos(thresholdMs, now);
             const candidateKeys = new Set(candidates.map((v) => `${v.txid}:${v.vout}`));

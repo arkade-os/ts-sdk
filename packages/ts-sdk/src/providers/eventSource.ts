@@ -85,8 +85,8 @@ let configured: EventSourceFactory | undefined;
  * Set the `EventSource` every provider uses by default. Call once at startup,
  * before opening a wallet; pass `undefined` to go back to the global.
  *
- * This exists because the provider-level option cannot reach providers the SDK
- * builds for you — `Wallet.create({ arkServerUrl })` constructs both itself.
+ * This exists because a single process may want one EventSource implementation shared
+ * by every Rest provider it constructs.
  *
  * @example
  * ```typescript

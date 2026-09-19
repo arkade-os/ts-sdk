@@ -8,7 +8,7 @@
  * ({@link retireSettledOfferContracts}). Identical offers derive one script, so
  * those two can name the same row — and a demotion that lands after a promotion
  * recreates exactly the failure the promotion exists to prevent: an address the
- * user was told to fund, out of the subscription, the poll and every sync.
+ * user was told to fund, out of the subscription and the failsafe poll.
  *
  * Two things keep them apart:
  *
@@ -29,7 +29,28 @@
  * the same backstop every other best-effort step here relies on.
  */
 import type { IContractManager } from "@arkade-os/sdk";
-import type { AssetSwap, AssetSwapStatus } from "./store";
+import type { RfqSwapState } from "./rfqSwapState";
+import type { AssetSwapStatus } from "./store";
+
+/**
+ * What coverage needs to know about a swap, and nothing else.
+ *
+ * Structural rather than `AssetSwap`, because two record families now ask the
+ * same question: v1's offer swaps and the v2 client's `OfferSwapRecord`s, which
+ * are keyed on a quote id and carry none of `AssetSwap`'s other fields.
+ * Liveness is a property of the status and the funding time, so those are the
+ * whole parameter.
+ *
+ * `createdAt` is unix **milliseconds** — the unit {@link promoteOfferContract}
+ * marks issuance in. A v2 record stores seconds, so its adapter converts;
+ * comparing seconds against a `Date.now()` mark would leave every issued script
+ * outstanding forever and never retire one.
+ */
+export interface CoveredSwap {
+    readonly swapPkScript: string;
+    readonly status: AssetSwapStatus;
+    readonly createdAt: number;
+}
 
 /**
  * Statuses after which the covenant no longer holds funds, so its contract can
@@ -40,6 +61,11 @@ export const RETIRABLE: readonly AssetSwapStatus[] = ["fulfilled", "cancelled"];
 
 /** The one contract-manager capability changing coverage needs. */
 export type OfferContractRetirer = Pick<IContractManager, "setContractWatchState">;
+
+/** Corridor states after which the LOCKUP no longer holds funds: both mean it
+ *  WAS SPENT. `failed` is terminal too and excluded on purpose — an action that
+ *  missed its window says nothing about a covenant that can still be funded. */
+export const LOCKUP_RETIRABLE: readonly RfqSwapState[] = ["settled", "refunded"];
 
 /**
  * Scripts whose address has been handed out, by the time it was handed out.
@@ -80,7 +106,7 @@ async function serialize<T>(script: string, task: () => Promise<T>): Promise<T> 
  * transaction), so a record older than the mark belongs to an earlier offer and
  * says nothing about this one.
  */
-function addressOutstanding(swaps: AssetSwap[], script: string): boolean {
+function addressOutstanding(swaps: readonly CoveredSwap[], script: string): boolean {
     const issued = issuedAt.get(script);
     if (issued === undefined) return false;
     if (swaps.some((s) => s.swapPkScript === script && s.createdAt >= issued)) {
@@ -122,9 +148,10 @@ export async function promoteOfferContract(
  *
  * `retained`, not deleted: the row is what keeps the deposit's VTXOs
  * annotatable and its history readable, while `retained` is what drops it from
- * the subscription, the failsafe poll and every sync. A user who has made
- * hundreds of offers otherwise re-subscribes to hundreds of dead scripts on
- * every wallet start.
+ * the subscription and the failsafe poll — not from every sync, since
+ * `getContractsWithVtxos` reads rows whatever their watch state and syncs the
+ * set it read. A user who has made hundreds of offers otherwise re-subscribes
+ * to hundreds of dead scripts on every wallet start.
  *
  * A `recoverable` record blocks its script for good — nothing moves a record
  * off that status — so a script that once held a swept deposit stays watched
@@ -136,7 +163,7 @@ export async function promoteOfferContract(
  */
 export async function retireOfferContract(
     manager: OfferContractRetirer,
-    swaps: AssetSwap[],
+    swaps: readonly CoveredSwap[],
     script: string,
 ): Promise<void> {
     // both reads happen inside the queue, so a promotion that arrives while an
@@ -165,7 +192,7 @@ export async function retireOfferContract(
  */
 export async function retireSettledOfferContracts(
     manager: OfferContractRetirer,
-    swaps: AssetSwap[],
+    swaps: readonly CoveredSwap[],
 ): Promise<void> {
     const settled = new Set(
         swaps.filter((s) => RETIRABLE.includes(s.status)).map((s) => s.swapPkScript),

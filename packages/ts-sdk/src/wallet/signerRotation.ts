@@ -1,10 +1,10 @@
 import { hex } from "@scure/base";
-import type { ArkInfo } from "../providers/ark";
+import type { ArkadeInfo } from "../providers/ark";
 import { toXOnly } from "../utils/keys";
 
 /**
  * Machine-readable classification of a contract's server signer relative to a
- * fresh {@link ArkInfo} snapshot. Drives both the migration selection (Section
+ * fresh {@link ArkadeInfo} snapshot. Drives both the migration selection (Section
  * 3) and the user-facing cutoff reporting (Section 6) without persisting any
  * stale-key metadata: staleness is always derived at read time from the
  * contract's `params.serverPubKey` plus the server's advertised signer set.
@@ -29,7 +29,7 @@ export type SignerStatus = "CURRENT" | "MIGRATABLE" | "DUE_NOW" | "EXPIRED" | "U
 
 /**
  * Result of classifying a single contract's server signer against the current
- * {@link ArkInfo} signer set.
+ * {@link ArkadeInfo} signer set.
  */
 export interface SignerClassification {
     status: SignerStatus;
@@ -51,7 +51,7 @@ export interface SignerClassification {
 /**
  * The server's signer set, pre-normalized to x-only hex for cheap repeated
  * lookups. Built once per migration/reporting pass from a fresh
- * {@link ArkInfo} snapshot via {@link signerSetFromInfo}.
+ * {@link ArkadeInfo} snapshot via {@link signerSetFromInfo}.
  */
 export interface SignerSet {
     /** Active signer, x-only (32-byte) hex. */
@@ -85,7 +85,7 @@ export function toXOnlySignerHex(pubkeyHex: string): string {
  * Build the {@link SignerSet} from a server-info snapshot. Deprecated signers
  * with an empty pubkey are skipped.
  */
-export function signerSetFromInfo(info: ArkInfo): SignerSet {
+export function signerSetFromInfo(info: ArkadeInfo): SignerSet {
     const active = toXOnlySignerHex(info.signerPubkey);
     const deprecated = new Map<string, bigint>();
     for (const signer of info.deprecatedSigners) {
@@ -133,13 +133,13 @@ export function classifyAgainstSignerSet(
 }
 
 /**
- * Convenience wrapper that builds the signer set from {@link ArkInfo} and
+ * Convenience wrapper that builds the signer set from {@link ArkadeInfo} and
  * classifies a single contract signer. Prefer {@link classifyAgainstSignerSet}
  * with a shared signer set when classifying many contracts in one pass.
  */
 export function classifyContractSigner(
     contractServerPubKeyHex: string,
-    info: ArkInfo,
+    info: ArkadeInfo,
     nowSeconds: number = Math.floor(Date.now() / 1000),
 ): SignerClassification {
     return classifyAgainstSignerSet(contractServerPubKeyHex, signerSetFromInfo(info), nowSeconds);

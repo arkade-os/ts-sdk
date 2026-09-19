@@ -70,6 +70,90 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(response.error?.message).toBe("Wallet handler not initialized");
     });
 
+    describe("chain-read and broadcast seams", () => {
+        // The reader is a readonly capability: it answers off `readonlyWallet`,
+        // so a readonly-initialized worker serves it like any other read.
+        it.each([
+            ["INDEXER_GET_VTXOS", { opts: { scripts: ["5120aa"] } }, "INDEXER_VTXOS"],
+            ["INDEXER_GET_VIRTUAL_TXS", { txids: ["ab".repeat(32)] }, "INDEXER_VIRTUAL_TXS"],
+        ])("answers %s from the readonly wallet", async (type, payload, expected) => {
+            (updater as any).readonlyWallet = {
+                getArkadeReader: async () => ({
+                    getVtxos: async () => ({ vtxos: [] }),
+                    getVirtualTxs: async () => ({ txs: [] }),
+                }),
+            };
+            (updater as any).wallet = undefined;
+
+            await expect(
+                updater.handleMessage({ ...baseMessage(), type, payload } as any),
+            ).resolves.toMatchObject({ type: expected });
+        });
+
+        // Broadcast is not. `getArkadeBroadcaster` lives on IWallet precisely so
+        // a readonly view cannot submit, and the worker has to enforce the same
+        // line the types draw page-side — the bus does not carry the type.
+        it.each([
+            ["SUBMIT_TX", { signedArkTx: "70736274ff", checkpointTxs: [] }],
+            ["FINALIZE_TX", { arkTxid: "ab".repeat(32), finalCheckpointTxs: [] }],
+        ])("refuses %s on a readonly worker", async (type, payload) => {
+            (updater as any).readonlyWallet = {};
+            (updater as any).wallet = undefined;
+
+            const response = await updater.handleMessage({
+                ...baseMessage(),
+                type,
+                payload,
+            } as any);
+
+            expect(response.error).toBeInstanceOf(Error);
+            // `ReadonlyWalletError`, not `WalletNotInitializedError`: the worker
+            // is initialized, it just holds a wallet that must not broadcast.
+            expect(response.error?.name).toBe("ReadonlyWalletError");
+        });
+
+        it("finalizes through the full wallet's broadcaster", async () => {
+            // The completion leg of every broadcast. It answers with a bare
+            // success envelope rather than a payload, which is exactly why it
+            // is worth pinning: a handler that forgot to await would still
+            // return the right shape.
+            const finalizeTx = vi.fn(async () => {});
+            (updater as any).readonlyWallet = {};
+            (updater as any).wallet = { getArkadeBroadcaster: async () => ({ finalizeTx }) };
+
+            await expect(
+                updater.handleMessage({
+                    ...baseMessage(),
+                    type: "FINALIZE_TX",
+                    payload: { arkTxid: "cd".repeat(32), finalCheckpointTxs: ["bb"] },
+                } as any),
+            ).resolves.toMatchObject({ type: "FINALIZE_TX_SUCCESS" });
+            expect(finalizeTx).toHaveBeenCalledWith("cd".repeat(32), ["bb"]);
+        });
+
+        it("submits through the full wallet's broadcaster", async () => {
+            const submitTx = vi.fn(async () => ({
+                arkTxid: "cd".repeat(32),
+                finalArkTx: "70736274ff",
+                signedCheckpointTxs: [],
+            }));
+            (updater as any).readonlyWallet = {};
+            (updater as any).wallet = { getArkadeBroadcaster: async () => ({ submitTx }) };
+
+            await expect(
+                updater.handleMessage({
+                    ...baseMessage(),
+                    type: "SUBMIT_TX",
+                    payload: { signedArkTx: "70736274ff", checkpointTxs: ["aa"] },
+                } as any),
+            ).resolves.toMatchObject({
+                type: "SUBMIT_TX_SUCCESS",
+                payload: { arkTxid: "cd".repeat(32) },
+            });
+            expect(submitTx).toHaveBeenCalledWith("70736274ff", ["aa"]);
+        });
+    });
+
     describe("HD signing-descriptor allocation", () => {
         const descriptor = "tr(deadbeef/86'/1'/0'/0/7)";
 
@@ -162,25 +246,21 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
-    it("handles SEND_BITCOIN messages", async () => {
+    it("handles SEND messages", async () => {
         (updater as any).readonlyWallet = {};
-        (updater as any).wallet = {};
-        const sendSpy = vi.fn().mockResolvedValue({
-            type: "SEND_BITCOIN_SUCCESS",
-            payload: { txid: "tx" },
-        });
-        (updater as any).handleSendBitcoin = sendSpy;
+        const sendSpy = vi.fn().mockResolvedValue("tx");
+        (updater as any).wallet = { send: sendSpy };
 
         const response = await updater.handleMessage({
             ...baseMessage(),
-            type: "SEND_BITCOIN",
-            payload: { address: "addr", amount: 1 },
+            type: "SEND",
+            payload: { recipients: [{ address: "addr", amount: 1 }] },
         } as any);
 
-        expect(sendSpy).toHaveBeenCalled();
+        expect(sendSpy).toHaveBeenCalledWith({ address: "addr", amount: 1 });
         expect(response).toMatchObject({
             tag: updater.messageTag,
-            type: "SEND_BITCOIN_SUCCESS",
+            type: "SEND_SUCCESS",
             payload: { txid: "tx" },
         });
     });
@@ -243,6 +323,50 @@ describe("WalletMessageHandler handleMessage", () => {
             type: "BOARDING_ADDRESS",
             payload: { address: "bc1-boarding" },
         });
+    });
+
+    it("handles GET_ARKADE_INFO messages", async () => {
+        // Worker-side half of the same guard — see `ResponseGetArkadeInfo`.
+        const info = { network: "regtest", signerPubkey: "02ab", dust: 1000n };
+        (updater as any).readonlyWallet = {
+            getArkadeInfo: vi.fn().mockResolvedValue(info),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_ARKADE_INFO",
+        } as any);
+
+        expect(response).toEqual({
+            tag: updater.messageTag,
+            id: "1",
+            type: "ARKADE_INFO",
+            payload: { info },
+        });
+    });
+
+    it("passes requireLive through GET_ARKADE_INFO to the wallet", async () => {
+        // The fail-closed covenant path in a service-worker deployment is
+        // page → message → this handler → wallet.getArkadeInfo(payload). A
+        // handler that dropped the payload (a destructuring slip) would pass
+        // every response-shape test while silently downgrading every
+        // covenant derivation to the snapshot-fallback read.
+        const getArkadeInfo = vi.fn().mockResolvedValue({ network: "regtest" });
+        (updater as any).readonlyWallet = { getArkadeInfo };
+
+        await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_ARKADE_INFO",
+            payload: { requireLive: true },
+        } as any);
+        expect(getArkadeInfo).toHaveBeenLastCalledWith({ requireLive: true });
+
+        // and the default read stays a default read
+        await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_ARKADE_INFO",
+        } as any);
+        expect(getArkadeInfo).toHaveBeenLastCalledWith(undefined);
     });
 
     it("handles GET_BALANCE messages", async () => {
@@ -1549,8 +1673,8 @@ describe("WalletMessageHandler handleMessage", () => {
 
         const sendRes = await updater.handleMessage({
             ...baseMessage(),
-            type: "SEND_BITCOIN",
-            payload: { address: "addr", amount: 1 },
+            type: "SEND",
+            payload: { recipients: [{ address: "addr", amount: 1 }] },
         } as any);
         expect(sendRes.error).toBeInstanceOf(Error);
         expect(sendRes.error?.message).toBe("Read-only wallet: operation requires signing");
@@ -1686,7 +1810,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const recoverable = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 50000,
-            virtualStatus: { state: "swept" },
+            isSwept: true,
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, recoverable]);
 
@@ -1793,7 +1917,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const preconfirmed = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 50000,
-            virtualStatus: { state: "preconfirmed" },
+            isPreconfirmed: true,
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, preconfirmed]);
 
@@ -2232,7 +2356,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const preconfirmed = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 50000,
-            virtualStatus: { state: "preconfirmed" },
+            isPreconfirmed: true,
         });
         const settled = createMockExtendedVtxo({
             txid: "bb".repeat(32),
@@ -2242,7 +2366,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const swept = createMockExtendedVtxo({
             txid: "cc".repeat(32),
             value: 20000,
-            virtualStatus: { state: "swept" },
+            isSwept: true,
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [preconfirmed, settled, swept]);
 

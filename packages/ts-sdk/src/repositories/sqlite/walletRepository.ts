@@ -10,6 +10,7 @@ import {
     SerializedTapLeaf,
 } from "../serialization";
 import { scriptFromArkAddress } from "../scriptFromAddress";
+import { legacyVtxoFacts } from "../legacyVtxoFacts";
 import { SQLExecutor } from "./types";
 import { runInTransaction } from "./transaction";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
@@ -156,6 +157,30 @@ export class SQLiteWalletRepository implements WalletRepository {
                 `PRAGMA table_info(${this.tables.vtxos})`,
             );
             const scriptCol = cols.find((c) => c.name === "script");
+            const nullableCanonicalColumns = [
+                ["is_swept", "INTEGER"],
+                ["is_preconfirmed", "INTEGER"],
+                ["commitment_txids_json", "TEXT"],
+                ["expires_at", "TEXT"],
+                ["expires_at_height", "INTEGER"],
+            ] as const;
+            let addedCanonicalColumns = false;
+            for (const [name, type] of nullableCanonicalColumns) {
+                if (!cols.some((c) => c.name === name)) {
+                    await this.db.run(
+                        `ALTER TABLE ${this.tables.vtxos} ADD COLUMN ${name} ${type}`,
+                    );
+                    addedCanonicalColumns = true;
+                }
+            }
+            // Every row this ALTER touched has the canonical columns NULL by construction, and its
+            // state survives only in the legacy blob — which SQLite cannot drop, so it is still
+            // there to read. Without the copy a swept row comes back `isSwept: false`, spendable,
+            // until the first indexer sync. Runs before the rebuild below, whose INSERT…SELECT
+            // carries these columns across.
+            if (addedCanonicalColumns && cols.some((c) => c.name === "virtual_status_json")) {
+                await this.backfillCanonicalVtxoColumns();
+            }
             if (scriptCol && scriptCol.notnull === 1) {
                 // Already on v1 schema.
                 return;
@@ -190,19 +215,62 @@ export class SQLiteWalletRepository implements WalletRepository {
                 INSERT INTO ${tempName}
                     (txid, vout, value, address, tap_tree,
                      forfeit_cb, forfeit_s, intent_cb, intent_s,
-                     status_json, virtual_status_json, created_at,
-                     is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
-                     extra_witness_json, assets_json, script)
+                     status_json, created_at, is_unrolled, is_spent,
+                     is_swept, is_preconfirmed, commitment_txids_json,
+                     expires_at, expires_at_height,
+                     spent_by, settled_by, ark_tx_id, extra_witness_json, assets_json, script)
                 SELECT txid, vout, value, address, tap_tree,
                        forfeit_cb, forfeit_s, intent_cb, intent_s,
-                       status_json, virtual_status_json, created_at,
-                       is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
-                       extra_witness_json, assets_json, script
+                       status_json, created_at, is_unrolled, is_spent,
+                       is_swept, is_preconfirmed, commitment_txids_json,
+                       expires_at, expires_at_height,
+                       spent_by, settled_by, ark_tx_id, extra_witness_json, assets_json, script
                 FROM ${this.tables.vtxos}
             `);
             await this.db.run(`DROP TABLE ${this.tables.vtxos}`);
             await this.db.run(`ALTER TABLE ${tempName} RENAME TO ${this.tables.vtxos}`);
         });
+    }
+
+    /**
+     * Copy the canonical VTXO facts out of the legacy `virtual_status_json` blob.
+     *
+     * Scoped to rows that still have `is_swept` NULL, which is what "never backfilled" looks
+     * like: the copy writes 0 or 1 to every row it touches, so a second pass — a later column
+     * addition, say — cannot overwrite what an indexer sync has since corrected. Rows whose blob
+     * is missing or corrupt are left alone: a migration must not be stopped by one bad row, and
+     * the next sync repairs it.
+     */
+    private async backfillCanonicalVtxoColumns(): Promise<void> {
+        const rows = await this.db.all<{
+            txid: string;
+            vout: number;
+            virtual_status_json: string | null;
+        }>(
+            `SELECT txid, vout, virtual_status_json FROM ${this.tables.vtxos}
+             WHERE virtual_status_json IS NOT NULL AND is_swept IS NULL`,
+        );
+        for (const row of rows) {
+            const facts = legacyVtxoFacts(row.virtual_status_json);
+            if (!facts) continue;
+            await this.db.run(
+                `UPDATE ${this.tables.vtxos}
+                 SET is_swept = ?, is_preconfirmed = ?, commitment_txids_json = ?,
+                     expires_at = ?, expires_at_height = ?,
+                     is_spent = COALESCE(is_spent, ?)
+                 WHERE txid = ? AND vout = ?`,
+                [
+                    facts.isSwept ? 1 : 0,
+                    facts.isPreconfirmed ? 1 : 0,
+                    facts.commitmentTxIds ? JSON.stringify(facts.commitmentTxIds) : null,
+                    facts.expiresAt ? facts.expiresAt.toISOString() : null,
+                    facts.expiresAtHeight ?? null,
+                    facts.isSpent ? 1 : 0,
+                    row.txid,
+                    row.vout,
+                ],
+            );
+        }
     }
 
     private vtxosCreateSql(tableName: string): string {
@@ -217,10 +285,14 @@ export class SQLiteWalletRepository implements WalletRepository {
             intent_cb TEXT NOT NULL,
             intent_s TEXT NOT NULL,
             status_json TEXT NOT NULL,
-            virtual_status_json TEXT NOT NULL,
             created_at TEXT NOT NULL,
             is_unrolled INTEGER NOT NULL DEFAULT 0,
             is_spent INTEGER,
+            is_swept INTEGER,
+            is_preconfirmed INTEGER,
+            commitment_txids_json TEXT,
+            expires_at TEXT,
+            expires_at_height INTEGER,
             spent_by TEXT,
             settled_by TEXT,
             ark_tx_id TEXT,
@@ -264,14 +336,16 @@ export class SQLiteWalletRepository implements WalletRepository {
                 `INSERT OR REPLACE INTO ${this.tables.vtxos}
                     (txid, vout, value, address,
                      tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
-                     status_json, virtual_status_json, created_at,
-                     is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
-                     extra_witness_json, assets_json, script)
+                     status_json, created_at, is_unrolled, is_spent,
+                     is_swept, is_preconfirmed, commitment_txids_json,
+                     expires_at, expires_at_height,
+                     spent_by, settled_by, ark_tx_id, extra_witness_json, assets_json, script)
                  VALUES (?, ?, ?, ?,
                          ?, ?, ?, ?, ?,
+                         ?, ?, ?, ?,
                          ?, ?, ?,
-                         ?, ?, ?, ?, ?,
-                         ?, ?, ?)`,
+                         ?, ?,
+                         ?, ?, ?, ?, ?, ?)`,
                 [
                     s.txid,
                     s.vout,
@@ -283,7 +357,6 @@ export class SQLiteWalletRepository implements WalletRepository {
                     s.intentTapLeafScript.cb,
                     s.intentTapLeafScript.s,
                     JSON.stringify(s.status),
-                    JSON.stringify(s.virtualStatus),
                     typeof s.createdAt === "string"
                         ? s.createdAt
                         : s.createdAt instanceof Date
@@ -291,6 +364,15 @@ export class SQLiteWalletRepository implements WalletRepository {
                           : new Date(s.createdAt).toISOString(),
                     s.isUnrolled ? 1 : 0,
                     s.isSpent === undefined ? null : s.isSpent ? 1 : 0,
+                    s.isSwept === undefined ? null : s.isSwept ? 1 : 0,
+                    s.isPreconfirmed === undefined ? null : s.isPreconfirmed ? 1 : 0,
+                    s.commitmentTxIds ? JSON.stringify(s.commitmentTxIds) : null,
+                    s.expiresAt === undefined
+                        ? null
+                        : s.expiresAt instanceof Date
+                          ? s.expiresAt.toISOString()
+                          : new Date(s.expiresAt).toISOString(),
+                    s.expiresAtHeight ?? null,
                     s.spentBy ?? null,
                     s.settledBy ?? null,
                     s.arkTxId ?? null,
@@ -466,10 +548,14 @@ interface VtxoRow {
     intent_cb: string;
     intent_s: string;
     status_json: string;
-    virtual_status_json: string;
     created_at: string;
     is_unrolled: number;
     is_spent: number | null;
+    is_swept?: number | null;
+    is_preconfirmed?: number | null;
+    commitment_txids_json?: string | null;
+    expires_at?: string | null;
+    expires_at_height?: number | null;
     spent_by: string | null;
     settled_by: string | null;
     ark_tx_id: string | null;
@@ -538,10 +624,16 @@ function vtxoRowToDomain(row: VtxoRow): ExtendedVirtualCoin {
             s: row.intent_s,
         } as SerializedTapLeaf,
         status: JSON.parse(row.status_json),
-        virtualStatus: JSON.parse(row.virtual_status_json),
         createdAt: new Date(row.created_at),
         isUnrolled: row.is_unrolled === 1,
         isSpent: row.is_spent === null ? undefined : row.is_spent === 1,
+        isSwept: row.is_swept == null ? undefined : row.is_swept === 1,
+        isPreconfirmed: row.is_preconfirmed == null ? undefined : row.is_preconfirmed === 1,
+        commitmentTxIds: row.commitment_txids_json
+            ? JSON.parse(row.commitment_txids_json)
+            : undefined,
+        expiresAt: row.expires_at ? new Date(row.expires_at) : undefined,
+        expiresAtHeight: row.expires_at_height ?? undefined,
         spentBy: row.spent_by ?? undefined,
         settledBy: row.settled_by ?? undefined,
         arkTxId: row.ark_tx_id ?? undefined,

@@ -25,8 +25,9 @@ export const serializeAsset = (a: Asset): SerializedAsset => ({
     amount: a.amount.toString(),
 });
 
-// Accept legacy persisted shapes where `amount` is a `number` — pre-bigint
-// data already on disk must keep round-tripping.
+// `number` is still accepted: amounts persisted before they became bigint are on disk as JSON
+// numbers, and `BigInt()` would take a fractional one as a throw rather than a diagnosis. The
+// guard turns silent precision loss into a message that says what to do about it.
 export const deserializeAsset = (a: {
     assetId: string;
     amount: string | number | bigint;
@@ -77,11 +78,7 @@ export const deserializeTapLeaf = (t: SerializedTapLeaf): TapLeafScript => {
     return [cb, s];
 };
 
-// Normalized on the way out so rows written before canonical facts existed — and rows from the
-// column-mapped backends, whose explicit column lists don't carry them — come back with the facts
-// reconstructed from the legacy blob, and with `expiresAt` rehydrated to a real Date rather than
-// the ISO string JSON left behind. The correctness boundary is `getVtxosForContract`, which also
-// covers the backends that never reach this code.
+// Normalized on the way out so persisted Date fields are rehydrated and optional facts are present.
 export const deserializeVtxo = (o: SerializedVtxo): NormalizedExtendedVirtualCoin =>
     normalizeVtxo({
         ...o,

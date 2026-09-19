@@ -16,6 +16,7 @@ import * as btc from "@scure/btc-signer";
 import {
     LOCKTIME_THRESHOLD,
     ONCHAIN_CLAIM_MARGIN_SECONDS,
+    ONCHAIN_CLAIM_VSIZE,
     awaitOnchainFill,
     buildHtlcClaim,
     buildHtlcRefund,
@@ -185,6 +186,22 @@ describe("buildHtlcClaim", () => {
 
         // The published preimage is recoverable — the receipt.
         expect(hex.encode(extractPreimage(spend.txHex, PAYMENT_HASH)!)).toBe(hex.encode(PREIMAGE));
+    });
+
+    it("costs what ONCHAIN_CLAIM_VSIZE prices it at, on the widest standard payout", async () => {
+        // The rail quotes this fee before the claim exists, so the constant and
+        // the builder have to move together. `PAYOUT` is P2TR — the largest
+        // standard output script, and the one the constant is sized against, so
+        // a rail's estimate never under-charges the recipient's payout.
+        const spend = await buildHtlcClaim({
+            htlc: htlc(),
+            utxo: UTXO,
+            preimage: PREIMAGE,
+            payoutPkScript: PAYOUT,
+            feeRateSatVb: 1,
+            sign: signWith(1),
+        });
+        expect(UTXO.amount - spend.payoutAmount).toBe(BigInt(ONCHAIN_CLAIM_VSIZE));
     });
 
     it("refuses a preimage that does not match the HTLC", async () => {

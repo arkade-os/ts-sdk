@@ -29,7 +29,10 @@ describe("contract watch state", () => {
         // operator issues, so the address is payable by the faucet.
         const [own] = await manager.getContracts({ type: "default" });
         const other = SingleKey.fromRandomBytes();
-        const params = { ...own.params, pubKey: hex.encode(await other.xOnlyPublicKey()) };
+        const params: Record<string, string> = {
+            ...own.params,
+            pubKey: hex.encode(await other.xOnlyPublicKey()),
+        };
         const tapscript = DefaultContractHandler.createScript(params);
         const script = hex.encode(tapscript.pkScript);
         const address = tapscript

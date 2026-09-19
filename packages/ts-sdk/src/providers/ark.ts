@@ -168,7 +168,20 @@ export interface DeprecatedSigner {
 
 export type ServiceStatus = Record<string, string>;
 
-export interface ArkInfo {
+/**
+ * The Arkade server's advertised configuration — the `/v1/info` response.
+ *
+ * Naming/placement vs the NArk reference (AGENTS.md asks divergences to be
+ * noted): NArk calls this `ArkServerInfo`, reads it via `GetServerInfoAsync`
+ * on the *transport*, and caches it in a dedicated `CachingClientTransport`.
+ * This SDK names it for the product (`ArkadeInfo`, per #734) and hangs the
+ * read off the wallet (`getArkadeInfo()`), because here the wallet is the one
+ * object every consumer already holds and — in the service-worker model — the
+ * only side that has a transport at all; the page has no provider to hang it
+ * on. The `CachingClientTransport`-style memo lives at this layer instead, as
+ * `CachingArkProvider`.
+ */
+export interface ArkadeInfo {
     boardingExitDelay: bigint;
     checkpointTapscript: string;
     deprecatedSigners: DeprecatedSigner[];
@@ -278,7 +291,7 @@ export interface TxNotificationEvent {
 
 export interface ArkProvider {
     /** Fetch Arkade server configuration and fee settings. */
-    getInfo(): Promise<ArkInfo>;
+    getInfo(): Promise<ArkadeInfo>;
 
     /** Submit a signed Arkade transaction and its checkpoint transactions. */
     submitTx(
@@ -365,28 +378,29 @@ export class RestArkProvider implements ArkProvider {
     }
 
     /**
-     * Last server-info digest seen from {@link getInfo}. Sent as `X-Digest`
-     * so arkd can reject stale client configuration.
+     * Last server-info digest seen (from {@link getInfo}). Sent as `X-Digest`
+     * on outgoing requests so arkd can reject a client whose cached info is
+     * stale. Empty until the first {@link getInfo}.
      */
     private _digest = "";
     private _hasServerInfo = false;
     private _suppressNextGetInfoChangeEmit = false;
 
-    private _serverInfoListeners = new Set<(info: ArkInfo) => void>();
+    private _serverInfoListeners = new Set<(info: ArkadeInfo) => void>();
 
     /**
      * Subscribe to server-info changes. Fired after a stale-info
      * `DIGEST_MISMATCH` refresh or when {@link getInfo} observes a changed digest.
      * Returns an unsubscribe function.
      */
-    onServerInfoChanged(listener: (info: ArkInfo) => void): () => void {
+    onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void {
         this._serverInfoListeners.add(listener);
         return () => {
             this._serverInfoListeners.delete(listener);
         };
     }
 
-    private emitServerInfoChanged(info: ArkInfo): void {
+    private emitServerInfoChanged(info: ArkadeInfo): void {
         for (const listener of this._serverInfoListeners) {
             try {
                 listener(info);
@@ -466,7 +480,7 @@ export class RestArkProvider implements ArkProvider {
         // so the caller must rebuild and retry it under the refreshed server info.
         this._digest = "";
         this._suppressNextGetInfoChangeEmit = true;
-        let info: ArkInfo;
+        let info: ArkadeInfo;
         try {
             info = await this.getInfo();
         } finally {
@@ -479,11 +493,19 @@ export class RestArkProvider implements ArkProvider {
         );
     }
 
-    async getInfo(): Promise<ArkInfo> {
+    async getInfo(): Promise<ArkadeInfo> {
         const url = `${this.serverUrl}/v1/info`;
         // Wait + report (see rateGate): shares an origin, and a limiter, with
-        // the indexer.
-        const response = await rateGate.runHttp(url, () => fetch(url));
+        // the indexer. The fetch carries its own budget where the runtime
+        // supports one: on a black-holed connection (captive portal, dropped
+        // Wi-Fi with no RST) an unbounded fetch hangs to the OS connect
+        // timeout (30-75s), which outlives the service-worker page deadline
+        // (20s) — the page would time out while the worker was still seconds
+        // from serving the cached snapshot. The abort rejects as a retryable
+        // timeout, so the snapshot fallback stays reachable.
+        const response = await rateGate.runHttp(url, () =>
+            fetch(url, { signal: infoFetchSignal() }),
+        );
         if (!response.ok) {
             const errorText = await response.text();
             // A 429 or 5xx means the operator is up but temporarily unable to
@@ -498,7 +520,7 @@ export class RestArkProvider implements ArkProvider {
             handleError(errorText, `Failed to get server info: ${response.statusText}`);
         }
         const fromServer = await response.json();
-        const info: ArkInfo = {
+        const info: ArkadeInfo = {
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
             checkpointTapscript: fromServer.checkpointTapscript ?? "",
             deprecatedSigners:
@@ -1253,6 +1275,20 @@ namespace ProtoTypes {
     }
 }
 
+/**
+ * Budget for a single live `/v1/info` fetch. Exported so the service-worker
+ * page deadline for GET_ARKADE_INFO is DERIVED from it (budget + queue
+ * headroom).
+ */
+export const INFO_FETCH_TIMEOUT_MS = 12_000;
+
+/** `AbortSignal.timeout` where the runtime has it; older runtimes go unbudgeted. */
+function infoFetchSignal(): AbortSignal | undefined {
+    return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+        ? AbortSignal.timeout(INFO_FETCH_TIMEOUT_MS)
+        : undefined;
+}
+
 export function isFetchTimeoutError(err: any): boolean {
     const checkError = (error: any) => {
         if (!(error instanceof Error)) return false;
@@ -1262,6 +1298,8 @@ export function isFetchTimeoutError(err: any): boolean {
 
         return (
             isCloudflare524 ||
+            // AbortSignal.timeout rejects with a DOMException named this
+            error.name === "TimeoutError" ||
             error.name === "HeadersTimeoutError" ||
             error.name === "BodyTimeoutError" ||
             (error as any).code === "UND_ERR_HEADERS_TIMEOUT" ||

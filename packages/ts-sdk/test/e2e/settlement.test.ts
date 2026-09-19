@@ -6,6 +6,7 @@ import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     ArkError,
+    RestArkProvider,
     RestDelegateProvider,
 } from "../../src";
 import { arkdExec, beforeEachFaucet, execCommand, waitFor } from "./utils";
@@ -19,7 +20,7 @@ describe("Settlement - Auto-settle boarding UTXOs", () => {
         // Settlement enabled with fast polling so the auto-settle triggers quickly
         const wallet = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -44,13 +45,18 @@ describe("Settlement - Auto-settle boarding UTXOs", () => {
             await waitFor(
                 async () => {
                     vtxos = await wallet.getVtxos();
-                    return vtxos.length > 0 && vtxos[0].virtualStatus.state === "settled";
+                    // This branch dropped `virtualStatus`; not-preconfirmed is the
+                    // canonical-facts equivalent of the "settled" state it carried.
+                    return vtxos.length > 0 && !vtxos[0].isPreconfirmed;
                 },
                 { timeout: 60000, interval: 2000 },
             );
 
             expect(vtxos.length).toBeGreaterThan(0);
-            expect(vtxos[0].virtualStatus.state).toBe("settled");
+            // The canonical facts this branch asserts on, against the snapshot the
+            // wait saw — a second read would reintroduce the race #939 removed.
+            expect(vtxos[0].isPreconfirmed).toBe(false);
+            expect(vtxos[0].isSwept).toBe(false);
         } finally {
             // A failed assertion must not leave the poll loop settling on the shared regtest.
             await wallet.dispose().catch(() => undefined);
@@ -71,7 +77,7 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
         // This ensures the poll loop sees already-expired UTXOs.
         const setupWallet = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -116,7 +122,7 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
         // The poll loop should detect the expired UTXO and auto-sweep it.
         const wallet = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -164,7 +170,7 @@ describe("Settlement - VtxoManager Recovery", () => {
         // with the manual recover/renew calls in these tests
         const wallet = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -203,7 +209,8 @@ describe("Settlement - VtxoManager Recovery", () => {
             const vtxos = await wallet.getVtxos({ withRecoverable: false });
             expect(vtxos).toHaveLength(1);
             const originalTxid = vtxos[0].txid;
-            expect(vtxos[0].virtualStatus.state).toBe("settled");
+            expect(vtxos[0].isPreconfirmed).toBe(false);
+            expect(vtxos[0].isSwept).toBe(false);
 
             // Mine 25 blocks to trigger server sweep (VTXO_TREE_EXPIRY=20)
             execCommand("node regtest/regtest.mjs mine 25");
@@ -211,7 +218,7 @@ describe("Settlement - VtxoManager Recovery", () => {
             // Wait for VTXO to become swept
             await waitFor(async () => {
                 const v = await wallet.getVtxos({ withRecoverable: true });
-                return v.some((c) => c.txid === originalTxid && c.virtualStatus.state === "swept");
+                return v.some((c) => c.txid === originalTxid && c.isSwept);
             });
 
             // Use the wallet's VtxoManager
@@ -240,7 +247,7 @@ describe("Settlement - VtxoManager Recovery", () => {
 
         const wallet = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -284,7 +291,7 @@ describe("Settlement - VtxoManager Recovery", () => {
 
             await waitFor(async () => {
                 const v = await wallet.getVtxos({ withRecoverable: true });
-                return v.some((c) => c.txid === originalTxid && c.virtualStatus.state === "swept");
+                return v.some((c) => c.txid === originalTxid && c.isSwept);
             });
 
             // Use the wallet's VtxoManager
@@ -316,7 +323,7 @@ describe("Settlement - Auto-delegation on vtxo_received", () => {
         // vtxo_received → auto-delegate via initializeSubscription.
         const wallet = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -380,7 +387,7 @@ describe("Settlement - VtxoManager Lifecycle", () => {
 
         const wallet = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -417,7 +424,7 @@ describe("Settlement - VtxoManager Lifecycle", () => {
 
         const wallet = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -457,7 +464,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
         const identityA = SingleKey.fromRandomBytes();
         const walletA = await Wallet.create({
             identity: identityA,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -476,7 +483,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             const identityB = SingleKey.fromRandomBytes();
             const walletB = await Wallet.create({
                 identity: identityB,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
                 onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
@@ -499,7 +506,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
                 await waitFor(
                     async () => {
                         const vtxos = await walletA.getVtxos();
-                        return vtxos.length > 0 && vtxos[0].virtualStatus.state === "settled";
+                        return vtxos.length > 0 && !vtxos[0].isPreconfirmed && !vtxos[0].isSwept;
                     },
                     { timeout: 60000, interval: 2000 },
                 );
@@ -552,7 +559,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
         const identityA = SingleKey.fromRandomBytes();
         const walletA = await Wallet.create({
             identity: identityA,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -571,7 +578,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             const identityB = SingleKey.fromRandomBytes();
             const walletB = await Wallet.create({
                 identity: identityB,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
                 onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
@@ -676,7 +683,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
         const identityA = SingleKey.fromRandomBytes();
         const walletA = await Wallet.create({
             identity: identityA,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -694,7 +701,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             const identityB = SingleKey.fromRandomBytes();
             const walletB = await Wallet.create({
                 identity: identityB,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
                 onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
@@ -716,7 +723,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
                 await waitFor(
                     async () => {
                         const vtxos = await walletA.getVtxos();
-                        return vtxos.length > 0 && vtxos[0].virtualStatus.state === "settled";
+                        return vtxos.length > 0 && !vtxos[0].isPreconfirmed && !vtxos[0].isSwept;
                     },
                     { timeout: 60000, interval: 2000 },
                 );
