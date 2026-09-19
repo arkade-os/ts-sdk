@@ -282,6 +282,86 @@ describe("ContractWatcher watch-only scripts", () => {
         await watcher.stopWatching();
     });
 
+    it("addWatchedScript takes a set, in one subscription update and no per-script read", async () => {
+        vi.useFakeTimers();
+
+        const vtxo = createMockVtxo({ script: FOREIGN_SCRIPT, value: 640 });
+        (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [vtxo] });
+
+        const callback = vi.fn();
+        await watcher.startWatching(callback);
+
+        const getVtxosMock = mockIndexer.getVtxos as ReturnType<typeof vi.fn>;
+        const subscribeMock = mockIndexer.subscribeForScripts as ReturnType<typeof vi.fn>;
+        getVtxosMock.mockClear();
+        subscribeMock.mockClear();
+
+        // Measured on registration alone: advancing the clock folds in the
+        // failsafe poll, which re-reads every watched script by design.
+        await watcher.addWatchedScript([FOREIGN_SCRIPT, OTHER_FOREIGN_SCRIPT]);
+
+        // The point of the plural form: the subscription is rebuilt once for
+        // the whole set, and no indexer read is per-script. The reads are not
+        // asserted by count — registration polls, then the flush re-syncs —
+        // but every one of them must carry the whole batch.
+        expect(subscribeMock).toHaveBeenCalledTimes(1);
+        expect(getVtxosMock.mock.calls.length).toBeGreaterThan(0);
+        for (const [query] of getVtxosMock.mock.calls) {
+            expect(query.scripts).toEqual([FOREIGN_SCRIPT, OTHER_FOREIGN_SCRIPT]);
+        }
+
+        expect(
+            watcher
+                .getWatchedScripts()
+                .map((w) => w.script)
+                .sort(),
+        ).toEqual([FOREIGN_SCRIPT, OTHER_FOREIGN_SCRIPT].sort());
+
+        await watcher.stopWatching();
+    });
+
+    it("addWatchedScript with a set still reports a VTXO already sitting at a new script", async () => {
+        vi.useFakeTimers();
+
+        const vtxo = createMockVtxo({ script: FOREIGN_SCRIPT, value: 640 });
+        (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [vtxo] });
+
+        const callback = vi.fn();
+        await watcher.startWatching(callback);
+        callback.mockClear();
+
+        // The coalesced update is deferred to the flush, so the batch has to
+        // carry its own catch-up or an output already there is never reported.
+        await watcher.addWatchedScript([FOREIGN_SCRIPT]);
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(callback).toHaveBeenCalledWith(
+            expect.objectContaining({ type: "vtxo_received", contractScript: FOREIGN_SCRIPT }),
+        );
+
+        await watcher.stopWatching();
+    });
+
+    it("addWatchedScript with a set is idempotent and only updates the label", async () => {
+        vi.useFakeTimers();
+
+        const vtxo = createMockVtxo({ script: FOREIGN_SCRIPT, value: 640 });
+        (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [vtxo] });
+
+        const callback = vi.fn();
+        await watcher.startWatching(callback);
+        await watcher.addWatchedScript([FOREIGN_SCRIPT], { label: "first" });
+        callback.mockClear();
+
+        await watcher.addWatchedScript([FOREIGN_SCRIPT], { label: "second" });
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(callback).not.toHaveBeenCalled();
+        expect(watcher.getWatchedScripts()).toEqual([{ script: FOREIGN_SCRIPT, label: "second" }]);
+
+        await watcher.stopWatching();
+    });
+
     it("fails closed when the indexer rejects: no event, state preserved", async () => {
         vi.useFakeTimers();
 
@@ -327,6 +407,48 @@ describe("ContractWatcher watch-only scripts", () => {
         expect(vtxoEvents).toHaveLength(1);
         expect(vtxoEvents[0].type).toBe("vtxo_received");
         expect(isContractVtxoEvent(vtxoEvents[0])).toBe(true);
+
+        await watcher.stopWatching();
+    });
+
+    it("removeWatchedScript takes a set, and rebuilds the subscription once", async () => {
+        vi.useFakeTimers();
+
+        const third = "5120" + "ef".repeat(32);
+        const vtxo = createMockVtxo({ script: FOREIGN_SCRIPT, value: 300 });
+        (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [vtxo] });
+
+        await watcher.startWatching(vi.fn());
+        await watcher.addWatchedScript([FOREIGN_SCRIPT, OTHER_FOREIGN_SCRIPT, third]);
+
+        const subscribeMock = mockIndexer.subscribeForScripts as ReturnType<typeof vi.fn>;
+        subscribeMock.mockClear();
+
+        // Two dropped, one update — not one per script removed.
+        await watcher.removeWatchedScript([FOREIGN_SCRIPT, OTHER_FOREIGN_SCRIPT]);
+
+        expect(subscribeMock).toHaveBeenCalledTimes(1);
+        const scripts = subscribeMock.mock.calls[0][0];
+        expect(scripts).not.toContain(FOREIGN_SCRIPT);
+        expect(scripts).not.toContain(OTHER_FOREIGN_SCRIPT);
+        expect(scripts).toContain(third);
+        expect(watcher.getWatchedScripts().map((w) => w.script)).toEqual([third]);
+
+        await watcher.stopWatching();
+    });
+
+    it("removeWatchedScript does not rebuild when nothing was watched", async () => {
+        vi.useFakeTimers();
+
+        (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+        await watcher.startWatching(vi.fn());
+
+        const subscribeMock = mockIndexer.subscribeForScripts as ReturnType<typeof vi.fn>;
+        subscribeMock.mockClear();
+
+        await watcher.removeWatchedScript([FOREIGN_SCRIPT, OTHER_FOREIGN_SCRIPT]);
+
+        expect(subscribeMock).not.toHaveBeenCalled();
 
         await watcher.stopWatching();
     });
