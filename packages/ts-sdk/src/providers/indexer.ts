@@ -334,9 +334,15 @@ export interface IndexerProvider {
     ): AsyncIterableIterator<SubscriptionResponse>;
 
     /**
-     * Fetch raw virtual transactions by txid.
+     * Fetch virtual transactions by txid.
      *
-     * @param txids - Virtual transaction ids to fetch
+     * Note (Positional Order Convention & Zero-Trust Parsing):
+     * Standard Ark indexers return raw PSBTs in the `txs` array corresponding positionally
+     * to the requested `txids` array. However, zero-trust consumers MUST NOT rely on
+     * positional alignment alone; callers should decode each PSBT and compute its transaction ID
+     * (e.g. via `computeTxid`) to index responses strictly by validated hash.
+     *
+     * @param txids - Array of virtual transaction IDs to fetch
      * @param opts - Optional pagination settings
      * @returns Raw virtual transactions and optional pagination state
      */
