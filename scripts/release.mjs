@@ -32,9 +32,9 @@ const PACKAGES = [
         order: 2,
         dependsOnSdk: true,
         bumpFlag: "--boltz-bump",
-        // Not part of bulk `all` releases for now; still releasable directly
-        // (`release.mjs boltz-swap <bump>`) and still dragged along as a
-        // dependent when `sdk` is released.
+        // Released only when named outright (`release.mjs boltz-swap <bump>`):
+        // out of `all`, and not dragged along by an SDK release either. The cost
+        // is that its published build keeps pinning whatever SDK it shipped with.
         excludeFromAll: true,
     },
     {
@@ -342,9 +342,10 @@ function validatePreid(preid) {
 }
 
 function primarySelection(target) {
-    // Releasing the SDK drags every SDK-dependent package along, because each
-    // would otherwise stay published against the previous SDK version.
-    if (target === "sdk") return ALL_KEYS;
+    // Releasing the SDK drags its dependents along, because each would otherwise
+    // stay published against the previous SDK version — except those opted out,
+    // which are deliberately left pinned to the SDK they last shipped with.
+    if (target === "sdk") return ALL_KEYS.filter((k) => !PACKAGE_BY_KEY[k].excludeFromAll);
     // `all` is a bulk convenience, not an implication of the SDK bump; packages
     // marked `excludeFromAll` opt out of it but remain releasable directly.
     if (target === "all") return ALL_KEYS.filter((k) => !PACKAGE_BY_KEY[k].excludeFromAll);
