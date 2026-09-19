@@ -751,7 +751,10 @@ function release(args) {
                 }
                 console.log(`Tag ${tag} already exists at HEAD; reusing.`);
             } else {
-                run("git", ["tag", tag]);
+                // Always annotated, never bare: under `tag.gpgsign` a bare `git tag`
+                // is a SIGNED tag, which needs a message and opens an editor — a
+                // release that hangs on vim forever with the commit already made.
+                run("git", ["tag", "-m", `${PACKAGE_BY_KEY[key].name} ${plan.get(key).next}`, tag]);
                 console.log(`Created tag ${tag}`);
             }
             state.tagsCreated[key] = true;
