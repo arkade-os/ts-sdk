@@ -63,6 +63,28 @@ export function offboardDestinationScript(destinationAddress: string): Uint8Arra
     throw new Error(`Failed to decode destination address: ${destinationAddress}`);
 }
 
+const CHANGE_FEE_MAX_ROUNDS = 8;
+
+/**
+ * Settle a change output against the fee charged on its own size — the two define each
+ * other, so one subtraction is only right for a flat schedule. Shared because writing it
+ * twice is how the unpriced-change bug reached both ramps. `0n` when the fee outruns it.
+ */
+function settleChangeAgainstFee(change: bigint, feeOn: (amount: bigint) => bigint): bigint {
+    let net = change;
+    for (let i = 0; i < CHANGE_FEE_MAX_ROUNDS; i++) {
+        // Divergence drives `net` negative, and a fee on a negative amount is meaningless.
+        const next = change - feeOn(net > 0n ? net : 0n);
+        if (next === net) return net > 0n ? net : 0n;
+        net = next;
+    }
+    // Sign-blind: which round a divergence ends on is an accident of the round count.
+    throw new Error(
+        `change fee does not settle after ${CHANGE_FEE_MAX_ROUNDS} rounds ` +
+            `(${change} sats of change); settle the full balance instead`,
+    );
+}
+
 /** `logUngatedInputs` is on the concrete wallet, not `IWallet` — probed like `dustAmount`. */
 function reportUngatedInputs(wallet: IWallet, inputs: readonly ExtendedCoin[]): void {
     if (!("logUngatedInputs" in wallet)) return;
@@ -151,6 +173,22 @@ export class Ramps {
             change = totalAmount - amount;
         }
 
+        // Change goes to a BOARDING address, which `settle` classifies as an ONCHAIN output.
+        let boardingAddress: string | undefined;
+        if (change > 0n) {
+            boardingAddress = await this.wallet.getBoardingAddress();
+            const changeScript = hex.encode(offboardDestinationScript(boardingAddress));
+            change = settleChangeAgainstFee(change, (amt) =>
+                BigInt(estimator.evalOnchainOutput({ amount: amt, script: changeScript }).satoshis),
+            );
+            // Post-fee, as `offboard`: arkd's sub-dust exception covers OP_RETURN VTXO
+            // outputs, not a boarding one, so below the floor it is rejected server-side.
+            const dustAmount = getDustAmount(this.wallet);
+            if (change > 0n && change < dustAmount) {
+                throw new DustChangeError(change, dustAmount);
+            }
+        }
+
         amount = amount ?? totalAmount;
 
         // Calculate offchain output fee using Estimator
@@ -178,9 +216,8 @@ export class Ramps {
         ];
 
         if (change > 0n) {
-            const boardingAddress = await this.wallet.getBoardingAddress();
             outputs.push({
-                address: boardingAddress,
+                address: boardingAddress!,
                 amount: change,
             });
         }
@@ -265,10 +302,21 @@ export class Ramps {
             change = totalAmount - amount;
         }
 
+        // The change is an offchain output charged on its own size, so fee and amount define
+        // each other. Unpaid, the outputs outclaim the inputs and arkd rejects the settlement.
+        let changeAddress: string | undefined;
+        if (change > 0n) {
+            changeAddress = await this.wallet.getAddress();
+            const changeScript = hex.encode(ArkAddress.decode(changeAddress).pkScript);
+            change = settleChangeAgainstFee(change, (amount) =>
+                BigInt(estimator.evalOffchainOutput({ amount, script: changeScript }).satoshis),
+            );
+        }
+
         // Reject partial exits that would leave a sub-dust change VTXO: arkd
         // would otherwise reject the intent and surface a raw dust error to
         // the caller. The wallet layer can catch DustChangeError and offer to
-        // exit the full balance instead.
+        // exit the full balance instead. Judged post-fee: that is the output arkd sees.
         const dustAmount = getDustAmount(this.wallet);
         if (change > 0n && change < dustAmount) {
             throw new DustChangeError(change, dustAmount);
@@ -298,7 +346,7 @@ export class Ramps {
         ];
 
         if (change > 0n) {
-            const offchainAddress = await this.wallet.getAddress();
+            const offchainAddress = changeAddress!;
             outputs.push({
                 address: offchainAddress,
                 amount: change,
