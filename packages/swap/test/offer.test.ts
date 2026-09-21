@@ -23,6 +23,7 @@ const keys = {
 };
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
 const EXIT_BLOCKS: RelativeTimelock = { type: "blocks", value: BigInt(144) };
+type ContractArtifact = Parameters<typeof arkade.programFromArtifact>[0];
 
 // hand-built TLV records: encodeOffer now rejects malformed offers, so the
 // decode-side coverage below assembles its foreign payloads from raw records
@@ -59,6 +60,98 @@ const goldens: [Omit<Offer, "swapPkScript">, string][] = [
 ];
 
 describe("swap offer", () => {
+    it("compiles an arkadec artifact byte-identically to the hand-written asset program", () => {
+        const compilerArtifact: ContractArtifact = {
+            contractName: "BancoBtcToAsset",
+            constructorInputs: [
+                { name: "makerWP", type: "pubkey" },
+                { name: "wantAmount", type: "int" },
+                { name: "wantAssetTxid", type: "bytes32" },
+                { name: "wantAssetGroupIndex", type: "int" },
+                { name: "user", type: "pubkey" },
+            ],
+            functions: [
+                {
+                    name: "fulfill",
+                    arkade: {
+                        inputs: [],
+                        asm: [
+                            "0",
+                            "<wantAssetTxid>",
+                            "<wantAssetGroupIndex>",
+                            "OP_INSPECTOUTASSETLOOKUP",
+                            "OP_VERIFY",
+                            "<wantAmount>",
+                            "OP_GREATERTHANOREQUAL",
+                            "OP_VERIFY",
+                            "0",
+                            "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                            "1",
+                            "OP_EQUALVERIFY",
+                            "<makerWP>",
+                            "OP_EQUAL",
+                        ],
+                    },
+                    leaves: [
+                        {
+                            name: "fulfill",
+                            asm: [
+                                "<SERVER_KEY>",
+                                "OP_CHECKSIGVERIFY",
+                                "<EMULATOR_KEY:fulfill>",
+                                "OP_CHECKSIG",
+                            ],
+                        },
+                    ],
+                },
+                {
+                    name: "cancel",
+                    leaves: [
+                        {
+                            name: "cancel",
+                            asm: ["<user>", "OP_CHECKSIGVERIFY", "<SERVER_KEY>", "OP_CHECKSIG"],
+                        },
+                    ],
+                },
+            ],
+        };
+        const binding = swapProgramBinding(
+            { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys },
+            server,
+        );
+        const handWritten = new arkade.ArkadeProgramScript(
+            binding.program,
+            binding.args,
+            binding.keys,
+        );
+        const generatedProgram = arkade.programFromArtifact(compilerArtifact);
+        expect(
+            generatedProgram.params?.map((param) =>
+                typeof param === "string" ? param : param.name,
+            ),
+        ).toEqual([...compilerArtifact.constructorInputs.map((input) => input.name), "server"]);
+        const generated = new arkade.ArkadeProgramScript(
+            generatedProgram,
+            binding.args,
+            binding.keys,
+        );
+
+        expect(generated.compiled.map((fn) => hex.encode(fn.leafScript))).toEqual(
+            handWritten.compiled.map((fn) => hex.encode(fn.leafScript)),
+        );
+        expect(
+            generated.compiled.map((fn) =>
+                fn.arkadeScript ? hex.encode(fn.arkadeScript) : undefined,
+            ),
+        ).toEqual(
+            handWritten.compiled.map((fn) =>
+                fn.arkadeScript ? hex.encode(fn.arkadeScript) : undefined,
+            ),
+        );
+        expect(hex.encode(generated.encode())).toBe(hex.encode(handWritten.encode()));
+        expect(hex.encode(generated.pkScript)).toBe(hex.encode(handWritten.pkScript));
+    });
+
     it("derives the golden swap addresses for both directions", () => {
         for (const [offer, golden] of goldens) {
             const script = offerVtxoScript(offer, server);
