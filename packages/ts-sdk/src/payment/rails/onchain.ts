@@ -2,11 +2,12 @@ import type { PaymentRail, RouterContext } from "../types";
 import { btcTarget } from "../targets";
 import { assertNoAssets, assetsOf, resolveSendAmount, selectionOf } from "../amount";
 import { makeHandle } from "../handle";
-import { Ramps, offboardDestinationScript } from "../../wallet/ramps";
+import { Ramps, changeAfterOutputFee, offboardDestinationScript } from "../../wallet/ramps";
 import { toOffchainInputFeeParams, type NormalizedExtendedVirtualCoin } from "../../wallet/vtxo";
 import { Estimator } from "../../arkfee";
 import type { FeeInfo } from "../../providers/ark";
 import type { Wallet } from "../../index";
+import { ArkAddress } from "../../script/address";
 import { hex } from "@scure/base";
 
 /** The canonical fee source for {@link onchainRail}: the operator's schedule, as
@@ -14,40 +15,6 @@ import { hex } from "@scure/base";
  *  so an app registering the rail itself need not know where fees live. */
 export const walletFeeSource = (wallet: Wallet) => async (): Promise<FeeInfo> =>
     (await wallet.arkProvider.getInfo()).fees;
-
-/** Iterations allowed when solving the gross-up fixpoint. A fee schedule charging
- *  less than one sat per extra sat converges in a handful of rounds; the cap only
- *  bounds a pathological program. */
-const GROSS_UP_MAX_ROUNDS = 8;
-
-/**
- * Solve `gross - fee(gross) = net` for the amount to hand {@link Ramps.offboard},
- * which *deducts* its output fee from whatever it is given.
- *
- * The fee program receives the amount (see `outputToArgs`), so it may itself be
- * amount-dependent — a single `net + fee(net)` under-shoots for any percentage
- * schedule. Iterating upward from `net` converges on the least fixpoint, and
- * because every intermediate value is an under-estimate a non-converging schedule
- * errs toward charging the sender too little rather than short-paying the
- * recipient.
- */
-function grossUpOffboard(
-    net: number,
-    feeInfo: FeeInfo,
-    script: string,
-): { gross: number; fee: number } {
-    const estimator = new Estimator(feeInfo?.intentFee ?? {});
-    const feeAt = (amount: number): number =>
-        estimator.evalOnchainOutput({ amount: BigInt(amount), script }).satoshis;
-
-    let gross = net;
-    for (let i = 0; i < GROSS_UP_MAX_ROUNDS; i++) {
-        const next = net + feeAt(gross);
-        if (next === gross) break;
-        gross = next;
-    }
-    return { gross, fee: gross - net };
-}
 
 /** What spending each named input costs, priced with the program `offboard` settles on. */
 function offchainInputFees(vtxos: readonly NormalizedExtendedVirtualCoin[], fees: FeeInfo): number {
@@ -59,15 +26,38 @@ function offchainInputFees(vtxos: readonly NormalizedExtendedVirtualCoin[], fees
     );
 }
 
+/** What the change output costs on its own size, for a named input set. */
+async function changeOutputFee(
+    wallet: RouterContext["wallet"],
+    inputs: readonly NormalizedExtendedVirtualCoin[],
+    needed: bigint,
+    fees: FeeInfo,
+): Promise<bigint> {
+    const estimator = new Estimator(fees?.intentFee ?? {});
+    const net = inputs.reduce(
+        (total, vtxo) =>
+            total +
+            BigInt(vtxo.value) -
+            BigInt(estimator.evalOffchainInput(toOffchainInputFeeParams(vtxo)).satoshis),
+        0n,
+    );
+    const script = hex.encode(ArkAddress.decode(await wallet.getAddress()).pkScript);
+    return changeAfterOutputFee(net - needed, (amount) =>
+        BigInt(estimator.evalOffchainOutput({ amount, script }).satoshis),
+    ).fee;
+}
+
 /**
  * On-chain BTC send via collaborative exit — the Wallet-only on-chain path (no
  * swap). Matches a bare BTC address or the on-chain part of a unified BIP21 URI
  * and offboards VTXOs to the address via {@link Ramps.offboard}, which owns
  * fee-aware coin selection, dust-safe change, and settlement.
  *
- * `offboard` deducts its fee from the amount it is handed, so the rail grosses
- * the amount up first: the recipient receives exactly `quote.amount`, matching
- * the receiver-exact semantics of every other rail (see {@link RouteQuote}).
+ * The exit fee is priced on the DESTINATION output — the one arkd charges for —
+ * and met from the balance, so the recipient receives exactly `quote.amount`
+ * (see {@link RouteQuote}). {@link Ramps.offboardExact} carries that; the
+ * gross-up this rail used to do could only approximate it.
+ *
  * A request naming `selectedVtxos` offboards exactly those — so the exit need not
  * sweep the whole off-chain balance into one change output — and only then does
  * the quote carry the per-input intent fees: unselected, the coins are chosen
@@ -101,27 +91,39 @@ export function onchainRail(deps: { feeInfo: () => Promise<FeeInfo> }): PaymentR
             // the same FeeInfo is reused at settlement, so the two cannot drift.
             const fees = await deps.feeInfo();
             const script = hex.encode(offboardDestinationScript(address));
-            const { gross, fee } = grossUpOffboard(amt, fees, script);
+            // The output arkd charges for, not what is sourced to pay for it.
+            const exitFee = Number(
+                new Estimator(fees?.intentFee ?? {}).evalOnchainOutput({
+                    amount: BigInt(amt),
+                    script,
+                }).satoshis,
+            );
             const selectedVtxos = selectionOf(req);
             const inputFee = selectedVtxos ? offchainInputFees(selectedVtxos, fees) : 0;
+            // Named inputs make the change knowable, and it pays its own fee.
+            const changeFee = selectedVtxos
+                ? await changeOutputFee(
+                      ctx.wallet,
+                      selectedVtxos,
+                      BigInt(amt) + BigInt(exitFee),
+                      fees,
+                  )
+                : 0n;
             return {
                 railId: "onchain",
                 amount: amt,
-                fee: fee + inputFee,
-                total: gross + inputFee,
+                fee: exitFee + inputFee + Number(changeFee),
+                total: amt + exitFee + inputFee + Number(changeFee),
                 send: async () =>
                     makeHandle("onchain", async (emit) => {
                         const ramps = new Ramps(ctx.wallet);
-                        // Omitted, not passed as undefined: the unselected call is unchanged.
-                        const txid = selectedVtxos
-                            ? await ramps.offboard(
-                                  address,
-                                  fees,
-                                  BigInt(gross),
-                                  undefined,
-                                  selectedVtxos,
-                              )
-                            : await ramps.offboard(address, fees, BigInt(gross));
+                        const txid = await ramps.offboardExact({
+                            destinationAddress: address,
+                            feeInfo: fees,
+                            amount: BigInt(amt),
+                            // Omitted, not undefined: an empty set covers nothing.
+                            ...(selectedVtxos ? { vtxos: selectedVtxos } : {}),
+                        });
                         const result = { railId: "onchain", txid };
                         emit({ status: "settled", result });
                         return result;
