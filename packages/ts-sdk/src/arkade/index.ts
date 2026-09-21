@@ -41,17 +41,7 @@ export {
     type ArkadeExtendedCoin,
     type ArkadeExtendedVirtualCoin,
 } from "./batch";
-export {
-    programFromArtifact,
-    isContractArtifact,
-    type ContractArtifact,
-    type ArtifactGroup,
-    type ArtifactLeaf,
-    type ArtifactCovenant,
-    type ArtifactParameter,
-    type ArtifactStruct,
-    type ArtifactWitnessElement,
-} from "./artifact";
+export { programFromArtifact, isContractArtifact, type ContractArtifact } from "./artifact";
 export {
     ArkadeProgramScript,
     stringifyArtifact,

@@ -23,8 +23,6 @@ import {
     type WitnessRef,
 } from "./program";
 
-// --- Artifact shape --------------------------------------------------------
-
 /** One declared parameter or covenant input. */
 export interface ArtifactParameter {
     name: string;
@@ -101,13 +99,7 @@ export function isContractArtifact(value: unknown): value is ContractArtifact {
     );
 }
 
-// --- Types and flattening --------------------------------------------------
-
-/**
- * Map an Arkade type onto the SDK's narrower argument types. The SDK
- * length-checks `pubkey` (32) and `sig` (64); every other byte-like type is
- * opaque bytes.
- */
+/** `pubkey` and `sig` are length-checked; other byte types stay opaque. */
 function argType(arkType: string): ArkadeArgType {
     switch (arkType) {
         case "pubkey":
@@ -162,12 +154,7 @@ function flatten(param: ArtifactParameter, structs: ArtifactStruct[]): InputDef[
     }));
 }
 
-// --- Assembly --------------------------------------------------------------
-
-/**
- * Translate one opcode token. The artifact prefixes every opcode with `OP_`;
- * @scure keeps that prefix only on the small-integer pushes.
- */
+/** Artifact opcodes are `OP_`-prefixed; @scure keeps that prefix only on OP_0..OP_16. */
 function opcodeToken(token: string): AsmToken {
     const base = token.slice(3);
     const name = base === "0" || /^([1-9]|1[0-6])$/.test(base) ? token : base;
@@ -179,14 +166,7 @@ function opcodeToken(token: string): AsmToken {
     return name as AsmToken;
 }
 
-/**
- * `<VTXO:SingleSig(<sellerPk>,<exit>)>` → `vtxo_SingleSig_sellerPk_exit`.
- *
- * The compiler leaves child instantiations opaque for the runtime to resolve
- * into the child's 32-byte witness program. The SDK cannot compute that — it
- * has no child artifact — so each distinct instantiation becomes a parameter
- * the caller binds.
- */
+/** `<VTXO:SingleSig(<sellerPk>,<exit>)>` → `vtxo_SingleSig_sellerPk_exit`. The caller binds that param to the child witness program. */
 function instantiationParam(token: string): string {
     const body = token.replace(/^<VTXO:/, "").replace(/>$/, "");
     return `vtxo_${body.replace(/[^A-Za-z0-9]+/g, "_")}`.replace(/_+$/, "");
@@ -226,21 +206,9 @@ function asmToken(token: string, instantiations: Map<string, string>): AsmToken 
     }
 }
 
-// --- Tapleaves -------------------------------------------------------------
-
 const HASH_OPCODES = new Set(["OP_SHA256", "OP_HASH160", "OP_HASH256", "OP_RIPEMD160"]);
 
-/** A timelock operand is a literal or a `<param>` reference. */
-function timelockOperand(token: string): bigint | string {
-    if (token.startsWith("<") && token.endsWith(">")) return `$${token.slice(1, -1)}`;
-    return BigInt(token);
-}
-
-/**
- * Parse a leaf back into the closure the compiler emitted it from:
- * `condition? · timelock? · N-of-N multisig`. Anything else is refused rather
- * than guessed at.
- */
+/** `condition? · timelock? · N-of-N`. Anything else is refused. */
 function parseLeaf(
     leaf: ArtifactLeaf,
     hasCovenant: boolean,
@@ -262,10 +230,11 @@ function parseLeaf(
     let csv: TapscriptSegment["csv"];
     let cltv: TapscriptSegment["cltv"];
     if (asm.length >= index + 3 && asm[index + 2] === "OP_DROP") {
-        const operand = timelockOperand(asm[index]);
+        const operand =
+            asm[index].startsWith("<") && asm[index].endsWith(">")
+                ? `$${asm[index].slice(1, -1)}`
+                : BigInt(asm[index]);
         if (asm[index + 1] === "OP_CHECKSEQUENCEVERIFY") {
-            // The compiler emits block-denominated CSV only, and BIP68 encodes
-            // a block count as itself, so the scripts agree.
             csv = { type: "blocks", value: operand };
         } else if (asm[index + 1] === "OP_CHECKLOCKTIMEVERIFY") {
             cltv = operand;
@@ -338,19 +307,10 @@ function parseLeaf(
     };
 }
 
-// --- Entry point -----------------------------------------------------------
-
 /**
- * Build a {@link Program} from an `arkadec` contract artifact.
- *
- * The returned program declares two kinds of parameter the artifact does not:
- * `server`, which the client binds automatically to the Arkade Service key,
- * and one per `new Contract(...)` payout, which the caller binds to the
- * child's 32-byte Taproot witness program.
- *
- * @throws when the artifact uses a shape the SDK cannot express — a spend
- * group with several tapleaves, a standalone leaf bound to another function's
- * covenant, or an opcode this SDK's table does not carry.
+ * Build a {@link Program} from an `arkadec` artifact. Adds `server`, and one
+ * param per `<VTXO:...>` placeholder for the caller to bind to the child
+ * witness program.
  */
 export function programFromArtifact(artifact: ContractArtifact): Program {
     if (!isContractArtifact(artifact)) {
@@ -374,8 +334,11 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
         const leaf = group.leaves[0];
         const tapscript = parseLeaf(leaf, group.arkade !== undefined, instantiations);
 
+        const covenantInputs = (group.arkade?.inputs ?? []).flatMap((input) =>
+            flatten(input, structs),
+        );
         const inputs: InputDef[] = [
-            ...(group.arkade?.inputs ?? []).flatMap((input) => flatten(input, structs)),
+            ...covenantInputs,
             ...(leaf.witness ?? [])
                 .filter((item) => !item.injected && item.type !== "signature")
                 .map((item) => ({ name: item.name, type: argType(item.type) })),
@@ -388,10 +351,8 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
                 ? {
                       arkadeScript: {
                           asm: group.arkade.asm.map((token) => asmToken(token, instantiations)),
-                          // Clients push covenant inputs in reverse declaration
-                          // order, composites deepest first.
-                          witness: group.arkade.inputs
-                              .flatMap((input) => flatten(input, structs))
+                          // Covenant witness is reverse declaration order.
+                          witness: covenantInputs
                               .map((field) => field.name as WitnessRef)
                               .reverse(),
                       },
