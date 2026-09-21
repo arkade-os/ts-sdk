@@ -1297,6 +1297,22 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
     }
 
+    /**
+     * The same VTXOs, read through to the indexer first.
+     *
+     * {@link getVtxos} answers from the repository so a display never waits on
+     * the operator, which means it cannot see a write that has not been synced
+     * yet. A caller that is about to *act* on the result — exiting, unrolling,
+     * recovering — needs the synced view, exactly as coin selection does.
+     */
+    async getSyncedVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+        return filterSnapshotVtxos(
+            await this.contractSnapshot(),
+            filter,
+            this._pendingSpendOutpoints,
+        );
+    }
+
     /** @inheritdoc */
     async getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
         const snapshot = await this.contractSnapshot();

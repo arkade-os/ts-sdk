@@ -84,7 +84,12 @@ export async function resolveFeeRate(opts: ExitOptions): Promise<number> {
 export type ExitVtxo = Pick<VirtualCoin, "txid" | "vout" | "value"> & { tapTree: Uint8Array };
 
 export async function selectExitVtxos(opts: ExitOptions): Promise<ExitVtxo[]> {
-    if (!opts.vtxos) return opts.wallet.getVtxos();
+    // Synced where the wallet can: this list becomes the exit's inputs, so the
+    // display read's repository-only view would report "nothing to exit" in the
+    // window after a receive. The fallback is for partial wallets built from the
+    // type rather than from the class, the shape `getStoredContractsWithVtxos`
+    // is also probed for.
+    if (!opts.vtxos) return opts.wallet.getSyncedVtxos?.() ?? opts.wallet.getVtxos();
 
     // Explicit outpoints are resolved from the indexer plus the registered
     // contract row (tap tree derived via the contract handler). This

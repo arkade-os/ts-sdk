@@ -262,7 +262,12 @@ export async function createVtxo(alice: TestArkWallet, amount: number): Promise<
     if (!address) throw new Error("Offchain address not defined.");
 
     faucetOffchain(address, amount);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // The faucet's VTXO arrives through the indexer, and `getVtxos` answers from
+    // the repository, so poll for it rather than sleeping a fixed second.
+    await waitFor(async () => (await alice.wallet.getVtxos()).length > 0, {
+        timeout: 30_000,
+    });
 
     const virtualCoins = await alice.wallet.getVtxos();
     if (!virtualCoins || virtualCoins.length === 0) {
@@ -278,6 +283,15 @@ export async function createVtxo(alice: TestArkWallet, amount: number): Promise<
             },
         ],
     });
+
+    // The settlement's own output arrives the same way, and every caller reads
+    // it back next — as settlement inputs, in four places. Wait for THAT outpoint
+    // rather than for any row, so a spent input row left in the repository
+    // cannot satisfy this.
+    await waitFor(
+        async () => (await alice.wallet.getVtxos()).some((vtxo) => vtxo.txid === settleTxid),
+        { timeout: 30_000 },
+    );
 
     return settleTxid;
 }

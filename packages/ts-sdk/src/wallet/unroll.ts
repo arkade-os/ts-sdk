@@ -361,7 +361,12 @@ export async function prepareUnrollTransaction(
 ): Promise<Transaction> {
     const chainTip = await wallet.onchainProvider.getChainTip();
 
-    let vtxos = await wallet.getVtxos({ withUnrolled: true });
+    // Synced where the wallet can: these become the transaction's inputs, so the
+    // display read's repository-only view would read as "No vtxos to complete
+    // unroll". Probed like the exit estimator's, for partial wallets.
+    let vtxos = await (wallet.getSyncedVtxos?.({
+        withUnrolled: true,
+    }) ?? wallet.getVtxos({ withUnrolled: true }));
     vtxos = vtxos.filter((vtxo) => vtxoTxIds.includes(vtxo.txid));
 
     if (vtxos.length === 0) {
