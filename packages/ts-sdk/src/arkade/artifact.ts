@@ -320,6 +320,15 @@ function parseLeaf(
         const inner = key.slice(1, -1);
         if (inner === "SERVER_KEY") {
             signers.push(`$${SERVER_PARAM}`);
+        } else if (inner.startsWith("TWEAK:")) {
+            // `<TWEAK:agentPk:complete>`: a second enclave key, tweaked by that
+            // function's covenant. The SDK resolves it at compile time.
+            const spec = inner.slice("TWEAK:".length);
+            const split = spec.indexOf(":");
+            if (split <= 0 || split === spec.length - 1) {
+                throw new Error(`leaf '${leaf.name}': malformed tweak operand '${key}'`);
+            }
+            signers.push(`$tweak:${spec.slice(0, split)}:${spec.slice(split + 1)}`);
         } else if (inner.startsWith("EMULATOR_KEY:")) {
             if (!hasCovenant) {
                 throw new Error(

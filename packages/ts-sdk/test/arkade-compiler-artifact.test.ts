@@ -80,6 +80,14 @@ function assembleArtifactAsm(tokens: string[], extra: Record<string, Uint8Array>
         }
         if (token.startsWith("<") && token.endsWith(">")) {
             const name = token.slice(1, -1);
+            if (name.startsWith("TWEAK:")) {
+                const [, key, func] = name.split(":");
+                const covenant = group(func).arkade;
+                if (!covenant) throw new Error(`tweak target ${func} has no covenant`);
+                const base = ARGS[key];
+                if (!(base instanceof Uint8Array)) throw new Error(`tweak base ${key}`);
+                return computeArkadeScriptPublicKey(base, assembleArtifactAsm(covenant.asm, extra));
+            }
             const value = extra[name] ?? ARGS[name];
             if (value === undefined) throw new Error(`unbound placeholder ${token}`);
             return value instanceof Uint8Array ? value : BigInt(value);
@@ -154,7 +162,7 @@ describe("reading an arkadec artifact", () => {
         // Pinned so a change to the reader, the opcode table, or the tapscript
         // encoders shows up here rather than in a deployment.
         expect(address).toMatchInlineSnapshot(
-            `"ark1qqqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqsrl5d98szjtgnt6r5wwxxvcy9q5ducwfj27vvah7gvwadggn8du53cy20z0"`,
+            `"ark1qqqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqsrze5ykn7pag4e0xgpn6ufe9h3u6ruutxzha4x3awusg5qenqmk7ll06vug"`,
         );
     });
 
@@ -167,13 +175,17 @@ describe("reading an arkadec artifact", () => {
         expect(named("cancel")).toEqual([]);
     });
 
-    it("reads the layered CSV exit as two standalone leaves", () => {
+    it("reads the insurer exit as a covenant tweak, then the parties", () => {
         const program = programFromArtifact(artifact);
 
-        const fallback = program.functions.fallback.tapscript;
-        expect(fallback.signers).toEqual(["$agentPk"]);
-        expect(fallback.csv).toEqual({ type: "blocks", value: "$agentExit" });
-        expect(program.functions.fallback.arkadeScript).toBeUndefined();
+        const complete = program.functions.fallbackComplete.tapscript;
+        expect(complete.signers).toEqual(["$tweak:agentPk:complete"]);
+        expect(complete.csv).toEqual({ type: "blocks", value: "$agentExit" });
+        expect(program.functions.fallbackComplete.arkadeScript).toBeUndefined();
+
+        const cancel = program.functions.fallbackCancel.tapscript;
+        expect(cancel.signers).toEqual(["$tweak:agentPk:cancel"]);
+        expect(cancel.csv).toEqual({ type: "blocks", value: "$agentExit" });
 
         const unilateral = program.functions.unilateral.tapscript;
         expect(unilateral.signers).toEqual(["$partyAPk", "$partyBPk"]);
