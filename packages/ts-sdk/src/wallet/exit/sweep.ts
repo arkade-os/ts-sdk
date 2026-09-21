@@ -44,6 +44,8 @@ export function sweepFeeFor(
  * the witness array, right before script and control block:
  * `[sig, ...extraWitness, script, controlBlock]`.
  */
+export type SweepSigner = (tx: Transaction) => Promise<Transaction>;
+
 export async function buildSignedSweep(params: {
     vtxo: SweepVtxo;
     path: PathSelection;
@@ -51,8 +53,14 @@ export async function buildSignedSweep(params: {
     feeRate: number;
     network: Network;
     identity: Identity;
+    /**
+     * Descriptor-aware signer for HD wallets: routes each input's
+     * witnessUtxo script to its owning key/descriptor instead of the
+     * index-0 baseline identity. Falls back to sign(tx) when omitted.
+     */
+    signer?: SweepSigner;
 }): Promise<{ tx: Transaction; fee: number }> {
-    const { vtxo, path, outputAddress, feeRate, network, identity } = params;
+    const { vtxo, path, outputAddress, feeRate, network, identity, signer } = params;
 
     const fee = sweepFeeFor(path, outputAddress, network, feeRate);
     const sendAmount = BigInt(vtxo.value) - BigInt(fee);
@@ -73,7 +81,7 @@ export async function buildSignedSweep(params: {
     });
     tx.addOutputAddress(outputAddress, sendAmount, network);
 
-    const signed = await identity.sign(tx);
+    const signed = signer ? await signer(tx) : await identity.sign(tx);
 
     if (!path.extraWitness || path.extraWitness.length === 0) {
         signed.finalize(); // proven path (prepareUnrollTransaction does this)

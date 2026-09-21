@@ -61,6 +61,11 @@ export async function prepare(opts: ExitOptions): Promise<ExitPackage> {
                 feeRate,
                 network: wallet.network,
                 identity: wallet.identity,
+                // HD wallets must sign sweep inputs with the key owned by each
+                // VTXO's script, not the index-0 identity. The wallet's
+                // descriptor-aware router does exactly that (see
+                // signInputsByWitnessScript), matching the boarding exit path.
+                signer: (tx) => wallet.signInputsByWitnessScript(tx),
             });
             activeOutpoints.add(outpoint);
             sweepSteps.push({

@@ -4712,15 +4712,31 @@ export class Wallet
     }
 
     /**
-     * @internal Sign an on-chain boarding exit / sweep transaction, routing
-     * each input to the correct key by its `witnessUtxo.script`: the identity
-     * for index-0 / static boarding, the per-index descriptor for a rotated
-     * boarding UTXO (plan §6-III.3). Used by
-     * {@link VtxoManager.sweepExpiredBoardingUtxos}; without it, the
-     * unilateral exit of a rotated boarding UTXO would be signed with the
-     * wrong (index-0) key and rejected.
+     * Public descriptor-aware signing for transaction inputs whose owning
+     * script can be read from each input's `witnessUtxo.script` (e.g. unilateral
+     * exit sweeps). Routes the baseline key to the identity and rotated
+     * contracts to their HD descriptor key.
+     */
+    async signInputsByWitnessScript(tx: Transaction): Promise<Transaction> {
+        const signed = await this._signerRouter.sign(
+            tx,
+            this.inputSigningJobsFromWitnessUtxos(tx),
+            {
+                onUnknownScript: "sign",
+            },
+        );
+        return signed as Transaction;
+    }
+
+    /**
+     * @internal Keeps the existing on-chain boarding sweep route on the same
+     * routing primitive above. Retired once the call sites switch to the new
+     * method.
      */
     async signOnchainBoardingTx(tx: Transaction): Promise<Transaction> {
+        // Preserves the historical boarding behavior: unknown scripts are
+        // skipped rather than signed with the identity key, matching how the
+        // boarding VTXO sweep should avoid signing unmanaged scripts.
         const signed = await this._signerRouter.sign(tx, this.inputSigningJobsFromWitnessUtxos(tx));
         return signed as Transaction;
     }

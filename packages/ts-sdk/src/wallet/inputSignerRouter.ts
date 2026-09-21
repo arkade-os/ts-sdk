@@ -43,6 +43,13 @@ export interface InputRoutingPlan {
      * resolves to the baseline key).
      */
     descriptorGroups: Map<string, number[]>;
+    /**
+     * Input indexes the router did not classify: the script matched neither a
+     * known contract nor the boarding fallback. Callers that want "sign the
+     * wallet's own key for unknown scripts" (exit sweeps) can force these onto
+     * the identity; other callers keep the historical silent-skip behaviour.
+     */
+    unknownIndexes: number[];
 }
 
 /**
@@ -77,8 +84,9 @@ export class InputSignerRouter {
     async classify(jobs: InputSigningJob[]): Promise<InputRoutingPlan> {
         const identityIndexes: number[] = [];
         const descriptorGroups = new Map<string, number[]>();
+        const unknownIndexes: number[] = [];
         if (jobs.length === 0) {
-            return { identityIndexes, descriptorGroups };
+            return { identityIndexes, descriptorGroups, unknownIndexes };
         }
 
         const distinctScripts = Array.from(new Set(jobs.map((j) => hex.encode(j.lookupScript))));
@@ -104,6 +112,8 @@ export class InputSignerRouter {
             if (!contract) {
                 if (scriptHex === boardingScriptHex) {
                     identityIndexes.push(job.index);
+                } else {
+                    unknownIndexes.push(job.index);
                 }
                 continue;
             }
@@ -137,7 +147,7 @@ export class InputSignerRouter {
             }
         }
 
-        return { identityIndexes, descriptorGroups };
+        return { identityIndexes, descriptorGroups, unknownIndexes };
     }
 
     /**
@@ -161,13 +171,24 @@ export class InputSignerRouter {
         return plan.descriptorGroups.size === 0;
     }
 
-    async sign(tx: Transaction, jobs: InputSigningJob[]): Promise<Transaction> {
+    async sign(
+        tx: Transaction,
+        jobs: InputSigningJob[],
+        opts?: { onUnknownScript?: "skip" | "sign" },
+    ): Promise<Transaction> {
         if (jobs.length === 0) return tx;
-        const { identityIndexes, descriptorGroups } = await this.classify(jobs);
+        const { identityIndexes, descriptorGroups, unknownIndexes } = await this.classify(jobs);
+
+        // Sweep/exit signing opts in to "unrecognized = mine" semantics. Other
+        // callers keep the historical silent-skip behaviour exactly.
+        const identitySignIndexes =
+            opts?.onUnknownScript === "sign"
+                ? [...identityIndexes, ...unknownIndexes]
+                : identityIndexes;
 
         let signed = tx;
-        if (identityIndexes.length > 0) {
-            signed = await this.deps.identity.sign(signed, identityIndexes);
+        if (identitySignIndexes.length > 0) {
+            signed = await this.deps.identity.sign(signed, identitySignIndexes);
         }
 
         if (descriptorGroups.size > 0) {
