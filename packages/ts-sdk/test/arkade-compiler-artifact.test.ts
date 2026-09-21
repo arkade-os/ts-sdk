@@ -20,8 +20,8 @@ import { networks } from "../src/networks";
 /**
  * Reading a compiler artifact, from the SDK's side.
  *
- * `escrow.artifact.json` is what `arkadec` writes for
- * `examples/escrow/escrow.ark` in arkade-os/compiler, minus the `source`
+ * `settlement.artifact.json` is what `arkadec` writes for
+ * `examples/settlement/settlement.ark` in arkade-os/compiler, minus the `source`
  * bundle (a verbatim copy of the .ark text) and `updatedAt` (changes every
  * compile). Nothing else is generated: the SDK reads this shape directly, so
  * there is no second artifact to keep in sync.
@@ -31,7 +31,7 @@ import { networks } from "../src/networks";
  * encoders, once by assembling the artifact's own raw assembly.
  */
 const artifact: ContractArtifact = JSON.parse(
-    readFileSync(new URL("./fixtures/arkadec/escrow.artifact.json", import.meta.url), "utf8"),
+    readFileSync(new URL("./fixtures/arkadec/settlement.artifact.json", import.meta.url), "utf8"),
 );
 
 const group = (name: string): ArtifactGroup => {
@@ -45,33 +45,22 @@ const key = (byte: number) => new Uint8Array(32).fill(byte);
 const SERVER_KEY = key(0x01);
 const EMULATOR_KEY = hex.decode(`02${"02".repeat(32)}`);
 
-/**
- * The parameter each `new Contract(...)` payout is expected to become.
- * Spelled out rather than derived, so a change to the naming shows up here
- * instead of as an unbound argument in a caller.
- */
-const VTXO_PARAMS: Record<string, string> = {
-    "VTXO:SingleSig(<sellerPk>,<exit>)": "vtxo_SingleSig_sellerPk_exit",
-    "VTXO:SingleSig(<buyerPk>,<exit>)": "vtxo_SingleSig_buyerPk_exit",
-    "VTXO:SingleSig(<mediatorPk>,<exit>)": "vtxo_SingleSig_mediatorPk_exit",
-};
-
 const ARGS: Record<string, ArkadeParamValue> = {
-    buyerPk: key(0x04),
-    sellerPk: key(0x05),
+    partyAPk: key(0x04),
+    partyBPk: key(0x05),
     oraclePk: key(0x06),
-    mediatorPk: key(0x07),
-    dealId: key(0x7a),
-    mediationFee: 10_000n,
-    refundLocktime: 800_000n,
-    exit: 144n,
+    agentPk: key(0x07),
+    oracleMessageHash: key(0x7a),
+    partyAScript: key(0xa1),
+    partyBScript: key(0xb2),
+    settlementAmount: 500_000n,
+    timeoutHeight: 900_000n,
+    agentExit: 144n,
+    exit: 1_008n,
     server: SERVER_KEY,
-    vtxo_SingleSig_sellerPk_exit: key(0x11),
-    vtxo_SingleSig_buyerPk_exit: key(0x12),
-    vtxo_SingleSig_mediatorPk_exit: key(0x13),
 };
 
-const escrowScript = () =>
+const settlementScript = () =>
     new ArkadeProgramScript(programFromArtifact(artifact), ARGS, {
         serverKey: SERVER_KEY,
         emulatorKey: EMULATOR_KEY,
@@ -91,7 +80,7 @@ function assembleArtifactAsm(tokens: string[], extra: Record<string, Uint8Array>
         }
         if (token.startsWith("<") && token.endsWith(">")) {
             const name = token.slice(1, -1);
-            const value = extra[name] ?? ARGS[VTXO_PARAMS[name] ?? name];
+            const value = extra[name] ?? ARGS[name];
             if (value === undefined) throw new Error(`unbound placeholder ${token}`);
             return value instanceof Uint8Array ? value : BigInt(value);
         }
@@ -110,28 +99,23 @@ describe("reading an arkadec artifact", () => {
 
     it("produces a valid program with the artifact's spend groups", () => {
         const program = programFromArtifact(artifact);
-        expect(program.name).toBe("Escrow");
+        expect(program.name).toBe("Settlement");
         expect(Object.keys(program.functions)).toEqual(artifact.functions.map((g) => g.name));
         expect(() => validateProgram(program, ARGS)).not.toThrow();
     });
 
-    it("declares server and one parameter per contract instantiation", () => {
+    it("declares server and every constructor parameter", () => {
         const declared = (programFromArtifact(artifact).params ?? []).map((p) =>
             typeof p === "string" ? p : p.name,
         );
         expect(declared).toContain("server");
-        for (const name of Object.values(VTXO_PARAMS)) {
-            expect(declared).toContain(name);
-        }
-        // validateProgram enforces this, but name the failure mode: an
-        // unbound `$param` is what a caller would hit.
         for (const name of declared) {
             expect(ARGS[name], `arg ${name}`).toBeDefined();
         }
     });
 
     it("compiles each leaf to the same bytes as the artifact's own assembly", () => {
-        const script = escrowScript();
+        const script = settlementScript();
         expect(script.compiled).toHaveLength(artifact.functions.length);
         for (const compiled of script.compiled) {
             const leaf = group(compiled.name).leaves[0];
@@ -153,7 +137,7 @@ describe("reading an arkadec artifact", () => {
     });
 
     it("compiles each covenant to the same bytes as the artifact's own assembly", () => {
-        for (const compiled of escrowScript().compiled) {
+        for (const compiled of settlementScript().compiled) {
             const covenant = group(compiled.name).arkade;
             if (!covenant) {
                 expect(compiled.arkadeScript, `${compiled.name} has no covenant`).toBeUndefined();
@@ -166,11 +150,11 @@ describe("reading an arkadec artifact", () => {
     });
 
     it("derives a stable address", () => {
-        const address = escrowScript().address(networks.bitcoin.hrp, SERVER_KEY).encode();
+        const address = settlementScript().address(networks.bitcoin.hrp, SERVER_KEY).encode();
         // Pinned so a change to the reader, the opcode table, or the tapscript
         // encoders shows up here rather than in a deployment.
         expect(address).toMatchInlineSnapshot(
-            `"ark1qqqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqsrazh2d034redkdjk4rtkac72gw4h6u2au76s48q5g4valx0nx8l3m0f5fk"`,
+            `"ark1qqqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqsrl5d98szjtgnt6r5wwxxvcy9q5ducwfj27vvah7gvwadggn8du53cy20z0"`,
         );
     });
 
@@ -179,34 +163,22 @@ describe("reading an arkadec artifact", () => {
         const named = (fn: string) =>
             (program.functions[fn].inputs ?? []).map((i) => (typeof i === "string" ? i : i.name));
 
-        // The escrow upgrade, seen from the SDK: release takes only the
-        // buyer's signature, refund takes nothing, resolve takes the verdict.
-        expect(named("release")).toEqual(["buyerSig"]);
-        expect(named("refund")).toEqual([]);
-        expect(named("resolve")).toEqual(["sellerShareBps", "attestedAt", "oracleSig"]);
-
-        // Covenant inputs reach the stack in reverse declaration order.
-        expect(program.functions.resolve.arkadeScript?.witness).toEqual([
-            "oracleSig",
-            "attestedAt",
-            "sellerShareBps",
-        ]);
+        expect(named("complete")).toEqual(["oracleMsg", "oracleSig"]);
+        expect(named("cancel")).toEqual([]);
     });
 
-    it("reads the emulator-down exit as a 2-of-3 across three leaves", () => {
+    it("reads the layered CSV exit as two standalone leaves", () => {
         const program = programFromArtifact(artifact);
-        const pairs: Record<string, string[]> = {
-            exitBuyerSeller: ["$buyerPk", "$sellerPk"],
-            exitBuyerMediator: ["$buyerPk", "$mediatorPk"],
-            exitSellerMediator: ["$sellerPk", "$mediatorPk"],
-        };
-        for (const [name, signers] of Object.entries(pairs)) {
-            const tapscript = program.functions[name].tapscript;
-            expect(tapscript.signers, name).toEqual(signers);
-            expect(tapscript.csv, name).toEqual({ type: "blocks", value: "$exit" });
-            // A standalone leaf has no covenant, so no co-signer is appended.
-            expect(program.functions[name].arkadeScript, name).toBeUndefined();
-        }
+
+        const fallback = program.functions.fallback.tapscript;
+        expect(fallback.signers).toEqual(["$agentPk"]);
+        expect(fallback.csv).toEqual({ type: "blocks", value: "$agentExit" });
+        expect(program.functions.fallback.arkadeScript).toBeUndefined();
+
+        const unilateral = program.functions.unilateral.tapscript;
+        expect(unilateral.signers).toEqual(["$partyAPk", "$partyBPk"]);
+        expect(unilateral.csv).toEqual({ type: "blocks", value: "$exit" });
+        expect(program.functions.unilateral.arkadeScript).toBeUndefined();
     });
 
     it("refuses an opcode this SDK's table does not carry", () => {
@@ -214,9 +186,9 @@ describe("reading an arkadec artifact", () => {
             ...artifact,
             functions: [
                 {
-                    name: "release",
+                    name: "complete",
                     arkade: { inputs: [], asm: ["OP_NOTAREALOPCODE"] },
-                    leaves: [group("release").leaves[0]],
+                    leaves: [group("complete").leaves[0]],
                 },
             ],
         };

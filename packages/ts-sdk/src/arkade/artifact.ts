@@ -13,12 +13,11 @@
  * to keep in sync. A client loads the compiler's output and spends:
  *
  * ```typescript
- * const artifact = JSON.parse(await readFile("escrow.json", "utf8"));
- * const escrow = arkade.contract(programFromArtifact(artifact), {
- *     buyerPk, sellerPk, oraclePk, mediatorPk, dealId,
- *     mediationFee: 10_000n, refundLocktime: 800_000n, exit: 144n,
- *     // one per `new Contract(...)` payout the covenant pins
- *     vtxo_SingleSig_sellerPk_exit: sellerVtxoProgram,
+ * const artifact = JSON.parse(await readFile("settlement.json", "utf8"));
+ * const settlement = arkade.contract(programFromArtifact(artifact), {
+ *     partyAPk, partyBPk, agentPk, oraclePk, oracleMessageHash,
+ *     partyAScript, partyBScript, settlementAmount, timeoutHeight,
+ *     agentExit: 144n, exit: 1_008n,
  * });
  * ```
  *
