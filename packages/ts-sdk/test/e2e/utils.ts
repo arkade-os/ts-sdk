@@ -28,6 +28,7 @@ import {
     VirtualTxRepository,
     ExitCaptureMode,
     ExitDataSource,
+    NormalizedExtendedVirtualCoin,
 } from "../../src";
 import { ANCHOR_PKSCRIPT } from "../../src/utils/anchor";
 import type { ExtensionPacket } from "../../src/extension";
@@ -321,6 +322,30 @@ export async function waitFor(
         await new Promise((r) => setTimeout(r, interval));
     }
     throw new Error("timeout in waitFor");
+}
+
+/**
+ * The wallet's unrolled row, once the indexer has caught up with the exit.
+ *
+ * `getVtxos` is a display read: it answers from the repository and only nudges a
+ * catch-up sync, so an unrolled row lands a sync after the session ends rather
+ * than by the time the read returns. Asserting on the first read races that.
+ *
+ * Returns the snapshot the predicate accepted, not a later read of it. The
+ * predicate asks only whether an unrolled row is there yet; the caller's own
+ * length and `isUnrolled` assertions still run, so a wallet holding the wrong
+ * set fails them rather than timing out here.
+ */
+export async function waitForUnrolledVtxos(wallet: {
+    getVtxos: (filter?: { withUnrolled?: boolean }) => Promise<NormalizedExtendedVirtualCoin[]>;
+}): Promise<NormalizedExtendedVirtualCoin[]> {
+    let unrolled: NormalizedExtendedVirtualCoin[] = [];
+    await waitFor(async () => {
+        const coins = await wallet.getVtxos({ withUnrolled: true });
+        unrolled = coins;
+        return coins.some((vtxo) => vtxo.isUnrolled);
+    });
+    return unrolled;
 }
 
 /**

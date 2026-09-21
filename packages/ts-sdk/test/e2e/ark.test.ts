@@ -36,6 +36,7 @@ import {
     faucetOnchain,
     setFees,
     waitFor,
+    waitForUnrolledVtxos,
 } from "./utils";
 
 describe("Common", () => {
@@ -468,9 +469,7 @@ describe("Common", () => {
                     }
                 }
 
-                const virtualCoinsAfterExit = await alice.wallet.getVtxos({
-                    withUnrolled: true,
-                });
+                const virtualCoinsAfterExit = await waitForUnrolledVtxos(alice.wallet);
                 expect(virtualCoinsAfterExit).toHaveLength(1);
                 expect(virtualCoinsAfterExit[0].isUnrolled).toBe(true);
                 // Hidden from the default read: the exit is not something a send
@@ -550,9 +549,7 @@ describe("Common", () => {
                     }
                 }
 
-                const virtualCoinsAfterExit = await alice.wallet.getVtxos({
-                    withUnrolled: true,
-                });
+                const virtualCoinsAfterExit = await waitForUnrolledVtxos(alice.wallet);
                 expect(virtualCoinsAfterExit).toHaveLength(1);
                 const unrolled = virtualCoinsAfterExit[0];
                 expect(unrolled.isUnrolled).toBe(true);
@@ -646,9 +643,7 @@ describe("Common", () => {
                     }
                 }
 
-                const virtualCoinsAfterExit = await alice.wallet.getVtxos({
-                    withUnrolled: true,
-                });
+                const virtualCoinsAfterExit = await waitForUnrolledVtxos(alice.wallet);
                 expect(virtualCoinsAfterExit).toHaveLength(1);
                 const unrolled = virtualCoinsAfterExit[0];
                 expect(unrolled.isUnrolled).toBe(true);
@@ -1152,6 +1147,10 @@ describe("Common", () => {
                     const settleTxid = await new Ramps(alice.wallet).onboard(fees);
                     expect(settleTxid).toBeDefined();
 
+                    // Onboarding records the VTXO through the contract sync, and
+                    // `getVtxos` is a display read that does not wait for it.
+                    await waitFor(async () => (await alice.wallet.getVtxos()).length > 0);
+
                     const vtxos = await alice.wallet.getVtxos();
                     expect(vtxos).toHaveLength(1);
                     const vtxo = vtxos[0];
@@ -1174,6 +1173,10 @@ describe("Delegate", () => {
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
         await alice.wallet.settle();
+
+        // `settle` records the VTXO through the contract sync, and `getVtxos` is
+        // a display read that does not wait for it.
+        await waitFor(async () => (await alice.wallet.getVtxos()).length > 0);
 
         let vtxos = await alice.wallet.getVtxos();
         expect(vtxos).toHaveLength(1);
