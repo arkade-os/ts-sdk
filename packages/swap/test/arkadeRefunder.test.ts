@@ -61,14 +61,23 @@ const fakeOperator = (): RefundArkProvider =>
 
 /** The lockup as the indexer reports it: `getVtxos` is asked twice, once per
  * filter, and only the spendable half answers unless a test says otherwise. */
-const fakeIndexer = (over: { spendable?: unknown[]; recoverable?: unknown[] } = {}) =>
+const fakeIndexer = (over: { spendable?: typeof FUNDED; recoverable?: typeof FUNDED } = {}) =>
     ({
-        getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
-            vtxos: opts?.spendableOnly
-                ? (over.spendable ?? [])
-                : opts?.recoverableOnly
-                  ? (over.recoverable ?? [])
-                  : [],
+        getVtxos: async (opts?: {
+            spendableOnly?: boolean;
+            recoverableOnly?: boolean;
+            renewableOnly?: boolean;
+        }) => ({
+            vtxos: opts?.renewableOnly
+                ? [
+                      ...(over.spendable ?? []),
+                      ...(over.recoverable ?? []).map((vtxo) => ({ ...vtxo, isSwept: true })),
+                  ]
+                : opts?.spendableOnly
+                  ? (over.spendable ?? [])
+                  : opts?.recoverableOnly
+                    ? (over.recoverable ?? [])
+                    : [],
         }),
     }) as never;
 

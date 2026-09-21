@@ -268,7 +268,11 @@ const fakeIndexer = (
     const indexer = {
         vtxoCalls: 0,
         txLookups: [] as string[][],
-        async getVtxos(filter?: { spendableOnly?: boolean; recoverableOnly?: boolean }) {
+        async getVtxos(filter?: {
+            spendableOnly?: boolean;
+            recoverableOnly?: boolean;
+            renewableOnly?: boolean;
+        }) {
             indexer.vtxoCalls += 1;
             if (state.fail) throw new Error("indexer unreachable");
             // The filters are honoured rather than ignored: `findLockupVtxos`
@@ -278,6 +282,13 @@ const fakeIndexer = (
             const funded = state.funded ?? [];
             if (filter?.spendableOnly) return { vtxos: funded.filter((v) => !v.recoverable) };
             if (filter?.recoverableOnly) return { vtxos: funded.filter((v) => v.recoverable) };
+            if (filter?.renewableOnly)
+                return {
+                    vtxos: funded.map(({ recoverable, ...vtxo }) => ({
+                        ...vtxo,
+                        isSwept: recoverable,
+                    })),
+                }; // union of both sets
             return { vtxos: state.vtxos ?? [] };
         },
         async getVirtualTxs(txids: string[]) {
@@ -2816,7 +2827,10 @@ describe("RfqSwapManager — the lockup as a contract", () => {
         // reports which failure this is, unflattened, so the caller can act.
         const swept = [{ txid: "55".repeat(32), vout: 3, value: 8_000, recoverable: true }];
         const s = spies({
-            refund: () => Promise.reject(new LockupNeedsRecoveryError(["55".repeat(32) + ":3"])),
+            refund: () =>
+                Promise.reject(
+                    new LockupNeedsRecoveryError(["55".repeat(32) + ":3"], BigInt(REFUND_LOCKTIME)),
+                ),
         });
         const seen: unknown[] = [];
         const m = manager({ now: REFUND_LOCKTIME, spies: s });

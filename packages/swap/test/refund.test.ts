@@ -365,8 +365,24 @@ describe("findLockupVtxos", () => {
 
     const byFilterIndexer = (spendable: IndexedVtxo[], recoverable: IndexedVtxo[]): RefundIndexer =>
         ({
-            getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
-                vtxos: opts?.recoverableOnly ? recoverable : opts?.spendableOnly ? spendable : [],
+            getVtxos: async (opts?: {
+                spendableOnly?: boolean;
+                recoverableOnly?: boolean;
+                renewableOnly?: boolean;
+            }) => ({
+                vtxos: opts?.renewableOnly
+                    ? [
+                          ...spendable.map(({ recoverable: _recoverable, ...vtxo }) => vtxo),
+                          ...recoverable.map(({ recoverable: _recoverable, ...vtxo }) => ({
+                              ...vtxo,
+                              isSwept: true,
+                          })),
+                      ]
+                    : opts?.recoverableOnly
+                      ? recoverable
+                      : opts?.spendableOnly
+                        ? spendable
+                        : [],
             }),
         }) as unknown as RefundIndexer;
 
@@ -516,8 +532,12 @@ describe("refundIfUnresolved", () => {
         const operator = fakeOperator();
         const swept = { txid: "55".repeat(32), vout: 3, value: 8_000 };
         const indexer = {
-            getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
-                vtxos: opts?.recoverableOnly ? [swept] : [],
+            getVtxos: async (opts?: {
+                spendableOnly?: boolean;
+                recoverableOnly?: boolean;
+                renewableOnly?: boolean;
+            }) => ({
+                vtxos: opts?.renewableOnly ? [{ ...swept, isSwept: true }] : [],
             }),
             getVirtualTxs: async () => ({ txs: [] }),
         } as unknown as LockupSpendIndexer;
