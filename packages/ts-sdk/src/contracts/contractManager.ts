@@ -982,8 +982,8 @@ export class ContractManager implements IContractManager {
         }
 
         if (!this.config.lazyInitialization) {
-            await this.scheduleLookAheadDrain();
             try {
+                await this.scheduleLookAheadDrain();
                 await this.reconcileWatched();
                 this.markSyncOnline();
             } catch (err) {

@@ -109,35 +109,41 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         expect(state.mode === "degraded" ? state.reason : "").toContain("schema violation");
     });
 
-    it("keeps a look-ahead failure across a successful boot reconcile", async () => {
-        const contractRepo = new InMemoryContractRepository();
-        await contractRepo.saveContract(seededContract());
-        const indexer = createMockIndexerProvider(); // the boot reconcile succeeds
+    it.each([false, true])(
+        "keeps a retryable look-ahead failure with lazyInitialization=%s",
+        async (lazyInitialization) => {
+            const contractRepo = new InMemoryContractRepository();
+            await contractRepo.saveContract(seededContract());
+            const indexer = createMockIndexerProvider(); // the boot reconcile succeeds
 
-        const m = await create(
-            indexer,
-            contractRepo,
-            new InMemoryWalletRepository(),
-            {
-                size: 1,
-                currentWatermark: async () => {
-                    throw new ProviderUnavailableError("look-ahead unavailable");
+            const m = await create(
+                indexer,
+                contractRepo,
+                new InMemoryWalletRepository(),
+                {
+                    size: 1,
+                    currentWatermark: async () => {
+                        throw new ProviderUnavailableError("look-ahead unavailable");
+                    },
+                    materialize: (index) => `descriptor-${index}`,
+                    candidateDeps: () => ({
+                        network: { hrp: "tark" },
+                        serverPubKey: new Uint8Array(32),
+                        csvTimelocks: [],
+                    }),
                 },
-                materialize: (index) => `descriptor-${index}`,
-                candidateDeps: () => ({
-                    network: { hrp: "tark" },
-                    serverPubKey: new Uint8Array(32),
-                    csvTimelocks: [],
-                }),
-            },
-            true,
-        );
+                lazyInitialization,
+            );
 
-        await m.whenBooted();
-        const state = m.getSyncState();
-        expect(state.mode).toBe("degraded");
-        expect(state.mode === "degraded" ? state.reason : "").toContain("look-ahead unavailable");
-    });
+            await m.whenBooted();
+            const state = m.getSyncState();
+            expect(state.mode).toBe("degraded");
+            expect(state.mode === "degraded" ? state.reason : "").toContain(
+                "look-ahead unavailable",
+            );
+            expect(indexer.subscribeForScripts).toHaveBeenCalled();
+        },
+    );
 
     it("getContractsWithVtxos serves repository state on a retryable sync failure", async () => {
         const contractRepo = new InMemoryContractRepository();
