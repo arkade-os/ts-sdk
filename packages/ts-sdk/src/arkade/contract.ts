@@ -342,7 +342,9 @@ export class Arkade {
         // documented default.
         const network =
             opts.network ??
-            (info.network in networks ? getNetwork(info.network as NetworkName) : DEFAULT_NETWORK);
+            (Object.hasOwn(networks, info.network)
+                ? getNetwork(info.network as NetworkName)
+                : DEFAULT_NETWORK);
 
         // The emulator is optional — only covenant contracts need it.
         //

@@ -323,6 +323,13 @@ describe("arkade.Arkade / ArkadeContract", () => {
             });
             expect(ark.contract(program).address.startsWith("ark1")).toBe(true);
         });
+
+        it("treats an inherited property name as no network", async () => {
+            const ark = await arkade.Arkade.connect({
+                arkade: arkProviderReporting(server, "constructor"),
+            });
+            expect(ark.contract(program).address.startsWith("ark1")).toBe(true);
+        });
     });
 
     it("resolveAsm substitutes $params and passes opcodes through", () => {
