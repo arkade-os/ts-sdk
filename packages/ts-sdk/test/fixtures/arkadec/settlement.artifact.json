@@ -1,155 +1,44 @@
 {
   "contractName": "Settlement",
   "constructorInputs": [
-    {
-      "name": "partyAPk",
-      "type": "pubkey"
-    },
-    {
-      "name": "partyBPk",
-      "type": "pubkey"
-    },
-    {
-      "name": "oraclePk",
-      "type": "pubkey"
-    },
-    {
-      "name": "oracleMessageHash",
-      "type": "bytes32"
-    },
-    {
-      "name": "partyAScript",
-      "type": "bytes32"
-    },
-    {
-      "name": "partyBScript",
-      "type": "bytes32"
-    },
-    {
-      "name": "settlementAmount",
-      "type": "int"
-    },
-    {
-      "name": "timeoutHeight",
-      "type": "int"
-    },
-    {
-      "name": "exit",
-      "type": "int"
-    }
+    { "name": "partyAPk", "type": "pubkey" },
+    { "name": "partyBPk", "type": "pubkey" },
+    { "name": "oraclePk", "type": "pubkey" },
+    { "name": "oracleMessageHash", "type": "bytes32" },
+    { "name": "partyAScript", "type": "bytes32" },
+    { "name": "partyBScript", "type": "bytes32" },
+    { "name": "settlementAmount", "type": "int" },
+    { "name": "timeoutHeight", "type": "int" },
+    { "name": "exit", "type": "int" }
   ],
   "functions": [
     {
       "name": "complete",
       "arkade": {
         "inputs": [
-          {
-            "name": "oracleMsg",
-            "type": "bytes32"
-          },
-          {
-            "name": "oracleSig",
-            "type": "signature"
-          }
+          { "name": "oracleMsg", "type": "bytes32" },
+          { "name": "oracleSig", "type": "signature" }
         ],
         "asm": [
-          "<settlementAmount>",
-          "<partyBScript>",
-          "<partyAScript>",
-          "<oracleMessageHash>",
-          "<oraclePk>",
-          "OP_5",
-          "OP_PICK",
-          "OP_SHA256",
-          "OP_2",
-          "OP_ROLL",
-          "OP_EQUAL",
-          "OP_VERIFY",
-          "OP_5",
-          "OP_ROLL",
-          "OP_5",
-          "OP_ROLL",
-          "OP_2",
-          "OP_ROLL",
-          "OP_CHECKSIGFROMSTACK",
-          "OP_VERIFY",
-          "OP_PUSHCURRENTINPUTINDEX",
-          "OP_INSPECTINPUTVALUE",
-          "OP_0",
-          "OP_PICK",
-          "OP_4",
-          "OP_PICK",
-          "OP_GREATERTHANOREQUAL",
-          "OP_VERIFY",
-          "OP_0",
-          "OP_ROLL",
-          "OP_3",
-          "OP_PICK",
-          "OP_SUB",
-          "0",
-          "OP_INSPECTOUTPUTVALUE",
-          "OP_4",
-          "OP_ROLL",
-          "OP_GREATERTHANOREQUAL",
-          "OP_VERIFY",
-          "0",
-          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-          "OP_DROP",
-          "OP_3",
-          "OP_ROLL",
-          "OP_EQUAL",
-          "OP_VERIFY",
-          "OP_0",
-          "OP_PICK",
-          "0",
-          "OP_GREATERTHAN",
-          "OP_IF",
-          "OP_0",
-          "OP_PICK",
-          "330",
-          "OP_GREATERTHAN",
-          "OP_VERIFY",
-          "1",
-          "OP_INSPECTOUTPUTVALUE",
-          "OP_1",
-          "OP_PICK",
-          "OP_GREATERTHANOREQUAL",
-          "OP_VERIFY",
-          "1",
-          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-          "OP_DROP",
-          "OP_2",
-          "OP_PICK",
-          "OP_EQUAL",
-          "OP_VERIFY",
-          "OP_ENDIF",
-          "OP_1",
-          "OP_NIP",
-          "OP_NIP"
+          "<settlementAmount>", "<partyBScript>", "<partyAScript>", "<oracleMessageHash>",
+          "<oraclePk>", "OP_5", "OP_PICK", "OP_SHA256", "OP_2", "OP_ROLL", "OP_EQUAL",
+          "OP_VERIFY", "OP_5", "OP_ROLL", "OP_5", "OP_ROLL", "OP_2", "OP_ROLL",
+          "OP_CHECKSIGFROMSTACK", "OP_VERIFY", "OP_PUSHCURRENTINPUTINDEX",
+          "OP_INSPECTINPUTVALUE", "OP_0", "OP_PICK", "OP_4", "OP_PICK", "OP_GREATERTHANOREQUAL",
+          "OP_VERIFY", "OP_0", "OP_ROLL", "OP_3", "OP_PICK", "OP_SUB", "0",
+          "OP_INSPECTOUTPUTVALUE", "OP_4", "OP_ROLL", "OP_GREATERTHANOREQUAL", "OP_VERIFY", "0",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY", "OP_DROP", "OP_3", "OP_ROLL", "OP_EQUAL", "OP_VERIFY",
+          "OP_0", "OP_PICK", "0", "OP_GREATERTHAN", "OP_IF", "OP_0", "OP_PICK", "330",
+          "OP_GREATERTHAN", "OP_VERIFY", "1", "OP_INSPECTOUTPUTVALUE", "OP_1", "OP_PICK",
+          "OP_GREATERTHANOREQUAL", "OP_VERIFY", "1", "OP_INSPECTOUTPUTSCRIPTPUBKEY", "OP_DROP",
+          "OP_2", "OP_PICK", "OP_EQUAL", "OP_VERIFY", "OP_ENDIF", "OP_1", "OP_NIP", "OP_NIP"
         ]
       },
       "leaves": [
         {
           "name": "complete",
-          "witness": [
-            {
-              "name": "serverSig",
-              "type": "signature",
-              "encoding": "schnorr-64",
-              "injected": true
-            },
-            {
-              "name": "emulatorSig",
-              "type": "signature",
-              "encoding": "schnorr-64",
-              "injected": true
-            }
-          ],
           "asm": [
-            "<SERVER_KEY>",
-            "OP_CHECKSIGVERIFY",
-            "<EMULATOR_KEY:complete>",
-            "OP_CHECKSIG"
+            "<SERVER_KEY>", "OP_CHECKSIGVERIFY", "<EMULATOR_KEY:complete>", "OP_CHECKSIG"
           ]
         }
       ]
@@ -159,51 +48,18 @@
       "arkade": {
         "inputs": [],
         "asm": [
-          "<timeoutHeight>",
-          "<partyAScript>",
-          "OP_INSPECTLOCKTIME",
-          "OP_2",
-          "OP_ROLL",
-          "OP_GREATERTHANOREQUAL",
-          "OP_VERIFY",
-          "0",
-          "OP_INSPECTOUTPUTVALUE",
-          "OP_PUSHCURRENTINPUTINDEX",
-          "OP_INSPECTINPUTVALUE",
-          "OP_GREATERTHANOREQUAL",
-          "OP_VERIFY",
-          "0",
-          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-          "OP_DROP",
-          "OP_1",
-          "OP_ROLL",
-          "OP_EQUAL",
-          "OP_VERIFY",
-          "OP_1"
+          "<timeoutHeight>", "<partyAScript>", "OP_INSPECTLOCKTIME", "OP_2", "OP_ROLL",
+          "OP_GREATERTHANOREQUAL", "OP_VERIFY", "0", "OP_INSPECTOUTPUTVALUE",
+          "OP_PUSHCURRENTINPUTINDEX", "OP_INSPECTINPUTVALUE", "OP_GREATERTHANOREQUAL",
+          "OP_VERIFY", "0", "OP_INSPECTOUTPUTSCRIPTPUBKEY", "OP_DROP", "OP_1", "OP_ROLL",
+          "OP_EQUAL", "OP_VERIFY", "OP_1"
         ]
       },
       "leaves": [
         {
           "name": "cancel",
-          "witness": [
-            {
-              "name": "serverSig",
-              "type": "signature",
-              "encoding": "schnorr-64",
-              "injected": true
-            },
-            {
-              "name": "emulatorSig",
-              "type": "signature",
-              "encoding": "schnorr-64",
-              "injected": true
-            }
-          ],
           "asm": [
-            "<SERVER_KEY>",
-            "OP_CHECKSIGVERIFY",
-            "<EMULATOR_KEY:cancel>",
-            "OP_CHECKSIG"
+            "<SERVER_KEY>", "OP_CHECKSIGVERIFY", "<EMULATOR_KEY:cancel>", "OP_CHECKSIG"
           ]
         }
       ]
@@ -213,33 +69,12 @@
       "leaves": [
         {
           "name": "unilateral",
-          "witness": [
-            {
-              "name": "partyASig",
-              "type": "signature",
-              "encoding": "schnorr-64"
-            },
-            {
-              "name": "partyBSig",
-              "type": "signature",
-              "encoding": "schnorr-64"
-            }
-          ],
           "asm": [
-            "<exit>",
-            "OP_CHECKSEQUENCEVERIFY",
-            "OP_DROP",
-            "<partyAPk>",
-            "OP_CHECKSIGVERIFY",
-            "<partyBPk>",
-            "OP_CHECKSIG"
+            "<exit>", "OP_CHECKSEQUENCEVERIFY", "OP_DROP", "<partyAPk>", "OP_CHECKSIGVERIFY",
+            "<partyBPk>", "OP_CHECKSIG"
           ]
         }
       ]
     }
-  ],
-  "compiler": {
-    "name": "arkade-compiler",
-    "version": "0.1.0"
-  }
+  ]
 }

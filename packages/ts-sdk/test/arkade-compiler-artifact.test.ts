@@ -19,7 +19,7 @@ import { ArkadeScript } from "../src/arkade/script";
 import { computeArkadeScriptPublicKey } from "../src/arkade/tweak";
 import { networks } from "../src/networks";
 
-/** `arkadec` output for settlement.ark, without `source` and `updatedAt`. */
+// settlement.ark without source, updatedAt, witness, and compiler metadata.
 const artifact: ContractArtifact = JSON.parse(
     readFileSync(new URL("./fixtures/arkadec/settlement.artifact.json", import.meta.url), "utf8"),
 );
@@ -54,16 +54,26 @@ const settlementScript = () =>
         emulatorKey: EMULATOR_KEY,
     });
 
-const collaborativeLeaf = (name: string, groupName = name): ArtifactLeaf => ({
+const collaborativeLeaf = (
+    name: string,
+    groupName = name,
+    prefix: string[] = [],
+): ArtifactLeaf => ({
     name,
     witness: [
         { name: "serverSig", type: "signature", injected: true },
         { name: "emulatorSig", type: "signature", injected: true },
     ],
-    asm: ["<SERVER_KEY>", "OP_CHECKSIGVERIFY", `<EMULATOR_KEY:${groupName}>`, "OP_CHECKSIG"],
+    asm: [
+        ...prefix,
+        "<SERVER_KEY>",
+        "OP_CHECKSIGVERIFY",
+        `<EMULATOR_KEY:${groupName}>`,
+        "OP_CHECKSIG",
+    ],
 });
 
-/** Assemble the artifact's own tokens, independent of `programFromArtifact`. */
+/** Assemble the artifact's own tokens, independent of the reader. */
 function assembleArtifactAsm(tokens: string[], extra: Record<string, Uint8Array> = {}): Uint8Array {
     const ops = tokens.map((token) => {
         if (token.startsWith("OP_")) {
@@ -106,7 +116,7 @@ describe("reading an arkadec artifact", () => {
         }
     });
 
-    it("produces the settlement program", () => {
+    it("reads the settlement artifact into the same program and the same bytes", () => {
         const program = programFromArtifact(artifact);
         expect(program.name).toBe("Settlement");
         expect(Object.keys(program.functions)).toEqual(["complete", "cancel", "unilateral"]);
@@ -125,49 +135,29 @@ describe("reading an arkadec artifact", () => {
         expect(exit.signers).toEqual(["$partyAPk", "$partyBPk"]);
         expect(exit.csv).toEqual({ type: "blocks", value: "$exit" });
         expect(program.functions.unilateral.arkadeScript).toBeUndefined();
-    });
 
-    it("compiles each leaf to the same bytes as the artifact's own assembly", () => {
         const script = settlementScript();
         expect(script.compiled).toHaveLength(artifact.functions.length);
         for (const compiled of script.compiled) {
-            const leaf = group(compiled.name).leaves[0];
-
-            // A covenant leaf commits to the co-signer key tweaked by that
-            // covenant; the SDK appends it, the artifact names it.
+            const found = group(compiled.name);
             const extra: Record<string, Uint8Array> = { SERVER_KEY };
             if (compiled.arkadeScript) {
                 extra[`EMULATOR_KEY:${compiled.name}`] = computeArkadeScriptPublicKey(
                     EMULATOR_KEY,
                     compiled.arkadeScript,
                 );
+                expect(hex.encode(compiled.arkadeScript), `${compiled.name} covenant`).toBe(
+                    hex.encode(assembleArtifactAsm(found.arkade!.asm)),
+                );
+            } else {
+                expect(found.arkade, compiled.name).toBeUndefined();
             }
-
             expect(hex.encode(compiled.leafScript), `${compiled.name} leaf`).toBe(
-                hex.encode(assembleArtifactAsm(leaf.asm, extra)),
+                hex.encode(assembleArtifactAsm(found.leaves[0].asm, extra)),
             );
         }
-    });
-
-    it("compiles each covenant to the same bytes as the artifact's own assembly", () => {
-        for (const compiled of settlementScript().compiled) {
-            const covenant = group(compiled.name).arkade;
-            if (!covenant) {
-                expect(compiled.arkadeScript, `${compiled.name} has no covenant`).toBeUndefined();
-                continue;
-            }
-            expect(hex.encode(compiled.arkadeScript!), `${compiled.name} covenant`).toBe(
-                hex.encode(assembleArtifactAsm(covenant.asm)),
-            );
-        }
-    });
-
-    it("derives a stable address", () => {
-        const address = settlementScript().address(networks.bitcoin.hrp, SERVER_KEY).encode();
-        // Pinned so a change to the reader, the opcode table, or the tapscript
-        // encoders shows up here rather than in a deployment.
-        expect(address).toMatchInlineSnapshot(
-            `"ark1qqqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqykuzqulnz07mglnukt7crj22pg7t8vey9lyqdxq2dr5w5y003ew4flny"`,
+        expect(script.address(networks.bitcoin.hrp, SERVER_KEY).encode()).toBe(
+            "ark1qqqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqykuzqulnz07mglnukt7crj22pg7t8vey9lyqdxq2dr5w5y003ew4flny",
         );
     });
 
@@ -181,22 +171,11 @@ describe("reading an arkadec artifact", () => {
                     arkade: { inputs: [], asm: ["OP_1"] },
                     leaves: [
                         collaborativeLeaf("spend"),
-                        {
-                            name: "fallback",
-                            witness: [
-                                { name: "serverSig", type: "signature", injected: true },
-                                { name: "emulatorSig", type: "signature", injected: true },
-                            ],
-                            asm: [
-                                "10",
-                                "OP_CHECKSEQUENCEVERIFY",
-                                "OP_DROP",
-                                "<SERVER_KEY>",
-                                "OP_CHECKSIGVERIFY",
-                                "<EMULATOR_KEY:spend>",
-                                "OP_CHECKSIG",
-                            ],
-                        },
+                        collaborativeLeaf("fallback", "spend", [
+                            "10",
+                            "OP_CHECKSEQUENCEVERIFY",
+                            "OP_DROP",
+                        ]),
                     ],
                 },
             ],

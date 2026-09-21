@@ -510,9 +510,7 @@ export function parseArtifact(artifact: {
     params?: readonly InputRef[];
     functions: unknown;
 }): Program {
-    // An arkadec ContractJson would otherwise parse into a program whose
-    // functions are named "0", "1", "2" — accepted by validateProgram and
-    // wrong everywhere after that.
+    // An arkadec ContractJson would otherwise become functions named "0", "1", "2".
     if (Array.isArray(artifact.functions)) {
         throw new Error(
             "parseArtifact: `functions` is an array, which is the arkadec artifact shape, not an SDK program — read it with programFromArtifact instead",

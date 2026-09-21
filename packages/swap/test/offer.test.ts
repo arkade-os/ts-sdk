@@ -136,20 +136,14 @@ describe("swap offer", () => {
             binding.keys,
         );
 
-        expect(generated.compiled.map((fn) => hex.encode(fn.leafScript))).toEqual(
-            handWritten.compiled.map((fn) => hex.encode(fn.leafScript)),
-        );
-        expect(
-            generated.compiled.map((fn) =>
-                fn.arkadeScript ? hex.encode(fn.arkadeScript) : undefined,
-            ),
-        ).toEqual(
-            handWritten.compiled.map((fn) =>
-                fn.arkadeScript ? hex.encode(fn.arkadeScript) : undefined,
-            ),
-        );
-        expect(hex.encode(generated.encode())).toBe(hex.encode(handWritten.encode()));
-        expect(hex.encode(generated.pkScript)).toBe(hex.encode(handWritten.pkScript));
+        const packed = (script: arkade.ArkadeProgramScript) =>
+            [
+                script.compiled.map((fn) => hex.encode(fn.leafScript)),
+                script.compiled.map((fn) => (fn.arkadeScript ? hex.encode(fn.arkadeScript) : "")),
+                hex.encode(script.encode()),
+                hex.encode(script.pkScript),
+            ].join("|");
+        expect(packed(generated)).toBe(packed(handWritten));
     });
 
     it("derives the golden swap addresses for both directions", () => {
