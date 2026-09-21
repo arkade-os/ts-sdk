@@ -273,10 +273,7 @@ function collectParamRefs(program: Program): Set<string> {
     const refs = new Set<string>();
     const collect = (items: readonly (AsmToken | WitnessRef | SignerRef)[] | undefined) => {
         for (const t of items ?? []) {
-            if (typeof t === "string" && t.startsWith("$tweak:")) {
-                const key = t.split(":")[1];
-                if (key) refs.add(key);
-            } else if (typeof t === "string" && t.startsWith("$")) refs.add(t.slice(1));
+            if (typeof t === "string" && t.startsWith("$")) refs.add(t.slice(1));
         }
     };
     for (const fn of Object.values(program.functions)) {
@@ -376,32 +373,6 @@ export interface CompiledProgramFunction {
     tapLeafScript: TapLeafScript;
 }
 
-/**
- * `$tweak:agentPk:complete` is `agentPk` tweaked by that function's covenant,
- * the same binding the Arkade emulator key uses. A second enclave (an insurer
- * running the emulator) co-signs through it.
- */
-function resolveLeafSigner(
-    ref: SignerRef,
-    args: Record<string, ArkadeParamValue>,
-    functions: Record<string, ArkadeFunction>,
-): Uint8Array {
-    if (typeof ref === "string" && ref.startsWith("$tweak:")) {
-        const [, key, func] = ref.split(":");
-        const covenant = functions[func]?.arkadeScript;
-        if (!key || !func || !covenant) {
-            throw new Error(
-                `signer ${ref} must name a constructor pubkey and a function that has an arkade script`,
-            );
-        }
-        return computeArkadeScriptPublicKey(
-            resolveSigner(`$${key}`, args),
-            resolveAsm(covenant.asm, args),
-        );
-    }
-    return resolveSigner(ref, args);
-}
-
 /** Resolve a {@link SignerRef} to x-only key bytes against the program's constructor args. */
 function resolveSigner(ref: SignerRef, args: Record<string, ArkadeParamValue>): Uint8Array {
     if (ref instanceof Uint8Array) return ref;
@@ -475,7 +446,7 @@ function compileFunctions(
 
     return defs.map((def, i) => {
         validateTapscript(def.tapscript);
-        const pubkeys = def.tapscript.signers.map((s) => resolveLeafSigner(s, args, functions));
+        const pubkeys = def.tapscript.signers.map((s) => resolveSigner(s, args));
 
         // Covenant leaf: bind the emulator's co-signer key to the arkade
         // script via the tagged-hash tweak, then append it to the leaf's

@@ -1,31 +1,9 @@
 /**
- * Arkade contract artifacts — reading what `arkadec` writes.
- *
- * The compiler's artifact and the SDK's {@link Program} describe the same
- * contract differently. The artifact lists spend groups in an array, writes
- * `<param>` placeholders, names opcodes with the `OP_` prefix, and gives each
- * tapleaf as assembly. A {@link Program} keys functions by name, uses `$param`,
- * follows @scure's opcode naming, and describes a leaf structurally so the
- * SDK's tapscript encoders can build it.
- *
- * {@link programFromArtifact} is that translation, done here rather than in a
- * build step so there is one artifact format to version and no generated JSON
- * to keep in sync. A client loads the compiler's output and spends:
- *
- * ```typescript
- * const artifact = JSON.parse(await readFile("settlement.json", "utf8"));
- * const settlement = arkade.contract(programFromArtifact(artifact), {
- *     partyAPk, partyBPk, agentPk, oraclePk, oracleMessageHash,
- *     partyAScript, partyBScript, settlementAmount, timeoutHeight,
- *     agentExit: 144n, exit: 1_008n,
- * });
- * ```
- *
- * Three conventions the artifact documents but does not encode are resolved
- * here, so callers do not have to know them: covenant inputs are pushed in
- * reverse declaration order, the function-tweaked co-signer is appended by the
- * SDK rather than listed as a signer, and composite parameters flatten to
- * their scalar leaves.
+ * Read the JSON `arkadec` writes into the SDK's {@link Program}: spend groups
+ * keyed by name instead of listed in an array, `$param` instead of `<param>`,
+ * @scure's opcode names instead of the `OP_`-prefixed ones, and each tapleaf
+ * described structurally instead of as assembly, so the SDK's tapscript
+ * encoders can rebuild it.
  *
  * @module arkade/artifact
  */
@@ -214,11 +192,6 @@ function instantiationParam(token: string): string {
     return `vtxo_${body.replace(/[^A-Za-z0-9]+/g, "_")}`.replace(/_+$/, "");
 }
 
-/** Placeholders that name a signer role rather than a value. */
-function isSignerRole(inner: string): boolean {
-    return inner === "SERVER_KEY" || inner.startsWith("EMULATOR_KEY:");
-}
-
 /** Translate a covenant assembly token, recording any instantiation it names. */
 function asmToken(token: string, instantiations: Map<string, string>): AsmToken {
     if (token.startsWith("OP_")) return opcodeToken(token);
@@ -236,7 +209,7 @@ function asmToken(token: string, instantiations: Map<string, string>): AsmToken 
             instantiations.set(name, token);
             return `$${name}`;
         }
-        if (isSignerRole(inner)) {
+        if (inner === "SERVER_KEY" || inner.startsWith("EMULATOR_KEY:")) {
             throw new Error(
                 `programFromArtifact: ${token} is a signer role and cannot appear in a covenant`,
             );
@@ -246,7 +219,6 @@ function asmToken(token: string, instantiations: Map<string, string>): AsmToken 
 
     if (token.startsWith("0x")) return hex.decode(token.slice(2));
 
-    // Everything else is a decimal literal the VM pushes as data.
     try {
         return BigInt(token);
     } catch {
@@ -321,14 +293,7 @@ function parseLeaf(
         if (inner === "SERVER_KEY") {
             signers.push(`$${SERVER_PARAM}`);
         } else if (inner.startsWith("TWEAK:")) {
-            // `<TWEAK:agentPk:complete>`: a second enclave key, tweaked by that
-            // function's covenant. The SDK resolves it at compile time.
-            const spec = inner.slice("TWEAK:".length);
-            const split = spec.indexOf(":");
-            if (split <= 0 || split === spec.length - 1) {
-                throw new Error(`leaf '${leaf.name}': malformed tweak operand '${key}'`);
-            }
-            signers.push(`$tweak:${spec.slice(0, split)}:${spec.slice(split + 1)}`);
+            throw new Error(`leaf '${leaf.name}': second-emulator tweaks are not read by this SDK`);
         } else if (inner.startsWith("EMULATOR_KEY:")) {
             if (!hasCovenant) {
                 throw new Error(
@@ -409,9 +374,6 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
         const leaf = group.leaves[0];
         const tapscript = parseLeaf(leaf, group.arkade !== undefined, instantiations);
 
-        // Call arguments: the covenant's flattened inputs, then anything the
-        // leaf condition needs. Composites arrive expanded, so an `int[3]`
-        // parameter becomes three arguments.
         const inputs: InputDef[] = [
             ...(group.arkade?.inputs ?? []).flatMap((input) => flatten(input, structs)),
             ...(leaf.witness ?? [])
@@ -426,10 +388,8 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
                 ? {
                       arkadeScript: {
                           asm: group.arkade.asm.map((token) => asmToken(token, instantiations)),
-                          // The artifact documents that clients push covenant
-                          // inputs in reverse declaration order, composites
-                          // deepest first. Reversing the flattened list is
-                          // that stack.
+                          // Clients push covenant inputs in reverse declaration
+                          // order, composites deepest first.
                           witness: group.arkade.inputs
                               .flatMap((input) => flatten(input, structs))
                               .map((field) => field.name as WitnessRef)

@@ -10,10 +10,6 @@
       "type": "pubkey"
     },
     {
-      "name": "agentPk",
-      "type": "pubkey"
-    },
-    {
       "name": "oraclePk",
       "type": "pubkey"
     },
@@ -35,10 +31,6 @@
     },
     {
       "name": "timeoutHeight",
-      "type": "int"
-    },
-    {
-      "name": "agentExit",
       "type": "int"
     },
     {
@@ -211,50 +203,6 @@
             "<SERVER_KEY>",
             "OP_CHECKSIGVERIFY",
             "<EMULATOR_KEY:cancel>",
-            "OP_CHECKSIG"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "fallbackComplete",
-      "leaves": [
-        {
-          "name": "fallbackComplete",
-          "witness": [
-            {
-              "name": "agentSig",
-              "type": "signature",
-              "encoding": "schnorr-64"
-            }
-          ],
-          "asm": [
-            "<agentExit>",
-            "OP_CHECKSEQUENCEVERIFY",
-            "OP_DROP",
-            "<TWEAK:agentPk:complete>",
-            "OP_CHECKSIG"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "fallbackCancel",
-      "leaves": [
-        {
-          "name": "fallbackCancel",
-          "witness": [
-            {
-              "name": "agentSig",
-              "type": "signature",
-              "encoding": "schnorr-64"
-            }
-          ],
-          "asm": [
-            "<agentExit>",
-            "OP_CHECKSEQUENCEVERIFY",
-            "OP_DROP",
-            "<TWEAK:agentPk:cancel>",
             "OP_CHECKSIG"
           ]
         }

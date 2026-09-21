@@ -49,13 +49,11 @@ const ARGS: Record<string, ArkadeParamValue> = {
     partyAPk: key(0x04),
     partyBPk: key(0x05),
     oraclePk: key(0x06),
-    agentPk: key(0x07),
     oracleMessageHash: key(0x7a),
     partyAScript: key(0xa1),
     partyBScript: key(0xb2),
     settlementAmount: 500_000n,
     timeoutHeight: 900_000n,
-    agentExit: 144n,
     exit: 1_008n,
     server: SERVER_KEY,
 };
@@ -80,14 +78,6 @@ function assembleArtifactAsm(tokens: string[], extra: Record<string, Uint8Array>
         }
         if (token.startsWith("<") && token.endsWith(">")) {
             const name = token.slice(1, -1);
-            if (name.startsWith("TWEAK:")) {
-                const [, key, func] = name.split(":");
-                const covenant = group(func).arkade;
-                if (!covenant) throw new Error(`tweak target ${func} has no covenant`);
-                const base = ARGS[key];
-                if (!(base instanceof Uint8Array)) throw new Error(`tweak base ${key}`);
-                return computeArkadeScriptPublicKey(base, assembleArtifactAsm(covenant.asm, extra));
-            }
             const value = extra[name] ?? ARGS[name];
             if (value === undefined) throw new Error(`unbound placeholder ${token}`);
             return value instanceof Uint8Array ? value : BigInt(value);
@@ -100,15 +90,14 @@ function assembleArtifactAsm(tokens: string[], extra: Record<string, Uint8Array>
 
 describe("reading an arkadec artifact", () => {
     it("parseArtifact points at the reader instead of mangling the artifact", () => {
-        // Parsing the array shape used to yield functions named "0", "1", "2",
-        // which validateProgram then accepted.
+        // The array shape used to parse into functions named "0", "1", "2".
         expect(() => parseArtifact(artifact as never)).toThrow(/programFromArtifact/);
     });
 
     it("produces a valid program with the artifact's spend groups", () => {
         const program = programFromArtifact(artifact);
         expect(program.name).toBe("Settlement");
-        expect(Object.keys(program.functions)).toEqual(artifact.functions.map((g) => g.name));
+        expect(Object.keys(program.functions)).toEqual(["complete", "cancel", "unilateral"]);
         expect(() => validateProgram(program, ARGS)).not.toThrow();
     });
 
@@ -162,7 +151,7 @@ describe("reading an arkadec artifact", () => {
         // Pinned so a change to the reader, the opcode table, or the tapscript
         // encoders shows up here rather than in a deployment.
         expect(address).toMatchInlineSnapshot(
-            `"ark1qqqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqsrze5ykn7pag4e0xgpn6ufe9h3u6ruutxzha4x3awusg5qenqmk7ll06vug"`,
+            `"ark1qqqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqykuzqulnz07mglnukt7crj22pg7t8vey9lyqdxq2dr5w5y003ew4flny"`,
         );
     });
 
@@ -175,17 +164,8 @@ describe("reading an arkadec artifact", () => {
         expect(named("cancel")).toEqual([]);
     });
 
-    it("reads the insurer exit as a covenant tweak, then the parties", () => {
+    it("reads the unilateral exit as its parties behind a timelock", () => {
         const program = programFromArtifact(artifact);
-
-        const complete = program.functions.fallbackComplete.tapscript;
-        expect(complete.signers).toEqual(["$tweak:agentPk:complete"]);
-        expect(complete.csv).toEqual({ type: "blocks", value: "$agentExit" });
-        expect(program.functions.fallbackComplete.arkadeScript).toBeUndefined();
-
-        const cancel = program.functions.fallbackCancel.tapscript;
-        expect(cancel.signers).toEqual(["$tweak:agentPk:cancel"]);
-        expect(cancel.csv).toEqual({ type: "blocks", value: "$agentExit" });
 
         const unilateral = program.functions.unilateral.tapscript;
         expect(unilateral.signers).toEqual(["$partyAPk", "$partyBPk"]);
@@ -205,5 +185,26 @@ describe("reading an arkadec artifact", () => {
             ],
         };
         expect(() => programFromArtifact(unknown)).toThrow(/not in this SDK's table/);
+    });
+
+    it("refuses a second emulator tweak", () => {
+        const leaf = group("unilateral").leaves[0];
+        const tweaked: ContractArtifact = {
+            ...artifact,
+            functions: [
+                {
+                    name: "unilateral",
+                    leaves: [
+                        {
+                            ...leaf,
+                            asm: leaf.asm.map((t) =>
+                                t === "<partyAPk>" ? "<TWEAK:agentPk:complete>" : t,
+                            ),
+                        },
+                    ],
+                },
+            ],
+        };
+        expect(() => programFromArtifact(tweaked)).toThrow(/second-emulator tweaks are not read/);
     });
 });
