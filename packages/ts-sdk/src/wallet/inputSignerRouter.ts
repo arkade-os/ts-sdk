@@ -43,6 +43,8 @@ export interface InputRoutingPlan {
      * resolves to the baseline key).
      */
     descriptorGroups: Map<string, number[]>;
+    /** Input indexes the router could not classify. */
+    unknownIndexes: number[];
 }
 
 /**
@@ -77,8 +79,9 @@ export class InputSignerRouter {
     async classify(jobs: InputSigningJob[]): Promise<InputRoutingPlan> {
         const identityIndexes: number[] = [];
         const descriptorGroups = new Map<string, number[]>();
+        const unknownIndexes: number[] = [];
         if (jobs.length === 0) {
-            return { identityIndexes, descriptorGroups };
+            return { identityIndexes, descriptorGroups, unknownIndexes };
         }
 
         const distinctScripts = Array.from(new Set(jobs.map((j) => hex.encode(j.lookupScript))));
@@ -104,6 +107,8 @@ export class InputSignerRouter {
             if (!contract) {
                 if (scriptHex === boardingScriptHex) {
                     identityIndexes.push(job.index);
+                } else {
+                    unknownIndexes.push(job.index);
                 }
                 continue;
             }
@@ -137,7 +142,7 @@ export class InputSignerRouter {
             }
         }
 
-        return { identityIndexes, descriptorGroups };
+        return { identityIndexes, descriptorGroups, unknownIndexes };
     }
 
     /**
@@ -161,13 +166,22 @@ export class InputSignerRouter {
         return plan.descriptorGroups.size === 0;
     }
 
-    async sign(tx: Transaction, jobs: InputSigningJob[]): Promise<Transaction> {
+    async sign(
+        tx: Transaction,
+        jobs: InputSigningJob[],
+        opts?: { onUnknownScript?: "skip" | "sign" },
+    ): Promise<Transaction> {
         if (jobs.length === 0) return tx;
-        const { identityIndexes, descriptorGroups } = await this.classify(jobs);
+        const { identityIndexes, descriptorGroups, unknownIndexes } = await this.classify(jobs);
+
+        const identitySignIndexes =
+            opts?.onUnknownScript === "sign"
+                ? [...identityIndexes, ...unknownIndexes]
+                : identityIndexes;
 
         let signed = tx;
-        if (identityIndexes.length > 0) {
-            signed = await this.deps.identity.sign(signed, identityIndexes);
+        if (identitySignIndexes.length > 0) {
+            signed = await this.deps.identity.sign(signed, identitySignIndexes);
         }
 
         if (descriptorGroups.size > 0) {
