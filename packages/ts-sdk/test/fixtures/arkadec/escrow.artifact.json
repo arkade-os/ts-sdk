@@ -1,5 +1,5 @@
 {
-  "contractName": "Settlement",
+  "contractName": "Escrow",
   "constructorInputs": [
     { "name": "partyAPk", "type": "pubkey" },
     { "name": "partyBPk", "type": "pubkey" },

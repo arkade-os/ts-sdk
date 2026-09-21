@@ -19,9 +19,9 @@ import { ArkadeScript } from "../src/arkade/script";
 import { computeArkadeScriptPublicKey } from "../src/arkade/tweak";
 import { networks } from "../src/networks";
 
-// settlement.ark without source, updatedAt, witness, and compiler metadata.
+// escrow.ark without source, updatedAt, witness, and compiler metadata.
 const artifact: ContractArtifact = JSON.parse(
-    readFileSync(new URL("./fixtures/arkadec/settlement.artifact.json", import.meta.url), "utf8"),
+    readFileSync(new URL("./fixtures/arkadec/escrow.artifact.json", import.meta.url), "utf8"),
 );
 
 const group = (name: string): ArtifactGroup => {
@@ -48,7 +48,7 @@ const ARGS: Record<string, ArkadeParamValue> = {
     server: SERVER_KEY,
 };
 
-const settlementScript = () =>
+const escrowScript = () =>
     new ArkadeProgramScript(programFromArtifact(artifact), ARGS, {
         serverKey: SERVER_KEY,
         emulatorKey: EMULATOR_KEY,
@@ -116,9 +116,9 @@ describe("reading an arkadec artifact", () => {
         }
     });
 
-    it("reads the settlement artifact into the same program and the same bytes", () => {
+    it("reads the escrow artifact into the same program and the same bytes", () => {
         const program = programFromArtifact(artifact);
-        expect(program.name).toBe("Settlement");
+        expect(program.name).toBe("Escrow");
         expect(Object.keys(program.functions)).toEqual(["complete", "cancel", "unilateral"]);
         expect(() => validateProgram(program, ARGS)).not.toThrow();
 
@@ -136,7 +136,7 @@ describe("reading an arkadec artifact", () => {
         expect(exit.csv).toEqual({ type: "blocks", value: "$exit" });
         expect(program.functions.unilateral.arkadeScript).toBeUndefined();
 
-        const script = settlementScript();
+        const script = escrowScript();
         expect(script.compiled).toHaveLength(artifact.functions.length);
         for (const compiled of script.compiled) {
             const found = group(compiled.name);
