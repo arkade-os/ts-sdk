@@ -58,6 +58,19 @@ const backends: { name: string; make: () => WalletRepository }[] = [
     },
 ];
 
+const deferred = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+        resolve = r;
+    });
+    return { promise, resolve };
+};
+
+/** Let queued microtasks run, so a chain step has had a chance to start. */
+const flush = async (turns = 8) => {
+    for (let i = 0; i < turns; i++) await Promise.resolve();
+};
+
 /**
  * `getContractsWithVtxos` delegates straight to `getVtxosForContract`, so this
  * is the read behind every consumer asking a contract what became of its
@@ -228,5 +241,40 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
 
         expect(vtxos.map((v) => v.txid).sort()).toEqual(["ab".repeat(32), "ef".repeat(32)].sort());
         expect(vtxos.find((v) => v.txid === "ab".repeat(32))?.spentBy).toBe(CHECKPOINT);
+    });
+
+    /**
+     * The guard is read before its write, so a batch read *before* a spend
+     * registered could still land *after* it and undo the spend — the poll that
+     * overtakes a send. Both writers are in this thread and both write through
+     * `saveVtxosForContract`, so ordering the guard-and-write section is what
+     * closes it; this parks the first write to hold that interleaving open.
+     */
+    it("does not let a write already in flight land on top of a newer spend", async () => {
+        const held = deferred();
+        const realSave = repository.saveVtxos.bind(repository);
+        let first = true;
+        repository.saveVtxos = async (address, vtxos) => {
+            if (first) {
+                first = false;
+                await held.promise;
+            }
+            return realSave(address, vtxos);
+        };
+
+        // A poll's view, taken before the send: this outpoint reads unspent.
+        const poll = saveVtxosForContract(repository, contract, [staleRow()]);
+        await flush();
+
+        // The send overtakes it while that write is still parked.
+        const send = saveVtxosForContract(repository, contract, [spentDeposit()]);
+
+        held.resolve();
+        await Promise.all([poll, send]);
+
+        const vtxos = await getVtxosForContract(repository, contract);
+        expect(vtxos).toHaveLength(1);
+        expect(vtxos[0]?.isSpent).toBe(true);
+        expect(vtxos[0]?.spentBy).toBe(CHECKPOINT);
     });
 });

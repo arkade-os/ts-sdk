@@ -52,6 +52,7 @@ import {
 import {
     applyRecordedSpends,
     getVtxosForContract,
+    inVtxoWriteOrder,
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
@@ -2365,9 +2366,11 @@ export class ContractManager implements IContractManager {
             } else {
                 // Unreachable today: every `address` came from `contracts`. Guarded
                 // so it cannot become a silent bypass if that mapping is loosened.
-                await this.config.walletRepository.saveVtxos(
-                    address,
-                    applyRecordedSpends(this.config.walletRepository, addressVtxos),
+                await inVtxoWriteOrder(this.config.walletRepository, async () =>
+                    this.config.walletRepository.saveVtxos(
+                        address,
+                        applyRecordedSpends(this.config.walletRepository, addressVtxos),
+                    ),
                 );
             }
         }
