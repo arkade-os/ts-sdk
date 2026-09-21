@@ -284,34 +284,20 @@ export async function findLockupVtxos(
     swapPkScript: Uint8Array,
 ): Promise<LockupVtxo[]> {
     const scripts = [hex.encode(swapPkScript)];
-    const [spendable, recoverable] = await Promise.all([
-        indexer.getVtxos({ scripts, spendableOnly: true }),
-        indexer.getVtxos({ scripts, recoverableOnly: true }),
-    ]);
+    const { vtxos: all } = await indexer.getVtxos({ scripts, renewableOnly: true });
     const seen = new Set<string>();
     const out: LockupVtxo[] = [];
-    for (const [vtxos, isRecoverable] of [
-        [spendable.vtxos ?? [], false],
-        [recoverable.vtxos ?? [], true],
-    ] as const) {
-        for (const vtxo of vtxos) {
-            // Dropped here, before the map: `LockupVtxo` discards the flag, so
-            // this is the last point at which an exited output can be told
-            // apart from a live one.
-            if (vtxo.isUnrolled) continue;
-            // Deduped by outpoint: the two filters are disjoint today, but an
-            // output counted twice would be added twice to the refund's
-            // aggregate output and make a transaction that cannot be built.
-            const key = `${vtxo.txid}:${vtxo.vout}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            out.push({
-                txid: vtxo.txid,
-                vout: vtxo.vout,
-                value: Number(vtxo.value),
-                recoverable: isRecoverable,
-            });
-        }
+    for (const vtxo of all ?? []) {
+        if (vtxo.isUnrolled) continue;
+        const key = `${vtxo.txid}:${vtxo.vout}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+            txid: vtxo.txid,
+            vout: vtxo.vout,
+            value: Number(vtxo.value),
+            recoverable: !!vtxo.isSwept, // swept → recoverable, live leaf → spendable
+        });
     }
     return out;
 }
