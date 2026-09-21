@@ -501,8 +501,8 @@ export class ArkadeProgramScript extends VtxoScript {
  * `$param` placeholders and numbers pass through unchanged.
  *
  * This is *not* the JSON `arkadec` writes. That artifact lists spend groups in
- * an array and uses `<param>` placeholders and raw leaf assembly; run it
- * through `arkade-bindgen --lang sdk-program` to get this shape.
+ * an array and uses `<param>` placeholders and raw leaf assembly; pass it to
+ * {@link programFromArtifact} instead.
  */
 export function parseArtifact(artifact: {
     version?: number;
@@ -515,7 +515,7 @@ export function parseArtifact(artifact: {
     // wrong everywhere after that.
     if (Array.isArray(artifact.functions)) {
         throw new Error(
-            "parseArtifact: `functions` is an array, which is the arkadec artifact shape, not an SDK program — convert it with `arkade-bindgen --lang sdk-program`",
+            "parseArtifact: `functions` is an array, which is the arkadec artifact shape, not an SDK program — read it with programFromArtifact instead",
         );
     }
     if (typeof artifact.functions !== "object" || artifact.functions === null) {

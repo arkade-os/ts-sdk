@@ -3,52 +3,58 @@ import { readFileSync } from "node:fs";
 import { hex } from "@scure/base";
 
 import {
+    programFromArtifact,
+    type ArtifactGroup,
+    type ContractArtifact,
+} from "../src/arkade/artifact";
+import {
     ArkadeProgramScript,
     parseArtifact,
     validateProgram,
     type ArkadeParamValue,
-    type Program,
 } from "../src/arkade/program";
 import { ArkadeScript } from "../src/arkade/script";
 import { computeArkadeScriptPublicKey } from "../src/arkade/tweak";
 import { networks } from "../src/networks";
 
 /**
- * The compiler-to-SDK bridge, from the SDK's side.
+ * Reading a compiler artifact, from the SDK's side.
  *
- * Both fixtures come from `examples/escrow/escrow.ark` in arkade-os/compiler
- * and are generated, not hand-maintained:
+ * `escrow.artifact.json` is what `arkadec` writes for
+ * `examples/escrow/escrow.ark` in arkade-os/compiler, minus the `source`
+ * bundle (a verbatim copy of the .ark text) and `updatedAt` (changes every
+ * compile). Nothing else is generated: the SDK reads this shape directly, so
+ * there is no second artifact to keep in sync.
  *
- * - `escrow.artifact.json` is what `arkadec` writes, minus the `source` bundle
- *   (a verbatim copy of the .ark text) and `updatedAt` (changes every compile).
- * - `escrow.program.json` is `arkade-bindgen --lang sdk-program` applied to it,
- *   byte-identical to the golden that repository holds.
- *
- * Having both lets these tests rebuild every script from the compiler's own
- * assembly and compare it against what the SDK builds from the program's
- * structured description — two independent routes to the same bytes.
+ * The load-bearing tests rebuild every script twice by independent routes and
+ * compare bytes — once through `programFromArtifact` and the SDK's tapscript
+ * encoders, once by assembling the artifact's own raw assembly.
  */
-const fixture = (name: string) =>
-    JSON.parse(readFileSync(new URL(`./fixtures/arkadec/${name}`, import.meta.url), "utf8"));
+const artifact: ContractArtifact = JSON.parse(
+    readFileSync(new URL("./fixtures/arkadec/escrow.artifact.json", import.meta.url), "utf8"),
+);
 
-interface CompilerGroup {
-    name: string;
-    arkade?: { asm: string[] };
-    leaves: { name: string; asm: string[] }[];
-}
-
-const compilerGroups: CompilerGroup[] = fixture("escrow.artifact.json").functions;
-
-const compilerGroup = (name: string): CompilerGroup => {
-    const group = compilerGroups.find((g) => g.name === name);
-    if (!group) throw new Error(`no compiler group ${name}`);
-    return group;
+const group = (name: string): ArtifactGroup => {
+    const found = artifact.functions.find((g) => g.name === name);
+    if (!found) throw new Error(`no group ${name}`);
+    return found;
 };
 
 // Deterministic keys — the values only have to be well-formed and stable.
 const key = (byte: number) => new Uint8Array(32).fill(byte);
 const SERVER_KEY = key(0x01);
 const EMULATOR_KEY = hex.decode(`02${"02".repeat(32)}`);
+
+/**
+ * The parameter each `new Contract(...)` payout is expected to become.
+ * Spelled out rather than derived, so a change to the naming shows up here
+ * instead of as an unbound argument in a caller.
+ */
+const VTXO_PARAMS: Record<string, string> = {
+    "VTXO:SingleSig(<sellerPk>,<exit>)": "vtxo_SingleSig_sellerPk_exit",
+    "VTXO:SingleSig(<buyerPk>,<exit>)": "vtxo_SingleSig_buyerPk_exit",
+    "VTXO:SingleSig(<mediatorPk>,<exit>)": "vtxo_SingleSig_mediatorPk_exit",
+};
 
 const ARGS: Record<string, ArkadeParamValue> = {
     buyerPk: key(0x04),
@@ -60,41 +66,23 @@ const ARGS: Record<string, ArkadeParamValue> = {
     refundLocktime: 800_000n,
     exit: 144n,
     server: SERVER_KEY,
-    // Each `new SingleSig(pk, exit)` payout resolves to the child's 32-byte
-    // taproot witness program, which the caller computes and binds.
     vtxo_SingleSig_sellerPk_exit: key(0x11),
     vtxo_SingleSig_buyerPk_exit: key(0x12),
     vtxo_SingleSig_mediatorPk_exit: key(0x13),
 };
 
-function escrowProgram(): Program {
-    return parseArtifact(fixture("escrow.program.json"));
-}
-
-function escrowScript(): ArkadeProgramScript {
-    return new ArkadeProgramScript(escrowProgram(), ARGS, {
+const escrowScript = () =>
+    new ArkadeProgramScript(programFromArtifact(artifact), ARGS, {
         serverKey: SERVER_KEY,
         emulatorKey: EMULATOR_KEY,
     });
-}
 
 /**
- * The parameter each `new Contract(...)` instantiation is expected to become.
- * Spelled out rather than derived, so a change to the generator's naming shows
- * up here as a failure rather than as an unbound argument in a caller.
+ * Assemble the artifact's own assembly tokens, resolving placeholders the way
+ * the runtime would. Independent of how `programFromArtifact` describes the
+ * same script, so agreement between the two is meaningful.
  */
-const VTXO_PARAMS: Record<string, string> = {
-    "VTXO:SingleSig(<sellerPk>,<exit>)": "vtxo_SingleSig_sellerPk_exit",
-    "VTXO:SingleSig(<buyerPk>,<exit>)": "vtxo_SingleSig_buyerPk_exit",
-    "VTXO:SingleSig(<mediatorPk>,<exit>)": "vtxo_SingleSig_mediatorPk_exit",
-};
-
-/**
- * Assemble the compiler's own assembly tokens, resolving placeholders the way
- * the runtime would. Independent of how the Program JSON describes the same
- * script, so agreement between the two is meaningful.
- */
-function assembleCompilerAsm(tokens: string[], extra: Record<string, Uint8Array> = {}): Uint8Array {
+function assembleArtifactAsm(tokens: string[], extra: Record<string, Uint8Array> = {}): Uint8Array {
     const ops = tokens.map((token) => {
         if (token.startsWith("OP_")) {
             const base = token.slice(3);
@@ -113,48 +101,43 @@ function assembleCompilerAsm(tokens: string[], extra: Record<string, Uint8Array>
     return ArkadeScript.encode(ops as never);
 }
 
-describe("arkadec artifacts and the SDK program model", () => {
-    it("refuses a raw compiler artifact instead of silently mangling it", () => {
-        // The compiler lists spend groups in an array; parsing that as a
-        // program used to yield functions named "0", "1", "2" — and
-        // validateProgram accepted the result.
-        expect(() => parseArtifact(fixture("escrow.artifact.json"))).toThrow(
-            /arkadec artifact shape/,
-        );
+describe("reading an arkadec artifact", () => {
+    it("parseArtifact points at the reader instead of mangling the artifact", () => {
+        // Parsing the array shape used to yield functions named "0", "1", "2",
+        // which validateProgram then accepted.
+        expect(() => parseArtifact(artifact as never)).toThrow(/programFromArtifact/);
     });
 
-    it("accepts the generated escrow program", () => {
-        const program = escrowProgram();
+    it("produces a valid program with the artifact's spend groups", () => {
+        const program = programFromArtifact(artifact);
         expect(program.name).toBe("Escrow");
-        expect(Object.keys(program.functions)).toEqual([
-            "release",
-            "refund",
-            "resolve",
-            "unilateral",
-        ]);
+        expect(Object.keys(program.functions)).toEqual(artifact.functions.map((g) => g.name));
         expect(() => validateProgram(program, ARGS)).not.toThrow();
     });
 
-    it("declares every parameter the program references", () => {
-        const program = escrowProgram();
-        const declared = (program.params ?? []).map((p) => (typeof p === "string" ? p : p.name));
-        // validateProgram enforces this, but name the gap explicitly: an
-        // unbound `$param` is the failure mode a generated program would hit.
+    it("declares server and one parameter per contract instantiation", () => {
+        const declared = (programFromArtifact(artifact).params ?? []).map((p) =>
+            typeof p === "string" ? p : p.name,
+        );
+        expect(declared).toContain("server");
+        for (const name of Object.values(VTXO_PARAMS)) {
+            expect(declared).toContain(name);
+        }
+        // validateProgram enforces this, but name the failure mode: an
+        // unbound `$param` is what a caller would hit.
         for (const name of declared) {
             expect(ARGS[name], `arg ${name}`).toBeDefined();
         }
-        expect(declared).toContain("server");
-        expect(declared).toContain("vtxo_SingleSig_sellerPk_exit");
     });
 
-    it("compiles each leaf to the same bytes as the compiler's own assembly", () => {
+    it("compiles each leaf to the same bytes as the artifact's own assembly", () => {
         const script = escrowScript();
-        expect(script.compiled).toHaveLength(compilerGroups.length);
+        expect(script.compiled).toHaveLength(artifact.functions.length);
         for (const compiled of script.compiled) {
-            const group = compilerGroup(compiled.name);
+            const leaf = group(compiled.name).leaves[0];
 
             // A covenant leaf commits to the co-signer key tweaked by that
-            // covenant; the SDK appends it, the compiler names it.
+            // covenant; the SDK appends it, the artifact names it.
             const extra: Record<string, Uint8Array> = { SERVER_KEY };
             if (compiled.arkadeScript) {
                 extra[`EMULATOR_KEY:${compiled.name}`] = computeArkadeScriptPublicKey(
@@ -164,48 +147,79 @@ describe("arkadec artifacts and the SDK program model", () => {
             }
 
             expect(hex.encode(compiled.leafScript), `${compiled.name} leaf`).toBe(
-                hex.encode(assembleCompilerAsm(group.leaves[0].asm, extra)),
+                hex.encode(assembleArtifactAsm(leaf.asm, extra)),
             );
         }
     });
 
-    it("compiles each covenant to the same bytes as the compiler's own assembly", () => {
-        const script = escrowScript();
-        for (const compiled of script.compiled) {
-            const group = compilerGroup(compiled.name);
-            if (!group.arkade) {
+    it("compiles each covenant to the same bytes as the artifact's own assembly", () => {
+        for (const compiled of escrowScript().compiled) {
+            const covenant = group(compiled.name).arkade;
+            if (!covenant) {
                 expect(compiled.arkadeScript, `${compiled.name} has no covenant`).toBeUndefined();
                 continue;
             }
             expect(hex.encode(compiled.arkadeScript!), `${compiled.name} covenant`).toBe(
-                hex.encode(assembleCompilerAsm(group.arkade.asm)),
+                hex.encode(assembleArtifactAsm(covenant.asm)),
             );
         }
     });
 
     it("derives a stable address", () => {
         const address = escrowScript().address(networks.bitcoin.hrp, SERVER_KEY).encode();
-        // Pinned so a change to the bridge, the opcode table, or the tapscript
+        // Pinned so a change to the reader, the opcode table, or the tapscript
         // encoders shows up here rather than in a deployment.
         expect(address).toMatchInlineSnapshot(
-            `"ark1qqqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszhr2r8g2exc93eqhccphlyu8x76yua2gxmfwculfz2urrrcywxza7aaedq"`,
+            `"ark1qqqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqsrazh2d034redkdjk4rtkac72gw4h6u2au76s48q5g4valx0nx8l3m0f5fk"`,
         );
     });
 
     it("keeps the spend paths callable with their declared inputs", () => {
-        const program = escrowProgram();
-        const named = (fn: keyof typeof program.functions) =>
+        const program = programFromArtifact(artifact);
+        const named = (fn: string) =>
             (program.functions[fn].inputs ?? []).map((i) => (typeof i === "string" ? i : i.name));
 
-        // The upgrade, seen from the SDK: release takes only the buyer's
-        // signature, refund takes nothing at all, resolve takes the verdict.
+        // The escrow upgrade, seen from the SDK: release takes only the
+        // buyer's signature, refund takes nothing, resolve takes the verdict.
         expect(named("release")).toEqual(["buyerSig"]);
         expect(named("refund")).toEqual([]);
         expect(named("resolve")).toEqual(["sellerShareBps", "attestedAt", "oracleSig"]);
+
+        // Covenant inputs reach the stack in reverse declaration order.
         expect(program.functions.resolve.arkadeScript?.witness).toEqual([
             "oracleSig",
             "attestedAt",
             "sellerShareBps",
         ]);
+    });
+
+    it("reads the emulator-down exit as a 2-of-3 across three leaves", () => {
+        const program = programFromArtifact(artifact);
+        const pairs: Record<string, string[]> = {
+            exitBuyerSeller: ["$buyerPk", "$sellerPk"],
+            exitBuyerMediator: ["$buyerPk", "$mediatorPk"],
+            exitSellerMediator: ["$sellerPk", "$mediatorPk"],
+        };
+        for (const [name, signers] of Object.entries(pairs)) {
+            const tapscript = program.functions[name].tapscript;
+            expect(tapscript.signers, name).toEqual(signers);
+            expect(tapscript.csv, name).toEqual({ type: "blocks", value: "$exit" });
+            // A standalone leaf has no covenant, so no co-signer is appended.
+            expect(program.functions[name].arkadeScript, name).toBeUndefined();
+        }
+    });
+
+    it("refuses an opcode this SDK's table does not carry", () => {
+        const unknown: ContractArtifact = {
+            ...artifact,
+            functions: [
+                {
+                    name: "release",
+                    arkade: { inputs: [], asm: ["OP_NOTAREALOPCODE"] },
+                    leaves: [group("release").leaves[0]],
+                },
+            ],
+        };
+        expect(() => programFromArtifact(unknown)).toThrow(/not in this SDK's table/);
     });
 });

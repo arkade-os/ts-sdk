@@ -394,10 +394,10 @@
       ]
     },
     {
-      "name": "unilateral",
+      "name": "exitBuyerSeller",
       "leaves": [
         {
-          "name": "unilateral",
+          "name": "exitBuyerSeller",
           "witness": [
             {
               "name": "buyerSig",
@@ -417,6 +417,64 @@
             "<buyerPk>",
             "OP_CHECKSIGVERIFY",
             "<sellerPk>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "exitBuyerMediator",
+      "leaves": [
+        {
+          "name": "exitBuyerMediator",
+          "witness": [
+            {
+              "name": "buyerSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "mediatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<exit>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<buyerPk>",
+            "OP_CHECKSIGVERIFY",
+            "<mediatorPk>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "exitSellerMediator",
+      "leaves": [
+        {
+          "name": "exitSellerMediator",
+          "witness": [
+            {
+              "name": "sellerSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "mediatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<exit>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<sellerPk>",
+            "OP_CHECKSIGVERIFY",
+            "<mediatorPk>",
             "OP_CHECKSIG"
           ]
         }
