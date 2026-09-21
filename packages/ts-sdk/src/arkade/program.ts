@@ -496,9 +496,13 @@ export class ArkadeProgramScript extends VtxoScript {
 // --- Artifact JSON ----------------------------------------------------------
 
 /**
- * Convert a compiler-style JSON artifact into a {@link Program}. Byte values are
+ * Convert a Program JSON artifact into a {@link Program}. Byte values are
  * encoded as `0x`-prefixed hex strings in `asm`/`witness`/`signers`; opcode names,
  * `$param` placeholders and numbers pass through unchanged.
+ *
+ * This is *not* the JSON `arkadec` writes. That artifact lists spend groups in
+ * an array and uses `<param>` placeholders and raw leaf assembly; run it
+ * through `arkade-bindgen --lang sdk-program` to get this shape.
  */
 export function parseArtifact(artifact: {
     version?: number;
@@ -506,6 +510,17 @@ export function parseArtifact(artifact: {
     params?: readonly InputRef[];
     functions: Record<string, any>;
 }): Program {
+    // An arkadec ContractJson would otherwise parse into a program whose
+    // functions are named "0", "1", "2" — accepted by validateProgram and
+    // wrong everywhere after that.
+    if (Array.isArray(artifact.functions)) {
+        throw new Error(
+            "parseArtifact: `functions` is an array, which is the arkadec artifact shape, not an SDK program — convert it with `arkade-bindgen --lang sdk-program`",
+        );
+    }
+    if (typeof artifact.functions !== "object" || artifact.functions === null) {
+        throw new Error("parseArtifact: `functions` must be an object keyed by function name");
+    }
     const hexToken = (t: unknown): any =>
         typeof t === "string" && t.startsWith("0x") ? hex.decode(t.slice(2)) : t;
     // A "$param" timelock stays a reference (resolved at compile time); anything
