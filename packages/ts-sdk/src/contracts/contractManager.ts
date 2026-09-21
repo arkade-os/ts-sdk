@@ -1072,7 +1072,14 @@ export class ContractManager implements IContractManager {
     /** No throw: construction returned long ago, so the state is the channel. */
     private reportBootFailure(stage: string, err: unknown): void {
         this.markSyncDegraded(err);
-        console.error(`[contracts] ${stage} failed during boot`, err);
+        // A retryable failure is the offline case the state channel exists for,
+        // and degradation is deliberately silent there — one log line per boot on
+        // a weak link is noise the previous awaited path never produced. A
+        // terminal failure is different: nothing retries it, so it must not
+        // vanish.
+        if (!isRetryableProviderError(err)) {
+            console.error(`[contracts] ${stage} failed during boot`, err);
+        }
     }
 
     /**
