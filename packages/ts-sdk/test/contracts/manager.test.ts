@@ -229,6 +229,8 @@ describe("ContractManager", () => {
             contractRepository: repository,
             walletRepository: walletRepo,
         });
+        // Boot is off the construction path, so wait for the sync it asserts on.
+        await newManager.whenBooted();
 
         // The bootstrap call should NOT have used spendableOnly
         const calls = (mockIndexer.getVtxos as any).mock.calls;
@@ -267,11 +269,12 @@ describe("ContractManager", () => {
             vtxos: [vtxo1, vtxo2],
         });
 
-        await ContractManager.create({
+        const booted = await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository: repository,
             walletRepository: walletRepo,
         });
+        await booted.whenBooted();
 
         const savedVtxos = await walletRepo.getVtxos("contract-address");
         expect(savedVtxos).toHaveLength(2);

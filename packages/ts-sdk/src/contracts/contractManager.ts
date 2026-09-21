@@ -304,10 +304,15 @@ export interface ScanContractsOptions {
  * retryable indexer/operator failure and the manager is serving repository
  * state; it returns to `online` on the next successful sync. This only
  * describes sync freshness — never wallet data itself.
+ *
+ * `syncing` says a provider sync is in flight right now, so a read can be
+ * served from the repository while the work that refreshes it runs on, and a UI
+ * can show that something is happening. Optional so adding it breaks no
+ * implementer of this public interface; {@link ContractManager} always sets it.
  */
 export type ContractSyncState =
-    | { mode: "online"; lastSyncedAt?: number }
-    | { mode: "degraded"; reason: string; lastSyncedAt?: number };
+    | { mode: "online"; syncing?: boolean; lastSyncedAt?: number }
+    | { mode: "degraded"; syncing?: boolean; reason: string; lastSyncedAt?: number };
 
 export interface IContractManager extends Disposable {
     /**
@@ -351,6 +356,30 @@ export interface IContractManager extends Disposable {
      * See {@link ContractSyncState}.
      */
     getSyncState(): ContractSyncState;
+
+    /**
+     * The repository snapshot, without waiting on the provider.
+     *
+     * Same shape as {@link getContractsWithVtxos}, but the answer is whatever
+     * storage already holds; a catch-up sync is requested behind it. Use this
+     * on read/display paths, where a round trip is something the user should
+     * never wait for; use {@link getContractsWithVtxos} where the answer gates
+     * a spend.
+     *
+     * Optional so adding it breaks no implementer of this public interface;
+     * {@link ContractManager} provides it.
+     */
+    getStoredContractsWithVtxos?(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
+
+    /**
+     * Resolves once the off-critical-path boot sequence (look-ahead drain, boot
+     * sync, watcher start) has settled — the point `create()` used to resolve
+     * at. Resolves immediately when none is running.
+     *
+     * Optional so adding it breaks no implementer of this public interface;
+     * {@link ContractManager} provides it.
+     */
+    whenBooted?(): Promise<void>;
 
     /**
      * Stamp raw virtual outputs with the correct per-contract tapscripts
@@ -761,6 +790,19 @@ export type CreateContractParams = Omit<Contract, "createdAt" | "state"> & {
     state?: ContractState;
 };
 
+/** Filter set for {@link ContractManager}'s provider sync. */
+type SyncContractsOptions = {
+    contracts?: Contract[];
+    pageSize?: number;
+    // Overrides the cursor-derived window.
+    window?: { after?: number; before?: number };
+    // When `contracts` is omitted: query every contract in the
+    // repository (active + inactive) instead of just the watcher's
+    // watched set. This is a superset of the watched set, so the
+    // cursor invariant still holds and the cursor still advances.
+    includeInactive?: boolean;
+};
+
 /**
  * Central manager for contract lifecycle and operations.
  *
@@ -819,6 +861,16 @@ export class ContractManager implements IContractManager {
     /** Epoch-ms of the last successful provider sync, if any. */
     private lastSyncedAt?: number;
     private syncedAtByScript = new Map<string, number>();
+    /**
+     * Depth of in-flight provider syncs, reported as `syncing` on
+     * {@link getSyncState}. Counted rather than flagged because a per-contract
+     * delta event can land while a wider sync is still open.
+     */
+    private syncsInFlight = 0;
+    /** The off-critical-path boot sequence, if one is running. @see runBootSequence */
+    private bootTask?: Promise<void>;
+    /** A catch-up sync requested behind a stored read. @see requestCatchUpSync */
+    private catchUpSync?: Promise<void>;
     /** Last chain tip read, with the epoch-ms it was read at. @see currentChainTip */
     private chainTipCache?: { height: number; time: number; at: number };
     /** In-flight chain tip read, so concurrent cache misses share one. */
@@ -871,13 +923,20 @@ export class ContractManager implements IContractManager {
      * sync. Purely a freshness signal — not a source of truth for wallet data.
      */
     getSyncState(): ContractSyncState {
+        const syncing = this.syncsInFlight > 0;
         return this.syncDegradedReason === undefined
-            ? { mode: "online", lastSyncedAt: this.lastSyncedAt }
+            ? { mode: "online", syncing, lastSyncedAt: this.lastSyncedAt }
             : {
                   mode: "degraded",
+                  syncing,
                   reason: this.syncDegradedReason,
                   lastSyncedAt: this.lastSyncedAt,
               };
+    }
+
+    /** @inheritdoc */
+    whenBooted(): Promise<void> {
+        return this.bootTask ?? Promise.resolve();
     }
 
     /** @see ContractManagerConfig.vtxoSyncMaxAgeMs — for factory-built managers. */
@@ -943,32 +1002,77 @@ export class ContractManager implements IContractManager {
             await this.watcher.addContract(contract);
         }
 
-        // Register the speculative band BEFORE the boot sync, so newly watched
-        // window scripts get their full-history catch-up first and the delta
-        // sync below then covers the whole watched set. Retryable failures are
-        // already swallowed inside (degraded state); terminal ones propagate.
-        await this.scheduleLookAheadDrain();
-
-        // Best-effort boot sync: a retryable indexer/operator failure must not
-        // fail construction. Record degraded state and continue with repository
-        // data — the watcher still starts below and reconciles when the operator
-        // returns. Terminal failures still propagate.
-        try {
-            await this.reconcileWatched();
-            this.markSyncOnline();
-        } catch (err) {
-            if (!isRetryableProviderError(err)) throw err;
-            this.markSyncDegraded(err);
-        }
-
         this.initialized = true;
 
-        // Start watching automatically
-        this.stopWatcherFn = await this.watcher.startWatching((event) => {
-            this.handleContractEvent(event).catch((error) => {
-                console.error("Error handling contract event:", error);
+        // Everything left needs the indexer, and none of it is a prerequisite
+        // for reading what the repository already holds — so it runs off the
+        // construction path. Building a manager then costs no round trip, and
+        // `getSyncState().syncing` is the channel that reports the catch-up
+        // still in flight. A failure cannot be thrown to a caller who already
+        // has a usable manager, so it lands on that same channel instead.
+        const boot: Promise<void> = this.runBootSequence();
+        this.bootTask = boot;
+        void boot
+            .catch(() => {})
+            .finally(() => {
+                if (this.bootTask === boot) this.bootTask = undefined;
             });
-        });
+    }
+
+    /**
+     * Everything a boot needs from the provider, off the construction path.
+     *
+     * Ordering is unchanged from when this was awaited inline: the speculative
+     * band registers before the delta sync covers the watched set, so newly
+     * watched window scripts get their full-history catch-up first.
+     *
+     * Each phase reports through {@link getSyncState} and none of them aborts
+     * the others — watching is the recovery channel, so it starts even when the
+     * sync before it failed. That is what lets a wrong or unreachable provider
+     * degrade the manager rather than fail its construction.
+     */
+    private async runBootSequence(): Promise<void> {
+        // Counted here as well as inside `syncContracts`, so `syncing` covers
+        // the whole catch-up rather than just the one call the delta sync makes.
+        this.syncsInFlight++;
+        try {
+            try {
+                await this.scheduleLookAheadDrain();
+            } catch (err) {
+                this.reportBootFailure("look-ahead drain", err);
+            }
+
+            try {
+                await this.reconcileWatched();
+                this.markSyncOnline();
+            } catch (err) {
+                this.reportBootFailure("boot sync", err);
+            }
+
+            if (this.disposed) return;
+            try {
+                const stopWatching = await this.watcher.startWatching((event) => {
+                    this.handleContractEvent(event).catch((error) => {
+                        console.error("Error handling contract event:", error);
+                    });
+                });
+                // dispose() can land while the subscription is opening. The stop
+                // function is the only handle on it, so use it rather than leak a
+                // watcher this manager no longer owns.
+                if (this.disposed) stopWatching();
+                else this.stopWatcherFn = stopWatching;
+            } catch (err) {
+                this.reportBootFailure("watcher start", err);
+            }
+        } finally {
+            this.syncsInFlight--;
+        }
+    }
+
+    /** No throw: construction returned long ago, so the state is the channel. */
+    private reportBootFailure(stage: string, err: unknown): void {
+        this.markSyncDegraded(err);
+        console.error(`[contracts] ${stage} failed during boot`, err);
     }
 
     /**
@@ -1729,6 +1833,58 @@ export class ContractManager implements IContractManager {
         }));
     }
 
+    /**
+     * The repository snapshot, served without a provider round trip.
+     *
+     * A caller that must show a balance or a coin list already has the answer
+     * on disk; making it wait for the indexer is what turns a first paint into
+     * a spinner on a weak link. So this reads storage, and when the data is
+     * older than the freshness budget it asks for a sync *behind* the answer —
+     * the event a subscription-backed wallet already reacts to by re-reading.
+     * {@link getSyncState}'s `syncing` is what reports that work.
+     *
+     * Spend paths must keep using {@link getContractsWithVtxos}: a cached
+     * answer is fine for display and not for coin selection.
+     */
+    async getStoredContractsWithVtxos(filter?: GetContractsFilter): Promise<ContractWithVtxos[]> {
+        const contracts = await this.getContracts(filter);
+        if (!this.syncedWithin(contracts, this.config.vtxoSyncMaxAgeMs ?? 0)) {
+            this.requestCatchUpSync(contracts);
+        }
+        const vtxos = await this.getVtxosForContracts(contracts);
+        return contracts.map((contract) => ({
+            contract,
+            vtxos: vtxos.filter((vtxo) => vtxo.contractScript === contract.script),
+        }));
+    }
+
+    /**
+     * One catch-up sync, at most one at a time.
+     *
+     * A stored read can be called several times per paint, and without the
+     * single-flight guard a polling UI would queue a sync per call. The watcher
+     * still owns steady-state freshness; this is only the nudge that covers a
+     * session whose subscription has been quiet.
+     */
+    private requestCatchUpSync(contracts: Contract[]): void {
+        if (this.disposed || this.catchUpSync || contracts.length === 0) return;
+        const run: Promise<void> = (async () => {
+            this.syncsInFlight++;
+            try {
+                await this.performContractSync({ contracts });
+                this.markSyncOnline();
+            } catch (err) {
+                this.reportBootFailure("catch-up sync", err);
+            } finally {
+                this.syncsInFlight--;
+            }
+        })();
+        this.catchUpSync = run;
+        void run.finally(() => {
+            if (this.catchUpSync === run) this.catchUpSync = undefined;
+        });
+    }
+
     async annotateVtxos(
         vtxos: VirtualCoin[],
         tapscripts?: ContractTapscriptCache,
@@ -2321,17 +2477,20 @@ export class ContractManager implements IContractManager {
      * leaves the cursor alone so a narrow poll can't hide data that
      * other contracts still need to pick up.
      */
-    private async syncContracts(options: {
-        contracts?: Contract[];
-        pageSize?: number;
-        // Overrides the cursor-derived window.
-        window?: { after?: number; before?: number };
-        // When `contracts` is omitted: query every contract in the
-        // repository (active + inactive) instead of just the watcher's
-        // watched set. This is a superset of the watched set, so the
-        // cursor invariant still holds and the cursor still advances.
-        includeInactive?: boolean;
-    }): Promise<Map<string, ExtendedContractVtxo[]>> {
+    private async syncContracts(
+        options: SyncContractsOptions,
+    ): Promise<Map<string, ExtendedContractVtxo[]>> {
+        this.syncsInFlight++;
+        try {
+            return await this.performContractSync(options);
+        } finally {
+            this.syncsInFlight--;
+        }
+    }
+
+    private async performContractSync(
+        options: SyncContractsOptions,
+    ): Promise<Map<string, ExtendedContractVtxo[]>> {
         const cursor = await getSyncCursor(this.config.walletRepository);
         const window = options.window ?? computeSyncWindow(cursor);
 

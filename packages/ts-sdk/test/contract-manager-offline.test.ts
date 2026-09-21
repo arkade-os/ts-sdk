@@ -14,6 +14,13 @@ import {
 } from "./contracts/helpers";
 import { getSyncCursor } from "../src/utils/syncCursors";
 
+/** Spin until `predicate` holds, so a test never races the boot sequence. */
+const until = async (predicate: () => boolean): Promise<void> => {
+    for (let i = 0; i < 200 && !predicate(); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+};
+
 // Long timers so the watcher's failsafe poll / reconnect never fire mid-test;
 // every manager is disposed in afterEach to stop them.
 const watcherConfig = { failsafePollIntervalMs: 1_000_000, reconnectDelayMs: 1_000_000 };
@@ -66,6 +73,8 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
 
         const m = await create(indexer, contractRepo, walletRepo);
 
+        // Boot runs off the construction path, so it lands asynchronously.
+        await until(() => m.getSyncState().mode === "degraded");
         expect(m.getSyncState().mode).toBe("degraded");
         // Repository rows are intact — a failed boot sync must not clear them.
         expect(await m.getContracts()).toHaveLength(1);
@@ -73,20 +82,21 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         expect(await getSyncCursor(walletRepo)).toBe(0);
     });
 
-    it("boot rethrows a terminal (non-retryable) indexer failure", async () => {
+    it("boot reports a terminal (non-retryable) failure on the state channel", async () => {
         const contractRepo = new InMemoryContractRepository();
         await contractRepo.saveContract(seededContract());
         const indexer = createMockIndexerProvider();
         (indexer.getVtxos as any).mockRejectedValue(new Error("schema violation"));
 
-        await expect(
-            ContractManager.create({
-                indexerProvider: indexer,
-                contractRepository: contractRepo,
-                walletRepository: new InMemoryWalletRepository(),
-                watcherConfig,
-            }),
-        ).rejects.toThrow("schema violation");
+        // Construction no longer waits on the indexer, so it cannot be where a
+        // terminal provider error surfaces. The manager is usable immediately
+        // and the failure is read from the sync state instead.
+        const m = await create(indexer, contractRepo, new InMemoryWalletRepository());
+
+        await until(() => m.getSyncState().mode === "degraded");
+        const state = m.getSyncState();
+        expect(state.mode).toBe("degraded");
+        expect(state.mode === "degraded" ? state.reason : "").toContain("schema violation");
     });
 
     it("getContractsWithVtxos serves repository state on a retryable sync failure", async () => {
@@ -137,6 +147,8 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         (indexer.getVtxos as any).mockRejectedValueOnce(new ProviderUnavailableError("down"));
 
         const m = await create(indexer, contractRepo, walletRepo);
+        // The boot sync consumes the one rejection, off the construction path.
+        await until(() => m.getSyncState().mode === "degraded");
         expect(m.getSyncState().mode).toBe("degraded");
 
         // Operator recovers (base mock resolves { vtxos: [] }).
@@ -150,6 +162,7 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         await contractRepo.saveContract(seededContract());
         const indexer = createMockIndexerProvider(); // boot online (getVtxos → [])
         const m = await create(indexer, contractRepo, walletRepo);
+        await until(() => m.getSyncState().syncing === false);
         expect(m.getSyncState().mode).toBe("online");
 
         // Operator degrades post-boot; the watcher fires connection_reset and the
@@ -168,6 +181,7 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         const indexer = createMockIndexerProvider();
         (indexer.getVtxos as any).mockRejectedValueOnce(new ProviderUnavailableError("down"));
         const m = await create(indexer, contractRepo, walletRepo);
+        await until(() => m.getSyncState().mode === "degraded");
         expect(m.getSyncState().mode).toBe("degraded");
 
         // Operator recovers; the next connection_reset recovery succeeds.

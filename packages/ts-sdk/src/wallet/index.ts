@@ -386,6 +386,15 @@ export interface WalletBalance {
         unconfirmed: number;
         /** Combined boarding balance (`confirmed` + `unconfirmed`) */
         total: number;
+        /**
+         * Whether this session has actually fetched the boarding addresses.
+         *
+         * `false` means the three numbers above are not an answer yet — empty
+         * because nothing has been read, or carried over from a previous
+         * session — so a caller should render a loading state rather than a
+         * zero balance. Optional so adding it breaks no consumer.
+         */
+        loaded?: boolean;
     };
     /** Settled (finalized) balance the wallet owns, including gated and intent-locked funds. */
     settled: number;
@@ -1200,6 +1209,16 @@ export interface IReadonlyWallet {
 
     /** @returns Onchain boarding inputs tracked by the wallet. */
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
+
+    /**
+     * The same boarding inputs, served from storage.
+     *
+     * The repository only holds them once something has fetched them, so this
+     * is for callers that already ran {@link getBoardingUtxos} (or a cached-data
+     * refresh that did) and want the answer without a second round trip.
+     * Optional so adding it breaks no implementer of this public interface.
+     */
+    getStoredBoardingUtxos?(): Promise<ExtendedCoin[]>;
 
     /** @returns Wallet transaction history derived from boarding and Arkade activity. */
     getTransactionHistory(): Promise<ArkTransaction[]>;

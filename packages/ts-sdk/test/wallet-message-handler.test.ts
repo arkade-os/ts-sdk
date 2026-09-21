@@ -2278,6 +2278,68 @@ describe("WalletMessageHandler repo-backed reads", () => {
         expect(rw.getBoardingUtxos).toHaveBeenCalled();
     });
 
+    it("GET_BALANCE takes boarding from storage instead of re-asking the provider", async () => {
+        setupHandler();
+        const rw = (updater as any).readonlyWallet;
+        const boardUtxo = {
+            txid: "bb".repeat(32),
+            vout: 0,
+            value: 10_000,
+            status: { confirmed: true, block_height: 1, block_hash: "cc", block_time: 1 },
+        };
+        // The cached-data refresh already fetched and saved these, so the
+        // balance read should not reach the onchain provider again.
+        rw.getStoredBoardingUtxos = vi.fn().mockResolvedValue([boardUtxo]);
+        rw.getBoardingUtxos = vi.fn().mockResolvedValue([]);
+
+        const balance = await (updater as any).handleGetBalance();
+
+        expect(rw.getStoredBoardingUtxos).toHaveBeenCalled();
+        expect(rw.getBoardingUtxos).not.toHaveBeenCalled();
+        expect(balance.boarding.total).toBe(10_000);
+    });
+
+    /** Spin until `predicate` holds, so a test never races a background leg. */
+    const until = async (predicate: () => boolean): Promise<void> => {
+        for (let i = 0; i < 200 && !predicate(); i++) {
+            await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+    };
+
+    it("lazyBoarding hands the onchain fetch to the background", async () => {
+        setupHandler();
+        const rw = (updater as any).readonlyWallet;
+        const boardUtxo = {
+            txid: "bb".repeat(32),
+            vout: 0,
+            value: 7_000,
+            status: { confirmed: true, block_height: 1, block_hash: "cc", block_time: 1 },
+        };
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        rw.getBoardingAddresses = vi.fn().mockResolvedValue(["boarding-address"]);
+        rw.getBoardingUtxos = vi.fn().mockImplementation(async () => {
+            await gate;
+            return [boardUtxo];
+        });
+        rw.getStoredBoardingUtxos = vi.fn().mockResolvedValue([boardUtxo]);
+
+        // Returns with the onchain fetch still parked: that is the whole point.
+        await (updater as any).refreshCachedData({ lazyBoarding: true });
+        expect((updater as any).boardingLoaded).toBe(false);
+        const before = await (updater as any).handleGetBalance();
+        expect(before.boarding.loaded).toBe(false);
+
+        release();
+        await until(() => (updater as any).boardingLoaded === true);
+
+        const after = await (updater as any).handleGetBalance();
+        expect(after.boarding.loaded).toBe(true);
+        expect(after.boarding.total).toBe(7_000);
+    });
+
     it("RELOAD_WALLET forces refreshVtxos before reading from repo", async () => {
         setupHandler();
         const refreshSpy = vi.fn().mockResolvedValue(undefined);

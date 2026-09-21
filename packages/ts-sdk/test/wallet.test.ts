@@ -34,7 +34,11 @@ const { mockFetch } = vi.hoisted(() => ({
     mockFetch: vi.fn(),
 }));
 
-vi.mock("../src/utils/fetch", () => ({
+// Spread the real module: `providers/availability` reads `FetchError` from it,
+// and a factory that omits it turns any error-classification into a hard
+// failure the moment a provider call rejects.
+vi.mock("../src/utils/fetch", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../src/utils/fetch")>()),
     fetch: mockFetch,
     baseFetch: mockFetch,
 }));
@@ -132,37 +136,57 @@ describe("Wallet", () => {
             // already persisted/watched via the default contract) and the
             // fetch sequence above is unchanged.
 
-            mockFetch
-                .mockResolvedValueOnce(
-                    jsonResponse({
-                        signerPubkey: mockServerKeyHex,
-                        forfeitPubkey: mockServerKeyHex,
-                        batchExpiry: BigInt(144),
-                        unilateralExitDelay: BigInt(144),
-                        boardingExitDelay: BigInt(144),
-                        roundInterval: BigInt(144),
-                        network: "mutinynet",
-                        forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
-                        checkpointTapscript:
-                            "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
-                    }),
-                )
-                .mockResolvedValueOnce(jsonResponse(mockUTXOs))
-                .mockResolvedValueOnce(jsonResponse({ vtxos: [] }))
-                .mockResolvedValueOnce(jsonResponse({ subscriptionId: "sub-1" }))
-                .mockImplementationOnce((url: string) => {
-                    // Extract the script from the request URL so the
-                    // mock response matches the wallet's actual script.
-                    const params = new URLSearchParams(url.split("?")[1]);
+            // Answered by URL rather than by call order: the manager's boot now
+            // runs off the construction path, so which request lands first is
+            // no longer pinned to the sequence `create` + `getBalance` implies.
+            mockFetch.mockImplementation((url: unknown) => {
+                const target = String(url);
+                if (target.includes("/v1/info")) {
+                    return Promise.resolve(
+                        jsonResponse({
+                            signerPubkey: mockServerKeyHex,
+                            forfeitPubkey: mockServerKeyHex,
+                            batchExpiry: BigInt(144),
+                            unilateralExitDelay: BigInt(144),
+                            boardingExitDelay: BigInt(144),
+                            roundInterval: BigInt(144),
+                            network: "mutinynet",
+                            forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                            checkpointTapscript:
+                                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+                        }),
+                    );
+                }
+                if (target.includes("subscribe")) {
+                    return Promise.resolve(jsonResponse({ subscriptionId: "sub-1" }));
+                }
+                if (target.includes("/address/")) {
+                    return Promise.resolve(jsonResponse(mockUTXOs));
+                }
+                if (target.includes("vtxos")) {
+                    // Only a scripts query names the wallet's script; an
+                    // outpoint or pending-only probe answers empty.
+                    const params = new URLSearchParams(target.split("?")[1] ?? "");
                     const script = params.getAll("scripts")[0];
-                    mockServerResponse.vtxos[0].script = script;
-                    return Promise.resolve(jsonResponse(mockServerResponse));
-                });
+                    return Promise.resolve(
+                        jsonResponse(
+                            script
+                                ? { vtxos: [{ ...mockServerResponse.vtxos[0], script }] }
+                                : { vtxos: [] },
+                        ),
+                    );
+                }
+                return Promise.resolve(jsonResponse([]));
+            });
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
                 arkServerUrl: "http://localhost:7070",
             });
+            // The manager's boot is off the construction path now, and the
+            // ordered responses above cover the calls it makes, so let it
+            // finish before the read that consumes the last one.
+            await (await wallet.getContractManager()).whenBooted?.();
 
             const balance = await wallet.getBalance();
             expect(balance.settled).toBe(50000);
@@ -685,6 +709,16 @@ describe("Wallet", () => {
             };
         }
 
+        /**
+         * The sync a display read used to trigger: `getVtxos` is a repository
+         * read now, so these cases drive the provider leg explicitly and then
+         * assert on what the sync left behind.
+         */
+        const sync = async (wallet: ReadonlyWallet) => {
+            const manager = await wallet.getContractManager();
+            await manager.refreshVtxos();
+        };
+
         it("should keep a preconfirmed VTXO when the full re-fetch still returns it", async () => {
             let walletScript = "";
             const getVtxos = vi
@@ -698,7 +732,9 @@ describe("Wallet", () => {
 
             const { wallet } = await createReadonlyTestWallet(getVtxos);
 
+            await sync(wallet);
             expect(await wallet.getVtxos()).toHaveLength(1);
+            await sync(wallet);
             expect(await wallet.getVtxos()).toHaveLength(1);
         });
 
@@ -718,10 +754,12 @@ describe("Wallet", () => {
 
             const { wallet, walletRepository } = await createReadonlyTestWallet(getVtxos);
 
+            await sync(wallet);
             expect((await wallet.getVtxos())[0].virtualStatus.state).toBe("preconfirmed");
 
             state = "settled";
 
+            await sync(wallet);
             const vtxos = await wallet.getVtxos();
             expect(vtxos).toHaveLength(1);
             expect(vtxos[0].virtualStatus.state).toBe("settled");
@@ -748,10 +786,12 @@ describe("Wallet", () => {
 
             const { wallet, walletRepository } = await createReadonlyTestWallet(getVtxos);
 
+            await sync(wallet);
             expect(await wallet.getVtxos()).toHaveLength(1);
 
             markSpent = true;
 
+            await sync(wallet);
             expect(await wallet.getVtxos()).toEqual([]);
 
             const cached = await walletRepository.getVtxos(await wallet.getAddress());
@@ -775,12 +815,14 @@ describe("Wallet", () => {
 
             const { wallet, walletRepository } = await createReadonlyTestWallet(getVtxos);
 
+            await sync(wallet);
             const vtxos = await wallet.getVtxos();
             expect(vtxos).toHaveLength(1);
             expect(vtxos[0].virtualStatus.state).toBe("settled");
 
             markSpent = true;
 
+            await sync(wallet);
             expect(await wallet.getVtxos()).toEqual([]);
 
             const cached = await walletRepository.getVtxos(await wallet.getAddress());

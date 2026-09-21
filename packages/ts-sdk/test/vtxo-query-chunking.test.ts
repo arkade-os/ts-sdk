@@ -230,6 +230,9 @@ describe("ContractManager script queries stay under the URL cap", () => {
             walletRepository: new InMemoryWalletRepository(),
             watcherConfig: { failsafePollIntervalMs: 1_000_000, reconnectDelayMs: 1_000_000 },
         });
+        // Boot is off the construction path now; the assertions below are about
+        // the queries it makes, so wait for it.
+        await manager.whenBooted();
         managers.push(manager);
         return manager;
     };
@@ -360,6 +363,13 @@ describe("Wallet.getTransactionHistory batches createdAt lookups", () => {
             }
             return { vtxos: (opts?.scripts ?? []).map((s) => spent.get(s)).filter(Boolean) };
         }) as IndexerProvider["getVtxos"];
+
+        // History is a repository read now, so the coins have to be synced in
+        // before it can report them. `includeInactive` because the contracts
+        // above went straight into the repository, not through the watcher.
+        await (await handle.wallet.getContractManager()).refreshVtxos({
+            includeInactive: true,
+        });
 
         return { wallet: handle.wallet, outpointCalls };
     };

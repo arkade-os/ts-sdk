@@ -11,6 +11,13 @@ import {
 import type { ArkInfo } from "../src/providers/ark";
 import { ReadonlySingleKey, SingleKey } from "../src/identity/singleKey";
 
+/** Spin until `predicate` holds, so a test never races the microtask queue. */
+const until = async (predicate: () => boolean): Promise<void> => {
+    for (let i = 0; i < 200 && !predicate(); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+};
+
 const serverKeyHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const privKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
 
@@ -142,5 +149,68 @@ describe("provider connection state (Scope 5)", () => {
             source: "repository",
             provider: "indexer",
         });
+    });
+
+    it("reports syncing while a spend read's indexer sync is in flight", async () => {
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const indexer = {
+            getVtxos: async () => ({ vtxos: [] }),
+            subscribeForScripts: async () => "sub-1",
+            unsubscribeForScripts: async () => undefined,
+            getSubscription: async function* () {},
+        };
+        const wallet = await createWallet(indexer as Partial<IndexerProvider> as IndexerProvider);
+        // First read constructs the manager and kicks its catch-up; let both
+        // settle so this measures the sync it is about to hold open.
+        await wallet.getVtxos();
+        await until(() => wallet.getProviderConnectionState().syncing === false);
+
+        // Hold the next sync open.
+        indexer.getVtxos = async () => {
+            await gate;
+            return { vtxos: [] };
+        };
+
+        // A spend read waits for the sync, so `syncing` is observable while it
+        // is parked on the indexer.
+        const read = wallet.getSpendableVtxos();
+        await until(() => wallet.getProviderConnectionState().syncing === true);
+        expect(wallet.getProviderConnectionState().syncing).toBe(true);
+
+        release();
+        await read;
+        expect(wallet.getProviderConnectionState().syncing).toBe(false);
+    });
+
+    it("answers a display read without waiting on the indexer", async () => {
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const indexer = {
+            getVtxos: async () => ({ vtxos: [] }),
+            subscribeForScripts: async () => "sub-1",
+            unsubscribeForScripts: async () => undefined,
+            getSubscription: async function* () {},
+        };
+        const wallet = await createWallet(indexer as Partial<IndexerProvider> as IndexerProvider);
+        await wallet.getVtxos();
+        await until(() => wallet.getProviderConnectionState().syncing === false);
+
+        indexer.getVtxos = async () => {
+            await gate;
+            return { vtxos: [] };
+        };
+
+        // Resolves from storage with the provider still parked...
+        await expect(wallet.getVtxos()).resolves.toEqual([]);
+        // ...while the catch-up it triggered is reported as in flight.
+        expect(wallet.getProviderConnectionState().syncing).toBe(true);
+
+        release();
+        await until(() => wallet.getProviderConnectionState().syncing === false);
     });
 });

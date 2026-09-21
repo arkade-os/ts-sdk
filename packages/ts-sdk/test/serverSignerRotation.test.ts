@@ -5,6 +5,7 @@ import {
     teardownRestoreHarness,
     makeStaticWalletForTest,
     mockArkInfo,
+    awaitWalletBooted,
 } from "./helpers/restoreWallet";
 import { BoardingContractHandler } from "../src/contracts/handlers/boarding";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
@@ -123,6 +124,9 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
     it("rejects a missing/empty checkpointTapscript without any side effect", async () => {
         const { wallet, contractRepository } = await makeStaticWalletForTest();
         try {
+            // The baseline rows are written by the boot, which is off the
+            // construction path now, so settle it before taking the "before".
+            await awaitWalletBooted(wallet);
             const beforeKey = hex.encode(wallet.arkServerPublicKey);
             const beforeOffchain = hex.encode(wallet.offchainTapscript.options.serverPubKey);
             const beforeBoarding = hex.encode(wallet.boardingTapscript.options.serverPubKey);
@@ -148,6 +152,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
     it("rejects a checkpointTapscript pinned to a foreign pubkey without any side effect", async () => {
         const { wallet, contractRepository } = await makeStaticWalletForTest();
         try {
+            await awaitWalletBooted(wallet);
             const beforeKey = hex.encode(wallet.arkServerPublicKey);
             const beforeUnroll = hex.encode(wallet.serverUnrollScript.script);
             const beforeRows = (await contractRepository.getContracts({})).length;
@@ -179,6 +184,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
     it("rejects a sub-floor checkpoint exit delay without any side effect", async () => {
         const { wallet, contractRepository } = await makeStaticWalletForTest();
         try {
+            await awaitWalletBooted(wallet);
             const beforeKey = hex.encode(wallet.arkServerPublicKey);
             const beforeUnroll = hex.encode(wallet.serverUnrollScript.script);
             const beforeRows = (await contractRepository.getContracts({})).length;

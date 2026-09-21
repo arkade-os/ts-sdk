@@ -624,11 +624,16 @@ export class ArkadeCashCreateError extends Error {
  * server-info source and the contract-manager's indexer-sync health. It
  * describes only how fresh provider data is — never the wallet balances/VTXOs
  * themselves, which are always served from the repository (system of record).
+ *
+ * `syncing` says a provider sync is in flight right now, so a UI can show the
+ * work without a read having blocked on it. Optional so adding it breaks no
+ * implementer of this public interface; {@link ReadonlyWallet} always sets it.
  */
 export type ProviderConnectionState =
-    | { mode: "online"; source: "live"; lastOnlineAt: number }
+    | { mode: "online"; syncing?: boolean; source: "live"; lastOnlineAt: number }
     | {
           mode: "degraded";
+          syncing?: boolean;
           source: "cache" | "repository";
           provider: ProviderKind;
           reason: string;
@@ -742,9 +747,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * from the repository regardless of this state.
      */
     getProviderConnectionState(): ProviderConnectionState {
+        const syncing = this._contractManager?.getSyncState().syncing ?? false;
         if (this._serverInfoSource === "cache") {
             return {
                 mode: "degraded",
+                syncing,
                 source: "cache",
                 provider: "arkade",
                 reason: "constructed from cached server-info; operator was unreachable at boot",
@@ -755,6 +762,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         if (sync?.mode === "degraded") {
             return {
                 mode: "degraded",
+                syncing,
                 source: "repository",
                 provider: "indexer",
                 reason: sync.reason,
@@ -763,6 +771,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
         return {
             mode: "online",
+            syncing,
             source: "live",
             lastOnlineAt: sync?.lastSyncedAt ?? this._serverInfoLastOnlineAt ?? 0,
         };
@@ -1218,7 +1227,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async getBalance(): Promise<WalletBalance> {
         const [boardingUtxos, snapshot] = await Promise.all([
             this.getBoardingUtxos(),
-            this.contractSnapshot(),
+            this.contractSnapshotStored(),
         ]);
         // Explicit, not the default filter: the default drops unrolled coins,
         // and `computeOffchainBalance` cannot report a bucket it never sees.
@@ -1282,7 +1291,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     async getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
         return filterSnapshotVtxos(
-            await this.contractSnapshot(),
+            await this.contractSnapshotStored(),
             filter,
             this._pendingSpendOutpoints,
         );
@@ -1418,6 +1427,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
+     * The same snapshot, served from the repository.
+     *
+     * Display reads use this so a first paint never waits on the indexer. The
+     * catch-up sync the manager starts behind it surfaces as `syncing` on
+     * {@link getProviderConnectionState}, and the wallet's own update events are
+     * what make the UI re-read. Everything that gates a spend keeps
+     * {@link contractSnapshot}.
+     */
+    protected async contractSnapshotStored(): Promise<ContractWithVtxos[]> {
+        const contractManager = await this.getContractManager();
+        // An older manager has no stored read; its synced snapshot is the only
+        // one it can give, so fall back rather than fail.
+        return contractManager.getStoredContractsWithVtxos
+            ? contractManager.getStoredContractsWithVtxos()
+            : contractManager.getContractsWithVtxos();
+    }
+
+    /**
      * The two exclusion sets the gate is made of, derived from one snapshot so
      * {@link getSpendableVtxos} and the balance answer about the same instant.
      */
@@ -1493,7 +1520,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // Independent: one syncs against the indexer, the other reads the
         // onchain provider. `getBalance` pairs its two reads the same way.
         const [snapshot, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
-            this.contractSnapshot(),
+            this.contractSnapshotStored(),
             this.getBoardingTxs(),
         ]);
         const allVtxos = snapshot.flatMap((_) => _.vtxos);
@@ -1756,28 +1783,32 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     async getBoardingUtxosForSigners(allowedSigners: Set<string>): Promise<BoardingUtxoGroup[]> {
         const tapscripts = await this.getBoardingTapscripts(allowedSigners);
-        const groups: BoardingUtxoGroup[] = [];
-        for (const tapscript of tapscripts) {
-            const address = tapscript.onchainAddress(this.network);
-            const coins = await this.onchainProvider.getCoins(address);
-            const utxos = coins.map((utxo) => extendCoinWithTapscript(tapscript, utxo));
-            // Save boarding inputs using unified repository, keyed by the
-            // address the UTXOs actually sit on.
-            await this.walletRepository.saveUtxos(address, utxos);
-            groups.push({
-                tapscript,
-                // Normalize so the group key matches the axis/contract x-only
-                // form regardless of how the tapscript's key was stored.
-                serverPubKey: toXOnlySignerHex(hex.encode(tapscript.options.serverPubKey)),
-                // Per-row CSV delay decoded from THIS tapscript's exit leaf —
-                // not the wallet's current boarding timelock, which a signer
-                // rotation may have changed.
-                csvTimelock: CSVMultisigTapscript.decode(hex.decode(tapscript.exitScript)).params
-                    .timelock,
-                coins: utxos,
-            });
-        }
-        return groups;
+        // One round trip per address, in parallel: rotated boarding addresses
+        // accumulate, and a sequential loop made every extra one cost the whole
+        // fetch again on the wallet's init path. `Promise.all` keeps the group
+        // order, so the flatten below is unchanged.
+        return Promise.all(
+            tapscripts.map(async (tapscript) => {
+                const address = tapscript.onchainAddress(this.network);
+                const coins = await this.onchainProvider.getCoins(address);
+                const utxos = coins.map((utxo) => extendCoinWithTapscript(tapscript, utxo));
+                // Save boarding inputs using unified repository, keyed by the
+                // address the UTXOs actually sit on.
+                await this.walletRepository.saveUtxos(address, utxos);
+                return {
+                    tapscript,
+                    // Normalize so the group key matches the axis/contract x-only
+                    // form regardless of how the tapscript's key was stored.
+                    serverPubKey: toXOnlySignerHex(hex.encode(tapscript.options.serverPubKey)),
+                    // Per-row CSV delay decoded from THIS tapscript's exit leaf —
+                    // not the wallet's current boarding timelock, which a signer
+                    // rotation may have changed.
+                    csvTimelock: CSVMultisigTapscript.decode(hex.decode(tapscript.exitScript))
+                        .params.timelock,
+                    coins: utxos,
+                };
+            }),
+        );
     }
 
     /**
@@ -1799,6 +1830,29 @@ export class ReadonlyWallet implements IReadonlyWallet {
         ]);
         const groups = await this.getBoardingUtxosForSigners(currentOnly);
         return groups.flatMap((g) => g.coins);
+    }
+
+    /**
+     * The onchain boarding inputs the repository already holds, for the current
+     * signer's addresses. No onchain round trip.
+     *
+     * The onchain watcher reports new deposits as events but does not persist
+     * them, so a fetch is what makes these rows current — {@link getBoardingUtxos}
+     * is that fetch. A caller that has just run one (the worker's cached-data
+     * refresh does, on init and reload) can read from here instead of asking the
+     * provider for an answer it already has on disk.
+     */
+    async getStoredBoardingUtxos(): Promise<ExtendedCoin[]> {
+        const currentOnly = new Set([
+            toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
+        ]);
+        const tapscripts = await this.getBoardingTapscripts(currentOnly);
+        const perAddress = await Promise.all(
+            tapscripts.map((tapscript) =>
+                this.walletRepository.getUtxos(tapscript.onchainAddress(this.network)),
+            ),
+        );
+        return perAddress.flat();
     }
 
     /**

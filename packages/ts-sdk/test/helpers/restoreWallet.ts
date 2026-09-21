@@ -289,6 +289,22 @@ export interface HdRestoreWalletHandle extends RestoreWalletHandle {
 }
 
 /**
+ * Wait for the wallet's contract manager to finish its off-critical-path boot
+ * (look-ahead drain, boot sync, watcher start).
+ *
+ * Construction no longer waits on the indexer, so a test that asserts on what a
+ * boot wrote — promoted rows, subscription contents, saved VTXOs — has to call
+ * this first. Constructs the manager if the wallet has not built one yet, which
+ * is what the first read would have done anyway.
+ */
+export async function awaitWalletBooted(wallet: {
+    getContractManager(): Promise<{ whenBooted?(): Promise<void> }>;
+}): Promise<void> {
+    const manager = await wallet.getContractManager();
+    await manager.whenBooted?.();
+}
+
+/**
  * Build an HD-mode wallet on the standard test mnemonic. Returns the
  * resolved {@link HDDescriptorProvider} (the wallet's private
  * `_descriptorProvider`) so a test can drive
