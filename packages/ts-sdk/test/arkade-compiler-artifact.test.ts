@@ -174,7 +174,7 @@ describe("reading an arkadec artifact", () => {
     it("keeps every leaf in a multi-leaf covenant group", () => {
         const multiLeaf: ContractArtifact = {
             contractName: "MultiLeaf",
-            constructorInputs: [{ name: "owner", type: "pubkey" }],
+            constructorInputs: [],
             functions: [
                 {
                     name: "spend",
@@ -185,13 +185,13 @@ describe("reading an arkadec artifact", () => {
                             name: "fallback",
                             witness: [
                                 { name: "serverSig", type: "signature", injected: true },
-                                { name: "ownerSig", type: "signature" },
                                 { name: "emulatorSig", type: "signature", injected: true },
                             ],
                             asm: [
+                                "10",
+                                "OP_CHECKSEQUENCEVERIFY",
+                                "OP_DROP",
                                 "<SERVER_KEY>",
-                                "OP_CHECKSIGVERIFY",
-                                "<owner>",
                                 "OP_CHECKSIGVERIFY",
                                 "<EMULATOR_KEY:spend>",
                                 "OP_CHECKSIG",
@@ -207,11 +207,15 @@ describe("reading an arkadec artifact", () => {
 
         const script = new ArkadeProgramScript(
             program,
-            { owner: key(0x07), server: SERVER_KEY },
+            { server: SERVER_KEY },
             { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY },
         );
         expect(script.compiled).toHaveLength(2);
         expect(script.compiled[0].arkadeScript).toEqual(script.compiled[1].arkadeScript);
+        expect(program.functions["spend/1:fallback"].tapscript.csv).toEqual({
+            type: "blocks",
+            value: 10n,
+        });
     });
 
     it("reads hash conditions and their witness", () => {
