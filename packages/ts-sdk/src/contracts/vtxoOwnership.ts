@@ -126,6 +126,41 @@ export function resetRecordedSpends(repo: WalletRepository): void {
     recordedSpends.delete(repo);
 }
 
+/**
+ * One write chain per repository: the read-modify-write half of the guard.
+ *
+ * {@link applyRecordedSpends} consults the registry and then hands the result
+ * to an async write, so a spend registered in between is invisible to the rows
+ * that write commits — a poll's batch, read before a send registered, can still
+ * land after it and undo the spend. Both writers are in this thread and both
+ * write through {@link inVtxoWriteOrder}, so ordering the section that guards
+ * and writes is enough: whichever section runs second reads the first's
+ * registrations.
+ *
+ * Keyed by repository, so this bounds nothing across processes or across a
+ * second wallet holding the same storage — like the registry, those have no
+ * record to clobber.
+ */
+const writeChains = new WeakMap<WalletRepository, Promise<unknown>>();
+
+/**
+ * Run `fn` after every write already queued for `repo`, and let the next one
+ * queue behind it. `fn` must not call this again for the same repository: it
+ * would wait on the chain it is part of.
+ */
+export function inVtxoWriteOrder<T>(repo: WalletRepository, fn: () => Promise<T>): Promise<T> {
+    const prev = writeChains.get(repo) ?? Promise.resolve();
+    // No await between get and set, so the enqueue is atomic.
+    const run = prev.then(fn, fn);
+    // Kept alive regardless of this run's outcome, so one failed write cannot
+    // wedge every later one.
+    writeChains.set(
+        repo,
+        run.catch(() => {}),
+    );
+    return run;
+}
+
 export function applyRecordedSpends(
     repo: WalletRepository,
     vtxos: ExtendedVirtualCoin[],
@@ -171,13 +206,17 @@ export async function saveVtxosForContract(
     contract: Pick<Contract, "script" | "address">,
     vtxos: ExtendedVirtualCoin[],
 ): Promise<void> {
-    const rows = applyRecordedSpends(repo, vtxos);
-    if (repo.saveVtxosForScript) {
-        return repo.saveVtxosForScript(
-            { script: contract.script, address: contract.address },
-            rows,
-        );
-    }
-    validateVtxosForScript(rows, contract.script, "saveVtxosForContract");
-    return repo.saveVtxos(contract.address, rows);
+    return inVtxoWriteOrder(repo, async () => {
+        // Inside the ordered section: a spend registered by the write this one
+        // is queued behind is already in the registry when the guard reads it.
+        const rows = applyRecordedSpends(repo, vtxos);
+        if (repo.saveVtxosForScript) {
+            return repo.saveVtxosForScript(
+                { script: contract.script, address: contract.address },
+                rows,
+            );
+        }
+        validateVtxosForScript(rows, contract.script, "saveVtxosForContract");
+        return repo.saveVtxos(contract.address, rows);
+    });
 }
