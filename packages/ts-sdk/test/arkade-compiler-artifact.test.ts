@@ -156,25 +156,4 @@ describe("reading an arkadec artifact", () => {
         };
         expect(() => programFromArtifact(unknown)).toThrow(/not in this SDK's table/);
     });
-
-    it("refuses a second emulator tweak", () => {
-        const leaf = group("unilateral").leaves[0];
-        const tweaked: ContractArtifact = {
-            ...artifact,
-            functions: [
-                {
-                    name: "unilateral",
-                    leaves: [
-                        {
-                            ...leaf,
-                            asm: leaf.asm.map((t) =>
-                                t === "<partyAPk>" ? "<TWEAK:agentPk:complete>" : t,
-                            ),
-                        },
-                    ],
-                },
-            ],
-        };
-        expect(() => programFromArtifact(tweaked)).toThrow(/second-emulator tweaks are not read/);
-    });
 });

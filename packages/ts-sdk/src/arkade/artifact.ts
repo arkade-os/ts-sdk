@@ -261,8 +261,6 @@ function parseLeaf(
         const inner = key.slice(1, -1);
         if (inner === "SERVER_KEY") {
             signers.push(`$${SERVER_PARAM}`);
-        } else if (inner.startsWith("TWEAK:")) {
-            throw new Error(`leaf '${leaf.name}': second-emulator tweaks are not read by this SDK`);
         } else if (inner.startsWith("EMULATOR_KEY:")) {
             if (!hasCovenant) {
                 throw new Error(
