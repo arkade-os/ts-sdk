@@ -508,7 +508,7 @@ export function parseArtifact(artifact: {
     version?: number;
     name?: string;
     params?: readonly InputRef[];
-    functions: Record<string, any>;
+    functions: unknown;
 }): Program {
     // An arkadec ContractJson would otherwise parse into a program whose
     // functions are named "0", "1", "2" — accepted by validateProgram and
@@ -529,7 +529,7 @@ export function parseArtifact(artifact: {
         typeof v === "string" && v.startsWith("$") ? v : BigInt(v as string | number);
 
     const functions: Record<string, ArkadeFunction> = {};
-    for (const [name, fn] of Object.entries(artifact.functions)) {
+    for (const [name, fn] of Object.entries(artifact.functions as Record<string, any>)) {
         const tap = fn.tapscript ?? {};
         const tapscript: TapscriptSegment = {
             signers: (tap.signers ?? []).map(hexToken),

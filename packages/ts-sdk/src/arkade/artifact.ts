@@ -74,6 +74,17 @@ export interface ContractArtifact {
 /** The SDK binds a parameter with this name to the Arkade Service key. */
 const SERVER_PARAM = "server";
 
+const BUILTIN_TYPES = new Set([
+    "pubkey",
+    "signature",
+    "bytes",
+    "bytes20",
+    "bytes32",
+    "int",
+    "bool",
+    "asset",
+]);
+
 /** Native result structs, in the field order the compiler flattens them. */
 const NATIVE_STRUCTS: Record<string, [string, string][]> = {
     AssetId: [
@@ -85,17 +96,90 @@ const NATIVE_STRUCTS: Record<string, [string, string][]> = {
         ["vout", "int"],
     ],
     ECPoint: [
-        ["x", "bytes32"],
-        ["y", "bytes32"],
+        ["x", "int"],
+        ["y", "int"],
     ],
 };
 
-/** `true` when the value looks like the compiler's artifact rather than a Program. */
+const SOURCE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isParameter(value: unknown): value is ArtifactParameter {
+    return (
+        isRecord(value) &&
+        typeof value.name === "string" &&
+        SOURCE_IDENTIFIER.test(value.name) &&
+        typeof value.type === "string" &&
+        value.type.length > 0
+    );
+}
+
+function isStringArray(value: unknown): value is string[] {
+    return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isWitnessElement(value: unknown): value is ArtifactWitnessElement {
+    return isParameter(value) && (!("injected" in value) || typeof value.injected === "boolean");
+}
+
+function isLeaf(value: unknown): value is ArtifactLeaf {
+    return (
+        isRecord(value) &&
+        typeof value.name === "string" &&
+        SOURCE_IDENTIFIER.test(value.name) &&
+        (value.witness === undefined ||
+            (Array.isArray(value.witness) && value.witness.every(isWitnessElement))) &&
+        isStringArray(value.asm)
+    );
+}
+
+function isCovenant(value: unknown): value is ArtifactCovenant {
+    return (
+        isRecord(value) &&
+        Array.isArray(value.inputs) &&
+        value.inputs.every(isParameter) &&
+        isStringArray(value.asm)
+    );
+}
+
+function isGroup(value: unknown): value is ArtifactGroup {
+    return (
+        isRecord(value) &&
+        typeof value.name === "string" &&
+        SOURCE_IDENTIFIER.test(value.name) &&
+        (value.arkade === undefined || isCovenant(value.arkade)) &&
+        Array.isArray(value.leaves) &&
+        value.leaves.length > 0 &&
+        value.leaves.every(isLeaf)
+    );
+}
+
+function isStruct(value: unknown): value is ArtifactStruct {
+    return (
+        isRecord(value) &&
+        typeof value.name === "string" &&
+        SOURCE_IDENTIFIER.test(value.name) &&
+        Array.isArray(value.fields) &&
+        value.fields.every(isParameter)
+    );
+}
+
+/** `true` when the complete value is a compiler artifact rather than a Program. */
 export function isContractArtifact(value: unknown): value is ContractArtifact {
     return (
-        typeof value === "object" &&
-        value !== null &&
-        Array.isArray((value as ContractArtifact).functions)
+        isRecord(value) &&
+        typeof value.contractName === "string" &&
+        SOURCE_IDENTIFIER.test(value.contractName) &&
+        Array.isArray(value.constructorInputs) &&
+        value.constructorInputs.every(isParameter) &&
+        (value.structs === undefined ||
+            (Array.isArray(value.structs) && value.structs.every(isStruct))) &&
+        Array.isArray(value.functions) &&
+        value.functions.length > 0 &&
+        value.functions.every(isGroup)
     );
 }
 
@@ -130,7 +214,11 @@ function arrayParts(type: string): [string, number] {
  * Expand one declared entry into the scalar leaves the assembly and witness
  * stack carry, using the dotted paths the artifact's placeholders use.
  */
-function flatten(param: ArtifactParameter, structs: ArtifactStruct[]): InputDef[] {
+function flatten(
+    param: ArtifactParameter,
+    structs: ArtifactStruct[],
+    stack: string[] = [],
+): InputDef[] {
     const native = NATIVE_STRUCTS[param.type];
     if (native) {
         return native.map(([field, type]) => ({
@@ -141,13 +229,35 @@ function flatten(param: ArtifactParameter, structs: ArtifactStruct[]): InputDef[
 
     const declared = structs.find((s) => s.name === param.type);
     if (declared) {
+        if (stack.includes(param.type)) {
+            throw new Error(`programFromArtifact: recursive struct layout '${param.type}'`);
+        }
         return declared.fields.flatMap((field) =>
-            flatten({ name: `${param.name}.${field.name}`, type: field.type }, structs),
+            flatten({ name: `${param.name}.${field.name}`, type: field.type }, structs, [
+                ...stack,
+                param.type,
+            ]),
         );
     }
 
     const [element, length] = arrayParts(param.type);
-    if (length === 0) return [{ name: param.name, type: argType(param.type) }];
+    if (length === 0) {
+        if (param.type.includes("[") || param.type.includes("]")) {
+            throw new Error(`programFromArtifact: invalid array type '${param.type}'`);
+        }
+        if (!BUILTIN_TYPES.has(param.type)) {
+            throw new Error(`programFromArtifact: unknown type '${param.type}'`);
+        }
+        return [{ name: param.name, type: argType(param.type) }];
+    }
+    if (NATIVE_STRUCTS[element] || structs.some((s) => s.name === element)) {
+        throw new Error(
+            `programFromArtifact: arrays of structs are not supported: '${param.type}'`,
+        );
+    }
+    if (!BUILTIN_TYPES.has(element)) {
+        throw new Error(`programFromArtifact: unknown array element type '${element}'`);
+    }
     return Array.from({ length }, (_, index) => ({
         name: `${param.name}.${index}`,
         type: argType(element),
@@ -313,50 +423,57 @@ function parseLeaf(
 export function programFromArtifact(artifact: ContractArtifact): Program {
     if (!isContractArtifact(artifact)) {
         throw new Error(
-            "programFromArtifact: expected an arkadec artifact with a `functions` array",
+            "programFromArtifact: expected a complete arkadec artifact with contractName, constructorInputs, and non-empty functions",
         );
     }
     const structs = artifact.structs ?? [];
+    const structNames = new Set<string>();
+    for (const struct of structs) {
+        if (structNames.has(struct.name)) {
+            throw new Error(`programFromArtifact: duplicate struct '${struct.name}'`);
+        }
+        structNames.add(struct.name);
+    }
     const instantiations = new Map<string, string>();
     const functions: Record<string, ArkadeFunction> = {};
+    const groups = new Set<string>();
 
     for (const group of artifact.functions) {
-        if (group.name in functions) {
+        if (groups.has(group.name)) {
             throw new Error(`programFromArtifact: duplicate spend group '${group.name}'`);
         }
-        if (group.leaves.length !== 1) {
-            throw new Error(
-                `programFromArtifact: group '${group.name}' has ${group.leaves.length} leaves; one tapscript per function is supported`,
-            );
-        }
-        const leaf = group.leaves[0];
-        const tapscript = parseLeaf(leaf, group.arkade !== undefined, instantiations);
+        groups.add(group.name);
 
         const covenantInputs = (group.arkade?.inputs ?? []).flatMap((input) =>
             flatten(input, structs),
         );
-        const inputs: InputDef[] = [
-            ...covenantInputs,
-            ...(leaf.witness ?? [])
-                .filter((item) => !item.injected && item.type !== "signature")
-                .map((item) => ({ name: item.name, type: argType(item.type) })),
-        ];
+        const arkadeScript = group.arkade
+            ? {
+                  asm: group.arkade.asm.map((token) => asmToken(token, instantiations)),
+                  // Covenant witness is reverse declaration order.
+                  witness: covenantInputs.map((field) => field.name as WitnessRef).reverse(),
+              }
+            : undefined;
 
-        functions[group.name] = {
-            ...(inputs.length > 0 ? { inputs } : {}),
-            tapscript,
-            ...(group.arkade
-                ? {
-                      arkadeScript: {
-                          asm: group.arkade.asm.map((token) => asmToken(token, instantiations)),
-                          // Covenant witness is reverse declaration order.
-                          witness: covenantInputs
-                              .map((field) => field.name as WitnessRef)
-                              .reverse(),
-                      },
-                  }
-                : {}),
-        };
+        for (const [index, leaf] of group.leaves.entries()) {
+            const name = index === 0 ? group.name : `${group.name}/${index}:${leaf.name}`;
+            if (name in functions) {
+                throw new Error(`programFromArtifact: duplicate function name '${name}'`);
+            }
+            const tapscript = parseLeaf(leaf, group.arkade !== undefined, instantiations);
+            const inputs: InputDef[] = [
+                ...covenantInputs,
+                ...(leaf.witness ?? [])
+                    .filter((item) => !item.injected && item.type !== "signature")
+                    .map((item) => ({ name: item.name, type: argType(item.type) })),
+            ];
+
+            functions[name] = {
+                ...(inputs.length > 0 ? { inputs } : {}),
+                tapscript,
+                ...(arkadeScript ? { arkadeScript } : {}),
+            };
+        }
     }
 
     const params: InputDef[] = [
@@ -364,6 +481,13 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
         { name: SERVER_PARAM, type: "pubkey" },
         ...[...instantiations.keys()].map((name) => ({ name, type: "hash" as const })),
     ];
+    const paramNames = new Set<string>();
+    for (const param of params) {
+        if (paramNames.has(param.name)) {
+            throw new Error(`programFromArtifact: duplicate program parameter '${param.name}'`);
+        }
+        paramNames.add(param.name);
+    }
 
     return {
         version: SUPPORTED_PROGRAM_VERSION,
