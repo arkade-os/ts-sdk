@@ -925,8 +925,8 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseRestoreWallet
     );
 
-/** What a generation counter covers: a subscription field, or the request stream. */
-type Scope = "incomingFunds" | "contractEvents" | "request";
+/** What a generation counter covers: a subscription field, a derived cache, or the request stream. */
+type Scope = "incomingFunds" | "contractEvents" | "boarding" | "request";
 
 /**
  * Bound to the generation live when it was created. Re-check `stale` after
@@ -959,9 +959,19 @@ export class WalletMessageHandler
     // `onWalletInitialized` re-subscribes incoming funds while
     // `ensureContractEventBroadcasting` deliberately keeps its subscription, so
     // a shared bump would leave the live contract-event emitter permanently
-    // stale, and folding requests in would truncate an in-flight settle.
+    // stale, folding requests in would truncate an in-flight settle, and
+    // sharing with boarding would kill every lazy refresh (see `boardingEpoch`).
     private incomingFundsEpoch = 0;
     private contractEventsEpoch = 0;
+    /**
+     * Bumped where the boarding rows are re-derived from nothing: teardown, a
+     * wipe, and a re-init. Its own counter rather than `incomingFundsEpoch`,
+     * which is bumped mid-init when the funds subscription is replaced — that
+     * lands *after* the lazy boarding refresh has started, so sharing it would
+     * mark every in-flight refresh stale and its result would never be
+     * reported.
+     */
+    private boardingEpoch = 0;
     /** Per-request progress callbacks: ends with the handler, not with a re-init. */
     private requestEpoch = 0;
 
@@ -994,6 +1004,7 @@ export class WalletMessageHandler
         this.requestEpoch++;
         this.incomingFundsEpoch++;
         this.contractEventsEpoch++;
+        this.boardingEpoch++;
         this.channel = undefined;
         this.onNextTick = [];
 
@@ -1048,6 +1059,8 @@ export class WalletMessageHandler
                 return this.incomingFundsEpoch;
             case "contractEvents":
                 return this.contractEventsEpoch;
+            case "boarding":
+                return this.boardingEpoch;
             case "request":
                 return this.requestEpoch;
             default: {
@@ -1209,7 +1222,14 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_BOARDING_UTXOS": {
-                    const utxos = await this.getAllBoardingUtxos();
+                    if (!this.readonlyWallet) {
+                        throw new WalletNotInitializedError();
+                    }
+                    // An explicit request is a request for the provider's
+                    // answer: the settle path selects its funding inputs off
+                    // this, and a stored row the operator has already swept is
+                    // a rejection, not a slow read.
+                    const utxos = await this.readonlyWallet.getBoardingUtxos();
                     return this.tagged({
                         id,
                         type: "BOARDING_UTXOS",
@@ -1704,6 +1724,9 @@ export class WalletMessageHandler
     private async handleInitWallet({ payload }: RequestInitWallet) {
         const { arkServerUrl } = payload;
         this.lazyBoardingInit = payload.lazyBoarding ?? false;
+        // A new session's boarding rows are not the previous one's: drop any
+        // refresh still running from before this call.
+        this.boardingEpoch++;
         this.boardingLoaded = false;
         this.indexerProvider = new RestIndexerProvider(arkServerUrl);
         await this.onWalletInitialized();
@@ -1724,7 +1747,7 @@ export class WalletMessageHandler
      */
     private async handleGetBalance(): Promise<WalletBalance> {
         const [boardingUtxos, { snapshot, vtxos: allVtxos }] = await Promise.all([
-            this.getAllBoardingUtxos(),
+            this.getBoardingUtxosForBalance(),
             this.repoSnapshot(),
         ]);
         // Both exclusion sets come off that one snapshot, so they answer about
@@ -1779,7 +1802,13 @@ export class WalletMessageHandler
             availableAssets: offchain.availableAssets,
         };
     }
-    private async getAllBoardingUtxos(): Promise<ExtendedCoin[]> {
+    /**
+     * The boarding rows this wallet already holds, for the balance read. No
+     * onchain round trip: `boarding.loaded` on {@link WalletBalance} is what
+     * tells a caller these are not known yet, so a poll never pays for a fetch
+     * it did not ask for. {@link RequestGetBoardingUtxos} is the live read.
+     */
+    private async getBoardingUtxosForBalance(): Promise<ExtendedCoin[]> {
         if (!this.readonlyWallet) return [];
         // The cached-data refresh fetched and saved these on init and reload, so
         // asking the onchain provider again here is a round trip for an answer
@@ -1955,9 +1984,13 @@ export class WalletMessageHandler
     }
 
     /**
-     * Refresh virtual outputs, boarding inputs, and transaction history from cache.
-     * Shared by onWalletInitialized (full bootstrap) and reloadWallet
-     * (post-refresh), avoiding duplicate subscriptions and VtxoManager restarts.
+     * Refresh boarding inputs and transaction history. The virtual outputs come
+     * from the contract manager, which runs before this. Shared by
+     * onWalletInitialized (full bootstrap) and reloadWallet (post-refresh),
+     * avoiding duplicate subscriptions and VtxoManager restarts.
+     *
+     * Both legs reach the onchain provider, so `lazyBoarding` moves them both
+     * off the caller's path. @see RequestInitWallet.payload.lazyBoarding
      */
     private async refreshCachedData(opts?: { lazyBoarding?: boolean }) {
         if (!this.readonlyWallet || !this.walletRepository) {
@@ -1965,35 +1998,47 @@ export class WalletMessageHandler
         }
 
         if (opts?.lazyBoarding) {
-            // Off the INIT_WALLET path: the onchain fetch is the last thing
-            // start-up waits on, and `boarding.loaded` exists so a balance read
-            // can say "not known yet" instead of holding the whole start-up.
-            // The emitter carries the incoming-funds generation, so a clear() or
-            // re-init drops the result rather than flagging a wallet that is gone.
-            const emitter = this.newEmitter("incomingFunds");
-            void this.refreshBoardingCache()
-                .then(async () => {
-                    if (emitter.stale) return;
-                    this.boardingLoaded = true;
-                    const coins = (await this.readonlyWallet?.getStoredBoardingUtxos?.()) ?? [];
-                    // The same signal a live deposit sends, so a client re-reads.
-                    emitter.emit(
-                        this.tagged({
-                            type: "UTXO_UPDATE",
-                            broadcast: true,
-                            payload: { coins },
-                        }),
-                    );
-                })
-                .catch((error) => {
-                    console.warn("[wallet] boarding refresh failed", error);
-                });
-        } else {
-            await this.refreshBoardingCache();
-            this.boardingLoaded = true;
+            // Off the INIT_WALLET path. Both halves reach the onchain provider —
+            // the boarding fetch directly, the history build through
+            // `getBoardingTxs` — so the whole refresh is one background task and
+            // nothing below this line is awaited. `boarding.loaded` is how a
+            // balance read says "not known yet" instead of holding start-up; a
+            // failure anywhere in the task leaves it false, and the next reload
+            // re-runs it.
+            const emitter = this.newEmitter("boarding");
+            void (async () => {
+                await this.refreshBoardingCache();
+                if (emitter.stale) return;
+                this.boardingLoaded = true;
+                const coins = (await this.readonlyWallet?.getStoredBoardingUtxos?.()) ?? [];
+                // The same signal a live deposit sends, so a client re-reads.
+                emitter.emit(
+                    this.tagged({
+                        type: "UTXO_UPDATE",
+                        broadcast: true,
+                        payload: { coins },
+                    }),
+                );
+                // Behind the boarding signal, which does not depend on it.
+                await this.refreshHistoryCache();
+            })().catch((error) => {
+                console.warn("[wallet] background refresh failed", error);
+            });
+            return;
         }
 
-        // Build transaction history from cached virtual outputs (no indexer call)
+        await this.refreshBoardingCache();
+        this.boardingLoaded = true;
+        await this.refreshHistoryCache();
+    }
+
+    /**
+     * Save the history view over the repository snapshot and the boarding
+     * transactions `getBoardingTxs` reads from the onchain provider. Split out
+     * of {@link refreshCachedData} so the lazy bootstrap can defer it.
+     */
+    private async refreshHistoryCache(): Promise<void> {
+        if (!this.readonlyWallet || !this.walletRepository) return;
         const address = await this.readonlyWallet.getAddress();
         const txs = await this.buildTransactionHistoryFromCache();
         if (txs) await this.walletRepository.saveTransactions(address, txs);
@@ -2174,6 +2219,7 @@ export class WalletMessageHandler
         this.requestEpoch++;
         this.incomingFundsEpoch++;
         this.contractEventsEpoch++;
+        this.boardingEpoch++;
         // The rows this flag describes may be the ones about to be wiped.
         this.boardingLoaded = false;
         this.onNextTick = [];

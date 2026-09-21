@@ -1036,15 +1036,22 @@ export class ContractManager implements IContractManager {
         // the whole catch-up rather than just the one call the delta sync makes.
         this.syncsInFlight++;
         try {
+            // Carried across the phases: `markSyncOnline` resets the reason, so
+            // clearing it after a later success would erase an earlier failure
+            // and report `online` while the look-ahead band is still behind the
+            // watermark — the state a caller watches to know that externally
+            // issued addresses may not be registered yet.
+            let phaseFailed = false;
             try {
                 await this.scheduleLookAheadDrain();
             } catch (err) {
+                phaseFailed = true;
                 this.reportBootFailure("look-ahead drain", err);
             }
 
             try {
                 await this.reconcileWatched();
-                this.markSyncOnline();
+                if (!phaseFailed) this.markSyncOnline();
             } catch (err) {
                 this.reportBootFailure("boot sync", err);
             }

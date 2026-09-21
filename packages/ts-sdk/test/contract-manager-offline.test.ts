@@ -7,6 +7,7 @@ import {
     type IndexerProvider,
 } from "../src";
 import type { Contract } from "../src/contracts";
+import type { LookAheadConfig } from "../src/contracts/contractManager";
 import {
     createMockIndexerProvider,
     createDefaultContractParams,
@@ -40,12 +41,14 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         indexer: IndexerProvider,
         contractRepository: InMemoryContractRepository,
         walletRepository: InMemoryWalletRepository,
+        lookAhead?: LookAheadConfig,
     ) =>
         ContractManager.create({
             indexerProvider: indexer,
             contractRepository,
             walletRepository,
             watcherConfig,
+            ...(lookAhead ? { lookAhead } : {}),
         }).then(track);
 
     const seededContract = (): Contract => ({
@@ -97,6 +100,35 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         const state = m.getSyncState();
         expect(state.mode).toBe("degraded");
         expect(state.mode === "degraded" ? state.reason : "").toContain("schema violation");
+    });
+
+    it("keeps a look-ahead failure across a successful boot reconcile", async () => {
+        const contractRepo = new InMemoryContractRepository();
+        await contractRepo.saveContract(seededContract());
+        const indexer = createMockIndexerProvider(); // the boot reconcile succeeds
+
+        // The drain is first, the reconcile after it succeeds, and
+        // `markSyncOnline` resets the reason — so without carrying the earlier
+        // failure forward the manager reports `online` with the watch band
+        // still behind the watermark, i.e. externally issued addresses that
+        // were never registered or caught up.
+        const m = await create(indexer, contractRepo, new InMemoryWalletRepository(), {
+            size: 1,
+            currentWatermark: async () => {
+                throw new ProviderUnavailableError("look-ahead unavailable");
+            },
+            materialize: (index) => `descriptor-${index}`,
+            candidateDeps: () => ({
+                network: { hrp: "tark" },
+                serverPubKey: new Uint8Array(32),
+                csvTimelocks: [],
+            }),
+        });
+
+        await m.whenBooted();
+        const state = m.getSyncState();
+        expect(state.mode).toBe("degraded");
+        expect(state.mode === "degraded" ? state.reason : "").toContain("look-ahead unavailable");
     });
 
     it("getContractsWithVtxos serves repository state on a retryable sync failure", async () => {

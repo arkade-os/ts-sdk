@@ -288,16 +288,22 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
-    it("handles GET_BOARDING_UTXOS messages", async () => {
-        (updater as any).readonlyWallet = {};
+    it("handles GET_BOARDING_UTXOS messages by asking the provider", async () => {
         const utxos = [{ txid: "tx", vout: 0, value: 1, status: { confirmed: true } }];
-        (updater as any).getAllBoardingUtxos = vi.fn().mockResolvedValue(utxos);
+        const getBoardingUtxos = vi.fn().mockResolvedValue(utxos);
+        const getStoredBoardingUtxos = vi.fn().mockResolvedValue([]);
+        (updater as any).readonlyWallet = { getBoardingUtxos, getStoredBoardingUtxos };
 
         const response = await updater.handleMessage({
             ...baseMessage(),
             type: "GET_BOARDING_UTXOS",
         } as any);
 
+        // An explicit request is answered from the provider: the settle path
+        // selects funding inputs off this, and a stored row the operator has
+        // already swept is a rejection rather than a slower read.
+        expect(getBoardingUtxos).toHaveBeenCalled();
+        expect(getStoredBoardingUtxos).not.toHaveBeenCalled();
         expect(response).toMatchObject({
             tag: updater.messageTag,
             type: "BOARDING_UTXOS",
@@ -2306,7 +2312,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         }
     };
 
-    it("lazyBoarding hands the onchain fetch to the background", async () => {
+    it("lazyBoarding hands both onchain legs to the background", async () => {
         setupHandler();
         const rw = (updater as any).readonlyWallet;
         const boardUtxo = {
@@ -2319,25 +2325,96 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const gate = new Promise<void>((resolve) => {
             release = resolve;
         });
+        let releaseHistory!: () => void;
+        const historyGate = new Promise<void>((resolve) => {
+            releaseHistory = resolve;
+        });
         rw.getBoardingAddresses = vi.fn().mockResolvedValue(["boarding-address"]);
         rw.getBoardingUtxos = vi.fn().mockImplementation(async () => {
             await gate;
             return [boardUtxo];
         });
+        // The history build reads the same provider through getBoardingTxs, so
+        // it has to be off the awaited path too, not just the boarding fetch.
+        rw.getBoardingTxs = vi.fn().mockImplementation(async () => {
+            await historyGate;
+            return { boardingTxs: [], commitmentsToIgnore: new Set<string>() };
+        });
         rw.getStoredBoardingUtxos = vi.fn().mockResolvedValue([boardUtxo]);
 
         // Returns with the onchain fetch still parked: that is the whole point.
         await (updater as any).refreshCachedData({ lazyBoarding: true });
+        expect(rw.getBoardingTxs).not.toHaveBeenCalled();
         expect((updater as any).boardingLoaded).toBe(false);
         const before = await (updater as any).handleGetBalance();
         expect(before.boarding.loaded).toBe(false);
 
         release();
         await until(() => (updater as any).boardingLoaded === true);
+        // The history leg only starts behind the boarding signal, and does not
+        // hold it back.
+        await until(() => rw.getBoardingTxs.mock.calls.length > 0);
 
         const after = await (updater as any).handleGetBalance();
         expect(after.boarding.loaded).toBe(true);
         expect(after.boarding.total).toBe(7_000);
+
+        releaseHistory();
+    });
+
+    it("INIT_WALLET with lazyBoarding resolves with both onchain legs parked", async () => {
+        setupHandler();
+        const rw = (updater as any).readonlyWallet;
+        const boardUtxo = {
+            txid: "bb".repeat(32),
+            vout: 0,
+            value: 7_000,
+            status: { confirmed: true, block_height: 1, block_hash: "cc", block_time: 1 },
+        };
+        let releaseBoarding!: () => void;
+        const boardingGate = new Promise<void>((resolve) => {
+            releaseBoarding = resolve;
+        });
+        let releaseHistory!: () => void;
+        const historyGate = new Promise<void>((resolve) => {
+            releaseHistory = resolve;
+        });
+        rw.getBoardingAddresses = vi.fn().mockResolvedValue(["boarding-address"]);
+        rw.getBoardingUtxos = vi.fn().mockImplementation(async () => {
+            await boardingGate;
+            return [boardUtxo];
+        });
+        rw.getBoardingTxs = vi.fn().mockImplementation(async () => {
+            await historyGate;
+            return { boardingTxs: [], commitmentsToIgnore: new Set<string>() };
+        });
+        rw.getStoredBoardingUtxos = vi.fn().mockResolvedValue([boardUtxo]);
+
+        const broadcasts: any[] = [];
+        (updater as any).channel = { broadcast: (response: any) => broadcasts.push(response) };
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue({}),
+            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
+        };
+
+        await updater.handleMessage({
+            ...baseMessage(),
+            type: "INIT_WALLET",
+            payload: { arkServerUrl: "http://localhost:7070", lazyBoarding: true },
+        } as any);
+
+        // What INIT_WALLET returned on is not parked on the explorer.
+        expect(rw.getBoardingTxs).not.toHaveBeenCalled();
+        expect((updater as any).boardingLoaded).toBe(false);
+
+        releaseBoarding();
+        // Init replaces the incoming-funds subscription part-way through, which
+        // is where a refresh bound to that epoch would go permanently stale and
+        // never report the boarding rows it fetched.
+        await until(() => (updater as any).boardingLoaded === true);
+        expect(broadcasts.some((response) => response?.type === "UTXO_UPDATE")).toBe(true);
+
+        releaseHistory();
     });
 
     it("RELOAD_WALLET forces refreshVtxos before reading from repo", async () => {
