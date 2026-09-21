@@ -109,11 +109,12 @@ describe("Common", () => {
                 execCommand(
                     `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`,
                 );
+                await waitFor(async () => (await alice.wallet.getVtxos()).length > 0);
+
                 execCommand(
                     `${arkdExec} ark send --to ${bobOffchainAddress} --amount ${fundAmount} --password secret`,
                 );
-
-                await new Promise((resolve) => setTimeout(resolve, 1000));
+                await waitFor(async () => (await bob.wallet.getVtxos()).length > 0);
 
                 const virtualCoins = await alice.wallet.getVtxos();
                 expect(virtualCoins).toHaveLength(1);
@@ -1288,16 +1289,21 @@ describe("Delegate Lifecycle", () => {
         expect(txid2).toBeDefined();
 
         // Verify delegate VTXOs were spent
-        const contractsAfter = await manager2.getContractsWithVtxos({
-            type: ["delegate"],
+        // arkd commits the spend to its indexer after FinalizeTx returns.
+        let spentDelegateOutpoints: typeof delegateVtxosBefore = [];
+        await waitFor(async () => {
+            const contractsAfter = await manager2.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosAfter = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
+            spentDelegateOutpoints = delegateVtxosBefore.filter(
+                (before) =>
+                    !delegateVtxosAfter.some(
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
+            );
+            return spentDelegateOutpoints.length > 0;
         });
-        const delegateVtxosAfter = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
-        const spentDelegateOutpoints = delegateVtxosBefore.filter(
-            (before) =>
-                !delegateVtxosAfter.some(
-                    (after) => after.txid === before.txid && after.vout === before.vout,
-                ),
-        );
         expect(spentDelegateOutpoints.length).toBeGreaterThan(0);
 
         // Phase 3 — Remove delegate
@@ -1315,19 +1321,27 @@ describe("Delegate Lifecycle", () => {
         const contracts3 = await manager3.getContracts();
         expect(contracts3.length).toBeGreaterThanOrEqual(2);
 
+        const unspentOf = async (type: "default" | "delegate") => {
+            const contracts = await manager3.getContractsWithVtxos({ type: [type] });
+            expect(contracts).toHaveLength(1);
+            return contracts[0].vtxos.filter((v) => !v.isSpent);
+        };
+
+        // Phase 2's change alone satisfies `getVtxos().length >= 2`, so each faucet must
+        // wait on its own contract: an incomplete or spent-inclusive baseline cannot fail.
+        const defaultUnspentBefore = (await unspentOf("default")).length;
+        const delegateUnspentBefore = (await unspentOf("delegate")).length;
+
         faucetOffchain(addressA, 10_000);
+        await waitFor(async () => (await unspentOf("default")).length > defaultUnspentBefore);
+
         faucetOffchain(addressB, 10_000);
-        await waitFor(async () => (await wallet3.getVtxos()).length >= 2);
+        await waitFor(async () => (await unspentOf("delegate")).length > delegateUnspentBefore);
 
         const vtxos3 = await wallet3.getVtxos();
         expect(vtxos3.length).toBeGreaterThanOrEqual(2);
 
-        // Capture delegate VTXOs before spending (forfeit path)
-        const contracts3Before = await manager3.getContractsWithVtxos({
-            type: ["delegate"],
-        });
-        expect(contracts3Before).toHaveLength(1);
-        const delegateVtxos3Before = contracts3Before[0].vtxos;
+        const delegateVtxos3Before = await unspentOf("delegate");
         expect(delegateVtxos3Before.length).toBeGreaterThan(0);
 
         // Send more than any single VTXO so delegate pool must be consumed
@@ -1343,16 +1357,17 @@ describe("Delegate Lifecycle", () => {
         expect(txid3).toBeDefined();
 
         // Verify delegate VTXOs were consumed via forfeit path
-        const contracts3After = await manager3.getContractsWithVtxos({
-            type: ["delegate"],
+        let spentDelegate3: typeof delegateVtxos3Before = [];
+        await waitFor(async () => {
+            const delegateVtxos3After = await unspentOf("delegate");
+            spentDelegate3 = delegateVtxos3Before.filter(
+                (before) =>
+                    !delegateVtxos3After.some(
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
+            );
+            return spentDelegate3.length > 0;
         });
-        const delegateVtxos3After = contracts3After[0].vtxos.filter((v) => !v.isSpent);
-        const spentDelegate3 = delegateVtxos3Before.filter(
-            (before) =>
-                !delegateVtxos3After.some(
-                    (after) => after.txid === before.txid && after.vout === before.vout,
-                ),
-        );
         expect(spentDelegate3.length).toBeGreaterThan(0);
     });
 });

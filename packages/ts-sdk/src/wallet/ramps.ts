@@ -1,6 +1,6 @@
 import { ExtendedCoin, IWallet } from ".";
-import { toOffchainInputFeeParams } from "./vtxo";
-import { FeeInfo, SettlementEvent } from "../providers/ark";
+import { toOffchainInputFeeParams, type NormalizedExtendedVirtualCoin } from "./vtxo";
+import { ArkInfo, FeeInfo, SettlementEvent } from "../providers/ark";
 import { Estimator } from "../arkfee";
 import { Address, OutScript } from "@scure/btc-signer";
 import { hex } from "@scure/base";
@@ -25,6 +25,22 @@ export class DustChangeError extends Error {
         this.name = "DustChangeError";
         this.change = change;
         this.dustAmount = dustAmount;
+    }
+}
+
+/** Thrown when a collaborative exit's change VTXO is above the server's
+ *  per-output ceiling, which arkd answers with `AMOUNT_TOO_HIGH`. */
+export class OversizedChangeError extends Error {
+    readonly change: bigint;
+    readonly maxAmount: bigint;
+    constructor(change: bigint, maxAmount: bigint) {
+        super(
+            `change ${change} sats is above the server's ${maxAmount} sat per-output ` +
+                `ceiling; exit more of the balance, or split it into smaller VTXOs first`,
+        );
+        this.name = "OversizedChangeError";
+        this.change = change;
+        this.maxAmount = maxAmount;
     }
 }
 
@@ -61,6 +77,102 @@ export function offboardDestinationScript(destinationAddress: string): Uint8Arra
     }
 
     throw new Error(`Failed to decode destination address: ${destinationAddress}`);
+}
+
+const CHANGE_FEE_MAX_ROUNDS = 8;
+
+/**
+ * Settle a change output against the fee charged on its own size — the two define each
+ * other, so one subtraction is only right for a flat schedule. Shared because writing it
+ * twice is how the unpriced-change bug reached both ramps. `0n` when the fee outruns it.
+ */
+function settleChangeAgainstFee(change: bigint, feeOn: (amount: bigint) => bigint): bigint {
+    let net = change;
+    for (let i = 0; i < CHANGE_FEE_MAX_ROUNDS; i++) {
+        // Divergence drives `net` negative, and a fee on a negative amount is meaningless.
+        const next = change - feeOn(net > 0n ? net : 0n);
+        if (next === net) return net > 0n ? net : 0n;
+        net = next;
+    }
+    // Sign-blind: which round a divergence ends on is an accident of the round count.
+    throw new Error(
+        `change fee does not settle after ${CHANGE_FEE_MAX_ROUNDS} rounds ` +
+            `(${change} sats of change); settle the full balance instead`,
+    );
+}
+
+/** What an exit leaves as change, and what that change output costs. Exported so
+ *  the payment router prices an exit with the arithmetic that settles it. */
+export function changeAfterOutputFee(
+    left: bigint,
+    feeOn: (amount: bigint) => bigint,
+): { change: bigint; fee: bigint } {
+    if (left <= 0n) return { change: 0n, fee: 0n };
+    const change = settleChangeAgainstFee(left, feeOn);
+    return { change, fee: left - change };
+}
+
+/** `logUngatedInputs` is on the concrete wallet, not `IWallet` — probed like `dustAmount`. */
+function reportUngatedInputs(wallet: IWallet, inputs: readonly ExtendedCoin[]): void {
+    if (!("logUngatedInputs" in wallet)) return;
+    const logger = wallet as {
+        logUngatedInputs(source: string, inputs: readonly ExtendedCoin[]): Promise<void>;
+    };
+    void logger.logUngatedInputs("Ramps.offboard({ vtxos })", inputs);
+}
+
+/** Price inputs, dropping the uneconomic ones — except from a NAMED set, where
+ *  a silent drop would spend a subset of the caller's choice. */
+function filterOffboardInputs(
+    vtxos: readonly NormalizedExtendedVirtualCoin[],
+    feeInfo: FeeInfo,
+    named: boolean,
+): { inputs: NormalizedExtendedVirtualCoin[]; subtotal: bigint } {
+    const estimator = new Estimator(feeInfo?.intentFee ?? {});
+    const inputs: NormalizedExtendedVirtualCoin[] = [];
+    let subtotal = 0n;
+
+    for (const vtxo of vtxos) {
+        const inputFee = estimator.evalOffchainInput(toOffchainInputFeeParams(vtxo));
+        if (inputFee.satoshis >= vtxo.value) {
+            if (named) {
+                throw new Error(
+                    `selected vtxo ${vtxo.txid}:${vtxo.vout} costs ${inputFee.satoshis} sats ` +
+                        `to spend and is worth ${vtxo.value} — drop it from the selection`,
+                );
+            }
+            continue;
+        }
+        inputs.push(vtxo);
+        subtotal += BigInt(vtxo.value) - BigInt(inputFee.satoshis);
+    }
+
+    if (inputs.length === 0) {
+        throw new Error("No vtxos available after deducting fees");
+    }
+    return { inputs, subtotal };
+}
+
+/** The server's per-output ceiling, `undefined` on a wallet with no provider
+ *  (mocks, watch-only). `-1` is the server's own "no limit" sentinel. */
+async function serverVtxoMaxAmount(wallet: IWallet): Promise<bigint | undefined> {
+    const provider = (wallet as { arkProvider?: { getInfo(): Promise<ArkInfo> } }).arkProvider;
+    if (!provider) return undefined;
+    return (await provider.getInfo()).vtxoMaxAmount;
+}
+
+/** Both bounds on a change VTXO: the dust floor and the per-output ceiling.
+ *  Either rejection kills the whole intent, so both are judged here. */
+function assertChangeSettleable(
+    change: bigint,
+    dustAmount: bigint,
+    maxAmount: bigint | undefined,
+): void {
+    if (change === 0n) return;
+    if (change < dustAmount) throw new DustChangeError(change, dustAmount);
+    if (maxAmount !== undefined && maxAmount >= 0n && change > maxAmount) {
+        throw new OversizedChangeError(change, maxAmount);
+    }
 }
 
 /**
@@ -142,6 +254,22 @@ export class Ramps {
             change = totalAmount - amount;
         }
 
+        // Change goes to a BOARDING address, which `settle` classifies as an ONCHAIN output.
+        let boardingAddress: string | undefined;
+        if (change > 0n) {
+            boardingAddress = await this.wallet.getBoardingAddress();
+            const changeScript = hex.encode(offboardDestinationScript(boardingAddress));
+            change = settleChangeAgainstFee(change, (amt) =>
+                BigInt(estimator.evalOnchainOutput({ amount: amt, script: changeScript }).satoshis),
+            );
+            // Post-fee, as `offboard`: arkd's sub-dust exception covers OP_RETURN VTXO
+            // outputs, not a boarding one, so below the floor it is rejected server-side.
+            const dustAmount = getDustAmount(this.wallet);
+            if (change > 0n && change < dustAmount) {
+                throw new DustChangeError(change, dustAmount);
+            }
+        }
+
         amount = amount ?? totalAmount;
 
         // Calculate offchain output fee using Estimator
@@ -169,9 +297,8 @@ export class Ramps {
         ];
 
         if (change > 0n) {
-            const boardingAddress = await this.wallet.getBoardingAddress();
             outputs.push({
-                address: boardingAddress,
+                address: boardingAddress!,
                 amount: change,
             });
         }
@@ -192,6 +319,10 @@ export class Ramps {
      * @param feeInfo - The fee info to deduct from the offboard amount.
      * @param amount - The amount to offboard. If not provided, the total amount of virtual outputs will be offboarded.
      * @param eventCallback - Optional callback that receives settlement events
+     * @param vtxos - Specific virtual outputs to spend, mirroring {@link onboard}'s
+     * `boardingUtxos`. Omitted, every spendable one is spent — merging the whole
+     * off-chain balance into a single change output. Taken as given like
+     * `settle({ inputs })`: an `amount` these cannot cover is an error, not a top-up.
      * @returns The Arkade transaction id created by settlement
      * @throws Error if no virtual outputs remain after fee deduction or the destination address cannot be decoded
      * @see IWallet.getSpendableVtxos
@@ -208,86 +339,120 @@ export class Ramps {
         feeInfo: FeeInfo,
         amount?: bigint,
         eventCallback?: (event: SettlementEvent) => void,
+        vtxos?: NormalizedExtendedVirtualCoin[],
     ): ReturnType<IWallet["settle"]> {
-        const vtxos = await this.wallet.getSpendableVtxos({
-            withRecoverable: true,
-            withUnrolled: false,
-        });
+        const named = vtxos !== undefined;
+        if (vtxos) reportUngatedInputs(this.wallet, vtxos);
+        const spendable =
+            vtxos ??
+            (await this.wallet.getSpendableVtxos({
+                withRecoverable: true,
+                withUnrolled: false,
+            }));
 
-        // Calculate input fees and filter out virtual outputs where fee >= value.
         const estimator = new Estimator(feeInfo?.intentFee ?? {});
-        const filteredVtxos: typeof vtxos = [];
-        let totalAmount = 0n;
+        const { inputs, subtotal } = filterOffboardInputs(spendable, feeInfo, named);
 
-        for (const vtxo of vtxos) {
-            const inputFee = estimator.evalOffchainInput(toOffchainInputFeeParams(vtxo));
-            if (inputFee.satoshis >= vtxo.value) {
-                // Skip virtual outputs where spending fees are greater than or equal to the output value.
-                continue;
-            }
-
-            filteredVtxos.push(vtxo);
-            totalAmount += BigInt(vtxo.value) - BigInt(inputFee.satoshis);
+        if (amount && amount > subtotal) {
+            throw new Error("Amount is greater than total amount of vtxos after fees");
         }
+        const handed = amount || subtotal;
 
-        if (filteredVtxos.length === 0) {
-            throw new Error("No vtxos available after deducting fees");
-        }
-
-        let change = 0n;
-        if (amount) {
-            if (amount > totalAmount) {
-                throw new Error("Amount is greater than total amount of vtxos after fees");
-            }
-            change = totalAmount - amount;
-        }
-
-        // Reject partial exits that would leave a sub-dust change VTXO: arkd
-        // would otherwise reject the intent and surface a raw dust error to
-        // the caller. The wallet layer can catch DustChangeError and offer to
-        // exit the full balance instead.
-        const dustAmount = getDustAmount(this.wallet);
-        if (change > 0n && change < dustAmount) {
-            throw new DustChangeError(change, dustAmount);
-        }
-
-        amount = amount ?? totalAmount;
-
-        const destinationScript = offboardDestinationScript(destinationAddress);
+        // The change is an offchain output charged on its own size, so fee and amount define
+        // each other. Unpaid, the outputs outclaim the inputs and arkd rejects the settlement.
+        const { change, changeAddress } = await this.fundChange(
+            amount ? subtotal - handed : 0n,
+            estimator,
+        );
 
         const outputFee = estimator.evalOnchainOutput({
-            amount,
-            script: hex.encode(destinationScript),
+            amount: handed,
+            script: hex.encode(offboardDestinationScript(destinationAddress)),
         });
-
-        if (BigInt(outputFee.satoshis) > amount) {
+        if (BigInt(outputFee.satoshis) > handed) {
             throw new Error(
-                `can't deduct fees from offboard amount (${outputFee.satoshis} > ${amount})`,
+                `can't deduct fees from offboard amount (${outputFee.satoshis} > ${handed})`,
             );
         }
-        amount -= BigInt(outputFee.satoshis);
 
         const outputs = [
-            {
-                address: destinationAddress,
-                amount,
-            },
+            { address: destinationAddress, amount: handed - BigInt(outputFee.satoshis) },
         ];
+        if (change > 0n) outputs.push({ address: changeAddress!, amount: change });
+        return this.wallet.settle({ inputs, outputs }, eventCallback);
+    }
 
-        if (change > 0n) {
-            const offchainAddress = await this.wallet.getAddress();
-            outputs.push({
-                address: offchainAddress,
-                amount: change,
-            });
+    /**
+     * Collaboratively exit with the DESTINATION paid exactly `amount`, pricing the
+     * fee on that output rather than on a grossed-up figure. {@link offboard} keeps
+     * the other anchor, which needs `g - fee(g) = amount` solved — impossible for
+     * a program charging the whole output.
+     */
+    async offboardExact(params: {
+        destinationAddress: string;
+        feeInfo: FeeInfo;
+        /** Sats the destination receives, exactly. */
+        amount: bigint;
+        eventCallback?: (event: SettlementEvent) => void;
+        vtxos?: NormalizedExtendedVirtualCoin[];
+    }): ReturnType<IWallet["settle"]> {
+        const { destinationAddress, feeInfo, amount, eventCallback, vtxos } = params;
+        if (amount <= 0n) {
+            throw new Error(`offboard amount must be positive, got ${amount}`);
         }
 
-        return this.wallet.settle(
-            {
-                inputs: filteredVtxos,
-                outputs,
-            },
-            eventCallback,
+        const named = vtxos !== undefined;
+        if (vtxos) reportUngatedInputs(this.wallet, vtxos);
+        const spendable =
+            vtxos ??
+            (await this.wallet.getSpendableVtxos({
+                withRecoverable: true,
+                withUnrolled: false,
+            }));
+
+        const estimator = new Estimator(feeInfo?.intentFee ?? {});
+        const { inputs, subtotal } = filterOffboardInputs(spendable, feeInfo, named);
+
+        const outputFee = BigInt(
+            estimator.evalOnchainOutput({
+                amount,
+                script: hex.encode(offboardDestinationScript(destinationAddress)),
+            }).satoshis,
         );
+        const needed = amount + outputFee;
+        if (needed > subtotal) {
+            throw new Error(
+                `selected vtxos net ${subtotal} sats, ${needed} needed to deliver ${amount} ` +
+                    `exactly (${amount} + a ${outputFee} sat exit fee)`,
+            );
+        }
+
+        const { change, changeAddress } = await this.fundChange(subtotal - needed, estimator);
+
+        const outputs = [{ address: destinationAddress, amount }];
+        if (change > 0n) outputs.push({ address: changeAddress!, amount: change });
+        return this.wallet.settle({ inputs, outputs }, eventCallback);
+    }
+
+    /** Fund the change output: pay its own fee, then judge it against both
+     *  server-side bounds. `0n` in is `0n` out — no change output at all. */
+    private async fundChange(
+        left: bigint,
+        estimator: Estimator,
+    ): Promise<{ change: bigint; changeAddress?: string }> {
+        if (left <= 0n) return { change: 0n };
+
+        const changeAddress = await this.wallet.getAddress();
+        const changeScript = hex.encode(ArkAddress.decode(changeAddress).pkScript);
+        const { change } = changeAfterOutputFee(left, (amount) =>
+            BigInt(estimator.evalOffchainOutput({ amount, script: changeScript }).satoshis),
+        );
+
+        assertChangeSettleable(
+            change,
+            getDustAmount(this.wallet),
+            await serverVtxoMaxAmount(this.wallet),
+        );
+        return { change, changeAddress };
     }
 }

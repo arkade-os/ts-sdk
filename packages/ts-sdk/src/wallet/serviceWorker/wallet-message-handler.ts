@@ -323,20 +323,20 @@ function unsupportedByManager(method: string): Error {
 
 export type RequestWatchScript = RequestEnvelope & {
     type: "WATCH_SCRIPT";
-    payload: { script: string; label?: string };
+    payload: { script: string | string[]; label?: string };
 };
 export type ResponseWatchScript = ResponseEnvelope & {
     type: "SCRIPT_WATCHED";
-    payload: { script: string };
+    payload: { script: string | string[] };
 };
 
 export type RequestUnwatchScript = RequestEnvelope & {
     type: "UNWATCH_SCRIPT";
-    payload: { script: string };
+    payload: { script: string | string[] };
 };
 export type ResponseUnwatchScript = ResponseEnvelope & {
     type: "SCRIPT_UNWATCHED";
-    payload: { script: string };
+    payload: { script: string | string[] };
 };
 
 export type RequestGetWatchedScripts = RequestEnvelope & {
