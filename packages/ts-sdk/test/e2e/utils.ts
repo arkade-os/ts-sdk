@@ -263,8 +263,6 @@ export async function createVtxo(alice: TestArkWallet, amount: number): Promise<
 
     faucetOffchain(address, amount);
 
-    // The faucet's VTXO arrives through the indexer, and `getVtxos` answers from
-    // the repository, so poll for it rather than sleeping a fixed second.
     await waitFor(async () => (await alice.wallet.getVtxos()).length > 0, {
         timeout: 30_000,
     });
@@ -284,12 +282,11 @@ export async function createVtxo(alice: TestArkWallet, amount: number): Promise<
         ],
     });
 
-    // The settlement's own output arrives the same way, and every caller reads
-    // it back next — as settlement inputs, in four places. Wait for THAT outpoint
-    // rather than for any row, so a spent input row left in the repository
-    // cannot satisfy this.
     await waitFor(
-        async () => (await alice.wallet.getVtxos()).some((vtxo) => vtxo.txid === settleTxid),
+        async () =>
+            (await alice.wallet.getVtxos()).some((vtxo) =>
+                vtxo.commitmentTxIds.includes(settleTxid),
+            ),
         { timeout: 30_000 },
     );
 
@@ -338,18 +335,6 @@ export async function waitFor(
     throw new Error("timeout in waitFor");
 }
 
-/**
- * The wallet's unrolled row, once the indexer has caught up with the exit.
- *
- * `getVtxos` is a display read: it answers from the repository and only nudges a
- * catch-up sync, so an unrolled row lands a sync after the session ends rather
- * than by the time the read returns. Asserting on the first read races that.
- *
- * Returns the snapshot the predicate accepted, not a later read of it. The
- * predicate asks only whether an unrolled row is there yet; the caller's own
- * length and `isUnrolled` assertions still run, so a wallet holding the wrong
- * set fails them rather than timing out here.
- */
 export async function waitForUnrolledVtxos(wallet: {
     getVtxos: (filter?: { withUnrolled?: boolean }) => Promise<NormalizedExtendedVirtualCoin[]>;
 }): Promise<NormalizedExtendedVirtualCoin[]> {

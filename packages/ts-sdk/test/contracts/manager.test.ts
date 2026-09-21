@@ -229,7 +229,6 @@ describe("ContractManager", () => {
             contractRepository: repository,
             walletRepository: walletRepo,
         });
-        // Boot is off the construction path, so wait for the sync it asserts on.
         await newManager.whenBooted();
 
         // The bootstrap call should NOT have used spendableOnly

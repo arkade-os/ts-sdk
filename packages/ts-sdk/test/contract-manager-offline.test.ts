@@ -42,12 +42,14 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         contractRepository: InMemoryContractRepository,
         walletRepository: InMemoryWalletRepository,
         lookAhead?: LookAheadConfig,
+        lazyInitialization = false,
     ) =>
         ContractManager.create({
             indexerProvider: indexer,
             contractRepository,
             walletRepository,
             watcherConfig,
+            lazyInitialization,
             ...(lookAhead ? { lookAhead } : {}),
         }).then(track);
 
@@ -76,7 +78,6 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
 
         const m = await create(indexer, contractRepo, walletRepo);
 
-        // Boot runs off the construction path, so it lands asynchronously.
         await until(() => m.getSyncState().mode === "degraded");
         expect(m.getSyncState().mode).toBe("degraded");
         // Repository rows are intact — a failed boot sync must not clear them.
@@ -91,10 +92,16 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         const indexer = createMockIndexerProvider();
         (indexer.getVtxos as any).mockRejectedValue(new Error("schema violation"));
 
-        // Construction no longer waits on the indexer, so it cannot be where a
-        // terminal provider error surfaces. The manager is usable immediately
-        // and the failure is read from the sync state instead.
-        const m = await create(indexer, contractRepo, new InMemoryWalletRepository());
+        await expect(create(indexer, contractRepo, new InMemoryWalletRepository())).rejects.toThrow(
+            "schema violation",
+        );
+        const m = await create(
+            indexer,
+            contractRepo,
+            new InMemoryWalletRepository(),
+            undefined,
+            true,
+        );
 
         await until(() => m.getSyncState().mode === "degraded");
         const state = m.getSyncState();
@@ -107,23 +114,24 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         await contractRepo.saveContract(seededContract());
         const indexer = createMockIndexerProvider(); // the boot reconcile succeeds
 
-        // The drain is first, the reconcile after it succeeds, and
-        // `markSyncOnline` resets the reason — so without carrying the earlier
-        // failure forward the manager reports `online` with the watch band
-        // still behind the watermark, i.e. externally issued addresses that
-        // were never registered or caught up.
-        const m = await create(indexer, contractRepo, new InMemoryWalletRepository(), {
-            size: 1,
-            currentWatermark: async () => {
-                throw new ProviderUnavailableError("look-ahead unavailable");
+        const m = await create(
+            indexer,
+            contractRepo,
+            new InMemoryWalletRepository(),
+            {
+                size: 1,
+                currentWatermark: async () => {
+                    throw new ProviderUnavailableError("look-ahead unavailable");
+                },
+                materialize: (index) => `descriptor-${index}`,
+                candidateDeps: () => ({
+                    network: { hrp: "tark" },
+                    serverPubKey: new Uint8Array(32),
+                    csvTimelocks: [],
+                }),
             },
-            materialize: (index) => `descriptor-${index}`,
-            candidateDeps: () => ({
-                network: { hrp: "tark" },
-                serverPubKey: new Uint8Array(32),
-                csvTimelocks: [],
-            }),
-        });
+            true,
+        );
 
         await m.whenBooted();
         const state = m.getSyncState();
@@ -179,7 +187,6 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         (indexer.getVtxos as any).mockRejectedValueOnce(new ProviderUnavailableError("down"));
 
         const m = await create(indexer, contractRepo, walletRepo);
-        // The boot sync consumes the one rejection, off the construction path.
         await until(() => m.getSyncState().mode === "degraded");
         expect(m.getSyncState().mode).toBe("degraded");
 

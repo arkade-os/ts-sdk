@@ -34,9 +34,6 @@ const { mockFetch } = vi.hoisted(() => ({
     mockFetch: vi.fn(),
 }));
 
-// Spread the real module: `providers/availability` reads `FetchError` from it,
-// and a factory that omits it turns any error-classification into a hard
-// failure the moment a provider call rejects.
 vi.mock("../src/utils/fetch", async (importOriginal) => ({
     ...(await importOriginal<typeof import("../src/utils/fetch")>()),
     fetch: mockFetch,
@@ -136,9 +133,6 @@ describe("Wallet", () => {
             // already persisted/watched via the default contract) and the
             // fetch sequence above is unchanged.
 
-            // Answered by URL rather than by call order: the manager's boot now
-            // runs off the construction path, so which request lands first is
-            // no longer pinned to the sequence `create` + `getBalance` implies.
             mockFetch.mockImplementation((url: unknown) => {
                 const target = String(url);
                 if (target.includes("/v1/info")) {
@@ -164,8 +158,6 @@ describe("Wallet", () => {
                     return Promise.resolve(jsonResponse(mockUTXOs));
                 }
                 if (target.includes("vtxos")) {
-                    // Only a scripts query names the wallet's script; an
-                    // outpoint or pending-only probe answers empty.
                     const params = new URLSearchParams(target.split("?")[1] ?? "");
                     const script = params.getAll("scripts")[0];
                     return Promise.resolve(
@@ -183,9 +175,6 @@ describe("Wallet", () => {
                 identity: mockIdentity,
                 arkServerUrl: "http://localhost:7070",
             });
-            // The manager's boot is off the construction path now, and the
-            // ordered responses above cover the calls it makes, so let it
-            // finish before the read that consumes the last one.
             await (await wallet.getContractManager()).whenBooted?.();
 
             const balance = await wallet.getBalance();
@@ -709,16 +698,6 @@ describe("Wallet", () => {
             };
         }
 
-        /**
-         * The sync a display read used to trigger: `getVtxos` is a repository
-         * read now, so these cases drive the provider leg explicitly and then
-         * assert on what the sync left behind.
-         */
-        const sync = async (wallet: ReadonlyWallet) => {
-            const manager = await wallet.getContractManager();
-            await manager.refreshVtxos();
-        };
-
         it("should keep a preconfirmed VTXO when the full re-fetch still returns it", async () => {
             let walletScript = "";
             const getVtxos = vi
@@ -732,9 +711,7 @@ describe("Wallet", () => {
 
             const { wallet } = await createReadonlyTestWallet(getVtxos);
 
-            await sync(wallet);
             expect(await wallet.getVtxos()).toHaveLength(1);
-            await sync(wallet);
             expect(await wallet.getVtxos()).toHaveLength(1);
         });
 
@@ -754,12 +731,10 @@ describe("Wallet", () => {
 
             const { wallet, walletRepository } = await createReadonlyTestWallet(getVtxos);
 
-            await sync(wallet);
             expect((await wallet.getVtxos())[0].virtualStatus.state).toBe("preconfirmed");
 
             state = "settled";
 
-            await sync(wallet);
             const vtxos = await wallet.getVtxos();
             expect(vtxos).toHaveLength(1);
             expect(vtxos[0].virtualStatus.state).toBe("settled");
@@ -786,12 +761,10 @@ describe("Wallet", () => {
 
             const { wallet, walletRepository } = await createReadonlyTestWallet(getVtxos);
 
-            await sync(wallet);
             expect(await wallet.getVtxos()).toHaveLength(1);
 
             markSpent = true;
 
-            await sync(wallet);
             expect(await wallet.getVtxos()).toEqual([]);
 
             const cached = await walletRepository.getVtxos(await wallet.getAddress());
@@ -815,14 +788,12 @@ describe("Wallet", () => {
 
             const { wallet, walletRepository } = await createReadonlyTestWallet(getVtxos);
 
-            await sync(wallet);
             const vtxos = await wallet.getVtxos();
             expect(vtxos).toHaveLength(1);
             expect(vtxos[0].virtualStatus.state).toBe("settled");
 
             markSpent = true;
 
-            await sync(wallet);
             expect(await wallet.getVtxos()).toEqual([]);
 
             const cached = await walletRepository.getVtxos(await wallet.getAddress());

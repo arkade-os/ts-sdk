@@ -1273,7 +1273,6 @@ describe("Wallet.restore", () => {
     it("rejects an invalid gapLimit without running a scan", async () => {
         const { wallet, indexer } = await makeStaticWalletForTest();
         try {
-            // Boot's own sync is not the discovery probe under test.
             await awaitWalletBooted(wallet);
             indexer.getVtxosCalls.length = 0;
 
@@ -1450,16 +1449,10 @@ describe("Wallet.restore", () => {
             indexer.subscribeCalls.length = 0;
             await wallet.restore({ gapLimit: 5 });
 
-            // The refill that follows the watermark the scan advanced is
-            // fire-and-forget, so let it land before counting.
             await until(() => indexer.subscribeCalls.length >= 1);
 
             const posts = indexer.subscribeCalls;
-            // Three discovered contracts must not mean three POSTs. Two is the
-            // ceiling: the scan's coalesced one, plus the look-ahead refill
-            // after the watermark move when the band actually changed.
             expect(posts.length).toBeLessThanOrEqual(2);
-            // The final POST carries every discovered script, not a prefix.
             for (const script of funded) {
                 expect(posts[posts.length - 1]).toContain(script);
             }

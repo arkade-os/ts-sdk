@@ -51,8 +51,6 @@ describe("ContractManager.createContracts", () => {
             walletRepository: new InMemoryWalletRepository(),
             watcherConfig: { failsafePollIntervalMs: 1000, reconnectDelayMs: 500 },
         });
-        // Boot is off the construction path, so its indexer calls would
-        // otherwise land after a test clears the mock.
         await manager.whenBooted();
     });
 

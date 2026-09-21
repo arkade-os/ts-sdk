@@ -1136,7 +1136,10 @@ describe("Common", () => {
                 // faucet 100_000 sats
                 execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
 
-                await waitFor(async () => (await alice.wallet.getBoardingUtxos()).length > 0);
+                await waitFor(async () => {
+                    const coins = await alice.wallet.getBoardingUtxos();
+                    return coins.length > 0 && coins.every((coin) => coin.status.confirmed);
+                });
 
                 try {
                     setFees({ onchainInput: "1000.0" });
@@ -1148,8 +1151,6 @@ describe("Common", () => {
                     const settleTxid = await new Ramps(alice.wallet).onboard(fees);
                     expect(settleTxid).toBeDefined();
 
-                    // Onboarding records the VTXO through the contract sync, and
-                    // `getVtxos` is a display read that does not wait for it.
                     await waitFor(async () => (await alice.wallet.getVtxos()).length > 0);
 
                     const vtxos = await alice.wallet.getVtxos();
@@ -1175,8 +1176,6 @@ describe("Delegate", () => {
 
         await alice.wallet.settle();
 
-        // `settle` records the VTXO through the contract sync, and `getVtxos` is
-        // a display read that does not wait for it.
         await waitFor(async () => (await alice.wallet.getVtxos()).length > 0);
 
         let vtxos = await alice.wallet.getVtxos();

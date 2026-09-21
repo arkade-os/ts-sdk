@@ -1578,6 +1578,26 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         });
     });
 
+    it.each([false, true])("forwards opt-in startup options for readonly=%s", async (readonly) => {
+        const identity = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+        const { serviceWorker } = await setup(identity);
+        const factory = readonly ? ServiceWorkerReadonlyWallet : ServiceWorkerWallet;
+        const wallet = await factory.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            storage: storage(),
+            lazyInitialization: true,
+            lazyBoarding: true,
+        });
+        expect(getInitializeMessage(serviceWorker).config.lazyInitialization).toBe(true);
+        expect(getInitWalletMessage(serviceWorker).payload.lazyBoarding).toBe(true);
+        serviceWorker.postMessage.mockClear();
+        await (wallet as any).reinitialize();
+        expect(getInitializeMessage(serviceWorker).config.lazyInitialization).toBe(true);
+        expect(getInitWalletMessage(serviceWorker).payload.lazyBoarding).toBe(true);
+    });
+
     it("ServiceWorkerWallet.create uses the default Arkade server URL when omitted", async () => {
         const identity = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
         const { serviceWorker } = await setup(identity);

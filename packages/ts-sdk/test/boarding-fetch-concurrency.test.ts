@@ -12,11 +12,6 @@ const until = async (predicate: () => boolean): Promise<void> => {
 describe("boarding reads fan out across addresses", () => {
     beforeEach(installRestoreHarness);
 
-    /**
-     * Two distinct boarding addresses, without deriving a real rotation: the
-     * wallets that pay for this are the ones whose boarding fan-out has
-     * accumulated, and a second script with a different key is one.
-     */
     const twoTapscripts = (wallet: { boardingTapscript: DefaultVtxo.Script }) => [
         wallet.boardingTapscript,
         new DefaultVtxo.Script({
@@ -43,8 +38,6 @@ describe("boarding reads fan out across addresses", () => {
         };
 
         const pending = wallet.getBoardingUtxos();
-        // The second address must be in flight while the first is parked; a
-        // sequential loop would still be showing one.
         await until(() => started.length === 2);
         expect(started).toHaveLength(2);
 

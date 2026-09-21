@@ -89,8 +89,6 @@ describe("HD look-ahead band composition", () => {
                 },
             },
         });
-        // The band is registered by the boot drain, which is off the
-        // construction path now.
         await manager.whenBooted();
         return { manager, indexer, contractRepository, provider, promoted };
     }
@@ -251,7 +249,6 @@ describe("HD look-ahead band composition", () => {
             },
         });
 
-        // The boot drain must have run before the watermark move is meaningful.
         await manager.whenBooted();
         // The boot band was [0, 1] and none of it is funded.
         expect(await contractRepository.getContracts({})).toEqual([]);

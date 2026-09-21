@@ -1249,23 +1249,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * });
      * ```
      */
-    /**
-     * The VTXOs a recovery pass is about to spend, read through to the indexer
-     * where the wallet can.
-     *
-     * `getVtxos` is the display read: it answers from the repository, so in the
-     * window after a receive it reports nothing and recovery would silently
-     * settle nothing. `getSyncedVtxos` is on the concrete `Wallet`, not
-     * `IWallet`, so it is probed the way `logUngatedInputs` is.
-     */
-    private readVtxosForRecovery(filter: Parameters<IWallet["getVtxos"]>[0]) {
-        const wallet = this.wallet as { getSyncedVtxos?: IWallet["getVtxos"] };
-        return (wallet.getSyncedVtxos ?? this.wallet.getVtxos).call(this.wallet, filter);
-    }
-
     async recoverVtxos(eventCallback?: (event: SettlementEvent) => void): Promise<string> {
         // Get all virtual outputs including recoverable ones
-        const allVtxos = await this.readVtxosForRecovery({
+        const allVtxos = await this.wallet.getVtxos({
             withRecoverable: true,
             withUnrolled: false,
         });
