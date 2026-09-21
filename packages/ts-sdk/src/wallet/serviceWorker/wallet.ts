@@ -1374,7 +1374,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
-            async watchScript(script: string, options?: { label?: string }): Promise<void> {
+            async watchScript(
+                script: string | string[],
+                options?: { label?: string },
+            ): Promise<void> {
                 const message: RequestWatchScript = {
                     type: "WATCH_SCRIPT",
                     id: getRandomId(),
@@ -1388,7 +1391,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
-            async unwatchScript(script: string): Promise<void> {
+            async unwatchScript(script: string | string[]): Promise<void> {
                 const message: RequestUnwatchScript = {
                     type: "UNWATCH_SCRIPT",
                     id: getRandomId(),

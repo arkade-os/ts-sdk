@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Ramps, DustChangeError } from "../src/wallet/ramps";
+import { Ramps, DustChangeError, OversizedChangeError } from "../src/wallet/ramps";
 
 const BTC_ADDR = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 const ARK_ADDR =
@@ -126,5 +126,191 @@ describe("Ramps.offboard with a named input set", () => {
         await new Ramps(w).offboard(BTC_ADDR, fees, 5_000n);
 
         expect(w.logUngatedInputs).not.toHaveBeenCalled();
+    });
+});
+
+describe("Ramps.offboard pays for the change it creates", () => {
+    // 7 per input, 100 for the exit output, 50 for the change output.
+    const priced = {
+        intentFee: { offchainInput: "7.0", onchainOutput: "100.0", offchainOutput: "50.0" },
+    } as any;
+
+    it("funds the change output's own fee, so the settlement balances", async () => {
+        const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]) });
+
+        await new Ramps(w).offboard(BTC_ADDR, priced, 50_000n);
+
+        const { inputs, outputs } = w.settle.mock.calls[0]![0];
+        expect(outputs).toEqual([
+            { address: BTC_ADDR, amount: 49_900n },
+            { address: ARK_ADDR, amount: 49_943n },
+        ]);
+        const spent: bigint = inputs.reduce(
+            (s: bigint, i: { value: number }) => s + BigInt(i.value),
+            0n,
+        );
+        const claimed: bigint = outputs.reduce(
+            (s: bigint, o: { amount: bigint }) => s + o.amount,
+            0n,
+        );
+        expect(spent - claimed).toBe(157n);
+    });
+
+    it("leaves a full sweep alone — no change output means no change fee", async () => {
+        const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]) });
+
+        await new Ramps(w).offboard(BTC_ADDR, priced);
+
+        expect(w.settle.mock.calls[0]![0].outputs).toEqual([
+            { address: BTC_ADDR, amount: 99_893n },
+        ]);
+    });
+
+    it("refuses a change fee that never settles, instead of underfunding the exit", async () => {
+        // Charging the whole output oscillates change → 0 → change, never reaching a fixpoint.
+        const absurd = { intentFee: { offchainOutput: "amount" } } as any;
+        const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]) });
+
+        await expect(new Ramps(w).offboard(BTC_ADDR, absurd, 50_000n)).rejects.toThrow(
+            /change fee/i,
+        );
+        expect(w.settle).not.toHaveBeenCalled();
+    });
+
+    it("refuses a super-linear schedule that diverges instead of oscillating", async () => {
+        // Overshoots every round, alternating sign — so the refusal cannot depend on the last one's.
+        const superLinear = { intentFee: { offchainOutput: "amount * 1.5" } } as any;
+        const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]) });
+
+        await expect(new Ramps(w).offboard(BTC_ADDR, superLinear, 50_000n)).rejects.toThrow(
+            /change fee/i,
+        );
+        expect(w.settle).not.toHaveBeenCalled();
+    });
+
+    it("emits no change when a flat fee outruns it, rather than refusing", async () => {
+        const steep = { intentFee: { offchainOutput: "100000.0" } } as any;
+        const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]) });
+
+        await new Ramps(w).offboard(BTC_ADDR, steep, 50_000n);
+
+        expect(w.settle.mock.calls[0]![0].outputs).toEqual([
+            { address: BTC_ADDR, amount: 50_000n },
+        ]);
+    });
+
+    it("judges the dust floor on the change that survives the fee", async () => {
+        // 50_360 - 7 input - 50_000 = 353 before the fee, 303 after: under the 330 floor.
+        const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 50_360)]) });
+
+        await expect(new Ramps(w).offboard(BTC_ADDR, priced, 50_000n)).rejects.toThrow(
+            DustChangeError,
+        );
+        expect(w.settle).not.toHaveBeenCalled();
+    });
+});
+
+const exactExit = (w: any, feeInfo: any, amount: bigint) =>
+    new Ramps(w).offboardExact({ destinationAddress: BTC_ADDR, feeInfo, amount });
+
+describe("Ramps.offboardExact pays the destination exactly", () => {
+    const one = () =>
+        wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]) });
+
+    it("takes a flat exit fee out of the balance, not out of the recipient's figure", async () => {
+        const w = one();
+
+        await exactExit(w, { intentFee: { onchainOutput: "100.0" } }, 50_000n);
+
+        expect(w.settle.mock.calls[0]![0].outputs).toEqual([
+            { address: BTC_ADDR, amount: 50_000n },
+            { address: ARK_ADDR, amount: 49_900n },
+        ]);
+    });
+
+    // 1% of the 50_000 the recipient is handed is 500. Deducting from it instead
+    // needs `g - fee(g) = 50_000` solved, which lands on 50_505: five sats of
+    // change for an output nobody ships.
+    it("prices the fee on the destination output, not on a grossed-up amount", async () => {
+        const w = one();
+
+        await exactExit(w, { intentFee: { onchainOutput: "amount * 0.01" } }, 50_000n);
+
+        expect(w.settle.mock.calls[0]![0].outputs).toEqual([
+            { address: BTC_ADDR, amount: 50_000n },
+            { address: ARK_ADDR, amount: 49_500n },
+        ]);
+    });
+
+    it("still funds the change output's own fee", async () => {
+        // 100_000 - 7 input - 50_000 - 500 exit = 49_493, less the change's own 50.
+        const w = one();
+        const feeInfo = {
+            intentFee: {
+                offchainInput: "7.0",
+                onchainOutput: "amount * 0.01",
+                offchainOutput: "50.0",
+            },
+        };
+
+        await exactExit(w, feeInfo, 50_000n);
+
+        expect(w.settle.mock.calls[0]![0].outputs).toEqual([
+            { address: BTC_ADDR, amount: 50_000n },
+            { address: ARK_ADDR, amount: 49_443n },
+        ]);
+    });
+
+    it("refuses an amount the inputs cannot deliver, and a non-positive one", async () => {
+        const short = wallet({
+            getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 50_000)]),
+        });
+
+        await expect(
+            exactExit(short, { intentFee: { onchainOutput: "100.0" } }, 50_000n),
+        ).rejects.toThrow(/needed to deliver 50000 exactly/);
+        await expect(exactExit(wallet(), fees, 0n)).rejects.toThrow(/must be positive/);
+        expect(short.settle).not.toHaveBeenCalled();
+    });
+});
+
+describe("both exits keep the change under the server's per-output ceiling", () => {
+    const priced = { intentFee: { onchainOutput: "100.0" } } as any;
+    // 100_000 - 30_100 = 69_900 of change.
+    const ceiling = (vtxoMaxAmount: bigint) =>
+        wallet({
+            getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]),
+            arkProvider: { getInfo: vi.fn().mockResolvedValue({ vtxoMaxAmount }) },
+        });
+
+    it("refuses an oversized change on either exit, and settles one that lands on the ceiling", async () => {
+        const exact = ceiling(40_000n);
+        const plain = ceiling(40_000n);
+
+        await expect(exactExit(exact, priced, 30_000n)).rejects.toThrow(OversizedChangeError);
+        await expect(new Ramps(plain).offboard(BTC_ADDR, priced, 30_000n)).rejects.toThrow(
+            OversizedChangeError,
+        );
+        expect(exact.settle).not.toHaveBeenCalled();
+        expect(plain.settle).not.toHaveBeenCalled();
+
+        const bounded = ceiling(69_900n);
+        await exactExit(bounded, priced, 30_000n);
+        expect(bounded.settle.mock.calls[0]![0].outputs).toEqual([
+            { address: BTC_ADDR, amount: 30_000n },
+            { address: ARK_ADDR, amount: 69_900n },
+        ]);
+    });
+
+    it("reads `-1` as no ceiling, and a wallet with no provider as none to read", async () => {
+        const unlimited = ceiling(-1n);
+        await exactExit(unlimited, priced, 30_000n);
+        expect(unlimited.settle).toHaveBeenCalledTimes(1);
+
+        const mock = wallet({
+            getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]),
+        });
+        await exactExit(mock, priced, 30_000n);
+        expect(mock.settle).toHaveBeenCalledTimes(1);
     });
 });

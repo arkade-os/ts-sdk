@@ -314,30 +314,50 @@ export class ContractWatcher {
     }
 
     /** @see IContractManager.watchScript for the delivery and filter contract. */
-    async addWatchedScript(script: string, options?: { label?: string }): Promise<void> {
-        const existing = this.watchedScripts.get(script);
-        if (existing) {
-            // Idempotent: a caller that re-derives its whole watched set on
-            // a timer would otherwise re-announce on every sweep.
-            if (options?.label !== undefined) existing.label = options.label;
-            return;
+    async addWatchedScript(script: string | string[], options?: { label?: string }): Promise<void> {
+        const added: string[] = [];
+        for (const one of Array.isArray(script) ? script : [script]) {
+            const existing = this.watchedScripts.get(one);
+            if (existing) {
+                // Idempotent: a caller that re-derives its whole watched set on
+                // a timer would otherwise re-announce on every sweep.
+                if (options?.label !== undefined) existing.label = options.label;
+                continue;
+            }
+
+            this.watchedScripts.set(one, {
+                label: options?.label,
+                lastKnownVtxos: new Map(),
+            });
+            added.push(one);
         }
 
-        this.watchedScripts.set(script, {
-            label: options?.label,
-            lastKnownVtxos: new Map(),
-        });
+        if (added.length === 0 || !this.isWatching) return;
 
-        if (this.isWatching) {
-            await this.pollWatchedScripts([script]);
+        await this.withCoalescedSubscription(async () => {
+            // The catch-up a coalesced scope demands of its callers. Watch-only
+            // polling reads the indexer for these scripts rather than diffing a
+            // repository, so an output already sitting at one is reported here
+            // rather than lost to the window the deferred flush opens.
+            await this.pollWatchedScripts(added);
+            // Requested inside the scope, not after it: the scope only flushes
+            // an update something asked for, and polling asks for none. One
+            // request for the whole batch becomes one update at the flush.
             await this.tryUpdateSubscription();
-        }
+        });
     }
 
     /** Stop watching a script added by {@link addWatchedScript}. */
-    async removeWatchedScript(script: string): Promise<void> {
-        if (!this.watchedScripts.delete(script)) return;
+    async removeWatchedScript(script: string | string[]): Promise<void> {
+        let removed = false;
+        for (const one of Array.isArray(script) ? script : [script]) {
+            if (this.watchedScripts.delete(one)) removed = true;
+        }
+        if (!removed) return;
 
+        // One update for the whole set, for the same reason the add path
+        // coalesces: the subscription is rebuilt from what remains, not per
+        // script dropped.
         if (this.isWatching) {
             await this.tryUpdateSubscription();
         }

@@ -177,7 +177,7 @@ import {
 import { createAssetPacket, selectCoinsWithAsset } from "./wallet/asset";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSession";
-import { DustChangeError, Ramps } from "./wallet/ramps";
+import { DustChangeError, OversizedChangeError, Ramps } from "./wallet/ramps";
 import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import type {
@@ -611,6 +611,7 @@ export {
     OnchainWallet,
     Ramps,
     DustChangeError,
+    OversizedChangeError,
     VtxoManager,
     classifyContractSigner,
     classifyAgainstSignerSet,

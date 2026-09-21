@@ -572,13 +572,19 @@ export interface IContractManager extends Disposable {
      * funding is not missed, but one already recoverable or swept is not
      * reported.
      *
+     * Takes one script or a set. A set costs one subscription update and one
+     * indexer read however many scripts it carries, which is the difference
+     * between registering and re-registering cheaply and paying N round trips
+     * — what a service watching an address per payment does on every restart.
+     *
      * Optional so adding it does not break an embedder with its own
      * `IContractManager`; both shipped implementations provide it for real.
      */
-    watchScript?(script: string, options?: { label?: string }): Promise<void>;
+    watchScript?(script: string | string[], options?: { label?: string }): Promise<void>;
 
-    /** Stop watching a script registered via {@link watchScript}. */
-    unwatchScript?(script: string): Promise<void>;
+    /** Stop watching a script registered via {@link watchScript}. Takes one or
+     *  a set, and rebuilds the subscription once either way. */
+    unwatchScript?(script: string | string[]): Promise<void>;
 
     /**
      * Every script registered via {@link watchScript}. Async for the same
@@ -2187,12 +2193,12 @@ export class ContractManager implements IContractManager {
     }
 
     /** @see IContractManager.watchScript */
-    async watchScript(script: string, options?: { label?: string }): Promise<void> {
+    async watchScript(script: string | string[], options?: { label?: string }): Promise<void> {
         await this.watcher.addWatchedScript(script, options);
     }
 
     /** @see IContractManager.unwatchScript */
-    async unwatchScript(script: string): Promise<void> {
+    async unwatchScript(script: string | string[]): Promise<void> {
         await this.watcher.removeWatchedScript(script);
     }
 
