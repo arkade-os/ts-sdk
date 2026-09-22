@@ -3,6 +3,7 @@ import { hex } from "@scure/base";
 import {
     ArkAddress,
     Wallet,
+    DuplicatedInputNotReleasedError,
     SingleKey,
     OnchainWallet,
     RestArkProvider,
@@ -1635,6 +1636,46 @@ describe("Wallet.safeRegisterIntent", () => {
         expect(getVtxos).not.toHaveBeenCalled();
         expect(deleteIntent).toHaveBeenCalledTimes(1);
         expect(registerIntent).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not register again when delete rejects with no matching intents", async () => {
+        const boardingInput = {
+            txid: "b".repeat(64),
+            vout: 0,
+            value: 10_000,
+            status: { confirmed: true, block_time: 1_700_000_000 },
+        } as ExtendedCoin;
+
+        const registerIntent = vi
+            .fn()
+            .mockRejectedValueOnce(new ArkError(0, "duplicated input", "FailedPrecondition"));
+        const deleteIntent = vi
+            .fn()
+            .mockRejectedValueOnce(
+                new Error("INVALID_INTENT_PROOF: no matching intents found for intent proof"),
+            );
+
+        const thisArg: any = {
+            arkProvider: { registerIntent, deleteIntent },
+            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+                proof: "delete-proof",
+                message: { type: "delete", expire_at: 0 },
+            }),
+            getVtxos: vi.fn(),
+        };
+
+        const error = await (Wallet.prototype as any).safeRegisterIntent
+            .call(thisArg, { proof: "register-proof", message: { type: "register" } }, [
+                boardingInput,
+            ])
+            .catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(DuplicatedInputNotReleasedError);
+        expect((error as Error).message).toContain(`${"b".repeat(64)}:0`);
+        expect((error as Error).message).toContain("duplicated input");
+        expect((error as Error).message).toContain("no matching intents found");
+        expect(registerIntent).toHaveBeenCalledTimes(1);
+        expect(deleteIntent).toHaveBeenCalledTimes(1);
     });
 
     it("does not attempt delete/retry for unrelated ArkError codes", async () => {

@@ -604,6 +604,32 @@ export interface ArkadeCashClaimResult {
  * cannot rule out a post-submit failure must persist `cash` — passing it to
  * {@link Wallet.claimCash} recovers the funds whether or not the send landed.
  */
+/**
+ * `registerIntent` refused because an outpoint is already registered, and
+ * `deleteIntent` could not release it (arkd: no matching intent for a boarding
+ * input it has locked). Retrying {@link Wallet.settle} registers the same
+ * inputs again and hits the same pair of refusals.
+ *
+ * Distinguished from a fee, script, or signing failure by this type in-process
+ * and by the message across the service-worker boundary: `message` names each
+ * duplicated outpoint and the delete refusal. `cause` is the delete error.
+ * `retryable` is false — another settle does not clear the lock.
+ */
+export class DuplicatedInputNotReleasedError extends Error {
+    readonly retryable = false;
+
+    constructor(inputs: ExtendedCoin[], deleteError: unknown) {
+        const outpoints = inputs.map((input) => `${input.txid}:${input.vout}`).join(", ");
+        const deleteMessage =
+            deleteError instanceof Error ? deleteError.message : String(deleteError);
+        super(
+            `duplicated input ${outpoints} is already registered, and deleteIntent failed: ${deleteMessage}. Retrying settle will not clear it.`,
+            deleteError !== undefined ? { cause: deleteError } : undefined,
+        );
+        this.name = "DuplicatedInputNotReleasedError";
+    }
+}
+
 export class ArkadeCashCreateError extends Error {
     constructor(
         /** The encoded arkadeCash token controlling the funded output. */
@@ -4796,10 +4822,22 @@ export class Wallet
                 // "duplicated input" on the auto-settle path. Signing the
                 // caller's own inputs keeps the proof surgical and correct
                 // regardless of whether the stuck input is a VTXO or boarding.
+                // A signing failure here (cancelled passkey) stays that error
+                // so the caller can retry; only a server refusal to delete
+                // stops the second register.
                 const deleteIntent = await this.makeDeleteIntentSignature(inputs);
-                await this.arkProvider.deleteIntent(deleteIntent);
+                try {
+                    await this.arkProvider.deleteIntent(deleteIntent);
+                } catch (deleteError) {
+                    // arkd matches VTXOs on delete and answers
+                    // INVALID_INTENT_PROOF ("no matching intents found") for a
+                    // boarding input it has locked. Registering again cannot
+                    // release it, and replacing the duplicate error with the
+                    // delete error makes the next settle look like a normal
+                    // failure worth retrying.
+                    throw new DuplicatedInputNotReleasedError(inputs, deleteError);
+                }
 
-                // try again
                 return this.arkProvider.registerIntent(intent);
             }
 

@@ -166,6 +166,7 @@ import {
     type ArkadeCashUnclaimedReason,
     type ArkadeCashUnclaimedVtxo,
     ArkadeCashCreateError,
+    DuplicatedInputNotReleasedError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
@@ -731,6 +732,7 @@ export {
     // ArkadeCash
     ArkadeCash,
     ArkadeCashCreateError,
+    DuplicatedInputNotReleasedError,
     // Network
     getNetwork,
     networks,
