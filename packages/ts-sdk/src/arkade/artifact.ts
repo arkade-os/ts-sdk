@@ -93,13 +93,27 @@ function isNamed(value: unknown): value is ArtifactParameter {
     );
 }
 
+function isStruct(value: unknown): value is ArtifactStruct {
+    return (
+        isRecord(value) &&
+        typeof value.name === "string" &&
+        Array.isArray(value.fields) &&
+        value.fields.every(isNamed)
+    );
+}
+
 /** `true` when `value` is an arkadec artifact rather than a Program. */
 export function isContractArtifact(value: unknown): value is ContractArtifact {
     if (!isRecord(value) || typeof value.contractName !== "string") return false;
     if (!Array.isArray(value.constructorInputs) || !value.constructorInputs.every(isNamed)) {
         return false;
     }
-    if (value.structs !== undefined && !Array.isArray(value.structs)) return false;
+    if (
+        value.structs !== undefined &&
+        (!Array.isArray(value.structs) || !value.structs.every(isStruct))
+    ) {
+        return false;
+    }
     if (!Array.isArray(value.functions) || value.functions.length === 0) return false;
     return value.functions.every((group) => {
         if (!isRecord(group) || typeof group.name !== "string") return false;
@@ -334,9 +348,6 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
     const structs = artifact.structs ?? [];
     const structNames = new Set<string>();
     for (const struct of structs) {
-        if (!isRecord(struct) || typeof struct.name !== "string" || !Array.isArray(struct.fields)) {
-            fail("struct needs a name and fields");
-        }
         if (
             Object.hasOwn(SCALAR_TYPES, struct.name) ||
             Object.hasOwn(NATIVE_STRUCTS, struct.name)
