@@ -998,6 +998,8 @@ export interface SponsorFillInput {
     fund: FillFunding[];
     /** Sats the sponsor approves spending; its change is inputs minus this. */
     netContributionSats: bigint | number;
+    /** Fold a sats-only fare into sponsor change when both use the same script. */
+    combineSatsFareWithChange?: boolean;
     /**
      * Optional fare output paid from the joint inputs. Give `assetId` and
      * `amount` together to charge in an asset, or omit both to charge in `sats`
@@ -1226,8 +1228,8 @@ export interface AssembledFillLayout {
 }
 
 /**
- * Inputs run deposit (0), solver, sponsor; outputs run maker (0), fare, sponsor
- * change, solver. Returns the intended layout to check the built tx against.
+ * Inputs run deposit (0), solver, sponsor; outputs run maker (0), optional fare,
+ * sponsor change, solver. Returns the intended layout to check the built tx against.
  */
 export function assembleOfferFill(
     fill: arkade.ArkadeTransactionBuilder,
@@ -1264,6 +1266,7 @@ export function assembleOfferFill(
     let fareAsset = "";
     let fareAmount = BigInt(0);
     let fareSats = BigInt(0);
+    let combineSatsFareWithChange = false;
     if (sponsor !== undefined) {
         if (sponsor.fund.length === 0) {
             throw new Error("sponsor needs coins to contribute with — `sponsor.fund` is empty");
@@ -1282,6 +1285,16 @@ export function assembleOfferFill(
         if (contribution <= BigInt(0)) {
             throw new Error("sponsor.netContributionSats must be a positive amount of sats");
         }
+        if (
+            sponsor.combineSatsFareWithChange !== undefined &&
+            typeof sponsor.combineSatsFareWithChange !== "boolean"
+        ) {
+            throw new Error("sponsor.combineSatsFareWithChange must be a boolean");
+        }
+        combineSatsFareWithChange = sponsor.combineSatsFareWithChange === true;
+        if (combineSatsFareWithChange && sponsor.fare === undefined) {
+            throw new Error("sponsor.combineSatsFareWithChange requires a fare");
+        }
         if (sponsor.fare !== undefined) {
             const { assetId, amount } = sponsor.fare;
             if ((assetId === undefined) !== (amount === undefined)) {
@@ -1298,6 +1311,16 @@ export function assembleOfferFill(
             }
             assertScript(sponsor.fare.script, "sponsor.fare.script");
             fareSats = toSatsAmount(sponsor.fare.sats, "sponsor.fare.sats", { min: BigInt(1) });
+            if (combineSatsFareWithChange) {
+                if (assetId !== undefined) {
+                    throw new Error("sponsor.combineSatsFareWithChange requires a sats-only fare");
+                }
+                if (hex.encode(sponsor.fare.script) !== hex.encode(sponsor.changeScript)) {
+                    throw new Error(
+                        "sponsor.combineSatsFareWithChange requires fare and change to use the same script",
+                    );
+                }
+            }
         }
         const sponsorInputs = sponsor.fund.reduce((s, c) => s + BigInt(c.value), BigInt(0));
         if (contribution > sponsorInputs) {
@@ -1306,7 +1329,12 @@ export function assembleOfferFill(
             );
         }
         sponsorFund = sponsor.fund;
-        sponsorChange = sponsorInputs - contribution;
+        const baseSponsorChange = sponsorInputs - contribution;
+        sponsorChange = combineSatsFareWithChange
+            ? toSatsAmount(baseSponsorChange + fareSats, "combined sponsor change", {
+                  min: BigInt(1),
+              })
+            : baseSponsorChange;
     }
 
     // Refused here because the emulator reports only that the covenant said no.
@@ -1360,7 +1388,7 @@ export function assembleOfferFill(
         { role: "receiver", script: offer.makerPkScript, sats: makerSats },
     ];
     const fareVout = outputs.length;
-    if (sponsor?.fare !== undefined) {
+    if (sponsor?.fare !== undefined && !combineSatsFareWithChange) {
         outputs.push({ role: "sponsor-fare", script: sponsor.fare.script, sats: fareSats });
     }
     if (sponsor !== undefined && sponsorChange > BigInt(0)) {
@@ -1372,7 +1400,8 @@ export function assembleOfferFill(
         .fund(sponsorFund.length > 0 ? [...solverFund, ...sponsorFund] : solverFund)
         // Not cosmetic: the covenant inspects output 0.
         .to(offer.makerPkScript, makerSats);
-    if (sponsor?.fare !== undefined) fill.to(sponsor.fare.script, fareSats);
+    if (sponsor?.fare !== undefined && !combineSatsFareWithChange)
+        fill.to(sponsor.fare.script, fareSats);
     if (sponsor !== undefined && sponsorChange > BigInt(0))
         fill.to(sponsor.changeScript, sponsorChange);
     fill.change(solverPayout);

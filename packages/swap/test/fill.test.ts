@@ -556,6 +556,11 @@ describe("assembleOfferFill routes the sponsor leg", () => {
     const callsOf = (fn: string) => state.calls.filter((c) => c.fn === fn);
     const TAXI_CHANGE = hex.decode("5120" + "33".repeat(32));
     const FARE_SCRIPT = hex.decode("5120" + "44".repeat(32));
+    const recycledWant = { ...wantAsset, wantAmount: BigInt(9_995) };
+    const recycledScript = offerVtxoScript(recycledWant, fundedServerKey);
+    const recycledWantHex = hex.encode(
+        encodeOffer({ ...recycledWant, swapPkScript: recycledScript.pkScript }),
+    );
     const taxiCoin = (over: Record<string, unknown> = {}) =>
         [{ txid: "77".repeat(32), vout: 3, value: 10_000, ...over }] as never;
 
@@ -583,6 +588,23 @@ describe("assembleOfferFill routes the sponsor leg", () => {
         changeScript: TAXI_CHANGE,
         ...over,
     });
+
+    const recycledFill = async (sponsor: SponsorFillInput) => {
+        reset([{ ...satsDeposit, value: 10_000 }]);
+        const layout = await assemble(
+            recycledWantHex,
+            sponsor,
+            fundingCoin({
+                value: 330,
+                assets: [{ assetId: WANTED_ASSET, amount: 10_000 }],
+            }),
+        );
+        return {
+            layout,
+            asset: callsOf("withAsset")[0].args[0],
+            to: callsOf("to").map((call) => call.args),
+        };
+    };
 
     it("refuses sponsor funding that carries an asset", async () => {
         reset();
@@ -617,6 +639,182 @@ describe("assembleOfferFill routes the sponsor leg", () => {
         const change = layout.outputs.find((o) => o.role === "sponsor-change");
         expect(change?.sats).toBe(BigInt(9_000));
         expect(hex.encode(change!.script)).toBe(hex.encode(TAXI_CHANGE));
+    });
+
+    it.each([
+        ["absent", {}],
+        ["false", { combineSatsFareWithChange: false }],
+    ])("keeps the exact legacy fare layout and packet when combine is %s", async (_label, flag) => {
+        const result = await recycledFill(
+            sponsorLeg({
+                fund: taxiCoin({ value: 1_000 }),
+                netContributionSats: BigInt(329),
+                fare: { script: TAXI_CHANGE, sats: BigInt(4) },
+                ...flag,
+            }),
+        );
+        expect(result.layout.outputs).toEqual([
+            { role: "receiver", script: recycledWant.makerPkScript, sats: BigInt(330) },
+            { role: "sponsor-fare", script: TAXI_CHANGE, sats: BigInt(4) },
+            { role: "sponsor-change", script: TAXI_CHANGE, sats: BigInt(671) },
+            { role: "solver", script: TAKER_PAYOUT, sats: BigInt(10_325) },
+        ]);
+        expect(result.asset).toEqual({
+            assetId: WANTED_ASSET,
+            inputs: [{ vin: 1, amount: BigInt(10_000) }],
+            outputs: [
+                { vout: 0, amount: BigInt(9_995) },
+                { vout: 3, amount: BigInt(5) },
+            ],
+        });
+    });
+
+    it("coalesces a sats fare into sponsor change without netting the gross loan", async () => {
+        const result = await recycledFill(
+            sponsorLeg({
+                fund: taxiCoin({ value: 1_000 }),
+                netContributionSats: BigInt(329),
+                fare: { script: TAXI_CHANGE, sats: BigInt(4) },
+                combineSatsFareWithChange: true,
+            }),
+        );
+        expect(result.layout.inputs.map(({ owner }) => owner)).toEqual([null, "solver", "sponsor"]);
+        expect(result.layout.outputs).toEqual([
+            { role: "receiver", script: recycledWant.makerPkScript, sats: BigInt(330) },
+            { role: "sponsor-change", script: TAXI_CHANGE, sats: BigInt(675) },
+            { role: "solver", script: TAKER_PAYOUT, sats: BigInt(10_325) },
+        ]);
+        expect(result.to).toEqual([
+            [recycledWant.makerPkScript, BigInt(330)],
+            [TAXI_CHANGE, BigInt(675)],
+        ]);
+        expect(result.asset).toEqual({
+            assetId: WANTED_ASSET,
+            inputs: [{ vin: 1, amount: BigInt(10_000) }],
+            outputs: [
+                { vout: 0, amount: BigInt(9_995) },
+                { vout: 2, amount: BigInt(5) },
+            ],
+        });
+        expect(result.layout.outputs.reduce((sum, output) => sum + output.sats, BigInt(0))).toBe(
+            BigInt(11_330),
+        );
+    });
+
+    it("creates sponsor change from a coalesced fare when gross contribution spends the fund", async () => {
+        const result = await recycledFill(
+            sponsorLeg({
+                fund: taxiCoin({ value: 329 }),
+                netContributionSats: BigInt(329),
+                fare: { script: TAXI_CHANGE, sats: BigInt(330) },
+                combineSatsFareWithChange: true,
+            }),
+        );
+        expect(result.layout.outputs.filter(({ role }) => role.startsWith("sponsor"))).toEqual([
+            { role: "sponsor-change", script: TAXI_CHANGE, sats: BigInt(330) },
+        ]);
+    });
+
+    it.each([
+        ["missing fare", { combineSatsFareWithChange: true }, /requires a fare/],
+        [
+            "asset fare",
+            {
+                combineSatsFareWithChange: true,
+                fare: {
+                    assetId: DEPOSIT_ASSET,
+                    amount: BigInt(1),
+                    script: TAXI_CHANGE,
+                    sats: BigInt(4),
+                },
+            },
+            /sats-only fare/,
+        ],
+        [
+            "different script",
+            {
+                combineSatsFareWithChange: true,
+                fare: { script: FARE_SCRIPT, sats: BigInt(4) },
+            },
+            /same script/,
+        ],
+        [
+            "non-boolean flag",
+            {
+                combineSatsFareWithChange: 0 as never,
+                fare: { script: TAXI_CHANGE, sats: BigInt(4) },
+            },
+            /must be a boolean/,
+        ],
+    ])("rejects %s before touching the builder", async (_label, over, message) => {
+        reset();
+        await expect(assemble(wantBtcHex, sponsorLeg(over))).rejects.toThrow(message);
+        expect(state.calls).toEqual([]);
+    });
+
+    it("rejects an unsafe combined sponsor output before touching the builder", async () => {
+        reset();
+        await expect(
+            assemble(
+                wantBtcHex,
+                sponsorLeg({
+                    fund: taxiCoin({ value: Number.MAX_SAFE_INTEGER }),
+                    netContributionSats: BigInt(1),
+                    fare: { script: TAXI_CHANGE, sats: BigInt(2) },
+                    combineSatsFareWithChange: true,
+                }),
+            ),
+        ).rejects.toThrow(/combined sponsor change must be a safe integer amount of sats/);
+        expect(state.calls).toEqual([]);
+    });
+
+    it("rejects invalid change script validation even for a tiny combined output", async () => {
+        reset();
+        await expect(
+            assemble(
+                wantBtcHex,
+                sponsorLeg({
+                    fund: taxiCoin({ value: 329 }),
+                    netContributionSats: BigInt(329),
+                    changeScript: new Uint8Array(),
+                    fare: { script: new Uint8Array(), sats: BigInt(1) },
+                    combineSatsFareWithChange: true,
+                }),
+            ),
+        ).rejects.toThrow(/sponsor.changeScript must be a non-empty output script/);
+        expect(state.calls).toEqual([]);
+    });
+
+    it("keeps the gross contribution bound when the fare is coalesced", async () => {
+        reset();
+        await expect(
+            assemble(
+                wantBtcHex,
+                sponsorLeg({
+                    fund: taxiCoin({ value: 1_000 }),
+                    netContributionSats: BigInt(1_001),
+                    fare: { script: TAXI_CHANGE, sats: BigInt(4) },
+                    combineSatsFareWithChange: true,
+                }),
+            ),
+        ).rejects.toThrow(/netContributionSats 1001 exceeds the sponsor inputs 1000/);
+        expect(state.calls).toEqual([]);
+    });
+
+    it("still rejects duplicate inputs before a coalesced build", async () => {
+        reset();
+        const shared = fundingCoin()[0] as { txid: string; vout: number; value: number };
+        await expect(
+            assemble(
+                wantBtcHex,
+                sponsorLeg({
+                    fund: [shared] as never,
+                    fare: { script: TAXI_CHANGE, sats: BigInt(4) },
+                    combineSatsFareWithChange: true,
+                }),
+            ),
+        ).rejects.toThrow(/duplicate fill input/);
+        expect(state.calls).toEqual([]);
     });
 
     it("folds a same-asset fare into the wanted group, not a second one", async () => {
