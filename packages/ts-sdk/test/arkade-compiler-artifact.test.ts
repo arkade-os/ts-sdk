@@ -305,6 +305,38 @@ describe("reading an arkadec artifact", () => {
         ).toThrow(/duplicate spend group 'complete'/);
     });
 
+    it("rejects a struct named after a built-in scalar type", () => {
+        expect(() =>
+            programFromArtifact({
+                contractName: "Shadow",
+                constructorInputs: [],
+                structs: [{ name: "pubkey", fields: [{ name: "x", type: "int" }] }],
+                functions: [
+                    {
+                        name: "spend",
+                        leaves: [{ name: "spend", asm: ["<SERVER_KEY>", "OP_CHECKSIG"] }],
+                    },
+                ],
+            }),
+        ).toThrow(/struct name 'pubkey' shadows a built-in type/);
+    });
+
+    it("leaves a second-emulator tweak as an undeclared parameter", () => {
+        const program = programFromArtifact({
+            contractName: "Tweaked",
+            constructorInputs: [],
+            functions: [
+                {
+                    name: "spend",
+                    leaves: [{ name: "spend", asm: ["<TWEAK:agentPk:spend>", "OP_CHECKSIG"] }],
+                },
+            ],
+        });
+        expect(() => validateProgram(program, { server: SERVER_KEY })).toThrow(
+            /'\$TWEAK:agentPk:spend' is referenced but not declared in program params/,
+        );
+    });
+
     it("refuses an opcode this SDK's table does not carry", () => {
         const unknown: ContractArtifact = {
             ...artifact,

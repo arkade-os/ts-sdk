@@ -118,24 +118,20 @@ function claim(seen: Set<string>, name: string, kind: string): void {
 }
 
 /** `pubkey` and `sig` are length-checked. `bytes20`, `bytes32`, and `asset` stay opaque hashes. */
+const SCALAR_TYPES: Record<string, ArkadeArgType> = {
+    pubkey: "pubkey",
+    signature: "sig",
+    bytes: "bytes",
+    bytes20: "hash",
+    bytes32: "hash",
+    asset: "hash",
+    int: "int",
+    bool: "int",
+};
+
 function argType(arkType: string): ArkadeArgType {
-    switch (arkType) {
-        case "pubkey":
-            return "pubkey";
-        case "signature":
-            return "sig";
-        case "bytes":
-            return "bytes";
-        case "bytes20":
-        case "bytes32":
-        case "asset":
-            return "hash";
-        case "int":
-        case "bool":
-            return "int";
-        default:
-            fail(`unknown type '${arkType}'`);
-    }
+    if (!Object.hasOwn(SCALAR_TYPES, arkType)) fail(`unknown type '${arkType}'`);
+    return SCALAR_TYPES[arkType];
 }
 
 function arrayParts(type: string): [string, number] {
@@ -342,6 +338,9 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
     for (const struct of structs) {
         if (!isRecord(struct) || typeof struct.name !== "string" || !Array.isArray(struct.fields)) {
             fail("struct needs a name and fields");
+        }
+        if (Object.hasOwn(SCALAR_TYPES, struct.name)) {
+            fail(`struct name '${struct.name}' shadows a built-in type`);
         }
         claim(structNames, struct.name, "struct");
     }
