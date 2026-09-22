@@ -1,6 +1,13 @@
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
+import {
+    advanceFundingSwap,
+    canInsertPreparedSwap,
+    fundingSnapshot,
+    mergeFundingProtectedSwap,
+    type FundingStateAdvance,
+} from "./fundingPersistence";
 
 /** A registry discovery result held for reuse. Refetchable — unlike a swap
  * record, losing it costs one network round trip — but it must survive a cold
@@ -31,11 +38,8 @@ export const marketsCacheKey = (network: string, registry: string) =>
  * subset queries.
  */
 export interface AssetSwapRepository extends AsyncDisposable {
-    /** 4 adds `getRfqSwap`. 3 added the other RFQ methods below; 2 was the
-     * released shape — swaps, scan cursor, markets, with `preimageSaltHex` on
-     * the swap record — so an implementor built against either cannot satisfy
-     * this one silently. */
-    readonly version: 4;
+    /** 5 adds atomic prepared-funding persistence. */
+    readonly version: 5;
 
     /** Insert or replace a swap by id. Store the record whole: `preimageHex`
      * and `preimageSaltHex` both leave the swap unclaimable if a field-mapped
@@ -49,6 +53,13 @@ export interface AssetSwapRepository extends AsyncDisposable {
      * none of which happens on IndexedDB's structured clone. `AssetSwap` as
      * declared is JSON-safe; keep added fields that way. */
     saveSwap(swap: AssetSwap): Promise<void>;
+    getSwap(id: string): Promise<AssetSwap | undefined>;
+    insertPreparedSwap(swap: AssetSwap): Promise<boolean>;
+    advanceFundingState(
+        id: string,
+        expected: "prepared" | "submitted",
+        next: FundingStateAdvance,
+    ): Promise<boolean>;
     /** All stored swaps, in no particular order — `getAssetSwaps` is the
      * canonical newest-first read. */
     getAllSwaps(): Promise<AssetSwap[]>;
@@ -82,18 +93,42 @@ export interface AssetSwapRepository extends AsyncDisposable {
 }
 
 export class InMemoryAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 4 as const;
+    readonly version = 5 as const;
     private readonly swaps = new Map<string, AssetSwap>();
     private readonly rfqSwaps = new Map<string, RfqSwapRecord>();
     private readonly scanned = new Set<string>();
     private readonly markets = new Map<string, MarketsCacheEntry>();
 
     async saveSwap(swap: AssetSwap): Promise<void> {
-        this.swaps.set(swap.id, swap);
+        const merged = mergeFundingProtectedSwap(this.swaps.get(swap.id), swap);
+        this.swaps.set(swap.id, merged.fundingIntent ? fundingSnapshot(merged) : merged);
+    }
+
+    async getSwap(id: string): Promise<AssetSwap | undefined> {
+        const swap = this.swaps.get(id);
+        return swap ? fundingSnapshot(swap) : undefined;
+    }
+
+    async insertPreparedSwap(swap: AssetSwap): Promise<boolean> {
+        if (!canInsertPreparedSwap([...this.swaps.values()], swap)) return false;
+        this.swaps.set(swap.id, fundingSnapshot(swap));
+        return true;
+    }
+
+    async advanceFundingState(
+        id: string,
+        expected: "prepared" | "submitted",
+        next: FundingStateAdvance,
+    ): Promise<boolean> {
+        const result = advanceFundingSwap(this.swaps.get(id), expected, next);
+        if (result.swap) this.swaps.set(id, fundingSnapshot(result.swap));
+        return result.ok;
     }
 
     async getAllSwaps(): Promise<AssetSwap[]> {
-        return [...this.swaps.values()];
+        return [...this.swaps.values()].map((swap) =>
+            swap.fundingIntent ? fundingSnapshot(swap) : swap,
+        );
     }
 
     async saveRfqSwap(record: RfqSwapRecord): Promise<void> {

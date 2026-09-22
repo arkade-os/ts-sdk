@@ -52,9 +52,18 @@ export {
     PreimageNotRecoverableError,
     type AssetSwap,
     type AssetSwapStatus,
+    type FundingIntent,
+    type FundingIntentInput,
+    type FundingIntentOutput,
+    type FundingIntentState,
     type PreimageBlockedReason,
     type SwapSecretsProjection,
 } from "./store";
+export {
+    assertPreparedFundingSwap,
+    FUNDING_INTENT_INPUT_LIMIT,
+    type FundingStateAdvance,
+} from "./fundingPersistence";
 export {
     type AssetSwapRepository,
     type MarketsCacheEntry,
