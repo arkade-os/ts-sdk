@@ -1,7 +1,7 @@
 /**
  * Arkade Script Opcodes
  *
- * This module defines ONLY Arkade-specific opcodes (0xb3, 0xc3-0xf8).
+ * This module defines ONLY Arkade-specific opcodes (0xb3, 0xc3-0xf6).
  * Standard Bitcoin opcodes are imported from @scure/btc-signer.
  *
  * Reference: arkade-os/emulator v0.0.4 pkg/arkade/opcode.go
@@ -52,11 +52,7 @@ export const ARKADE_OP = {
     BIN2NUM: 0xd8,
     REVERSEBYTES: 0xd9,
     MODEXP: 0xda,
-    // VTXO Expiry & Emulator Clock (0xdb-0xdc)
-    PUSHEXPIRY: 0xdb,
-    // The emulator calls this byte OP_CHECKTIMEVERIFY; compiler artifacts use OP_CHECKTIME.
-    CHECKTIME: 0xdc,
-    // 0xdd-0xdf are unassigned (OP_UNKNOWN221-223)
+    // 0xdb-0xdf are unassigned (OP_UNKNOWN219-223)
 
     // EC Operations (0xe0-0xe2)
     ECADD: 0xe0,
@@ -92,10 +88,6 @@ export const ARKADE_OP = {
 
     // Signature Hash (0xf6)
     SIGHASH: 0xf6,
-
-    // Continuation & Intent Introspection (0xf7-0xf8)
-    TUNNEL: 0xf7,
-    INSPECTINTENTMESSAGE: 0xf8,
 } as const;
 
 export const ARKADE_OPCODES: number[] = Object.values(ARKADE_OP);
