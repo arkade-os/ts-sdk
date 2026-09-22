@@ -147,6 +147,7 @@ export {
     type Program,
     type ProgramKeys,
     type SignerRef,
+    type TweakedSigner,
     type TapscriptSegment,
     type WitnessRef,
 } from "./program";

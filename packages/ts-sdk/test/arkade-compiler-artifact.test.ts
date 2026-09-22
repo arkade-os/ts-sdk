@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { hex } from "@scure/base";
+import { schnorr } from "@noble/curves/secp256k1.js";
 
 import {
     isContractArtifact,
@@ -12,11 +13,13 @@ import {
 import {
     ArkadeProgramScript,
     parseArtifact,
+    stringifyArtifact,
     validateProgram,
     type ArkadeParamValue,
 } from "../src/arkade/program";
 import { ArkadeScript } from "../src/arkade/script";
 import { computeArkadeScriptPublicKey } from "../src/arkade/tweak";
+import { CSVMultisigTapscript, MultisigTapscript } from "../src/script/tapscript";
 import { networks } from "../src/networks";
 
 // escrow.ark without source, updatedAt, witness, and compiler metadata.
@@ -321,19 +324,79 @@ describe("reading an arkadec artifact", () => {
         ).toThrow(/struct name 'pubkey' shadows a built-in type/);
     });
 
-    it("leaves a second-emulator tweak as an undeclared parameter", () => {
+    it("tweaks a constructor pubkey by the named covenant", () => {
+        const insurer = schnorr.getPublicKey(new Uint8Array(32).fill(0x09));
         const program = programFromArtifact({
-            contractName: "Tweaked",
-            constructorInputs: [],
+            contractName: "Demo",
+            constructorInputs: [{ name: "insurer", type: "pubkey" }],
             functions: [
                 {
-                    name: "spend",
-                    leaves: [{ name: "spend", asm: ["<TWEAK:agentPk:spend>", "OP_CHECKSIG"] }],
+                    name: "claim",
+                    arkade: { inputs: [], asm: ["OP_1"] },
+                    leaves: [collaborativeLeaf("claim")],
+                },
+                {
+                    name: "late",
+                    leaves: [
+                        {
+                            name: "late",
+                            asm: [
+                                "10",
+                                "OP_CHECKSEQUENCEVERIFY",
+                                "OP_DROP",
+                                "<TWEAK:insurer:claim>",
+                                "OP_CHECKSIG",
+                            ],
+                        },
+                    ],
+                },
+                {
+                    name: "race",
+                    leaves: [
+                        {
+                            name: "race",
+                            asm: [
+                                "<SERVER_KEY>",
+                                "OP_CHECKSIGVERIFY",
+                                "<TWEAK:insurer:claim>",
+                                "OP_CHECKSIG",
+                            ],
+                        },
+                    ],
                 },
             ],
         });
-        expect(() => validateProgram(program, { server: SERVER_KEY })).toThrow(
-            /'\$TWEAK:agentPk:spend' is referenced but not declared in program params/,
+        expect(program.functions.late.tapscript.signers).toEqual([
+            { tweak: "$insurer", fn: "claim" },
+        ]);
+        expect(program.functions.race.tapscript.signers).toEqual([
+            "$server",
+            { tweak: "$insurer", fn: "claim" },
+        ]);
+        const roundTrip = parseArtifact(JSON.parse(stringifyArtifact(program)));
+        expect(roundTrip.functions.race.tapscript.signers).toEqual(
+            program.functions.race.tapscript.signers,
+        );
+
+        const script = new ArkadeProgramScript(
+            program,
+            { insurer, server: SERVER_KEY },
+            { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY },
+        );
+        const tweaked = computeArkadeScriptPublicKey(
+            insurer,
+            script.functionByName("claim")!.arkadeScript!,
+        );
+        expect(hex.encode(script.functionByName("late")!.leafScript)).toBe(
+            hex.encode(
+                CSVMultisigTapscript.encode({
+                    timelock: { type: "blocks", value: 10 },
+                    pubkeys: [tweaked],
+                }).script,
+            ),
+        );
+        expect(hex.encode(script.functionByName("race")!.leafScript)).toBe(
+            hex.encode(MultisigTapscript.encode({ pubkeys: [SERVER_KEY, tweaked] }).script),
         );
     });
 

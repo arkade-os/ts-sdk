@@ -86,8 +86,17 @@ export interface InputDef {
  */
 export type InputRef = string | InputDef;
 
-/** Reference to a signer key: a `"$param"` reference or literal x-only bytes. */
-export type SignerRef = string | Uint8Array;
+/**
+ * A constructor pubkey tweaked by `fn`'s covenant, the same binding the Arkade
+ * emulator uses. `tweak` is a `$param` for that pubkey.
+ */
+export interface TweakedSigner {
+    tweak: string;
+    fn: string;
+}
+
+/** A `"$param"` reference, literal x-only bytes, or a {@link TweakedSigner}. */
+export type SignerRef = string | Uint8Array | TweakedSigner;
 
 /** A witness-stack item: a function-input name, a `"$param"`, a literal number/bigint (minimal script-num), or raw bytes. */
 export type WitnessRef = string | number | bigint | Uint8Array;
@@ -279,6 +288,9 @@ function collectParamRefs(program: Program): Set<string> {
     for (const fn of Object.values(program.functions)) {
         const tap = fn.tapscript;
         collect(tap.signers);
+        for (const signer of tap.signers) {
+            if (isTweakedSigner(signer)) collect([signer.tweak]);
+        }
         collect(tap.asm);
         collect(tap.witness);
         collect(tap.csv ? [tap.csv.value] : undefined);
@@ -373,8 +385,15 @@ export interface CompiledProgramFunction {
     tapLeafScript: TapLeafScript;
 }
 
-/** Resolve a {@link SignerRef} to x-only key bytes against the program's constructor args. */
-function resolveSigner(ref: SignerRef, args: Record<string, ArkadeParamValue>): Uint8Array {
+function isTweakedSigner(ref: SignerRef): ref is TweakedSigner {
+    return typeof ref === "object" && !(ref instanceof Uint8Array);
+}
+
+/** Resolve a pubkey signer to x-only key bytes against the program's constructor args. */
+function resolveSigner(
+    ref: string | Uint8Array,
+    args: Record<string, ArkadeParamValue>,
+): Uint8Array {
     if (ref instanceof Uint8Array) return ref;
     if (!ref.startsWith("$")) {
         throw new Error(`unknown signer reference '${ref}' — use '$${ref}'`);
@@ -444,14 +463,31 @@ function compileFunctions(
         );
     }
 
+    // Covenant bytes first. A constructor tweak names a function that may be
+    // declared later than the leaf that uses it.
+    const scripts = new Map<string, Uint8Array>();
+    for (const name of names) {
+        const asm = functions[name].arkadeScript?.asm;
+        if (asm) scripts.set(name, resolveAsm(asm, args));
+    }
+
     return defs.map((def, i) => {
         validateTapscript(def.tapscript);
-        const pubkeys = def.tapscript.signers.map((s) => resolveSigner(s, args));
+        const pubkeys = def.tapscript.signers.map((signer) => {
+            if (!isTweakedSigner(signer)) return resolveSigner(signer, args);
+            const script = scripts.get(signer.fn);
+            if (!script) {
+                throw new Error(
+                    `ArkadeContract: function '${names[i]}' tweaks '${signer.fn}', which has no arkade script`,
+                );
+            }
+            return computeArkadeScriptPublicKey(resolveSigner(signer.tweak, args), script);
+        });
 
         // Covenant leaf: bind the emulator's co-signer key to the arkade
         // script via the tagged-hash tweak, then append it to the leaf's
         // signer set.
-        const arkadeScript = def.arkadeScript ? resolveAsm(def.arkadeScript.asm, args) : undefined;
+        const arkadeScript = scripts.get(names[i]);
         const leafPubkeys = arkadeScript
             ? [...pubkeys, computeArkadeScriptPublicKey(keys.emulatorKey!, arkadeScript)]
             : pubkeys;
@@ -530,7 +566,18 @@ export function parseArtifact(artifact: {
     for (const [name, fn] of Object.entries(artifact.functions as Record<string, any>)) {
         const tap = fn.tapscript ?? {};
         const tapscript: TapscriptSegment = {
-            signers: (tap.signers ?? []).map(hexToken),
+            signers: (tap.signers ?? []).map((signer: unknown) => {
+                if (signer && typeof signer === "object" && !(signer instanceof Uint8Array)) {
+                    const { tweak, fn } = signer as { tweak?: unknown; fn?: unknown };
+                    if (typeof tweak !== "string" || typeof fn !== "string") {
+                        throw new Error(
+                            "parseArtifact: a tweaked signer needs string `tweak` and `fn`",
+                        );
+                    }
+                    return { tweak, fn };
+                }
+                return hexToken(signer);
+            }),
             ...(tap.asm ? { asm: tap.asm.map(hexToken) } : {}),
             ...(tap.witness ? { witness: tap.witness.map(hexToken) } : {}),
             ...(tap.csv

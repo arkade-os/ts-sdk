@@ -72,6 +72,7 @@ export {
     type InputDef,
     type InputRef,
     type SignerRef,
+    type TweakedSigner,
     type WitnessRef,
     type Utxo,
     type ArkadeSpendResult,
