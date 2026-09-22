@@ -120,7 +120,12 @@ export function isContractArtifact(value: unknown): value is ContractArtifact {
         if (!Array.isArray(group.leaves) || group.leaves.length === 0) return false;
         const arkade = group.arkade;
         if (arkade !== undefined) {
-            if (!isRecord(arkade) || !Array.isArray(arkade.inputs) || !isStringArray(arkade.asm)) {
+            if (
+                !isRecord(arkade) ||
+                !Array.isArray(arkade.inputs) ||
+                !arkade.inputs.every(isNamed) ||
+                !isStringArray(arkade.asm)
+            ) {
                 return false;
             }
         }

@@ -265,6 +265,19 @@ describe("reading an arkadec artifact", () => {
         ],
         ["a null struct entry", demo({ structs: [null] }), /complete arkadec artifact/],
         [
+            "a null covenant input",
+            demo({
+                functions: [
+                    {
+                        name: "spend",
+                        arkade: { inputs: [null], asm: ["OP_1"] },
+                        leaves: [{ name: "spend", asm: ["<SERVER_KEY>", "OP_CHECKSIG"] }],
+                    },
+                ],
+            }),
+            /complete arkadec artifact/,
+        ],
+        [
             "a constructor `server`",
             {
                 ...artifact,
