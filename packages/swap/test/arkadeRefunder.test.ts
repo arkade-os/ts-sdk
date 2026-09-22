@@ -74,7 +74,10 @@ const fakeContracts = (over: { unspent?: typeof FUNDED; swept?: typeof FUNDED } 
                     createdAt: 1,
                 },
                 vtxos: [
-                    ...(over.unspent ?? []).map(({ recoverable: _r, ...vtxo }) => vtxo),
+                    ...(over.unspent ?? []).map(({ recoverable: _r, ...vtxo }) => ({
+                        ...vtxo,
+                        isSwept: false,
+                    })),
                     ...(over.swept ?? []).map(({ recoverable: _r, ...vtxo }) => ({
                         ...vtxo,
                         isSwept: true,
