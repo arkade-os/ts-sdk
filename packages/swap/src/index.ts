@@ -175,6 +175,12 @@ export {
     type RfqTransport,
 } from "./rfq";
 export {
+    type ArkadeCarrierChoice,
+    type ArkadeCarrierRequest,
+    type RecycleCarrierQuote,
+    type VerifiedCarrierTerms,
+} from "./receiveCarrier";
+export {
     LOCKTIME_THRESHOLD,
     ONCHAIN_DUST_SATS,
     ONCHAIN_SECONDS_PER_BLOCK,
