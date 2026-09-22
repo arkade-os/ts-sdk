@@ -54,7 +54,7 @@ export const ARKADE_OP = {
     MODEXP: 0xda,
     // VTXO Expiry & Emulator Clock (0xdb-0xdc)
     PUSHEXPIRY: 0xdb,
-    // The emulator calls this byte OP_CHECKTIMEVERIFY; compiler artifacts use OP_CHECKTIME.
+    // compiler artifacts use OP_CHECKTIME.
     CHECKTIME: 0xdc,
     // 0xdd-0xdf are unassigned (OP_UNKNOWN221-223)
 
