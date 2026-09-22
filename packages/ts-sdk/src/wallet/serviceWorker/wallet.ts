@@ -98,6 +98,7 @@ import {
     RequestGetAllSpendingPaths,
     ResponseGetAllSpendingPaths,
     RequestSend,
+    RequestSendWithDeadline,
     ResponseSend,
     RequestGetAssetDetails,
     ResponseGetAssetDetails,
@@ -146,6 +147,7 @@ import {
     deserializeAggregateError,
     isSerializedAggregateError,
 } from "./wallet-message-handler";
+import { captureSendDeadline } from "../sendDeadline";
 import type {
     Contract,
     ContractEventCallback,
@@ -243,6 +245,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // are retained only for type completeness and are never enforced.
     SEND_BITCOIN: 50_000,
     SEND: 50_000,
+    SEND_WITH_DEADLINE: 50_000,
     SETTLE: 50_000,
     ISSUE: 50_000,
     REISSUE: 50_000,
@@ -2006,18 +2009,36 @@ export class ServiceWorkerWallet
 
     async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         const [first] = args;
-        const { recipients, selectedVtxos } =
-            args.length === 1 && first && "recipients" in first
-                ? (first as SendParams)
-                : { recipients: args as [Recipient, ...Recipient[]], selectedVtxos: undefined };
-        const message: RequestSend = {
-            tag: this.messageTag,
-            type: "SEND",
-            id: getRandomId(),
-            // Omitted rather than sent as `undefined`, so an older worker sees
-            // exactly the payload it saw before.
-            payload: selectedVtxos ? { recipients, selectedVtxos } : { recipients },
-        };
+        const {
+            recipients,
+            selectedVtxos,
+            validUntil: wireDeadline,
+        } = args.length === 1 && first && "recipients" in first
+            ? (first as SendParams)
+            : {
+                  recipients: args as [Recipient, ...Recipient[]],
+                  selectedVtxos: undefined,
+                  validUntil: undefined,
+              };
+        const validUntil = captureSendDeadline(wireDeadline);
+        const message: RequestSend | RequestSendWithDeadline =
+            validUntil === undefined
+                ? {
+                      tag: this.messageTag,
+                      type: "SEND",
+                      id: getRandomId(),
+                      // Omitted rather than sent as `undefined`, so an older worker sees
+                      // exactly the payload it saw before.
+                      payload: selectedVtxos ? { recipients, selectedVtxos } : { recipients },
+                  }
+                : {
+                      tag: this.messageTag,
+                      type: "SEND_WITH_DEADLINE",
+                      id: getRandomId(),
+                      payload: selectedVtxos
+                          ? { recipients, selectedVtxos, validUntil }
+                          : { recipients, validUntil },
+                  };
 
         try {
             const response = await this.sendMessage(message);

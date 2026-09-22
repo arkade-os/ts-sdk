@@ -560,6 +560,96 @@ describe("ServiceWorkerWallet", () => {
         vi.unstubAllGlobals();
     });
 
+    it("keeps ordinary variadic sends on the legacy SEND payload", async () => {
+        const recipient = { address: "tark1legacy", amount: 2000 };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "SEND") return null;
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "SEND_SUCCESS",
+                payload: { txid: "legacy-txid" },
+            };
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+
+        await expect(wallet.send(recipient)).resolves.toBe("legacy-txid");
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith({
+            id: expect.any(String),
+            tag: messageTag,
+            type: "SEND",
+            payload: { recipients: [recipient] },
+        });
+    });
+
+    it("uses SEND_WITH_DEADLINE and snapshots its exact payload", async () => {
+        const recipients = [{ address: "tark1timed", amount: 2000 }] as const;
+        const selectedVtxos = [{ txid: "aa".repeat(32), vout: 1, value: 3000 }] as any;
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "SEND_WITH_DEADLINE") return null;
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "SEND_SUCCESS",
+                payload: { txid: "timed-txid" },
+            };
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        const params = {
+            recipients: [...recipients] as any,
+            selectedVtxos,
+            validUntil: 1_700_000_123,
+        };
+
+        const result = wallet.send(params);
+        params.validUntil = 1;
+
+        await expect(result).resolves.toBe("timed-txid");
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith({
+            id: expect.any(String),
+            tag: messageTag,
+            type: "SEND_WITH_DEADLINE",
+            payload: {
+                recipients: [...recipients],
+                selectedVtxos,
+                validUntil: 1_700_000_123,
+            },
+        });
+    });
+
+    it("never downgrades a timed send when an older worker rejects the request", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "SEND_WITH_DEADLINE") {
+                return { id: message.id, tag: messageTag, error: new Error("unknown request") };
+            }
+            if (message.type === "SEND") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "SEND_SUCCESS",
+                    payload: { txid: "unsafe-fallback" },
+                };
+            }
+            return null;
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+
+        await expect(
+            wallet.send({
+                recipients: [{ address: "tark1timed", amount: 2000 }],
+                validUntil: 1_700_000_123,
+            }),
+        ).rejects.toThrow(/unknown request/);
+        expect(
+            serviceWorker.postMessage.mock.calls.filter(
+                ([message]: any) => message.type === "SEND",
+            ),
+        ).toHaveLength(0);
+    });
+
     it("getDelegateManager returns undefined when no delegate configured", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness();
 

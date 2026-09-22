@@ -71,6 +71,7 @@ import {
     warnAndFilterVtxosForScript,
 } from "../../contracts/vtxoOwnership";
 import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
+import { captureSendDeadline } from "../sendDeadline";
 
 export class WalletNotInitializedError extends Error {
     constructor() {
@@ -509,6 +510,14 @@ export type RequestSend = RequestEnvelope & {
         selectedVtxos?: ExtendedVirtualCoin[];
     };
 };
+export type RequestSendWithDeadline = RequestEnvelope & {
+    type: "SEND_WITH_DEADLINE";
+    payload: {
+        recipients: [Recipient, ...Recipient[]];
+        selectedVtxos?: ExtendedVirtualCoin[];
+        validUntil: number;
+    };
+};
 export type ResponseSend = ResponseEnvelope & {
     type: "SEND_SUCCESS";
     payload: { txid: string };
@@ -835,6 +844,7 @@ export type WalletUpdaterRequest =
     | RequestGetUsedSigningDescriptors
     | RequestAdvanceSigningDescriptorWatermark
     | RequestSend
+    | RequestSendWithDeadline
     | RequestGetAssetDetails
     | RequestIssue
     | RequestReissue
@@ -1483,6 +1493,24 @@ export class WalletMessageHandler
                     const txid = await (selectedVtxos
                         ? (this.wallet as IWallet).send({ recipients, selectedVtxos })
                         : (this.wallet as IWallet).send(...recipients));
+                    return this.tagged({
+                        id,
+                        type: "SEND_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "SEND_WITH_DEADLINE": {
+                    const {
+                        recipients,
+                        selectedVtxos,
+                        validUntil: wireDeadline,
+                    } = (message as RequestSendWithDeadline).payload;
+                    const validUntil = captureSendDeadline(wireDeadline, true)!;
+                    const txid = await (this.wallet as IWallet).send({
+                        recipients,
+                        ...(selectedVtxos ? { selectedVtxos } : {}),
+                        validUntil,
+                    });
                     return this.tagged({
                         id,
                         type: "SEND_SUCCESS",
