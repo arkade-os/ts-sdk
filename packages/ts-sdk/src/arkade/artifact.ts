@@ -150,9 +150,8 @@ function flatten(
         fail("parameter needs a name and a type");
     }
 
-    const native = NATIVE_STRUCTS[param.type];
-    if (native) {
-        return native.map(([field, type]) => ({
+    if (Object.hasOwn(NATIVE_STRUCTS, param.type)) {
+        return NATIVE_STRUCTS[param.type].map(([field, type]) => ({
             name: `${param.name}.${field}`,
             type: argType(type),
         }));
@@ -176,7 +175,10 @@ function flatten(
         }
         return [{ name: param.name, type: argType(param.type) }];
     }
-    if (NATIVE_STRUCTS[element] || structs.some((struct) => struct.name === element)) {
+    if (
+        Object.hasOwn(NATIVE_STRUCTS, element) ||
+        structs.some((struct) => struct.name === element)
+    ) {
         fail(`arrays of structs are not supported: '${param.type}'`);
     }
     return Array.from({ length }, (_, index) => ({
@@ -189,7 +191,7 @@ function flatten(
 function opcodeToken(token: string): AsmToken {
     const base = token.slice(3);
     const name = base === "0" || /^([1-9]|1[0-6])$/.test(base) ? token : base;
-    if (!(name in ARKADE_OPS)) {
+    if (!Object.hasOwn(ARKADE_OPS, name)) {
         fail(`opcode '${token}' is not in this SDK's table`);
     }
     return name as AsmToken;
@@ -346,7 +348,12 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
         if (!isRecord(struct) || typeof struct.name !== "string" || !Array.isArray(struct.fields)) {
             fail("struct needs a name and fields");
         }
-        if (Object.hasOwn(SCALAR_TYPES, struct.name)) {
+        // `flatten` resolves these names itself, so a struct taking one would
+        // be silently replaced by the built-in layout.
+        if (
+            Object.hasOwn(SCALAR_TYPES, struct.name) ||
+            Object.hasOwn(NATIVE_STRUCTS, struct.name)
+        ) {
             fail(`struct name '${struct.name}' shadows a built-in type`);
         }
         claim(structNames, struct.name, "struct");
@@ -355,6 +362,7 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
     const instantiations = new Map<string, string>();
     const functions: Record<string, ArkadeFunction> = {};
     const groups = new Set<string>();
+    const leafNames = new Set<string>();
 
     for (const group of artifact.functions) {
         claim(groups, group.name, "spend group");
@@ -371,7 +379,7 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
 
         for (const [index, leaf] of group.leaves.entries()) {
             const name = index === 0 ? group.name : `${group.name}/${index}:${leaf.name}`;
-            if (name in functions) fail(`duplicate function name '${name}'`);
+            claim(leafNames, name, "function name");
             const extras = providedWitness(leaf.witness);
             const tapscript = parseLeaf(leaf, group.arkade !== undefined, instantiations, extras);
             const inputs: InputDef[] = [

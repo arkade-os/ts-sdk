@@ -308,12 +308,14 @@ describe("reading an arkadec artifact", () => {
         ).toThrow(/duplicate spend group 'complete'/);
     });
 
-    it("rejects a struct named after a built-in scalar type", () => {
+    // A scalar name changes how every field of that type flattens; a native
+    // struct name is resolved first, so the declared fields would be dropped.
+    it.each(["pubkey", "ECPoint"])("rejects a struct named after the built-in %s", (name) => {
         expect(() =>
             programFromArtifact({
                 contractName: "Shadow",
                 constructorInputs: [],
-                structs: [{ name: "pubkey", fields: [{ name: "x", type: "int" }] }],
+                structs: [{ name, fields: [{ name: "x", type: "int" }] }],
                 functions: [
                     {
                         name: "spend",
@@ -321,7 +323,7 @@ describe("reading an arkadec artifact", () => {
                     },
                 ],
             }),
-        ).toThrow(/struct name 'pubkey' shadows a built-in type/);
+        ).toThrow(new RegExp(`struct name '${name}' shadows a built-in type`));
     });
 
     it("tweaks a constructor pubkey by the named covenant", () => {
@@ -400,17 +402,37 @@ describe("reading an arkadec artifact", () => {
         );
     });
 
-    it("refuses an opcode this SDK's table does not carry", () => {
-        const unknown: ContractArtifact = {
-            ...artifact,
-            functions: [
-                {
-                    name: "complete",
-                    arkade: { inputs: [], asm: ["OP_NOTAREALOPCODE"] },
-                    leaves: [group("complete").leaves[0]],
-                },
-            ],
-        };
-        expect(() => programFromArtifact(unknown)).toThrow(/not in this SDK's table/);
+    it("refuses a tweak that names no covenant", () => {
+        expect(() =>
+            programFromArtifact({
+                contractName: "Demo",
+                constructorInputs: [{ name: "insurer", type: "pubkey" }],
+                functions: [
+                    {
+                        name: "race",
+                        leaves: [{ name: "race", asm: ["<TWEAK:insurer>", "OP_CHECKSIG"] }],
+                    },
+                ],
+            }),
+        ).toThrow(/malformed tweak/);
     });
+
+    // OP_constructor reaches Object.prototype, so a membership test that is not
+    // own-property would accept it and fail later inside the script encoder.
+    it.each(["OP_NOTAREALOPCODE", "OP_constructor"])(
+        "refuses %s, which this SDK's table does not carry",
+        (opcode) => {
+            const unknown: ContractArtifact = {
+                ...artifact,
+                functions: [
+                    {
+                        name: "complete",
+                        arkade: { inputs: [], asm: [opcode] },
+                        leaves: [group("complete").leaves[0]],
+                    },
+                ],
+            };
+            expect(() => programFromArtifact(unknown)).toThrow(/not in this SDK's table/);
+        },
+    );
 });
