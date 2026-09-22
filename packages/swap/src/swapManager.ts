@@ -1474,9 +1474,9 @@ export class RfqSwapManager {
         //    and the worst is a caller who wired it generically watching that
         //    push fail forever against a key this wallet does not hold.
         if (swap.kind === "lightning_receive") {
-            return fate.fate === "exited"
-                ? this.blockExitedLockup(swap, fate)
-                : this.driveReceiveClaim(swap);
+            if (fate.fate === "exited") return this.blockExitedLockup(swap, fate);
+            if (fate.fate === "open") return this.driveReceiveClaim(swap);
+            return;
         }
 
         //    The L1 half. Skipped once claimed — there is nothing further to
