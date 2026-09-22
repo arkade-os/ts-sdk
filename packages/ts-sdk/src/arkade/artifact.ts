@@ -84,10 +84,21 @@ function isStringArray(value: unknown): value is string[] {
     return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+function isNamed(value: unknown): value is ArtifactParameter {
+    return (
+        isRecord(value) &&
+        typeof value.name === "string" &&
+        typeof value.type === "string" &&
+        value.type.length > 0
+    );
+}
+
 /** `true` when `value` is an arkadec artifact rather than a Program. */
 export function isContractArtifact(value: unknown): value is ContractArtifact {
     if (!isRecord(value) || typeof value.contractName !== "string") return false;
-    if (!Array.isArray(value.constructorInputs)) return false;
+    if (!Array.isArray(value.constructorInputs) || !value.constructorInputs.every(isNamed)) {
+        return false;
+    }
     if (value.structs !== undefined && !Array.isArray(value.structs)) return false;
     if (!Array.isArray(value.functions) || value.functions.length === 0) return false;
     return value.functions.every((group) => {

@@ -262,6 +262,17 @@ describe("reading an arkadec artifact", () => {
     it.each([
         ["an incomplete artifact", { functions: [] }, /complete arkadec artifact/],
         [
+            "a constructor input without a type",
+            {
+                contractName: "Broken",
+                constructorInputs: [{ name: "amount" }],
+                functions: [
+                    { name: "spend", leaves: [leaf("spend", ["<SERVER_KEY>", "OP_CHECKSIG"])] },
+                ],
+            },
+            /complete arkadec artifact/,
+        ],
+        [
             "a constructor `server`",
             {
                 ...artifact,
