@@ -296,12 +296,9 @@ function parseLeaf(
         const inner = key.slice(1, -1);
         if (inner === "SERVER_KEY") signers.push("$server");
         else if (inner.startsWith("TWEAK:")) {
-            const body = inner.slice("TWEAK:".length);
-            const colon = body.indexOf(":");
-            if (colon <= 0 || colon === body.length - 1) {
-                fail(`leaf '${leaf.name}': malformed tweak '${key}'`);
-            }
-            signers.push({ tweak: `$${body.slice(0, colon)}`, fn: body.slice(colon + 1) });
+            const [, base, fn] = inner.match(/^TWEAK:([^:]+):([^:]+)$/) ?? [];
+            if (!base || !fn) fail(`leaf '${leaf.name}': malformed tweak '${key}'`);
+            signers.push({ tweak: `$${base}`, fn });
         } else if (inner.startsWith("EMULATOR_KEY:")) {
             if (!hasCovenant) {
                 fail(
