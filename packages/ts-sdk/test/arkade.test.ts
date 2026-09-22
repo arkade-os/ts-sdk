@@ -30,6 +30,23 @@ describe("Arkade Opcodes", () => {
             expect(OPCODE_VALUES[name]).toBe(Number(value));
         }
     });
+
+    // The compiler emits these bytes; the SDK disassembles and re-serializes
+    // them. A one-way lookup yields an unspendable script, so every opcode
+    // round-trips instead of a hand-picked few. The byte values are ARKADE_OP's
+    // own: the emulator's opcode table stays the reference for those.
+    it.each(Object.entries(ARKADE_OP) as [keyof typeof ARKADE_OPS, number][])(
+        "should round-trip OP_%s",
+        (name, value) => {
+            expect(getOpcodeName(value)).toBe(`OP_${name}`);
+            expect(getOpcodeValue(`OP_${name}`)).toBe(value);
+            expect(getOpcodeValue(name)).toBe(value);
+            expect(ARKADE_OPCODES).toContain(value);
+            expect(ArkadeScript.encode([name])).toEqual(new Uint8Array([value]));
+            expect(ArkadeScript.decode(new Uint8Array([value]))).toEqual([name]);
+            expect(toASM(fromASM(`OP_${name}`))).toBe(`OP_${name}`);
+        },
+    );
 });
 
 describe("Script Encoding/Decoding", () => {
@@ -121,32 +138,6 @@ describe("Script Encoding/Decoding", () => {
             expect(decoded).toEqual(script);
         });
 
-        it("should encode and decode MERKLEBRANCHVERIFY opcode (0xb3)", () => {
-            const script: ArkadeScriptType = ["MERKLEBRANCHVERIFY"];
-            const encoded = ArkadeScript.encode(script);
-            expect(encoded).toEqual(new Uint8Array([0xb3]));
-            const decoded = ArkadeScript.decode(encoded);
-            expect(decoded).toEqual(["MERKLEBRANCHVERIFY"]);
-        });
-
-        it("should encode and decode TXID opcode (0xf3)", () => {
-            const script: ArkadeScriptType = ["TXID"];
-            const encoded = ArkadeScript.encode(script);
-            expect(encoded).toEqual(new Uint8Array([0xf3]));
-            const decoded = ArkadeScript.decode(encoded);
-            expect(decoded).toEqual(["TXID"]);
-        });
-
-        it("should encode script using MERKLEBRANCHVERIFY and TXID together", () => {
-            const root = new Uint8Array(32).fill(0xaa);
-            const script: ArkadeScriptType = ["MERKLEBRANCHVERIFY", root, "EQUALVERIFY", "TXID"];
-            const decoded = ArkadeScript.decode(ArkadeScript.encode(script));
-            expect(decoded[0]).toBe("MERKLEBRANCHVERIFY");
-            expect(decoded[1]).toEqual(root);
-            expect(decoded[2]).toBe("EQUALVERIFY");
-            expect(decoded[3]).toBe("TXID");
-        });
-
         it("should encode and decode mixed script", () => {
             const data1 = hex.decode("deadbeef");
             const data2 = new Uint8Array(32).fill(0x11);
@@ -201,10 +192,6 @@ describe("ASM Conversion", () => {
             expect(toASM(["SHA256INITIALIZE", "NUM2BIN", "TWEAKVERIFY"])).toBe(
                 "OP_SHA256INITIALIZE OP_NUM2BIN OP_TWEAKVERIFY",
             );
-        });
-
-        it("should convert MERKLEBRANCHVERIFY and TXID to ASM", () => {
-            expect(toASM(["MERKLEBRANCHVERIFY", "TXID"])).toBe("OP_MERKLEBRANCHVERIFY OP_TXID");
         });
 
         it("should convert mixed script to ASM", () => {
@@ -273,13 +260,6 @@ describe("ArkadeScript CoderType", () => {
             expect(ARKADE_OPS.OP_1).toBe(0x51);
             expect(ARKADE_OPS.DUP).toBe(0x76);
             expect(ARKADE_OPS.CHECKSIG).toBe(0xac);
-        });
-
-        it("should include Arkade extension opcodes", () => {
-            expect(ARKADE_OPS.SHA256INITIALIZE).toBe(0xc4);
-            expect(ARKADE_OPS.NUM2BIN).toBe(0xd7);
-            expect(ARKADE_OPS.TWEAKVERIFY).toBe(0xe4);
-            expect(ARKADE_OPS.INSPECTINASSETLOOKUP).toBe(0xf2);
         });
     });
 
@@ -426,16 +406,6 @@ describe("ArkadeScript CoderType", () => {
             const decoded = ArkadeScript.decode(ArkadeScript.encode(script));
             expect(decoded).toEqual(script);
         });
-
-        it("should round-trip all Arkade opcodes", () => {
-            const allArkadeOps: ArkadeScriptType = Object.keys(ARKADE_OPS).filter((k) => {
-                const v = ARKADE_OPS[k as keyof typeof ARKADE_OPS];
-                // Only include Arkade-range opcodes (0xc4+)
-                return v >= 0xc4;
-            }) as ArkadeScriptType;
-            const decoded = ArkadeScript.decode(ArkadeScript.encode(allArkadeOps));
-            expect(decoded).toEqual(allArkadeOps);
-        });
     });
 
     describe("compatibility with @scure/btc-signer Script", () => {
@@ -461,86 +431,6 @@ describe("ArkadeScript CoderType", () => {
             const scureDecoded = Script.decode(hex.decode(scriptHex));
             expect(arkadeDecoded).toEqual(scureDecoded);
         });
-    });
-});
-
-describe("Emulator Packet Opcodes", () => {
-    it("should define INSPECTINPUTARKADESCRIPTHASH at 0xc8", () => {
-        expect(ARKADE_OP.INSPECTINPUTARKADESCRIPTHASH).toBe(0xc8);
-        expect(OPCODE_NAMES[0xc8]).toBe("OP_INSPECTINPUTARKADESCRIPTHASH");
-        expect(OPCODE_VALUES["INSPECTINPUTARKADESCRIPTHASH"]).toBe(0xc8);
-        expect(OPCODE_VALUES["OP_INSPECTINPUTARKADESCRIPTHASH"]).toBe(0xc8);
-    });
-
-    it("should define INSPECTINPUTARKADEWITNESSHASH at 0xce", () => {
-        expect(ARKADE_OP.INSPECTINPUTARKADEWITNESSHASH).toBe(0xce);
-        expect(OPCODE_NAMES[0xce]).toBe("OP_INSPECTINPUTARKADEWITNESSHASH");
-        expect(OPCODE_VALUES["INSPECTINPUTARKADEWITNESSHASH"]).toBe(0xce);
-        expect(OPCODE_VALUES["OP_INSPECTINPUTARKADEWITNESSHASH"]).toBe(0xce);
-    });
-
-    it("should encode and decode INSPECTINPUTARKADESCRIPTHASH", () => {
-        const script: ArkadeScriptType = ["INSPECTINPUTARKADESCRIPTHASH"];
-        const encoded = ArkadeScript.encode(script);
-        expect(encoded).toEqual(new Uint8Array([0xc8]));
-        const decoded = ArkadeScript.decode(encoded);
-        expect(decoded).toEqual(["INSPECTINPUTARKADESCRIPTHASH"]);
-    });
-
-    it("should encode and decode INSPECTINPUTARKADEWITNESSHASH", () => {
-        const script: ArkadeScriptType = ["INSPECTINPUTARKADEWITNESSHASH"];
-        const encoded = ArkadeScript.encode(script);
-        expect(encoded).toEqual(new Uint8Array([0xce]));
-        const decoded = ArkadeScript.decode(encoded);
-        expect(decoded).toEqual(["INSPECTINPUTARKADEWITNESSHASH"]);
-    });
-
-    it("should include new opcodes in ARKADE_OPCODES list", () => {
-        expect(ARKADE_OPCODES).toContain(0xc8);
-        expect(ARKADE_OPCODES).toContain(0xce);
-    });
-
-    it("should round-trip ASM for new opcodes", () => {
-        const asm =
-            "OP_0 OP_INSPECTINPUTARKADESCRIPTHASH OP_INSPECTINPUTARKADEWITNESSHASH OP_EQUAL";
-        const bytes = ArkadeScript.encode(fromASM(asm));
-        expect(toASM(ArkadeScript.decode(bytes))).toBe(asm);
-    });
-});
-
-describe("Expiry, clock, continuation, and intent opcodes", () => {
-    const cases: [number, string][] = [
-        [0xdb, "OP_PUSHEXPIRY"],
-        [0xdc, "OP_CHECKTIME"],
-        [0xf7, "OP_TUNNEL"],
-        [0xf8, "OP_INSPECTINTENTMESSAGE"],
-    ];
-
-    it.each(cases)("names %s %s", (value, name) => {
-        expect(getOpcodeName(value)).toBe(name);
-    });
-
-    it.each(cases)("values %s at %s", (value, name) => {
-        expect(getOpcodeValue(name)).toBe(value);
-    });
-
-    it.each(cases)("includes %s in ARKADE_OPCODES", (value) => {
-        expect(ARKADE_OPCODES).toContain(value);
-    });
-
-    it("should encode and decode each opcode", () => {
-        for (const [value, name] of cases) {
-            const bare = name.slice(3);
-            const encoded = ArkadeScript.encode([bare]);
-            expect(encoded).toEqual(new Uint8Array([value]));
-            expect(ArkadeScript.decode(encoded)).toEqual([bare]);
-        }
-    });
-
-    it("should round-trip ASM", () => {
-        const asm = cases.map(([, name]) => name).join(" ");
-        const bytes = ArkadeScript.encode(fromASM(asm));
-        expect(toASM(ArkadeScript.decode(bytes))).toBe(asm);
     });
 });
 
