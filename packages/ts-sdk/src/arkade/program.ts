@@ -383,7 +383,7 @@ export interface CompiledProgramFunction {
     tapLeafScript: TapLeafScript;
 }
 
-function isTweakedSigner(ref: SignerRef): ref is TweakedSigner {
+function isTweakedSigner(ref: unknown): ref is TweakedSigner {
     return typeof ref === "object" && ref !== null && !(ref instanceof Uint8Array);
 }
 
