@@ -3,6 +3,8 @@ import { restoreOfferCoverage } from "./offer";
 import type { AssetSwapRepository } from "./repository";
 import { restoreAssetSwaps, type RestoreIndexer, type Tx } from "./restore";
 import { getAssetSwapsOrThrow, type AssetSwap } from "./store";
+import { recoverPreparedOfferFunding } from "./fundingRecovery";
+import { hasBoundFunding, mayHaveSubmittedFunding } from "./fundingPersistence";
 
 export interface AssetSwapRestoreChange {
     /** The stored record before this restore; absent for a rebuilt record. */
@@ -47,7 +49,7 @@ const restoreCoverage = async (
     arkServerUrl: string,
     swaps: AssetSwap[],
 ): Promise<void> => {
-    const offers = swaps.filter(isOfferSwap);
+    const offers = swaps.filter((swap) => isOfferSwap(swap) && mayHaveSubmittedFunding(swap));
     if (offers.length > 0) await restoreOfferCoverage(wallet, arkServerUrl, offers);
 };
 
@@ -77,18 +79,38 @@ export async function restoreAssetSwapRepository(
 ): Promise<RestoreAssetSwapRepositoryResult> {
     const { wallet, arkServerUrl, indexer, repository, txs, serverPubkey, prepareNew, signal } =
         opts;
-    const [existing, scanned] = await Promise.all([
+    const [initial, scanned] = await Promise.all([
         getAssetSwapsOrThrow(repository),
         repository.getScannedTxids(),
     ]);
-    if (signal?.aborted) return aborted(existing);
+    if (signal?.aborted) return aborted(initial);
+
+    const recovered = await recoverPreparedOfferFunding(indexer, repository, initial);
+    const existing =
+        recovered.changes.length > 0 ? await getAssetSwapsOrThrow(repository) : initial;
+    if (signal?.aborted) {
+        return {
+            swaps: existing,
+            changes: recovered.changes,
+            scannedTxids: [],
+            aborted: true,
+        };
+    }
 
     let scan: Awaited<ReturnType<typeof restoreAssetSwaps>>;
     try {
-        scan = await restoreAssetSwaps(indexer, txs, new Set(existing.map((swap) => swap.id)), {
+        const knownFunding = new Set<string>();
+        for (const swap of existing) {
+            if (swap.fundingIntent === undefined) knownFunding.add(swap.id);
+            else if (hasBoundFunding(swap)) knownFunding.add(swap.fundingTxid);
+        }
+        for (const txid of recovered.candidateTxids) knownFunding.add(txid);
+        scan = await restoreAssetSwaps(indexer, txs, knownFunding, {
             serverPubkey,
             scanned,
-            reopen: existing.filter((swap) => isOpen(swap) && isOfferSwap(swap)),
+            reopen: existing.filter(
+                (swap) => isOpen(swap) && isOfferSwap(swap) && hasBoundFunding(swap),
+            ),
         });
     } catch (scanError) {
         // Coverage for records already on disk must not depend on the chain scan
@@ -108,7 +130,7 @@ export async function restoreAssetSwapRepository(
     if (signal?.aborted) return aborted(existing);
 
     const before = new Map(existing.map((swap) => [swap.id, swap]));
-    const changes: AssetSwapRestoreChange[] = [];
+    const changes: AssetSwapRestoreChange[] = [...recovered.changes];
     const cancelledAfterCommit = async (
         scannedTxids: string[] = [],
     ): Promise<RestoreAssetSwapRepositoryResult> => ({

@@ -1428,9 +1428,9 @@ const quoteCarrierSats = (quote: RfqQuote): bigint => {
  * (closed reason), {@link AddressMismatch} (never fund), or a gate error with
  * a stable `reason`.
  *
- * Funding (caller's job, immediately after, before `valid_until`):
- * - BTC->asset (`wantAsset`): `wallet.send({ address, amount: Number(fundAmount), extensions: [extension] })`
- * - asset->BTC or asset->asset (`offerAsset`): `wallet.send({ address, amount: Number(carrierSats), assets: [{ assetId: offerAsset, amount: fundAmount }], extensions: [extension] })`
+ * Funding remains the caller's next step, but should go through `fundOffer`
+ * with this result's `offerHex`, `fundAmount`, optional asset/carrier, stable
+ * `rfqId`, and a deadline no later than every verified quote expiry.
  */
 export async function requestArkadeSwap(
     wallet: IWallet,

@@ -65,6 +65,12 @@ export {
     type FundingStateAdvance,
 } from "./fundingPersistence";
 export {
+    FundingOutcomeUnknownError,
+    fundOffer,
+    type FundOfferParams,
+    type FundingExpiryFloor,
+} from "./funding";
+export {
     type AssetSwapRepository,
     type MarketsCacheEntry,
     InMemoryAssetSwapRepository,

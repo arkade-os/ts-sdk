@@ -46,6 +46,7 @@ import {
 import wantAssetProgram from "./swap-want-asset.program.json";
 import wantBtcProgram from "./swap-want-btc.program.json";
 import { promoteOfferContract, retireOfferContract, RETIRABLE } from "./coverage";
+import { hasBoundFunding, mayHaveSubmittedFunding } from "./fundingPersistence";
 import type { AssetSwapRepository } from "./repository";
 import {
     getAssetSwapsOrThrow,
@@ -480,7 +481,7 @@ export const OFFER_CONTRACT_KIND = "asset-swap-offer";
  * is a watched address, and {@link promoteOfferContract} is what keeps a
  * settlement racing this call from taking it back.
  */
-async function registerOfferContract(
+export async function registerOfferContract(
     wallet: IWallet,
     arkServerUrl: string,
     network: NetworkName,
@@ -551,7 +552,7 @@ export async function restoreOfferCoverage(
     arkServerUrl: string,
     swaps: AssetSwap[],
 ): Promise<void> {
-    const live = swaps.filter((s) => !RETIRABLE.includes(s.status));
+    const live = swaps.filter((s) => mayHaveSubmittedFunding(s) && !RETIRABLE.includes(s.status));
     if (live.length === 0) return;
 
     const arkProvider = new RestArkProvider(arkServerUrl);
@@ -871,6 +872,17 @@ export async function cancelOffer(
 ): Promise<string> {
     const { repository, fundingTxid, fundingOutpoint, swapAddress } = opts;
     const offer = decodeOffer(hex.decode(offerHex));
+    const stored = await getAssetSwapsOrThrow(repository);
+    const matching = stored.filter((swap) => swap.offerHex === offerHex);
+    const requested = fundingTxid
+        ? matching.find((swap) => swap.id === fundingTxid || swap.fundingTxid === fundingTxid)
+        : undefined;
+    if (requested && !hasBoundFunding(requested)) {
+        throw new Error(`swap operation ${requested.id} is not funded and cannot be cancelled`);
+    }
+    if (!fundingTxid && matching.length > 0 && !matching.some(hasBoundFunding)) {
+        throw new Error(`swap operation ${matching[0].id} is not funded and cannot be cancelled`);
+    }
 
     const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
@@ -924,18 +936,21 @@ export async function cancelOffer(
             outputs: [{ vout: 0, amount: BigInt(a.amount) }],
         });
     }
-    const swapId = fundingTxid ?? vtxo.txid;
+    const localSwap = stored.find(
+        (swap) =>
+            swap.fundingTxid === vtxo.txid && swap.swapPkScript === hex.encode(offer.swapPkScript),
+    );
+    const swapId = localSwap?.id;
     // Strict read: a failed one must not read as "no local record here" and
     // send us past the marker into the broadcast.
-    const hasLocalRecord = (await getAssetSwapsOrThrow(repository)).some((s) => s.id === swapId);
     // The in-flight marker is useful only when there is a local record to
     // update; a different or empty repository intentionally leaves the cancel
     // for event/restore classification. It gates the broadcast, so it throws:
     // the marker is what keeps a crash here from leaving a swap that still
     // looks pending.
-    if (hasLocalRecord) await updateAssetSwap(repository, swapId, { status: "cancelling" });
+    if (swapId) await updateAssetSwap(repository, swapId, { status: "cancelling" });
     const { txid } = await cancel.send();
-    if (hasLocalRecord) {
+    if (swapId) {
         // Past the point of no return: the cancel is broadcast, so a lost write
         // must not fail the caller. The watcher classifies by covenant leaf and
         // the restore scan re-derives the outcome.

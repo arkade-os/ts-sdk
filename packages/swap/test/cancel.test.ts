@@ -94,6 +94,35 @@ const pendingSwap = (over: Partial<AssetSwap> = {}): AssetSwap => ({
 });
 
 describe("cancelOffer guards", () => {
+    it("refuses an unfunded stable operation before a reusable-script lookup", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const value = pendingSwap({
+            id: "operation-a",
+            fundingTxid: "",
+            fundingIntent: {
+                version: 1,
+                state: "prepared",
+                inputs: [{ txid: "11".repeat(32), vout: 0 }],
+                serverPubkey: hex.encode(fundedServerKey),
+                arkServerUrl: "https://ark.example/",
+                output: {
+                    script: hex.encode(script.pkScript),
+                    value: "10000",
+                },
+            },
+        });
+        await repository.insertPreparedSwap(value);
+        state.sends = 0;
+
+        await expect(
+            cancelOffer(wallet, "http://ark", offerHex, {
+                repository,
+                fundingTxid: "operation-a",
+            }),
+        ).rejects.toThrow(/not funded/i);
+        expect(state.sends).toBe(0);
+    });
+
     it("diagnoses a rotated server key instead of reporting a missing VTXO", async () => {
         state.serverKey = rotatedServerKey;
         await expect(
@@ -205,6 +234,44 @@ describe("cancelOffer guards", () => {
             }),
         ).rejects.toThrow("no spendable VTXO");
         expect(state.connectOptions?.contractManager).toBe(contractManager);
+    });
+
+    it("updates a bound stable operation by its actual funding txid", async () => {
+        state.serverKey = fundedServerKey;
+        state.utxos = [{ txid: "a".repeat(64), vout: 0, value: 10_000 }];
+        const repository = new InMemoryAssetSwapRepository();
+        const value = pendingSwap({
+            id: "operation-a",
+            fundingTxid: "",
+            fundingIntent: {
+                version: 1,
+                state: "prepared",
+                inputs: [{ txid: "11".repeat(32), vout: 0 }],
+                serverPubkey: hex.encode(fundedServerKey),
+                arkServerUrl: "https://ark.example/",
+                output: {
+                    script: hex.encode(script.pkScript),
+                    value: "10000",
+                },
+            },
+        });
+        await repository.insertPreparedSwap(value);
+        await repository.advanceFundingState(value.id, "prepared", { state: "submitted" });
+        await repository.advanceFundingState(value.id, "submitted", {
+            state: "bound",
+            fundingTxid: "a".repeat(64),
+        });
+        const funded = { ...wallet, getAddress: async () => fundedAddress } as unknown as IWallet;
+
+        await cancelOffer(funded, "http://ark", offerHex, {
+            repository,
+            fundingTxid: "a".repeat(64),
+        });
+
+        expect(await repository.getSwap("operation-a")).toMatchObject({
+            status: "cancelled",
+            spentTxid: "cc".repeat(32),
+        });
     });
 });
 

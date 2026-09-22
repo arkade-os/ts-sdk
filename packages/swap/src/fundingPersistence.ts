@@ -225,6 +225,18 @@ export function assertFundingSwap(swap: AssetSwap): void {
     validatePinnedSwap(swap);
 }
 
+export function hasBoundFunding(swap: AssetSwap): boolean {
+    if (swap.fundingIntent === undefined) return swap.fundingTxid.length > 0;
+    assertFundingSwap(swap);
+    return swap.fundingIntent.state === "bound" && swap.fundingTxid.length > 0;
+}
+
+export function mayHaveSubmittedFunding(swap: AssetSwap): boolean {
+    if (swap.fundingIntent === undefined) return swap.fundingTxid.length > 0;
+    assertFundingSwap(swap);
+    return swap.fundingIntent.state === "submitted" || swap.fundingIntent.state === "bound";
+}
+
 const sameInputs = (a: FundingIntent, b: FundingIntent): boolean =>
     a.inputs.length === b.inputs.length &&
     a.inputs.every((input, index) => {

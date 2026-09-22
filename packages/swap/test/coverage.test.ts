@@ -39,6 +39,32 @@ describe("offer contract coverage", () => {
         expect(setContractWatchState.mock.calls).toEqual([[SCRIPT, "watched"]]);
     });
 
+    it("lets an explicitly abandoned unfunded issuance retire", async () => {
+        const { setContractWatchState } = manager();
+        const abandoned = swap({
+            id: "operation-a",
+            fundingTxid: "",
+            swapAddress: "tark1qprepared",
+            status: "cancelled",
+            createdAt: Date.now(),
+            fundingIntent: {
+                version: 1,
+                state: "abandoned",
+                inputs: [{ txid: "11".repeat(32), vout: 0 }],
+                serverPubkey: "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+                arkServerUrl: "https://ark.example/",
+                output: { script: SCRIPT, value: "10000" },
+            },
+        });
+        await promoteOfferContract({ setContractWatchState }, SCRIPT);
+        await retireOfferContract({ setContractWatchState }, [swap({}), abandoned], SCRIPT);
+
+        expect(setContractWatchState.mock.calls).toEqual([
+            [SCRIPT, "watched"],
+            [SCRIPT, "retained"],
+        ]);
+    });
+
     it("retires once the issued address has been funded and settled", async () => {
         // the mark answers one question — has this address been funded — and a
         // record created since the issuance is that funding; from there the

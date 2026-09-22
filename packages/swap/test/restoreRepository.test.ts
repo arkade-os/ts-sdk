@@ -76,6 +76,38 @@ describe("restoreAssetSwapRepository", () => {
         );
     });
 
+    it("skips and reopens a stable operation by its bound funding txid", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const operation = pending("operation-a", {
+            fundingTxid: "",
+            fundingIntent: {
+                version: 1,
+                state: "prepared",
+                inputs: [{ txid: "11".repeat(32), vout: 0 }],
+                serverPubkey: "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+                arkServerUrl: "https://ark.test/",
+                output: { script: `5120${"ab".repeat(32)}`, value: "10000" },
+            },
+        });
+        await repository.insertPreparedSwap(operation);
+        await repository.advanceFundingState(operation.id, "prepared", { state: "submitted" });
+        const fundingTxid = "22".repeat(32);
+        await repository.advanceFundingState(operation.id, "submitted", {
+            state: "bound",
+            fundingTxid,
+        });
+        const bound = (await repository.getSwap(operation.id))!;
+        mocks.restoreAssetSwaps.mockResolvedValue({ restored: [], scannedTxids: [] });
+
+        await run(repository);
+
+        expect(mocks.restoreAssetSwaps).toHaveBeenCalledWith(indexer, txs, new Set([fundingTxid]), {
+            serverPubkey,
+            scanned: new Set(),
+            reopen: [bound],
+        });
+    });
+
     it("persists new and resolved records before advancing the cursor", async () => {
         const events: string[] = [];
         class OrderedRepository extends InMemoryAssetSwapRepository {
