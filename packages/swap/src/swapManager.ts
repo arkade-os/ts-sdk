@@ -228,6 +228,9 @@ export interface OnchainSendSwap extends RfqSwapCommon {
     htlc: OnchainHtlc;
     /** `profile.min_confirmations` from the quote. */
     minConfirmations: number;
+    /** The quote's `to_amount`, captured at REQUEST time: read at claim time it
+     * would be whatever the solver funded. */
+    expectedAmount: number;
     /** Where {@link RfqSwapManagerCallbacks.claimOnchain} pays; optional only
      * so records predating its profile slot still restore. */
     payoutPkScript?: Uint8Array;
@@ -1746,6 +1749,23 @@ export class RfqSwapManager {
             // step 2 skipped this branch on it; a blocked swap keeps the txid
             // while the label defers, and re-broadcasting would publish P twice.
             if (swap.claimTxid) return "continue";
+            // Before the label, as the receive leg gates its lockup: the claim
+            // publishes `P`, and that is not recallable.
+            if (!Number.isSafeInteger(swap.expectedAmount) || swap.expectedAmount <= 0) {
+                this.block(
+                    swap,
+                    `expectedAmount is not a positive number of sats (${String(swap.expectedAmount)}), so the funded value cannot be checked — refusing to publish the preimage`,
+                );
+                return "handled";
+            }
+            const filled = Number(phase.utxo.amount);
+            if (!Number.isFinite(filled) || filled < swap.expectedAmount) {
+                this.block(
+                    swap,
+                    `fill holds ${filled} sats, below the agreed ${swap.expectedAmount} — refusing to publish the preimage`,
+                );
+                return "handled";
+            }
             // Half-wired: callbacks installed, this one absent. Blocked rather
             // than labelled `claimable`, for the reason `claimIfFunded` gives —
             // and NOT failed, unlike the missing-`ChainSource` case above:
@@ -1845,18 +1865,22 @@ export class RfqSwapManager {
             if (pushed) {
                 swap.refundArkTxid = pushed.arkTxid;
                 this.touch(swap);
+            } else if (now < swap.refundLocktime + REFUND_MTP_LAG_SECONDS) {
+                // `null` means the lockup had nothing to return. That is not
+                // proof the money came home: something spent it, and step 1
+                // could not say what. Ending here would record a late
+                // settlement as a refund — the payment landed, and the record
+                // says the funds came back. Wait out the same deadline the
+                // failed push below uses. Step 1 re-reads the lockup every
+                // pass, so it ends the swap on the spend as soon as the indexer
+                // can show it.
+                return;
             }
-            // An empty lockup lands here too, and this is the ONE place the
-            // manager settles for less than proof. Step 1 already ended the
-            // swap `settled` on a hash-verified claim and `refunded` on a spend
-            // it could fully see, so a lockup that reads empty this far down is
-            // one step 1 came back `unknown` for — the indexer produced no
-            // outputs, or no transaction for the spend. There is nothing left
-            // to recover and no further move available, so the swap ends
-            // `refunded`. A settlement that only becomes observable after this
-            // point will therefore have been recorded as a refund; that is the
-            // cost of ending the wait at all, and it takes an indexer that
-            // cannot answer for the whole span past `refundLocktime`.
+            // The deadline. Either the push moved the lockup, or the window
+            // passed with an indexer that still cannot answer and nothing left
+            // to recover, so there is no further move and the wait ends here.
+            // A settlement that only appears after this point is still recorded
+            // as a refund; that is the cost of ending the wait at all.
             this.setState(swap, "refunded");
             this.emitAction(swap, "refundArkade");
         } catch (error) {

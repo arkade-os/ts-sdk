@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { hex } from "@scure/base";
+import { p2tr, SigHash } from "@scure/btc-signer";
+import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     Wallet,
     MnemonicIdentity,
@@ -15,7 +17,12 @@ import {
 } from "../src";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { deriveDescriptorLeafCompressedPubKey } from "../src/identity/descriptor";
+import { VtxoScript } from "../src/script/base";
+import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
+import { verifyTapscriptSignatures } from "../src/utils/arkTransaction";
+import { Transaction } from "../src/utils/transaction";
+import { timelockToSequence } from "../src/utils/timelock";
 import { jsonResponse } from "./helpers/response";
 
 const MNEMONIC =
@@ -349,6 +356,88 @@ describe("HDWalletCapable", () => {
         const wallet = await makeWallet({ hd: true });
         const own = `tr(${hex.encode(await wallet.identity.xOnlyPublicKey())})`;
         expect(await wallet.signerForDescriptor(own)).toBe(wallet.identity);
+        await wallet.dispose();
+    });
+
+    it("signInputsByWitnessScript signs a rotated VTXO key through the descriptor route", async () => {
+        const contractRepo = new InMemoryContractRepository();
+        const wallet = await makeWallet({ hd: true, contractRepo });
+        const provider: HDDescriptorProvider = (wallet as any)._descriptorProvider;
+        const descriptor = provider.materializeDescriptorAt(5);
+        const rotatedKey = deriveDescriptorLeafPubKey(descriptor);
+
+        const timelock = { type: "blocks", value: 144n } as const;
+        const expectedSequence = timelockToSequence(timelock);
+        const exit = CSVMultisigTapscript.encode({ pubkeys: [rotatedKey], timelock });
+        const script = new VtxoScript([exit.script]);
+        const leaf = script.findLeaf(hex.encode(exit.script));
+        const outputAddress = p2tr(
+            schnorr.getPublicKey(new Uint8Array(32).fill(3)),
+            undefined,
+            wallet.network,
+        ).address!;
+
+        await contractRepo.saveContract({
+            id: "vtxo-5",
+            type: "default",
+            params: { pubKey: hex.encode(rotatedKey) },
+            script: hex.encode(script.pkScript),
+            address: "ark1vtxo5",
+            state: "active",
+            createdAt: Date.now(),
+            metadata: { signingDescriptor: descriptor },
+        } as any);
+
+        const tx = new Transaction({ version: 2 });
+        tx.addInput({
+            txid: "44".repeat(32),
+            index: 0,
+            tapLeafScript: [leaf],
+            sequence: expectedSequence,
+            witnessUtxo: { amount: 50_000n, script: script.pkScript },
+            sighashType: SigHash.DEFAULT,
+        });
+        tx.addOutputAddress(outputAddress, 49_900n, wallet.network);
+
+        const signed = await wallet.signInputsByWitnessScript(tx);
+        expect(signed.getInput(0).tapScriptSig?.length).toBe(1);
+        expect(() => verifyTapscriptSignatures(signed, 0, [hex.encode(rotatedKey)])).not.toThrow();
+        expect(() => signed.finalize()).not.toThrow();
+        await wallet.dispose();
+    });
+
+    it("signInputsByWitnessScript falls back to identity for an unknown script", async () => {
+        const wallet = await makeWallet({ hd: true });
+        const identityKey = await wallet.identity.xOnlyPublicKey();
+
+        const timelock = { type: "blocks", value: 144n } as const;
+        const expectedSequence = timelockToSequence(timelock);
+        const exit = CSVMultisigTapscript.encode({ pubkeys: [identityKey!], timelock });
+        const script = new VtxoScript([exit.script]);
+        const leaf = script.findLeaf(hex.encode(exit.script));
+        const outputAddress = p2tr(
+            schnorr.getPublicKey(new Uint8Array(32).fill(4)),
+            undefined,
+            wallet.network,
+        ).address!;
+
+        const tx = new Transaction({ version: 2 });
+        tx.addInput({
+            txid: "55".repeat(32),
+            index: 0,
+            tapLeafScript: [leaf],
+            sequence: expectedSequence,
+            witnessUtxo: { amount: 50_000n, script: script.pkScript },
+            sighashType: SigHash.DEFAULT,
+        });
+        tx.addOutputAddress(outputAddress, 49_900n, wallet.network);
+
+        const signed = await wallet.signInputsByWitnessScript(tx);
+        expect(signed.getInput(0).tapScriptSig?.length).toBe(1);
+        expect(() =>
+            verifyTapscriptSignatures(signed, 0, [hex.encode(identityKey!)]),
+        ).not.toThrow();
+        expect(() => signed.finalize()).not.toThrow();
         await wallet.dispose();
     });
 });
