@@ -283,14 +283,12 @@ function collectParamRefs(program: Program): Set<string> {
     const collect = (items: readonly (AsmToken | WitnessRef | SignerRef)[] | undefined) => {
         for (const t of items ?? []) {
             if (typeof t === "string" && t.startsWith("$")) refs.add(t.slice(1));
+            else if (isTweakedSigner(t) && t.tweak.startsWith("$")) refs.add(t.tweak.slice(1));
         }
     };
     for (const fn of Object.values(program.functions)) {
         const tap = fn.tapscript;
         collect(tap.signers);
-        for (const signer of tap.signers) {
-            if (isTweakedSigner(signer)) collect([signer.tweak]);
-        }
         collect(tap.asm);
         collect(tap.witness);
         collect(tap.csv ? [tap.csv.value] : undefined);
@@ -554,16 +552,11 @@ export function parseArtifact(artifact: {
     }
     const hexToken = (t: unknown): any =>
         typeof t === "string" && t.startsWith("0x") ? hex.decode(t.slice(2)) : t;
-    const invalidSigner = () => {
-        throw new Error("parseArtifact: a tweaked signer needs string `tweak` and `fn`");
-    };
     const signerRef = (s: unknown): SignerRef => {
-        if (s instanceof Uint8Array) return s;
-        if (typeof s === "string") return hexToken(s);
-        if (s === null || Array.isArray(s) || typeof s !== "object") invalidSigner();
-        const { tweak, fn } = s as { tweak?: unknown; fn?: unknown };
+        if (s instanceof Uint8Array || typeof s === "string") return hexToken(s);
+        const { tweak, fn } = (s ?? {}) as { tweak?: unknown; fn?: unknown };
         if (typeof tweak === "string" && typeof fn === "string") return { tweak, fn };
-        invalidSigner();
+        throw new Error("parseArtifact: a tweaked signer needs string `tweak` and `fn`");
     };
     // A "$param" timelock stays a reference (resolved at compile time); anything
     // else is a literal.

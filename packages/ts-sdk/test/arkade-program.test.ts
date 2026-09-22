@@ -327,15 +327,12 @@ describe("parseArtifact — signer validation", () => {
 
     const invalidSigner = /parseArtifact: a tweaked signer needs string `tweak` and `fn`/;
 
-    it.each([null, [], 42])("rejects %j signers before compilation", (signer) => {
-        expect(() => arkade.parseArtifact(artifactWithSigner(signer))).toThrow(invalidSigner);
-    });
-
-    it("rejects a malformed tweaked-signer object", () => {
-        expect(() => arkade.parseArtifact(artifactWithSigner({ tweak: 1, fn: "claim" }))).toThrow(
-            invalidSigner,
-        );
-    });
+    it.each([null, [], 42, { tweak: 1, fn: "claim" }])(
+        "rejects %j signers before compilation",
+        (signer) => {
+            expect(() => arkade.parseArtifact(artifactWithSigner(signer))).toThrow(invalidSigner);
+        },
+    );
 
     it("round-trips a valid TweakedSigner", () => {
         const tweaked = { tweak: "$insurer", fn: "claim" };

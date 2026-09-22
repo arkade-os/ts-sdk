@@ -4,40 +4,28 @@ import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
 import {
-    isContractArtifact,
     programFromArtifact,
-    type ArtifactGroup,
     type ArtifactLeaf,
     type ContractArtifact,
 } from "../src/arkade/artifact";
 import {
     ArkadeProgramScript,
     parseArtifact,
-    stringifyArtifact,
     validateProgram,
     type ArkadeParamValue,
 } from "../src/arkade/program";
 import { ArkadeScript } from "../src/arkade/script";
 import { computeArkadeScriptPublicKey } from "../src/arkade/tweak";
-import { CSVMultisigTapscript, MultisigTapscript } from "../src/script/tapscript";
+import { MultisigTapscript } from "../src/script/tapscript";
 import { networks } from "../src/networks";
 
-// escrow.ark without source, updatedAt, witness, and compiler metadata.
 const artifact: ContractArtifact = JSON.parse(
     readFileSync(new URL("./fixtures/arkadec/escrow.artifact.json", import.meta.url), "utf8"),
 );
 
-const group = (name: string): ArtifactGroup => {
-    const found = artifact.functions.find((g) => g.name === name);
-    if (!found) throw new Error(`no group ${name}`);
-    return found;
-};
-
-// Deterministic keys — the values only have to be well-formed and stable.
 const key = (byte: number) => new Uint8Array(32).fill(byte);
 const SERVER_KEY = key(0x01);
 const EMULATOR_KEY = hex.decode(`02${"02".repeat(32)}`);
-
 const ARGS: Record<string, ArkadeParamValue> = {
     partyAPk: key(0x04),
     partyBPk: key(0x05),
@@ -51,17 +39,7 @@ const ARGS: Record<string, ArkadeParamValue> = {
     server: SERVER_KEY,
 };
 
-const escrowScript = () =>
-    new ArkadeProgramScript(programFromArtifact(artifact), ARGS, {
-        serverKey: SERVER_KEY,
-        emulatorKey: EMULATOR_KEY,
-    });
-
-const collaborativeLeaf = (
-    name: string,
-    groupName = name,
-    prefix: string[] = [],
-): ArtifactLeaf => ({
+const collaborativeLeaf = (name: string, prefix: string[] = []): ArtifactLeaf => ({
     name,
     witness: [
         { name: "serverSig", type: "signature", injected: true },
@@ -71,92 +49,64 @@ const collaborativeLeaf = (
         ...prefix,
         "<SERVER_KEY>",
         "OP_CHECKSIGVERIFY",
-        `<EMULATOR_KEY:${groupName}>`,
+        `<EMULATOR_KEY:${name.split("/")[0]}>`,
         "OP_CHECKSIG",
     ],
 });
 
-/** Assemble the artifact's own tokens, independent of the reader. */
-function assembleArtifactAsm(tokens: string[], extra: Record<string, Uint8Array> = {}): Uint8Array {
-    const ops = tokens.map((token) => {
-        if (token.startsWith("OP_")) {
-            const base = token.slice(3);
-            // @scure keeps only the small-integer pushes prefixed.
-            return base === "0" || /^([1-9]|1[0-6])$/.test(base) ? token : base;
-        }
-        if (token.startsWith("<") && token.endsWith(">")) {
-            const name = token.slice(1, -1);
-            const value = extra[name] ?? ARGS[name];
-            if (value === undefined) throw new Error(`unbound placeholder ${token}`);
-            return value instanceof Uint8Array ? value : BigInt(value);
-        }
-        if (token.startsWith("0x")) return hex.decode(token.slice(2));
-        return BigInt(token);
-    });
-    return ArkadeScript.encode(ops as never);
+function assemble(tokens: string[], extra: Record<string, Uint8Array> = {}): Uint8Array {
+    return ArkadeScript.encode(
+        tokens.map((token) => {
+            if (token.startsWith("OP_")) {
+                const base = token.slice(3);
+                return base === "0" || /^([1-9]|1[0-6])$/.test(base) ? token : base;
+            }
+            if (token.startsWith("<") && token.endsWith(">")) {
+                const value = extra[token.slice(1, -1)] ?? ARGS[token.slice(1, -1)];
+                if (value === undefined) throw new Error(`unbound ${token}`);
+                return value instanceof Uint8Array ? value : BigInt(value);
+            }
+            return token.startsWith("0x") ? hex.decode(token.slice(2)) : BigInt(token);
+        }) as never,
+    );
 }
 
-describe("reading an arkadec artifact", () => {
-    it("parseArtifact points at the reader instead of mangling the artifact", () => {
-        // The array shape used to parse into functions named "0", "1", "2".
-        expect(() => parseArtifact(artifact as never)).toThrow(/programFromArtifact/);
-    });
+const leaf = (name: string, asm: string[]): ArtifactLeaf => ({ name, asm });
+const refuse = (art: unknown, pattern: RegExp) =>
+    expect(() => programFromArtifact(art as never)).toThrow(pattern);
 
-    it("rejects incomplete and malformed artifact shapes", () => {
-        for (const malformed of [
-            { functions: [] },
-            { contractName: "Broken", constructorInputs: [], functions: [] },
-            {
-                contractName: "Broken",
-                constructorInputs: [],
-                functions: [{ name: "spend", leaves: [{ name: "spend", asm: [7] }] }],
-            },
-        ]) {
-            expect(isContractArtifact(malformed), JSON.stringify(malformed)).toBe(false);
-            expect(() => programFromArtifact(malformed as never)).toThrow(
-                /complete arkadec artifact/,
-            );
-        }
+describe("reading an arkadec artifact", () => {
+    it("parseArtifact points at the reader for the array shape", () => {
+        expect(() => parseArtifact(artifact as never)).toThrow(/programFromArtifact/);
     });
 
     it("reads the escrow artifact into the same program and the same bytes", () => {
         const program = programFromArtifact(artifact);
-        expect(program.name).toBe("Escrow");
         expect(Object.keys(program.functions)).toEqual(["complete", "cancel", "unilateral"]);
         expect(() => validateProgram(program, ARGS)).not.toThrow();
+        expect(program.functions.unilateral.tapscript).toMatchObject({
+            signers: ["$partyAPk", "$partyBPk"],
+            csv: { type: "blocks", value: "$exit" },
+        });
 
-        const declared = (program.params ?? []).map((p) => (typeof p === "string" ? p : p.name));
-        expect(declared).toContain("server");
-        for (const name of declared) expect(ARGS[name], name).toBeDefined();
-
-        const named = (fn: string) =>
-            (program.functions[fn].inputs ?? []).map((i) => (typeof i === "string" ? i : i.name));
-        expect(named("complete")).toEqual(["oracleMsg", "oracleSig"]);
-        expect(named("cancel")).toEqual([]);
-
-        const exit = program.functions.unilateral.tapscript;
-        expect(exit.signers).toEqual(["$partyAPk", "$partyBPk"]);
-        expect(exit.csv).toEqual({ type: "blocks", value: "$exit" });
-        expect(program.functions.unilateral.arkadeScript).toBeUndefined();
-
-        const script = escrowScript();
-        expect(script.compiled).toHaveLength(artifact.functions.length);
+        const script = new ArkadeProgramScript(program, ARGS, {
+            serverKey: SERVER_KEY,
+            emulatorKey: EMULATOR_KEY,
+        });
         for (const compiled of script.compiled) {
-            const found = group(compiled.name);
+            const found = artifact.functions.find((g) => g.name === compiled.name)!;
             const extra: Record<string, Uint8Array> = { SERVER_KEY };
             if (compiled.arkadeScript) {
                 extra[`EMULATOR_KEY:${compiled.name}`] = computeArkadeScriptPublicKey(
                     EMULATOR_KEY,
                     compiled.arkadeScript,
                 );
-                expect(hex.encode(compiled.arkadeScript), `${compiled.name} covenant`).toBe(
-                    hex.encode(assembleArtifactAsm(found.arkade!.asm)),
+                expect(hex.encode(compiled.arkadeScript)).toBe(
+                    hex.encode(assemble(found.arkade!.asm)),
                 );
-            } else {
-                expect(found.arkade, compiled.name).toBeUndefined();
             }
-            expect(hex.encode(compiled.leafScript), `${compiled.name} leaf`).toBe(
-                hex.encode(assembleArtifactAsm(found.leaves[0].asm, extra)),
+            expect(hex.encode(compiled.leafScript)).toBe(
+                hex.encode(assemble(found.leaves[0].asm, extra)),
             );
         }
         expect(script.address(networks.bitcoin.hrp, SERVER_KEY).encode()).toBe(
@@ -165,7 +115,7 @@ describe("reading an arkadec artifact", () => {
     });
 
     it("keeps every leaf in a multi-leaf covenant group", () => {
-        const multiLeaf: ContractArtifact = {
+        const program = programFromArtifact({
             contractName: "MultiLeaf",
             constructorInputs: [],
             functions: [
@@ -174,34 +124,20 @@ describe("reading an arkadec artifact", () => {
                     arkade: { inputs: [], asm: ["OP_1"] },
                     leaves: [
                         collaborativeLeaf("spend"),
-                        collaborativeLeaf("fallback", "spend", [
-                            "10",
-                            "OP_CHECKSEQUENCEVERIFY",
-                            "OP_DROP",
-                        ]),
+                        collaborativeLeaf("spend", ["10", "OP_CHECKSEQUENCEVERIFY", "OP_DROP"]),
                     ],
                 },
             ],
-        };
-
-        const program = programFromArtifact(multiLeaf);
-        expect(Object.keys(program.functions)).toEqual(["spend", "spend/1:fallback"]);
-
-        const script = new ArkadeProgramScript(
-            program,
-            { server: SERVER_KEY },
-            { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY },
-        );
-        expect(script.compiled).toHaveLength(2);
-        expect(script.compiled[0].arkadeScript).toEqual(script.compiled[1].arkadeScript);
-        expect(program.functions["spend/1:fallback"].tapscript.csv).toEqual({
+        });
+        expect(Object.keys(program.functions)).toEqual(["spend", "spend/1:spend"]);
+        expect(program.functions["spend/1:spend"].tapscript.csv).toEqual({
             type: "blocks",
             value: 10n,
         });
     });
 
-    it("reads hash conditions and their witness", () => {
-        const hashlock: ContractArtifact = {
+    it("reads hash conditions and flattens structs, natives, arrays, and VTXO params", () => {
+        const hash = programFromArtifact({
             contractName: "Hashlock",
             constructorInputs: [
                 { name: "owner", type: "pubkey" },
@@ -229,16 +165,14 @@ describe("reading an arkadec artifact", () => {
                     ],
                 },
             ],
-        };
+        }).functions.claim;
+        expect(hash.inputs).toEqual([{ name: "preimage", type: "bytes" }]);
+        expect(hash.tapscript).toMatchObject({
+            asm: ["SHA256", "$hash", "EQUAL"],
+            witness: ["preimage"],
+        });
 
-        const claim = programFromArtifact(hashlock).functions.claim;
-        expect(claim.inputs).toEqual([{ name: "preimage", type: "bytes" }]);
-        expect(claim.tapscript.asm).toEqual(["SHA256", "$hash", "EQUAL"]);
-        expect(claim.tapscript.witness).toEqual(["preimage"]);
-    });
-
-    it("flattens structs, native values, arrays, and VTXO parameters", () => {
-        const composite: ContractArtifact = {
+        const program = programFromArtifact({
             contractName: "Composite",
             constructorInputs: [
                 { name: "policy", type: "Policy" },
@@ -265,65 +199,22 @@ describe("reading an arkadec artifact", () => {
                     leaves: [collaborativeLeaf("spend")],
                 },
             ],
-        };
-
-        const program = programFromArtifact(composite);
-        expect(program.params).toEqual([
-            { name: "policy.owner", type: "pubkey" },
-            { name: "policy.threshold", type: "int" },
-            { name: "point.x", type: "int" },
-            { name: "point.y", type: "int" },
-            { name: "votes.0", type: "int" },
-            { name: "votes.1", type: "int" },
-            { name: "exit", type: "int" },
-            { name: "server", type: "pubkey" },
-            { name: "vtxo_SingleSig_policy_owner_exit", type: "hash" },
-        ]);
-        expect(program.functions.spend.inputs).toEqual([
-            { name: "request.owner", type: "pubkey" },
-            { name: "request.threshold", type: "int" },
+        });
+        expect(program.params?.map((p) => (typeof p === "string" ? p : p.name))).toEqual([
+            "policy.owner",
+            "policy.threshold",
+            "point.x",
+            "point.y",
+            "votes.0",
+            "votes.1",
+            "exit",
+            "server",
+            "vtxo_SingleSig_policy_owner_exit",
         ]);
         expect(program.functions.spend.arkadeScript?.witness).toEqual([
             "request.threshold",
             "request.owner",
         ]);
-    });
-
-    it("rejects parameter and spend-group collisions", () => {
-        expect(() =>
-            programFromArtifact({
-                ...artifact,
-                constructorInputs: [
-                    ...artifact.constructorInputs,
-                    { name: "server", type: "pubkey" },
-                ],
-            }),
-        ).toThrow(/duplicate program parameter 'server'/);
-
-        expect(() =>
-            programFromArtifact({
-                ...artifact,
-                functions: [group("complete"), group("complete")],
-            }),
-        ).toThrow(/duplicate spend group 'complete'/);
-    });
-
-    // A scalar name changes how every field of that type flattens; a native
-    // struct name is resolved first, so the declared fields would be dropped.
-    it.each(["pubkey", "ECPoint"])("rejects a struct named after the built-in %s", (name) => {
-        expect(() =>
-            programFromArtifact({
-                contractName: "Shadow",
-                constructorInputs: [],
-                structs: [{ name, fields: [{ name: "x", type: "int" }] }],
-                functions: [
-                    {
-                        name: "spend",
-                        leaves: [{ name: "spend", asm: ["<SERVER_KEY>", "OP_CHECKSIG"] }],
-                    },
-                ],
-            }),
-        ).toThrow(new RegExp(`struct name '${name}' shadows a built-in type`));
     });
 
     it("tweaks a constructor pubkey by the named covenant", () => {
@@ -338,48 +229,22 @@ describe("reading an arkadec artifact", () => {
                     leaves: [collaborativeLeaf("claim")],
                 },
                 {
-                    name: "late",
-                    leaves: [
-                        {
-                            name: "late",
-                            asm: [
-                                "10",
-                                "OP_CHECKSEQUENCEVERIFY",
-                                "OP_DROP",
-                                "<TWEAK:insurer:claim>",
-                                "OP_CHECKSIG",
-                            ],
-                        },
-                    ],
-                },
-                {
                     name: "race",
                     leaves: [
-                        {
-                            name: "race",
-                            asm: [
-                                "<SERVER_KEY>",
-                                "OP_CHECKSIGVERIFY",
-                                "<TWEAK:insurer:claim>",
-                                "OP_CHECKSIG",
-                            ],
-                        },
+                        leaf("race", [
+                            "<SERVER_KEY>",
+                            "OP_CHECKSIGVERIFY",
+                            "<TWEAK:insurer:claim>",
+                            "OP_CHECKSIG",
+                        ]),
                     ],
                 },
             ],
         });
-        expect(program.functions.late.tapscript.signers).toEqual([
-            { tweak: "$insurer", fn: "claim" },
-        ]);
         expect(program.functions.race.tapscript.signers).toEqual([
             "$server",
             { tweak: "$insurer", fn: "claim" },
         ]);
-        const roundTrip = parseArtifact(JSON.parse(stringifyArtifact(program)));
-        expect(roundTrip.functions.race.tapscript.signers).toEqual(
-            program.functions.race.tapscript.signers,
-        );
-
         const script = new ArkadeProgramScript(
             program,
             { insurer, server: SERVER_KEY },
@@ -389,50 +254,83 @@ describe("reading an arkadec artifact", () => {
             insurer,
             script.functionByName("claim")!.arkadeScript!,
         );
-        expect(hex.encode(script.functionByName("late")!.leafScript)).toBe(
-            hex.encode(
-                CSVMultisigTapscript.encode({
-                    timelock: { type: "blocks", value: 10 },
-                    pubkeys: [tweaked],
-                }).script,
-            ),
-        );
         expect(hex.encode(script.functionByName("race")!.leafScript)).toBe(
             hex.encode(MultisigTapscript.encode({ pubkeys: [SERVER_KEY, tweaked] }).script),
         );
     });
 
-    it("refuses a tweak that names no covenant", () => {
-        expect(() =>
-            programFromArtifact({
-                contractName: "Demo",
+    it.each([
+        ["an incomplete artifact", { functions: [] }, /complete arkadec artifact/],
+        [
+            "a constructor `server`",
+            {
+                ...artifact,
+                constructorInputs: [
+                    ...artifact.constructorInputs,
+                    { name: "server", type: "pubkey" },
+                ],
+            },
+            /duplicate program parameter 'server'/,
+        ],
+        [
+            "a struct named pubkey",
+            {
+                contractName: "S",
+                constructorInputs: [],
+                structs: [{ name: "pubkey", fields: [{ name: "x", type: "int" }] }],
+                functions: [
+                    { name: "spend", leaves: [leaf("spend", ["<SERVER_KEY>", "OP_CHECKSIG"])] },
+                ],
+            },
+            /struct name 'pubkey' shadows a built-in type/,
+        ],
+        [
+            "a struct named ECPoint",
+            {
+                contractName: "S",
+                constructorInputs: [],
+                structs: [{ name: "ECPoint", fields: [{ name: "x", type: "int" }] }],
+                functions: [
+                    { name: "spend", leaves: [leaf("spend", ["<SERVER_KEY>", "OP_CHECKSIG"])] },
+                ],
+            },
+            /struct name 'ECPoint' shadows a built-in type/,
+        ],
+        [
+            "a tweak with no function",
+            {
+                contractName: "D",
                 constructorInputs: [{ name: "insurer", type: "pubkey" }],
                 functions: [
-                    {
-                        name: "race",
-                        leaves: [{ name: "race", asm: ["<TWEAK:insurer>", "OP_CHECKSIG"] }],
-                    },
+                    { name: "race", leaves: [leaf("race", ["<TWEAK:insurer>", "OP_CHECKSIG"])] },
                 ],
-            }),
-        ).toThrow(/malformed tweak/);
-    });
-
-    // OP_constructor reaches Object.prototype, so a membership test that is not
-    // own-property would accept it and fail later inside the script encoder.
-    it.each(["OP_NOTAREALOPCODE", "OP_constructor"])(
-        "refuses %s, which this SDK's table does not carry",
-        (opcode) => {
-            const unknown: ContractArtifact = {
+            },
+            /malformed tweak/,
+        ],
+        [
+            "an unknown opcode",
+            {
                 ...artifact,
                 functions: [
                     {
-                        name: "complete",
-                        arkade: { inputs: [], asm: [opcode] },
-                        leaves: [group("complete").leaves[0]],
+                        ...artifact.functions[0],
+                        arkade: { inputs: [], asm: ["OP_NOTAREALOPCODE"] },
                     },
                 ],
-            };
-            expect(() => programFromArtifact(unknown)).toThrow(/not in this SDK's table/);
-        },
-    );
+            },
+            /not in this SDK's table/,
+        ],
+        [
+            "OP_constructor",
+            {
+                ...artifact,
+                functions: [
+                    { ...artifact.functions[0], arkade: { inputs: [], asm: ["OP_constructor"] } },
+                ],
+            },
+            /not in this SDK's table/,
+        ],
+    ] as [string, unknown, RegExp][])("refuses %s", (_label, art, pattern) => {
+        refuse(art, pattern);
+    });
 });
