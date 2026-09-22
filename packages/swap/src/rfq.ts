@@ -86,7 +86,7 @@ import {
 } from "@arkade-os/sdk";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
-import { ASSET_CARRIER_SATS, createOffer } from "./offer";
+import { ASSET_CARRIER_SATS, createOffer, receivePkScriptFor } from "./offer";
 
 /** Decode a solver-supplied hex field, turning a malformed value (odd length,
  * non-hex chars) into a solver-blaming diagnostic instead of a bare
@@ -1429,6 +1429,9 @@ export async function requestArkadeSwap(
         rfqId?: string;
         /** Co-signer key override (33-byte compressed hex); see `createOffer`. */
         emulatorPubkey?: string;
+        /** Where the fill pays; see `createOffer`. Omitted, the wallet's own
+         * address is used and the request is unchanged. */
+        receiveAddress?: string;
         now?: number;
     },
 ): Promise<{
@@ -1459,7 +1462,13 @@ export async function requestArkadeSwap(
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
+    // Validated here, before the quote is asked for, through the same path
+    // createOffer uses below, so a substituted recipient never reaches a solver
+    // and the request profile and the derived offer cannot disagree.
+    const makerPkScript =
+        params.receiveAddress === undefined
+            ? ArkAddress.decode(makerAddress).pkScript
+            : await receivePkScriptFor(arkServerUrl, params.receiveAddress, makerAddress);
     const pair = rfqPair(
         params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
         params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
@@ -1512,6 +1521,7 @@ export async function requestArkadeSwap(
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
         ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),
         ...(params.emulatorPubkey !== undefined ? { emulatorPubkey: params.emulatorPubkey } : {}),
+        ...(params.receiveAddress !== undefined ? { receiveAddress: params.receiveAddress } : {}),
     });
     verifyOfferAddress(quote, offer);
     const fundAmount = BigInt(quote.from_amount);

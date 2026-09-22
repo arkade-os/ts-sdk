@@ -22,7 +22,7 @@
  * to the program's `$param`s, and speak the solver's TLV offer-discovery
  * format.
  */
-import { hex } from "@scure/base";
+import { bech32m, hex } from "@scure/base";
 import { concatBytes } from "@scure/btc-signer/utils.js";
 import {
     ASSET_CARRIER_SATS as SDK_ASSET_CARRIER_SATS,
@@ -625,6 +625,50 @@ function serverExitDelay(delay: bigint): RelativeTimelock {
     return assertExitDelay({ value: delay, type: delay < BigInt(512) ? "blocks" : "seconds" });
 }
 
+/** The offer's makerWP. Defaults to the wallet's own address; an override must
+ * be a canonical Arkade address for the connected server — same HRP, same
+ * server key — so no Bitcoin address or raw script can be bound. A covenant
+ * P2TR script is fine; the tapscript tree behind it is never inspected. */
+function resolveReceivePkScript(
+    receiveAddress: string | undefined,
+    walletAddress: string,
+    hrp: string,
+    serverPubKey: Uint8Array,
+): Uint8Array {
+    if (receiveAddress === undefined) return ArkAddress.decode(walletAddress).pkScript;
+    const decoded = bech32m.decodeUnsafe(receiveAddress, 1023);
+    if (!decoded) throw new Error("receiveAddress is not a valid Arkade address");
+    if (decoded.prefix !== hrp) {
+        throw new Error(
+            `receiveAddress network ${decoded.prefix} does not match the server network ${hrp}`,
+        );
+    }
+    const address = ArkAddress.decode(receiveAddress);
+    // uppercase decodes but re-encodes differently, so re-encoding is the proof
+    if (address.encode() !== receiveAddress) {
+        throw new Error("receiveAddress is not in canonical bech32m form");
+    }
+    if (hex.encode(address.serverPubKey) !== hex.encode(serverPubKey)) {
+        throw new Error(
+            "receiveAddress is bound to a different server public key than the connected server",
+        );
+    }
+    return address.pkScript;
+}
+
+/** Resolve an override against the connected server's network and signer key.
+ * Shared with the RFQ path; the public surface stays `receiveAddress` alone. */
+export async function receivePkScriptFor(
+    arkServerUrl: string,
+    receiveAddress: string,
+    walletAddress: string,
+): Promise<Uint8Array> {
+    const info = await new RestArkProvider(arkServerUrl).getInfo();
+    const network = getNetwork(info.network as NetworkName);
+    const serverPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
+    return resolveReceivePkScript(receiveAddress, walletAddress, network.hrp, serverPubKey);
+}
+
 /**
  * Build a new offer for `wallet` (the user). Fund `address` with the side
  * you deposit, embedding the returned extension, and the solver does the rest:
@@ -671,6 +715,10 @@ export async function createOffer(
         /** Publish without the exit closure, leaving `cancel` — which needs the
          * server — as the only way back out. See the note on this function. */
         noExit?: boolean;
+        /** Where the fill pays (the covenant's `makerWP`). Defaults to the
+         * wallet's own address; never moves the `cancel` signer. Must be an
+         * Arkade address for the connected server. */
+        receiveAddress?: string;
     },
 ): Promise<{
     /** The encoded offer, hex. **Persist this** — it is the only input
@@ -701,6 +749,13 @@ export async function createOffer(
     const emuKey = hex.decode(
         toXOnlySignerHex(resolveEmulatorPubkey(network, params.emulatorPubkey)),
     );
+    // before registration: a bad override must not leave a watched row behind
+    const makerPkScript = resolveReceivePkScript(
+        params.receiveAddress,
+        makerAddress,
+        network.hrp,
+        serverPubKey,
+    );
 
     // the script derives from every field but the script itself, so build the
     // binding first and complete the offer with it — an Offer value never
@@ -709,7 +764,7 @@ export async function createOffer(
         wantAmount: params.wantAmount,
         wantAsset: params.wantAsset,
         offerAsset: params.offerAsset,
-        makerPkScript: ArkAddress.decode(makerAddress).pkScript,
+        makerPkScript,
         makerPublicKey,
         emulatorPubkey: emuKey,
         // checked HERE, before the covenant is derived and registered below:
