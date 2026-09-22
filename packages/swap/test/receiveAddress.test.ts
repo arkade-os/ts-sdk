@@ -179,13 +179,28 @@ describe("createOffer receiveAddress", () => {
     });
 
     it("accepts a covenant-derived taproot pkScript that has a tapscript tree", async () => {
+        // A real second covenant, not a bare P2TR: its address commits to the
+        // first offer's swapPkScript and carries a tapscript tree behind it.
+        const funder = await createOffer(wallet, "http://ark", {
+            wantAmount: BigInt(50_000),
+            wantAsset: testAsset,
+            emulatorPubkey,
+        });
+        const decodedSource = ArkAddress.decode(funder.address);
+        expect(hex.encode(decodedSource.pkScript)).toBe(hex.encode(funder.swapPkScript));
+        expect(hex.encode(decodedSource.pkScript)).not.toBe(hex.encode(makerPkScript));
         const offer = await createOffer(wallet, "http://ark", {
             wantAmount: BigInt(50_000),
             wantAsset: testAsset,
             emulatorPubkey,
-            receiveAddress: altAddress,
+            receiveAddress: funder.address,
         });
-        expect(decodeOffer(hex.decode(offer.offerHex)).makerPkScript).toEqual(altPkScript);
+        const decoded = decodeOffer(hex.decode(offer.offerHex));
+        expect(hex.encode(decoded.makerPkScript)).toBe(hex.encode(funder.swapPkScript));
+        expect(hex.encode(decoded.makerPkScript)).not.toBe(hex.encode(makerPkScript));
+        expect(hex.encode(decoded.makerPublicKey)).toBe(
+            hex.encode(await identity.xOnlyPublicKey()),
+        );
     });
 
     it("rejects a wrong-network HRP before any contract registration", async () => {
