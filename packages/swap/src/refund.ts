@@ -246,14 +246,10 @@ export class LockupNeedsRecoveryError extends Error {
  * send, and refunding only `vtxos[0]` returns part of the money and strands
  * the rest at a script whose other refund paths are all longer.
  *
- * ONE read, from the contract manager, and it is trusted. The old form — two
- * parallel indexer queries (`spendableOnly` + `recoverableOnly`) merged
- * client-side — is gone: `spendableOnly` alone goes blind at exactly the wrong
- * moment (a lockup whose batch expiry passed is swept into the recoverable
- * set, precisely the swaps this path exists to serve), and the two-set merge
- * is exactly what `getContractsWithVtxos` already computes per read, as one
- * normalized row per output. `packages/boltz-swap`, which still queries the
- * indexer directly, keeps its own two-query merge.
+ * ONE `renewableOnly` read returns both live and swept outputs together. The
+ * provider marks swept outputs with `isSwept`, so this function can preserve
+ * the full lockup balance and tag each output as spendable or recoverable
+ * without merging separate `spendableOnly` and `recoverableOnly` queries.
  *
  * **Visible is not the same as refundable.** A `recoverable` output cannot be
  * spent offchain at all — see {@link LockupVtxo.recoverable} — so this set is
