@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { hex } from "@scure/base";
 import { ArkAddress, arkade, asset, type RelativeTimelock } from "@arkade-os/sdk";
 import {
@@ -61,81 +62,21 @@ const goldens: [Omit<Offer, "swapPkScript">, string][] = [
 
 describe("swap offer", () => {
     it("compiles an arkadec artifact byte-identically to the hand-written asset program", () => {
-        const compilerArtifact: ContractArtifact = {
-            contractName: "BancoBtcToAsset",
-            constructorInputs: [
-                { name: "makerWP", type: "pubkey" },
-                { name: "wantAmount", type: "int" },
-                { name: "wantAssetTxid", type: "bytes32" },
-                { name: "wantAssetGroupIndex", type: "int" },
-                { name: "user", type: "pubkey" },
-            ],
-            functions: [
-                {
-                    name: "fulfill",
-                    arkade: {
-                        inputs: [],
-                        asm: [
-                            "0",
-                            "<wantAssetTxid>",
-                            "<wantAssetGroupIndex>",
-                            "OP_INSPECTOUTASSETLOOKUP",
-                            "OP_VERIFY",
-                            "<wantAmount>",
-                            "OP_GREATERTHANOREQUAL",
-                            "OP_VERIFY",
-                            "0",
-                            "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-                            "1",
-                            "OP_EQUALVERIFY",
-                            "<makerWP>",
-                            "OP_EQUAL",
-                        ],
-                    },
-                    leaves: [
-                        {
-                            name: "fulfill",
-                            asm: [
-                                "<SERVER_KEY>",
-                                "OP_CHECKSIGVERIFY",
-                                "<EMULATOR_KEY:fulfill>",
-                                "OP_CHECKSIG",
-                            ],
-                        },
-                    ],
-                },
-                {
-                    name: "cancel",
-                    leaves: [
-                        {
-                            name: "cancel",
-                            asm: ["<user>", "OP_CHECKSIGVERIFY", "<SERVER_KEY>", "OP_CHECKSIG"],
-                        },
-                    ],
-                },
-            ],
-        };
+        const compilerArtifact: ContractArtifact = JSON.parse(
+            readFileSync(
+                new URL("./fixtures/arkadec/banco-btc-to-asset.artifact.json", import.meta.url),
+                "utf8",
+            ),
+        );
         const binding = swapProgramBinding(
             { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys },
             server,
         );
-        const handWritten = new arkade.ArkadeProgramScript(
-            binding.program,
-            binding.args,
-            binding.keys,
-        );
-        const generatedProgram = arkade.programFromArtifact(compilerArtifact);
-        expect(
-            generatedProgram.params?.map((param) =>
-                typeof param === "string" ? param : param.name,
-            ),
-        ).toEqual([...compilerArtifact.constructorInputs.map((input) => input.name), "server"]);
-        const generated = new arkade.ArkadeProgramScript(
-            generatedProgram,
-            binding.args,
-            binding.keys,
-        );
-
+        const generated = arkade.programFromArtifact(compilerArtifact);
+        expect(generated.params?.map((p) => (typeof p === "string" ? p : p.name))).toEqual([
+            ...compilerArtifact.constructorInputs.map((input) => input.name),
+            "server",
+        ]);
         const packed = (script: arkade.ArkadeProgramScript) =>
             [
                 script.compiled.map((fn) => hex.encode(fn.leafScript)),
@@ -143,7 +84,9 @@ describe("swap offer", () => {
                 hex.encode(script.encode()),
                 hex.encode(script.pkScript),
             ].join("|");
-        expect(packed(generated)).toBe(packed(handWritten));
+        expect(packed(new arkade.ArkadeProgramScript(generated, binding.args, binding.keys))).toBe(
+            packed(new arkade.ArkadeProgramScript(binding.program, binding.args, binding.keys)),
+        );
     });
 
     it("derives the golden swap addresses for both directions", () => {

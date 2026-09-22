@@ -204,7 +204,6 @@ describe("Typed program params — authoritative when present", () => {
         );
     });
 
-    // Signers arrive untyped from parsed JSON, so these reach the resolver.
     it.each([null, 42, true, { role: "oracle" }])(
         "rejects %j where a signer key belongs",
         (signer) => {
@@ -321,25 +320,23 @@ describe("Type-directed persistence", () => {
 });
 
 describe("parseArtifact — signer validation", () => {
-    function artifactWithSigner(signer: unknown) {
-        return {
-            version: 0,
-            functions: { exit: { tapscript: { signers: [signer] } } },
-        };
-    }
-
-    const invalidSigner = /parseArtifact: a tweaked signer needs string `tweak` and `fn`/;
+    const withSigner = (signer: unknown) => ({
+        version: 0,
+        functions: { exit: { tapscript: { signers: [signer] } } },
+    });
 
     it.each([null, [], 42, { tweak: 1, fn: "claim" }])(
         "rejects %j signers before compilation",
         (signer) => {
-            expect(() => arkade.parseArtifact(artifactWithSigner(signer))).toThrow(invalidSigner);
+            expect(() => arkade.parseArtifact(withSigner(signer))).toThrow(
+                /tweaked signer needs string `tweak` and `fn`/,
+            );
         },
     );
 
     it("round-trips a valid TweakedSigner", () => {
         const tweaked = { tweak: "$insurer", fn: "claim" };
-        const program = arkade.parseArtifact(artifactWithSigner(tweaked));
+        const program = arkade.parseArtifact(withSigner(tweaked));
         expect(program.functions.exit.tapscript.signers[0]).toEqual(tweaked);
         expect(
             arkade.parseArtifact(JSON.parse(arkade.stringifyArtifact(program))).functions.exit

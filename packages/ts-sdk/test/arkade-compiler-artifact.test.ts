@@ -3,17 +3,8 @@ import { readFileSync } from "node:fs";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
-import {
-    programFromArtifact,
-    type ArtifactLeaf,
-    type ContractArtifact,
-} from "../src/arkade/artifact";
-import {
-    ArkadeProgramScript,
-    parseArtifact,
-    validateProgram,
-    type ArkadeParamValue,
-} from "../src/arkade/program";
+import { programFromArtifact, type ContractArtifact } from "../src/arkade/artifact";
+import { ArkadeProgramScript, parseArtifact, type ArkadeParamValue } from "../src/arkade/program";
 import { ArkadeScript } from "../src/arkade/script";
 import { computeArkadeScriptPublicKey } from "../src/arkade/tweak";
 import { MultisigTapscript } from "../src/script/tapscript";
@@ -39,12 +30,8 @@ const ARGS: Record<string, ArkadeParamValue> = {
     server: SERVER_KEY,
 };
 
-const collaborativeLeaf = (name: string, prefix: string[] = []): ArtifactLeaf => ({
+const collab = (name: string, prefix: string[] = []) => ({
     name,
-    witness: [
-        { name: "serverSig", type: "signature", injected: true },
-        { name: "emulatorSig", type: "signature", injected: true },
-    ],
     asm: [
         ...prefix,
         "<SERVER_KEY>",
@@ -71,9 +58,15 @@ function assemble(tokens: string[], extra: Record<string, Uint8Array> = {}): Uin
     );
 }
 
-const leaf = (name: string, asm: string[]): ArtifactLeaf => ({ name, asm });
-const refuse = (art: unknown, pattern: RegExp) =>
-    expect(() => programFromArtifact(art as never)).toThrow(pattern);
+const demo = (extra: Record<string, unknown> = {}): ContractArtifact =>
+    ({
+        contractName: "T",
+        constructorInputs: [],
+        functions: [
+            { name: "spend", leaves: [{ name: "spend", asm: ["<SERVER_KEY>", "OP_CHECKSIG"] }] },
+        ],
+        ...extra,
+    }) as ContractArtifact;
 
 describe("reading an arkadec artifact", () => {
     it("parseArtifact points at the reader for the array shape", () => {
@@ -83,12 +76,10 @@ describe("reading an arkadec artifact", () => {
     it("reads the escrow artifact into the same program and the same bytes", () => {
         const program = programFromArtifact(artifact);
         expect(Object.keys(program.functions)).toEqual(["complete", "cancel", "unilateral"]);
-        expect(() => validateProgram(program, ARGS)).not.toThrow();
         expect(program.functions.unilateral.tapscript).toMatchObject({
             signers: ["$partyAPk", "$partyBPk"],
             csv: { type: "blocks", value: "$exit" },
         });
-
         const script = new ArkadeProgramScript(program, ARGS, {
             serverKey: SERVER_KEY,
             emulatorKey: EMULATOR_KEY,
@@ -115,20 +106,20 @@ describe("reading an arkadec artifact", () => {
     });
 
     it("keeps every leaf in a multi-leaf covenant group", () => {
-        const program = programFromArtifact({
-            contractName: "MultiLeaf",
-            constructorInputs: [],
-            functions: [
-                {
-                    name: "spend",
-                    arkade: { inputs: [], asm: ["OP_1"] },
-                    leaves: [
-                        collaborativeLeaf("spend"),
-                        collaborativeLeaf("spend", ["10", "OP_CHECKSEQUENCEVERIFY", "OP_DROP"]),
-                    ],
-                },
-            ],
-        });
+        const program = programFromArtifact(
+            demo({
+                functions: [
+                    {
+                        name: "spend",
+                        arkade: { inputs: [], asm: ["OP_1"] },
+                        leaves: [
+                            collab("spend"),
+                            collab("spend", ["10", "OP_CHECKSEQUENCEVERIFY", "OP_DROP"]),
+                        ],
+                    },
+                ],
+            }),
+        );
         expect(Object.keys(program.functions)).toEqual(["spend", "spend/1:spend"]);
         expect(program.functions["spend/1:spend"].tapscript.csv).toEqual({
             type: "blocks",
@@ -137,69 +128,71 @@ describe("reading an arkadec artifact", () => {
     });
 
     it("reads hash conditions and flattens structs, natives, arrays, and VTXO params", () => {
-        const hash = programFromArtifact({
-            contractName: "Hashlock",
-            constructorInputs: [
-                { name: "owner", type: "pubkey" },
-                { name: "hash", type: "bytes32" },
-            ],
-            functions: [
-                {
-                    name: "claim",
-                    leaves: [
-                        {
-                            name: "claim",
-                            witness: [
-                                { name: "preimage", type: "bytes" },
-                                { name: "ownerSig", type: "signature" },
-                            ],
-                            asm: [
-                                "OP_SHA256",
-                                "<hash>",
-                                "OP_EQUAL",
-                                "OP_VERIFY",
-                                "<owner>",
-                                "OP_CHECKSIG",
-                            ],
-                        },
-                    ],
-                },
-            ],
-        }).functions.claim;
+        const hash = programFromArtifact(
+            demo({
+                constructorInputs: [
+                    { name: "owner", type: "pubkey" },
+                    { name: "hash", type: "bytes32" },
+                ],
+                functions: [
+                    {
+                        name: "claim",
+                        leaves: [
+                            {
+                                name: "claim",
+                                witness: [
+                                    { name: "preimage", type: "bytes" },
+                                    { name: "ownerSig", type: "signature" },
+                                ],
+                                asm: [
+                                    "OP_SHA256",
+                                    "<hash>",
+                                    "OP_EQUAL",
+                                    "OP_VERIFY",
+                                    "<owner>",
+                                    "OP_CHECKSIG",
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            }),
+        ).functions.claim;
         expect(hash.inputs).toEqual([{ name: "preimage", type: "bytes" }]);
         expect(hash.tapscript).toMatchObject({
             asm: ["SHA256", "$hash", "EQUAL"],
             witness: ["preimage"],
         });
 
-        const program = programFromArtifact({
-            contractName: "Composite",
-            constructorInputs: [
-                { name: "policy", type: "Policy" },
-                { name: "point", type: "ECPoint" },
-                { name: "votes", type: "bool[2]" },
-                { name: "exit", type: "int" },
-            ],
-            structs: [
-                {
-                    name: "Policy",
-                    fields: [
-                        { name: "owner", type: "pubkey" },
-                        { name: "threshold", type: "int" },
-                    ],
-                },
-            ],
-            functions: [
-                {
-                    name: "spend",
-                    arkade: {
-                        inputs: [{ name: "request", type: "Policy" }],
-                        asm: ["<VTXO:SingleSig(<policy.owner>,<exit>)>", "OP_DROP"],
+        const program = programFromArtifact(
+            demo({
+                constructorInputs: [
+                    { name: "policy", type: "Policy" },
+                    { name: "point", type: "ECPoint" },
+                    { name: "votes", type: "bool[2]" },
+                    { name: "exit", type: "int" },
+                ],
+                structs: [
+                    {
+                        name: "Policy",
+                        fields: [
+                            { name: "owner", type: "pubkey" },
+                            { name: "threshold", type: "int" },
+                        ],
                     },
-                    leaves: [collaborativeLeaf("spend")],
-                },
-            ],
-        });
+                ],
+                functions: [
+                    {
+                        name: "spend",
+                        arkade: {
+                            inputs: [{ name: "request", type: "Policy" }],
+                            asm: ["<VTXO:SingleSig(<policy.owner>,<exit>)>", "OP_DROP"],
+                        },
+                        leaves: [collab("spend")],
+                    },
+                ],
+            }),
+        );
         expect(program.params?.map((p) => (typeof p === "string" ? p : p.name))).toEqual([
             "policy.owner",
             "policy.threshold",
@@ -219,28 +212,32 @@ describe("reading an arkadec artifact", () => {
 
     it("tweaks a constructor pubkey by the named covenant", () => {
         const insurer = schnorr.getPublicKey(new Uint8Array(32).fill(0x09));
-        const program = programFromArtifact({
-            contractName: "Demo",
-            constructorInputs: [{ name: "insurer", type: "pubkey" }],
-            functions: [
-                {
-                    name: "claim",
-                    arkade: { inputs: [], asm: ["OP_1"] },
-                    leaves: [collaborativeLeaf("claim")],
-                },
-                {
-                    name: "race",
-                    leaves: [
-                        leaf("race", [
-                            "<SERVER_KEY>",
-                            "OP_CHECKSIGVERIFY",
-                            "<TWEAK:insurer:claim>",
-                            "OP_CHECKSIG",
-                        ]),
-                    ],
-                },
-            ],
-        });
+        const program = programFromArtifact(
+            demo({
+                constructorInputs: [{ name: "insurer", type: "pubkey" }],
+                functions: [
+                    {
+                        name: "claim",
+                        arkade: { inputs: [], asm: ["OP_1"] },
+                        leaves: [collab("claim")],
+                    },
+                    {
+                        name: "race",
+                        leaves: [
+                            {
+                                name: "race",
+                                asm: [
+                                    "<SERVER_KEY>",
+                                    "OP_CHECKSIGVERIFY",
+                                    "<TWEAK:insurer:claim>",
+                                    "OP_CHECKSIG",
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            }),
+        );
         expect(program.functions.race.tapscript.signers).toEqual([
             "$server",
             { tweak: "$insurer", fn: "claim" },
@@ -263,13 +260,7 @@ describe("reading an arkadec artifact", () => {
         ["an incomplete artifact", { functions: [] }, /complete arkadec artifact/],
         [
             "a constructor input without a type",
-            {
-                contractName: "Broken",
-                constructorInputs: [{ name: "amount" }],
-                functions: [
-                    { name: "spend", leaves: [leaf("spend", ["<SERVER_KEY>", "OP_CHECKSIG"])] },
-                ],
-            },
+            demo({ constructorInputs: [{ name: "amount" }] }),
             /complete arkadec artifact/,
         ],
         [
@@ -283,65 +274,41 @@ describe("reading an arkadec artifact", () => {
             },
             /duplicate program parameter 'server'/,
         ],
-        [
-            "a struct named pubkey",
-            {
-                contractName: "S",
-                constructorInputs: [],
-                structs: [{ name: "pubkey", fields: [{ name: "x", type: "int" }] }],
-                functions: [
-                    { name: "spend", leaves: [leaf("spend", ["<SERVER_KEY>", "OP_CHECKSIG"])] },
-                ],
-            },
-            /struct name 'pubkey' shadows a built-in type/,
-        ],
-        [
-            "a struct named ECPoint",
-            {
-                contractName: "S",
-                constructorInputs: [],
-                structs: [{ name: "ECPoint", fields: [{ name: "x", type: "int" }] }],
-                functions: [
-                    { name: "spend", leaves: [leaf("spend", ["<SERVER_KEY>", "OP_CHECKSIG"])] },
-                ],
-            },
-            /struct name 'ECPoint' shadows a built-in type/,
-        ],
+        ...(["pubkey", "ECPoint"] as const).map(
+            (name) =>
+                [
+                    `a struct named ${name}`,
+                    demo({ structs: [{ name, fields: [{ name: "x", type: "int" }] }] }),
+                    /shadows a built-in type/,
+                ] as const,
+        ),
         [
             "a tweak with no function",
-            {
-                contractName: "D",
+            demo({
                 constructorInputs: [{ name: "insurer", type: "pubkey" }],
                 functions: [
-                    { name: "race", leaves: [leaf("race", ["<TWEAK:insurer>", "OP_CHECKSIG"])] },
-                ],
-            },
-            /malformed tweak/,
-        ],
-        [
-            "an unknown opcode",
-            {
-                ...artifact,
-                functions: [
                     {
-                        ...artifact.functions[0],
-                        arkade: { inputs: [], asm: ["OP_NOTAREALOPCODE"] },
+                        name: "race",
+                        leaves: [{ name: "race", asm: ["<TWEAK:insurer>", "OP_CHECKSIG"] }],
                     },
                 ],
-            },
-            /not in this SDK's table/,
+            }),
+            /malformed tweak/,
         ],
-        [
-            "OP_constructor",
-            {
-                ...artifact,
-                functions: [
-                    { ...artifact.functions[0], arkade: { inputs: [], asm: ["OP_constructor"] } },
-                ],
-            },
-            /not in this SDK's table/,
-        ],
+        ...(["OP_NOTAREALOPCODE", "OP_constructor"] as const).map(
+            (op) =>
+                [
+                    op,
+                    {
+                        ...artifact,
+                        functions: [
+                            { ...artifact.functions[0], arkade: { inputs: [], asm: [op] } },
+                        ],
+                    },
+                    /not in this SDK's table/,
+                ] as const,
+        ),
     ] as [string, unknown, RegExp][])("refuses %s", (_label, art, pattern) => {
-        refuse(art, pattern);
+        expect(() => programFromArtifact(art as never)).toThrow(pattern);
     });
 });

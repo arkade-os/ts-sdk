@@ -104,12 +104,9 @@ export function isContractArtifact(value: unknown): value is ContractArtifact {
     return value.functions.every((group) => {
         if (!isRecord(group) || typeof group.name !== "string") return false;
         if (!Array.isArray(group.leaves) || group.leaves.length === 0) return false;
-        if (group.arkade !== undefined) {
-            if (
-                !isRecord(group.arkade) ||
-                !Array.isArray(group.arkade.inputs) ||
-                !isStringArray(group.arkade.asm)
-            ) {
+        const arkade = group.arkade;
+        if (arkade !== undefined) {
+            if (!isRecord(arkade) || !Array.isArray(arkade.inputs) || !isStringArray(arkade.asm)) {
                 return false;
             }
         }
@@ -157,9 +154,7 @@ function flatten(
     structs: ArtifactStruct[],
     stack: string[] = [],
 ): InputDef[] {
-    if (typeof param?.name !== "string" || typeof param.type !== "string" || param.type === "") {
-        fail("parameter needs a name and a type");
-    }
+    if (!isNamed(param)) fail("parameter needs a name and a type");
 
     if (Object.hasOwn(NATIVE_STRUCTS, param.type)) {
         return NATIVE_STRUCTS[param.type].map(([field, type]) => ({
@@ -248,9 +243,7 @@ function providedWitness(witness: ArtifactWitnessElement[] | undefined): Artifac
     if (witness === undefined) return [];
     if (!Array.isArray(witness)) fail("leaf witness must be an array");
     return witness.filter((item) => {
-        if (!isRecord(item) || typeof item.name !== "string" || typeof item.type !== "string") {
-            fail("witness item needs a name and a type");
-        }
+        if (!isNamed(item)) fail("witness item needs a name and a type");
         if ("injected" in item && typeof item.injected !== "boolean") {
             fail(`witness '${item.name}' injected flag must be a boolean`);
         }
@@ -297,9 +290,7 @@ function parseLeaf(
         const terminator = asm[index + 1];
         const last = terminator === "OP_CHECKSIG";
         if (!last && terminator !== "OP_CHECKSIGVERIFY") {
-            fail(
-                `leaf '${leaf.name}': expected a signature check after '${key}', found '${terminator}'`,
-            );
+            fail(`leaf '${leaf.name}': expected CHECKSIG after '${key}', found '${terminator}'`);
         }
         if (!key.startsWith("<") || !key.endsWith(">")) {
             fail(`leaf '${leaf.name}': unsupported key operand '${key}'`);
@@ -311,25 +302,15 @@ function parseLeaf(
             if (!base || !fn) fail(`leaf '${leaf.name}': malformed tweak '${key}'`);
             signers.push({ tweak: `$${base}`, fn });
         } else if (inner.startsWith("EMULATOR_KEY:")) {
-            if (!hasCovenant) {
-                fail(
-                    `leaf '${leaf.name}': references ${key} but its group has no covenant, so the tweak cannot be derived`,
-                );
-            }
-            if (!last) {
-                fail(
-                    `leaf '${leaf.name}': the tweaked co-signer is appended last, but ${key} is not the final key`,
-                );
-            }
+            if (!hasCovenant) fail(`leaf '${leaf.name}': ${key} needs a covenant`);
+            if (!last) fail(`leaf '${leaf.name}': ${key} must be the last signer`);
             sawEmulator = true;
         } else signers.push(`$${inner}`);
         index += 2;
     }
 
     if (hasCovenant && !sawEmulator) {
-        fail(
-            `leaf '${leaf.name}': a covenant group's leaf must commit to the tweaked co-signer key`,
-        );
+        fail(`leaf '${leaf.name}': covenant leaf must end with the tweaked co-signer`);
     }
     if (signers.length === 0) fail(`leaf '${leaf.name}': at least one named signer is required`);
 
@@ -356,8 +337,6 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
         if (!isRecord(struct) || typeof struct.name !== "string" || !Array.isArray(struct.fields)) {
             fail("struct needs a name and fields");
         }
-        // `flatten` resolves these names itself, so a struct taking one would
-        // be silently replaced by the built-in layout.
         if (
             Object.hasOwn(SCALAR_TYPES, struct.name) ||
             Object.hasOwn(NATIVE_STRUCTS, struct.name)

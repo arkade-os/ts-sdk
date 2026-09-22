@@ -86,10 +86,7 @@ export interface InputDef {
  */
 export type InputRef = string | InputDef;
 
-/**
- * A constructor pubkey tweaked by `fn`'s covenant, the same binding the Arkade
- * emulator uses. `tweak` is a `$param` for that pubkey.
- */
+/** Constructor pubkey `$param` tweaked by `fn`'s covenant. */
 export interface TweakedSigner {
     tweak: string;
     fn: string;
@@ -395,7 +392,6 @@ function resolveSigner(
     args: Record<string, ArkadeParamValue>,
 ): Uint8Array {
     if (ref instanceof Uint8Array) return ref;
-    // Parsed JSON reaches here untyped, so a non-string is a signer, not a name.
     if (typeof ref !== "string" || !ref.startsWith("$")) {
         throw new Error(`unknown signer reference '${ref}' — use a '$param' or key bytes`);
     }
@@ -468,7 +464,6 @@ function compileFunctions(
         validateTapscript(def.tapscript);
         const pubkeys = def.tapscript.signers.map((signer) => {
             if (!isTweakedSigner(signer)) return resolveSigner(signer, args);
-            // The named covenant may be declared after the leaf that tweaks it.
             const asm = functions[signer.fn]?.arkadeScript?.asm;
             if (!asm) {
                 throw new Error(
@@ -556,8 +551,7 @@ export function parseArtifact(artifact: {
         typeof t === "string" && t.startsWith("0x") ? hex.decode(t.slice(2)) : t;
     const signerRef = (s: unknown): SignerRef => {
         if (s instanceof Uint8Array || typeof s === "string") return hexToken(s);
-        const { tweak, fn } = (s ?? {}) as { tweak?: unknown; fn?: unknown };
-        if (typeof tweak === "string" && typeof fn === "string") return { tweak, fn };
+        if (isTweakedSigner(s)) return { tweak: s.tweak, fn: s.fn };
         throw new Error("parseArtifact: a tweaked signer needs string `tweak` and `fn`");
     };
     // A "$param" timelock stays a reference (resolved at compile time); anything
