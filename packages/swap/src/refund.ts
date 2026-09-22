@@ -44,6 +44,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
     ConditionWitness,
+    type IContractManager,
     type Identity,
     RestArkProvider,
     RestIndexerProvider,
@@ -126,8 +127,17 @@ export async function awaitRfqResolution(
  * satisfied by {@link RestArkProvider}. Same seam style as `RestoreIndexer`. */
 export type RefundArkProvider = Pick<RestArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
 
-/** The indexer surface the lockup lookup needs. */
-export type RefundIndexer = Pick<RestIndexerProvider, "getVtxos">;
+/**
+ * The contract-manager surface the lockup lookup needs: the registered
+ * contract and its VTXOs, in one read.
+ *
+ * Satisfied structurally by a real `ContractManager`
+ * (`await wallet.getContractManager()`), whose `getContractsWithVtxos`
+ * performs a best-effort provider sync on every read and serves repository
+ * state only when that sync failed retryably — recorded in `getSyncState()`,
+ * never silently. {@link findLockupVtxos} trusts this read.
+ */
+export type LockupContractSource = Pick<IContractManager, "getContractsWithVtxos">;
 
 /** A still-refundable virtual output sitting at the swap lockup. */
 export interface LockupVtxo {
@@ -236,14 +246,14 @@ export class LockupNeedsRecoveryError extends Error {
  * send, and refunding only `vtxos[0]` returns part of the money and strands
  * the rest at a script whose other refund paths are all longer.
  *
- * BOTH queries, because they are disjoint sets and `spendableOnly` alone goes
- * blind at exactly the wrong moment. A lockup whose batch expiry passed is
- * swept into the recoverable set, and this function exists to serve swaps that
- * sat unresolved — which are precisely the ones most likely to have got there.
- * Reading only the spendable set would report `nothing_to_refund` over money
- * that is still sitting at the script, which is worse than an error: it looks
- * like a resolved swap. `packages/boltz-swap` merges the same two queries for
- * the same reason (`arkade-swaps.ts`'s `refundableVtxos`).
+ * ONE read, from the contract manager, and it is trusted. The old form — two
+ * parallel indexer queries (`spendableOnly` + `recoverableOnly`) merged
+ * client-side — is gone: `spendableOnly` alone goes blind at exactly the wrong
+ * moment (a lockup whose batch expiry passed is swept into the recoverable
+ * set, precisely the swaps this path exists to serve), and the two-set merge
+ * is exactly what `getContractsWithVtxos` already computes per read, as one
+ * normalized row per output. `packages/boltz-swap`, which still queries the
+ * indexer directly, keeps its own two-query merge.
  *
  * **Visible is not the same as refundable.** A `recoverable` output cannot be
  * spent offchain at all — see {@link LockupVtxo.recoverable} — so this set is
@@ -251,12 +261,13 @@ export class LockupNeedsRecoveryError extends Error {
  * That function refuses the recoverable ones by name rather than submitting a
  * spend the server must reject.
  *
- * **Unrolled outputs are the one exception, and are dropped.** A unilaterally
+ * **Unrolled and terminally spent outputs are dropped.** A unilaterally
  * exited output lives onchain behind its CSV; no offchain spend of any leaf can
  * reach it, and `LockupVtxo` carries no field to say so, so a caller could not
- * tell it apart from a live one. Whether arkd returns such an output under
- * `spendableOnly` is not determinable from here, so the exclusion is made
- * defensively rather than assumed. It costs the two waiting callers nothing
+ * tell it apart from a live one. The manager's rows carry the canonical facts
+ * (`isUnrolled`, `isSpent`, `spentBy`, `settledBy`), so both exclusions are
+ * exact rather than defensive — the same predicate (`hasTerminalSpend`) the
+ * wallet's own spend gate uses. It costs the two waiting callers nothing
  * they wanted: `awaitLockupFunding` keeps waiting for a claimable lockup
  * instead of publishing `P` into a spend that cannot land, and
  * `refundIfUnresolved` reports rather than grinding a doomed push to its
@@ -268,27 +279,41 @@ export class LockupNeedsRecoveryError extends Error {
  * This read — not the RFQ's reported state — is the authority on whether
  * there is anything left at the lockup.
  *
- * **Not replaced by the contract manager's VTXO state, deliberately.** Once a
- * lockup is registered (see `RfqSwapManagerDeps.contracts`) the wallet tracks
- * these same outputs, and `getContractsWithVtxos` plus `canSpendOffchain` /
- * `canRecoverOnchain` would classify them. That is a WEAKER answer here on two
- * counts: it serves the wallet REPOSITORY, which a degraded sync will happily
- * hand back stale (`getSyncState()` reports `degraded` and returns cached rows
- * rather than failing), and its height-based expiry test needs a chain tip this
- * module does not have. The two queries below ask the indexer itself and need
- * neither. Ask-the-indexer, don't-trust-local-state — the same posture
- * {@link readLockupFate} takes, and for the same reason: this decides money.
+ * **Read from the contract manager, and trust it.** The lookup no longer asks
+ * the indexer by script: it reads the lockup's REGISTERED contract row
+ * (`getContractsWithVtxos`, see {@link LockupContractSource}) and trusts the
+ * answer. Two things make that safe, and both are the manager's to hold:
+ * the row must exist — registration writes it before the address can be
+ * funded (`requestLightningSend` / `requestOnchainSend` up front,
+ * `RfqSwapManager`'s `ensureRegistered` per pass for records made before that
+ * existed) — and the read must be fresh, which the manager's per-read
+ * best-effort sync provides; when only the repository answers, `getSyncState()`
+ * loudly says `degraded` instead of hiding it. An empty row for an
+ * unregistered or unfunded lockup is honored as-is: this module does not fall
+ * back to a script query behind the manager's back, so `RfqSwapManager` (which
+ * supplies the seam via `RfqSwapManagerDeps.contracts`) and standalone callers
+ * of {@link refundIfUnresolved} / {@link claimReceiveLockup} own the
+ * registration.
+ *
+ * {@link readLockupFate} is the mirror image, and deliberately so: the fate
+ * question needs the spending TRANSACTIONS' witnesses, which the manager does
+ * not expose — so it stays a direct indexer read while the money question
+ * (what is left here) is the manager's.
  */
 export async function findLockupVtxos(
-    indexer: RefundIndexer,
+    contracts: LockupContractSource,
     swapPkScript: Uint8Array,
 ): Promise<LockupVtxo[]> {
-    const scripts = [hex.encode(swapPkScript)];
-    const { vtxos: all } = await indexer.getVtxos({ scripts, renewableOnly: true });
+    const [row] = await contracts.getContractsWithVtxos({
+        script: hex.encode(swapPkScript),
+    });
     const seen = new Set<string>();
     const out: LockupVtxo[] = [];
-    for (const vtxo of all ?? []) {
+    for (const vtxo of row?.vtxos ?? []) {
         if (vtxo.isUnrolled) continue;
+        // A spent output cannot back any refund push, and `hasTerminalSpend`
+        // unions the three spend facts rather than trusting any one of them.
+        if (hasTerminalSpend(vtxo)) continue;
         const key = `${vtxo.txid}:${vtxo.vout}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -296,7 +321,9 @@ export async function findLockupVtxos(
             txid: vtxo.txid,
             vout: vtxo.vout,
             value: Number(vtxo.value),
-            recoverable: !!vtxo.isSwept, // swept → recoverable, live leaf → spendable
+            // The manager's canonical `isSwept` fact; no coercion, because the
+            // normalized row guarantees a boolean.
+            recoverable: vtxo.isSwept,
         });
     }
     return out;
@@ -307,8 +334,8 @@ export async function findLockupVtxos(
 /**
  * The indexer surface the lockup-spend read needs: the vtxo lookup, plus the
  * raw transactions those vtxos were spent by. Same narrow-seam style as
- * {@link RefundIndexer} and `restore.ts`'s `RestoreIndexer`, and satisfied by
- * {@link RestIndexerProvider}.
+ * a direct read of {@link RestIndexerProvider}, unlike
+ * {@link LockupContractSource}'s contract-manager read.
  */
 export type LockupSpendIndexer = Pick<RestIndexerProvider, "getVtxos" | "getVirtualTxs">;
 
@@ -416,8 +443,10 @@ const candidateWitnessItems = (tx: Transaction, inputIndex: number): Uint8Array[
  * it is scanned across every output rather than in outpoint order, so which
  * output happens to come first cannot change the answer.
  *
- * Ask-the-indexer, don't-trust-local-state: read fresh on every poll, never
- * cached, the same posture {@link findLockupVtxos} already establishes.
+ * Read fresh on every poll, never cached. {@link findLockupVtxos} has since
+ * moved to the contract manager's read, but this question needs the spending
+ * transactions' witnesses, which the manager does not expose — so the indexer
+ * seam stays.
  */
 export async function readLockupFate(
     indexer: LockupSpendIndexer,
@@ -721,6 +750,7 @@ export type RefundOutcome =
 export async function refundIfUnresolved(
     transport: RfqTransport,
     ark: RefundArkProvider,
+    contracts: LockupContractSource,
     indexer: LockupSpendIndexer,
     input: {
         rfqId: string;
@@ -779,7 +809,7 @@ export async function refundIfUnresolved(
                 };
             }
 
-            const vtxos = await findLockupVtxos(indexer, input.script.pkScript);
+            const vtxos = await findLockupVtxos(contracts, input.script.pkScript);
             if (vtxos.length === 0) return { outcome: "nothing_to_refund", status };
             try {
                 const pushed = await pushRefundWithoutReceiver(ark, {

@@ -241,17 +241,19 @@ const spentUnnamed = (over: Partial<FakeVtxo> = {}): FakeVtxo => ({
 type FakeIndexer = LockupSpendIndexer & { vtxoCalls: number; txLookups: string[][] };
 
 /**
- * A funded output as `findLockupVtxos` reads one — the receive leg's view of
- * the same script. Separate from {@link FakeVtxo} because the two reads are
- * genuinely different queries: the fate read asks for everything at the script
- * and cares about `spentBy`, while this one asks the spendable and recoverable
- * filters separately and is the only read whose `value` is summed.
+ * A funded output as `findLockupVtxos` reads one — the contract manager's
+ * normalized row, which is the receive leg's only view of its funding now.
+ * Separate from {@link FakeVtxo} because the two reads are genuinely different
+ * queries: the fate read goes to the indexer and cares about `spentBy`, while
+ * this one goes to the registered contract row and is the only read whose
+ * `value` is summed.
  */
 interface FakeFunded {
     txid: string;
     vout: number;
     value: number;
     recoverable?: boolean;
+    isUnrolled?: boolean;
 }
 
 const fakeIndexer = (
@@ -260,35 +262,17 @@ const fakeIndexer = (
         /** Only the txids present here are resolvable — a `spentBy` with no
          * entry models the indexer returning fewer txs than were asked for. */
         txs?: { txid: string; psbt: string }[];
-        /** What sits at the lockup, for the filtered reads. */
-        funded?: FakeFunded[];
         fail?: boolean;
     } = {},
 ): FakeIndexer => {
     const indexer = {
         vtxoCalls: 0,
         txLookups: [] as string[][],
-        async getVtxos(filter?: {
-            spendableOnly?: boolean;
-            recoverableOnly?: boolean;
-            renewableOnly?: boolean;
-        }) {
+        async getVtxos() {
             indexer.vtxoCalls += 1;
             if (state.fail) throw new Error("indexer unreachable");
-            // The filters are honoured rather than ignored: `findLockupVtxos`
-            // makes both calls and merges them, so a fake that answered the
-            // same set twice would report every output as spendable AND
-            // recoverable and hide the dedup entirely.
-            const funded = state.funded ?? [];
-            if (filter?.spendableOnly) return { vtxos: funded.filter((v) => !v.recoverable) };
-            if (filter?.recoverableOnly) return { vtxos: funded.filter((v) => v.recoverable) };
-            if (filter?.renewableOnly)
-                return {
-                    vtxos: funded.map(({ recoverable, ...vtxo }) => ({
-                        ...vtxo,
-                        isSwept: recoverable,
-                    })),
-                }; // union of both sets
+            // The fate read is unfiltered: `findLockupVtxos` has since moved to
+            // the contract manager's read, so this fake only ever answers it.
             return { vtxos: state.vtxos ?? [] };
         },
         async getVirtualTxs(txids: string[]) {
@@ -448,9 +432,20 @@ const fakeContracts = (
     over: {
         failCreate?: () => boolean;
         failRead?: () => boolean;
+        /** Fails the VTXO read only — `getContractsWithVtxos` — while registry
+         * reads (getContracts) stay answerable, so a test can pin one failure
+         * event on the lockup read itself. */
+        failVtxosRead?: () => boolean;
         /** Rows written by something other than this manager — what the request
          * entrypoints leave behind before the caller funds. */
         preexisting?: CreateContractParams[];
+        /**
+         * The lockup's normalized VTXO rows `getContractsWithVtxos` serves,
+         * keyed by the row's script. Under contract-manager sourcing this is
+         * `findLockupVtxos`'s ONLY view of the funding, so a receive test that
+         * wants its lockup seen must put its `funded` rows here.
+         */
+        vtxos?: (script: string) => Record<string, unknown>[];
     } = {},
 ): FakeContracts => {
     const listeners = new Set<(event: ContractEvent) => void>();
@@ -480,6 +475,17 @@ const fakeContracts = (
                 .filter((row) => filter?.script === undefined || row.script === filter.script)
                 .map((row) => ({ ...row, state: "active", createdAt: 1 }) as Contract);
         },
+        async getContractsWithVtxos(filter?: { script?: string }) {
+            if (over.failVtxosRead?.() || over.failRead?.())
+                throw new Error("contract repository unavailable");
+            const matched = created
+                .filter((row) => filter?.script === undefined || row.script === filter.script)
+                .map((row) => ({ ...row, state: "active", createdAt: 1 }) as Contract);
+            return matched.map((contract) => ({
+                contract,
+                vtxos: (over.vtxos?.(contract.script) ?? []).map(contractRow),
+            }));
+        },
         onContractEvent(callback: (event: ContractEvent) => void) {
             listeners.add(callback);
             return () => listeners.delete(callback);
@@ -496,6 +502,28 @@ const fakeContracts = (
         },
     } as unknown as FakeContracts;
 };
+
+/** One VTXO as the manager's normalized `ExtendedContractVtxo` row carries
+ * it. `recoverable` maps to `isSwept`, the canonical fact the manager holds;
+ * `findLockupVtxos` maps it back. */
+const contractRow = (v: {
+    txid: string;
+    vout: number;
+    value: number;
+    recoverable?: boolean;
+    isUnrolled?: boolean;
+    isSpent?: boolean;
+    spentBy?: string;
+}) => ({
+    txid: v.txid,
+    vout: v.vout,
+    value: v.value,
+    isSwept: !!v.recoverable,
+    isSpent: !!v.isSpent,
+    isPreconfirmed: false,
+    isUnrolled: !!v.isUnrolled,
+    spentBy: v.spentBy ?? "",
+});
 
 /** The lockup as a caller would hand it over for registration: the very
  * covenant object `pushRefundWithoutReceiver` takes, plus the address that was
@@ -517,6 +545,28 @@ const watchedScriptEvent = (
     contractScript = LOCKUP_SCRIPT_HEX,
 ): ContractEvent => ({ type, contractScript, vtxos: [], timestamp: 1 }) as unknown as ContractEvent;
 
+/**
+ * The row the request entrypoints leave behind before the caller funds —
+ * the shape a monitored swap resumes from when the manager never wrote one
+ * itself. The DEFAULT contract fake carries one per corridor script, because
+ * under contract-manager sourcing the row is `findLockupVtxos`'s only book
+ * and a fixture without it would model "the swap was never registered", which
+ * is what `ensureRegistered` loudly reports.
+ */
+const lockupRowParams = (scriptHex: string, address = "ark1lockup"): CreateContractParams => ({
+    type: SWAP_LOCKUP_CONTRACT_TYPE,
+    params: {},
+    script: scriptHex,
+    address,
+});
+
+/** The preconditioned rows the manager() default serves a fixture without a
+ * `lockup` handle: both the send and the receive script are already written. */
+const REGISTERED_LOCKUP_ROWS = (): CreateContractParams[] => [
+    lockupRowParams(LOCKUP_SCRIPT_HEX),
+    lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript)),
+];
+
 /** A manager wired to the given seams, never started — the tests drive `poll()`
  * so nothing depends on a timer. */
 const manager = (input: {
@@ -535,7 +585,7 @@ const manager = (input: {
         {
             indexer: input.indexer ?? fakeIndexer({ vtxos: unspent() }),
             chain: input.chain,
-            contracts: input.contracts,
+            contracts: input.contracts ?? fakeContracts({ preexisting: REGISTERED_LOCKUP_ROWS() }),
             repository: input.repository,
         },
         {
@@ -981,7 +1031,14 @@ describe("RfqSwapManager — the onchain-send L1 half", () => {
         const failures: string[] = [];
         const completed: RfqSwap[] = [];
         const m = new RfqSwapManager(
-            { indexer: fakeIndexer({ vtxos: unspent() }) },
+            {
+                indexer: fakeIndexer({ vtxos: unspent() }),
+                // A covenant-less fixture models "the request path wrote the
+                // row before funding", so the registration attempt finds it.
+                contracts: fakeContracts({
+                    preexisting: [lockupRowParams(hex.encode(LOCKUP.pkScript))],
+                }),
+            },
             {
                 now: () => SAFE_NOW,
                 events: {
@@ -1204,12 +1261,16 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         await m.poll();
     };
 
-    /** A lockup funded with one output, unspent — so the fate read says `open`
-     * and the pass carries on to the claim. */
-    const fundedIndexer = (value = LOCKUP_VALUE, over: Partial<FakeFunded> = {}) =>
-        fakeIndexer({
-            vtxos: unspent(),
-            funded: [{ ...LOCKUP_OUTPOINT, value, ...over }],
+    /** A lockup funded with one output, unspent in the fate read — so that
+     * read says `open` and the pass carries on to the claim. */
+    const fundedIndexer = () => fakeIndexer({ vtxos: unspent() });
+
+    /** The same funding as the contract manager serves it — under
+     * contract-manager sourcing this is `findLockupVtxos`'s only read. */
+    const fundedContracts = (value = LOCKUP_VALUE, over: Partial<FakeFunded> = {}) =>
+        fakeContracts({
+            preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+            vtxos: () => [{ ...LOCKUP_OUTPOINT, value, ...over }],
         });
 
     /** Comfortably inside the claim window. */
@@ -1218,7 +1279,12 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
     it("claims a lockup funded for the agreed amount", async () => {
         const s = spies();
         const swap = receiveSwap();
-        const m = manager({ indexer: fundedIndexer(), now: BEFORE_DEADLINE, spies: s });
+        const m = manager({
+            indexer: fundedIndexer(),
+            contracts: fundedContracts(),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
         await pass(m, swap);
 
         expect(s.lockupClaims).toHaveLength(1);
@@ -1237,7 +1303,8 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const s = spies();
         const swap = receiveSwap();
         const m = manager({
-            indexer: fundedIndexer(LOCKUP_VALUE + 1),
+            indexer: fundedIndexer(),
+            contracts: fundedContracts(LOCKUP_VALUE + 1),
             now: BEFORE_DEADLINE,
             spies: s,
         });
@@ -1250,9 +1317,10 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const s = spies();
         const swap = receiveSwap();
         const m = manager({
-            indexer: fakeIndexer({
-                vtxos: unspent(),
-                funded: [
+            indexer: fakeIndexer({ vtxos: unspent() }),
+            contracts: fakeContracts({
+                preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+                vtxos: () => [
                     { ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE - 1 },
                     { ...LOCKUP_OUTPOINT, vout: 1, value: 1 },
                 ],
@@ -1275,9 +1343,10 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const s = spies();
         const swap = receiveSwap();
         const m = manager({
-            indexer: fakeIndexer({
-                vtxos: unspent(),
-                funded: [
+            indexer: fakeIndexer({ vtxos: unspent() }),
+            contracts: fakeContracts({
+                preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+                vtxos: () => [
                     { ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE - 1 },
                     { ...LOCKUP_OUTPOINT, vout: 1, value: 1, recoverable: true },
                 ],
@@ -1298,7 +1367,12 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         // Claiming makes `P` public, which settles the payer's held HTLC in full.
         const s = spies();
         const swap = receiveSwap();
-        const m = manager({ indexer: fundedIndexer(330), now: BEFORE_DEADLINE, spies: s });
+        const m = manager({
+            indexer: fundedIndexer(),
+            contracts: fundedContracts(330),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
         await pass(m, swap);
 
         expect(s.lockupClaims).toHaveLength(0);
@@ -1316,7 +1390,12 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         for (const expectedAmount of [Number.NaN, undefined as unknown as number]) {
             const s = spies();
             const swap = receiveSwap({ expectedAmount });
-            const m = manager({ indexer: fundedIndexer(1), now: BEFORE_DEADLINE, spies: s });
+            const m = manager({
+                indexer: fundedIndexer(),
+                contracts: fundedContracts(1),
+                now: BEFORE_DEADLINE,
+                spies: s,
+            });
             await pass(m, swap);
 
             expect(s.lockupClaims).toHaveLength(0);
@@ -1330,11 +1409,12 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const swap = receiveSwap();
         let value = LOCKUP_VALUE - 1;
         const m = manager({
-            indexer: fakeIndexer({
-                vtxos: unspent(),
+            indexer: fakeIndexer({ vtxos: unspent() }),
+            contracts: fakeContracts({
+                preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
                 // read fresh every pass, so the top-up is visible
-                get funded() {
-                    return [{ ...LOCKUP_OUTPOINT, value }];
+                get vtxos() {
+                    return () => [{ ...LOCKUP_OUTPOINT, value }];
                 },
             }),
             now: BEFORE_DEADLINE,
@@ -1365,7 +1445,12 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
                 },
             });
             const swap = receiveSwap();
-            const m = manager({ indexer: fundedIndexer(), now, spies: s });
+            const m = manager({
+                indexer: fundedIndexer(),
+                contracts: fundedContracts(),
+                now,
+                spies: s,
+            });
             await pass(m, swap);
 
             expect(s.refunds).toHaveLength(0);
@@ -1382,6 +1467,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const open = receiveSwap();
         const before = manager({
             indexer: fundedIndexer(),
+            contracts: fundedContracts(),
             now: REFUND_LOCKTIME - 1,
             spies: claimed,
         });
@@ -1481,7 +1567,10 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         // `claimable` would name an action this wallet cannot perform by hand
         // either, and the swap would sit at it until the window shut.
         const swap = receiveSwap();
-        const m = new RfqSwapManager({ indexer: fundedIndexer() }, { now: () => BEFORE_DEADLINE });
+        const m = new RfqSwapManager(
+            { indexer: fundedIndexer(), contracts: fundedContracts() },
+            { now: () => BEFORE_DEADLINE },
+        );
         await m.addSwap(swap);
         await m.poll();
 
@@ -1504,10 +1593,11 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const swap = receiveSwap();
         const funded = [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }];
         const m = manager({
-            indexer: fakeIndexer({
-                vtxos: unspent(),
-                get funded() {
-                    return funded;
+            indexer: fakeIndexer({ vtxos: unspent() }),
+            contracts: fakeContracts({
+                preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+                get vtxos() {
+                    return () => funded;
                 },
             }),
             now: () => now,
@@ -1534,7 +1624,12 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         // funding here is far below `expectedAmount` and is claimed anyway.
         const s = spies();
         const swap = receiveSwap({ state: "claimed", claimArkTxid: CLAIM_ARK_TXID });
-        const m = manager({ indexer: fundedIndexer(1), now: BEFORE_DEADLINE, spies: s });
+        const m = manager({
+            indexer: fundedIndexer(),
+            contracts: fundedContracts(1),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
         await pass(m, swap);
 
         expect(s.lockupClaims).toHaveLength(1);
@@ -1552,10 +1647,11 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const swap = receiveSwap();
         const funded = [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }];
         const m = manager({
-            indexer: fakeIndexer({
-                vtxos: unspent(),
-                get funded() {
-                    return funded;
+            indexer: fakeIndexer({ vtxos: unspent() }),
+            contracts: fakeContracts({
+                preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+                get vtxos() {
+                    return () => funded;
                 },
             }),
             now: BEFORE_DEADLINE,
@@ -1606,7 +1702,12 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             },
         });
         const swap = receiveSwap();
-        const m = manager({ indexer: fundedIndexer(), now: () => now, spies: s });
+        const m = manager({
+            indexer: fundedIndexer(),
+            contracts: fundedContracts(),
+            now: () => now,
+            spies: s,
+        });
         await pass(m, swap);
         expect(swap.state).toBe("claimable"); // retried, not given up on
         expect(s.lockupClaims).toHaveLength(1);
@@ -1627,6 +1728,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const swap = receiveSwap();
         const m = manager({
             indexer: fundedIndexer(),
+            contracts: fundedContracts(),
             now: BEFORE_DEADLINE,
             spies: s,
             enableAutoActions: false,
@@ -1641,12 +1743,22 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const s = spies();
         const swap = receiveSwap();
         const failures: string[] = [];
-        const m = manager({ indexer: fakeIndexer({ fail: true }), now: BEFORE_DEADLINE, spies: s });
+        const m = manager({
+            indexer: fakeIndexer({ fail: true }),
+            // The receive leg's lockup read now goes through the contract
+            // manager, so its outage is what gets reported.
+            contracts: fakeContracts({
+                preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+                failVtxosRead: () => true,
+            }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
         m.onSwapFailed((_s, error) => failures.push(error.message));
         await pass(m, swap);
 
         expect(swap.state).toBe("pending");
-        expect(failures).toEqual(["indexer unreachable"]);
+        expect(failures).toEqual(["contract repository unavailable"]);
         expect(await m.hasSwap(RFQ_ID)).toBe(true);
     });
 
@@ -1662,12 +1774,13 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             get vtxos() {
                 return state.vtxos;
             },
-            get funded() {
-                return state.funded;
-            },
             txs: [spend],
         });
-        const m = manager({ indexer, now: BEFORE_DEADLINE, spies: s });
+        const contracts = fakeContracts({
+            preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+            vtxos: () => state.funded,
+        });
+        const m = manager({ indexer, contracts, now: BEFORE_DEADLINE, spies: s });
         await pass(m, swap);
         expect(swap.state).toBe("claimed");
 
@@ -1692,8 +1805,12 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
  */
 describe("RfqSwapManager — a kind whose claim was never wired", () => {
     const BEFORE_DEADLINE = REFUND_LOCKTIME - 3600;
-    const fundedIndexer = () =>
-        fakeIndexer({ vtxos: unspent(), funded: [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }] });
+    const fundedIndexer = () => fakeIndexer({ vtxos: unspent() });
+    const fundedContracts = () =>
+        fakeContracts({
+            preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+            vtxos: () => [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }],
+        });
 
     it("drives a lightning send with neither claim wired, which used not to compile", async () => {
         const s = spies();
@@ -1715,6 +1832,7 @@ describe("RfqSwapManager — a kind whose claim was never wired", () => {
         const swap = receiveSwap();
         const m = manager({
             indexer: fundedIndexer(),
+            contracts: fundedContracts(),
             now: BEFORE_DEADLINE,
             spies: s,
             install: without(s, "claimLockup"),
@@ -1763,6 +1881,7 @@ describe("RfqSwapManager — a kind whose claim was never wired", () => {
             {
                 indexer: fakeIndexer({ vtxos: unspent() }),
                 chain: fakeChain({ utxos: [FILL], mtp: SAFE_NOW }),
+                contracts: fakeContracts(),
             },
             { now: () => SAFE_NOW },
         );
@@ -2130,10 +2249,7 @@ describe("RfqSwapManager — a lockup that was unilaterally exited", () => {
         const s = spies();
         const swap = receiveSwap();
         const m = manager({
-            indexer: fakeIndexer({
-                vtxos: exited(),
-                funded: [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }],
-            }),
+            indexer: fakeIndexer({ vtxos: exited() }),
             now: REFUND_LOCKTIME - 3600,
             spies: s,
         });
@@ -2258,7 +2374,7 @@ describe("RfqSwapManager — bookkeeping", () => {
         const completed: RfqSwap[] = [];
         const s = spies();
         const m = new RfqSwapManager(
-            { indexer: settledIndexer() },
+            { indexer: settledIndexer(), contracts: fakeContracts() },
             { now: () => SAFE_NOW, events: { onSwapCompleted: (swap) => completed.push(swap) } },
         );
         m.setCallbacks(s.callbacks);
@@ -2424,7 +2540,7 @@ describe("RfqSwapManager — bookkeeping", () => {
     it("does not let a throwing listener derail the pass", async () => {
         const s = spies();
         const m = new RfqSwapManager(
-            { indexer: settledIndexer() },
+            { indexer: settledIndexer(), contracts: fakeContracts() },
             {
                 now: () => SAFE_NOW,
                 events: {
@@ -2971,7 +3087,14 @@ describe("RfqSwapManager — manager-owned persistence", () => {
         it("writes a swap's first record from the origin handed to addSwap", async () => {
             const store = fakeStore();
             const s = spies();
-            const m = manager({ repository: store, now: SAFE_NOW, spies: s });
+            const m = manager({
+                repository: store,
+                // An empty contract store is exactly the missing-row shape:
+                // one per-record covenant miss, not a refused restore.
+                contracts: fakeContracts(),
+                now: SAFE_NOW,
+                spies: s,
+            });
 
             await m.addSwap(lightningSwap(), sendOrigin());
             await m.poll();
@@ -3155,7 +3278,10 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             const swap = lightningSwap();
             const completed: string[] = [];
             const m = new RfqSwapManager(
-                { indexer: fakeIndexer({ vtxos: spentBy(CLAIM_SPEND.txid), txs: [CLAIM_SPEND] }) },
+                {
+                    indexer: fakeIndexer({ vtxos: spentBy(CLAIM_SPEND.txid), txs: [CLAIM_SPEND] }),
+                    contracts: fakeContracts(),
+                },
                 { now: () => SAFE_NOW },
             );
             m.setCallbacks({ refundArkade: async () => null });
@@ -3257,12 +3383,25 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(result.restored).toHaveLength(1);
         });
 
-        it("refuses when there is no covenant source at all", async () => {
+        it("reports per-record when the covenant store is gone, without falling back", async () => {
             const store = fakeStore([storedSend()]);
             const s = spies();
-            const m = manager({ repository: store, now: SAFE_NOW, spies: s });
+            const m = manager({
+                repository: store,
+                // An empty contract store: the contract manager is the
+                // required seam, but nothing ever registered this lockup.
+                contracts: fakeContracts(),
+                now: SAFE_NOW,
+                spies: s,
+            });
 
-            await expect(m.restoreFromRepository()).rejects.toThrow(/contracts/);
+            // The contract manager is now a required seam, so "no source at
+            // all" is gone; what remains is a store that never held the row,
+            // which is one record's missing covenant, not a refused restore.
+            const result = await m.restoreFromRepository();
+            expect(result.restored).toEqual([]);
+            expect(result.failed).toHaveLength(1);
+            expect(result.failed[0]!.error).toMatchObject({ name: "LockupContractMissing" });
         });
 
         it("refuses when no repository is wired", async () => {
