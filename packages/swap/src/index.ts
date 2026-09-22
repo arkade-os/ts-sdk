@@ -66,6 +66,7 @@ export {
 } from "./fundingPersistence";
 export {
     FundingOutcomeUnknownError,
+    FundingOutputMismatchError,
     fundOffer,
     type FundOfferParams,
     type FundingExpiryFloor,

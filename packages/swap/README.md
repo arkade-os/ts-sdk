@@ -274,9 +274,19 @@ maker key, operator key, or network; it decodes and verifies those facts from `o
 wallet, and the connected operator. `prepareNew` may add detached JSON-safe display metadata before
 insertion, but it cannot change the funding authority or serve as proof that funding happened.
 
-A deposit must clear the live operator dust, `carrierSats` for an asset and the BTC amount itself
+A deposit must clear a **dust floor**, `carrierSats` for an asset and the BTC amount itself
 otherwise: below it the wallet pays the address's `OP_RETURN` sub-dust script, which funds no
-covenant, so `fundOffer` refuses rather than spending more than the caller authorized.
+covenant, so `fundOffer` refuses rather than spending more than the caller authorized. The floor is
+the larger of the live operator dust and the wallet's own, because a wallet freezes its dust at
+construction and can outlive a lowered operator value. An omitted `carrierSats` defaults to that
+same floor.
+
+A wallet that does not report a `dustAmount` — `ServiceWorkerWallet`, which decides in its own
+process — leaves that floor unprovable from here. For those, `fundOffer` reads the covenant output
+back from the produced transaction before recording anything as funded, and raises
+`FundingOutputMismatchError` (carrying `operationId` and `fundingTxid`) when the deposit went
+somewhere else. That operation is *not* pending verification: the payment is spent and the covenant
+was never funded, so recovery will never bind it either.
 
 Once send is entered, a throw is not proof that nothing broadcast. A
 `FundingOutcomeUnknownError` carries `operationId` (and a locally returned `fundingTxid` when

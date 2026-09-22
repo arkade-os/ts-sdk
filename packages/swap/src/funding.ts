@@ -2,6 +2,7 @@ import { hex } from "@scure/base";
 import {
     ArkAddress,
     RestArkProvider,
+    RestIndexerProvider,
     SendDeadlineExceededError,
     asset,
     getNetwork,
@@ -12,6 +13,7 @@ import {
     type NetworkName,
     type NormalizedExtendedVirtualCoin,
 } from "@arkade-os/sdk";
+import { checkFundingOutput, type FundingOutputCheck } from "./fundingRecovery";
 import { decodeOffer, OFFER_PACKET_TYPE, offerVtxoScript, registerOfferContract } from "./offer";
 import type { AssetSwapRepository } from "./repository";
 import { canonicalAssetAmount } from "./rfq";
@@ -52,6 +54,27 @@ export class FundingOutcomeUnknownError extends Error {
         );
     }
 }
+
+export class FundingOutputMismatchError extends Error {
+    override readonly name = "FundingOutputMismatchError";
+
+    constructor(
+        readonly operationId: string,
+        readonly fundingTxid: string,
+    ) {
+        super(
+            `funding ${operationId} sent ${fundingTxid}, which does not carry the intended covenant output`,
+        );
+    }
+}
+
+// The SDK's own `getDustAmount` probe minus its 330-sat fallback: a guess cannot
+// found a floor whose whole job is to be sound.
+const walletDustAmount = (wallet: IWallet): bigint | undefined => {
+    if (!("dustAmount" in wallet)) return undefined;
+    const value = (wallet as { dustAmount?: unknown }).dustAmount;
+    return typeof value === "bigint" && value > 0n ? value : undefined;
+};
 
 const assertFundingRepository = (repository: AssetSwapRepository): void => {
     if (
@@ -342,15 +365,20 @@ export async function fundOffer(
         throw new Error("offer covenant commitment does not match the connected operator");
     }
 
-    const dust = satsNumber(BigInt(info.dust), "operator dust");
+    // Under dust the wallet pays the address's OP_RETURN sub-dust script, and decides
+    // that against its OWN dust — frozen at construction, so it can outlive a lowered
+    // operator value. Topping up instead would spend sats the caller never authorized.
+    const walletDust = walletDustAmount(wallet);
+    const dust = Math.max(
+        satsNumber(BigInt(info.dust), "operator dust"),
+        walletDust === undefined ? 0 : satsNumber(walletDust, "wallet dust"),
+    );
     const depositField = depositAssetId ? "deposit.carrierSats" : "deposit.amount";
     const outputSats = depositAssetId
-        ? satsNumber(explicitCarrier ?? BigInt(info.dust), depositField)
+        ? satsNumber(explicitCarrier ?? BigInt(dust), depositField)
         : satsNumber(depositAmount, depositField);
     if (outputSats < dust) {
-        // Under dust the wallet pays the address's OP_RETURN sub-dust script, which
-        // funds no covenant; topping up would spend sats the caller never authorized.
-        throw new Error(`${depositField} must be at least operator dust ${dust}`);
+        throw new Error(`${depositField} must be at least the ${dust} sat dust floor`);
     }
     const [spendable, swaps] = await Promise.all([
         wallet.getSpendableVtxos({ withRecoverable: false }),
@@ -450,6 +478,28 @@ export async function fundOffer(
             undefined,
             new Error("wallet returned invalid txid"),
         );
+    }
+    if (walletDust === undefined) {
+        // Nothing above proves which dust this shape applied, so the covenant output is
+        // read back before anything is funded. The row stays submitted: the send went out.
+        let observed: FundingOutputCheck;
+        try {
+            observed = await checkFundingOutput(
+                new RestIndexerProvider(url),
+                fundingTxid,
+                prepared,
+            );
+        } catch (cause) {
+            throw new FundingOutcomeUnknownError(id, fundingTxid, cause);
+        }
+        if (observed === "mismatch") throw new FundingOutputMismatchError(id, fundingTxid);
+        if (observed === "unavailable") {
+            throw new FundingOutcomeUnknownError(
+                id,
+                fundingTxid,
+                new Error("funding output is not observable yet"),
+            );
+        }
     }
     try {
         const bound = await repository.advanceFundingState(id, "submitted", {

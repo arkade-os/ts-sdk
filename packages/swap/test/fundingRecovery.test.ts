@@ -400,6 +400,29 @@ describe("prepared OFFER funding recovery", () => {
         }
     });
 
+    it("preserves both causes when coverage also fails after a failed recovery read", async () => {
+        const evidence = chain(source("9c"));
+        const repository = new InMemoryAssetSwapRepository();
+        await seed(repository, prepared("operation-a", [evidence.source]));
+        const unavailable = new Error("getVtxos unavailable");
+        const uncovered = new Error("coverage unavailable");
+        mocks.restoreOfferCoverage.mockRejectedValueOnce(uncovered);
+        const answers = indexerFor([evidence]);
+        const indexer = {
+            getVirtualTxs: answers.getVirtualTxs,
+            getVtxos: async (opts: Parameters<RestoreIndexer["getVtxos"]>[0]) => {
+                if (opts?.outpoints) throw unavailable;
+                return answers.getVtxos(opts);
+            },
+        } as RestoreIndexer;
+
+        const failure = await run(repository, indexer).catch((value) => value);
+
+        expect(failure).toBeInstanceOf(AggregateError);
+        expect((failure as AggregateError).errors).toEqual([unavailable, uncovered]);
+        expect(mocks.restoreOfferCoverage).toHaveBeenCalledOnce();
+    });
+
     it("retries ambiguous evidence and makes repeated exact observations idempotent", async () => {
         const evidence = chain(source("91"));
         const repository = new InMemoryAssetSwapRepository();

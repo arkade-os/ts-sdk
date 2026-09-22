@@ -1,13 +1,21 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
 import {
     ArkAddress,
     asset,
+    Extension,
+    Transaction,
+    UnknownPacket,
     type IWallet,
     type NormalizedExtendedVirtualCoin,
 } from "@arkade-os/sdk";
-import { FundingOutcomeUnknownError, fundOffer, InMemoryAssetSwapRepository } from "../src";
+import {
+    FundingOutcomeUnknownError,
+    FundingOutputMismatchError,
+    fundOffer,
+    InMemoryAssetSwapRepository,
+} from "../src";
 import { IndexedDbAssetSwapRepository } from "../src/indexedDbRepository";
 import { encodeOffer, OFFER_PACKET_TYPE, offerVtxoScript, type Offer } from "../src/offer";
 
@@ -24,6 +32,7 @@ const state = vi.hoisted(() => ({
     network: "regtest",
     signerPubkey: "024f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
     dust: 330n,
+    virtualTxs: new Map<string, string>(),
 }));
 
 vi.mock("@arkade-os/sdk", async (importOriginal) => {
@@ -54,6 +63,13 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
         RestIndexerProvider: class {
             async getVtxos() {
                 return { vtxos: [] };
+            }
+            async getVirtualTxs(ids: string[]) {
+                return {
+                    txs: ids
+                        .map((id) => state.virtualTxs.get(id))
+                        .filter((psbt): psbt is string => psbt !== undefined),
+                };
             }
         },
     };
@@ -156,24 +172,47 @@ const guardedSend = (dust: number) =>
         return FUNDING_TXID;
     });
 
+/** A wallet shape that reports its own frozen dust, as `Wallet` does. */
 const walletFor = (
     vtxos: NormalizedExtendedVirtualCoin[],
     send: (params: SelectedSend) => Promise<string> = vi.fn(async () => FUNDING_TXID),
     address = MAKER_ADDRESS,
+    dustAmount: bigint | null = 330n,
 ) =>
     ({
         identity: { xOnlyPublicKey: vi.fn(async () => MAKER_KEY) },
         getAddress: vi.fn(async () => address),
         getContractManager: vi.fn(async () => contractManager),
         getSpendableVtxos: vi.fn(async () => vtxos),
+        ...(dustAmount === null ? {} : { dustAmount }),
         send,
     }) as unknown as IWallet;
+
+/** The `ServiceWorkerWallet` shape: no `dustAmount`, so the floor is unprovable here. */
+const opaqueWalletFor = (
+    vtxos: NormalizedExtendedVirtualCoin[],
+    send: (params: SelectedSend) => Promise<string>,
+) => walletFor(vtxos, send, MAKER_ADDRESS, null);
+
+/** A funding transaction as the wallet would produce it: the deposit output, then
+ * the extension carrying the OFFER packet. */
+const fundingTx = (script: Uint8Array, amount: bigint, offerHex: string) => {
+    const value = new Transaction({ allowUnknownInputs: true, allowUnknownOutputs: true });
+    value.addInput({ txid: hex.decode("11".repeat(32)), index: 0 });
+    value.addOutput({ script, amount });
+    value.addOutput(
+        Extension.create([new UnknownPacket(OFFER_PACKET_TYPE, hex.decode(offerHex))]).txOut(),
+    );
+    state.virtualTxs.set(value.id, base64.encode(value.toPSBT()));
+    return value.id;
+};
 
 beforeEach(() => {
     state.providerCalls = 0;
     state.network = "regtest";
     state.signerPubkey = `02${SERVER_KEY_HEX}`;
     state.dust = 330n;
+    state.virtualTxs.clear();
     contractManager.createContract.mockClear();
     contractManager.setContractWatchState.mockClear();
 });
@@ -344,6 +383,95 @@ describe("fundOffer", () => {
         ).rejects.toThrow(/dust/i);
         expect(wallet.send).not.toHaveBeenCalled();
         expect(await repository.getAllSwaps()).toEqual([]);
+    });
+
+    it("floors a BTC deposit at the wallet's own dust when it outlives a lowered operator dust", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const wallet = walletFor([coin("11", 20_000)], undefined, MAKER_ADDRESS, 1_000n);
+        const derived = offer();
+
+        await expect(
+            fundOffer(wallet, "https://ark.example/", {
+                repository,
+                offerHex: derived.offerHex,
+                deposit: { amount: 500n },
+                id: "stale-dust-operation",
+            }),
+        ).rejects.toThrow(/dust/i);
+        expect(wallet.send).not.toHaveBeenCalled();
+        expect(await repository.getAllSwaps()).toEqual([]);
+    });
+
+    it("defaults the asset carrier to the wallet's dust rather than the lower operator value", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const holding = coin("11", 4_000, [{ assetId: ASSET_ID, amount: 500n }]);
+        const send = vi.fn(async () => FUNDING_TXID);
+        const wallet = walletFor([holding], send, MAKER_ADDRESS, 1_000n);
+        const derived = offer("asset");
+
+        const result = await fundOffer(wallet, "https://ark.example/", {
+            repository,
+            offerHex: derived.offerHex,
+            deposit: { assetId: ASSET_ID, amount: 500n },
+            id: "carrier-floor-operation",
+        });
+
+        expect(send).toHaveBeenCalledWith(
+            expect.objectContaining({
+                recipients: [expect.objectContaining({ amount: 1_000 })],
+            }),
+        );
+        expect(result).toMatchObject({ fundingIntent: { output: { value: "1000" } } });
+    });
+
+    it("refuses to bind when a wallet that hides its dust redirected the deposit", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const derived = offer();
+        const subdust = ArkAddress.decode(derived.address).subdustPkScript;
+        const redirected = fundingTx(subdust, 10_000n, derived.offerHex);
+        const wallet = opaqueWalletFor(
+            [coin("11", 20_000)],
+            vi.fn(async () => redirected),
+        );
+
+        const error = await fundOffer(wallet, "https://ark.example/", {
+            repository,
+            offerHex: derived.offerHex,
+            deposit: { amount: 10_000n },
+            id: "redirected-operation",
+        }).catch((value) => value);
+
+        expect(await repository.getSwap("redirected-operation")).toMatchObject({
+            fundingTxid: "",
+            fundingIntent: { state: "submitted" },
+        });
+        expect(error).toBeInstanceOf(FundingOutputMismatchError);
+        expect(error).toMatchObject({
+            operationId: "redirected-operation",
+            fundingTxid: redirected,
+        });
+    });
+
+    it("binds a wallet that hides its dust once the covenant output is read back", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const derived = offer();
+        const funded = fundingTx(derived.offer.swapPkScript, 10_000n, derived.offerHex);
+        const wallet = opaqueWalletFor(
+            [coin("11", 20_000)],
+            vi.fn(async () => funded),
+        );
+
+        const result = await fundOffer(wallet, "https://ark.example/", {
+            repository,
+            offerHex: derived.offerHex,
+            deposit: { amount: 10_000n },
+            id: "opaque-operation",
+        });
+
+        expect(result).toMatchObject({
+            fundingTxid: funded,
+            fundingIntent: { state: "bound" },
+        });
     });
 
     it("recomputes asset change over the inputs added by the carrier top-up", async () => {

@@ -105,6 +105,23 @@ const exactFundingOutput = (final: Transaction, swap: AssetSwap): boolean => {
     );
 };
 
+export type FundingOutputCheck = "matches" | "mismatch" | "unavailable";
+
+/**
+ * Ask of one known txid the same question recovery binds on: does this transaction
+ * carry the intended covenant output? `unavailable` is the absence of an answer —
+ * the transaction is not retrievable yet — and is never a mismatch.
+ */
+export async function checkFundingOutput(
+    indexer: RestoreIndexer,
+    fundingTxid: string,
+    swap: AssetSwap,
+): Promise<FundingOutputCheck> {
+    const final = (await fetchTransactions(indexer, new Set([fundingTxid]))).get(fundingTxid);
+    if (!final) return "unavailable";
+    return exactFundingOutput(final, swap) ? "matches" : "mismatch";
+}
+
 export async function recoverPreparedOfferFunding(
     indexer: RestoreIndexer,
     repository: AssetSwapRepository,
