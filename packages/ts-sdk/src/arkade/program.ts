@@ -554,6 +554,17 @@ export function parseArtifact(artifact: {
     }
     const hexToken = (t: unknown): any =>
         typeof t === "string" && t.startsWith("0x") ? hex.decode(t.slice(2)) : t;
+    const invalidSigner = () => {
+        throw new Error("parseArtifact: a tweaked signer needs string `tweak` and `fn`");
+    };
+    const signerRef = (s: unknown): SignerRef => {
+        if (s instanceof Uint8Array) return s;
+        if (typeof s === "string") return hexToken(s);
+        if (s === null || Array.isArray(s) || typeof s !== "object") invalidSigner();
+        const { tweak, fn } = s as { tweak?: unknown; fn?: unknown };
+        if (typeof tweak === "string" && typeof fn === "string") return { tweak, fn };
+        invalidSigner();
+    };
     // A "$param" timelock stays a reference (resolved at compile time); anything
     // else is a literal.
     const timelockValue = (v: unknown): bigint | string =>
@@ -563,8 +574,7 @@ export function parseArtifact(artifact: {
     for (const [name, fn] of Object.entries(artifact.functions as Record<string, any>)) {
         const tap = fn.tapscript ?? {};
         const tapscript: TapscriptSegment = {
-            // A tweaked signer is a plain object, which `hexToken` passes through.
-            signers: (tap.signers ?? []).map(hexToken),
+            signers: (tap.signers ?? []).map(signerRef),
             ...(tap.asm ? { asm: tap.asm.map(hexToken) } : {}),
             ...(tap.witness ? { witness: tap.witness.map(hexToken) } : {}),
             ...(tap.csv

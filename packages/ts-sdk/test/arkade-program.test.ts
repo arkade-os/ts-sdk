@@ -317,6 +317,37 @@ describe("Type-directed persistence", () => {
     });
 });
 
+describe("parseArtifact — signer validation", () => {
+    function artifactWithSigner(signer: unknown) {
+        return {
+            version: 0,
+            functions: { exit: { tapscript: { signers: [signer] } } },
+        };
+    }
+
+    const invalidSigner = /parseArtifact: a tweaked signer needs string `tweak` and `fn`/;
+
+    it.each([null, [], 42])("rejects %j signers before compilation", (signer) => {
+        expect(() => arkade.parseArtifact(artifactWithSigner(signer))).toThrow(invalidSigner);
+    });
+
+    it("rejects a malformed tweaked-signer object", () => {
+        expect(() => arkade.parseArtifact(artifactWithSigner({ tweak: 1, fn: "claim" }))).toThrow(
+            invalidSigner,
+        );
+    });
+
+    it("round-trips a valid TweakedSigner", () => {
+        const tweaked = { tweak: "$insurer", fn: "claim" };
+        const program = arkade.parseArtifact(artifactWithSigner(tweaked));
+        expect(program.functions.exit.tapscript.signers[0]).toEqual(tweaked);
+        expect(
+            arkade.parseArtifact(JSON.parse(arkade.stringifyArtifact(program))).functions.exit
+                .tapscript.signers[0],
+        ).toEqual(tweaked);
+    });
+});
+
 describe("Program name & full-feature artifact round-trip", () => {
     it("name is metadata only — it never changes the compiled tree", () => {
         const base: arkade.Program = {
