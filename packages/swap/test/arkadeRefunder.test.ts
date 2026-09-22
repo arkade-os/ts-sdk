@@ -84,7 +84,7 @@ const fakeContracts = (over: { unspent?: typeof FUNDED; swept?: typeof FUNDED } 
         ],
     }) as never;
 
-const FUNDED = [{ txid: "11".repeat(32), vout: 0, value: 60_000 }];
+const FUNDED = [{ txid: "11".repeat(32), vout: 0, value: 60_000, recoverable: false }];
 
 const walletFor = (identity = SENDER) => ({ identity }) as unknown as IWallet;
 

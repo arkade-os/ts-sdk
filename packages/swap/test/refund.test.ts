@@ -427,16 +427,10 @@ describe("findLockupVtxos", () => {
 
     it("merges both sets and marks which outputs were swept", async () => {
         const script = swapScript();
-        const live = { txid: "aa".repeat(32), vout: 0, value: 1_000 };
-        const swept = { txid: "bb".repeat(32), vout: 2, value: 2_000 };
-        const found = await findLockupVtxos(
-            fakeContracts([live, { ...swept, recoverable: true }]),
-            script.pkScript,
-        );
-        expect(found).toEqual([
-            { ...live, recoverable: false },
-            { ...swept, recoverable: true },
-        ]);
+        const live = { txid: "aa".repeat(32), vout: 0, value: 1_000, recoverable: false };
+        const swept = { txid: "bb".repeat(32), vout: 2, value: 2_000, recoverable: true };
+        const found = await findLockupVtxos(fakeContracts([live, swept]), script.pkScript);
+        expect(found).toEqual([live, swept]);
     });
 
     it("drops an unrolled output the manager still serves", async () => {
@@ -453,6 +447,7 @@ describe("findLockupVtxos", () => {
             vout: 1,
             value: 6_000,
             isUnrolled: true,
+            recoverable: false,
         };
         const found = await findLockupVtxos(fakeContracts([live, exited]), script.pkScript);
         expect(found).toEqual([live]);
@@ -463,7 +458,7 @@ describe("findLockupVtxos", () => {
         // unions every spend fact the manager's normalized row carries — so the
         // fake fills all three in and one alone must not drop out.
         const script = swapScript();
-        const live = { txid: "f2".repeat(32), vout: 0, value: 2_500 };
+        const live = { txid: "f2".repeat(32), vout: 0, value: 2_500, recoverable: false };
         const consumed = {
             txid: "f1".repeat(32),
             vout: 3,
@@ -471,6 +466,7 @@ describe("findLockupVtxos", () => {
             isSpent: true,
             spentBy: "77".repeat(32),
             settledBy: "88".repeat(32),
+            recoverable: false,
         };
         const found = await findLockupVtxos(fakeContracts([live, consumed]), script.pkScript);
         expect(found).toEqual([{ ...live, recoverable: false }]);
@@ -656,7 +652,13 @@ describe("refundIfUnresolved", () => {
         return { operator, provider, pushes: () => pushes };
     };
 
-    const EXITED = { txid: "66".repeat(32), vout: 0, value: 8_000, isUnrolled: true };
+    const EXITED = {
+        txid: "66".repeat(32),
+        vout: 0,
+        value: 8_000,
+        isUnrolled: true,
+        recoverable: false,
+    };
 
     it("reports an exited lockup instead of pushing a refund that cannot land", async () => {
         // The output is unspent, but onchain behind its CSV: no offchain leaf
