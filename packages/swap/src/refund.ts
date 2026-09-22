@@ -246,10 +246,9 @@ export class LockupNeedsRecoveryError extends Error {
  * send, and refunding only `vtxos[0]` returns part of the money and strands
  * the rest at a script whose other refund paths are all longer.
  *
- * ONE `renewableOnly` read returns both live and swept outputs together. The
- * provider marks swept outputs with `isSwept`, so this function can preserve
- * the full lockup balance and tag each output as spendable or recoverable
- * without merging separate `spendableOnly` and `recoverableOnly` queries.
+ * ONE read from the registered contract row (getContractsWithVtxos), not from the indexer by script.
+ * The row's isSwept flag is the authority on which outputs are swept-but-recoverable versus live-spendable,
+ * and hasTerminalSpend prunes already-consumed outputs before they reach the caller.
  *
  * **Visible is not the same as refundable.** A `recoverable` output cannot be
  * spent offchain at all — see {@link LockupVtxo.recoverable} — so this set is
