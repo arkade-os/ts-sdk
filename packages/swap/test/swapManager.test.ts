@@ -428,6 +428,16 @@ type FakeContracts = SwapContractRegistry & {
     listenerCount: () => number;
 };
 
+type FakeContractVtxo = {
+    txid: string;
+    vout: number;
+    value: number;
+    recoverable?: boolean;
+    isUnrolled?: boolean;
+    isSpent?: boolean;
+    spentBy?: string;
+};
+
 const fakeContracts = (
     over: {
         failCreate?: () => boolean;
@@ -445,7 +455,7 @@ const fakeContracts = (
          * `findLockupVtxos`'s ONLY view of the funding, so a receive test that
          * wants its lockup seen must put its `funded` rows here.
          */
-        vtxos?: (script: string) => Record<string, unknown>[];
+        vtxos?: (script: string) => FakeContractVtxo[];
     } = {},
 ): FakeContracts => {
     const listeners = new Set<(event: ContractEvent) => void>();
@@ -506,15 +516,7 @@ const fakeContracts = (
 /** One VTXO as the manager's normalized `ExtendedContractVtxo` row carries
  * it. `recoverable` maps to `isSwept`, the canonical fact the manager holds;
  * `findLockupVtxos` maps it back. */
-const contractRow = (v: {
-    txid: string;
-    vout: number;
-    value: number;
-    recoverable?: boolean;
-    isUnrolled?: boolean;
-    isSpent?: boolean;
-    spentBy?: string;
-}) => ({
+const contractRow = (v: FakeContractVtxo) => ({
     txid: v.txid,
     vout: v.vout,
     value: v.value,
@@ -1676,7 +1678,9 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const s = spies();
         const swap = receiveSwap();
         const m = manager({
-            indexer: fakeIndexer({ vtxos: [] }),
+            // The fate read must observe the lockup as open so the receive
+            // deadline path gets a chance to classify the unresolved swap.
+            indexer: fakeIndexer({ vtxos: unspent() }),
             now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS,
             spies: s,
         });
@@ -1744,7 +1748,9 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const swap = receiveSwap();
         const failures: string[] = [];
         const m = manager({
-            indexer: fakeIndexer({ fail: true }),
+            // Keep the fate read open; this test isolates the contract-row
+            // read failure that supplies the receive leg's funding.
+            indexer: fakeIndexer({ vtxos: unspent() }),
             // The receive leg's lockup read now goes through the contract
             // manager, so its outage is what gets reported.
             contracts: fakeContracts({
