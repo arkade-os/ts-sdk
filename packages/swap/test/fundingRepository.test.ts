@@ -50,6 +50,30 @@ const legacy = (id: string): AssetSwap => ({
 
 const clone = <T>(value: T): T => structuredClone(value);
 
+type CorruptHarness = {
+    repository: AssetSwapRepository;
+    seed(swap: AssetSwap): Promise<void>;
+};
+
+const putIndexedDbSwap = (dbName: string, swap: AssetSwap): Promise<void> =>
+    new Promise((resolve, reject) => {
+        const open = indexedDB.open(dbName, 2);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+            const db = open.result;
+            const tx = db.transaction("swaps", "readwrite");
+            tx.objectStore("swaps").put(swap);
+            tx.oncomplete = () => {
+                db.close();
+                resolve();
+            };
+            tx.onabort = () => {
+                db.close();
+                reject(tx.error);
+            };
+        };
+    });
+
 const realm = () =>
     createMockRealm({
         ArkadeAssetSwap: "id",
@@ -63,6 +87,78 @@ const backends: [string, () => AssetSwapRepository][] = [
     ["indexedDb", () => new IndexedDbAssetSwapRepository(`funding-${Math.random()}`)],
     ["sqlite", () => new SQLiteAssetSwapRepository(createNodeSQLExecutor())],
     ["realm", () => new RealmAssetSwapRepository(realm())],
+];
+
+const corruptBackends: { name: string; open(): Promise<CorruptHarness> }[] = [
+    {
+        name: "inMemory",
+        async open() {
+            const repository = new InMemoryAssetSwapRepository();
+            return {
+                repository,
+                async seed(swap) {
+                    const alias = legacy(swap.id);
+                    await repository.saveSwap(alias);
+                    Object.assign(alias, clone(swap));
+                },
+            };
+        },
+    },
+    {
+        name: "indexedDb",
+        async open() {
+            const dbName = `funding-corrupt-${Math.random()}`;
+            const repository = new IndexedDbAssetSwapRepository(dbName);
+            return {
+                repository,
+                async seed(swap) {
+                    await repository.saveSwap(legacy(swap.id));
+                    await putIndexedDbSwap(dbName, swap);
+                },
+            };
+        },
+    },
+    {
+        name: "sqlite",
+        async open() {
+            const db = createNodeSQLExecutor();
+            const repository = new SQLiteAssetSwapRepository(db);
+            return {
+                repository,
+                async seed(swap) {
+                    await repository.saveSwap(legacy(swap.id));
+                    await db.run("UPDATE arkade_asset_swaps SET data = ? WHERE id = ?", [
+                        JSON.stringify(swap),
+                        swap.id,
+                    ]);
+                },
+            };
+        },
+    },
+    {
+        name: "realm",
+        async open() {
+            const db = realm();
+            const repository = new RealmAssetSwapRepository(db);
+            return {
+                repository,
+                async seed(swap) {
+                    db.write(() => {
+                        db.create(
+                            "ArkadeAssetSwap",
+                            {
+                                id: swap.id,
+                                status: swap.status,
+                                createdAt: swap.createdAt,
+                                data: JSON.stringify(swap),
+                            },
+                            "modified",
+                        );
+                    });
+                },
+            };
+        },
+    },
 ];
 
 describe.each(backends)("prepared funding repository (%s)", (_, create) => {
@@ -158,6 +254,20 @@ describe.each(backends)("prepared funding repository (%s)", (_, create) => {
                 fundingTxid: "55".repeat(32),
             }),
         ).toBe(false);
+    });
+
+    it("rejects a non-string bound txid without releasing the inputs", async () => {
+        await using repository = create();
+        await repository.insertPreparedSwap(prepared("operation-a"));
+        await repository.advanceFundingState("operation-a", "prepared", { state: "submitted" });
+        await expect(
+            repository.advanceFundingState("operation-a", "submitted", {
+                state: "bound",
+                fundingTxid: [BOUND_TXID],
+            } as never),
+        ).rejects.toThrow();
+        expect((await repository.getSwap("operation-a"))?.fundingIntent?.state).toBe("submitted");
+        expect(await repository.insertPreparedSwap(prepared("operation-b"))).toBe(false);
     });
 
     it("keeps abandoned rows terminal", async () => {
@@ -449,6 +559,46 @@ describe.each(backends)("prepared funding repository (%s)", (_, create) => {
         };
         expect(await repository.insertPreparedSwap(value)).toBe(true);
         expect(await repository.getSwap(value.id)).toEqual(value);
+    });
+});
+
+const falseyIntents = [null, false, 0, ""] as const;
+
+describe.each(corruptBackends)("corrupt persisted funding intent ($name)", ({ open }) => {
+    it.each(falseyIntents)("fails an insert scan for %j", async (fundingIntent) => {
+        const harness = await open();
+        await using repository = harness.repository;
+        await harness.seed({ ...legacy("corrupt"), fundingIntent } as never);
+        await expect(repository.insertPreparedSwap(prepared("operation-a"))).rejects.toThrow();
+    });
+
+    it.each(falseyIntents)("fails an ordinary save for %j", async (fundingIntent) => {
+        const harness = await open();
+        await using repository = harness.repository;
+        await harness.seed({ ...legacy("corrupt"), fundingIntent } as never);
+        await expect(
+            repository.saveSwap({ ...legacy("corrupt"), status: "fulfilled" }),
+        ).rejects.toThrow();
+        expect((await repository.getSwap("corrupt"))?.fundingIntent).toBe(fundingIntent);
+    });
+
+    it.each(falseyIntents)("fails a state CAS for %j", async (fundingIntent) => {
+        const harness = await open();
+        await using repository = harness.repository;
+        await harness.seed({ ...legacy("corrupt"), fundingIntent } as never);
+        await expect(
+            repository.advanceFundingState("corrupt", "prepared", { state: "submitted" }),
+        ).rejects.toThrow();
+    });
+
+    it("fails closed on a persisted bound array txid", async () => {
+        const harness = await open();
+        await using repository = harness.repository;
+        const corrupt = prepared("corrupt");
+        corrupt.fundingIntent = { ...corrupt.fundingIntent!, state: "bound" };
+        (corrupt as unknown as { fundingTxid: unknown }).fundingTxid = [BOUND_TXID];
+        await harness.seed(corrupt);
+        await expect(repository.insertPreparedSwap(prepared("operation-a"))).rejects.toThrow();
     });
 });
 

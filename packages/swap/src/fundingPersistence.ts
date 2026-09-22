@@ -165,7 +165,7 @@ const validateIntent = (swap: AssetSwap): FundingIntent => {
     }
     const state = intent.state as FundingIntentState;
     if (state === "bound") {
-        if (!TXID.test(swap.fundingTxid))
+        if (typeof swap.fundingTxid !== "string" || !TXID.test(swap.fundingTxid))
             throw new Error("bound fundingTxid must be lowercase hex");
     } else if (swap.fundingTxid !== "") {
         throw new Error(`${state} fundingTxid must be empty`);
@@ -253,7 +253,7 @@ const assertImmutableFacts = (existing: AssetSwap, incoming: AssetSwap): void =>
         if (incoming[field] !== existing[field])
             throw new Error(`prepared swap ${field} is immutable`);
     }
-    if (!incoming.fundingIntent) return;
+    if (incoming.fundingIntent === undefined) return;
     const current = existing.fundingIntent!;
     const next = incoming.fundingIntent;
     if (
@@ -285,14 +285,14 @@ export function mergeFundingProtectedSwap(
         }
         return incoming;
     }
-    if (!existing.fundingIntent) {
+    if (existing.fundingIntent === undefined) {
         if (incoming.fundingIntent !== undefined) {
             throw new Error("fundingIntent cannot retrofit a legacy swap");
         }
         return incoming;
     }
     assertFundingSwap(existing);
-    if (incoming.fundingIntent) assertFundingSwap(incoming);
+    if (incoming.fundingIntent !== undefined) assertFundingSwap(incoming);
     assertImmutableFacts(existing, incoming);
     if (incoming.fundingTxid && incoming.fundingTxid !== existing.fundingTxid) {
         throw new Error("fundingTxid is write-once");
@@ -305,7 +305,7 @@ export function mergeFundingProtectedSwap(
 }
 
 const reservationKeys = (swap: AssetSwap): string[] => {
-    if (!swap.fundingIntent) return [];
+    if (swap.fundingIntent === undefined) return [];
     assertFundingSwap(swap);
     if (swap.fundingIntent.state !== "prepared" && swap.fundingIntent.state !== "submitted") {
         return [];
@@ -341,10 +341,10 @@ export function advanceFundingSwap(
         [],
         "funding state advance",
     );
-    if (!existing?.fundingIntent) return { ok: false };
+    if (!existing || existing.fundingIntent === undefined) return { ok: false };
     assertFundingSwap(existing);
     if (next.state === "bound") {
-        if (!TXID.test(next.fundingTxid))
+        if (typeof next.fundingTxid !== "string" || !TXID.test(next.fundingTxid))
             throw new Error("bound fundingTxid must be lowercase hex");
         if (existing.fundingIntent.state === "bound") {
             return { ok: expected === "submitted" && existing.fundingTxid === next.fundingTxid };

@@ -101,7 +101,10 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
 
     async saveSwap(swap: AssetSwap): Promise<void> {
         const merged = mergeFundingProtectedSwap(this.swaps.get(swap.id), swap);
-        this.swaps.set(swap.id, merged.fundingIntent ? fundingSnapshot(merged) : merged);
+        this.swaps.set(
+            swap.id,
+            merged.fundingIntent !== undefined ? fundingSnapshot(merged) : merged,
+        );
     }
 
     async getSwap(id: string): Promise<AssetSwap | undefined> {
@@ -127,7 +130,7 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
 
     async getAllSwaps(): Promise<AssetSwap[]> {
         return [...this.swaps.values()].map((swap) =>
-            swap.fundingIntent ? fundingSnapshot(swap) : swap,
+            swap.fundingIntent !== undefined ? fundingSnapshot(swap) : swap,
         );
     }
 
