@@ -156,22 +156,28 @@ const selectFundingInputs = (
             .inputs as NormalizedExtendedVirtualCoin[];
     }
 
-    const assetChange = new Map<string, bigint>();
-    for (const coin of selected) {
-        for (const held of coin.assets ?? []) {
-            assetChange.set(held.assetId, (assetChange.get(held.assetId) ?? 0n) + held.amount);
+    const assetChange = (coins: NormalizedExtendedVirtualCoin[]): Map<string, bigint> => {
+        const change = new Map<string, bigint>();
+        for (const coin of coins) {
+            for (const held of coin.assets ?? []) {
+                change.set(held.assetId, (change.get(held.assetId) ?? 0n) + held.amount);
+            }
         }
-    }
-    if (depositAssetId) {
-        const left = (assetChange.get(depositAssetId) ?? 0n) - depositAmount;
-        if (left < 0n) throw new Error(`selected inputs are short asset ${depositAssetId}`);
-        if (left === 0n) assetChange.delete(depositAssetId);
-        else assetChange.set(depositAssetId, left);
-    }
+        if (depositAssetId) {
+            const left = (change.get(depositAssetId) ?? 0n) - depositAmount;
+            if (left < 0n) throw new Error(`selected inputs are short asset ${depositAssetId}`);
+            if (left === 0n) change.delete(depositAssetId);
+            else change.set(depositAssetId, left);
+        }
+        return change;
+    };
 
     let selectedSats = selected.reduce((sum, coin) => sum + coin.value, 0);
-    const neededSats = outputSats + (assetChange.size > 0 ? dust : 0);
-    if (selectedSats < neededSats) {
+    // A top-up coin carries its own assets, so the carrier reserve is re-derived over
+    // the whole selection: `send({selectedVtxos})` may not reach for an unnamed input.
+    for (;;) {
+        const neededSats = outputSats + (assetChange(selected).size > 0 ? dust : 0);
+        if (selectedSats >= neededSats) return selected;
         const selectedKeys = new Set(selected.map((coin) => `${coin.txid}:${coin.vout}`));
         const remaining = available.filter(
             (coin) => !selectedKeys.has(`${coin.txid}:${coin.vout}`),
@@ -181,8 +187,6 @@ const selectFundingInputs = (
         selected = [...selected, ...extra];
         selectedSats += extra.reduce((sum, coin) => sum + coin.value, 0);
     }
-    if (selectedSats < outputSats) throw new Error("selected inputs do not fund the offer output");
-    return selected;
 };
 
 const authorityFields = [
@@ -339,11 +343,14 @@ export async function fundOffer(
     }
 
     const dust = satsNumber(BigInt(info.dust), "operator dust");
+    const depositField = depositAssetId ? "deposit.carrierSats" : "deposit.amount";
     const outputSats = depositAssetId
-        ? satsNumber(explicitCarrier ?? BigInt(info.dust), "deposit.carrierSats")
-        : satsNumber(depositAmount, "deposit.amount");
-    if (depositAssetId && outputSats < dust) {
-        throw new Error(`deposit.carrierSats must be at least operator dust ${dust}`);
+        ? satsNumber(explicitCarrier ?? BigInt(info.dust), depositField)
+        : satsNumber(depositAmount, depositField);
+    if (outputSats < dust) {
+        // Under dust the wallet pays the address's OP_RETURN sub-dust script, which
+        // funds no covenant; topping up would spend sats the caller never authorized.
+        throw new Error(`${depositField} must be at least operator dust ${dust}`);
     }
     const [spendable, swaps] = await Promise.all([
         wallet.getSpendableVtxos({ withRecoverable: false }),
@@ -410,11 +417,17 @@ export async function fundOffer(
         throw new Error(`funding reservation conflict for operation ${id}`);
     }
 
-    assertDeadline(validUntil);
+    try {
+        assertDeadline(validUntil);
+    } catch (expired) {
+        // Provably unsent, so the inputs are released here. A submitted row never
+        // takes this path: its send may have gone out, and that liability stands.
+        await repository.advanceFundingState(id, "prepared", { state: "abandoned" });
+        throw expired;
+    }
     if (!(await repository.advanceFundingState(id, "prepared", { state: "submitted" }))) {
         throw new Error(`funding state for operation ${id} did not advance to submitted`);
     }
-    assertDeadline(validUntil);
     const recipient = {
         address,
         amount: outputSats,

@@ -274,10 +274,16 @@ maker key, operator key, or network; it decodes and verifies those facts from `o
 wallet, and the connected operator. `prepareNew` may add detached JSON-safe display metadata before
 insertion, but it cannot change the funding authority or serve as proof that funding happened.
 
+A deposit must clear the live operator dust, `carrierSats` for an asset and the BTC amount itself
+otherwise: below it the wallet pays the address's `OP_RETURN` sub-dust script, which funds no
+covenant, so `fundOffer` refuses rather than spending more than the caller authorized.
+
 Once send is entered, a throw is not proof that nothing broadcast. A
 `FundingOutcomeUnknownError` carries `operationId` (and a locally returned `fundingTxid` when
 available); show that operation as pending verification and let `restoreAssetSwapRepository`
-resolve exact input/checkpoint/final-transaction evidence instead of sending again.
+resolve exact input/checkpoint/final-transaction evidence instead of sending again. Only a
+deadline that expires *before* send releases the reserved inputs — that operation is provably
+unsent, and its record is abandoned.
 
 The covenant co-signer ("emulator") key defaults to the SDK's per-network pin, resolved from the
 network the Ark server reports — never fetched from the emulator itself. Pass

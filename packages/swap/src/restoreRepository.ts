@@ -3,7 +3,7 @@ import { restoreOfferCoverage } from "./offer";
 import type { AssetSwapRepository } from "./repository";
 import { restoreAssetSwaps, type RestoreIndexer, type Tx } from "./restore";
 import { getAssetSwapsOrThrow, type AssetSwap } from "./store";
-import { recoverPreparedOfferFunding } from "./fundingRecovery";
+import { recoverPreparedOfferFunding, type FundingRecoveryResult } from "./fundingRecovery";
 import { hasBoundFunding, mayHaveSubmittedFunding } from "./fundingPersistence";
 
 export interface AssetSwapRestoreChange {
@@ -85,7 +85,27 @@ export async function restoreAssetSwapRepository(
     ]);
     if (signal?.aborted) return aborted(initial);
 
-    const recovered = await recoverPreparedOfferFunding(indexer, repository, initial);
+    // Coverage for records already on disk must not depend on the reads above them
+    // succeeding. If both fail, preserve both causes for the caller.
+    const withCoverage = async (cause: unknown, swaps: AssetSwap[]): Promise<unknown> => {
+        if (signal?.aborted) return cause;
+        try {
+            await restoreCoverage(wallet, arkServerUrl, swaps);
+        } catch (coverageError) {
+            return new AggregateError(
+                [cause, coverageError],
+                "asset-swap restore and covenant coverage restore both failed",
+            );
+        }
+        return cause;
+    };
+
+    let recovered: FundingRecoveryResult;
+    try {
+        recovered = await recoverPreparedOfferFunding(indexer, repository, initial);
+    } catch (recoveryError) {
+        throw await withCoverage(recoveryError, initial);
+    }
     const existing =
         recovered.changes.length > 0 ? await getAssetSwapsOrThrow(repository) : initial;
     if (signal?.aborted) {
@@ -113,19 +133,7 @@ export async function restoreAssetSwapRepository(
             ),
         });
     } catch (scanError) {
-        // Coverage for records already on disk must not depend on the chain scan
-        // succeeding. If both fail, preserve both causes for the caller.
-        if (!signal?.aborted) {
-            try {
-                await restoreCoverage(wallet, arkServerUrl, existing);
-            } catch (coverageError) {
-                throw new AggregateError(
-                    [scanError, coverageError],
-                    "asset-swap scan and covenant coverage restore both failed",
-                );
-            }
-        }
-        throw scanError;
+        throw await withCoverage(scanError, existing);
     }
     if (signal?.aborted) return aborted(existing);
 

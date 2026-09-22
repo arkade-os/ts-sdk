@@ -122,9 +122,43 @@ const coin = (
         createdAt: new Date((NOW - 1000) * 1000),
     }) as unknown as NormalizedExtendedVirtualCoin;
 
+type SelectedSend = {
+    recipients: { amount: number; assets?: { assetId: string; amount: bigint }[] }[];
+    selectedVtxos: NormalizedExtendedVirtualCoin[];
+};
+
+/** Mirrors the pre-broadcast asset-change guard `send({ selectedVtxos })` applies
+ * (ts-sdk `wallet.ts`): a named input set may not reach for a coin to carry change. */
+const guardedSend = (dust: number) =>
+    vi.fn(async ({ recipients, selectedVtxos }: SelectedSend) => {
+        const changes = new Map<string, bigint>();
+        for (const coin of selectedVtxos) {
+            for (const held of coin.assets ?? []) {
+                changes.set(held.assetId, (changes.get(held.assetId) ?? 0n) + held.amount);
+            }
+        }
+        for (const recipient of recipients) {
+            for (const paid of recipient.assets ?? []) {
+                const left = (changes.get(paid.assetId) ?? 0n) - paid.amount;
+                if (left > 0n) changes.set(paid.assetId, left);
+                else changes.delete(paid.assetId);
+            }
+        }
+        const change =
+            selectedVtxos.reduce((sum, coin) => sum + coin.value, 0) -
+            recipients.reduce((sum, recipient) => sum + recipient.amount, 0);
+        if (changes.size > 0 && change < dust) {
+            throw new Error(
+                `send({ selectedVtxos }): ${change} sats of change cannot carry ` +
+                    `${changes.size} asset change(s), needs ${dust}`,
+            );
+        }
+        return FUNDING_TXID;
+    });
+
 const walletFor = (
     vtxos: NormalizedExtendedVirtualCoin[],
-    send = vi.fn(async () => FUNDING_TXID),
+    send: (params: SelectedSend) => Promise<string> = vi.fn(async () => FUNDING_TXID),
     address = MAKER_ADDRESS,
 ) =>
     ({
@@ -295,6 +329,48 @@ describe("fundOffer", () => {
         });
     });
 
+    it("refuses a sub-dust BTC deposit rather than paying the sub-dust script", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const wallet = walletFor([coin("11", 20_000)]);
+        const derived = offer();
+
+        await expect(
+            fundOffer(wallet, "https://ark.example/", {
+                repository,
+                offerHex: derived.offerHex,
+                deposit: { amount: 329n },
+                id: "subdust-operation",
+            }),
+        ).rejects.toThrow(/dust/i);
+        expect(wallet.send).not.toHaveBeenCalled();
+        expect(await repository.getAllSwaps()).toEqual([]);
+    });
+
+    it("recomputes asset change over the inputs added by the carrier top-up", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const exact = coin("11", 100, [{ assetId: ASSET_ID, amount: 500n }]);
+        const foreign = coin("22", 400, [{ assetId: OTHER_ASSET_ID, amount: 7n }]);
+        const plain = coin("33", 300);
+        const send = guardedSend(330);
+        const wallet = walletFor([exact, foreign, plain], send);
+        const derived = offer("asset");
+
+        const result = await fundOffer(wallet, "https://ark.example/", {
+            repository,
+            offerHex: derived.offerHex,
+            deposit: { assetId: ASSET_ID, amount: 500n },
+            id: "topped-up-operation",
+        });
+
+        expect(send).toHaveBeenCalledWith(
+            expect.objectContaining({ selectedVtxos: [exact, foreign, plain] }),
+        );
+        expect(result).toMatchObject({
+            fundingTxid: FUNDING_TXID,
+            fundingIntent: { state: "bound" },
+        });
+    });
+
     it("rejects maker, operator, and wallet-network mismatches before selection or send", async () => {
         const derived = offer();
         const repository = new InMemoryAssetSwapRepository();
@@ -385,6 +461,84 @@ describe("fundOffer", () => {
         ).rejects.toThrow(/deadline/i);
         expect(await repository.getAllSwaps()).toEqual([]);
         expect(wallet.send).not.toHaveBeenCalled();
+    });
+
+    it("releases the reservation when the deadline passes after insertion but before send", async () => {
+        let clock = NOW;
+        vi.spyOn(Date, "now").mockImplementation(() => clock * 1000);
+        const repository = new InMemoryAssetSwapRepository();
+        const insert = repository.insertPreparedSwap.bind(repository);
+        vi.spyOn(repository, "insertPreparedSwap").mockImplementation(async (swap) => {
+            const inserted = await insert(swap);
+            clock = NOW + 30;
+            return inserted;
+        });
+        const selected = coin("11", 20_000);
+        const wallet = walletFor([selected]);
+        const derived = offer();
+
+        await expect(
+            fundOffer(wallet, "https://ark.example/", {
+                repository,
+                offerHex: derived.offerHex,
+                deposit: { amount: 10_000n },
+                id: "late-operation",
+                validUntil: NOW + 1,
+            }),
+        ).rejects.toThrow(/deadline/i);
+        expect(wallet.send).not.toHaveBeenCalled();
+        expect(await repository.getSwap("late-operation")).toMatchObject({
+            status: "cancelled",
+            fundingTxid: "",
+            fundingIntent: { state: "abandoned" },
+        });
+
+        clock = NOW;
+        const retry = walletFor([selected]);
+        await expect(
+            fundOffer(retry, "https://ark.example/", {
+                repository,
+                offerHex: derived.offerHex,
+                deposit: { amount: 10_000n },
+                id: "reuse-operation",
+            }),
+        ).resolves.toMatchObject({ fundingIntent: { state: "bound" } });
+    });
+
+    it("keeps a submitted reservation when the send may already have gone out", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const selected = coin("11", 20_000);
+        const wallet = walletFor(
+            [selected],
+            vi.fn(async () => {
+                throw new Error("response lost");
+            }),
+        );
+        const derived = offer();
+
+        await expect(
+            fundOffer(wallet, "https://ark.example/", {
+                repository,
+                offerHex: derived.offerHex,
+                deposit: { amount: 10_000n },
+                id: "ambiguous-operation",
+            }),
+        ).rejects.toBeInstanceOf(FundingOutcomeUnknownError);
+        expect(await repository.getSwap("ambiguous-operation")).toMatchObject({
+            fundingTxid: "",
+            fundingIntent: { state: "submitted" },
+        });
+
+        const retry = walletFor([selected]);
+        await expect(
+            fundOffer(retry, "https://ark.example/", {
+                repository,
+                offerHex: derived.offerHex,
+                deposit: { amount: 10_000n },
+                id: "second-operation",
+            }),
+        ).rejects.toThrow(/insufficient/i);
+        expect(retry.send).not.toHaveBeenCalled();
     });
 
     it("rejects decoration that changes authority while allowing detached display extras", async () => {

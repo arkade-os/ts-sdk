@@ -33,13 +33,11 @@ const fetchTransactions = async (
     if (txids.size === 0) return parsed;
     const values = [...txids];
     for (let offset = 0; offset < values.length; offset += TXS_PER_REQUEST) {
-        let raws: string[];
-        try {
-            raws = (await indexer.getVirtualTxs(values.slice(offset, offset + TXS_PER_REQUEST)))
-                .txs;
-        } catch {
-            continue;
-        }
+        // A read that failed is not an absence of evidence: swallowing it reports a
+        // funded operation as having no candidate, and the caller then rebuilds it.
+        const { txs: raws } = await indexer.getVirtualTxs(
+            values.slice(offset, offset + TXS_PER_REQUEST),
+        );
         for (const raw of raws) {
             try {
                 const tx = Transaction.fromPSBT(base64.decode(raw));
@@ -133,18 +131,14 @@ export async function recoverPreparedOfferFunding(
     const wantedInputs = [...wanted.values()];
     for (let offset = 0; offset < wantedInputs.length; offset += OUTPOINTS_PER_REQUEST) {
         const outpoints = wantedInputs.slice(offset, offset + OUTPOINTS_PER_REQUEST);
-        try {
-            sourceRows.push(
-                ...(
-                    await indexer.getVtxos({
-                        outpoints,
-                        pageSize: outpoints.length,
-                    })
-                ).vtxos,
-            );
-        } catch {
-            continue;
-        }
+        sourceRows.push(
+            ...(
+                await indexer.getVtxos({
+                    outpoints,
+                    pageSize: outpoints.length,
+                })
+            ).vtxos,
+        );
     }
     const byOutpoint = new Map<string, (typeof sourceRows)[number] | undefined>();
     const requested = new Set<string>();

@@ -373,6 +373,33 @@ describe("prepared OFFER funding recovery", () => {
         expect(result.scannedTxids).toEqual([]);
     });
 
+    it("surfaces an indexer read failure instead of reporting no candidates", async () => {
+        for (const failing of ["getVtxos", "getVirtualTxs"] as const) {
+            const evidence = chain(source("9b"));
+            const repository = new InMemoryAssetSwapRepository();
+            await seed(repository, prepared("operation-a", [evidence.source]));
+            const unavailable = new Error(`${failing} unavailable`);
+            const answers = indexerFor([evidence]);
+            const indexer: RestoreIndexer = {
+                getVirtualTxs: async (ids) => {
+                    if (failing === "getVirtualTxs") throw unavailable;
+                    return answers.getVirtualTxs(ids);
+                },
+                getVtxos: async (opts) => {
+                    if (failing === "getVtxos" && opts?.outpoints) throw unavailable;
+                    return answers.getVtxos(opts);
+                },
+            } as RestoreIndexer;
+
+            await expect(run(repository, indexer, [history(evidence.final.txid)])).rejects.toBe(
+                unavailable,
+            );
+            expect((await repository.getAllSwaps()).map((swap) => swap.id)).toEqual([
+                "operation-a",
+            ]);
+        }
+    });
+
     it("retries ambiguous evidence and makes repeated exact observations idempotent", async () => {
         const evidence = chain(source("91"));
         const repository = new InMemoryAssetSwapRepository();
