@@ -13,6 +13,8 @@ import {
     OPCODE_VALUES,
     ARKADE_OPCODES,
     ARKADE_OP,
+    getOpcodeName,
+    getOpcodeValue,
     toASM,
     fromASM,
     ArkadeScript,
@@ -501,6 +503,42 @@ describe("Emulator Packet Opcodes", () => {
     it("should round-trip ASM for new opcodes", () => {
         const asm =
             "OP_0 OP_INSPECTINPUTARKADESCRIPTHASH OP_INSPECTINPUTARKADEWITNESSHASH OP_EQUAL";
+        const bytes = ArkadeScript.encode(fromASM(asm));
+        expect(toASM(ArkadeScript.decode(bytes))).toBe(asm);
+    });
+});
+
+describe("Expiry, clock, continuation, and intent opcodes", () => {
+    const cases: [number, string][] = [
+        [0xdb, "OP_PUSHEXPIRY"],
+        [0xdc, "OP_CHECKTIME"],
+        [0xf7, "OP_TUNNEL"],
+        [0xf8, "OP_INSPECTINTENTMESSAGE"],
+    ];
+
+    it.each(cases)("names %s %s", (value, name) => {
+        expect(getOpcodeName(value)).toBe(name);
+    });
+
+    it.each(cases)("values %s at %s", (value, name) => {
+        expect(getOpcodeValue(name)).toBe(value);
+    });
+
+    it.each(cases)("includes %s in ARKADE_OPCODES", (value) => {
+        expect(ARKADE_OPCODES).toContain(value);
+    });
+
+    it("should encode and decode each opcode", () => {
+        for (const [value, name] of cases) {
+            const bare = name.slice(3);
+            const encoded = ArkadeScript.encode([bare]);
+            expect(encoded).toEqual(new Uint8Array([value]));
+            expect(ArkadeScript.decode(encoded)).toEqual([bare]);
+        }
+    });
+
+    it("should round-trip ASM", () => {
+        const asm = cases.map(([, name]) => name).join(" ");
         const bytes = ArkadeScript.encode(fromASM(asm));
         expect(toASM(ArkadeScript.decode(bytes))).toBe(asm);
     });
