@@ -386,7 +386,7 @@ export interface CompiledProgramFunction {
 }
 
 function isTweakedSigner(ref: SignerRef): ref is TweakedSigner {
-    return typeof ref === "object" && !(ref instanceof Uint8Array);
+    return typeof ref === "object" && ref !== null && !(ref instanceof Uint8Array);
 }
 
 /** Resolve a pubkey signer to x-only key bytes against the program's constructor args. */
@@ -395,8 +395,9 @@ function resolveSigner(
     args: Record<string, ArkadeParamValue>,
 ): Uint8Array {
     if (ref instanceof Uint8Array) return ref;
-    if (!ref.startsWith("$")) {
-        throw new Error(`unknown signer reference '${ref}' — use '$${ref}'`);
+    // Parsed JSON reaches here untyped, so a non-string is a signer, not a name.
+    if (typeof ref !== "string" || !ref.startsWith("$")) {
+        throw new Error(`unknown signer reference '${ref}' — use a '$param' or key bytes`);
     }
     const v = bindValue(args, ref.slice(1));
     if (!(v instanceof Uint8Array)) {
