@@ -1756,28 +1756,34 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     async getBoardingUtxosForSigners(allowedSigners: Set<string>): Promise<BoardingUtxoGroup[]> {
         const tapscripts = await this.getBoardingTapscripts(allowedSigners);
-        const groups: BoardingUtxoGroup[] = [];
-        for (const tapscript of tapscripts) {
-            const address = tapscript.onchainAddress(this.network);
-            const coins = await this.onchainProvider.getCoins(address);
-            const utxos = coins.map((utxo) => extendCoinWithTapscript(tapscript, utxo));
-            // Save boarding inputs using unified repository, keyed by the
-            // address the UTXOs actually sit on.
-            await this.walletRepository.saveUtxos(address, utxos);
-            groups.push({
-                tapscript,
-                // Normalize so the group key matches the axis/contract x-only
-                // form regardless of how the tapscript's key was stored.
-                serverPubKey: toXOnlySignerHex(hex.encode(tapscript.options.serverPubKey)),
-                // Per-row CSV delay decoded from THIS tapscript's exit leaf —
-                // not the wallet's current boarding timelock, which a signer
-                // rotation may have changed.
-                csvTimelock: CSVMultisigTapscript.decode(hex.decode(tapscript.exitScript)).params
-                    .timelock,
-                coins: utxos,
-            });
-        }
-        return groups;
+        // One round trip per address, in parallel. Rotated boarding addresses
+        // accumulate (index-0 baseline, the current one, and every persisted
+        // boarding contract), and a sequential loop made each extra address cost
+        // the whole fetch again — on the wallet's initialization path, where the
+        // total is what the user waits for. `Promise.all` preserves the group
+        // order, so the flatten below is unchanged.
+        return Promise.all(
+            tapscripts.map(async (tapscript) => {
+                const address = tapscript.onchainAddress(this.network);
+                const coins = await this.onchainProvider.getCoins(address);
+                const utxos = coins.map((utxo) => extendCoinWithTapscript(tapscript, utxo));
+                // Save boarding inputs using unified repository, keyed by the
+                // address the UTXOs actually sit on.
+                await this.walletRepository.saveUtxos(address, utxos);
+                return {
+                    tapscript,
+                    // Normalize so the group key matches the axis/contract x-only
+                    // form regardless of how the tapscript's key was stored.
+                    serverPubKey: toXOnlySignerHex(hex.encode(tapscript.options.serverPubKey)),
+                    // Per-row CSV delay decoded from THIS tapscript's exit leaf —
+                    // not the wallet's current boarding timelock, which a signer
+                    // rotation may have changed.
+                    csvTimelock: CSVMultisigTapscript.decode(hex.decode(tapscript.exitScript))
+                        .params.timelock,
+                    coins: utxos,
+                };
+            }),
+        );
     }
 
     /**
