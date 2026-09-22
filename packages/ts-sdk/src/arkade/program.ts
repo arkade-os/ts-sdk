@@ -384,7 +384,9 @@ export interface CompiledProgramFunction {
 }
 
 function isTweakedSigner(ref: unknown): ref is TweakedSigner {
-    return typeof ref === "object" && ref !== null && !(ref instanceof Uint8Array);
+    if (typeof ref !== "object" || ref === null || ref instanceof Uint8Array) return false;
+    const { tweak, fn } = ref as TweakedSigner;
+    return typeof tweak === "string" && typeof fn === "string";
 }
 
 /** Resolve a pubkey signer to x-only key bytes against the program's constructor args. */

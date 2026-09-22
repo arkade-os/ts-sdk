@@ -205,13 +205,16 @@ describe("Typed program params — authoritative when present", () => {
     });
 
     // Signers arrive untyped from parsed JSON, so these reach the resolver.
-    it.each([null, 42, true])("rejects %s where a signer key belongs", (signer) => {
-        const program = typedProgram();
-        program.functions.exit.tapscript.signers = [signer as never];
-        expect(() => new arkade.ArkadeProgramScript(program, { user, exit: 144n }, keys)).toThrow(
-            /unknown signer reference/,
-        );
-    });
+    it.each([null, 42, true, { role: "oracle" }])(
+        "rejects %j where a signer key belongs",
+        (signer) => {
+            const program = typedProgram();
+            program.functions.exit.tapscript.signers = [signer as never];
+            expect(
+                () => new arkade.ArkadeProgramScript(program, { user, exit: 144n }, keys),
+            ).toThrow(/unknown signer reference/);
+        },
+    );
 
     it("rejects a typed pubkey param bound to a 33-byte array", () => {
         expect(
