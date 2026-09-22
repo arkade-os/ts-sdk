@@ -263,11 +263,7 @@ describe("reading an arkadec artifact", () => {
             demo({ constructorInputs: [{ name: "amount" }] }),
             /complete arkadec artifact/,
         ],
-        [
-            "a null struct entry",
-            demo({ structs: [null] }),
-            /complete arkadec artifact/,
-        ],
+        ["a null struct entry", demo({ structs: [null] }), /complete arkadec artifact/],
         [
             "a constructor `server`",
             {
