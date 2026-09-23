@@ -4,7 +4,12 @@ import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
 import { programFromArtifact, type ContractArtifact } from "../src/arkade/artifact";
-import { ArkadeProgramScript, parseArtifact, type ArkadeParamValue } from "../src/arkade/program";
+import {
+    ArkadeProgramScript,
+    parseArtifact,
+    stringifyArtifact,
+    type ArkadeParamValue,
+} from "../src/arkade/program";
 import { ArkadeScript } from "../src/arkade/script";
 import { computeArkadeScriptPublicKey } from "../src/arkade/tweak";
 import { MultisigTapscript } from "../src/script/tapscript";
@@ -256,6 +261,69 @@ describe("reading an arkadec artifact", () => {
         );
     });
 
+    it("keeps a constructor tweak beside the emulator leaf of the same covenant", () => {
+        const insurer = schnorr.getPublicKey(new Uint8Array(32).fill(0x09));
+        const program = programFromArtifact(
+            demo({
+                constructorInputs: [{ name: "insurer", type: "pubkey" }],
+                functions: [
+                    {
+                        name: "claim",
+                        arkade: { inputs: [], asm: ["OP_1"] },
+                        leaves: [
+                            collab("claim"),
+                            {
+                                name: "race",
+                                asm: [
+                                    "<SERVER_KEY>",
+                                    "OP_CHECKSIGVERIFY",
+                                    "<TWEAK:insurer:claim>",
+                                    "OP_CHECKSIG",
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            }),
+        );
+        expect(Object.keys(program.functions)).toEqual(["claim", "claim/1:race"]);
+        expect(program.functions.claim.tapscript.emulator).toBe("claim");
+        expect(program.functions["claim/1:race"].tapscript).toMatchObject({
+            signers: ["$server", { tweak: "$insurer", fn: "claim" }],
+            emulator: null,
+        });
+        expect(program.functions["claim/1:race"].arkadeScript).toEqual(
+            program.functions.claim.arkadeScript,
+        );
+
+        const script = new ArkadeProgramScript(
+            program,
+            { insurer, server: SERVER_KEY },
+            { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY },
+        );
+        const covenant = script.functionByName("claim")!.arkadeScript!;
+        const tweaked = computeArkadeScriptPublicKey(insurer, covenant);
+        const emulator = computeArkadeScriptPublicKey(EMULATOR_KEY, covenant);
+        expect(hex.encode(script.functionByName("claim/1:race")!.leafScript)).toBe(
+            hex.encode(MultisigTapscript.encode({ pubkeys: [SERVER_KEY, tweaked] }).script),
+        );
+        expect(hex.encode(script.functionByName("claim")!.leafScript)).toBe(
+            hex.encode(MultisigTapscript.encode({ pubkeys: [SERVER_KEY, emulator] }).script),
+        );
+
+        const roundTrip = parseArtifact(JSON.parse(stringifyArtifact(program)));
+        expect(roundTrip.functions["claim/1:race"].tapscript.emulator).toBeNull();
+        expect(
+            hex.encode(
+                new ArkadeProgramScript(
+                    roundTrip,
+                    { insurer, server: SERVER_KEY },
+                    { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY },
+                ).functionByName("claim/1:race")!.leafScript,
+            ),
+        ).toBe(hex.encode(MultisigTapscript.encode({ pubkeys: [SERVER_KEY, tweaked] }).script));
+    });
+
     it.each([
         ["an incomplete artifact", { functions: [] }, /complete arkadec artifact/],
         [
@@ -308,6 +376,20 @@ describe("reading an arkadec artifact", () => {
                 ],
             }),
             /malformed tweak/,
+        ],
+        [
+            "a covenant leaf with neither emulator nor tweak",
+            demo({
+                constructorInputs: [{ name: "user", type: "pubkey" }],
+                functions: [
+                    {
+                        name: "spend",
+                        arkade: { inputs: [], asm: ["OP_1"] },
+                        leaves: [{ name: "spend", asm: ["<user>", "OP_CHECKSIG"] }],
+                    },
+                ],
+            }),
+            /emulator or a tweaked constructor key/,
         ],
         ...(["OP_NOTAREALOPCODE", "OP_constructor"] as const).map(
             (op) =>

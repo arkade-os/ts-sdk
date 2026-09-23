@@ -303,7 +303,7 @@ function parseLeaf(
     }
 
     const signers: SignerRef[] = [];
-    let sawEmulator = false;
+    let emulator: string | undefined;
     while (index < asm.length) {
         const key = asm[index];
         const terminator = asm[index + 1];
@@ -323,18 +323,23 @@ function parseLeaf(
         } else if (inner.startsWith("EMULATOR_KEY:")) {
             if (!hasCovenant) fail(`leaf '${leaf.name}': ${key} needs a covenant`);
             if (!last) fail(`leaf '${leaf.name}': ${key} must be the last signer`);
-            sawEmulator = true;
+            emulator = inner.slice("EMULATOR_KEY:".length);
+            if (emulator.length === 0) fail(`leaf '${leaf.name}': malformed emulator '${key}'`);
         } else signers.push(`$${inner}`);
         index += 2;
     }
 
-    if (hasCovenant && !sawEmulator) {
-        fail(`leaf '${leaf.name}': covenant leaf must end with the tweaked co-signer`);
+    const constructorTweak = signers.some((signer) => typeof signer !== "string");
+    if (hasCovenant && emulator === undefined && !constructorTweak) {
+        fail(
+            `leaf '${leaf.name}': covenant leaf must sign with the emulator or a tweaked constructor key`,
+        );
     }
     if (signers.length === 0) fail(`leaf '${leaf.name}': at least one named signer is required`);
 
     return {
         signers,
+        ...(emulator !== undefined ? { emulator } : hasCovenant ? { emulator: null } : {}),
         ...(condition ? { asm: condition } : {}),
         ...(csv ? { csv } : {}),
         ...(cltv !== undefined ? { cltv } : {}),

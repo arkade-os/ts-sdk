@@ -100,8 +100,17 @@ export type WitnessRef = string | number | bigint | Uint8Array;
 
 /** Bitcoin Script segment of a spending path — enforced on-chain. */
 export interface TapscriptSegment {
-    /** Required signers. The tweaked co-signer is appended automatically when the path has an `arkadeScript`. */
+    /**
+     * Required signers. A path with `arkadeScript` also appends the emulator
+     * co-signer, unless `emulator` is `null`.
+     */
     signers: SignerRef[];
+    /**
+     * Covenant named by `<EMULATOR_KEY:fn>`. `null` when this leaf belongs to a
+     * covenant but signs with a constructor-key tweak instead. Omitted on
+     * hand-written programs, which still append the co-signer.
+     */
+    emulator?: string | null;
     /**
      * Optional standard-opcode condition (e.g. a hashlock), encoded into a
      * ConditionMultisig leaf — or ConditionCSVMultisig when combined with `csv`.
@@ -476,13 +485,13 @@ function compileFunctions(
             );
         });
 
-        // Covenant leaf: bind the emulator's co-signer key to the arkade
-        // script via the tagged-hash tweak, then append it to the leaf's
-        // signer set.
+        // A covenant leaf appends the emulator co-signer. A constructor-key
+        // tweak of that covenant sets `emulator` to null and does not.
         const arkadeScript = def.arkadeScript ? resolveAsm(def.arkadeScript.asm, args) : undefined;
-        const leafPubkeys = arkadeScript
-            ? [...pubkeys, computeArkadeScriptPublicKey(keys.emulatorKey!, arkadeScript)]
-            : pubkeys;
+        const leafPubkeys =
+            arkadeScript && def.tapscript.emulator !== null
+                ? [...pubkeys, computeArkadeScriptPublicKey(keys.emulatorKey!, arkadeScript)]
+                : pubkeys;
         const leafScript = encodeTapscriptSegment(def.tapscript, leafPubkeys, args).script;
         return { name: names[i], def, leafScript, arkadeScript, signerKeys: pubkeys };
     });
@@ -562,6 +571,9 @@ export function parseArtifact(artifact: {
     const functions: Record<string, ArkadeFunction> = {};
     for (const [name, fn] of Object.entries(artifact.functions as Record<string, any>)) {
         const tap = fn.tapscript ?? {};
+        if ("emulator" in tap && tap.emulator !== null && typeof tap.emulator !== "string") {
+            throw new Error("parseArtifact: tapscript.emulator must be a string or null");
+        }
         const tapscript: TapscriptSegment = {
             signers: (tap.signers ?? []).map(signerRef),
             ...(tap.asm ? { asm: tap.asm.map(hexToken) } : {}),
@@ -570,6 +582,7 @@ export function parseArtifact(artifact: {
                 ? { csv: { type: tap.csv.type, value: timelockValue(tap.csv.value) } }
                 : {}),
             ...(tap.cltv !== undefined ? { cltv: timelockValue(tap.cltv) } : {}),
+            ...("emulator" in tap ? { emulator: tap.emulator as string | null } : {}),
         };
         const arkadeScript = fn.arkadeScript
             ? {
@@ -628,6 +641,7 @@ export function stringifyArtifact(program: Program): string {
                     ? { csv: { type: tap.csv.type, value: tap.csv.value.toString() } }
                     : {}),
                 ...(tap.cltv !== undefined ? { cltv: tap.cltv.toString() } : {}),
+                ...(tap.emulator !== undefined ? { emulator: tap.emulator } : {}),
             },
             ...(fn.arkadeScript
                 ? {
