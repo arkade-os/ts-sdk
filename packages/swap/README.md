@@ -259,7 +259,7 @@ const btcSwap = await fundOffer(wallet, ARK, {
     deposit: { amount: 1000n },
 });
 
-// asset -> BTC; carrierSats omitted means the live operator dust value
+// asset -> BTC; carrierSats omitted means the dust floor (larger of operator and wallet dust)
 const assetOffer = await createOffer(wallet, ARK, { wantAmount: 1000n, offerAsset });
 const assetSwap = await fundOffer(wallet, ARK, {
     repository,
