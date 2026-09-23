@@ -105,7 +105,7 @@ const assertFiniteAmount = (value: number, reason: string, label: string): void 
  *
  * So is the funded VALUE, against `expectedAmount` — and for the same reason,
  * only more sharply: disclosure happens at SUBMIT, since `P` rides the PSBT to
- * the Ark server. A check that waits for the transaction to land has already
+ * the Arkade operator. A check that waits for the transaction to land has already
  * leaked the secret.
  *
  * Swept outputs are refused, not attempted, exactly as in

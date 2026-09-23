@@ -80,7 +80,7 @@ type FakeOperator = ArkProvider & {
     finalized: { txid: string; checkpoints: string[] }[];
 };
 
-/** The Ark server's own key — key(3) in the covenant above. */
+/** The Arkade operator's own key — key(3) in the covenant above. */
 const OPERATOR_SIGNER = SingleKey.fromPrivateKey(priv(3));
 
 const operatorCosign = async (psbt: string): Promise<string> =>
@@ -234,7 +234,7 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(LockupAmountMismatchError);
-        // `P` reaches the Ark server at submit, so this is the whole guarantee.
+        // `P` reaches the Arkade operator at submit, so this is the whole guarantee.
         expect(operator.submitted).toHaveLength(0);
     });
 

@@ -22,7 +22,7 @@ import { CLAIM_PACKET_TYPE, claimPacketShape, type InvoiceFacts } from "../../sr
 import { covclaimdClient } from "../../src/advanced";
 import { httpTransport, requestLightningReceive } from "../../src/protocol";
 
-const ARK_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";
 const SOLVER_URL = "http://localhost:8787";
 const COVCLAIMD_URL = "http://localhost:7271";
@@ -63,14 +63,14 @@ const decodeInvoice = (raw: string): InvoiceFacts => {
     };
 };
 
-const indexer = new RestIndexerProvider(ARK_URL);
+const indexer = new RestIndexerProvider(OPERATOR_URL);
 let wallet: Wallet;
 let covclaimdPubkey: Uint8Array;
 
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(ARK_URL),
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,

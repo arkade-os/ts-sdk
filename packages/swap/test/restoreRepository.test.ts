@@ -162,7 +162,7 @@ describe("restoreAssetSwapRepository", () => {
         } as unknown as AssetSwap;
         await repository.saveSwap(onchain);
         mocks.restoreAssetSwaps.mockResolvedValue({ restored: [], scannedTxids: [] });
-        mocks.restoreOfferCoverage.mockRejectedValue(new Error("Ark server unavailable"));
+        mocks.restoreOfferCoverage.mockRejectedValue(new Error("Arkade operator unavailable"));
 
         const result = await run(repository);
 

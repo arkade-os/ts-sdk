@@ -36,7 +36,7 @@
  * the binding fields — `solver_pubkey`, `refund_locktime`, `valid_until`, the
  * amounts, and `profile.refund_without_receiver_delay` on Lightning sends.
  * Every other contract parameter is the user's own data (its
- * invoice, its Ark server connection, its refund address) or a trusted
+ * invoice, its Arkade operator connection, its refund address) or a trusted
  * constant — the emulator key defaults to the SDK's per-network pin (see
  * `resolveEmulatorPubkey`). Anything address-shaped the solver sends is
  * compare-only: a mismatch means refuse-to-fund, never "use theirs".
@@ -1030,7 +1030,7 @@ const SEQUENCE_GRANULARITY_SECONDS = 512;
  */
 export const SOLO_REFUND_HEADROOM_SECONDS = 8 * SEQUENCE_GRANULARITY_SECONDS;
 
-/** The solver's unilateral-claim delay, derived from the Ark server's reported
+/** The solver's unilateral-claim delay, derived from the Arkade operator's reported
  * exit delay exactly as the reference solver derives it — both sides read the
  * SAME server, so the derivation (not a quote field) is what keeps the two
  * scripts identical.
@@ -1102,7 +1102,7 @@ export function lightningSendContract(params: {
     solverPubkey: Uint8Array;
     /** Binding field #2: when the trader's refund path opens, from the quote. */
     refundLocktime: number;
-    /** The Ark server's x-only key — the trader's OWN connection. */
+    /** The Arkade operator's x-only key — the trader's OWN connection. */
     operatorPubkey: Uint8Array;
     /** BOLT11 payment hash, hex — from the trader's OWN invoice decode. */
     paymentHash: string;
@@ -2215,7 +2215,7 @@ export function lightningReceiveContract(params: {
     /** Binding field #2: the SOLVER's own refund deadline on these legs, from
      * the quote — after it the solver may reclaim an unclaimed lockup. */
     refundLocktime: number;
-    /** The Ark server's x-only key — the trader's OWN connection. */
+    /** The Arkade operator's x-only key — the trader's OWN connection. */
     operatorPubkey: Uint8Array;
     /** `sha256(P)`, hex — the trader's OWN preimage hash. */
     paymentHash: string;
