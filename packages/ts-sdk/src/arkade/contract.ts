@@ -73,8 +73,8 @@ import { RawWitness } from "@scure/btc-signer";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 
-import type { Network } from "../networks";
-import { DEFAULT_NETWORK, resolveEmulatorPubkey } from "../networks";
+import type { Network, NetworkName } from "../networks";
+import { DEFAULT_NETWORK, getNetwork, networks, resolveEmulatorPubkey } from "../networks";
 import type { ArkProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
@@ -249,7 +249,10 @@ export interface ArkadeConnectOptions {
     indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
     /** Signer for paths that require a user signature; optional for watch-only. */
     identity?: Identity;
-    /** Network for address derivation; defaults to the SDK default. */
+    /**
+     * Network for address derivation. Defaults to the network the server
+     * reports on `getInfo` — or the SDK default when the server names none.
+     */
     network?: Network;
     /**
      * Co-sign with this emulator key (33-byte compressed hex) instead of the
@@ -333,7 +336,16 @@ export class Arkade {
         const info = await opts.arkade.getInfo();
         const serverKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
         const checkpoint = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
-        const network = opts.network ?? DEFAULT_NETWORK;
+        // The server says which network it is on — use it for address
+        // derivation unless the caller overrides, so a test-network server
+        // no longer yields mainnet-prefixed contract addresses. A server
+        // that names no network (or one this SDK does not know) keeps the
+        // documented default.
+        const network =
+            opts.network ??
+            (Object.hasOwn(networks, info.network)
+                ? getNetwork(info.network as NetworkName)
+                : DEFAULT_NETWORK);
 
         // The emulator is optional — only covenant contracts need it.
         //
