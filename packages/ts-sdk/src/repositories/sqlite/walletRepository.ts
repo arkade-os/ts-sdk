@@ -20,11 +20,10 @@ interface SQLiteWalletRepositoryOptions {
 }
 
 /**
- * Rows per multi-row UTXO insert. At 11 parameters a row this stays under 999,
- * the host-parameter limit of SQLite before 3.32 — the executor is the
- * consumer's, so its SQLite build may be that old.
+ * Bound parameters per statement: 999 was SQLite's limit before 3.32, and the
+ * executor is the consumer's, so its SQLite build may be that old.
  */
-const UTXO_ROWS_PER_INSERT = 50;
+const MAX_BOUND_PARAMETERS = 999;
 
 /**
  * SQLite-based implementation of WalletRepository.
@@ -238,6 +237,25 @@ export class SQLiteWalletRepository implements WalletRepository {
         )`;
     }
 
+    /** `INSERT OR REPLACE` rows, as many to a statement as the parameter budget allows. */
+    private async insertOrReplace(
+        table: string,
+        columns: string,
+        rows: unknown[][],
+    ): Promise<void> {
+        const width = columns.split(",").length;
+        const tuple = `(${Array(width).fill("?").join(", ")})`;
+        const rowsPerStatement = Math.floor(MAX_BOUND_PARAMETERS / width);
+        for (let i = 0; i < rows.length; i += rowsPerStatement) {
+            const chunk = rows.slice(i, i + rowsPerStatement);
+            await this.db.run(
+                `INSERT OR REPLACE INTO ${table} (${columns})
+                 VALUES ${chunk.map(() => tuple).join(", ")}`,
+                chunk.flat(),
+            );
+        }
+    }
+
     async [Symbol.asyncDispose](): Promise<void> {
         // no-op — consumer owns the SQLExecutor lifecycle
     }
@@ -265,21 +283,16 @@ export class SQLiteWalletRepository implements WalletRepository {
 
     async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
         await this.ensureInit();
-        for (const vtxo of vtxos) {
-            const s = serializeVtxo(vtxo);
-            await this.db.run(
-                `INSERT OR REPLACE INTO ${this.tables.vtxos}
-                    (txid, vout, value, address,
-                     tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
-                     status_json, virtual_status_json, created_at,
-                     is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
-                     extra_witness_json, assets_json, script)
-                 VALUES (?, ?, ?, ?,
-                         ?, ?, ?, ?, ?,
-                         ?, ?, ?,
-                         ?, ?, ?, ?, ?,
-                         ?, ?, ?)`,
-                [
+        await this.insertOrReplace(
+            this.tables.vtxos,
+            `txid, vout, value, address,
+             tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
+             status_json, virtual_status_json, created_at,
+             is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
+             extra_witness_json, assets_json, script`,
+            vtxos.map((vtxo) => {
+                const s = serializeVtxo(vtxo);
+                return [
                     s.txid,
                     s.vout,
                     s.value,
@@ -304,9 +317,9 @@ export class SQLiteWalletRepository implements WalletRepository {
                     s.extraWitness ? JSON.stringify(s.extraWitness) : null,
                     s.assets ? JSON.stringify(s.assets) : null,
                     s.script ?? null,
-                ],
-            );
-        }
+                ];
+            }),
+        );
     }
 
     async deleteVtxos(address: string): Promise<void> {
@@ -376,17 +389,13 @@ export class SQLiteWalletRepository implements WalletRepository {
                 ];
             }),
         );
-        for (let i = 0; i < rows.length; i += UTXO_ROWS_PER_INSERT) {
-            const chunk = rows.slice(i, i + UTXO_ROWS_PER_INSERT);
-            await this.db.run(
-                `INSERT OR REPLACE INTO ${this.tables.utxos}
-                    (txid, vout, value, address,
-                     tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
-                     status_json, extra_witness_json)
-                 VALUES ${chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}`,
-                chunk.flat(),
-            );
-        }
+        await this.insertOrReplace(
+            this.tables.utxos,
+            `txid, vout, value, address,
+             tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
+             status_json, extra_witness_json`,
+            rows,
+        );
     }
 
     async deleteUtxos(address: string): Promise<void> {
@@ -407,26 +416,22 @@ export class SQLiteWalletRepository implements WalletRepository {
 
     async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
         await this.ensureInit();
-        for (const tx of txs) {
-            await this.db.run(
-                `INSERT OR REPLACE INTO ${this.tables.transactions}
-                    (address, boarding_txid, commitment_txid, ark_txid,
-                     type, amount, settled, created_at, assets_json)
-                 VALUES (?, ?, ?, ?,
-                         ?, ?, ?, ?, ?)`,
-                [
-                    address,
-                    tx.key.boardingTxid,
-                    tx.key.commitmentTxid,
-                    tx.key.arkTxid,
-                    tx.type,
-                    tx.amount,
-                    tx.settled ? 1 : 0,
-                    tx.createdAt,
-                    tx.assets ? JSON.stringify(serializeAssets(tx.assets)) : null,
-                ],
-            );
-        }
+        await this.insertOrReplace(
+            this.tables.transactions,
+            `address, boarding_txid, commitment_txid, ark_txid,
+             type, amount, settled, created_at, assets_json`,
+            txs.map((tx) => [
+                address,
+                tx.key.boardingTxid,
+                tx.key.commitmentTxid,
+                tx.key.arkTxid,
+                tx.type,
+                tx.amount,
+                tx.settled ? 1 : 0,
+                tx.createdAt,
+                tx.assets ? JSON.stringify(serializeAssets(tx.assets)) : null,
+            ]),
+        );
     }
 
     async deleteTransactions(address: string): Promise<void> {

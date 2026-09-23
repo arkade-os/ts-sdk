@@ -488,7 +488,7 @@ describe("SQLiteWalletRepository", () => {
 
         it("should save every row when one call spans several inserts", async () => {
             const utxos = (prefix: string) =>
-                Array.from({ length: 40 }, (_, i) => createMockUtxo(`${prefix}${i}`, 0, 1000 + i));
+                Array.from({ length: 50 }, (_, i) => createMockUtxo(`${prefix}${i}`, 0, 1000 + i));
 
             await repository.saveUtxos(
                 new Map<string, ExtendedCoin[]>([
@@ -497,8 +497,8 @@ describe("SQLiteWalletRepository", () => {
                 ]),
             );
 
-            expect(await repository.getUtxos("address-1")).toHaveLength(40);
-            expect(await repository.getUtxos("address-2")).toHaveLength(40);
+            expect(await repository.getUtxos("address-1")).toHaveLength(50);
+            expect(await repository.getUtxos("address-2")).toHaveLength(50);
         });
 
         it("should round-trip tap tree and leaf scripts for UTXOs", async () => {
@@ -759,15 +759,21 @@ describe("SQLiteWalletRepository", () => {
     });
 });
 
-describe("SQLiteWalletRepository UTXO batch on a real SQLite database", () => {
-    // The mock executor ignores the VALUES text, so only a real engine can reject a bad batch insert.
+describe("SQLiteWalletRepository bulk writes on a real SQLite database", () => {
+    // The mock executor ignores the VALUES text, so only a real engine can reject a bad bulk insert.
     let db: Database.Database;
+    let inserts: string[];
     let repository: SQLiteWalletRepository;
 
     beforeEach(() => {
         db = new Database(":memory:");
+        inserts = [];
         repository = new SQLiteWalletRepository({
-            run: async (sql, params) => void db.prepare(sql).run(...((params ?? []) as [])),
+            run: async (sql, params) => {
+                const table = sql.match(/^\s*INSERT\s+OR\s+REPLACE\s+INTO\s+(\w+)/i)?.[1];
+                if (table) inserts.push(table);
+                db.prepare(sql).run(...((params ?? []) as []));
+            },
             get: async (sql, params) => db.prepare(sql).get(...((params ?? []) as [])) as any,
             all: async (sql, params) => db.prepare(sql).all(...((params ?? []) as [])) as any,
         });
@@ -775,10 +781,13 @@ describe("SQLiteWalletRepository UTXO batch on a real SQLite database", () => {
 
     afterEach(() => db.close());
 
-    it("should save UTXOs for several addresses across insert chunks", async () => {
+    const insertsInto = (table: string) => inserts.filter((t) => t === table).length;
+
+    it("should save UTXOs for several addresses in as few statements as fit", async () => {
         const utxos = (prefix: string) =>
             Array.from({ length: 40 }, (_, i) => createMockUtxo(`${prefix}${i}`, 0, 1000 + i));
         await repository.saveUtxos("address-1", [createMockUtxo("a0", 0, 1)]);
+        inserts = [];
 
         await repository.saveUtxos(
             new Map<string, ExtendedCoin[]>([
@@ -787,9 +796,51 @@ describe("SQLiteWalletRepository UTXO batch on a real SQLite database", () => {
             ]),
         );
 
+        expect(insertsInto("ark_utxos")).toBe(1); // 80 rows, 90 per statement
         const first = await repository.getUtxos("address-1");
         expect(first).toHaveLength(40);
         expect(first.find((u) => u.txid === "a0")?.value).toBe(1000);
         expect(await repository.getUtxos("address-2")).toHaveLength(40);
+    });
+
+    it("should save VTXOs in as few statements as fit", async () => {
+        const vtxos = Array.from({ length: 60 }, (_, i) =>
+            createMockVtxoWithExtras(`v${i}`, 0, 1000 + i),
+        );
+
+        await repository.saveVtxos("address-1", vtxos);
+
+        expect(insertsInto("ark_vtxos")).toBe(2); // 60 rows, 49 per statement
+        const saved = await repository.getVtxos("address-1");
+        expect(saved).toHaveLength(60);
+        const last = saved.find((v) => v.txid === "v59")!;
+        expect(last.value).toBe(1059);
+        expect(last.spentBy).toBe("spent-by-tx");
+        expect(last.assets).toEqual([{ assetId: "asset-1", amount: 500n }]);
+        expect(last.script).toBe("5120deadbeef");
+    });
+
+    it("should keep the last of a key repeated within one statement", async () => {
+        await repository.saveVtxos("address-1", [
+            createMockVtxo("dup", 0, 1000),
+            createMockVtxo("dup", 0, 2000),
+        ]);
+
+        expect(insertsInto("ark_vtxos")).toBe(1);
+        const saved = await repository.getVtxos("address-1");
+        expect(saved.map((v) => v.value)).toEqual([2000]);
+    });
+
+    it("should save transactions in as few statements as fit", async () => {
+        const txs = Array.from({ length: 120 }, (_, i) =>
+            createMockTransaction({ arkTxid: `atx${i}` }, "SENT" as TxType, 1000 + i),
+        );
+
+        await repository.saveTransactions("address-1", txs);
+
+        expect(insertsInto("ark_transactions")).toBe(2); // 120 rows, 111 per statement
+        const saved = await repository.getTransactionHistory("address-1");
+        expect(saved).toHaveLength(120);
+        expect(saved.find((t) => t.key.arkTxid === "atx119")?.amount).toBe(1119);
     });
 });
