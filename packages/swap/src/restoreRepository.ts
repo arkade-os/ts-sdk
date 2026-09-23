@@ -53,9 +53,14 @@ const restoreCoverage = async (
     if (offers.length > 0) await restoreOfferCoverage(wallet, arkServerUrl, offers);
 };
 
-const aborted = (swaps: AssetSwap[]): RestoreAssetSwapRepositoryResult => ({
+const aborted = (
+    swaps: AssetSwap[],
+    // Recovery commits before the scan starts, and a later restore never reports
+    // those rows again — they are already bound. Dropping them here loses them.
+    changes: AssetSwapRestoreChange[] = [],
+): RestoreAssetSwapRepositoryResult => ({
     swaps,
-    changes: [],
+    changes,
     scannedTxids: [],
     aborted: true,
 });
@@ -135,7 +140,7 @@ export async function restoreAssetSwapRepository(
     } catch (scanError) {
         throw await withCoverage(scanError, existing);
     }
-    if (signal?.aborted) return aborted(existing);
+    if (signal?.aborted) return aborted(existing, recovered.changes);
 
     const before = new Map(existing.map((swap) => [swap.id, swap]));
     const changes: AssetSwapRestoreChange[] = [...recovered.changes];

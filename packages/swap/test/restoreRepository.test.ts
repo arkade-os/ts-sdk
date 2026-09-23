@@ -8,11 +8,17 @@ import type { AssetSwap } from "../src/store";
 const mocks = vi.hoisted(() => ({
     restoreAssetSwaps: vi.fn(),
     restoreOfferCoverage: vi.fn(),
+    recoverPreparedOfferFunding: vi.fn(),
 }));
 
 vi.mock("../src/restore", async (importOriginal) => ({
     ...(await importOriginal<typeof import("../src/restore")>()),
     restoreAssetSwaps: mocks.restoreAssetSwaps,
+}));
+
+vi.mock("../src/fundingRecovery", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../src/fundingRecovery")>()),
+    recoverPreparedOfferFunding: mocks.recoverPreparedOfferFunding,
 }));
 
 vi.mock("../src/offer", async (importOriginal) => ({
@@ -54,6 +60,9 @@ const run = (repository: InMemoryAssetSwapRepository, overrides = {}) =>
 beforeEach(() => {
     mocks.restoreAssetSwaps.mockReset();
     mocks.restoreOfferCoverage.mockReset().mockResolvedValue(undefined);
+    mocks.recoverPreparedOfferFunding
+        .mockReset()
+        .mockResolvedValue({ changes: [], candidateTxids: new Set<string>() });
 });
 
 describe("restoreAssetSwapRepository", () => {
@@ -230,6 +239,27 @@ describe("restoreAssetSwapRepository", () => {
         expect(await repository.getAllSwaps()).toEqual([]);
         expect(await repository.getScannedTxids()).toEqual(new Set());
         expect(mocks.restoreOfferCoverage).not.toHaveBeenCalled();
+    });
+
+    it("still reports funding it recovered when the scan is cancelled", async () => {
+        // Recovery commits prepared -> submitted -> bound before the scan runs,
+        // and a later restore never reports those rows again — they are bound.
+        const repository = new InMemoryAssetSwapRepository();
+        const controller = new AbortController();
+        const previous = pending("operation-a", { fundingTxid: "" });
+        const current = pending("operation-a", { fundingTxid: "cc".repeat(32) });
+        mocks.recoverPreparedOfferFunding.mockResolvedValue({
+            changes: [{ previous, current }],
+            candidateTxids: new Set<string>(),
+        });
+        mocks.restoreAssetSwaps.mockImplementation(async () => {
+            controller.abort();
+            return { restored: [], scannedTxids: [] };
+        });
+
+        const result = await run(repository, { signal: controller.signal });
+
+        expect(result).toMatchObject({ aborted: true, changes: [{ previous, current }] });
     });
 
     it("reports records durably saved before cancellation without advancing the cursor", async () => {
