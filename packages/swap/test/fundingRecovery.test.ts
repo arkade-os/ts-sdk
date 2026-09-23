@@ -326,9 +326,7 @@ describe("prepared OFFER funding recovery", () => {
         }
     });
 
-    // `prepared`, not `submitted`: the output check runs before the
-    // prepared-to-submitted CAS, so evidence that fails it must not promote a
-    // row out of the one state the abandon edge still applies to.
+    // the output check runs before the prepared-to-submitted CAS
     it("leaves a prepared row prepared when its inputs paid something else", async () => {
         const selected = source("8b");
         const repository = new InMemoryAssetSwapRepository();

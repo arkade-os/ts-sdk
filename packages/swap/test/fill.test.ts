@@ -669,8 +669,6 @@ describe("assembleOfferFill routes the sponsor leg", () => {
         });
     });
 
-    // The asset packet addresses outputs by vout off this layout, so a layout
-    // that disagrees with the builder's own output order misdirects the assets.
     it("reports the outputs the builder was actually asked to build, in vout order", async () => {
         const result = await recycledFill(
             sponsorLeg({
@@ -961,8 +959,7 @@ describe("resolveDeposit picks one deposit or refuses", () => {
 
     it("takes the outpoint when both references are given and agree", () => {
         const shared = "a".repeat(64);
-        // `vout`, not `value`: both deposits are worth 10_000, so a value
-        // assertion holds whichever one an outpoint-ignoring resolve returns.
+        // `vout`, not `value`: both deposits are worth 10_000
         expect(
             resolveDeposit([at(shared, 0), at(shared, 1)], {
                 fundingTxid: shared,

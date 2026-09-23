@@ -242,8 +242,6 @@ describe("restoreAssetSwapRepository", () => {
     });
 
     it("still reports funding it recovered when the scan is cancelled", async () => {
-        // Recovery commits prepared -> submitted -> bound before the scan runs,
-        // and a later restore never reports those rows again — they are bound.
         const repository = new InMemoryAssetSwapRepository();
         const controller = new AbortController();
         const previous = pending("operation-a", { fundingTxid: "" });

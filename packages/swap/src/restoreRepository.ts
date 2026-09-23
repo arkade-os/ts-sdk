@@ -55,8 +55,8 @@ const restoreCoverage = async (
 
 const aborted = (
     swaps: AssetSwap[],
-    // Recovery commits before the scan starts, and a later restore never reports
-    // those rows again — they are already bound. Dropping them here loses them.
+    // a later restore skips these rows -- already bound -- so this is the only
+    // report of them
     changes: AssetSwapRestoreChange[] = [],
 ): RestoreAssetSwapRepositoryResult => ({
     swaps,

@@ -56,8 +56,7 @@ describe("offer contract coverage", () => {
                 output: { script: SCRIPT, value: "10000" },
             },
         });
-        // the record's own time, not a later read: the two would otherwise have
-        // to land in the same millisecond for the mark to clear
+        // the record's own time: two Date.now() reads need not share a ms
         await promoteOfferContract({ setContractWatchState }, SCRIPT, abandoned.createdAt);
         await retireOfferContract({ setContractWatchState }, [swap({}), abandoned], SCRIPT);
 
