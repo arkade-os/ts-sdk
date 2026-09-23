@@ -1,0 +1,10 @@
+{
+    "name": "escrow-demo",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "node dev.mjs",
+        "build": "node dev.mjs --build",
+        "check": "pnpm exec vite-node src/check.ts"
+    }
+}

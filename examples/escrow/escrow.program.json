@@ -1,0 +1,185 @@
+{
+    "version": 0,
+    "name": "Escrow",
+    "params": [
+        {
+            "name": "partyAPk",
+            "type": "pubkey"
+        },
+        {
+            "name": "partyBPk",
+            "type": "pubkey"
+        },
+        {
+            "name": "oraclePk",
+            "type": "pubkey"
+        },
+        {
+            "name": "oracleMessageHash",
+            "type": "hash"
+        },
+        {
+            "name": "partyAScript",
+            "type": "hash"
+        },
+        {
+            "name": "partyBScript",
+            "type": "hash"
+        },
+        {
+            "name": "amount",
+            "type": "int"
+        },
+        {
+            "name": "timeoutAt",
+            "type": "int"
+        },
+        {
+            "name": "exit",
+            "type": "int"
+        },
+        {
+            "name": "server",
+            "type": "pubkey"
+        }
+    ],
+    "functions": {
+        "complete": {
+            "inputs": [
+                {
+                    "name": "oracleMsg",
+                    "type": "hash"
+                },
+                {
+                    "name": "oracleSig",
+                    "type": "sig"
+                }
+            ],
+            "tapscript": {
+                "signers": ["$server"],
+                "emulator": "complete"
+            },
+            "arkadeScript": {
+                "asm": [
+                    "$amount",
+                    "$partyBScript",
+                    "$partyAScript",
+                    "$oracleMessageHash",
+                    "$oraclePk",
+                    "INSPECTNUMINPUTS",
+                    1,
+                    "EQUAL",
+                    "VERIFY",
+                    "OP_5",
+                    "PICK",
+                    "SHA256",
+                    "OP_2",
+                    "ROLL",
+                    "EQUAL",
+                    "VERIFY",
+                    "OP_5",
+                    "ROLL",
+                    "OP_5",
+                    "ROLL",
+                    "OP_2",
+                    "ROLL",
+                    "CHECKSIGFROMSTACK",
+                    "VERIFY",
+                    "PUSHCURRENTINPUTINDEX",
+                    "INSPECTINPUTVALUE",
+                    "OP_0",
+                    "PICK",
+                    "OP_4",
+                    "PICK",
+                    "GREATERTHANOREQUAL",
+                    "VERIFY",
+                    "OP_0",
+                    "ROLL",
+                    "OP_3",
+                    "PICK",
+                    "SUB",
+                    0,
+                    "INSPECTOUTPUTVALUE",
+                    "OP_4",
+                    "ROLL",
+                    "GREATERTHANOREQUAL",
+                    "VERIFY",
+                    0,
+                    "INSPECTOUTPUTSCRIPTPUBKEY",
+                    "DROP",
+                    "OP_3",
+                    "ROLL",
+                    "EQUAL",
+                    "VERIFY",
+                    "OP_0",
+                    "PICK",
+                    330,
+                    "GREATERTHAN",
+                    "IF",
+                    1,
+                    "INSPECTOUTPUTVALUE",
+                    "OP_1",
+                    "PICK",
+                    "GREATERTHANOREQUAL",
+                    "VERIFY",
+                    1,
+                    "INSPECTOUTPUTSCRIPTPUBKEY",
+                    "DROP",
+                    "OP_2",
+                    "PICK",
+                    "EQUAL",
+                    "VERIFY",
+                    "ENDIF",
+                    "OP_1",
+                    "NIP",
+                    "NIP"
+                ],
+                "witness": ["oracleSig", "oracleMsg"]
+            }
+        },
+        "cancel": {
+            "tapscript": {
+                "signers": ["$server"],
+                "emulator": "cancel"
+            },
+            "arkadeScript": {
+                "asm": [
+                    "$timeoutAt",
+                    "$partyAScript",
+                    "INSPECTNUMINPUTS",
+                    1,
+                    "EQUAL",
+                    "VERIFY",
+                    "OP_1",
+                    "ROLL",
+                    "CHECKTIME",
+                    "VERIFY",
+                    0,
+                    "INSPECTOUTPUTVALUE",
+                    "PUSHCURRENTINPUTINDEX",
+                    "INSPECTINPUTVALUE",
+                    "GREATERTHANOREQUAL",
+                    "VERIFY",
+                    0,
+                    "INSPECTOUTPUTSCRIPTPUBKEY",
+                    "DROP",
+                    "OP_1",
+                    "ROLL",
+                    "EQUAL",
+                    "VERIFY",
+                    "OP_1"
+                ],
+                "witness": []
+            }
+        },
+        "unilateral": {
+            "tapscript": {
+                "signers": ["$partyAPk", "$partyBPk"],
+                "csv": {
+                    "type": "blocks",
+                    "value": "$exit"
+                }
+            }
+        }
+    }
+}

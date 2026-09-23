@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Escrow</title>
+        <style>
+            :root {
+                color-scheme: light;
+                font-family: "Iowan Old Style", Palatino, Georgia, serif;
+                background: #f4f1ea;
+                color: #1c1915;
+            }
+            body {
+                margin: 0 auto;
+                max-width: 40rem;
+                padding: 2rem 1.25rem 4rem;
+            }
+            h1 {
+                font-size: 1.8rem;
+                margin: 0 0 0.4rem;
+            }
+            p {
+                line-height: 1.45;
+            }
+            form,
+            section,
+            details {
+                display: grid;
+                gap: 0.75rem;
+            }
+            label {
+                display: grid;
+                gap: 0.25rem;
+                font-size: 0.95rem;
+            }
+            input,
+            select,
+            button {
+                font: inherit;
+                padding: 0.45rem 0.55rem;
+                border: 1px solid #c8c0b4;
+                border-radius: 6px;
+                background: white;
+            }
+            button {
+                cursor: pointer;
+                background: #1c1915;
+                color: #f4f1ea;
+            }
+            button:disabled {
+                cursor: default;
+                background: #8a8175;
+            }
+            .row {
+                display: flex;
+                gap: 0.5rem;
+                flex-wrap: wrap;
+            }
+            .row button {
+                flex: 1;
+            }
+            code,
+            #log {
+                font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+                font-size: 0.82rem;
+                word-break: break-all;
+            }
+            #address {
+                display: block;
+                padding: 0.6rem;
+                background: white;
+                border-radius: 6px;
+            }
+            #log {
+                min-height: 4rem;
+                white-space: pre-wrap;
+            }
+            .hint {
+                color: #5c564e;
+                font-size: 0.9rem;
+            }
+            button.small {
+                color: inherit;
+                background: white;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Escrow</h1>
+        <p>
+            Paste an Arkade.Money address for the buyer and the seller. This page
+            builds the escrow, and a simulated oracle here signs the release that
+            pays the seller.
+        </p>
+        <form>
+            <label>
+                Network
+                <select id="network"></select>
+            </label>
+            <p class="hint">Wallet: <a id="wallet" target="_blank" rel="noreferrer"></a></p>
+            <label>
+                Buyer address
+                <input id="buyer" autocomplete="off" spellcheck="false" placeholder="tark1…" required />
+            </label>
+            <label>
+                Seller address
+                <input id="seller" autocomplete="off" spellcheck="false" placeholder="tark1…" required />
+            </label>
+            <label>
+                Amount (sats)
+                <input id="amount" type="number" min="1" step="1" required />
+            </label>
+            <label>
+                Refund after
+                <input id="timeout" type="datetime-local" required />
+            </label>
+            <p class="hint">
+                Refund pays the buyer once the emulator clock passes this time. A time
+                in the past can be spent now.
+            </p>
+            <label>
+                Unilateral delay (blocks)
+                <input id="exit" type="number" min="0" step="1" required />
+            </label>
+            <button id="prepare" type="submit">Create escrow</button>
+        </form>
+
+        <section id="contract" hidden>
+            <p>Send the amount from Arkade.Money to this address.</p>
+            <code id="address"></code>
+            <button id="copy" class="small" type="button">Copy address</button>
+            <p id="balance"></p>
+            <label>
+                Coin
+                <select id="coin"></select>
+            </label>
+            <div class="row">
+                <button id="complete" type="button" disabled>Unlock to seller</button>
+                <button id="cancel" type="button" disabled>Refund buyer</button>
+                <button id="unilateral" type="button" disabled>Unilateral exit</button>
+            </div>
+            <p class="hint">complete · cancel · unilateral. Each spend takes one coin.</p>
+        </section>
+
+        <details>
+            <summary>Oracle and exit keys</summary>
+            <p id="oracle"></p>
+            <p id="keys"></p>
+            <p class="hint">
+                The pasted addresses are where the coins go. These keys only co-sign
+                the unilateral exit, and the oracle key only signs the release. They
+                stay in this browser.
+            </p>
+        </details>
+        <div id="log"></div>
+        <script type="module" src="./dist/app.js"></script>
+    </body>
+</html>

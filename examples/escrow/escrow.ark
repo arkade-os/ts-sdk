@@ -1,0 +1,58 @@
+pragma arkade ^0.1.0;
+
+// Spend paths and outputs are drawn in escrow.md.
+
+contract Escrow(
+  // 32-byte x-only key. Party A funds the coins and co-signs the unilateral exit.
+  pubkey  partyAPk,
+  // 32-byte x-only key. Party B receives `amount` and co-signs the unilateral exit.
+  pubkey  partyBPk,
+  // 32-byte x-only key. Signs the one attestation message.
+  pubkey  oraclePk,
+  // 32 bytes. sha256 of that message. The message itself is also bytes32.
+  bytes32 oracleMessageHash,
+  // 32-byte witness program OP_INSPECTOUTPUTSCRIPTPUBKEY reports. Refund and surplus pay this.
+  bytes32 partyAScript,
+  // 32-byte witness program OP_INSPECTOUTPUTSCRIPTPUBKEY reports. The release pays this.
+  bytes32 partyBScript,
+  // Sats. `complete` pays at least this to party B on output 0.
+  int     amount,
+  // Unix seconds. `cancel` requires the emulator clock to reach this. tx.time cannot
+  // gate it: arkd rebuilds offchain spends of this leaf with nLockTime 0.
+  int     timeoutAt,
+  // Blocks. `unilateral` requires older(exit), a relative locktime.
+  int     exit
+) {
+  const int DUST = 330;
+
+  function complete(bytes32 oracleMsg, signature oracleSig) {
+    require(tx.numInputs == 1, "single-input spend required");
+    require(sha256(oracleMsg) == oracleMessageHash, "unexpected attestation");
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int locked = tx.input.current.value;
+    require(locked >= amount, "escrow underfunded");
+    int surplus = locked - amount;
+
+    require(tx.outputs[0].value >= amount, "party B underpaid");
+    require(tx.outputs[0].scriptPubKey == partyBScript, "output 0 not party B");
+
+    // A surplus at or below dust is left unconstrained so it cannot block the release.
+    if (surplus > DUST) {
+      require(tx.outputs[1].value >= surplus, "party A surplus underpaid");
+      require(tx.outputs[1].scriptPubKey == partyAScript, "output 1 not party A");
+    }
+  }
+
+  function cancel() {
+    require(tx.numInputs == 1, "single-input spend required");
+    require(checkTime(timeoutAt), "timeout not reached");
+    require(tx.outputs[0].value >= tx.input.current.value, "party A underpaid");
+    require(tx.outputs[0].scriptPubKey == partyAScript, "output 0 not party A");
+  }
+
+  function unilateral(signature partyASig, signature partyBSig) tapscript {
+    require(older(exit));
+    require(checkMultisig([partyAPk, partyBPk], [partyASig, partyBSig], 2));
+  }
+}
