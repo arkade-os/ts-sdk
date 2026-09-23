@@ -323,6 +323,7 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
     const structs = artifact.structs ?? [];
     const structNames = new Set<string>();
     for (const struct of structs) {
+        // Nameless entries are skipped. A parameter that needed that struct fails as an unknown type.
         if (!isRecord(struct) || typeof struct.name !== "string") continue;
         if (
             Object.hasOwn(SCALAR_TYPES, struct.name) ||

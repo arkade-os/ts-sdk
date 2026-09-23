@@ -261,6 +261,29 @@ describe("reading an arkadec artifact", () => {
         );
     });
 
+    it("refuses a tweak of a function that has no covenant", () => {
+        const insurer = schnorr.getPublicKey(new Uint8Array(32).fill(0x09));
+        const program = programFromArtifact(
+            demo({
+                constructorInputs: [{ name: "insurer", type: "pubkey" }],
+                functions: [
+                    {
+                        name: "race",
+                        leaves: [{ name: "race", asm: ["<TWEAK:insurer:claim>", "OP_CHECKSIG"] }],
+                    },
+                ],
+            }),
+        );
+        expect(
+            () =>
+                new ArkadeProgramScript(
+                    program,
+                    { insurer, server: SERVER_KEY },
+                    { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY },
+                ),
+        ).toThrow(/tweaks 'claim', which has no arkade script/);
+    });
+
     it("keeps a constructor tweak beside the emulator leaf of the same covenant", () => {
         const insurer = schnorr.getPublicKey(new Uint8Array(32).fill(0x09));
         const program = programFromArtifact(
@@ -345,6 +368,11 @@ describe("reading an arkadec artifact", () => {
         [
             "a struct named pubkey",
             demo({ structs: [{ name: "pubkey", fields: [{ name: "x", type: "int" }] }] }),
+            /shadows a built-in type/,
+        ],
+        [
+            "a struct named ECPoint",
+            demo({ structs: [{ name: "ECPoint", fields: [{ name: "x", type: "int" }] }] }),
             /shadows a built-in type/,
         ],
         [
