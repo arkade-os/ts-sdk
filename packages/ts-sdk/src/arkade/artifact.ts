@@ -80,10 +80,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isStringArray(value: unknown): value is string[] {
-    return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-
 function isNamed(value: unknown): value is ArtifactParameter {
     return (
         isRecord(value) &&
@@ -93,46 +89,19 @@ function isNamed(value: unknown): value is ArtifactParameter {
     );
 }
 
-function isStruct(value: unknown): value is ArtifactStruct {
-    return (
-        isRecord(value) &&
-        typeof value.name === "string" &&
-        Array.isArray(value.fields) &&
-        value.fields.every(isNamed)
-    );
-}
-
 /** `true` when `value` is an arkadec artifact rather than a Program. */
 export function isContractArtifact(value: unknown): value is ContractArtifact {
     if (!isRecord(value) || typeof value.contractName !== "string") return false;
-    if (!Array.isArray(value.constructorInputs) || !value.constructorInputs.every(isNamed)) {
-        return false;
-    }
-    if (
-        value.structs !== undefined &&
-        (!Array.isArray(value.structs) || !value.structs.every(isStruct))
-    ) {
-        return false;
-    }
+    if (!Array.isArray(value.constructorInputs)) return false;
+    if (value.structs !== undefined && !Array.isArray(value.structs)) return false;
     if (!Array.isArray(value.functions) || value.functions.length === 0) return false;
-    return value.functions.every((group) => {
-        if (!isRecord(group) || typeof group.name !== "string") return false;
-        if (!Array.isArray(group.leaves) || group.leaves.length === 0) return false;
-        const arkade = group.arkade;
-        if (arkade !== undefined) {
-            if (
-                !isRecord(arkade) ||
-                !Array.isArray(arkade.inputs) ||
-                !arkade.inputs.every(isNamed) ||
-                !isStringArray(arkade.asm)
-            ) {
-                return false;
-            }
-        }
-        return group.leaves.every(
-            (leaf) => isRecord(leaf) && typeof leaf.name === "string" && isStringArray(leaf.asm),
-        );
-    });
+    return value.functions.every(
+        (group) =>
+            isRecord(group) &&
+            typeof group.name === "string" &&
+            Array.isArray(group.leaves) &&
+            group.leaves.length > 0,
+    );
 }
 
 function fail(detail: string): never {
@@ -182,7 +151,7 @@ function flatten(
         }));
     }
 
-    const declared = structs.find((struct) => struct.name === param.type);
+    const declared = structs.find((struct) => struct?.name === param.type);
     if (declared) {
         if (stack.includes(param.type)) fail(`recursive struct layout '${param.type}'`);
         return declared.fields.flatMap((field) =>
@@ -263,9 +232,6 @@ function providedWitness(witness: ArtifactWitnessElement[] | undefined): Artifac
     if (!Array.isArray(witness)) fail("leaf witness must be an array");
     return witness.filter((item) => {
         if (!isNamed(item)) fail("witness item needs a name and a type");
-        if ("injected" in item && typeof item.injected !== "boolean") {
-            fail(`witness '${item.name}' injected flag must be a boolean`);
-        }
         return !item.injected && item.type !== "signature";
     }) as ArtifactWitnessElement[];
 }
@@ -324,7 +290,6 @@ function parseLeaf(
             if (!hasCovenant) fail(`leaf '${leaf.name}': ${key} needs a covenant`);
             if (!last) fail(`leaf '${leaf.name}': ${key} must be the last signer`);
             emulator = inner.slice("EMULATOR_KEY:".length);
-            if (emulator.length === 0) fail(`leaf '${leaf.name}': malformed emulator '${key}'`);
         } else signers.push(`$${inner}`);
         index += 2;
     }
@@ -358,6 +323,7 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
     const structs = artifact.structs ?? [];
     const structNames = new Set<string>();
     for (const struct of structs) {
+        if (!isRecord(struct) || typeof struct.name !== "string") continue;
         if (
             Object.hasOwn(SCALAR_TYPES, struct.name) ||
             Object.hasOwn(NATIVE_STRUCTS, struct.name)

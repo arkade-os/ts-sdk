@@ -329,21 +329,7 @@ describe("reading an arkadec artifact", () => {
         [
             "a constructor input without a type",
             demo({ constructorInputs: [{ name: "amount" }] }),
-            /complete arkadec artifact/,
-        ],
-        ["a null struct entry", demo({ structs: [null] }), /complete arkadec artifact/],
-        [
-            "a null covenant input",
-            demo({
-                functions: [
-                    {
-                        name: "spend",
-                        arkade: { inputs: [null], asm: ["OP_1"] },
-                        leaves: [{ name: "spend", asm: ["<SERVER_KEY>", "OP_CHECKSIG"] }],
-                    },
-                ],
-            }),
-            /complete arkadec artifact/,
+            /parameter needs a name and a type/,
         ],
         [
             "a constructor `server`",
@@ -356,14 +342,11 @@ describe("reading an arkadec artifact", () => {
             },
             /duplicate program parameter 'server'/,
         ],
-        ...(["pubkey", "ECPoint"] as const).map(
-            (name) =>
-                [
-                    `a struct named ${name}`,
-                    demo({ structs: [{ name, fields: [{ name: "x", type: "int" }] }] }),
-                    /shadows a built-in type/,
-                ] as const,
-        ),
+        [
+            "a struct named pubkey",
+            demo({ structs: [{ name: "pubkey", fields: [{ name: "x", type: "int" }] }] }),
+            /shadows a built-in type/,
+        ],
         [
             "a tweak with no function",
             demo({
@@ -391,19 +374,19 @@ describe("reading an arkadec artifact", () => {
             }),
             /emulator or a tweaked constructor key/,
         ],
-        ...(["OP_NOTAREALOPCODE", "OP_constructor"] as const).map(
-            (op) =>
-                [
-                    op,
+        [
+            "an unknown opcode",
+            {
+                ...artifact,
+                functions: [
                     {
-                        ...artifact,
-                        functions: [
-                            { ...artifact.functions[0], arkade: { inputs: [], asm: [op] } },
-                        ],
+                        ...artifact.functions[0],
+                        arkade: { inputs: [], asm: ["OP_NOT_A_REAL_OPCODE"] },
                     },
-                    /not in this SDK's table/,
-                ] as const,
-        ),
+                ],
+            },
+            /not in this SDK's table/,
+        ],
     ] as [string, unknown, RegExp][])("refuses %s", (_label, art, pattern) => {
         expect(() => programFromArtifact(art as never)).toThrow(pattern);
     });

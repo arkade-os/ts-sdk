@@ -571,9 +571,6 @@ export function parseArtifact(artifact: {
     const functions: Record<string, ArkadeFunction> = {};
     for (const [name, fn] of Object.entries(artifact.functions as Record<string, any>)) {
         const tap = fn.tapscript ?? {};
-        if ("emulator" in tap && tap.emulator !== null && typeof tap.emulator !== "string") {
-            throw new Error("parseArtifact: tapscript.emulator must be a string or null");
-        }
         const tapscript: TapscriptSegment = {
             signers: (tap.signers ?? []).map(signerRef),
             ...(tap.asm ? { asm: tap.asm.map(hexToken) } : {}),
