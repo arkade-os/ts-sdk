@@ -5,12 +5,14 @@ import {
     ArkAddress,
     asset,
     Extension,
+    SendDeadlineExceededError,
     Transaction,
     UnknownPacket,
     type IWallet,
     type NormalizedExtendedVirtualCoin,
 } from "@arkade-os/sdk";
 import {
+    FundingNotCompletedError,
     FundingOutcomeUnknownError,
     FundingOutputMismatchError,
     fundOffer,
@@ -634,6 +636,67 @@ describe("fundOffer", () => {
         ).resolves.toMatchObject({ fundingIntent: { state: "bound" } });
     });
 
+    it("releases the reservation when the wallet refuses the deadline before submitting", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const selected = coin("11", 20_000);
+        const wallet = walletFor(
+            [selected],
+            vi.fn(async () => {
+                throw new SendDeadlineExceededError(NOW + 1);
+            }),
+        );
+        const derived = offer();
+
+        await expect(
+            fundOffer(wallet, "https://ark.example/", {
+                repository,
+                offerHex: derived.offerHex,
+                deposit: { amount: 10_000n },
+                id: "refused-operation",
+            }),
+        ).rejects.toBeInstanceOf(SendDeadlineExceededError);
+        expect(await repository.getSwap("refused-operation")).toMatchObject({
+            status: "cancelled",
+            fundingTxid: "",
+            fundingIntent: { state: "abandoned" },
+        });
+
+        const retry = walletFor([selected]);
+        await expect(
+            fundOffer(retry, "https://ark.example/", {
+                repository,
+                offerHex: derived.offerHex,
+                deposit: { amount: 10_000n },
+                id: "after-refusal",
+            }),
+        ).resolves.toMatchObject({ fundingIntent: { state: "bound" } });
+    });
+
+    it("keeps a service worker's wrapped deadline failure on the unknown branch", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const selected = coin("11", 20_000);
+        const wallet = opaqueWalletFor(
+            [selected],
+            vi.fn(async () => {
+                throw new Error(`Send failed: ${new SendDeadlineExceededError(NOW + 1)}`);
+            }),
+        );
+        const derived = offer();
+
+        await expect(
+            fundOffer(wallet, "https://ark.example/", {
+                repository,
+                offerHex: derived.offerHex,
+                deposit: { amount: 10_000n },
+                id: "worker-operation",
+            }),
+        ).rejects.toBeInstanceOf(FundingOutcomeUnknownError);
+        expect(await repository.getSwap("worker-operation")).toMatchObject({
+            fundingTxid: "",
+            fundingIntent: { state: "submitted" },
+        });
+    });
+
     it("keeps a submitted reservation when the send may already have gone out", async () => {
         const repository = new InMemoryAssetSwapRepository();
         const selected = coin("11", 20_000);
@@ -716,8 +779,7 @@ describe("fundOffer", () => {
     });
 
     it("marks issuance at the record's own createdAt so the funded script can retire", async () => {
-        // Every `Date.now()` here returns a later value, which is what a real
-        // `Arkade.connect` round trip between the two reads amounts to.
+        // a later value per call: what the Arkade.connect round trip amounts to
         let clock = NOW * 1000;
         vi.spyOn(Date, "now").mockImplementation(() => (clock += 1000));
         const repository = new InMemoryAssetSwapRepository();
@@ -741,6 +803,83 @@ describe("fundOffer", () => {
             swap.swapPkScript,
             "retained",
         );
+    });
+
+    it("refuses a same-id retry on a submitted row instead of returning it as funded", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const derived = offer();
+        const selected = coin("11", 20_000);
+        await expect(
+            fundOffer(
+                walletFor(
+                    [selected],
+                    vi.fn(async () => {
+                        throw new Error("response lost");
+                    }),
+                ),
+                "https://ark.example/",
+                {
+                    repository,
+                    offerHex: derived.offerHex,
+                    deposit: { amount: 10_000n },
+                    id: "ambiguous-operation",
+                },
+            ),
+        ).rejects.toBeInstanceOf(FundingOutcomeUnknownError);
+
+        const retry = walletFor([selected]);
+        const error = await fundOffer(retry, "https://ark.example/", {
+            repository,
+            offerHex: derived.offerHex,
+            deposit: { amount: 10_000n },
+            id: "ambiguous-operation",
+        }).catch((value) => value);
+
+        expect(error).toBeInstanceOf(FundingOutcomeUnknownError);
+        expect(error).toMatchObject({ operationId: "ambiguous-operation", fundingTxid: undefined });
+        expect(retry.send).not.toHaveBeenCalled();
+        expect(await repository.getSwap("ambiguous-operation")).toMatchObject({
+            fundingTxid: "",
+            fundingIntent: { state: "submitted" },
+        });
+    });
+
+    it("leaves a prepared row untouched for its own owner and reports an abandoned one", async () => {
+        const derived = offer();
+        for (const state of ["prepared", "abandoned"] as const) {
+            const repository = new InMemoryAssetSwapRepository();
+            const wallet = walletFor([coin("11", 20_000)]);
+            vi.spyOn(repository, "advanceFundingState").mockResolvedValue(false);
+            await expect(
+                fundOffer(wallet, "https://ark.example/", {
+                    repository,
+                    offerHex: derived.offerHex,
+                    deposit: { amount: 10_000n },
+                    id: "owned-operation",
+                }),
+            ).rejects.toThrow(/funding state/i);
+            vi.mocked(repository.advanceFundingState).mockRestore();
+            if (state === "abandoned") {
+                await repository.advanceFundingState("owned-operation", "prepared", {
+                    state: "abandoned",
+                });
+            }
+
+            const retry = walletFor([coin("11", 20_000)]);
+            const error = await fundOffer(retry, "https://ark.example/", {
+                repository,
+                offerHex: derived.offerHex,
+                deposit: { amount: 10_000n },
+                id: "owned-operation",
+            }).catch((value) => value);
+
+            expect(error).toBeInstanceOf(FundingNotCompletedError);
+            expect(error).toMatchObject({ operationId: "owned-operation", state });
+            expect(retry.send).not.toHaveBeenCalled();
+            expect(await repository.getSwap("owned-operation")).toMatchObject({
+                fundingIntent: { state },
+            });
+        }
     });
 
     it("does not send when insertion or the prepared-to-submitted CAS fails", async () => {

@@ -233,11 +233,6 @@ describe.each(backends)("prepared funding repository (%s)", (_, create) => {
         ).toBe(true);
         expect(
             await repository.advanceFundingState("operation-a", "submitted", {
-                state: "abandoned",
-            }),
-        ).toBe(false);
-        expect(
-            await repository.advanceFundingState("operation-a", "submitted", {
                 state: "bound",
                 fundingTxid: BOUND_TXID,
             }),
@@ -268,6 +263,26 @@ describe.each(backends)("prepared funding repository (%s)", (_, create) => {
         ).rejects.toThrow();
         expect((await repository.getSwap("operation-a"))?.fundingIntent?.state).toBe("submitted");
         expect(await repository.insertPreparedSwap(prepared("operation-b"))).toBe(false);
+    });
+
+    it("releases a submitted reservation when abandoned, and keeps it terminal", async () => {
+        await using repository = create();
+        await repository.insertPreparedSwap(prepared("operation-a"));
+        await repository.advanceFundingState("operation-a", "prepared", { state: "submitted" });
+        expect(
+            await repository.advanceFundingState("operation-a", "submitted", {
+                state: "abandoned",
+            }),
+        ).toBe(true);
+        expect((await repository.getSwap("operation-a"))?.status).toBe("cancelled");
+        expect((await repository.getSwap("operation-a"))?.fundingTxid).toBe("");
+        expect(
+            await repository.advanceFundingState("operation-a", "submitted", {
+                state: "bound",
+                fundingTxid: BOUND_TXID,
+            }),
+        ).toBe(false);
+        expect(await repository.insertPreparedSwap(prepared("operation-b"))).toBe(true);
     });
 
     it("keeps abandoned rows terminal", async () => {

@@ -1,4 +1,10 @@
-/** Raised only while a timed send can still prove `submitTx` was not invoked. */
+/**
+ * Raised only while a timed send can still prove `submitTx` was not invoked:
+ * the last raise site is the `beforeSubmit` hook, awaited immediately before
+ * `provider.submitTx`. A caller holding state against the send may therefore
+ * release it, unlike on an error raised past that point. A wallet that rewraps
+ * errors across a process boundary (`ServiceWorkerWallet`) loses that.
+ */
 export class SendDeadlineExceededError extends Error {
     constructor(validUntil: number) {
         super(`Send deadline ${validUntil} expired before provider submission`);

@@ -363,9 +363,11 @@ export function advanceFundingSwap(
         }
     }
     if (existing.fundingIntent.state !== expected) return { ok: false };
+    // `submitted -> abandoned` is for one caller: `fundOffer` catching the
+    // wallet's pre-submit deadline refusal. Nothing less may take it.
     const allowed =
         (expected === "prepared" && (next.state === "submitted" || next.state === "abandoned")) ||
-        (expected === "submitted" && next.state === "bound");
+        (expected === "submitted" && (next.state === "bound" || next.state === "abandoned"));
     if (!allowed) return { ok: false };
     const swap: AssetSwap = {
         ...existing,

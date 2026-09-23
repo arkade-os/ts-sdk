@@ -65,6 +65,7 @@ export {
     type FundingStateAdvance,
 } from "./fundingPersistence";
 export {
+    FundingNotCompletedError,
     FundingOutcomeUnknownError,
     FundingOutputMismatchError,
     fundOffer,

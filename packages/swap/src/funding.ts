@@ -13,6 +13,7 @@ import {
     type NetworkName,
     type NormalizedExtendedVirtualCoin,
 } from "@arkade-os/sdk";
+import { hasBoundFunding } from "./fundingPersistence";
 import { checkFundingOutput, type FundingOutputCheck } from "./fundingRecovery";
 import { decodeOffer, OFFER_PACKET_TYPE, offerVtxoScript, registerOfferContract } from "./offer";
 import type { AssetSwapRepository } from "./repository";
@@ -38,6 +39,11 @@ export interface FundOfferParams {
     prepareNew?: (swap: AssetSwap) => AssetSwap | Promise<AssetSwap>;
 }
 
+/**
+ * The outcome is unknown and **the reservation is still held**: never abandon
+ * on this error, only let `restoreAssetSwapRepository` resolve it from chain
+ * evidence. The provably-unsent case raises `SendDeadlineExceededError`.
+ */
 export class FundingOutcomeUnknownError extends Error {
     override readonly name = "FundingOutcomeUnknownError";
 
@@ -51,6 +57,25 @@ export class FundingOutcomeUnknownError extends Error {
                 ? `funding ${operationId} returned ${fundingTxid} but could not be bound durably`
                 : `funding ${operationId} entered send but its outcome is unknown`,
             { cause },
+        );
+    }
+}
+
+/**
+ * An unfunded operation: `prepared` is a reservation still owned by whoever
+ * made it, `abandoned` is terminal and needs a new id.
+ */
+export class FundingNotCompletedError extends Error {
+    override readonly name = "FundingNotCompletedError";
+
+    constructor(
+        readonly operationId: string,
+        readonly state: "prepared" | "abandoned",
+    ) {
+        super(
+            state === "prepared"
+                ? `funding operation ${operationId} is still preparing under its own caller`
+                : `funding operation ${operationId} was abandoned before send`,
         );
     }
 }
@@ -282,6 +307,28 @@ const assertExistingRequest = (
         throw new Error(`funding operation ${existing.id} conflicts with its stored intent`);
 };
 
+/**
+ * Only a funded row is a result: `submitted` has no `fundingTxid`, `abandoned`
+ * is `cancelled`. A `prepared` row is left as found — this caller never made
+ * that reservation, and taking its CAS would make its owner skip `wallet.send`.
+ */
+const resolveExistingFunding = (existing: AssetSwap): AssetSwap => {
+    // also true for legacy pre-v5 rows, which are funded on a txid alone
+    if (hasBoundFunding(existing)) return existing;
+    const state = existing.fundingIntent?.state;
+    if (state === "submitted") {
+        throw new FundingOutcomeUnknownError(
+            existing.id,
+            undefined,
+            new Error("send outcome is still unverified"),
+        );
+    }
+    if (state === "prepared" || state === "abandoned") {
+        throw new FundingNotCompletedError(existing.id, state);
+    }
+    throw new Error(`funding operation ${existing.id} is not funded`);
+};
+
 export async function fundOffer(
     wallet: IWallet,
     arkServerUrl: string,
@@ -331,7 +378,7 @@ export async function fundOffer(
         const existing = await repository.getSwap(id);
         if (existing) {
             assertExistingRequest(existing, requestFacts);
-            return existing;
+            return resolveExistingFunding(existing);
         }
     }
 
@@ -434,9 +481,7 @@ export async function fundOffer(
         binding,
         serverPubkey,
         script.pkScript,
-        // This row IS the deposit landing, so the mark must not postdate it: a
-        // default `Date.now()` here is read after `createdAt` and pins the
-        // script watched for the life of the process.
+        // a mark postdating `createdAt` is one no record can ever clear
         { issued: prepared.createdAt },
     );
     assertDeadline(validUntil);
@@ -444,7 +489,7 @@ export async function fundOffer(
         const existing = await repository.getSwap(id);
         if (existing) {
             assertExistingRequest(existing, requestFacts);
-            return existing;
+            return resolveExistingFunding(existing);
         }
         throw new Error(`funding reservation conflict for operation ${id}`);
     }
@@ -474,6 +519,12 @@ export async function fundOffer(
             ...(validUntil === undefined ? {} : { validUntil }),
         });
     } catch (cause) {
+        if (cause instanceof SendDeadlineExceededError) {
+            // Raised only from the wallet's pre-submit hook, the last step
+            // before `submitTx`: proof the send never went out.
+            await repository.advanceFundingState(id, "submitted", { state: "abandoned" });
+            throw cause;
+        }
         throw new FundingOutcomeUnknownError(id, undefined, cause);
     }
     if (!/^[0-9a-f]{64}$/.test(fundingTxid)) {

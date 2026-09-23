@@ -291,9 +291,21 @@ was never funded, so recovery will never bind it either.
 Once send is entered, a throw is not proof that nothing broadcast. A
 `FundingOutcomeUnknownError` carries `operationId` (and a locally returned `fundingTxid` when
 available); show that operation as pending verification and let `restoreAssetSwapRepository`
-resolve exact input/checkpoint/final-transaction evidence instead of sending again. Only a
-deadline that expires *before* send releases the reserved inputs — that operation is provably
-unsent, and its record is abandoned.
+resolve exact input/checkpoint/final-transaction evidence instead of sending again.
+
+Only a deadline refused *before* submission releases the reserved inputs, and there are two:
+`fundOffer`'s own check before it enters send, and the wallet raising
+`SendDeadlineExceededError` from its pre-submit hook — the last step before `submitTx`. Both
+prove the operation unsent, so its record is abandoned and its inputs are selectable again. A
+`ServiceWorkerWallet` re-wraps that error across its process boundary, where it is no longer
+distinguishable, so the reservation stands there.
+
+Passing an `id` makes the call idempotent, and only a **funded** operation is returned: a row
+bound to a funding txid, or a legacy pre-v5 row. Anything else raises rather than reporting
+unfunded output as funded — `FundingOutcomeUnknownError` for a `submitted` row, and
+`FundingNotCompletedError` (carrying `state`) for `prepared` or `abandoned`. A retry never
+abandons or advances a `prepared` row: it did not make that reservation, and taking it could
+make an owner still in flight skip its own send.
 
 The covenant co-signer ("emulator") key defaults to the SDK's per-network pin, resolved from the
 network the Ark server reports — never fetched from the emulator itself. Pass
