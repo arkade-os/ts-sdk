@@ -57,4 +57,39 @@ describe("boarding fetch fans out across addresses", () => {
         release();
         await pending;
     });
+
+    it("writes nothing once any address's fetch has failed", async () => {
+        const { wallet, walletRepository } = await makeStaticWalletForTest();
+        const second = new DefaultVtxo.Script({
+            ...wallet.boardingTapscript.options,
+            pubKey: new Uint8Array(32).fill(7),
+        });
+        (wallet as any).getBoardingTapscripts = async () => [wallet.boardingTapscript, second];
+        const [failing, late] = [wallet.boardingTapscript, second].map((s) =>
+            s.onchainAddress(wallet.network),
+        );
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => (release = resolve));
+        (wallet as any).onchainProvider = {
+            getCoins: async (address: string) => {
+                if (address === failing) throw new Error("explorer down");
+                await released;
+                return [
+                    { txid: "ab".repeat(32), vout: 0, value: 5_000, status: { confirmed: true } },
+                ];
+            },
+        };
+        onTestFinished(async () => {
+            release();
+            await wallet.dispose();
+        });
+
+        await expect(wallet.getBoardingUtxos()).rejects.toThrow("explorer down");
+        // A caller reacting to the failure (here: clearing) must not see a late write.
+        await walletRepository.clear();
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        expect(await walletRepository.getUtxos(late)).toEqual([]);
+    });
 });
