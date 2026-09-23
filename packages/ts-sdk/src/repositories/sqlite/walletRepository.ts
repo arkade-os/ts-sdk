@@ -237,7 +237,10 @@ export class SQLiteWalletRepository implements WalletRepository {
         )`;
     }
 
-    /** `INSERT OR REPLACE` rows, as many to a statement as the parameter budget allows. */
+    /**
+     * `INSERT OR REPLACE` rows, as many to a statement as the parameter budget allows.
+     * No enclosing transaction: on the shared connection it would take in other repos' writes.
+     */
     private async insertOrReplace(
         table: string,
         columns: string,
