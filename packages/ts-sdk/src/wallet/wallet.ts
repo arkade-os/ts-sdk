@@ -1747,9 +1747,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * `DefaultVtxo.Script` and its `serverPubKey`/CSV delay).
      *
      * Per group it does exactly what {@link getBoardingUtxos} does per tapscript:
-     * `getCoins` → {@link extendCoinWithTapscript} → `saveUtxos`. Offline-first:
-     * it does not call `getInfo()`; the caller supplies the allowed signer set,
-     * so the only network calls are the per-address `getCoins`.
+     * `getCoins` → {@link extendCoinWithTapscript}, then one `saveUtxos` for all
+     * groups. Offline-first: it does not call `getInfo()`; the caller supplies the
+     * allowed signer set, so the only network calls are the per-address `getCoins`.
      *
      * @param allowedSigners - x-only-hex server keys whose boarding addresses to
      *   fetch (passed through to {@link getBoardingTapscripts}).
@@ -1775,10 +1775,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 };
             }),
         );
-        // Saved only once every fetch has succeeded, so a failure leaves no write in flight.
-        for (const [i, group] of groups.entries()) {
-            await this.walletRepository.saveUtxos(addresses[i], group.coins);
-        }
+        // One write, made only once every fetch has succeeded, so a failure writes nothing.
+        await this.walletRepository.saveUtxos(
+            new Map(groups.map((group, i) => [addresses[i], group.coins] as const)),
+        );
         return groups;
     }
 

@@ -520,6 +520,31 @@ describe("RealmWalletRepository", () => {
             expect(retrieved2[0].txid).toBe("tx2");
         });
 
+        it("should save UTXOs for several addresses in one call", async () => {
+            await repository.saveUtxos(testAddress, [createMockUtxo("tx1", 0, 10000)]);
+
+            await repository.saveUtxos(
+                new Map<string, ExtendedCoin[]>([
+                    [
+                        testAddress,
+                        [createMockUtxo("tx1", 0, 15000), createMockUtxo("tx2", 1, 20000)],
+                    ],
+                    ["address-2", [createMockUtxoWithExtras("tx3", 0, 30000)]],
+                    ["address-3", []],
+                ]),
+            );
+
+            const mine = await repository.getUtxos(testAddress);
+            expect(mine.map((u) => `${u.txid}:${u.value}`).sort()).toEqual([
+                "tx1:15000",
+                "tx2:20000",
+            ]);
+            const [other] = await repository.getUtxos("address-2");
+            expect(other.txid).toBe("tx3");
+            expect(hex.encode(other.extraWitness![0])).toBe("1122");
+            expect(await repository.getUtxos("address-3")).toEqual([]);
+        });
+
         it("should round-trip tap tree and leaf scripts for UTXOs", async () => {
             const utxo = createMockUtxo("tx-tap-utxo", 0, 7000);
             await repository.saveUtxos(testAddress, [utxo]);

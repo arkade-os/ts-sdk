@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import Database from "better-sqlite3";
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { SQLiteWalletRepository } from "../src/repositories/sqlite/walletRepository";
@@ -460,6 +461,46 @@ describe("SQLiteWalletRepository", () => {
             expect(retrieved2[0].txid).toBe("tx2");
         });
 
+        it("should save UTXOs for several addresses in one call", async () => {
+            await repository.saveUtxos(testAddress, [createMockUtxo("tx1", 0, 10000)]);
+
+            await repository.saveUtxos(
+                new Map<string, ExtendedCoin[]>([
+                    [
+                        testAddress,
+                        [createMockUtxo("tx1", 0, 15000), createMockUtxo("tx2", 1, 20000)],
+                    ],
+                    ["address-2", [createMockUtxoWithExtras("tx3", 0, 30000)]],
+                    ["address-3", []],
+                ]),
+            );
+
+            const mine = await repository.getUtxos(testAddress);
+            expect(mine.map((u) => `${u.txid}:${u.value}`).sort()).toEqual([
+                "tx1:15000",
+                "tx2:20000",
+            ]);
+            const [other] = await repository.getUtxos("address-2");
+            expect(other.txid).toBe("tx3");
+            expect(hex.encode(other.extraWitness![0])).toBe("1122");
+            expect(await repository.getUtxos("address-3")).toEqual([]);
+        });
+
+        it("should save every row when one call spans several inserts", async () => {
+            const utxos = (prefix: string) =>
+                Array.from({ length: 40 }, (_, i) => createMockUtxo(`${prefix}${i}`, 0, 1000 + i));
+
+            await repository.saveUtxos(
+                new Map<string, ExtendedCoin[]>([
+                    ["address-1", utxos("a")],
+                    ["address-2", utxos("b")],
+                ]),
+            );
+
+            expect(await repository.getUtxos("address-1")).toHaveLength(40);
+            expect(await repository.getUtxos("address-2")).toHaveLength(40);
+        });
+
         it("should round-trip tap tree and leaf scripts for UTXOs", async () => {
             const utxo = createMockUtxo("tx-tap-utxo", 0, 7000);
             await repository.saveUtxos(testAddress, [utxo]);
@@ -715,5 +756,40 @@ describe("SQLiteWalletRepository", () => {
         it("should be a no-op and not throw", async () => {
             await expect(repository[Symbol.asyncDispose]()).resolves.toBeUndefined();
         });
+    });
+});
+
+describe("SQLiteWalletRepository UTXO batch on a real SQLite database", () => {
+    // The mock executor ignores the VALUES text, so only a real engine can reject a bad batch insert.
+    let db: Database.Database;
+    let repository: SQLiteWalletRepository;
+
+    beforeEach(() => {
+        db = new Database(":memory:");
+        repository = new SQLiteWalletRepository({
+            run: async (sql, params) => void db.prepare(sql).run(...((params ?? []) as [])),
+            get: async (sql, params) => db.prepare(sql).get(...((params ?? []) as [])) as any,
+            all: async (sql, params) => db.prepare(sql).all(...((params ?? []) as [])) as any,
+        });
+    });
+
+    afterEach(() => db.close());
+
+    it("should save UTXOs for several addresses across insert chunks", async () => {
+        const utxos = (prefix: string) =>
+            Array.from({ length: 40 }, (_, i) => createMockUtxo(`${prefix}${i}`, 0, 1000 + i));
+        await repository.saveUtxos("address-1", [createMockUtxo("a0", 0, 1)]);
+
+        await repository.saveUtxos(
+            new Map<string, ExtendedCoin[]>([
+                ["address-1", utxos("a")],
+                ["address-2", utxos("b")],
+            ]),
+        );
+
+        const first = await repository.getUtxos("address-1");
+        expect(first).toHaveLength(40);
+        expect(first.find((u) => u.txid === "a0")?.value).toBe(1000);
+        expect(await repository.getUtxos("address-2")).toHaveLength(40);
     });
 });

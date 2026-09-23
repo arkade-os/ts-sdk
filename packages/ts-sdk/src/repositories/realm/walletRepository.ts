@@ -1,5 +1,5 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
-import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
+import { WalletRepository, WalletState, VtxoRepositoryKey, utxoEntries } from "../walletRepository";
 import {
     serializeVtxo,
     serializeUtxo,
@@ -142,10 +142,17 @@ export class RealmWalletRepository implements WalletRepository {
         return [...results].map(utxoObjectToDomain);
     }
 
-    async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
+    async saveUtxos(
+        addressOrBatch: string | ReadonlyMap<string, ExtendedCoin[]>,
+        utxos?: ExtendedCoin[],
+    ): Promise<void> {
         await this.ensureInit();
+        const rows = utxoEntries(addressOrBatch, utxos).flatMap(([address, list]) =>
+            list.map((utxo) => ({ address, utxo })),
+        );
+        if (rows.length === 0) return;
         this.realm.write(() => {
-            for (const utxo of utxos) {
+            for (const { address, utxo } of rows) {
                 const s = serializeUtxo(utxo);
                 this.realm.create(
                     "ArkUtxo",

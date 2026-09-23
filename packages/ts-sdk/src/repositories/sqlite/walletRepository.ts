@@ -1,5 +1,5 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
-import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
+import { WalletRepository, WalletState, VtxoRepositoryKey, utxoEntries } from "../walletRepository";
 import {
     serializeVtxo,
     serializeUtxo,
@@ -18,6 +18,13 @@ interface SQLiteWalletRepositoryOptions {
     /** Table name prefix (default: "ark_") */
     prefix?: string;
 }
+
+/**
+ * Rows per multi-row UTXO insert. At 11 parameters a row this stays under 999,
+ * the host-parameter limit of SQLite before 3.32 — the executor is the
+ * consumer's, so its SQLite build may be that old.
+ */
+const UTXO_ROWS_PER_INSERT = 50;
 
 /**
  * SQLite-based implementation of WalletRepository.
@@ -346,19 +353,15 @@ export class SQLiteWalletRepository implements WalletRepository {
         return rows.map(utxoRowToDomain);
     }
 
-    async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
+    async saveUtxos(
+        addressOrBatch: string | ReadonlyMap<string, ExtendedCoin[]>,
+        utxos?: ExtendedCoin[],
+    ): Promise<void> {
         await this.ensureInit();
-        for (const utxo of utxos) {
-            const s = serializeUtxo(utxo);
-            await this.db.run(
-                `INSERT OR REPLACE INTO ${this.tables.utxos}
-                    (txid, vout, value, address,
-                     tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
-                     status_json, extra_witness_json)
-                 VALUES (?, ?, ?, ?,
-                         ?, ?, ?, ?, ?,
-                         ?, ?)`,
-                [
+        const rows = utxoEntries(addressOrBatch, utxos).flatMap(([address, list]) =>
+            list.map((utxo) => {
+                const s = serializeUtxo(utxo);
+                return [
                     s.txid,
                     s.vout,
                     s.value,
@@ -370,7 +373,18 @@ export class SQLiteWalletRepository implements WalletRepository {
                     s.intentTapLeafScript.s,
                     JSON.stringify(s.status),
                     s.extraWitness ? JSON.stringify(s.extraWitness) : null,
-                ],
+                ];
+            }),
+        );
+        for (let i = 0; i < rows.length; i += UTXO_ROWS_PER_INSERT) {
+            const chunk = rows.slice(i, i + UTXO_ROWS_PER_INSERT);
+            await this.db.run(
+                `INSERT OR REPLACE INTO ${this.tables.utxos}
+                    (txid, vout, value, address,
+                     tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
+                     status_json, extra_witness_json)
+                 VALUES ${chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}`,
+                chunk.flat(),
             );
         }
     }

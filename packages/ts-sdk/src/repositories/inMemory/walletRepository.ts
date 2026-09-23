@@ -1,5 +1,5 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
-import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
+import { WalletRepository, WalletState, VtxoRepositoryKey, utxoEntries } from "../walletRepository";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
 
 /**
@@ -70,10 +70,15 @@ export class InMemoryWalletRepository implements WalletRepository {
         return this.utxosByAddress.get(address) ?? [];
     }
 
-    async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
-        const existing = this.utxosByAddress.get(address) ?? [];
-        const next = mergeByKey(existing, utxos, (item) => `${item.txid}:${item.vout}`);
-        this.utxosByAddress.set(address, next);
+    async saveUtxos(
+        addressOrBatch: string | ReadonlyMap<string, ExtendedCoin[]>,
+        utxos?: ExtendedCoin[],
+    ): Promise<void> {
+        for (const [address, list] of utxoEntries(addressOrBatch, utxos)) {
+            const existing = this.utxosByAddress.get(address) ?? [];
+            const next = mergeByKey(existing, list, (item) => `${item.txid}:${item.vout}`);
+            this.utxosByAddress.set(address, next);
+        }
     }
 
     async deleteUtxos(address: string): Promise<void> {
