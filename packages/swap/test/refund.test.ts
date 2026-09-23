@@ -162,6 +162,7 @@ const fakeContracts = (
                         isUnrolled: !!row.isUnrolled,
                         spentBy: row.spentBy ?? "",
                         settledBy: row.settledBy,
+                        ...(row.assets ? { assets: row.assets } : {}),
                     })),
                 },
             ];
@@ -431,6 +432,22 @@ describe("findLockupVtxos", () => {
         const swept = { txid: "bb".repeat(32), vout: 2, value: 2_000, recoverable: true };
         const found = await findLockupVtxos(fakeContracts([live, swept]), script.pkScript);
         expect(found).toEqual([live, swept]);
+    });
+
+    it("carries each output's assets, which a claim or refund must declare to arkd", async () => {
+        const script = swapScript();
+        const assetId = "aa".repeat(32) + "0000";
+        const withAssets = {
+            txid: "a1".repeat(32),
+            vout: 0,
+            value: 330,
+            recoverable: false,
+            assets: [{ assetId, amount: 500n }],
+        };
+        const plain = { txid: "a2".repeat(32), vout: 1, value: 1_000, recoverable: false };
+        const found = await findLockupVtxos(fakeContracts([withAssets, plain]), script.pkScript);
+        expect(found).toEqual([withAssets, plain]);
+        expect(found[1]).not.toHaveProperty("assets");
     });
 
     it("drops an unrolled output the manager still serves", async () => {
