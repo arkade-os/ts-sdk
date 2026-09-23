@@ -38,9 +38,9 @@ import {
 
 import {
     LockupNeedsRecoveryError,
+    type LockupContractSource,
     findLockupVtxos,
     type LockupVtxo,
-    type RefundIndexer,
     type SwapOperator,
 } from "./refund";
 
@@ -218,13 +218,13 @@ export async function pushClaim(
  * the deadline passes.
  */
 export async function awaitLockupFunding(
-    indexer: RefundIndexer,
+    contracts: LockupContractSource,
     swapPkScript: Uint8Array,
     options: { pollMs?: number; deadline?: number } = {},
 ): Promise<readonly LockupVtxo[]> {
     const pollMs = options.pollMs ?? 5_000;
     for (;;) {
-        const vtxos = await findLockupVtxos(indexer, swapPkScript);
+        const vtxos = await findLockupVtxos(contracts, swapPkScript);
         if (vtxos.length > 0) return vtxos;
         if (options.deadline !== undefined && Date.now() / 1000 >= options.deadline) {
             const error = new Error("the lockup never appeared at the covenant script") as Error & {
@@ -251,7 +251,7 @@ export async function awaitLockupFunding(
  * lockup, which never gets past the gate at all.
  */
 export async function claimReceiveLockup(
-    indexer: RefundIndexer,
+    contracts: LockupContractSource,
     operator: SwapOperator,
     input: Parameters<typeof pushClaim>[1] & {
         /** The covenant's scriptPubKey, from the request flow's `swapPkScript`. */
@@ -260,7 +260,7 @@ export async function claimReceiveLockup(
         deadline?: number;
     },
 ): Promise<{ txid: string; amount: number }> {
-    const vtxos = await awaitLockupFunding(indexer, input.swapPkScript, {
+    const vtxos = await awaitLockupFunding(contracts, input.swapPkScript, {
         pollMs: input.pollMs,
         deadline: input.deadline,
     });

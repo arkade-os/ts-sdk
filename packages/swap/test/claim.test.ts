@@ -28,7 +28,11 @@ import {
     claimReceiveLockup,
     pushClaim,
 } from "../src/claim";
-import { LockupNeedsRecoveryError, type LockupVtxo, type RefundIndexer } from "../src/refund";
+import {
+    LockupNeedsRecoveryError,
+    type LockupContractSource,
+    type LockupVtxo,
+} from "../src/refund";
 
 const priv = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(priv(fill));
@@ -380,22 +384,29 @@ describe("pushClaim", () => {
 });
 
 describe("awaitLockupFunding + claimReceiveLockup", () => {
-    const indexerOver = (rounds: LockupVtxo[][]): RefundIndexer => {
+    const contractsOver = (rounds: LockupVtxo[][]): LockupContractSource => {
         let calls = 0;
         return {
-            getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => {
-                // The real findLockupVtxos asks both filters; only the
-                // spendable answer carries the live lockup.
-                if (opts?.recoverableOnly) return { vtxos: [] };
-                return { vtxos: rounds[Math.min(calls++, rounds.length - 1)]! };
-            },
-        } as unknown as RefundIndexer;
+            getContractsWithVtxos: async () => [
+                {
+                    contract: {
+                        script: "5120",
+                        type: "vhtlc-v2",
+                        params: {},
+                        address: "ark1lockup",
+                        state: "active",
+                        createdAt: 1,
+                    },
+                    vtxos: rounds[Math.min(calls++, rounds.length - 1)]!,
+                },
+            ],
+        } as unknown as LockupContractSource;
     };
 
     it("waits for the lockup, then claims it in one call", async () => {
-        const indexer = indexerOver([[], VTXOS]);
+        const contracts = contractsOver([[], VTXOS]);
         const operator = fakeOperator();
-        const result = await claimReceiveLockup(indexer, operator, {
+        const result = await claimReceiveLockup(contracts, operator, {
             contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
@@ -410,7 +421,7 @@ describe("awaitLockupFunding + claimReceiveLockup", () => {
 
     it("times out with a stable reason when the lockup never lands", async () => {
         await expect(
-            awaitLockupFunding(indexerOver([[]]), swapScript().pkScript, {
+            awaitLockupFunding(contractsOver([[]]), swapScript().pkScript, {
                 pollMs: 1,
                 deadline: Math.floor(Date.now() / 1000) - 1,
             }),

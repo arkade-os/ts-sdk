@@ -157,6 +157,7 @@ const build = async (
         ...(over.claim === undefined ? {} : { claim: over.claim }),
     });
     const contracts = over.contracts ?? fakeContracts([SEND_LOCKUP, RECEIVE_LOCKUP]);
+    contracts.funded.push(...(over.funded ?? []));
     const { wallet, recoveries } = fakeWallet({
         contracts,
         identity: over.identity ?? SENDER,
@@ -171,7 +172,6 @@ const build = async (
         operator: fakeOperator(over.gate),
         indexer: fakeIndexer({
             ...(over.vtxos === undefined ? {} : { vtxos: over.vtxos }),
-            ...(over.funded === undefined ? {} : { funded: over.funded }),
             ...(over.txs === undefined ? {} : { txs: over.txs }),
             ...(over.indexerFails ? { fail: true } : {}),
         }),

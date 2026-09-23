@@ -50,7 +50,9 @@ import {
     getSyncCursor,
 } from "../utils/syncCursors";
 import {
+    applyRecordedSpends,
     getVtxosForContract,
+    inVtxoWriteOrder,
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
@@ -882,12 +884,24 @@ export class ContractManager implements IContractManager {
 
     private markSyncOnline(): void {
         this.lastSyncedAt = Date.now();
-        // An unannotatable contract outlives an otherwise-successful sync: the
-        // operator is reachable and every other contract is current, but this
-        // wallet still cannot read that one, and its VTXOs stopped being
-        // refreshed. Reporting it here is what keeps the skip from being
-        // silent — `getSyncState()` is the channel apps already watch.
-        this.syncDegradedReason = this.annotationDegradedReason();
+        this.syncDegradedReason = this.syncGapReason();
+    }
+
+    /**
+     * Why a sync that just succeeded still has not covered everything it should
+     * have. Both reasons outlive the sync that failed to cover them, so neither
+     * is discharged by the next one succeeding — which is the point: a wallet
+     * that reported itself current while the look-ahead band sat behind the
+     * watermark, or while a contract could not be annotated, would be claiming
+     * coverage it never had. `getSyncState()` is the channel apps already watch.
+     */
+    private syncGapReason(): string | undefined {
+        const annotations = this.annotationDegradedReason();
+        const owedRefill = this.lookAheadRefillOwed
+            ? "the look-ahead band is behind the allocation watermark, so a funded address inside it is not being watched yet"
+            : undefined;
+        const reasons = [annotations, owedRefill].filter((r): r is string => r !== undefined);
+        return reasons.length === 0 ? undefined : reasons.join("; ");
     }
 
     /** Contracts a sync could not annotate, as `script → reason`. */
@@ -940,9 +954,23 @@ export class ContractManager implements IContractManager {
 
         // Register the speculative band BEFORE the boot sync, so newly watched
         // window scripts get their full-history catch-up first and the delta
-        // sync below then covers the whole watched set. Retryable failures are
-        // already swallowed inside (degraded state); terminal ones propagate.
-        await this.scheduleLookAheadDrain();
+        // sync below then covers the whole watched set.
+        //
+        // A retryable failure here must not end the wallet's startup: the
+        // wallet can run on what it already holds. But the band is now behind
+        // the allocation watermark, so a funded address inside it would go
+        // unregistered and the balance would under-report — record that as an
+        // owed refill rather than dropping it. `handleContractEvent` pays the
+        // debt on the next event, which is also the proof the transport is back,
+        // and `syncGapReason` keeps `getSyncState()` honest until it is paid.
+        // Terminal failures still propagate: nothing retries those.
+        try {
+            await this.scheduleLookAheadDrain();
+        } catch (err) {
+            if (!isRetryableProviderError(err)) throw err;
+            this.lookAheadRefillOwed = true;
+            this.markSyncDegraded(err);
+        }
 
         // Best-effort boot sync: a retryable indexer/operator failure must not
         // fail construction. Record degraded state and continue with repository
@@ -2180,7 +2208,14 @@ export class ContractManager implements IContractManager {
             if (contract) {
                 await saveVtxosForContract(this.config.walletRepository, contract, addressVtxos);
             } else {
-                await this.config.walletRepository.saveVtxos(address, addressVtxos);
+                // Unreachable today: every `address` came from `contracts`. Guarded
+                // so it cannot become a silent bypass if that mapping is loosened.
+                await inVtxoWriteOrder(this.config.walletRepository, async () =>
+                    this.config.walletRepository.saveVtxos(
+                        address,
+                        applyRecordedSpends(this.config.walletRepository, addressVtxos),
+                    ),
+                );
             }
         }
     }

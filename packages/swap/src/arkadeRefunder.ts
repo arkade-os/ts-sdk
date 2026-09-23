@@ -17,9 +17,9 @@
  */
 import type { IWallet } from "@arkade-os/sdk";
 import {
+    type LockupContractSource,
     findLockupVtxos,
     pushRefundWithoutReceiver,
-    type RefundIndexer,
     type SwapOperator,
 } from "./refund";
 import { RefundNotLocallyPossibleError, senderIdentityForSwapRecord } from "./refundBlocked";
@@ -29,7 +29,14 @@ import type { ArkadeRefundResult, RfqSwap } from "./swapManager";
 
 export interface ArkadeRefunderDeps {
     operator: SwapOperator;
-    indexer: RefundIndexer;
+    /**
+     * The wallet's contract manager. The lockup's row must be registered in
+     * it before this can see the funding — which is what
+     * `RfqSwapManager.ensureRegistered` does per pass, and what
+     * `requestLightningSend` / `requestOnchainSend` do up front. Prefer
+     * `await wallet.getContractManager()`.
+     */
+    contracts: LockupContractSource;
     /** Asked for the descriptor's signer; never asked to mint a key. */
     wallet: IWallet;
     /**
@@ -45,7 +52,7 @@ export interface ArkadeRefunderDeps {
  *
  * @example
  * manager.setCallbacks({
- *     refundArkade: arkadeRefunder({ operator, indexer, wallet, repository }),
+ *     refundArkade: arkadeRefunder({ operator, contracts, wallet, repository }),
  *     saveSwap,
  * });
  */
@@ -70,7 +77,7 @@ export function arkadeRefunder(
 
         // Before the store read: a lockup holding nothing needs no signer, and
         // `null` is the manager's "nothing to do" rather than a failure.
-        const vtxos = await findLockupVtxos(deps.indexer, swap.lockupPkScript);
+        const vtxos = await findLockupVtxos(deps.contracts, swap.lockupPkScript);
         if (vtxos.length === 0) return null;
 
         const record = await deps.repository.getRfqSwap(swap.rfqId);

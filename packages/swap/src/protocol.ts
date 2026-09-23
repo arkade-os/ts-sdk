@@ -139,6 +139,7 @@ export {
     awaitRfqResolution,
     findLockupVtxos,
     isRfqTerminal,
+    type LockupContractSource,
     type LockupFate,
     LockupNeedsRecoveryError,
     type LockupSpend,
@@ -146,7 +147,6 @@ export {
     pushRefundWithoutReceiver,
     readLockupFate,
     refundIfUnresolved,
-    type RefundIndexer,
     type RefundOutcome,
 } from "./refund";
 export {

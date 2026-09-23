@@ -65,20 +65,35 @@ const fakeOperator = (): ArkProvider =>
         finalizeTx: async () => {},
     }) as unknown as ArkProvider;
 
-/** The lockup as the indexer reports it: `getVtxos` is asked twice, once per
- * filter, and only the spendable half answers unless a test says otherwise. */
-const fakeIndexer = (over: { spendable?: unknown[]; recoverable?: unknown[] } = {}) =>
+/** The lockup as the contract manager serves it: the registered row, one
+ * normalized output per entry. The swept half arrives already tagged. */
+const fakeContracts = (over: { unspent?: typeof FUNDED; swept?: typeof FUNDED } = {}) =>
     ({
-        getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
-            vtxos: opts?.spendableOnly
-                ? (over.spendable ?? [])
-                : opts?.recoverableOnly
-                  ? (over.recoverable ?? [])
-                  : [],
-        }),
+        getContractsWithVtxos: async () => [
+            {
+                contract: {
+                    script: "5120",
+                    type: "vhtlc-v2",
+                    params: {},
+                    address: "ark1lockup",
+                    state: "active",
+                    createdAt: 1,
+                },
+                vtxos: [
+                    ...(over.unspent ?? []).map(({ recoverable: _r, ...vtxo }) => ({
+                        ...vtxo,
+                        isSwept: false,
+                    })),
+                    ...(over.swept ?? []).map(({ recoverable: _r, ...vtxo }) => ({
+                        ...vtxo,
+                        isSwept: true,
+                    })),
+                ],
+            },
+        ],
     }) as never;
 
-const FUNDED = [{ txid: "11".repeat(32), vout: 0, value: 60_000 }];
+const FUNDED = [{ txid: "11".repeat(32), vout: 0, value: 60_000, recoverable: false }];
 
 const walletFor = (identity = SENDER) => ({ identity }) as unknown as IWallet;
 
@@ -111,7 +126,7 @@ const record = async (over: Partial<RfqSwapRecord> = {}): Promise<RfqSwapRecord>
 
 const refunderWith = async (
     input: {
-        indexer?: ReturnType<typeof fakeIndexer>;
+        contracts?: ReturnType<typeof fakeContracts>;
         stored?: RfqSwapRecord | null;
         wallet?: IWallet;
     } = {},
@@ -121,7 +136,7 @@ const refunderWith = async (
     if (stored) await repository.saveRfqSwap(stored);
     return arkadeRefunder({
         operator: fakeOperator(),
-        indexer: input.indexer ?? fakeIndexer({ spendable: FUNDED }),
+        contracts: input.contracts ?? fakeContracts({ unspent: FUNDED }),
         wallet: input.wallet ?? walletFor(),
         repository,
     });
@@ -137,7 +152,7 @@ describe("arkadeRefunder", () => {
     });
 
     it("returns null for an empty lockup, which is not a failure", async () => {
-        const refund = await refunderWith({ indexer: fakeIndexer() });
+        const refund = await refunderWith({ contracts: fakeContracts() });
         await expect(refund(swap())).resolves.toBeNull();
     });
 
@@ -161,7 +176,7 @@ describe("arkadeRefunder", () => {
 
     it("lets LockupNeedsRecoveryError through instead of retrying the window away", async () => {
         const refund = await refunderWith({
-            indexer: fakeIndexer({ recoverable: FUNDED }),
+            contracts: fakeContracts({ swept: FUNDED }),
         });
         await expect(refund(swap())).rejects.toThrow(LockupNeedsRecoveryError);
     });

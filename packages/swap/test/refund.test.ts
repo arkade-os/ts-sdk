@@ -22,9 +22,9 @@ import {
     pushRefundWithoutReceiver,
     readLockupFate,
     refundIfUnresolved,
+    type LockupContractSource,
     type LockupSpendIndexer,
     type LockupVtxo,
-    type RefundIndexer,
 } from "../src/refund";
 
 const priv = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
@@ -118,6 +118,54 @@ const fakeIndexer = (vtxos: LockupVtxo[]): LockupSpendIndexer & { scripts: strin
         },
         getVirtualTxs: async () => ({ txs: [] }),
     } as unknown as LockupSpendIndexer & { scripts: string[][] };
+};
+
+/** A lockup output as a test names it, plus the fact flags the manager's
+ * normalized row would carry. `recoverable` maps to `isSwept`. */
+type LockupRow = LockupVtxo & {
+    isUnrolled?: boolean;
+    isSpent?: boolean;
+    spentBy?: string;
+    settledBy?: string;
+};
+
+/** The lockup as the contract manager serves it: the registered row, one
+ * normalized output per entry, canonical facts filled in. Filters are recorded
+ * so a test can assert the script asked for. */
+const fakeContracts = (
+    rows: LockupRow[] = [],
+): LockupContractSource & { asked: (string | undefined)[] } => {
+    const asked: (string | undefined)[] = [];
+    return {
+        asked,
+        getContractsWithVtxos: async (filter?: { script?: string }) => {
+            asked.push(filter?.script);
+            return [
+                {
+                    contract: {
+                        script: filter?.script,
+                        type: "vhtlc-v2",
+                        params: {},
+                        address: "ark1lockup",
+                        state: "active",
+                        createdAt: 1,
+                    },
+                    // `value` is kept as the test's number; the real rows carry
+                    // the same numeric `value` a settled coin does.
+                    vtxos: rows.map((row) => ({
+                        txid: row.txid,
+                        vout: row.vout,
+                        value: row.value,
+                        isSwept: !!row.recoverable,
+                        isSpent: !!row.isSpent,
+                        isUnrolled: !!row.isUnrolled,
+                        spentBy: row.spentBy ?? "",
+                        settledBy: row.settledBy,
+                    })),
+                },
+            ];
+        },
+    } as unknown as LockupContractSource & { asked: (string | undefined)[] };
 };
 
 const statusOf = (state: string): RfqStatus => ({
@@ -349,24 +397,12 @@ describe("pushRefundWithoutReceiver", () => {
 });
 
 describe("findLockupVtxos", () => {
-    it("asks for the lockup script and returns every spendable output", async () => {
+    it("reads the lockup's registered contract and returns every unspent output", async () => {
         const contract = swapScript();
-        const indexer = fakeIndexer(VTXOS);
-        expect(await findLockupVtxos(indexer, contract.pkScript)).toHaveLength(2);
-        expect(indexer.scripts[0]).toEqual([hex.encode(contract.pkScript)]);
+        const contracts = fakeContracts(VTXOS);
+        expect(await findLockupVtxos(contracts, contract.pkScript)).toHaveLength(2);
+        expect(contracts.asked[0]).toBe(hex.encode(contract.pkScript));
     });
-
-    /** Filter-aware, unlike `fakeIndexer`: the two sets are disjoint here, which
-     * is what makes a swept output visible or not. `isUnrolled` is the wire's,
-     * not `LockupVtxo`'s — the point is that it never survives the mapping. */
-    type IndexedVtxo = LockupVtxo & { isUnrolled?: boolean };
-
-    const byFilterIndexer = (spendable: IndexedVtxo[], recoverable: IndexedVtxo[]): RefundIndexer =>
-        ({
-            getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
-                vtxos: opts?.recoverableOnly ? recoverable : opts?.spendableOnly ? spendable : [],
-            }),
-        }) as unknown as RefundIndexer;
 
     it("finds a swept lockup, which a spendable-only read would report as nothing to refund", async () => {
         // A batch expiry sweeps the output out of the spendable set. It is
@@ -378,55 +414,60 @@ describe("findLockupVtxos", () => {
         // `pushRefundWithoutReceiver` enforces rather than discovers.
         const contract = swapScript();
         const swept = { txid: "cc".repeat(32), vout: 1, value: 4_000, recoverable: false };
-        const found = await findLockupVtxos(byFilterIndexer([], [swept]), contract.pkScript);
+        const found = await findLockupVtxos(
+            fakeContracts([
+                { txid: swept.txid, vout: swept.vout, value: swept.value, recoverable: true },
+            ]),
+            contract.pkScript,
+        );
         expect(found).toEqual([{ ...swept, recoverable: true }]);
     });
 
     it("merges both sets and marks which outputs were swept", async () => {
         const contract = swapScript();
         const live = { txid: "aa".repeat(32), vout: 0, value: 1_000, recoverable: false };
-        const swept = { txid: "bb".repeat(32), vout: 2, value: 2_000, recoverable: false };
-        const found = await findLockupVtxos(byFilterIndexer([live], [swept]), contract.pkScript);
-        expect(found).toEqual([
-            { ...live, recoverable: false },
-            { ...swept, recoverable: true },
-        ]);
+        const swept = { txid: "bb".repeat(32), vout: 2, value: 2_000, recoverable: true };
+        const found = await findLockupVtxos(fakeContracts([live, swept]), contract.pkScript);
+        expect(found).toEqual([live, swept]);
     });
 
-    it("drops an unrolled output the indexer still lists as spendable", async () => {
-        // arkd is not depended on to exclude a unilateral exit from
-        // `spendableOnly`, and `LockupVtxo` carries no flag to pass one along —
-        // so anything that reached the mapping would be indistinguishable from
-        // the live output beside it and would be signed into a refund that no
-        // offchain leaf can land. The live sibling proves the drop is the
-        // output's own, not the whole response being discarded.
+    it("drops an unrolled output the manager still serves", async () => {
+        // A unilaterally exited output lives onchain behind its CSV, and
+        // `LockupVtxo` carries no flag to pass one along — anything that
+        // reached the mapping would be indistinguishable from the live output
+        // beside it and would be signed into a refund that no offchain leaf can
+        // land. The live sibling proves the drop is the output's own, not the
+        // whole response being discarded.
         const script = swapScript();
         const live = { txid: "ee".repeat(32), vout: 0, value: 3_000, recoverable: false };
         const exited = {
             txid: "ef".repeat(32),
             vout: 1,
             value: 6_000,
-            recoverable: false,
             isUnrolled: true,
+            recoverable: false,
         };
-        const found = await findLockupVtxos(byFilterIndexer([live, exited], []), script.pkScript);
+        const found = await findLockupVtxos(fakeContracts([live, exited]), script.pkScript);
         expect(found).toEqual([live]);
     });
 
-    it("drops an unrolled output from the recoverable half too", async () => {
-        // Both queries feed one loop, so the exclusion has to hold on the side
-        // whose outputs are already un-spendable for a different reason.
+    it("drops a terminally spent output beside its live sibling", async () => {
+        // A consumed output cannot back any refund push, and `hasTerminalSpend`
+        // unions every spend fact the manager's normalized row carries — so the
+        // fake fills all three in and one alone must not drop out.
         const script = swapScript();
-        const swept = { txid: "f0".repeat(32), vout: 0, value: 2_500, recoverable: false };
-        const exited = {
+        const live = { txid: "f2".repeat(32), vout: 0, value: 2_500, recoverable: false };
+        const consumed = {
             txid: "f1".repeat(32),
             vout: 3,
             value: 9_000,
+            isSpent: true,
+            spentBy: "77".repeat(32),
+            settledBy: "88".repeat(32),
             recoverable: false,
-            isUnrolled: true,
         };
-        const found = await findLockupVtxos(byFilterIndexer([], [swept, exited]), script.pkScript);
-        expect(found).toEqual([{ ...swept, recoverable: true }]);
+        const found = await findLockupVtxos(fakeContracts([live, consumed]), script.pkScript);
+        expect(found).toEqual([{ ...live, recoverable: false }]);
     });
 
     it("counts an output appearing in both sets exactly once", async () => {
@@ -435,7 +476,7 @@ describe("findLockupVtxos", () => {
         // cannot be signed.
         const contract = swapScript();
         const both = { txid: "dd".repeat(32), vout: 0, value: 7_000, recoverable: false };
-        const found = await findLockupVtxos(byFilterIndexer([both], [both]), contract.pkScript);
+        const found = await findLockupVtxos(fakeContracts([both, both]), contract.pkScript);
         expect(found).toHaveLength(1);
         expect(found[0]!.recoverable).toBe(false);
     });
@@ -479,6 +520,7 @@ describe("refundIfUnresolved", () => {
             const result = await refundIfUnresolved(
                 fakeTransport([state]),
                 operator,
+                fakeContracts(VTXOS),
                 fakeIndexer(VTXOS),
                 { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
             );
@@ -497,6 +539,7 @@ describe("refundIfUnresolved", () => {
             const result = await refundIfUnresolved(
                 fakeTransport([state]),
                 operator,
+                fakeContracts(VTXOS),
                 fakeIndexer(VTXOS),
                 { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
             );
@@ -514,16 +557,28 @@ describe("refundIfUnresolved", () => {
         const operator = fakeOperator();
         const swept = { txid: "55".repeat(32), vout: 3, value: 8_000 };
         const indexer = {
-            getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
-                vtxos: opts?.recoverableOnly ? [swept] : [],
+            getVtxos: async (opts?: {
+                spendableOnly?: boolean;
+                recoverableOnly?: boolean;
+                renewableOnly?: boolean;
+            }) => ({
+                vtxos: opts?.renewableOnly ? [{ ...swept, isSwept: true }] : [],
             }),
             getVirtualTxs: async () => ({ txs: [] }),
         } as unknown as LockupSpendIndexer;
 
-        const result = await refundIfUnresolved(fakeTransport(["quoted"]), operator, indexer, {
-            ...baseInput(),
-            now: () => REFUND_LOCKTIME + 1,
-        });
+        const result = await refundIfUnresolved(
+            fakeTransport(["quoted"]),
+            operator,
+            // The manager's row carries the swept fact, the wire vtxo the fate
+            // read sees does not — that split is what says "still open" to the
+            // fate read and "recoverable" to the push.
+            fakeContracts([
+                { txid: swept.txid, vout: swept.vout, value: swept.value, recoverable: true },
+            ]),
+            indexer,
+            { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
+        );
 
         expect(result.outcome).toBe("needs_recovery");
         if (result.outcome === "needs_recovery") {
@@ -539,6 +594,7 @@ describe("refundIfUnresolved", () => {
         const result = await refundIfUnresolved(
             fakeTransport(["quoted"]),
             operator,
+            fakeContracts(VTXOS),
             fakeIndexer(VTXOS),
             { ...baseInput(), now: () => clock++ },
         );
@@ -555,6 +611,7 @@ describe("refundIfUnresolved", () => {
         const result = await refundIfUnresolved(
             fakeTransport(["quoted"]),
             operator,
+            fakeContracts(VTXOS),
             fakeIndexer(VTXOS),
             { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
         );
@@ -565,11 +622,17 @@ describe("refundIfUnresolved", () => {
     it("rethrows the server's refusal once the attempt window closes", async () => {
         const operator = fakeOperator({ failSubmit: () => new Error("FORFEIT_CLOSURE_LOCKED") });
         await expect(
-            refundIfUnresolved(fakeTransport(["quoted"]), operator, fakeIndexer(VTXOS), {
-                ...baseInput(),
-                now: () => REFUND_LOCKTIME + 1,
-                attemptDeadline: REFUND_LOCKTIME,
-            }),
+            refundIfUnresolved(
+                fakeTransport(["quoted"]),
+                operator,
+                fakeContracts(VTXOS),
+                fakeIndexer(VTXOS),
+                {
+                    ...baseInput(),
+                    now: () => REFUND_LOCKTIME + 1,
+                    attemptDeadline: REFUND_LOCKTIME,
+                },
+            ),
         ).rejects.toThrow(/FORFEIT_CLOSURE_LOCKED/);
     });
 
@@ -587,7 +650,13 @@ describe("refundIfUnresolved", () => {
         return { operator, provider, pushes: () => pushes };
     };
 
-    const EXITED = { txid: "66".repeat(32), vout: 0, value: 8_000, isUnrolled: true };
+    const EXITED = {
+        txid: "66".repeat(32),
+        vout: 0,
+        value: 8_000,
+        isUnrolled: true,
+        recoverable: false,
+    };
 
     it("reports an exited lockup instead of pushing a refund that cannot land", async () => {
         // The output is unspent, but onchain behind its CSV: no offchain leaf
@@ -599,10 +668,13 @@ describe("refundIfUnresolved", () => {
             getVirtualTxs: async () => ({ txs: [] }),
         } as unknown as LockupSpendIndexer;
 
-        const result = await refundIfUnresolved(fakeTransport(["quoted"]), provider, indexer, {
-            ...baseInput(),
-            now: () => REFUND_LOCKTIME + 1,
-        });
+        const result = await refundIfUnresolved(
+            fakeTransport(["quoted"]),
+            provider,
+            fakeContracts([]),
+            indexer,
+            { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
+        );
 
         expect(result.outcome).toBe("exited");
         if (result.outcome === "exited") {
@@ -623,10 +695,13 @@ describe("refundIfUnresolved", () => {
             getVirtualTxs: async () => ({ txs: [] }),
         } as unknown as LockupSpendIndexer;
 
-        const result = await refundIfUnresolved(fakeTransport(["quoted"]), provider, indexer, {
-            ...baseInput(),
-            now: () => REFUND_LOCKTIME + 1,
-        });
+        const result = await refundIfUnresolved(
+            fakeTransport(["quoted"]),
+            provider,
+            fakeContracts([EXITED]),
+            indexer,
+            { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
+        );
 
         expect(result.outcome).toBe("nothing_to_refund");
         expect(pushes()).toBe(0);
@@ -640,15 +715,18 @@ describe("refundIfUnresolved", () => {
         const { operator, provider, pushes } = watchedOperator();
         const indexer = {
             getVtxos: async (opts?: { spendableOnly?: boolean }) => ({
-                vtxos: opts?.spendableOnly ? [EXITED] : [],
+                vtxos: [],
             }),
             getVirtualTxs: async () => ({ txs: [] }),
         } as unknown as LockupSpendIndexer;
 
-        const result = await refundIfUnresolved(fakeTransport(["quoted"]), provider, indexer, {
-            ...baseInput(),
-            now: () => REFUND_LOCKTIME + 1,
-        });
+        const result = await refundIfUnresolved(
+            fakeTransport(["quoted"]),
+            provider,
+            fakeContracts([EXITED]),
+            indexer,
+            { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
+        );
 
         expect(result.outcome).toBe("nothing_to_refund");
         expect(pushes()).toBe(0);
@@ -660,6 +738,7 @@ describe("refundIfUnresolved", () => {
         const result = await refundIfUnresolved(
             fakeTransport(["stuck"]),
             operator,
+            fakeContracts([]),
             fakeIndexer([]),
             {
                 ...baseInput(),

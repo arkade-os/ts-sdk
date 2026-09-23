@@ -40,6 +40,7 @@ import { arkadeRefunder } from "../arkadeRefunder";
 import {
     LockupNeedsRecoveryError,
     findLockupVtxos,
+    type LockupContractSource,
     type LockupSpendIndexer,
     type LockupVtxo,
     type SwapOperator,
@@ -520,10 +521,13 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
      * way config is already snapshotted takes this drive's onchain support and
      * its restore with it, silently. The two move together or not at all.
      */
-    const managerDeps: RfqSwapManagerDeps = { indexer };
+    // `contracts` is required by the type but filled by `contractsOf()`, which
+    // every path that can start a pass awaits first.
+    const managerDeps: Omit<RfqSwapManagerDeps, "contracts"> &
+        Partial<Pick<RfqSwapManagerDeps, "contracts">> = { indexer };
     if (config.contracts) managerDeps.contracts = config.contracts;
 
-    const manager = new RfqSwapManager(managerDeps, {
+    const manager = new RfqSwapManager(managerDeps as RfqSwapManagerDeps, {
         ...(config.pollIntervalMs === undefined ? {} : { pollIntervalMs: config.pollIntervalMs }),
         now,
     });
@@ -740,7 +744,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         if (mode === "readonly") return;
         const push = arkadeRefunder({
             operator,
-            indexer,
+            contracts: lockupSource,
             wallet,
             repository: corridorStore(),
         });
@@ -882,6 +886,11 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
     const contractsOf = async (): Promise<SwapContractRegistry> =>
         (managerDeps.contracts ??= await wallet.getContractManager());
+
+    const lockupSource: LockupContractSource = {
+        getContractsWithVtxos: async (filter) =>
+            (await contractsOf()).getContractsWithVtxos(filter),
+    };
 
     const registerCorridorSwap = async (record: CorridorSwapRecord): Promise<void> => {
         // `readonly` discovers nothing new: it reports what the restore-read
@@ -1067,7 +1076,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     };
 
     const recoverableAt = async (script: Uint8Array): Promise<LockupVtxo[]> =>
-        (await findLockupVtxos(indexer, script)).filter((vtxo) => vtxo.recoverable);
+        (await findLockupVtxos(lockupSource, script)).filter((vtxo) => vtxo.recoverable);
 
     const recover = async (id: QuoteId): Promise<RecoveryResult> => {
         if (disposed) throw new ClientDisposed("recover");
