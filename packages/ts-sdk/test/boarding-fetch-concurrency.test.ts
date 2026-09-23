@@ -1,6 +1,10 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 import { DefaultVtxo } from "../src/script/default";
-import { installRestoreHarness, makeStaticWalletForTest } from "./helpers/restoreWallet";
+import {
+    installRestoreHarness,
+    makeStaticWalletForTest,
+    teardownRestoreHarness,
+} from "./helpers/restoreWallet";
 
 /** Spin until `predicate` holds, so a test never races a scheduler. */
 const until = async (predicate: () => boolean): Promise<void> => {
@@ -11,6 +15,7 @@ const until = async (predicate: () => boolean): Promise<void> => {
 
 describe("boarding fetch fans out across addresses", () => {
     beforeEach(installRestoreHarness);
+    afterEach(teardownRestoreHarness);
 
     it("starts every address's fetch before any of them resolves", async () => {
         const handle = await makeStaticWalletForTest();
@@ -29,24 +34,27 @@ describe("boarding fetch fans out across addresses", () => {
         ];
 
         const started: string[] = [];
-        const gates: Array<() => void> = [];
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => (release = resolve));
         (wallet as any).onchainProvider = {
             getCoins: async (address: string) => {
                 started.push(address);
-                await new Promise<void>((resolve) => gates.push(resolve));
+                await released;
                 return [];
             },
         };
+        onTestFinished(async () => {
+            release(); // a fetch still parked would hang dispose()
+            await wallet.dispose();
+        });
 
         const pending = wallet.getBoardingUtxos();
         // The second address must be in flight while the first is parked; a
         // sequential loop would still be showing one.
-        await until(() => started.length === 2);
-        expect(started).toHaveLength(2);
+        await until(() => new Set(started).size === 2); // by address: background polls fetch too
+        expect(new Set(started).size).toBe(2);
 
-        for (const release of gates) release();
+        release();
         await pending;
-
-        await wallet.dispose();
     });
 });
