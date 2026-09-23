@@ -439,8 +439,9 @@ describe("the curated root boundary", () => {
     it("keeps ./advanced a superset of the root's client vocabulary", () => {
         // One specifier per flow: an advanced consumer imports the drive and
         // the verbs from the same subpath.
+        const declaredIn = moduleOf(ROOT_ENTRY);
         const missing = [...root].filter(
-            (n) => !advanced.has(n) && moduleOf(ROOT_ENTRY).get(n)?.startsWith("src/client/"),
+            (n) => !advanced.has(n) && declaredIn.get(n)?.startsWith("src/client/"),
         );
         expect(missing).toEqual([]);
     });
