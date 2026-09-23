@@ -131,6 +131,11 @@ export interface PreparedEscrow {
     exit: bigint;
 }
 
+/** Operator unilateral exit delay. Public arkd requires the escrow exit to be at least this. */
+export async function minimumExitDelay(demo: DemoNetwork): Promise<bigint> {
+    return (await new RestArkProvider(demo.arkUrl).getInfo()).unilateralExitDelay;
+}
+
 export async function prepareEscrow(input: {
     demo: DemoNetwork;
     buyerAddress: string;
@@ -143,7 +148,7 @@ export async function prepareEscrow(input: {
     const ark = new RestArkProvider(input.demo.arkUrl);
     const indexer = new RestIndexerProvider(input.demo.arkUrl);
     const emulator = new RestEmulatorProvider(input.demo.emulatorUrl);
-    const [client, emulatorInfo, message] = await Promise.all([
+    const [client, emulatorInfo, message, info] = await Promise.all([
         Arkade.connect({
             arkade: ark,
             indexer,
@@ -156,7 +161,18 @@ export async function prepareEscrow(input: {
             return response.json() as Promise<{ version?: string }>;
         }),
         releaseMessage(),
+        ark.getInfo(),
     ]);
+    // Public arkd rejects a block CSV on an exit leaf, and a seconds delay
+    // shorter than the operator's own unilateral exit.
+    if (input.exit % 512n !== 0n) {
+        throw new Error("unilateral delay must be a multiple of 512 seconds");
+    }
+    if (input.exit < info.unilateralExitDelay) {
+        throw new Error(
+            `unilateral delay must be at least ${info.unilateralExitDelay} seconds on this operator`,
+        );
+    }
     const buyer = payoutFromAddress(input.buyerAddress, input.demo.network.hrp, client.serverKey);
     const seller = payoutFromAddress(input.sellerAddress, input.demo.network.hrp, client.serverKey);
     const [buyerPk, sellerPk, oraclePk, messageHash] = await Promise.all([
@@ -227,7 +243,7 @@ export async function spendUnilateral(
     sellerScript: Uint8Array,
 ): Promise<string> {
     const outputs = unilateralOutputs(BigInt(coin.value), sellerScript);
-    const sequence = timelockToSequence({ type: "blocks", value: prepared.exit });
+    const sequence = timelockToSequence({ type: "seconds", value: prepared.exit });
     const built = await prepared.contract.functions.unilateral().from(coin).to(outputs).build();
     setSequence(built.arkTx, sequence);
     for (const checkpoint of built.checkpoints) setSequence(checkpoint, sequence);

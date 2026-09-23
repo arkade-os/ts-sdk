@@ -1,6 +1,7 @@
 import { hex } from "@scure/base";
 
 import { ArkadeProgramScript } from "../../../packages/ts-sdk/src/arkade/program.ts";
+import { CSVMultisigTapscript } from "../../../packages/ts-sdk/src/script/tapscript.ts";
 import escrowProgram from "../escrow.program.json";
 import type { Program } from "../../../packages/ts-sdk/src/arkade/program.ts";
 
@@ -21,7 +22,7 @@ const compiled = new ArkadeProgramScript(
         partyBScript: key(6),
         amount: 10_000n,
         timeoutAt: 1_700_000_000n,
-        exit: 0n,
+        exit: 2048n,
         server: key(7),
     },
     { serverKey: key(7), emulatorKey },
@@ -43,7 +44,13 @@ const unilateralHex = hex.encode(unilateral);
 if (!cancelHex.includes("dc")) throw new Error("cancel is missing CHECKTIME");
 if (!completeHex.includes("cc")) throw new Error("complete is missing CHECKSIGFROMSTACK");
 if (!completeHex.includes("a8")) throw new Error("complete is missing SHA256");
-if (!unilateralHex.includes("b2")) throw new Error("unilateral is missing CHECKSEQUENCEVERIFY");
+if (!unilateralHex.startsWith("03040040b2")) {
+    throw new Error(`unilateral CSV is not 2048 seconds: ${unilateralHex}`);
+}
+const exitLock = CSVMultisigTapscript.decode(unilateral).params.timelock;
+if (exitLock.type !== "seconds" || exitLock.value !== 2048n) {
+    throw new Error(`unilateral decoded as ${exitLock.type} ${exitLock.value}`);
+}
 if (!unilateralHex.includes(hex.encode(key(1))) || !unilateralHex.includes(hex.encode(key(2)))) {
     throw new Error("unilateral is missing a party key");
 }

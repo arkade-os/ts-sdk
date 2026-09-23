@@ -176,7 +176,7 @@
             "tapscript": {
                 "signers": ["$partyAPk", "$partyBPk"],
                 "csv": {
-                    "type": "blocks",
+                    "type": "seconds",
                     "value": "$exit"
                 }
             }

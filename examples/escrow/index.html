@@ -120,9 +120,13 @@
                 in the past can be spent now.
             </p>
             <label>
-                Unilateral delay (blocks)
-                <input id="exit" type="number" min="0" step="1" required />
+                Unilateral delay (seconds)
+                <input id="exit" type="number" min="512" step="512" required />
             </label>
+            <p class="hint">
+                The two exit keys can spend after this. Public operators require a
+                seconds delay, a multiple of 512, at least their unilateral exit delay.
+            </p>
             <button id="prepare" type="submit">Create escrow</button>
         </form>
 

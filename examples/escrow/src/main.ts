@@ -5,6 +5,7 @@ import {
     DEMO_NETWORKS,
     loadKeys,
     payoutFromAddress,
+    minimumExitDelay,
     prepareEscrow,
     RELEASE_LABEL,
     releaseMessage,
@@ -54,7 +55,8 @@ networkSelect.replaceChildren(
 buyerInput.value = localStorage.getItem("arkade-escrow-buyer") ?? "";
 sellerInput.value = localStorage.getItem("arkade-escrow-seller") ?? "";
 amountInput.value = localStorage.getItem("arkade-escrow-amount") ?? "10000";
-exitInput.value = localStorage.getItem("arkade-escrow-exit") ?? "0";
+const storedExit = localStorage.getItem("arkade-escrow-exit");
+exitInput.value = !storedExit || storedExit === "0" ? "2048" : storedExit;
 timeoutInput.value = localStorage.getItem("arkade-escrow-timeout") ?? localInput(nowSeconds() - 60);
 networkSelect.value = localStorage.getItem("arkade-escrow-network") ?? "mutinynet";
 updateWalletLink();
@@ -63,7 +65,9 @@ void showKeys();
 networkSelect.addEventListener("change", () => {
     updateWalletLink();
     markStale();
+    void raiseExitToOperator();
 });
+void raiseExitToOperator();
 for (const input of [buyerInput, sellerInput, amountInput, timeoutInput, exitInput]) {
     input.addEventListener("input", markStale);
 }
@@ -227,6 +231,16 @@ function readAmount(): bigint {
     const amount = BigInt(amountInput.value);
     if (amount <= 0n) throw new Error("amount must be positive");
     return amount;
+}
+
+async function raiseExitToOperator(): Promise<void> {
+    try {
+        const minimum = await minimumExitDelay(selectedNetwork());
+        if (BigInt(exitInput.value || "0") < minimum) exitInput.value = minimum.toString();
+    } catch {
+        // Create reports the operator minimum when this lookup fails.
+    }
+    markStale();
 }
 
 function readExit(): bigint {
