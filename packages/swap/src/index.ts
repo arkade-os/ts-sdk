@@ -275,11 +275,11 @@ export {
     readLockupFate,
     refundIfUnresolved,
     type LockupFate,
+    type LockupContractSource,
     type LockupSpend,
     type LockupSpendIndexer,
     type LockupVtxo,
     type RefundArkProvider,
-    type RefundIndexer,
     type RefundOutcome,
 } from "./refund";
 export { arkadeRefunder, type ArkadeRefunderDeps } from "./arkadeRefunder";
