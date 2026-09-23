@@ -313,7 +313,6 @@ const assertExistingRequest = (
  * that reservation, and taking its CAS would make its owner skip `wallet.send`.
  */
 const resolveExistingFunding = (existing: AssetSwap): AssetSwap => {
-    // also true for legacy pre-v5 rows, which are funded on a txid alone
     if (hasBoundFunding(existing)) return existing;
     const state = existing.fundingIntent?.state;
     if (state === "submitted") {

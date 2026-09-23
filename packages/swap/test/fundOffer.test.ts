@@ -778,6 +778,31 @@ describe("fundOffer", () => {
         expect(retryWallet.send).not.toHaveBeenCalled();
     });
 
+    it("refuses a same-id retry on a row fundOffer did not create", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const derived = offer();
+        const funded = await fundOffer(walletFor([coin("11", 20_000)]), "https://ark.example/", {
+            repository,
+            offerHex: derived.offerHex,
+            deposit: { amount: 10_000n },
+            id: "funded-operation",
+        });
+        const foreign = { ...funded, id: "foreign-operation", fundingIntent: undefined };
+        await repository.saveSwap(foreign);
+        const retry = walletFor([]);
+
+        await expect(
+            fundOffer(retry, "https://ark.example/", {
+                repository,
+                offerHex: derived.offerHex,
+                deposit: { amount: 10_000n },
+                id: "foreign-operation",
+            }),
+        ).rejects.toThrow("conflicts with its stored intent");
+        expect(retry.send).not.toHaveBeenCalled();
+        expect(await repository.getSwap("foreign-operation")).toEqual(foreign);
+    });
+
     it("marks issuance at the record's own createdAt so the funded script can retire", async () => {
         // a later value per call: what the Arkade.connect round trip amounts to
         let clock = NOW * 1000;

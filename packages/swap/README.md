@@ -301,7 +301,9 @@ prove the operation unsent, so its record is abandoned and its inputs are select
 distinguishable, so the reservation stands there.
 
 Passing an `id` makes the call idempotent, and only a **funded** operation is returned: a row
-bound to a funding txid, or a legacy pre-v5 row. Anything else raises rather than reporting
+bound to a funding txid. A row `fundOffer` did not create, which has no stored funding intent (a
+legacy manually funded offer, for one), is refused as a conflicting intent: its id belongs to
+another operation. Anything else raises rather than reporting
 unfunded output as funded — `FundingOutcomeUnknownError` for a `submitted` row, and
 `FundingNotCompletedError` (carrying `state`) for `prepared` or `abandoned`. A retry never
 abandons or advances a `prepared` row: it did not make that reservation, and taking it could
