@@ -18,6 +18,7 @@ import {
 } from "../src";
 import { IndexedDbAssetSwapRepository } from "../src/indexedDbRepository";
 import { encodeOffer, OFFER_PACKET_TYPE, offerVtxoScript, type Offer } from "../src/offer";
+import { retireOfferContract } from "../src/coverage";
 
 const SERVER_KEY_HEX = "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
 const MAKER_KEY_HEX = "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1";
@@ -712,6 +713,34 @@ describe("fundOffer", () => {
         ).resolves.toEqual(first);
         expect(retryWallet.getSpendableVtxos).not.toHaveBeenCalled();
         expect(retryWallet.send).not.toHaveBeenCalled();
+    });
+
+    it("marks issuance at the record's own createdAt so the funded script can retire", async () => {
+        // Every `Date.now()` here returns a later value, which is what a real
+        // `Arkade.connect` round trip between the two reads amounts to.
+        let clock = NOW * 1000;
+        vi.spyOn(Date, "now").mockImplementation(() => (clock += 1000));
+        const repository = new InMemoryAssetSwapRepository();
+        const wallet = walletFor([coin("11", 20_000)]);
+        const derived = offer();
+
+        const swap = await fundOffer(wallet, "https://ark.example/", {
+            repository,
+            offerHex: derived.offerHex,
+            deposit: { amount: 10_000n },
+            id: "issued-operation",
+        });
+        contractManager.setContractWatchState.mockClear();
+        await retireOfferContract(
+            contractManager,
+            [{ ...swap, status: "fulfilled" }],
+            swap.swapPkScript,
+        );
+
+        expect(contractManager.setContractWatchState).toHaveBeenCalledWith(
+            swap.swapPkScript,
+            "retained",
+        );
     });
 
     it("does not send when insertion or the prepared-to-submitted CAS fails", async () => {

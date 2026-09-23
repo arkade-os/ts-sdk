@@ -434,6 +434,10 @@ export async function fundOffer(
         binding,
         serverPubkey,
         script.pkScript,
+        // This row IS the deposit landing, so the mark must not postdate it: a
+        // default `Date.now()` here is read after `createdAt` and pins the
+        // script watched for the life of the process.
+        { issued: prepared.createdAt },
     );
     assertDeadline(validUntil);
     if (!(await repository.insertPreparedSwap(prepared))) {
