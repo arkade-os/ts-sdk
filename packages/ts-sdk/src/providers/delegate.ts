@@ -5,6 +5,7 @@ import { rateGate } from "./rateGate";
 
 /**
  * Delegate identity and fee information returned by `getDelegateInfo`.
+ * @deprecated The pre-signed delegator protocol is retained for existing integrations.
  */
 export interface DelegateInfo {
     /** Delegate public key. */
@@ -19,6 +20,7 @@ export interface DelegateInfo {
 
 /**
  * Optional delegate behavior flags.
+ * @deprecated Used only by the pre-signed delegator protocol.
  */
 export interface DelegateOptions {
     /**
@@ -33,6 +35,7 @@ export interface DelegateOptions {
 
 /**
  * Provider interface for remote delegation service.
+ * @deprecated Use {@link import("./delegatee").DelegateeProvider} for covenant-based delegation.
  */
 export interface DelegateProvider {
     /**
@@ -61,6 +64,7 @@ export type DelegatorProvider = DelegateProvider;
 
 /**
  * REST-based delegate provider implementation.
+ * @deprecated Use {@link import("./delegatee").RestDelegateeProvider} for covenant-based delegation.
  * @example
  * ```typescript
  * const provider = new RestDelegateProvider('https://delegate.example.com');
@@ -146,7 +150,7 @@ export class RestDelegateProvider implements DelegateProvider {
     }
 }
 
-/** @deprecated alias for @see RestDelegateProvider */
+/** @deprecated Legacy pre-signed delegator alias; use {@link import("./delegatee").RestDelegateeProvider}. */
 export const RestDelegatorProvider = RestDelegateProvider;
 export type RestDelegatorProvider = RestDelegateProvider;
 

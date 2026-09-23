@@ -1,5 +1,6 @@
 import { hex } from "@scure/base";
 import { DelegateVtxo } from "../../script/delegate";
+import { isDelegateeVtxoOptions, type DelegateeVtxoOptions } from "../../script/delegatee";
 import { RelativeTimelock } from "../../script/tapscript";
 import { Contract, ContractHandler, Discoverable, PathContext, PathSelection } from "../types";
 import type { CandidateDeps, DiscoveredContract, DiscoveryDeps } from "../types";
@@ -19,12 +20,14 @@ import { timelockToSequence } from "../../utils/timelock";
 /**
  * Typed parameters for DelegateVtxo contracts.
  */
-export interface DelegateContractParams {
+export interface LegacyDelegateContractParams {
     pubKey: Uint8Array;
     serverPubKey: Uint8Array;
     delegatePubKey: Uint8Array;
     csvTimelock: RelativeTimelock;
 }
+
+export type DelegateContractParams = LegacyDelegateContractParams | DelegateeVtxoOptions;
 
 /**
  * Handler for delegate wallet virtual outputs.
@@ -44,15 +47,33 @@ export const DelegateContractHandler: ContractHandler<DelegateContractParams, De
     },
 
     serializeParams(params: DelegateContractParams): Record<string, string> {
-        return {
+        const base = {
             pubKey: hex.encode(params.pubKey),
             serverPubKey: hex.encode(params.serverPubKey),
             delegatePubKey: hex.encode(params.delegatePubKey),
             csvTimelock: timelockToSequence(params.csvTimelock).toString(),
         };
+        if (!isDelegateeVtxoOptions(params)) return base;
+        return {
+            ...base,
+            emulatorPubKey: hex.encode(params.emulatorPubKey),
+            renewalWindow: params.renewalWindow.toString(),
+            maxFee: params.maxFee.toString(),
+        };
     },
 
     deserializeParams(params: Record<string, string>): DelegateContractParams {
+        if (params.emulatorPubKey !== undefined) {
+            return {
+                pubKey: extractPubKeyBytes(params.pubKey),
+                serverPubKey: extractPubKeyBytes(params.serverPubKey),
+                delegatePubKey: decodeRawPubKey(params.delegatePubKey),
+                emulatorPubKey: decodeRawPubKey(params.emulatorPubKey),
+                renewalWindow: Number(params.renewalWindow),
+                maxFee: Number(params.maxFee),
+                csvTimelock: deserializeCsvTimelock(params.csvTimelock),
+            };
+        }
         return {
             pubKey: extractPubKeyBytes(params.pubKey),
             serverPubKey: extractPubKeyBytes(params.serverPubKey),
@@ -109,6 +130,25 @@ function delegateCandidatesAt(
     descriptor: string,
     deps: CandidateDeps,
 ): DiscoveredContract[] {
+    if (deps.delegatee) {
+        return buildSignerTimelockCandidates(
+            descriptor,
+            deps,
+            (opts) => new DelegateVtxo.Script({ ...opts, ...deps.delegatee! }),
+        ).map((c) => {
+            const script = new DelegateVtxo.Script({
+                ...c,
+                ...deps.delegatee!,
+            });
+            return {
+                type: "delegate",
+                params: DelegateContractHandler.serializeParams(script.options),
+                script: c.scriptHex,
+                address: script.address(deps.network.hrp, c.serverPubKey).encode(),
+            };
+        });
+    }
+
     const delegatePubKey = deps.delegatePubKey;
     if (!delegatePubKey) return [];
 
@@ -127,6 +167,17 @@ function delegateCandidatesAt(
         script: c.scriptHex,
         address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
     }));
+}
+
+function decodeRawPubKey(value: string): Uint8Array {
+    const key = hex.decode(value);
+    if (
+        (key.length !== 32 && key.length !== 33) ||
+        (key.length === 33 && key[0] !== 0x02 && key[0] !== 0x03)
+    ) {
+        throw new Error("invalid delegatee public key");
+    }
+    return key;
 }
 
 function discoverDelegateRange(

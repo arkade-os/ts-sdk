@@ -38,6 +38,7 @@ import {
     WalletBalance,
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
+import { DelegateeInfo } from "../../providers/delegatee";
 import {
     fetchVtxoCreatedAtByTxid,
     hasTerminalSpend,
@@ -577,6 +578,31 @@ export type ResponseGetDelegateInfo = ResponseEnvelope & {
     payload: { info: DelegateInfo };
 };
 
+export type RequestGetDelegateeInfo = RequestEnvelope & {
+    type: "GET_DELEGATEE_INFO";
+};
+export type ResponseGetDelegateeInfo = ResponseEnvelope & {
+    type: "DELEGATEE_INFO";
+    payload: { info: DelegateeInfo };
+};
+
+export type RequestRevokeDelegatee = RequestEnvelope & {
+    type: "REVOKE_DELEGATEE";
+    payload: { address: string; timestamp?: number };
+};
+export type ResponseRevokeDelegatee = ResponseEnvelope & {
+    type: "REVOKE_DELEGATEE_SUCCESS";
+};
+
+export type RequestSendSelectedVtxosToSelf = RequestEnvelope & {
+    type: "SEND_SELECTED_VTXOS_TO_SELF";
+    payload: { vtxoOutpoints: { txid: string; vout: number }[] };
+};
+export type ResponseSendSelectedVtxosToSelf = ResponseEnvelope & {
+    type: "SEND_SELECTED_VTXOS_TO_SELF_SUCCESS";
+    payload: { txid: string };
+};
+
 // VtxoManager operations
 export type RequestRecoverVtxos = RequestEnvelope & {
     type: "RECOVER_VTXOS";
@@ -841,6 +867,9 @@ export type WalletUpdaterRequest =
     | RequestBurn
     | RequestDelegate
     | RequestGetDelegateInfo
+    | RequestGetDelegateeInfo
+    | RequestRevokeDelegatee
+    | RequestSendSelectedVtxosToSelf
     | RequestRecoverVtxos
     | RequestGetRecoverableBalance
     | RequestGetExpiringVtxos
@@ -898,6 +927,9 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseBurn
         | ResponseDelegate
         | ResponseGetDelegateInfo
+        | ResponseGetDelegateeInfo
+        | ResponseRevokeDelegatee
+        | ResponseSendSelectedVtxosToSelf
         | ResponseRecoverVtxos
         | ResponseRecoverVtxosEvent
         | ResponseGetRecoverableBalance
@@ -1541,6 +1573,46 @@ export class WalletMessageHandler
                         id,
                         type: "DELEGATE_INFO",
                         payload: { info },
+                    });
+                }
+                case "GET_DELEGATEE_INFO": {
+                    const wallet = this.requireWallet();
+                    const delegateeManager = await wallet.getDelegateeManager();
+                    if (!delegateeManager) {
+                        throw new DelegateNotConfiguredError();
+                    }
+                    const info = await delegateeManager.getInfo();
+                    return this.tagged({
+                        id,
+                        type: "DELEGATEE_INFO",
+                        payload: { info },
+                    });
+                }
+                case "REVOKE_DELEGATEE": {
+                    const wallet = this.requireWallet();
+                    const delegateeManager = await wallet.getDelegateeManager();
+                    if (!delegateeManager) {
+                        throw new DelegateNotConfiguredError();
+                    }
+                    const { address, timestamp } = (message as RequestRevokeDelegatee).payload;
+                    await delegateeManager.revoke(address, timestamp);
+                    return this.tagged({ id, type: "REVOKE_DELEGATEE_SUCCESS" });
+                }
+                case "SEND_SELECTED_VTXOS_TO_SELF": {
+                    const wallet = this.requireWallet();
+                    const { vtxoOutpoints } = (message as RequestSendSelectedVtxosToSelf).payload;
+                    const wanted = new Set(vtxoOutpoints.map((o) => `${o.txid}:${o.vout}`));
+                    const inputs = (await wallet.getVtxos()).filter((v) =>
+                        wanted.has(`${v.txid}:${v.vout}`),
+                    );
+                    if (inputs.length !== vtxoOutpoints.length) {
+                        throw new Error("Some requested VTXOs are no longer available");
+                    }
+                    const txid = await wallet.sendSelectedVtxosToSelf(inputs);
+                    return this.tagged({
+                        id,
+                        type: "SEND_SELECTED_VTXOS_TO_SELF_SUCCESS",
+                        payload: { txid },
                     });
                 }
                 case "RECOVER_VTXOS": {

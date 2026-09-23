@@ -40,6 +40,10 @@ import { getNetwork, NetworkName } from "../networks";
 import { createAssetPacket } from "./asset";
 import { Extension } from "../extension";
 
+/**
+ * @deprecated Legacy pre-signed delegator manager. Existing integrations remain supported;
+ * new integrations should use {@link import("./delegatee").IDelegateeManager}.
+ */
 export interface IDelegateManager {
     /**
      * Delegate virtual outputs to the remote delegation service.
@@ -69,6 +73,7 @@ export interface IDelegateManager {
 /** @deprecated alias for @see IDelegateManager */
 export type IDelegatorManager = IDelegateManager;
 
+/** @deprecated Legacy pre-signed delegator implementation. */
 export class DelegateManagerImpl implements IDelegateManager {
     /** Create a delegate manager from the configured provider, Arkade info source, and wallet identity. */
     constructor(

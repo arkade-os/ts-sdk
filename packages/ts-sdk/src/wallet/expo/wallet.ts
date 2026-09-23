@@ -13,6 +13,7 @@ import type {
     NewAddress,
     ArkTransaction,
     ExtendedCoin,
+    ExtendedVirtualCoin,
     Recipient,
     SendParams,
 } from "..";
@@ -335,6 +336,14 @@ export class ExpoWallet
 
     getContractManager(): Promise<IContractManager> {
         return this.wallet.getContractManager();
+    }
+
+    getDelegateeManager() {
+        return this.wallet.getDelegateeManager();
+    }
+
+    sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[]): Promise<string> {
+        return this.wallet.sendSelectedVtxosToSelf(inputs);
     }
 
     // Descriptor surface, delegated like everything else here. Without these

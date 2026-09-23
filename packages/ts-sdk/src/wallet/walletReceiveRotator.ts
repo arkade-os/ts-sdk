@@ -9,6 +9,7 @@ import { CreateContractParams, IContractManager } from "../contracts/contractMan
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
+import { DelegateContractHandler } from "../contracts/handlers/delegate";
 import { timelockToSequence } from "../utils/timelock";
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import type { WalletConfig, WalletMode } from ".";
@@ -666,12 +667,7 @@ export function buildReceiveContract(
             ? {
                   ...base,
                   type: "delegate",
-                  params: {
-                      pubKey: hex.encode(pubKey),
-                      serverPubKey: hex.encode(serverPubKey),
-                      delegatePubKey: hex.encode(tapscript.options.delegatePubKey),
-                      csvTimelock,
-                  },
+                  params: DelegateContractHandler.serializeParams(tapscript.options),
               }
             : {
                   ...base,

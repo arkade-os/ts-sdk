@@ -16,6 +16,7 @@ import {
 } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
 import type { Contract } from "../contracts/types";
+import type { IDelegateeManager } from "./delegatee";
 import { IDelegateManager } from "./delegate";
 import type { Activity, ActivityRegistry } from "./activity";
 import type { ExitCaptureMode } from "./exit/capture";
@@ -190,10 +191,16 @@ export interface BaseWalletConfig {
     indexerProvider?: IndexerProvider;
     /** Optional onchain provider instance. */
     onchainProvider?: OnchainProvider;
-    /** Optional delegation service instance. */
+    /** @deprecated Legacy pre-signed delegator provider. Use delegateeProvider for new wallets. */
     delegateProvider?: DelegateProvider;
     /** @deprecated alias for @see BaseWalletConfig.delegateProvider */
     delegatorProvider?: DelegateProvider;
+    /** Optional delegatee renewal service instance. */
+    delegateeProvider?: import("../providers/delegatee").DelegateeProvider;
+    /** Delegatee covenant renewal window, in seconds. */
+    delegateeRenewalWindow?: number;
+    /** Maximum per-renewal fee accepted by the delegatee covenant. */
+    delegateeMaxFee?: number;
 }
 
 /**
@@ -1144,11 +1151,17 @@ export interface IWallet extends IReadonlyWallet {
     /** Asset manager bound to this wallet instance. */
     assetManager: IAssetManager;
 
-    /** @returns Delegation manager, when configured. */
+    /** @deprecated Legacy pre-signed delegator manager; use getDelegateeManager. */
     getDelegateManager(): Promise<IDelegateManager | undefined>;
 
     /** @deprecated alias for @see IWallet.getDelegateManager */
     getDelegatorManager(): Promise<IDelegateManager | undefined>;
+
+    /** @returns The covenant-based delegatee manager, when configured. */
+    getDelegateeManager(): Promise<IDelegateeManager | undefined>;
+
+    /** @internal Move explicit wallet VTXOs to the current receive address. */
+    sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[]): Promise<string>;
 }
 
 /**

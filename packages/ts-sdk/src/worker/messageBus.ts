@@ -3,6 +3,7 @@
 import { getActiveServiceWorker, setupServiceWorkerOnce } from "./browser/service-worker-manager";
 import { ArkProvider, RestArkProvider } from "../providers/ark";
 import { RestDelegateProvider } from "../providers/delegate";
+import { RestDelegateeProvider } from "../providers/delegatee";
 import {
     type Identity,
     type ReadonlyIdentity,
@@ -157,9 +158,13 @@ type Initialize = {
             url: string;
             publicKey?: string;
         };
+        /** @deprecated Legacy pre-signed delegator endpoint; use delegateeUrl. */
         delegateUrl?: string;
         /** @deprecated alias for @see Initialize.config.delegateUrl */
         delegatorUrl?: string;
+        delegateeUrl?: string;
+        delegateeRenewalWindow?: number;
+        delegateeMaxFee?: number;
         indexerUrl?: string;
         esploraUrl?: string;
         settlementConfig?: SettlementConfig | false;
@@ -520,6 +525,9 @@ export class MessageBus {
             : config.delegatorUrl
               ? new RestDelegateProvider(config.delegatorUrl)
               : undefined;
+        const delegateeProvider = config.delegateeUrl
+            ? new RestDelegateeProvider(config.delegateeUrl)
+            : undefined;
 
         const serialized = normalizeSerializedIdentity(config.wallet);
 
@@ -533,6 +541,9 @@ export class MessageBus {
                 esploraUrl: config.esploraUrl,
                 storage,
                 delegateProvider,
+                delegateeProvider,
+                delegateeRenewalWindow: config.delegateeRenewalWindow,
+                delegateeMaxFee: config.delegateeMaxFee,
                 settlementConfig: config.settlementConfig,
                 walletMode: config.walletMode,
                 watcherConfig: config.watcherConfig,
@@ -552,6 +563,9 @@ export class MessageBus {
             esploraUrl: config.esploraUrl,
             storage,
             delegateProvider,
+            delegateeProvider,
+            delegateeRenewalWindow: config.delegateeRenewalWindow,
+            delegateeMaxFee: config.delegateeMaxFee,
             watcherConfig: config.watcherConfig,
         });
         return { readonlyWallet, arkProvider };

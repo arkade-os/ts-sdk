@@ -908,6 +908,47 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(response.error?.message).toBe("Delegate not configured");
     });
 
+    it("handles delegatee info, revocation, and selected-input migration", async () => {
+        const info = { network: "regtest", renewalWindow: 1024, maxFee: 0 };
+        const inputs = [{ txid: "selected", vout: 1, value: 1000 }];
+        const manager = {
+            getInfo: vi.fn().mockResolvedValue(info),
+            revoke: vi.fn().mockResolvedValue(undefined),
+        };
+        const wallet = {
+            getVtxos: vi.fn().mockResolvedValue([...inputs, { txid: "other", vout: 2 }]),
+            getDelegateeManager: vi.fn().mockResolvedValue(manager),
+            sendSelectedVtxosToSelf: vi.fn().mockResolvedValue("migration-txid"),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = wallet;
+
+        await expect(
+            updater.handleMessage({ ...baseMessage(), type: "GET_DELEGATEE_INFO" } as any),
+        ).resolves.toMatchObject({ type: "DELEGATEE_INFO", payload: { info } });
+
+        await expect(
+            updater.handleMessage({
+                ...baseMessage(),
+                type: "REVOKE_DELEGATEE",
+                payload: { address: "tark1address", timestamp: 1_700_000_000 },
+            } as any),
+        ).resolves.toMatchObject({ type: "REVOKE_DELEGATEE_SUCCESS" });
+        expect(manager.revoke).toHaveBeenCalledWith("tark1address", 1_700_000_000);
+
+        await expect(
+            updater.handleMessage({
+                ...baseMessage(),
+                type: "SEND_SELECTED_VTXOS_TO_SELF",
+                payload: { vtxoOutpoints: [{ txid: "selected", vout: 1 }] },
+            } as any),
+        ).resolves.toMatchObject({
+            type: "SEND_SELECTED_VTXOS_TO_SELF_SUCCESS",
+            payload: { txid: "migration-txid" },
+        });
+        expect(wallet.sendSelectedVtxosToSelf).toHaveBeenCalledWith(inputs);
+    });
+
     it("handles RECOVER_VTXOS messages", async () => {
         const vtxoManager = {
             recoverVtxos: vi.fn().mockResolvedValue("recover-txid"),

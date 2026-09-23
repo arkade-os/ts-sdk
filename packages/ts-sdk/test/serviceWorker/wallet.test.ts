@@ -542,6 +542,7 @@ const createSWWallet = (
     serviceWorker: ServiceWorker,
     messageTag: string = DEFAULT_MESSAGE_TAG,
     hasDelegate: boolean = false,
+    hasDelegatee: boolean = false,
 ) =>
     new (ServiceWorkerWallet as any)(
         serviceWorker,
@@ -550,6 +551,7 @@ const createSWWallet = (
         new InMemoryContractRepository(),
         messageTag,
         hasDelegate,
+        hasDelegatee,
     ) as ServiceWorkerWallet;
 
 describe("ServiceWorkerWallet", () => {
@@ -628,6 +630,66 @@ describe("ServiceWorkerWallet", () => {
             expect.objectContaining({
                 tag: messageTag,
                 type: "DELEGATE",
+            }),
+        );
+    });
+
+    it("getDelegateeManager and self-migration proxy delegatee messages", async () => {
+        const delegateeInfo = {
+            version: "test",
+            network: "regtest",
+            delegatePubkey: "02abc",
+            serverPubkey: "02def",
+            emulatorPubkey: "02fed",
+            emulatorTweakedPubkey: "02cba",
+            arkadeScript: "00",
+            delegateTapscript: "51",
+            renewalWindow: 1024,
+            maxFee: 0,
+        };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            switch (message.type) {
+                case "GET_DELEGATEE_INFO":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "DELEGATEE_INFO",
+                        payload: { info: delegateeInfo },
+                    };
+                case "REVOKE_DELEGATEE":
+                    return { id: message.id, tag: messageTag, type: "REVOKE_DELEGATEE_SUCCESS" };
+                case "SEND_SELECTED_VTXOS_TO_SELF":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "SEND_SELECTED_VTXOS_TO_SELF_SUCCESS",
+                        payload: { txid: "migration-txid" },
+                    };
+                default:
+                    return null;
+            }
+        });
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag, false, true);
+        const manager = await wallet.getDelegateeManager();
+        expect(manager).toBeDefined();
+        await expect(manager!.getInfo()).resolves.toEqual(delegateeInfo);
+        await manager!.revoke("tark1address", 1_700_000_000);
+        await expect(
+            wallet.sendSelectedVtxosToSelf([{ txid: "coin-txid", vout: 2 }] as any),
+        ).resolves.toBe("migration-txid");
+
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "REVOKE_DELEGATEE",
+                payload: { address: "tark1address", timestamp: 1_700_000_000 },
+            }),
+        );
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "SEND_SELECTED_VTXOS_TO_SELF",
+                payload: { vtxoOutpoints: [{ txid: "coin-txid", vout: 2 }] },
             }),
         );
     });

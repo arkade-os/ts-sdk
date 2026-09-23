@@ -4,7 +4,7 @@
  * This module defines ONLY Arkade-specific opcodes (0xb3, 0xc3-0xf8).
  * Standard Bitcoin opcodes are imported from @scure/btc-signer.
  *
- * Reference: arkade-os/emulator v0.0.4 pkg/arkade/opcode.go
+ * Reference: arkade-os/emulator v0.0.8-rc.1 pkg/arkade/opcode.go
  */
 
 import { OP } from "@scure/btc-signer";
@@ -54,7 +54,7 @@ export const ARKADE_OP = {
     MODEXP: 0xda,
     // VTXO Expiry & Emulator Clock (0xdb-0xdc)
     PUSHEXPIRY: 0xdb,
-    // compiler artifacts use OP_CHECKTIME.
+    // Pushes whether the timestamp is at or before the emulator clock.
     CHECKTIME: 0xdc,
     // 0xdd-0xdf are unassigned (OP_UNKNOWN221-223)
 
