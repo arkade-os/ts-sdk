@@ -540,7 +540,11 @@ export interface RfqSwapManagerConfig {
  * `ContractManager` (`await wallet.getContractManager()`). */
 export type SwapContractRegistry = Pick<
     IContractManager,
-    "createContract" | "getContracts" | "onContractEvent" | "setContractWatchState"
+    | "createContract"
+    | "getContracts"
+    | "getContractsWithVtxos"
+    | "onContractEvent"
+    | "setContractWatchState"
 >;
 
 /**
@@ -656,22 +660,16 @@ export interface RfqSwapManagerDeps {
      */
     repository?: RfqSwapRecordStore;
     /**
-     * The wallet's contract manager, when there is one. Optional in the same
-     * way {@link chain} is: a caller with no wallet, or one that only wants the
-     * timer, still gets a fully working manager — the subscription is a
-     * LATENCY optimization and nothing depends on it.
+     * The wallet's contract manager. REQUIRED, because under contract-manager
+     * sourcing it is no longer only registration and push: the lockup's own
+     * VTXO state is read through `getContractsWithVtxos`, so the claim and
+     * refund paths cannot work without it and its contract row. The manager
+     * registers that row per pass (`ensureRegistered`).
      *
-     * Supplying it buys two things. The lockup gets REGISTERED, which is what
-     * puts it in the wallet's own contract set at all — a prerequisite for
-     * anything that has to act on the lockup before its batch expires, since an
-     * expired lockup is swept and loses every cooperative path. And the indexer
-     * PUSHES its funding and its spend, so a settlement is noticed when it
-     * happens rather than up to `pollIntervalMs` later.
-     *
-     * Prefer `await wallet.getContractManager()` over constructing one, the way
-     * `createOffer` does.
+     * Prefer `await wallet.getContractManager()` over constructing one, the
+     * way `createOffer` does.
      */
-    contracts?: SwapContractRegistry;
+    contracts: SwapContractRegistry;
 }
 
 /** A listener that throws must not derail the state machine mid-swap. */
@@ -1476,9 +1474,10 @@ export class RfqSwapManager {
         //    and the worst is a caller who wired it generically watching that
         //    push fail forever against a key this wallet does not hold.
         if (swap.kind === "lightning_receive") {
-            return fate.fate === "exited"
-                ? this.blockExitedLockup(swap, fate)
-                : this.driveReceiveClaim(swap);
+            if (fate.fate === "exited") return this.blockExitedLockup(swap, fate);
+            if (fate.fate === "open") return this.driveReceiveClaim(swap);
+            if (this.config.now() >= swap.refundLocktime) return this.driveReceiveClaim(swap);
+            return;
         }
 
         //    The L1 half. Skipped once claimed — there is nothing further to
@@ -1549,7 +1548,7 @@ export class RfqSwapManager {
         if (now < swap.refundLocktime) {
             let vtxos: readonly LockupVtxo[];
             try {
-                vtxos = await findLockupVtxos(this.deps.indexer, swap.lockupPkScript);
+                vtxos = await findLockupVtxos(this.deps.contracts, swap.lockupPkScript);
             } catch (error) {
                 // Transient by assumption, as in step 1 — but REPORTED, unlike
                 // step 1's. There the failure is absorbed because the pass

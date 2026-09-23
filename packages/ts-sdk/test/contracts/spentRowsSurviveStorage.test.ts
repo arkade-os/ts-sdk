@@ -125,6 +125,7 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         });
     });
 
+    // `updateDbAfterSettle` records a settle-spent input with `settledBy` alone.
     it("keeps a settle-spent row when a stale sync re-reports it unspent", async () => {
         const settled: ExtendedVirtualCoin = {
             ...spentDeposit(),
@@ -143,6 +144,8 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         expect(vtxos[0]).toMatchObject({ isSpent: true, settledBy: COMMITMENT });
     });
 
+    // A sync for a fully-spent contract writes an all-spent batch, which may
+    // carry none of the provenance the pin is keyed on.
     it("keeps the spend when an all-spent sync strips its provenance first", async () => {
         await saveVtxosForContract(repository, contract, [spentDeposit()]);
         const bare = { ...spentDeposit(), spentBy: "", arkTxId: undefined, settledBy: "" };
@@ -205,12 +208,14 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         const vtxos = await getVtxosForContract(repository, contract);
         expect(vtxos).toHaveLength(1);
         expect(vtxos[0]?.isSpent).toBe(false);
+        // Provenance must go too: `hasTerminalSpend` hides on it alone.
         expect(vtxos[0]?.spentBy).toBeFalsy();
         expect(vtxos[0]?.arkTxId).toBeFalsy();
     });
 
     it("lets the indexer correct a spend recorded before a restart", async () => {
         await saveVtxosForContract(repository, contract, [spentDeposit()]);
+        // A restart keeps storage but loses the records; the row must not stay pinned.
         resetRecordedSpends(repository);
 
         await saveVtxosForContract(repository, contract, [staleRow()]);
@@ -238,6 +243,13 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         expect(vtxos.find((v) => v.txid === "ab".repeat(32))?.spentBy).toBe(CHECKPOINT);
     });
 
+    /**
+     * The guard is read before its write, so a batch read *before* a spend
+     * registered could still land *after* it and undo the spend — the poll that
+     * overtakes a send. Both writers are in this thread and both write through
+     * `saveVtxosForContract`, so ordering the guard-and-write section is what
+     * closes it; this parks the first write to hold that interleaving open.
+     */
     it("does not let a write already in flight land on top of a newer spend", async () => {
         const held = deferred();
         const realSave = repository.saveVtxos.bind(repository);
@@ -250,9 +262,11 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
             return realSave(address, vtxos);
         };
 
+        // A poll's view, taken before the send: this outpoint reads unspent.
         const poll = saveVtxosForContract(repository, contract, [staleRow()]);
         await flush();
 
+        // The send overtakes it while that write is still parked.
         const send = saveVtxosForContract(repository, contract, [spentDeposit()]);
 
         held.resolve();

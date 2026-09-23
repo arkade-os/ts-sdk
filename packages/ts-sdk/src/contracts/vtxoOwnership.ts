@@ -90,14 +90,17 @@ export async function getVtxosForContract(
     return vtxos.map(normalizeVtxo);
 }
 
-// Local sends/settles include provenance; bare indexer flags must remain correctable.
+/** Provenance is required, so a bare `isSpent: true` records nothing and stays
+ * correctable. Every local write sets `arkTxId` (send) or `settledBy` (settle). */
 function hasRecordedSpend(
     vtxo: Pick<ExtendedVirtualCoin, "isSpent" | "spentBy" | "arkTxId" | "settledBy">,
 ) {
     return vtxo.isSpent === true && (!!vtxo.spentBy || !!vtxo.arkTxId || !!vtxo.settledBy);
 }
 
-// Bound stale-indexer protection so an incorrect local record can recover.
+/** Only a write THIS process made can be raced by its own read; arkd indexes a
+ * spend just after `FinalizeTx` returns. Persisting this would instead make a
+ * wrong spend permanent — nothing clears `isSpent` — so expiry is the way back. */
 const RECORDED_SPEND_TTL_MS = 60_000;
 
 interface RecordedSpend {
@@ -123,12 +126,34 @@ export function resetRecordedSpends(repo: WalletRepository): void {
     recordedSpends.delete(repo);
 }
 
+/**
+ * One write chain per repository: the read-modify-write half of the guard.
+ *
+ * {@link applyRecordedSpends} consults the registry and then hands the result
+ * to an async write, so a spend registered in between is invisible to the rows
+ * that write commits — a poll's batch, read before a send registered, can still
+ * land after it and undo the spend. Both writers are in this thread and both
+ * write through {@link inVtxoWriteOrder}, so ordering the section that guards
+ * and writes is enough: whichever section runs second reads the first's
+ * registrations.
+ *
+ * Keyed by repository, so this bounds nothing across processes or across a
+ * second wallet holding the same storage — like the registry, those have no
+ * record to clobber.
+ */
 const writeChains = new WeakMap<WalletRepository, Promise<unknown>>();
 
-// Guard evaluation and persistence share one queue; failed writes must not block later ones.
+/**
+ * Run `fn` after every write already queued for `repo`, and let the next one
+ * queue behind it. `fn` must not call this again for the same repository: it
+ * would wait on the chain it is part of.
+ */
 export function inVtxoWriteOrder<T>(repo: WalletRepository, fn: () => Promise<T>): Promise<T> {
     const prev = writeChains.get(repo) ?? Promise.resolve();
+    // No await between get and set, so the enqueue is atomic.
     const run = prev.then(fn, fn);
+    // Kept alive regardless of this run's outcome, so one failed write cannot
+    // wedge every later one.
     writeChains.set(
         repo,
         run.catch(() => {}),
@@ -148,6 +173,7 @@ export function applyRecordedSpends(
     for (const incoming of vtxos) {
         const key = vtxoOutpoint(incoming);
         if (!hasRecordedSpend(incoming) || registry.has(key)) continue;
+        // `at` is first sighting, so re-reporting a spend cannot extend the pin.
         registry.set(key, {
             at: now,
             spentBy: incoming.spentBy,
@@ -161,6 +187,7 @@ export function applyRecordedSpends(
         if (hasRecordedSpend(incoming)) return incoming;
         const spent = registry.get(vtxoOutpoint(incoming));
         if (!spent) return incoming;
+        // Fresher incoming provenance wins; the record only fills what is missing.
         const spentBy = incoming.spentBy || spent.spentBy;
         const arkTxId = incoming.arkTxId || spent.arkTxId;
         const settledBy = incoming.settledBy || spent.settledBy;
@@ -180,6 +207,8 @@ export async function saveVtxosForContract(
     vtxos: ExtendedVirtualCoin[],
 ): Promise<void> {
     return inVtxoWriteOrder(repo, async () => {
+        // Inside the ordered section: a spend registered by the write this one
+        // is queued behind is already in the registry when the guard reads it.
         const rows = applyRecordedSpends(repo, vtxos);
         if (repo.saveVtxosForScript) {
             return repo.saveVtxosForScript(

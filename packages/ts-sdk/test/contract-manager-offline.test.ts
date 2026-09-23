@@ -138,9 +138,7 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
             await m.whenBooted();
             const state = m.getSyncState();
             expect(state.mode).toBe("degraded");
-            expect(state.mode === "degraded" ? state.reason : "").toContain(
-                "look-ahead unavailable",
-            );
+            expect(state.mode === "degraded" ? state.reason : "").toContain("look-ahead band");
             expect(indexer.subscribeForScripts).toHaveBeenCalled();
         },
     );
