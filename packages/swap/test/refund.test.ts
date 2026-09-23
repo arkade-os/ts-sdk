@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { CSVMultisigTapscript, SingleKey, Transaction } from "@arkade-os/sdk";
+import { CSVMultisigTapscript, Extension, SingleKey, Transaction } from "@arkade-os/sdk";
 
 import { lightningSendVtxoScript, type RfqStatus, type RfqTransport } from "../src/rfq";
 import {
@@ -940,5 +940,102 @@ describe("readLockupFate", () => {
         expect(await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }]))).toEqual({
             fate: "unknown",
         });
+    });
+});
+
+/**
+ * A cross-rail ASSET receive the solver never claims comes back down this CLTV
+ * path, where an undeclared asset strands the lockup exactly as it did the claim.
+ */
+describe("refunding a lockup that carries assets", () => {
+    const ASSET_A = "aa".repeat(32) + "0000";
+    const ASSET_B = "bb".repeat(32) + "0000";
+    const withAssets = (): LockupVtxo[] => [
+        { ...VTXOS[0], assets: [{ assetId: ASSET_A, amount: BigInt(700) }] },
+        {
+            ...VTXOS[1],
+            assets: [
+                { assetId: ASSET_A, amount: BigInt(300) },
+                { assetId: ASSET_B, amount: BigInt(5) },
+            ],
+        },
+    ];
+
+    const refunded = async (vtxos: LockupVtxo[]) => {
+        const operator = fakeOperator();
+        await pushRefundWithoutReceiver(operator, { script: swapScript(), sender: SENDER, vtxos });
+        return Transaction.fromPSBT(base64.decode(operator.submitted[0].arkTx));
+    };
+
+    it("declares every asset, summed onto the refund output", async () => {
+        const tx = await refunded(withAssets());
+        const groups = Extension.fromTx(tx).getAssetPacket()!.groups;
+        const byId = new Map(groups.map((g) => [g.assetId!.toString(), g]));
+        expect([...byId.keys()].sort()).toEqual([ASSET_A, ASSET_B].sort());
+        const a = byId.get(ASSET_A)!;
+        expect(a.inputs.map((i) => [i.vin, i.amount])).toEqual([
+            [0, BigInt(700)],
+            [1, BigInt(300)],
+        ]);
+        expect(a.outputs.map((o) => [o.vout, o.amount])).toEqual([[0, BigInt(1_000)]]);
+        expect(byId.get(ASSET_B)!.outputs).toEqual([
+            expect.objectContaining({ vout: 0, amount: BigInt(5) }),
+        ]);
+    });
+
+    it("conserves each asset: what the inputs carry is what the refund gets", async () => {
+        const tx = await refunded(withAssets());
+        for (const group of Extension.fromTx(tx).getAssetPacket()!.groups) {
+            const inSum = group.inputs.reduce((s, i) => s + i.amount, BigInt(0));
+            const outSum = group.outputs.reduce((s, o) => s + o.amount, BigInt(0));
+            expect(outSum).toBe(inSum);
+        }
+    });
+
+    it("targets the refund output even when the destination is overridden", async () => {
+        const operator = fakeOperator();
+        const elsewhere = p2tr(key(21));
+        await pushRefundWithoutReceiver(operator, {
+            script: swapScript(),
+            sender: SENDER,
+            vtxos: withAssets(),
+            refundPkScript: elsewhere,
+        });
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].arkTx));
+        expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(elsewhere));
+        for (const group of Extension.fromTx(tx).getAssetPacket()!.groups) {
+            expect(group.outputs.map((o) => o.vout)).toEqual([0]);
+        }
+    });
+
+    it("adds no packet when the lockup carries no assets", async () => {
+        const tx = await refunded(VTXOS);
+        const scripts = Array.from(
+            { length: tx.outputsLength },
+            (_, i) => tx.getOutput(i)!.script!,
+        );
+        expect(scripts.some((script) => Extension.isExtension(script))).toBe(false);
+    });
+
+    it("carries the packet through refundIfUnresolved's fallback push", async () => {
+        const operator = fakeOperator();
+        const result = await refundIfUnresolved(
+            fakeTransport(["quoted"]),
+            operator,
+            fakeContracts(withAssets()),
+            fakeIndexer(withAssets()),
+            {
+                rfqId: RFQ_ID,
+                script: swapScript(),
+                sender: SENDER,
+                paymentHash: SWAP_PAYMENT_HASH,
+                refundLocktime: REFUND_LOCKTIME,
+                pollMs: 1,
+                now: () => REFUND_LOCKTIME + 1,
+            },
+        );
+        expect(result.outcome).toBe("refunded");
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].arkTx));
+        expect(Extension.fromTx(tx).getAssetPacket()!.groups).toHaveLength(2);
     });
 });

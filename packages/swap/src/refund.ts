@@ -44,6 +44,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
     ConditionWitness,
+    Extension,
     type IContractManager,
     type Identity,
     RestArkProvider,
@@ -51,6 +52,7 @@ import {
     Transaction,
     VHTLC,
     assertSubmittedArkTxid,
+    asset,
     buildOffchainTx,
     getArkPsbtFields,
     hasTerminalSpend,
@@ -540,6 +542,43 @@ export async function readLockupFate(
 }
 
 /**
+ * The outputs of a lockup spend: the aggregate payment, plus an asset packet
+ * when the inputs carried assets. Shared by the claim and the CLTV refund —
+ * neither leaf inspects the output set, so each asset is one total on vout 0
+ * fed by every input vin, never a routing decision. Undeclared, arkd answers
+ * ASSET_NOT_FOUND.
+ */
+export function lockupSpendOutputs(
+    vtxos: readonly LockupVtxo[],
+    pkScript: Uint8Array,
+    amount: bigint,
+): { script: Uint8Array; amount: bigint }[] {
+    const outputs = [{ script: pkScript, amount }];
+    const totals = new Map<string, { inputs: { vin: number; amount: bigint }[]; total: bigint }>();
+    vtxos.forEach((vtxo, vin) => {
+        for (const { assetId, amount } of vtxo.assets ?? []) {
+            if (amount <= BigInt(0)) continue;
+            const entry = totals.get(assetId) ?? { inputs: [], total: BigInt(0) };
+            entry.inputs.push({ vin, amount });
+            entry.total += amount;
+            totals.set(assetId, entry);
+        }
+    });
+    if (totals.size === 0) return outputs;
+    const groups = [...totals].map(([assetId, { inputs, total }]) =>
+        asset.AssetGroup.create(
+            asset.AssetId.fromString(assetId),
+            null,
+            inputs.map(({ vin, amount }) => asset.AssetInput.create(vin, amount)),
+            [asset.AssetOutput.create(0, total)],
+            [],
+        ),
+    );
+    outputs.push(Extension.create([asset.Packet.create(groups)]).txOut());
+    return outputs;
+}
+
+/**
  * Build, sign, and push the `refundWithoutReceiver` spend: return every funded
  * output at the lockup to the trader's refund address.
  *
@@ -554,7 +593,8 @@ export async function readLockupFate(
  * One aggregate output, not one per input — again unlike the solver's covenant
  * refund, which needs index-aligned outputs because its ArkadeScript inspects
  * the output at the current input's index. This leaf carries no covenant, so a
- * single output paying the whole balance is both valid and cheaper.
+ * single output paying the whole balance is both valid and cheaper, with any
+ * assets the lockup carried declared alongside it by {@link lockupSpendOutputs}.
  *
  * `refundPkScript` defaults to the destination the contract itself commits to
  * (`nonInteractiveRefund`'s `senderPkScript`, i.e. the address the trader gave
@@ -635,7 +675,7 @@ export async function pushRefundWithoutReceiver(
             tapLeafScript: leaf,
             tapTree,
         })),
-        [{ script: refundPkScript, amount: BigInt(amount) }],
+        lockupSpendOutputs(input.vtxos, refundPkScript, BigInt(amount)),
         serverUnrollScript,
     );
 
