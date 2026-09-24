@@ -223,7 +223,7 @@ export function encodeCarrierRequest(choice: ArkadeCarrierRequest): Record<strin
         !choice.quoteId.length ||
         choice.quoteId.length > CARRIER_QUOTE_ID_MAX
     ) {
-        throw new Error("carrier recycle quoteId must be 1..128 chars");
+        throw new Error(`carrier ${choice.mode} quoteId must be 1..128 chars`);
     }
     if (choice.mode === "recycle") return { mode: "recycle", quote_id: choice.quoteId };
     if (

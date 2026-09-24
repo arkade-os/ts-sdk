@@ -369,8 +369,12 @@ describe("carrier wire validation (receiver-paid)", () => {
             taxiKey: TAXI_KEY,
         };
         const cases: Array<{ name: string; over: Record<string, unknown>; error: RegExp }> = [
-            { name: "quoteId empty", over: { quoteId: "" }, error: /quoteId/ },
-            { name: "quoteId too long", over: { quoteId: "x".repeat(129) }, error: /quoteId/ },
+            { name: "quoteId empty", over: { quoteId: "" }, error: /recycle_receiver quoteId/ },
+            {
+                name: "quoteId too long",
+                over: { quoteId: "x".repeat(129) },
+                error: /recycle_receiver quoteId/,
+            },
             { name: "taxiUrl empty", over: { taxiUrl: "" }, error: /taxiUrl/ },
             { name: "taxiUrl too long", over: { taxiUrl: "h".repeat(513) }, error: /taxiUrl/ },
             { name: "taxiKey short", over: { taxiKey: "aa" }, error: /taxiKey/ },
@@ -1117,7 +1121,7 @@ describe("requestArkadeSwap carrier recycle", () => {
 });
 
 describe("requestArkadeSwap carrier recycle_receiver", () => {
-    const receiverPaidCarrier = (over: { quote?: ReceiverPaidCarrierQuote } = {}) => ({
+    const receiverPaidCarrier = (over: { quote: ReceiverPaidCarrierQuote }) => ({
         mode: "recycleReceiver" as const,
         taxi: { url: TAXI_URL, operatorKey: TAXI_KEY },
         ...over,
