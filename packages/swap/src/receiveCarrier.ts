@@ -2,6 +2,7 @@ import { hex } from "@scure/base";
 import { asset } from "@arkade-os/sdk";
 
 export const CARRIER_QUOTE_ID_MAX = 128;
+export const CARRIER_TAXI_URL_MAX = 512;
 
 export interface RecycleCarrierQuote {
     quoteId: string;
@@ -15,14 +16,30 @@ export interface RecycleCarrierQuote {
     expiresAt: number;
 }
 
+export interface ReceiverPaidCarrierQuote {
+    quoteId: string;
+    receiveAddress: string;
+    makerPublicKey: string;
+    assetId: string;
+    physicalSats: bigint; // === loanSats
+    loanSats: bigint; // the whole dust the Taxi fronts
+    expiresAt: number;
+}
+
+export type TaxiIdentity = { url: string; operatorKey: string };
+
 export type ArkadeCarrierChoice =
     | { mode: "purchase" }
-    | { mode: "recycle"; quote: RecycleCarrierQuote };
+    | { mode: "recycle"; quote: RecycleCarrierQuote }
+    | { mode: "recycleReceiver"; quote: ReceiverPaidCarrierQuote; taxi: TaxiIdentity };
 
-export type ArkadeCarrierRequest = { mode: "purchase" } | { mode: "recycle"; quoteId: string };
+export type ArkadeCarrierRequest =
+    | { mode: "purchase" }
+    | { mode: "recycle"; quoteId: string }
+    | { mode: "recycle_receiver"; quoteId: string; taxiUrl: string; taxiKey: string };
 
 export interface VerifiedCarrierTerms {
-    mode: "purchase" | "recycle";
+    mode: "purchase" | "recycle" | "recycle_receiver";
     physicalSats: bigint;
     loanSats: bigint;
     receiptSats: bigint;
@@ -135,12 +152,68 @@ export function validateRecycleQuoteShape(q: RecycleCarrierQuote): void {
     }
 }
 
+export function validateReceiverPaidQuoteShape(q: ReceiverPaidCarrierQuote): void {
+    if (!q || typeof q !== "object") throw new Error("carrier receiver-paid quote is required");
+    if (
+        typeof q.quoteId !== "string" ||
+        !q.quoteId.length ||
+        q.quoteId.length > CARRIER_QUOTE_ID_MAX
+    ) {
+        throw new Error("carrier receiver-paid quoteId must be 1..128 chars");
+    }
+    if (typeof q.receiveAddress !== "string" || !q.receiveAddress.length) {
+        throw new Error("carrier receiver-paid quote needs a receiveAddress");
+    }
+    if (typeof q.makerPublicKey !== "string" || !XONLY_HEX.test(q.makerPublicKey)) {
+        throw new Error("carrier receiver-paid quote makerPublicKey must be lowercase x-only hex");
+    }
+    if (typeof q.assetId !== "string" || !q.assetId.length) {
+        throw new Error("carrier receiver-paid quote needs an assetId");
+    }
+    try {
+        asset.AssetId.fromString(q.assetId);
+    } catch {
+        throw new Error("carrier receiver-paid quote assetId is not a valid SDK asset id");
+    }
+    const amounts: Array<[string, unknown]> = [
+        ["physicalSats", q.physicalSats],
+        ["loanSats", q.loanSats],
+    ];
+    for (const [name, v] of amounts) {
+        if (typeof v !== "bigint" || v < 0n) {
+            throw new Error(
+                "carrier receiver-paid quote " + name + " must be a non-negative bigint",
+            );
+        }
+        if (v > MAX_BITCOIN_SATS) {
+            throw new Error("carrier receiver-paid quote " + name + " exceeds the Bitcoin supply");
+        }
+    }
+    if (q.physicalSats <= 0n)
+        throw new Error("carrier receiver-paid quote physicalSats must be positive");
+    if (q.loanSats !== q.physicalSats) {
+        throw new Error("carrier receiver-paid quote loanSats must equal physical");
+    }
+    if (!Number.isSafeInteger(q.expiresAt) || q.expiresAt <= 0) {
+        throw new Error("carrier receiver-paid quote expiresAt must be safe positive unix time");
+    }
+}
+
 export function encodeCarrierRequest(choice: ArkadeCarrierRequest): Record<string, unknown> {
     if (!isPlainObject(choice)) throw new Error("carrier request must be an object");
-    if (choice.mode !== "purchase" && choice.mode !== "recycle") {
-        throw new Error("carrier request mode must be purchase or recycle");
+    if (
+        choice.mode !== "purchase" &&
+        choice.mode !== "recycle" &&
+        choice.mode !== "recycle_receiver"
+    ) {
+        throw new Error("carrier request mode must be purchase, recycle or recycle_receiver");
     }
-    const allowed = choice.mode === "purchase" ? new Set(["mode"]) : new Set(["mode", "quoteId"]);
+    const allowed =
+        choice.mode === "purchase"
+            ? new Set(["mode"])
+            : choice.mode === "recycle"
+              ? new Set(["mode", "quoteId"])
+              : new Set(["mode", "quoteId", "taxiUrl", "taxiKey"]);
     for (const key of Object.keys(choice)) {
         if (!allowed.has(key)) throw new Error("carrier request carries unknown field " + key);
     }
@@ -152,7 +225,23 @@ export function encodeCarrierRequest(choice: ArkadeCarrierRequest): Record<strin
     ) {
         throw new Error("carrier recycle quoteId must be 1..128 chars");
     }
-    return { mode: "recycle", quote_id: choice.quoteId };
+    if (choice.mode === "recycle") return { mode: "recycle", quote_id: choice.quoteId };
+    if (
+        typeof choice.taxiUrl !== "string" ||
+        !choice.taxiUrl.length ||
+        choice.taxiUrl.length > CARRIER_TAXI_URL_MAX
+    ) {
+        throw new Error("carrier recycle_receiver taxiUrl must be 1..512 chars");
+    }
+    if (typeof choice.taxiKey !== "string" || !XONLY_HEX.test(choice.taxiKey)) {
+        throw new Error("carrier recycle_receiver taxiKey must be 64 lowercase hex chars");
+    }
+    return {
+        mode: "recycle_receiver",
+        quote_id: choice.quoteId,
+        taxi_url: choice.taxiUrl,
+        taxi_key: choice.taxiKey,
+    };
 }
 
 export function assertCarrierRequestAllowed(
@@ -167,7 +256,12 @@ export function assertCarrierRequestAllowed(
 
 export function parseCarrierEcho(
     raw: unknown,
-    expected: { mode: "purchase" | "recycle"; quoteId?: string },
+    expected: {
+        mode: "purchase" | "recycle" | "recycle_receiver";
+        quoteId?: string;
+        taxiUrl?: string;
+        taxiKey?: string;
+    },
 ): ParsedCarrierEcho {
     if (!isPlainObject(raw)) throw new Error("carrier echo must be an object");
     if (raw.mode !== expected.mode) throw new Error("carrier echo mode differs from the request");
@@ -181,7 +275,12 @@ export function parseCarrierEcho(
         "priced_sats",
         "expires_at",
     ]);
-    const allowed = expected.mode === "recycle" ? new Set([...base, "quote_id"]) : base;
+    const allowed =
+        expected.mode === "recycle"
+            ? new Set([...base, "quote_id"])
+            : expected.mode === "recycle_receiver"
+              ? new Set([...base, "quote_id", "taxi_url", "taxi_key"])
+              : base;
     for (const k of keys) {
         if (!allowed.has(k)) throw new Error("carrier echo carries unknown field " + k);
     }
@@ -190,7 +289,7 @@ export function parseCarrierEcho(
     }
     const r = raw as Record<string, unknown>;
     let quoteId: string | undefined;
-    if (expected.mode === "recycle") {
+    if (expected.mode === "recycle" || expected.mode === "recycle_receiver") {
         const qid = r.quote_id;
         if (typeof qid !== "string" || !qid.length || qid.length > CARRIER_QUOTE_ID_MAX) {
             throw new Error("carrier echo quote_id must be 1..128 chars");
@@ -198,6 +297,24 @@ export function parseCarrierEcho(
         if (qid !== expected.quoteId)
             throw new Error("carrier echo quote_id differs from the request");
         quoteId = qid;
+    }
+    if (expected.mode === "recycle_receiver") {
+        const taxiUrl = r.taxi_url;
+        if (
+            typeof taxiUrl !== "string" ||
+            !taxiUrl.length ||
+            taxiUrl.length > CARRIER_TAXI_URL_MAX
+        ) {
+            throw new Error("carrier echo taxi_url must be 1..512 chars");
+        }
+        if (taxiUrl !== expected.taxiUrl)
+            throw new Error("carrier echo taxi_url differs from the request");
+        const taxiKey = r.taxi_key;
+        if (typeof taxiKey !== "string" || !XONLY_HEX.test(taxiKey)) {
+            throw new Error("carrier echo taxi_key must be 64 lowercase hex chars");
+        }
+        if (taxiKey !== expected.taxiKey)
+            throw new Error("carrier echo taxi_key differs from the request");
     }
     const physical = parseSatsField(r.physical_sats, "physical_sats");
     const loan = parseSatsField(r.loan_sats, "loan_sats");
@@ -211,6 +328,19 @@ export function parseCarrierEcho(
             throw new Error("carrier purchase echo must carry zero loan/receipt/fare");
         }
         if (priced !== physical) throw new Error("carrier purchase priced must equal physical");
+    } else if (expected.mode === "recycle_receiver") {
+        if (loan !== physical) {
+            throw new Error("carrier receiver-paid echo loan must equal physical");
+        }
+        if (receipt !== 0n) {
+            throw new Error("carrier receiver-paid echo must carry a zero receipt");
+        }
+        if (serviceFare !== 0n) {
+            throw new Error("carrier receiver-paid echo must carry a zero service fare");
+        }
+        if (priced !== 0n) {
+            throw new Error("carrier receiver-paid echo must carry a zero priced_sats");
+        }
     } else {
         if (loan <= 0n || receipt <= 0n) {
             throw new Error("carrier recycle echo needs positive loan and receipt");
@@ -255,6 +385,27 @@ export function assertRecycleEchoMatchesExpected(
         echo.receiptSats !== expected.receiptSats ||
         echo.serviceFareSats !== expected.serviceFareSats ||
         echo.pricedSats !== expected.receiptSats + expected.serviceFareSats
+    ) {
+        throw new Error("carrier echo amounts differ from the expected descriptor");
+    }
+    if (echo.expiresAt > expected.expiresAt) {
+        throw new Error("carrier echo must not extend the expected expiry");
+    }
+}
+
+export function assertReceiverPaidEchoMatchesExpected(
+    echo: ParsedCarrierEcho,
+    expected: ReceiverPaidCarrierQuote,
+): void {
+    if (echo.mode !== "recycle_receiver" || echo.quoteId !== expected.quoteId) {
+        throw new Error("carrier echo quote differs from the expected descriptor");
+    }
+    if (
+        echo.physicalSats !== expected.physicalSats ||
+        echo.loanSats !== expected.loanSats ||
+        echo.receiptSats !== 0n ||
+        echo.serviceFareSats !== 0n ||
+        echo.pricedSats !== 0n
     ) {
         throw new Error("carrier echo amounts differ from the expected descriptor");
     }

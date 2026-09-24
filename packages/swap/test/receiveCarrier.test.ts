@@ -4,9 +4,12 @@ import { ArkAddress, asset, ReadonlySingleKey, type IWallet } from "@arkade-os/s
 import { createOffer, decodeOffer } from "../src/offer";
 import { arkadeSwapRequest, requestArkadeSwap, type RfqQuote, type RfqTransport } from "../src/rfq";
 import {
+    assertReceiverPaidEchoMatchesExpected,
     encodeCarrierRequest,
     parseCarrierEcho,
+    validateReceiverPaidQuoteShape,
     validateRecycleQuoteShape,
+    type ReceiverPaidCarrierQuote,
     type RecycleCarrierQuote,
 } from "../src/receiveCarrier";
 
@@ -107,6 +110,8 @@ const EXPIRES_AT = NOW + 300;
 const RFQ_ID = "11".repeat(32);
 const QUOTE_ID = "taxi-quote-1";
 const MAX_BITCOIN_SATS = 2_100_000_000_000_000n;
+const TAXI_URL = "https://taxi.example";
+const TAXI_KEY = "aa".repeat(32);
 
 const makerPublicKeyHex = async (): Promise<string> => hex.encode(await identity.xOnlyPublicKey());
 
@@ -132,6 +137,28 @@ const recycleEcho = (over: Record<string, unknown> = {}) => ({
     ...over,
 });
 
+const receiverPaidEcho = (over: Record<string, unknown> = {}) => ({
+    mode: "recycle_receiver",
+    quote_id: QUOTE_ID,
+    taxi_url: TAXI_URL,
+    taxi_key: TAXI_KEY,
+    physical_sats: "330",
+    loan_sats: "330",
+    receipt_sats: "0",
+    service_fare_sats: "0",
+    priced_sats: "0",
+    expires_at: EXPIRES_AT,
+    ...over,
+});
+
+const receiverPaidExpected = (over: Record<string, unknown> = {}) => ({
+    mode: "recycle_receiver" as const,
+    quoteId: QUOTE_ID,
+    taxiUrl: TAXI_URL,
+    taxiKey: TAXI_KEY,
+    ...over,
+});
+
 const derivedOffer = async (receiveAddress?: string) =>
     createOffer(fixtureWallet, "http://ark", {
         wantAmount: 50_000n,
@@ -151,6 +178,19 @@ const recycleQuote = async (
     loanSats: 329n,
     receiptSats: 1n,
     serviceFareSats: 0n,
+    expiresAt: EXPIRES_AT,
+    ...over,
+});
+
+const receiverPaidQuote = async (
+    over: Partial<ReceiverPaidCarrierQuote> = {},
+): Promise<ReceiverPaidCarrierQuote> => ({
+    quoteId: QUOTE_ID,
+    receiveAddress: (await derivedOffer()).address,
+    makerPublicKey: await makerPublicKeyHex(),
+    assetId: testAsset.toString(),
+    physicalSats: 330n,
+    loanSats: 330n,
     expiresAt: EXPIRES_AT,
     ...over,
 });
@@ -301,6 +341,130 @@ describe("carrier wire validation", () => {
                 serviceFareSats: 2n,
             }),
         ).toThrow(/priced/);
+    });
+});
+
+describe("carrier wire validation (receiver-paid)", () => {
+    it("encodes a receiver-paid request with its Taxi identity", () => {
+        expect(
+            encodeCarrierRequest({
+                mode: "recycle_receiver",
+                quoteId: QUOTE_ID,
+                taxiUrl: TAXI_URL,
+                taxiKey: TAXI_KEY,
+            }),
+        ).toEqual({
+            mode: "recycle_receiver",
+            quote_id: QUOTE_ID,
+            taxi_url: TAXI_URL,
+            taxi_key: TAXI_KEY,
+        });
+    });
+
+    it("refuses out-of-bounds receiver-paid request fields", () => {
+        const base = {
+            mode: "recycle_receiver" as const,
+            quoteId: QUOTE_ID,
+            taxiUrl: TAXI_URL,
+            taxiKey: TAXI_KEY,
+        };
+        const cases: Array<{ name: string; over: Record<string, unknown>; error: RegExp }> = [
+            { name: "quoteId empty", over: { quoteId: "" }, error: /quoteId/ },
+            { name: "quoteId too long", over: { quoteId: "x".repeat(129) }, error: /quoteId/ },
+            { name: "taxiUrl empty", over: { taxiUrl: "" }, error: /taxiUrl/ },
+            { name: "taxiUrl too long", over: { taxiUrl: "h".repeat(513) }, error: /taxiUrl/ },
+            { name: "taxiKey short", over: { taxiKey: "aa" }, error: /taxiKey/ },
+            { name: "taxiKey uppercase", over: { taxiKey: "AA".repeat(32) }, error: /taxiKey/ },
+            { name: "taxiKey non-hex", over: { taxiKey: "gg".repeat(32) }, error: /taxiKey/ },
+        ];
+        for (const c of cases) {
+            expect(() => encodeCarrierRequest({ ...base, ...c.over }), c.name).toThrow(c.error);
+        }
+    });
+
+    it("parses a zero-priced receiver-paid echo", () => {
+        const echo = parseCarrierEcho(receiverPaidEcho(), receiverPaidExpected());
+        expect(echo.pricedSats).toBe(0n);
+        expect(echo.receiptSats).toBe(0n);
+        expect(echo.serviceFareSats).toBe(0n);
+        expect(echo.loanSats).toBe(echo.physicalSats);
+    });
+
+    it("refuses an echo that charges a receipt or a fare", () => {
+        expect(() =>
+            parseCarrierEcho({ ...receiverPaidEcho(), receipt_sats: "1" }, receiverPaidExpected()),
+        ).toThrow(/zero receipt/);
+        expect(() =>
+            parseCarrierEcho(
+                { ...receiverPaidEcho(), service_fare_sats: "1" },
+                receiverPaidExpected(),
+            ),
+        ).toThrow(/zero .*fare/);
+        expect(() =>
+            parseCarrierEcho({ ...receiverPaidEcho(), priced_sats: "1" }, receiverPaidExpected()),
+        ).toThrow(/zero priced_sats/);
+    });
+
+    it("refuses an echo naming a different Taxi or key", () => {
+        expect(() =>
+            parseCarrierEcho(
+                { ...receiverPaidEcho(), taxi_url: "https://evil.example" },
+                receiverPaidExpected(),
+            ),
+        ).toThrow(/taxi_url differs from the request/);
+        expect(() =>
+            parseCarrierEcho(
+                { ...receiverPaidEcho(), taxi_key: "bb".repeat(32) },
+                receiverPaidExpected(),
+            ),
+        ).toThrow(/taxi_key differs from the request/);
+    });
+
+    it("still refuses an unknown field on a receiver-paid echo", () => {
+        expect(() =>
+            parseCarrierEcho({ ...receiverPaidEcho(), surprise: "1" }, receiverPaidExpected()),
+        ).toThrow(/unknown field surprise/);
+    });
+
+    it("exports the new types from the package entry point", async () => {
+        const mod = await import("../src/index.js");
+        expect(Object.keys(mod)).toEqual(
+            expect.arrayContaining(["assertReceiverPaidEchoMatchesExpected"]),
+        );
+    });
+
+    it("bounds every local receiver-paid term", async () => {
+        const quote = await receiverPaidQuote();
+        for (const field of ["physicalSats", "loanSats"] as const) {
+            expect(() =>
+                validateReceiverPaidQuoteShape({ ...quote, [field]: MAX_BITCOIN_SATS + 1n }),
+            ).toThrow(/Bitcoin supply/);
+        }
+        expect(() =>
+            validateReceiverPaidQuoteShape({ ...quote, loanSats: quote.physicalSats + 1n }),
+        ).toThrow(/loanSats must equal physical/);
+    });
+
+    it("matches a receiver-paid echo against its expected descriptor", async () => {
+        const expected = await receiverPaidQuote();
+        const echo = parseCarrierEcho(receiverPaidEcho(), receiverPaidExpected());
+        expect(() => assertReceiverPaidEchoMatchesExpected(echo, expected)).not.toThrow();
+        expect(() =>
+            assertReceiverPaidEchoMatchesExpected(echo, { ...expected, quoteId: "other" }),
+        ).toThrow(/expected descriptor/);
+        expect(() =>
+            assertReceiverPaidEchoMatchesExpected(echo, {
+                ...expected,
+                physicalSats: 331n,
+                loanSats: 331n,
+            }),
+        ).toThrow(/expected descriptor/);
+        expect(() =>
+            assertReceiverPaidEchoMatchesExpected(
+                { ...echo, expiresAt: expected.expiresAt + 1 },
+                expected,
+            ),
+        ).toThrow(/expiry/);
     });
 });
 

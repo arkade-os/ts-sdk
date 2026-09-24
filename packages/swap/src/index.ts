@@ -192,9 +192,12 @@ export {
     type RfqTransport,
 } from "./rfq";
 export {
+    assertReceiverPaidEchoMatchesExpected,
     type ArkadeCarrierChoice,
     type ArkadeCarrierRequest,
+    type ReceiverPaidCarrierQuote,
     type RecycleCarrierQuote,
+    type TaxiIdentity,
     type VerifiedCarrierTerms,
 } from "./receiveCarrier";
 export {
