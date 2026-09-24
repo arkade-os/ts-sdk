@@ -11,6 +11,15 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`BIP21.create` writes the amount as a plain decimal.** It formatted
+  the BTC amount with `String()`, which switches to exponent notation
+  below `1e-6`, so any amount under 100 sats came out as `amount=1e-7` —
+  outside BIP21's `*digit [ "." *digit ]` grammar, and rejected by the
+  SDK's own `BIP21.parse`. Amounts are now written with at most 8
+  decimals and no trailing zeros, which also drops float noise
+  (`0.30000000000000004` → `0.3`) and rounds sub-satoshi precision to the
+  satoshi.
+
 - **A `vtxo_spent` from the failsafe poll now carries the row that records
   the spend.** `ContractWatcher.pollContracts` reported the difference
   using its *cached* rows, and those were unspent when cached — so a
