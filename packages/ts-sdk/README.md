@@ -1061,6 +1061,37 @@ const balance = await wallet.getBalance()
 For watch-only wallets, use `ServiceWorkerReadonlyWallet` with a
 `ReadonlySingleKey` identity instead.
 
+### Faster startup without changing existing reads
+
+Existing `Wallet` and `ReadonlyWallet` reads (`getVtxos`, `getBalance`, and
+`getTransactionHistory`) still synchronize before answering. Retryable provider
+failures retain the existing offline fallback; terminal errors still reject.
+Contract initialization still awaits synchronization and watcher startup by default.
+
+For a returning wallet with persisted contracts, opt into `lazyInitialization: true`
+and use `getStoredVtxos()` or `getStoredBalance()` for the initial display. These
+methods return cached data and request background synchronization. They can return
+empty or stale data, so inspect `(await wallet.getContractManager()).getSyncState()`:
+an absent `lastSyncedAt` means no successful sync this session, `syncing` means work
+is in flight, and `degraded` means refresh failed. Await `manager.whenBooted()` and
+inspect that state again before treating initialization as successful. Refresh the
+display after completion; cached reads do not guarantee a change event.
+
+`getStoredBalance().boarding.loaded` is false until this wallet instance has fetched
+boarding inputs. Call `getBoardingUtxos()` to refresh them. Stored methods are for
+display, not transaction inputs; use the normal reads and spending APIs for actions.
+New contract registration, identity setup, and server-info validation can still
+require provider calls even with lazy initialization enabled.
+
+Service-worker factories expose the same `lazyInitialization` option and a separate
+`lazyBoarding: true` option. Lazy boarding defers the explorer-backed boarding and
+history refresh, reports `boarding.loaded: false`, and broadcasts `UTXO_UPDATE`
+when boarding loading completes. Both options default to false and survive worker
+reinitialization. Existing `GET_BOARDING_UTXOS` requests remain live reads.
+
+Boarding addresses are fetched concurrently in both modes, so wallets with rotated
+addresses benefit without opting into changed initialization timing.
+
 ### Worker Architecture
 
 The _worker_ captures the background processing infrastructure for the SDK.

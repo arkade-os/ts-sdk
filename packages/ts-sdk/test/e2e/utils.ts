@@ -28,6 +28,7 @@ import {
     VirtualTxRepository,
     ExitCaptureMode,
     ExitDataSource,
+    NormalizedExtendedVirtualCoin,
 } from "../../src";
 import { ANCHOR_PKSCRIPT } from "../../src/utils/anchor";
 import type { ExtensionPacket } from "../../src/extension";
@@ -261,7 +262,10 @@ export async function createVtxo(alice: TestArkWallet, amount: number): Promise<
     if (!address) throw new Error("Offchain address not defined.");
 
     faucetOffchain(address, amount);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    await waitFor(async () => (await alice.wallet.getVtxos()).length > 0, {
+        timeout: 30_000,
+    });
 
     const virtualCoins = await alice.wallet.getVtxos();
     if (!virtualCoins || virtualCoins.length === 0) {
@@ -277,6 +281,14 @@ export async function createVtxo(alice: TestArkWallet, amount: number): Promise<
             },
         ],
     });
+
+    await waitFor(
+        async () =>
+            (await alice.wallet.getVtxos()).some((vtxo) =>
+                vtxo.commitmentTxIds.includes(settleTxid),
+            ),
+        { timeout: 30_000 },
+    );
 
     return settleTxid;
 }
@@ -321,6 +333,18 @@ export async function waitFor(
         await new Promise((r) => setTimeout(r, interval));
     }
     throw new Error("timeout in waitFor");
+}
+
+export async function waitForUnrolledVtxos(wallet: {
+    getVtxos: (filter?: { withUnrolled?: boolean }) => Promise<NormalizedExtendedVirtualCoin[]>;
+}): Promise<NormalizedExtendedVirtualCoin[]> {
+    let unrolled: NormalizedExtendedVirtualCoin[] = [];
+    await waitFor(async () => {
+        const coins = await wallet.getVtxos({ withUnrolled: true });
+        unrolled = coins;
+        return coins.some((vtxo) => vtxo.isUnrolled);
+    });
+    return unrolled;
 }
 
 /**

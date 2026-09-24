@@ -288,6 +288,13 @@ export interface HdRestoreWalletHandle extends RestoreWalletHandle {
     hdProvider: HDDescriptorProvider;
 }
 
+export async function awaitWalletBooted(wallet: {
+    getContractManager(): Promise<{ whenBooted?(): Promise<void> }>;
+}): Promise<void> {
+    const manager = await wallet.getContractManager();
+    await manager.whenBooted?.();
+}
+
 /**
  * Build an HD-mode wallet on the standard test mnemonic. Returns the
  * resolved {@link HDDescriptorProvider} (the wallet's private

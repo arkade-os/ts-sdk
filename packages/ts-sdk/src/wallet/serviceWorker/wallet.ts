@@ -390,6 +390,10 @@ class ServiceWorkerAssetManager extends ServiceWorkerReadonlyAssetManager implem
  * ```
  */
 interface ServiceWorkerWalletOptions {
+    /** Start contract synchronization in the background; inspect provider connection state. */
+    lazyInitialization?: boolean;
+    /** Defer boarding and history loading; render boarding.loaded=false as unknown. */
+    lazyBoarding?: boolean;
     /** Optional Arkade server public key used to construct and validate Arkade addresses. */
     arkServerPublicKey?: string;
     /**
@@ -492,6 +496,7 @@ export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
 };
 
 type MessageBusInitConfig = {
+    lazyInitialization?: boolean;
     wallet: SerializedIdentity | LegacySerializedIdentity;
     arkServer: {
         url: string;
@@ -637,6 +642,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         const publicKey = await options.identity.compressedPublicKey().then(hex.encode);
         const initWalletPayload = {
             key: { publicKey },
+            lazyBoarding: options.lazyBoarding,
             arkServerUrl: getArkadeServerUrl(options),
             arkServerPublicKey: options.arkServerPublicKey,
             delegateUrl: options.delegateUrl || options.delegatorUrl,
@@ -669,6 +675,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             indexerUrl: options.indexerUrl,
             esploraUrl: options.esploraUrl,
             watcherConfig: options.watcherConfig,
+            lazyInitialization: options.lazyInitialization,
             messageTimeouts,
         };
 
@@ -1708,6 +1715,7 @@ export class ServiceWorkerWallet
             serializedWallet.type === "single-key" ? serializedWallet.privateKey : null;
         const initWalletPayload = {
             key: legacyPrivateKey ? { privateKey: legacyPrivateKey } : {},
+            lazyBoarding: options.lazyBoarding,
             arkServerUrl: getArkadeServerUrl(options),
             arkServerPublicKey: options.arkServerPublicKey,
             delegateUrl: options.delegateUrl || options.delegatorUrl,
@@ -1741,6 +1749,7 @@ export class ServiceWorkerWallet
             esploraUrl: options.esploraUrl,
             settlementConfig: options.settlementConfig,
             walletMode: options.walletMode,
+            lazyInitialization: options.lazyInitialization,
             watcherConfig: options.watcherConfig,
             lookAheadWindow: options.lookAheadWindow,
             minBatchExpirySeconds: options.minBatchExpirySeconds,

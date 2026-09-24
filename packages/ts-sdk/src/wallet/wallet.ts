@@ -625,11 +625,16 @@ export class ArkadeCashCreateError extends Error {
  * server-info source and the contract-manager's indexer-sync health. It
  * describes only how fresh provider data is — never the wallet balances/VTXOs
  * themselves, which are always served from the repository (system of record).
+ *
+ * `syncing` says a provider sync is in flight right now, so a UI can show the
+ * work without a read having blocked on it. Optional so adding it breaks no
+ * implementer of this public interface; {@link ReadonlyWallet} always sets it.
  */
 export type ProviderConnectionState =
-    | { mode: "online"; source: "live"; lastOnlineAt: number }
+    | { mode: "online"; syncing?: boolean; source: "live"; lastOnlineAt: number }
     | {
           mode: "degraded";
+          syncing?: boolean;
           source: "cache" | "repository";
           provider: ProviderKind;
           reason: string;
@@ -637,6 +642,8 @@ export type ProviderConnectionState =
       };
 
 export class ReadonlyWallet implements IReadonlyWallet {
+    protected lazyInitialization = false;
+    private boardingLoaded = false;
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
@@ -743,9 +750,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * from the repository regardless of this state.
      */
     getProviderConnectionState(): ProviderConnectionState {
+        const syncing = this._contractManager?.getSyncState().syncing ?? false;
         if (this._serverInfoSource === "cache") {
             return {
                 mode: "degraded",
+                syncing,
                 source: "cache",
                 provider: "arkade",
                 reason: "constructed from cached server-info; operator was unreachable at boot",
@@ -756,6 +765,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         if (sync?.mode === "degraded") {
             return {
                 mode: "degraded",
+                syncing,
                 source: "repository",
                 provider: "indexer",
                 reason: sync.reason,
@@ -764,6 +774,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
         return {
             mode: "online",
+            syncing,
             source: "live",
             lastOnlineAt: sync?.lastSyncedAt ?? this._serverInfoLastOnlineAt ?? 0,
         };
@@ -1175,6 +1186,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.walletContractTimelocks,
         );
         wallet.intentRepository = config.storage?.intentRepository;
+        wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
         wallet.exitDataCapture = config.storage?.exitDataCapture;
         wallet._serverInfoSource = setup.serverInfoSource;
@@ -1221,6 +1233,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
             this.getBoardingUtxos(),
             this.contractSnapshot(),
         ]);
+        return this.balanceFromSnapshot(boardingUtxos, snapshot);
+    }
+
+    /** Cached balance; inspect connection state and boarding.loaded before displaying zeros. */
+    async getStoredBalance(): Promise<WalletBalance> {
+        const [boardingUtxos, snapshot] = await Promise.all([
+            this.getStoredBoardingUtxos(),
+            this.contractSnapshotStored(),
+        ]);
+        const balance = await this.balanceFromSnapshot(boardingUtxos, snapshot);
+        balance.boarding.loaded = this.boardingLoaded;
+        return balance;
+    }
+
+    private async balanceFromSnapshot(
+        boardingUtxos: ExtendedCoin[],
+        snapshot: ContractWithVtxos[],
+    ): Promise<WalletBalance> {
         // Explicit, not the default filter: the default drops unrolled coins,
         // and `computeOffchainBalance` cannot report a bucket it never sees.
         const vtxos = filterSnapshotVtxos(
@@ -1284,6 +1314,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
         return filterSnapshotVtxos(
             await this.contractSnapshot(),
+            filter,
+            this._pendingSpendOutpoints,
+        );
+    }
+
+    /** Cached VTXOs; may be empty before the first sync. Never use for coin selection. */
+    async getStoredVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+        return filterSnapshotVtxos(
+            await this.contractSnapshotStored(),
             filter,
             this._pendingSpendOutpoints,
         );
@@ -1416,6 +1455,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
     protected async contractSnapshot(): Promise<ContractWithVtxos[]> {
         const contractManager = await this.getContractManager();
         return contractManager.getContractsWithVtxos();
+    }
+
+    protected async contractSnapshotStored(): Promise<ContractWithVtxos[]> {
+        const contractManager = await this.getContractManager();
+        return contractManager.getStoredContractsWithVtxos
+            ? contractManager.getStoredContractsWithVtxos()
+            : contractManager.getContractsWithVtxos();
     }
 
     /**
@@ -1802,7 +1848,21 @@ export class ReadonlyWallet implements IReadonlyWallet {
             toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
         ]);
         const groups = await this.getBoardingUtxosForSigners(currentOnly);
+        this.boardingLoaded = true;
         return groups.flatMap((g) => g.coins);
+    }
+
+    async getStoredBoardingUtxos(): Promise<ExtendedCoin[]> {
+        const currentOnly = new Set([
+            toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
+        ]);
+        const tapscripts = await this.getBoardingTapscripts(currentOnly);
+        const perAddress = await Promise.all(
+            tapscripts.map((tapscript) =>
+                this.walletRepository.getUtxos(tapscript.onchainAddress(this.network)),
+            ),
+        );
+        return perAddress.flat();
     }
 
     /**
@@ -2127,6 +2187,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             onVtxosSpent = (vtxos) => pruneExitBranches(virtualTxRepository, vtxos);
         }
         const manager = await ContractManager.create({
+            lazyInitialization: this.lazyInitialization,
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
@@ -3682,6 +3743,7 @@ export class Wallet
             },
             checkpointExitDelayOverrides,
         );
+        wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet._serverInfoSource = setup.serverInfoSource;
         // The response cleared construction validation — network/signer in
         // setupWalletConfig plus the checkpoint/forfeit parsing above — so it is

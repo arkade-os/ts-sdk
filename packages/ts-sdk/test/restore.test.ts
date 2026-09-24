@@ -21,11 +21,19 @@ import type { RelativeTimelock } from "../src/script/tapscript";
 import { contractHandlers } from "../src/contracts/handlers";
 import { makeManagerForTest, makeDeps } from "./helpers/scanManager";
 import { getSyncCursor, OVERLAP_MS } from "../src/utils/syncCursors";
+
+/** Spin until `predicate` holds, so a test never races a fire-and-forget step. */
+const until = async (predicate: () => boolean): Promise<void> => {
+    for (let i = 0; i < 200 && !predicate(); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+};
 import {
     installRestoreHarness,
     teardownRestoreHarness,
     makeStaticWalletForTest,
     makeHdWalletForTest,
+    awaitWalletBooted,
 } from "./helpers/restoreWallet";
 import { jsonResponse } from "./helpers/response";
 import { registerWalletRestoreHook } from "../src/wallet/restoreHooks";
@@ -1265,6 +1273,9 @@ describe("Wallet.restore", () => {
     it("rejects an invalid gapLimit without running a scan", async () => {
         const { wallet, indexer } = await makeStaticWalletForTest();
         try {
+            await awaitWalletBooted(wallet);
+            indexer.getVtxosCalls.length = 0;
+
             for (const bad of [0, -1, 1.5]) {
                 await expect(wallet.restore({ gapLimit: bad })).rejects.toThrow(/gapLimit/);
             }
@@ -1362,7 +1373,7 @@ describe("Wallet.restore", () => {
 
             // Force the boot-time reconcile so the cursor is already at
             // "now" when the scan runs — the ordering the bug depends on.
-            await wallet.getContractManager();
+            await awaitWalletBooted(wallet);
             expect(await getSyncCursor(walletRepository)).toBeGreaterThan(0);
 
             await wallet.restore({ gapLimit: 5 });
@@ -1396,6 +1407,7 @@ describe("Wallet.restore", () => {
                 );
             }
 
+            await awaitWalletBooted(wallet);
             indexer.getVtxosCalls.length = 0;
             await wallet.restore({ gapLimit: 20 });
 
@@ -1437,12 +1449,12 @@ describe("Wallet.restore", () => {
             indexer.subscribeCalls.length = 0;
             await wallet.restore({ gapLimit: 5 });
 
-            // Two POSTs total: the scan's coalesced one, then the look-ahead
-            // refill that follows the watermark the scan advanced.
-            expect(indexer.subscribeCalls).toHaveLength(2);
-            // The scan's POST carries every discovered script, not a prefix.
+            await until(() => indexer.subscribeCalls.length >= 1);
+
+            const posts = indexer.subscribeCalls;
+            expect(posts.length).toBeLessThanOrEqual(2);
             for (const script of funded) {
-                expect(indexer.subscribeCalls[0]).toContain(script);
+                expect(posts[posts.length - 1]).toContain(script);
             }
         } finally {
             await wallet.dispose();

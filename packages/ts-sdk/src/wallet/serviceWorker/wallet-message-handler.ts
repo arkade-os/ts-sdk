@@ -157,6 +157,7 @@ export type RequestInitWallet = RequestEnvelope & {
         key?: { privateKey: string } | { publicKey: string } | {};
         arkServerUrl: string;
         arkServerPublicKey?: string;
+        lazyBoarding?: boolean;
     };
 };
 export type ResponseInitWallet = ResponseEnvelope & {
@@ -913,8 +914,8 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseRestoreWallet
     );
 
-/** What a generation counter covers: a subscription field, or the request stream. */
-type Scope = "incomingFunds" | "contractEvents" | "request";
+/** What a generation counter covers: a subscription field, a derived cache, or the request stream. */
+type Scope = "incomingFunds" | "contractEvents" | "boarding" | "request";
 
 /**
  * Bound to the generation live when it was created. Re-check `stale` after
@@ -947,9 +948,11 @@ export class WalletMessageHandler
     // `onWalletInitialized` re-subscribes incoming funds while
     // `ensureContractEventBroadcasting` deliberately keeps its subscription, so
     // a shared bump would leave the live contract-event emitter permanently
-    // stale, and folding requests in would truncate an in-flight settle.
+    // stale, folding requests in would truncate an in-flight settle, and
+    // sharing with boarding would kill every lazy refresh (see `boardingEpoch`).
     private incomingFundsEpoch = 0;
     private contractEventsEpoch = 0;
+    private boardingEpoch = 0;
     /** Per-request progress callbacks: ends with the handler, not with a re-init. */
     private requestEpoch = 0;
 
@@ -982,6 +985,7 @@ export class WalletMessageHandler
         this.requestEpoch++;
         this.incomingFundsEpoch++;
         this.contractEventsEpoch++;
+        this.boardingEpoch++;
         this.channel = undefined;
         this.onNextTick = [];
 
@@ -1036,6 +1040,8 @@ export class WalletMessageHandler
                 return this.incomingFundsEpoch;
             case "contractEvents":
                 return this.contractEventsEpoch;
+            case "boarding":
+                return this.boardingEpoch;
             case "request":
                 return this.requestEpoch;
             default: {
@@ -1197,7 +1203,10 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_BOARDING_UTXOS": {
-                    const utxos = await this.getAllBoardingUtxos();
+                    if (!this.readonlyWallet) {
+                        throw new WalletNotInitializedError();
+                    }
+                    const utxos = await this.readonlyWallet.getBoardingUtxos();
                     return this.tagged({
                         id,
                         type: "BOARDING_UTXOS",
@@ -1691,9 +1700,17 @@ export class WalletMessageHandler
     // Wallet methods
     private async handleInitWallet({ payload }: RequestInitWallet) {
         const { arkServerUrl } = payload;
+        this.lazyBoardingInit = payload.lazyBoarding ?? false;
+        this.boardingEpoch++;
+        this.boardingLoaded = false;
         this.indexerProvider = new RestIndexerProvider(arkServerUrl);
         await this.onWalletInitialized();
     }
+
+    /** @see RequestInitWallet.payload.lazyBoarding */
+    private lazyBoardingInit = false;
+    /** Set once this session has actually fetched the boarding addresses. */
+    private boardingLoaded = false;
 
     /**
      * The worker's own balance. Same bucketing rules as `Wallet.getBalance` —
@@ -1705,7 +1722,7 @@ export class WalletMessageHandler
      */
     private async handleGetBalance(): Promise<WalletBalance> {
         const [boardingUtxos, { snapshot, vtxos: allVtxos }] = await Promise.all([
-            this.getAllBoardingUtxos(),
+            this.getBoardingUtxosForBalance(),
             this.repoSnapshot(),
         ]);
         // Both exclusion sets come off that one snapshot, so they answer about
@@ -1746,6 +1763,7 @@ export class WalletMessageHandler
                 confirmed,
                 unconfirmed,
                 total: totalBoarding,
+                loaded: this.boardingLoaded,
             },
             settled: offchain.settled,
             preconfirmed: offchain.preconfirmed,
@@ -1760,9 +1778,12 @@ export class WalletMessageHandler
             availableAssets: offchain.availableAssets,
         };
     }
-    private async getAllBoardingUtxos(): Promise<ExtendedCoin[]> {
+    private async getBoardingUtxosForBalance(): Promise<ExtendedCoin[]> {
         if (!this.readonlyWallet) return [];
-        return this.readonlyWallet.getBoardingUtxos();
+        if (!this.lazyBoardingInit) return this.readonlyWallet.getBoardingUtxos();
+        return this.readonlyWallet.getStoredBoardingUtxos
+            ? this.readonlyWallet.getStoredBoardingUtxos()
+            : this.readonlyWallet.getBoardingUtxos();
     }
     private async onWalletInitialized() {
         const wallet = this.readonlyWallet;
@@ -1783,8 +1804,7 @@ export class WalletMessageHandler
         await this.ensureContractEventBroadcasting();
         if (init.stale) return;
 
-        // Refresh cached data (virtual outputs, boarding inputs, tx history)
-        await this.refreshCachedData();
+        await this.refreshCachedData({ lazyBoarding: this.lazyBoardingInit });
         if (init.stale) return;
 
         // Recover pending transactions (init-only, not on reload).
@@ -1929,22 +1949,54 @@ export class WalletMessageHandler
     }
 
     /**
-     * Refresh virtual outputs, boarding inputs, and transaction history from cache.
-     * Shared by onWalletInitialized (full bootstrap) and reloadWallet
-     * (post-refresh), avoiding duplicate subscriptions and VtxoManager restarts.
+     * Refresh boarding inputs and transaction history. The virtual outputs come
+     * from the contract manager, which runs before this. Shared by
+     * onWalletInitialized (full bootstrap) and reloadWallet (post-refresh),
+     * avoiding duplicate subscriptions and VtxoManager restarts.
+     *
+     * Both legs reach the onchain provider, so `lazyBoarding` moves them both
+     * off the caller's path. @see RequestInitWallet.payload.lazyBoarding
      */
-    private async refreshCachedData() {
+    private async refreshCachedData(opts?: { lazyBoarding?: boolean }) {
         if (!this.readonlyWallet || !this.walletRepository) {
             return;
         }
 
-        // Fetch boarding inputs across the full boarding-address set (current +
-        // historical rotated; plan §6-IV.2). Fetch FIRST: getBoardingUtxos
-        // re-fetches each boarding address from the onchain provider and saves
-        // it, so a transient failure throws here before we touch the cache and
-        // the previous snapshot survives (offline-first). saveUtxos merges, so
-        // only once the fetch succeeds do we prune spent coins the merge would
-        // otherwise keep — per address, mirroring updateDbAfterSettle.
+        if (opts?.lazyBoarding) {
+            const emitter = this.newEmitter("boarding");
+            void (async () => {
+                await this.refreshBoardingCache();
+                if (emitter.stale) return;
+                this.boardingLoaded = true;
+                const coins = (await this.readonlyWallet?.getStoredBoardingUtxos?.()) ?? [];
+                emitter.emit(
+                    this.tagged({
+                        type: "UTXO_UPDATE",
+                        broadcast: true,
+                        payload: { coins },
+                    }),
+                );
+                await this.refreshHistoryCache();
+            })().catch((error) => {
+                console.warn("[wallet] background refresh failed", error);
+            });
+            return;
+        }
+
+        await this.refreshBoardingCache();
+        this.boardingLoaded = true;
+        await this.refreshHistoryCache();
+    }
+
+    private async refreshHistoryCache(): Promise<void> {
+        if (!this.readonlyWallet || !this.walletRepository) return;
+        const address = await this.readonlyWallet.getAddress();
+        const txs = await this.buildTransactionHistoryFromCache();
+        if (txs) await this.walletRepository.saveTransactions(address, txs);
+    }
+
+    private async refreshBoardingCache(): Promise<void> {
+        if (!this.readonlyWallet || !this.walletRepository) return;
         const boardingAddresses = await this.readonlyWallet.getBoardingAddresses();
         const fresh = await this.readonlyWallet.getBoardingUtxos();
         const freshKeys = new Set(fresh.map((u) => `${u.txid}:${u.vout}`));
@@ -1955,11 +2007,6 @@ export class WalletMessageHandler
             await this.walletRepository.deleteUtxos(addr);
             if (kept.length > 0) await this.walletRepository.saveUtxos(addr, kept);
         }
-
-        // Build transaction history from cached virtual outputs (no indexer call)
-        const address = await this.readonlyWallet.getAddress();
-        const txs = await this.buildTransactionHistoryFromCache();
-        if (txs) await this.walletRepository.saveTransactions(address, txs);
     }
 
     /**
@@ -2114,6 +2161,8 @@ export class WalletMessageHandler
         this.requestEpoch++;
         this.incomingFundsEpoch++;
         this.contractEventsEpoch++;
+        this.boardingEpoch++;
+        this.boardingLoaded = false;
         this.onNextTick = [];
 
         if (this.incomingFundsSubscription) {
