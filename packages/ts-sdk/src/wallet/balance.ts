@@ -10,6 +10,10 @@ import { canRecoverOnchain, canSpendOffchain, hasTerminalSpend } from "./vtxo";
 export interface OffchainBalance {
     settled: number;
     preconfirmed: number;
+    /**
+     * Sats generic spending can move as plain sats.
+     * If any assets are available, one dust carrier is deducted.
+     */
     available: number;
     /**
      * Spendable-but-for-the-gate funds: VTXOs under a contract
@@ -55,8 +59,8 @@ export interface OffchainBalance {
 }
 
 /**
- * Per-VTXO facts the bucketing rules need but cannot derive offline from the
- * VTXO alone. Each caller supplies them from its own read strategy — the
+ * Facts the bucketing rules need but cannot derive offline from the VTXOs
+ * alone. Each caller supplies them from its own read strategy — the
  * main-thread balance from a synced contract snapshot, the service worker from
  * a pure repository read — so the *rules* stay shared while the *freshness*
  * stays deliberately different.
@@ -69,6 +73,12 @@ export interface BalanceCapabilities {
     isGenericallySpendable: (vtxo: NormalizedExtendedVirtualCoin) => boolean;
     /** Not committed to an in-flight (non-terminal) intent. */
     isUnlocked: (vtxo: NormalizedExtendedVirtualCoin) => boolean;
+    /**
+     * The sats an asset output rides on — the operator-advertised dust amount.
+     * Callers answer from {@link getDustAmount}: the wallet's `dustAmount`,
+     * or the fallback threshold. `0n` disables the carrier deduction from `available`.
+     */
+    dustCarrier: bigint;
 }
 
 /**
@@ -89,7 +99,7 @@ export function computeOffchainBalance(
     vtxos: readonly NormalizedExtendedVirtualCoin[],
     caps: BalanceCapabilities,
 ): OffchainBalance {
-    const { now, isPendingRecovery, isGenericallySpendable, isUnlocked } = caps;
+    const { now, isPendingRecovery, isGenericallySpendable, isUnlocked, dustCarrier } = caps;
 
     let settled = 0;
     let preconfirmed = 0;
@@ -159,6 +169,13 @@ export function computeOffchainBalance(
             available += vtxo.value;
             addAssets(spendable, vtxo);
         }
+    }
+
+    // An available asset rides on a dust carrier whose sats move only with the
+    // asset, so while any assets are available, one carrier's worth of the
+    // available sats are reserved and cannot be sent as plain sats.
+    if (available > 0 && spendable.size > 0) {
+        available = Math.max(0, available - Number(dustCarrier));
     }
 
     const toAssets = (from: Map<string, bigint>): Asset[] =>
