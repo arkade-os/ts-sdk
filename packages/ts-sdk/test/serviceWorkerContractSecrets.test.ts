@@ -49,6 +49,7 @@ import {
     provisionRefundKey,
 } from "../src/wallet/contractSecrets";
 import { jsonResponse } from "./helpers/response";
+import { createHandlerBackedBus } from "./helpers/handlerBackedBus";
 
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -120,48 +121,6 @@ async function makeInnerWallet(opts: {
     });
     openWallets.push(wallet);
     return wallet;
-}
-
-/**
- * A message bus whose far end is the real worker-side handler.
- *
- * Mirrors `createServiceWorkerHarness` in `test/serviceWorker/wallet.test.ts`
- * (same `navigator.serviceWorker` listener set, same `postMessage` shape, same
- * PING/PONG auto-answer) — that helper is file-local there, so this is the
- * same harness with the canned responder replaced by a real handler. Extract
- * both into `test/helpers/` if a third file needs it.
- */
-function createHandlerBackedBus(handler: WalletMessageHandler) {
-    type MessageHandler = (event: { data: any }) => void;
-    const listeners = new Set<MessageHandler>();
-
-    const emit = (data: any) => listeners.forEach((listener) => listener({ data }));
-
-    const navigatorServiceWorker = {
-        addEventListener: vi.fn((type: string, listener: MessageHandler) => {
-            if (type === "message") listeners.add(listener);
-        }),
-        removeEventListener: vi.fn((type: string, listener: MessageHandler) => {
-            if (type === "message") listeners.delete(listener);
-        }),
-    };
-
-    const serviceWorker = {
-        postMessage: vi.fn((message: any) => {
-            if (message.tag === "PING") {
-                emit({ id: message.id, tag: "PONG" });
-                return;
-            }
-            // Asynchronous on purpose: the real bus never answers inside the
-            // postMessage call, and a synchronous stub hides ordering bugs.
-            void handler
-                .handleMessage(message)
-                .then(emit)
-                .catch((error) => emit({ id: message.id, tag: message.tag, error }));
-        }),
-    };
-
-    return { navigatorServiceWorker, serviceWorker };
 }
 
 /**

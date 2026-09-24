@@ -9,6 +9,7 @@ import {
 import type { Contract } from "../src/contracts";
 import {
     createMockIndexerProvider,
+    createMockExtendedVtxo,
     createDefaultContractParams,
     TEST_DEFAULT_SCRIPT,
 } from "./contracts/helpers";
@@ -185,5 +186,37 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         await expect(
             (m as any).handleContractEvent({ type: "connection_reset", timestamp: 3 }),
         ).rejects.toThrow("schema violation");
+    });
+
+    describe("getStoredVtxosForContract", () => {
+        it("returns spent rows from storage without touching the indexer", async () => {
+            const contractRepo = new InMemoryContractRepository();
+            const walletRepo = new InMemoryWalletRepository();
+            await contractRepo.saveContract(seededContract());
+            const indexer = createMockIndexerProvider();
+            const m = await create(indexer, contractRepo, walletRepo);
+
+            // one live coin and one spent coin already in storage
+            await walletRepo.saveVtxos("addr", [
+                createMockExtendedVtxo({ vout: 0 }),
+                createMockExtendedVtxo({ vout: 1, isSpent: true, spentBy: "cc".repeat(32) }),
+            ]);
+
+            // the server goes down, and we forget the calls boot already made
+            (indexer.getVtxos as any).mockRejectedValue(new ProviderUnavailableError("down"));
+            (indexer.getVtxos as any).mockClear();
+
+            const vtxos = await m.getStoredVtxosForContract(seededContract());
+
+            expect(vtxos).toHaveLength(2);
+            expect(vtxos.find((v) => v.vout === 1)).toMatchObject({
+                isSpent: true,
+                spentBy: "cc".repeat(32),
+                contractScript: TEST_DEFAULT_SCRIPT,
+            });
+            expect(indexer.getVtxos).not.toHaveBeenCalled();
+            // a read that never tried the network leaves sync state alone
+            expect(m.getSyncState().mode).toBe("online");
+        });
     });
 });
