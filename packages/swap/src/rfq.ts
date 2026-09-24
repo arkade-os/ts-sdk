@@ -89,16 +89,20 @@ import { registerLockupContract } from "./lockupContract";
 import { ASSET_CARRIER_SATS, createOffer, receivePkScriptFor } from "./offer";
 import {
     assertCarrierRequestAllowed,
+    assertReceiverPaidEchoMatchesExpected,
     assertRecycleEchoMatchesExpected,
     carrierNow,
     encodeCarrierRequest,
     normalizeXonlyHex,
     parseCarrierEcho,
     parseTopLevelCarrierSats,
+    validateReceiverPaidQuoteShape,
     validateRecycleQuoteShape,
     type ArkadeCarrierChoice,
     type ArkadeCarrierRequest,
+    type ReceiverPaidCarrierQuote,
     type RecycleCarrierQuote,
+    type TaxiIdentity,
     type VerifiedCarrierTerms,
 } from "./receiveCarrier";
 
@@ -1494,6 +1498,13 @@ export async function requestArkadeSwap(
     }
     let carrierRequest: ArkadeCarrierRequest | undefined;
     let expectedRecycle: RecycleCarrierQuote | undefined;
+    let expectedReceiverPaid: ReceiverPaidCarrierQuote | undefined;
+    // The descriptor that fixes the receive address/asset/maker, whichever
+    // mode set it — the pre-flight checks below read only this, so recycle
+    // and recycle_receiver share one enforcement path.
+    let expectedCarrierQuote:
+        | { receiveAddress: string; makerPublicKey: string; assetId: string }
+        | undefined;
     if (params.carrier !== undefined) {
         const mode: unknown = (params.carrier as { mode?: unknown }).mode;
         if (mode === "purchase") {
@@ -1516,8 +1527,35 @@ export async function requestArkadeSwap(
             };
             validateRecycleQuoteShape(expectedRecycle);
             carrierRequest = { mode: "recycle", quoteId: expectedRecycle.quoteId };
+            expectedCarrierQuote = expectedRecycle;
+        } else if (mode === "recycleReceiver") {
+            const quote = (params.carrier as { quote?: ReceiverPaidCarrierQuote }).quote;
+            const taxi = (params.carrier as { taxi?: TaxiIdentity }).taxi;
+            if (!quote || typeof quote !== "object") {
+                throw new Error("carrier receiver-paid quote is required");
+            }
+            if (!taxi || typeof taxi !== "object") {
+                throw new Error("carrier receiver-paid taxi identity is required");
+            }
+            expectedReceiverPaid = {
+                quoteId: quote.quoteId,
+                receiveAddress: quote.receiveAddress,
+                makerPublicKey: quote.makerPublicKey,
+                assetId: quote.assetId,
+                physicalSats: quote.physicalSats,
+                loanSats: quote.loanSats,
+                expiresAt: quote.expiresAt,
+            };
+            validateReceiverPaidQuoteShape(expectedReceiverPaid);
+            carrierRequest = {
+                mode: "recycle_receiver",
+                quoteId: expectedReceiverPaid.quoteId,
+                taxiUrl: taxi.url,
+                taxiKey: taxi.operatorKey,
+            };
+            expectedCarrierQuote = expectedReceiverPaid;
         } else {
-            throw new Error("carrier request mode must be purchase or recycle");
+            throw new Error("carrier request mode must be purchase, recycle or recycleReceiver");
         }
     }
     assertCarrierRequestAllowed(carrierRequest, {
@@ -1525,7 +1563,9 @@ export async function requestArkadeSwap(
         ...(offerAsset !== undefined ? { offerAsset } : {}),
     });
     const effectiveReceiveAddress =
-        expectedRecycle !== undefined ? expectedRecycle.receiveAddress : requestedReceiveAddress;
+        expectedCarrierQuote !== undefined
+            ? expectedCarrierQuote.receiveAddress
+            : requestedReceiveAddress;
     if (
         requestedReceiveAddress !== undefined &&
         effectiveReceiveAddress !== undefined &&
@@ -1538,11 +1578,11 @@ export async function requestArkadeSwap(
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    if (expectedRecycle !== undefined) {
-        if (wantAsset === undefined || expectedRecycle.assetId !== wantAsset.toString()) {
+    if (expectedCarrierQuote !== undefined) {
+        if (wantAsset === undefined || expectedCarrierQuote.assetId !== wantAsset.toString()) {
             throw new Error("carrier quote assetId differs from the requested wantAsset");
         }
-        if (normalizeXonlyHex(makerPublicKey) !== expectedRecycle.makerPublicKey) {
+        if (normalizeXonlyHex(makerPublicKey) !== expectedCarrierQuote.makerPublicKey) {
             throw new Error("carrier quote makerPublicKey differs from the wallet identity");
         }
     }
@@ -1610,10 +1650,30 @@ export async function requestArkadeSwap(
         const echo = parseCarrierEcho(echoRaw, {
             mode: carrierRequest.mode,
             ...(carrierRequest.mode === "recycle" ? { quoteId: carrierRequest.quoteId } : {}),
+            ...(carrierRequest.mode === "recycle_receiver"
+                ? {
+                      quoteId: carrierRequest.quoteId,
+                      taxiUrl: carrierRequest.taxiUrl,
+                      taxiKey: carrierRequest.taxiKey,
+                  }
+                : {}),
         });
-        const topCarrier = parseTopLevelCarrierSats(quote.carrier_sats);
-        if (topCarrier !== echo.physicalSats) {
-            throw new Error("carrier echo physical differs from top-level carrier_sats");
+        if (echo.mode === "recycle_receiver") {
+            // Nothing is netted on a receiver-paid deal, so a published
+            // carrier_sats would be false; the dust comparison is its own
+            // getInfo call, independent of the purchase branch's below.
+            if (quote.carrier_sats !== undefined) {
+                throw new Error("receiver-paid quote must publish no carrier_sats");
+            }
+            const dustInfo = await new RestArkProvider(arkServerUrl).getInfo();
+            if (echo.physicalSats !== dustInfo.dust) {
+                throw new Error("carrier receiver-paid physical differs from the server dust");
+            }
+        } else {
+            const topCarrier = parseTopLevelCarrierSats(quote.carrier_sats);
+            if (topCarrier !== echo.physicalSats) {
+                throw new Error("carrier echo physical differs from top-level carrier_sats");
+            }
         }
         if (quote.valid_until > echo.expiresAt) {
             throw new Error("carrier echo expires before the quote valid_until");
@@ -1627,6 +1687,11 @@ export async function requestArkadeSwap(
             if (echo.physicalSats !== info.dust) {
                 throw new Error("carrier purchase physical differs from the server dust");
             }
+        } else if (echo.mode === "recycle_receiver") {
+            if (expectedReceiverPaid === undefined) {
+                throw new Error("carrier receiver-paid request is missing its expected descriptor");
+            }
+            assertReceiverPaidEchoMatchesExpected(echo, expectedReceiverPaid);
         } else {
             if (expectedRecycle === undefined) {
                 throw new Error("carrier recycle request is missing its expected descriptor");

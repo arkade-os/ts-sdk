@@ -1115,3 +1115,203 @@ describe("requestArkadeSwap carrier recycle", () => {
         expect("carrier" in result).toBe(false);
     });
 });
+
+describe("requestArkadeSwap carrier recycle_receiver", () => {
+    const receiverPaidCarrier = (over: { quote?: ReceiverPaidCarrierQuote } = {}) => ({
+        mode: "recycleReceiver" as const,
+        taxi: { url: TAXI_URL, operatorKey: TAXI_KEY },
+        ...over,
+    });
+
+    it("sends the Taxi identity in the RFQ profile and funds the quote's address", async () => {
+        const expected = await receiverPaidQuote();
+        const derived = await derivedOffer(expected.receiveAddress);
+        const quote = await quoteFor(derived, {
+            carrier_sats: undefined,
+            profile: {
+                offer_address: derived.address,
+                offer_pk_script: hex.encode(derived.swapPkScript),
+                carrier: receiverPaidEcho(),
+            },
+        });
+        const log: Record<string, unknown>[] = [];
+        const result = await requestArkadeSwap(wallet, "http://ark", transportFor(quote, log), {
+            wantAsset: testAsset,
+            amount: 1000n,
+            rfqId: RFQ_ID,
+            emulatorPubkey,
+            now: NOW,
+            carrier: receiverPaidCarrier({ quote: expected }),
+        });
+        expect((log[0] as { profile: { carrier: unknown } }).profile.carrier).toEqual({
+            mode: "recycle_receiver",
+            quote_id: QUOTE_ID,
+            taxi_url: TAXI_URL,
+            taxi_key: TAXI_KEY,
+        });
+        expect(result.carrier).toEqual({
+            mode: "recycle_receiver",
+            physicalSats: 330n,
+            loanSats: 330n,
+            receiptSats: 0n,
+            serviceFareSats: 0n,
+            pricedSats: 0n,
+            expiresAt: EXPIRES_AT,
+            quoteId: QUOTE_ID,
+        });
+        const decoded = decodeOffer(hex.decode(result.offerHex));
+        expect(decoded.makerPkScript).toEqual(ArkAddress.decode(expected.receiveAddress).pkScript);
+        expect(state.created).toHaveLength(1);
+    });
+
+    it("requires the top-level carrier_sats to be absent on a receiver-paid quote", async () => {
+        const expected = await receiverPaidQuote();
+        const derived = await derivedOffer(expected.receiveAddress);
+        const quote = await quoteFor(derived, {
+            carrier_sats: "330",
+            profile: {
+                offer_address: derived.address,
+                offer_pk_script: hex.encode(derived.swapPkScript),
+                carrier: receiverPaidEcho(),
+            },
+        });
+        await expect(
+            requestArkadeSwap(wallet, "http://ark", transportFor(quote), {
+                wantAsset: testAsset,
+                amount: 1000n,
+                rfqId: RFQ_ID,
+                emulatorPubkey,
+                now: NOW,
+                carrier: receiverPaidCarrier({ quote: expected }),
+            }),
+        ).rejects.toThrow(/receiver-paid quote must publish no carrier_sats/);
+        expect(state.created).toHaveLength(0);
+    });
+
+    it("refuses a receiver-paid echo whose physical is not the server dust", async () => {
+        const expected = await receiverPaidQuote();
+        const derived = await derivedOffer(expected.receiveAddress);
+        const quote = await quoteFor(derived, {
+            carrier_sats: undefined,
+            profile: {
+                offer_address: derived.address,
+                offer_pk_script: hex.encode(derived.swapPkScript),
+                carrier: receiverPaidEcho({ physical_sats: "331", loan_sats: "331" }),
+            },
+        });
+        await expect(
+            requestArkadeSwap(wallet, "http://ark", transportFor(quote), {
+                wantAsset: testAsset,
+                amount: 1000n,
+                rfqId: RFQ_ID,
+                emulatorPubkey,
+                now: NOW,
+                carrier: receiverPaidCarrier({ quote: expected }),
+            }),
+        ).rejects.toThrow(/physical/);
+        expect(state.created).toHaveLength(0);
+    });
+
+    it("refuses a receiver-paid quote for the wrong asset", async () => {
+        const wrongAsset = asset.AssetId.fromString("cc".repeat(32) + "0000");
+        const expected = await receiverPaidQuote();
+        const derived = await derivedOffer(expected.receiveAddress);
+        const quote = await quoteFor(derived, {
+            carrier_sats: undefined,
+            profile: {
+                offer_address: derived.address,
+                offer_pk_script: hex.encode(derived.swapPkScript),
+                carrier: receiverPaidEcho(),
+            },
+        });
+        await expect(
+            requestArkadeSwap(wallet, "http://ark", transportFor(quote), {
+                wantAsset: testAsset,
+                amount: 1000n,
+                rfqId: RFQ_ID,
+                emulatorPubkey,
+                now: NOW,
+                carrier: receiverPaidCarrier({
+                    quote: { ...expected, assetId: wrongAsset.toString() },
+                }),
+            }),
+        ).rejects.toThrow(/assetId/);
+        expect(state.created).toHaveLength(0);
+    });
+
+    it("refuses a receiver-paid quote for the wrong maker key", async () => {
+        const expected = await receiverPaidQuote();
+        const derived = await derivedOffer(expected.receiveAddress);
+        const quote = await quoteFor(derived, {
+            carrier_sats: undefined,
+            profile: {
+                offer_address: derived.address,
+                offer_pk_script: hex.encode(derived.swapPkScript),
+                carrier: receiverPaidEcho(),
+            },
+        });
+        await expect(
+            requestArkadeSwap(wallet, "http://ark", transportFor(quote), {
+                wantAsset: testAsset,
+                amount: 1000n,
+                rfqId: RFQ_ID,
+                emulatorPubkey,
+                now: NOW,
+                carrier: receiverPaidCarrier({
+                    quote: { ...expected, makerPublicKey: "34".repeat(32) },
+                }),
+            }),
+        ).rejects.toThrow(/makerPublicKey/);
+        expect(state.created).toHaveLength(0);
+    });
+
+    it("refuses a mismatched receiveAddress before transport", async () => {
+        const requestQuote = vi.fn(async () => {
+            throw new Error("must not be called");
+        });
+        const transport: RfqTransport = {
+            requestQuote,
+            status: vi.fn(async () => null),
+            close: vi.fn(async () => undefined),
+        };
+        const expected = await receiverPaidQuote();
+        await expect(
+            requestArkadeSwap(wallet, "http://ark", transport, {
+                wantAsset: testAsset,
+                amount: 1000n,
+                rfqId: RFQ_ID,
+                emulatorPubkey,
+                now: NOW,
+                receiveAddress: makerAddress,
+                carrier: receiverPaidCarrier({ quote: expected }),
+            }),
+        ).rejects.toThrow(/receiveAddress/);
+        expect(requestQuote).not.toHaveBeenCalled();
+        expect(state.created).toHaveLength(0);
+    });
+
+    it("leaves the existing recycle path byte-identical", async () => {
+        const expected = await recycleQuote();
+        const derived = await derivedOffer(expected.receiveAddress);
+        const quote = await quoteFor(derived, {
+            profile: {
+                offer_address: derived.address,
+                offer_pk_script: hex.encode(derived.swapPkScript),
+                carrier: recycleEcho(),
+            },
+        });
+        const log: Record<string, unknown>[] = [];
+        await requestArkadeSwap(wallet, "http://ark", transportFor(quote, log), {
+            wantAsset: testAsset,
+            amount: 1000n,
+            rfqId: RFQ_ID,
+            emulatorPubkey,
+            now: NOW,
+            carrier: { mode: "recycle", quote: expected },
+        });
+        expect((log[0] as { profile: { carrier: unknown } }).profile.carrier).toEqual({
+            mode: "recycle",
+            quote_id: QUOTE_ID,
+        });
+    });
+});
