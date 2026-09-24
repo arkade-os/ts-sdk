@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
@@ -125,8 +125,8 @@ describe("offer contract registration", () => {
         const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
         const gouging: RfqTransport = {
             requestQuote: vi.fn(async () => ({
-                v: 1,
-                type: "rfq_quote",
+                v: 1 as const,
+                type: "rfq_quote" as const,
                 rfq_id: rfqId,
                 pair,
                 // 1000x a fair deposit, while to_amount echoes the request.
@@ -186,8 +186,8 @@ describe("offer contract registration", () => {
         const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
         const transport: RfqTransport = {
             requestQuote: vi.fn(async () => ({
-                v: 1,
-                type: "rfq_quote",
+                v: 1 as const,
+                type: "rfq_quote" as const,
                 rfq_id: rfqId,
                 pair,
                 from_amount: "700",
@@ -230,8 +230,8 @@ describe("offer contract registration", () => {
         const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
         const quoteWith = (carrier?: string): RfqTransport => ({
             requestQuote: vi.fn(async () => ({
-                v: 1,
-                type: "rfq_quote",
+                v: 1 as const,
+                type: "rfq_quote" as const,
                 rfq_id: rfqId,
                 pair,
                 from_amount: "700",

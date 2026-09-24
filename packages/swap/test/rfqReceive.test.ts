@@ -283,7 +283,7 @@ const receiveQuote = (
         valid_until: VALID_UNTIL,
         refund_locktime: REFUND_LOCKTIME,
         profile: {
-            payment_hash: profile.payment_hash,
+            payment_hash: profile.payment_hash as string | undefined,
             invoice: "lnbcrt49u1p...",
             lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
             solver_refund_pk_script: hex.encode(SOLVER_REFUND_PK_SCRIPT),
@@ -870,9 +870,10 @@ describe("requestLightningReceive on an HD wallet", () => {
         // never decides which of its fields to copy.
         const flow = await lightningReceiveFlow();
         const result = await flow.run();
-        const { params } = flow.createContract.mock.calls[0][0] as {
-            params: Record<string, string>;
-        };
+        const call = (
+            flow.createContract.mock.calls as unknown as Array<[{ params: Record<string, string> }]>
+        )[0];
+        const { params } = call[0];
 
         const record = createRfqSwapRecord(
             {
@@ -1020,10 +1021,12 @@ describe("a static wallet's receive record hands P back", () => {
         );
 
     it("stores the salt, stores no preimage, and re-derives P through the record", async () => {
-        const createContract = vi.fn(async () => ({}));
+        const createContract = vi.fn(async (_args?: { params: Record<string, string> }) => ({}));
         const flow = await lightningReceiveFlow({ wallet: staticWallet(createContract) });
         const result = await flow.run();
-        const { params } = createContract.mock.calls[0][0] as { params: Record<string, string> };
+        const { params } = createContract.mock.calls[0][0] as unknown as {
+            params: Record<string, string>;
+        };
 
         // the arm this test exists for: one repeating key, so uniqueness comes
         // from a salt rather than from the descriptor

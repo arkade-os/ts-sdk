@@ -167,18 +167,19 @@ describe("pushClaim", () => {
         // different payload than the one submitted.
         const contract = swapScript();
         let fieldPresentAtSignTime = false;
-        const probe = {
-            ...RECEIVER,
-            sign: async (tx: InstanceType<typeof Transaction>, inputIndexes?: number[]) => {
-                const indexes =
-                    inputIndexes ?? Array.from({ length: tx.inputsLength }, (_, i) => i);
-                for (const index of indexes) {
-                    fieldPresentAtSignTime ||=
-                        getArkPsbtFields(tx, index, ConditionWitness).length > 0;
-                }
-                return RECEIVER.sign(tx, inputIndexes);
+        const probe: SingleKey = Object.create(RECEIVER, {
+            sign: {
+                value: async (tx: InstanceType<typeof Transaction>, inputIndexes?: number[]) => {
+                    const indexes =
+                        inputIndexes ?? Array.from({ length: tx.inputsLength }, (_, i) => i);
+                    for (const index of indexes) {
+                        fieldPresentAtSignTime ||=
+                            getArkPsbtFields(tx, index, ConditionWitness).length > 0;
+                    }
+                    return RECEIVER.sign(tx, inputIndexes);
+                },
             },
-        };
+        });
         await pushClaim(fakeOperator(), {
             contract: contract,
             receiver: probe,
@@ -414,6 +415,7 @@ describe("awaitLockupFunding + claimReceiveLockup", () => {
             destinationPkScript: DESTINATION_PK_SCRIPT,
             expectedAmount: EXPECTED_AMOUNT,
             pollMs: 1,
+            vtxos: VTXOS,
         });
         expect(operator.submitted).toHaveLength(1);
         expect(result.amount).toBe(100_000);

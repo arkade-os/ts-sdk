@@ -240,12 +240,12 @@ describe.each([
         const secrets = result.secrets;
         expect(secrets).not.toHaveProperty("senderPrivateKey");
 
-        expect(secrets.preimage !== undefined).toBe(hasPreimage);
+        expect("preimage" in secrets && secrets.preimage !== undefined).toBe(hasPreimage);
 
         const serialized = JSON.stringify(created[0]);
         const forbidden = [
             result.rfqId,
-            ...(secrets.preimage ? [hex.encode(secrets.preimage)] : []),
+            ...("preimage" in secrets && secrets.preimage ? [hex.encode(secrets.preimage)] : []),
         ];
         for (const value of forbidden) expect(serialized).not.toContain(value);
     });

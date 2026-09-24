@@ -32,7 +32,6 @@ import {
     type RfqQuote,
 } from "../../src/protocol";
 import {
-    type AttestingRfqTransport,
     createSwapClient,
     createSwapPaymentRouter,
     InMemoryAssetSwapRepository,
@@ -40,6 +39,7 @@ import {
     ONCHAIN_SWAP_RAIL,
     type SwapClient,
 } from "../../src";
+import { type AttestingRfqTransport } from "../../src/client/transport";
 import { encodeInvoice } from "../helpers/bolt11";
 
 const OPERATOR_URL = "http://localhost:7070";

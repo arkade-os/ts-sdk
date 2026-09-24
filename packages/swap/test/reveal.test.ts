@@ -164,9 +164,9 @@ describe("covclaimdClient", () => {
 
     it("reports a 200 carrying a non-JSON body as CovclaimdRevealError, not SyntaxError", async () => {
         const { impl } = stubFetch([{ body: "<html>502 Bad Gateway</html>" }]);
-        const error = await covclaimdClient("https://cov.example", { fetchImpl: impl })
+        const error = (await covclaimdClient("https://cov.example", { fetchImpl: impl })
             .info()
-            .catch((e: unknown) => e as CovclaimdRevealError);
+            .catch((e: unknown) => e as CovclaimdRevealError)) as CovclaimdRevealError;
         expect(error).toBeInstanceOf(CovclaimdRevealError);
         expect(error.status).toBe(200);
         expect(error.retryable).toBe(false);
@@ -194,9 +194,9 @@ describe("covclaimdClient", () => {
         const { impl } = stubFetch([
             { status: 400, body: "aead open: message authentication failed" },
         ]);
-        const error = await covclaimdClient("https://cov.example", { fetchImpl: impl })
+        const error = (await covclaimdClient("https://cov.example", { fetchImpl: impl })
             .reveal({ swapAddress: "a", ciphertext: "b", arkadeScript: "c", taptree: "d" })
-            .catch((e: unknown) => e as CovclaimdRevealError);
+            .catch((e: unknown) => e as CovclaimdRevealError)) as CovclaimdRevealError;
         expect(error).toBeInstanceOf(CovclaimdRevealError);
         expect(error.retryable).toBe(false);
         expect(error.status).toBe(400);
@@ -206,9 +206,9 @@ describe("covclaimdClient", () => {
     it("marks 429 and 503 retryable", async () => {
         for (const status of [429, 503]) {
             const { impl } = stubFetch([{ status, body: "busy" }]);
-            const error = await covclaimdClient("https://cov.example", { fetchImpl: impl })
+            const error = (await covclaimdClient("https://cov.example", { fetchImpl: impl })
                 .reveal({ swapAddress: "a", ciphertext: "b", arkadeScript: "c", taptree: "d" })
-                .catch((e: unknown) => e as CovclaimdRevealError);
+                .catch((e: unknown) => e as CovclaimdRevealError)) as CovclaimdRevealError;
             expect(error.retryable, `status ${status}`).toBe(true);
         }
     });
@@ -217,9 +217,10 @@ describe("covclaimdClient", () => {
         const impl = (async () => {
             throw new Error("ECONNREFUSED");
         }) as unknown as typeof fetch;
-        const error = await covclaimdClient("https://cov.example", { fetchImpl: impl })
+        const error = (await covclaimdClient("https://cov.example", { fetchImpl: impl })
             .reveal({ swapAddress: "a", ciphertext: "b", arkadeScript: "c", taptree: "d" })
-            .catch((e: unknown) => e as CovclaimdRevealError);
+            .catch((e: unknown) => e as CovclaimdRevealError)) as CovclaimdRevealError;
+        expect(error).toBeInstanceOf(CovclaimdRevealError);
         expect(error.status).toBe(0);
         expect(error.retryable).toBe(true);
         expect(error.message).toContain("ECONNREFUSED");
@@ -318,11 +319,11 @@ describe("revealClaimPacket", () => {
             { body: infoBody },
             { status: 400, body: "no such closure" },
         ]);
-        const error = await revealClaimPacket(c, {
+        const error = (await revealClaimPacket(c, {
             script,
             address: addressOf(script),
             preimage: PREIMAGE,
-        }).catch((e: unknown) => e as CovclaimdRevealError);
+        }).catch((e: unknown) => e as CovclaimdRevealError)) as CovclaimdRevealError;
         expect(error).toBeInstanceOf(CovclaimdRevealError);
         expect(error.retryable).toBe(false);
     });

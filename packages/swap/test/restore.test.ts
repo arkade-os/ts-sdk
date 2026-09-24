@@ -388,7 +388,7 @@ describe("restoreAssetSwaps", () => {
             [{}, "pending"],
             [{ isSwept: true }, "recoverable"],
         ]) {
-            const vtxo = depositVtxo(offer, funding.txid, extra);
+            const vtxo = depositVtxo(offer, funding.txid, extra as Record<string, unknown>);
             const indexer = makeIndexer([funding], [vtxo]);
             const {
                 restored: [restored],

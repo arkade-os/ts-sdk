@@ -1186,7 +1186,7 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         await m.poll();
 
         expect(swap.state).toBe("pending");
-        expect(swap.refundArkTxid).toBeUndefined();
+        expect(swap.refundTxid).toBeUndefined();
     });
 
     it("holds the wait open through the lag window and ends it at the deadline", async () => {
@@ -1239,7 +1239,7 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         await m.poll();
 
         expect(swap.state).toBe("settled");
-        expect(swap.refundArkTxid).toBeUndefined();
+        expect(swap.refundTxid).toBeUndefined();
     });
 });
 

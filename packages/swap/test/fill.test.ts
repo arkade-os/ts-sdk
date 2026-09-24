@@ -216,7 +216,7 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         ["carrying a different asset", [{ assetId: STRAY_ASSET, amount: 9 }]],
         ["carrying a zero amount of it", [{ assetId: DEPOSIT_ASSET, amount: 0 }]],
     ])("refuses a deposit %s the offer says it sells", async (_label, assets) => {
-        reset([{ ...satsDeposit, ...(assets ? { assets } : {}) }]);
+        reset([{ ...satsDeposit, assets: assets ?? [] }]);
         await expect(
             fillOffer(wallet, "http://ark", wantBtcHex, { fund, emulator: EMULATOR }),
         ).rejects.toThrow(/carries no aa+0000, which this offer sells/);
@@ -247,7 +247,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
     });
 
     it("pays an ASSET want through the packet, with only a carrier at output 0", async () => {
-        reset([satsDeposit]);
+        reset([{ ...satsDeposit, assets: [] }]);
         const txid = await fillOffer(wallet, "http://ark", wantAssetHex, {
             fund: fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }),
             emulator: EMULATOR,
@@ -276,7 +276,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
     });
 
     it("returns the taker's surplus of the wanted asset, in the same group", async () => {
-        reset([satsDeposit]);
+        reset([{ ...satsDeposit, assets: [] }]);
         await fillOffer(wallet, "http://ark", wantAssetHex, {
             fund: fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 80_000 }] }),
             emulator: EMULATOR,
@@ -338,7 +338,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
     });
 
     it("lets the caller raise the carrier for a higher dust threshold", async () => {
-        reset([satsDeposit]);
+        reset([{ ...satsDeposit, assets: [] }]);
         await fillOffer(wallet, "http://ark", wantAssetHex, {
             fund: fundingCoin({ assets: [{ assetId: WANTED_ASSET, amount: 50_000 }] }),
             emulator: EMULATOR,
