@@ -119,6 +119,7 @@ import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import {
     assertRecipientArkAddress,
     extendCoinWithTapscript,
+    getDustAmount,
     validateRecipients,
     type RecipientAddressContext,
 } from "./utils";
@@ -1448,6 +1449,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             isPendingRecovery: (vtxo) => pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
             isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
+            dustCarrier: getDustAmount(this),
         };
     }
 
