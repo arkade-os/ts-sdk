@@ -12,8 +12,7 @@
  * swap at a time, remembers where each one got to, and tells the caller when
  * something happened. That is this module.
  *
- * The shape is deliberately the one `packages/boltz-swap`'s `SwapManager`
- * arrived at — monitor a set, act automatically through injected callbacks,
+ * The shape is a set of live swaps driven to completion — monitor a set, act automatically through injected callbacks,
  * persist through an injected `saveSwap` or a repository of its own, expose
  * events plus a promise-based escape hatch. Three things are different, each
  * for a reason:
@@ -52,7 +51,7 @@
  * - **No manager-level retry backoff.** The one long-running action here,
  *   the `refundWithoutReceiver` push, is atomic — one transaction spending
  *   every lockup output into one aggregate output — so there is no partial
- *   success to re-arm, unlike Boltz's per-VTXO `skipped`/`retryAt` outcome.
+ *   success to re-arm on a per-VTXO `skipped`/`retryAt` outcome.
  *   Retrying it is genuinely needed (median-time-past lags wall clock, so the
  *   first pushes after `refundLocktime` are EXPECTED to be refused), but the
  *   poll interval is already that retry cadence and
@@ -2100,10 +2099,10 @@ export class RfqSwapManager {
     /**
      * Drop a terminal swap from monitoring and report it exactly once.
      *
-     * `onSwapCompleted` and `onSwapFailed` are mutually exclusive here, unlike
-     * Boltz's manager, which fires completion for every swap that leaves
-     * monitoring including the failed ones — a listener named "completed" that
-     * also fires on failure is a trap worth not inheriting.
+     * `onSwapCompleted` and `onSwapFailed` are mutually exclusive here.
+     * Completion fires only when a swap leaves monitoring successfully; a
+     * failed swap reports through `onSwapFailed` alone, so a listener named
+     * "completed" never also fires on failure.
      */
     private finalize(swap: RfqSwap): void {
         if (!this.monitored.has(swap.rfqId)) return;

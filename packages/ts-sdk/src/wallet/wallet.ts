@@ -2037,16 +2037,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
      *
      * The ContractManager handles:
      * - The wallet's default receiving address (as a "default" contract)
-     * - External contracts (Boltz swaps, HTLCs, etc.)
+     * - External contracts (asset swaps, HTLCs, etc.)
      * - Multi-contract watching with resilient connections
      *
      * @example
      * ```typescript
      * const manager = await wallet.getContractManager();
      *
-     * // Create a contract for a Boltz swap
+     * // Create a contract for an external swap
      * const contract = await manager.createContract({
-     *   label: "Boltz Swap",
+     *   label: "Swap",
      *   type: "vhtlc",
      *   params: { ... },
      *   script: swapScript,

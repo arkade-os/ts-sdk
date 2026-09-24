@@ -289,8 +289,8 @@ describe("pushRefundWithoutReceiver", () => {
          * take it back — `canSpendOffchain` and `canRecoverOnchain` are
          * mutually exclusive in the SDK, and the latter means "must be
          * recovered into a fresh batch rather than spent offchain". Holding the
-         * sender key does not change that. `packages/boltz-swap` routes exactly
-         * this case through `joinBatch` instead of an offchain tx.
+         * sender key does not change that. The swept output has to be recovered
+         * into a fresh batch instead of spent with an offchain transaction.
          */
         it("refuses rather than submitting a spend the server must reject", async () => {
             const operator = fakeOperator();

@@ -51,7 +51,7 @@ function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTrans
 }
 
 /** Browser backend over the SDK's shared IndexedDB manager — the same
- * infrastructure the wallet already uses for its Boltz swap repository. */
+ * infrastructure the wallet already uses for its other repositories. */
 export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     readonly version = 4 as const;
     private readonly connection: ManagedConnection;

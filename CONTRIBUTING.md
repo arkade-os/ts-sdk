@@ -10,7 +10,6 @@ Integration tests live in `test/e2e/` within each package and require the Docker
 ```bash
 pnpm run test:integration              # Every package, end-to-end
 pnpm run test:integration:ts-sdk       # ts-sdk only
-pnpm run test:integration:boltz-swap   # boltz-swap only
 pnpm run test:integration:swap         # swap only
 pnpm run test:integration:swap-rfq     # swap's RFQ corridor only
 ```
@@ -24,7 +23,7 @@ matrix jobs.
 
 ### Per-package stack control
 
-Replace `:ts-sdk` with `:boltz-swap`, `:swap`, or `:swap-rfq` for the other packages.
+Replace `:ts-sdk` with `:swap` or `:swap-rfq` for the other packages.
 
 ```bash
 pnpm run regtest:up:ts-sdk
@@ -42,7 +41,7 @@ CI fans the ts-sdk e2e suite out across parallel groups by passing each group's 
 
 `regtest/` is a git submodule pointing to
 [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest). It manages a Docker Compose stack
-(Bitcoin Core, Fulcrum, mempool, NBXplorer, arkd, boltz, LND, fulmine, and supporting services)
+(Bitcoin Core, Fulcrum, mempool, NBXplorer, arkd, LND, and supporting services)
 driven by the in-house Node CLI `regtest.mjs`. Use `node regtest/regtest.mjs start` / `stop` /
 `clean`, or the `scripts/regtest.sh` controller.
 
@@ -50,12 +49,11 @@ Run `git submodule update --init` after cloning.
 
 ## Releasing
 
-Package-scoped release orchestrator. Target is `sdk`, `boltz-swap`, `swap`, or `all`.
+Package-scoped release orchestrator. Target is `sdk`, `swap`, or `all`.
 
 ```bash
-pnpm run release -- boltz-swap patch          # Boltz bugfix only
 pnpm run release -- swap patch                # Swap bugfix only
-pnpm run release -- sdk patch                 # SDK + dependent boltz-swap/swap patch
+pnpm run release -- sdk patch                 # SDK + dependent swap patch
 pnpm run release -- sdk prepatch --preid beta # Mirrors prerelease into the dependents
 pnpm run release -- all patch                 # Bump every package
 pnpm run release:dry-run -- sdk patch         # Preview without changes
@@ -69,9 +67,9 @@ semver such as `0.5.0-beta.0`. Prerelease bumps require `--preid alpha|beta|rc|n
 under a matching npm dist-tag — never `latest`.
 
 Releasing SDK implies a dependent release of every package that depends on it via `workspace:*`
-(`boltz-swap` and `swap`), because pnpm rewrites `workspace:*` to an exact version on publish, so a
-dependent left unreleased stays pinned to the previous SDK. Override an individual dependent's bump
-with `--boltz-bump` / `--swap-bump <bump-or-version>`.
+(`swap`), because pnpm rewrites `workspace:*` to an exact version on publish, so a
+dependent left unreleased stays pinned to the previous SDK. Override that dependent's bump
+with `--swap-bump <bump-or-version>`.
 
 The script runs tests, builds, commits, tags, publishes to npm (requires local npm credentials),
 and pushes commit + tags to `origin`.

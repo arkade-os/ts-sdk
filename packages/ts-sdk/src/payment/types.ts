@@ -40,8 +40,8 @@ export interface PaymentHandle {
  * never chooses, and flags that instead: see `claimFeeDeductedFromPayout`.
  *
  * `fee` is a pre-send estimate wherever the true cost is only fixed later: the
- * swap rails quote from Boltz's advertised pricing and are superseded by the
- * amount Boltz returns at swap creation, and the collaborative exit omits the
+ * swap rails quote from the counterparty's advertised pricing and are superseded by the
+ * amount that counterparty returns at swap creation, and the collaborative exit omits the
  * per-input intent fees whenever the request left the VTXO selection to
  * settlement — naming {@link PaymentRequest.selectedVtxos} fixes them, and they
  * are priced in. Treat it as a display and ranking figure, not a guarantee.
@@ -103,7 +103,7 @@ export interface RouterContext {
     /** A rail needing more than this takes it as a constructor dep, rather than
      *  narrowing the context every other rail shares. */
     wallet: IWallet;
-    /** Loosely typed in core to avoid a dependency on boltz-swap; swap rails cast it. */
+    /** Loosely typed in core so a plugin can attach its own swap client; rails cast it. */
     swaps?: unknown;
     prefs: RouterPreferences;
 }

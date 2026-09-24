@@ -161,11 +161,9 @@ export interface LockupVtxo {
      * Opposite, but not exhaustive: an unrolled output satisfies neither, and
      * {@link findLockupVtxos} drops those before they reach this type at all.
      *
-     * `packages/boltz-swap` splits on exactly this fact rather than working
-     * around it: `settleRefundWithoutReceiver` sends a live VTXO through an
-     * offchain tx and a recoverable one through `joinBatch` — "a swept
+     * A live VTXO is refunded with an offchain transaction. A swept
      * (recoverable) VTXO is no longer a live leaf, so it can only be reclaimed
-     * by re-registering it into a batch".
+     * by re-registering it into a batch.
      *
      * So the remedy is recovery (renewing the output into a fresh batch),
      * after which the ordinary CLTV refund works again. This package does not
@@ -185,8 +183,7 @@ export interface LockupVtxo {
  *
  * **The remedy already exists; this package does not reimplement it.** The SDK
  * recovers swept outputs by re-registering them into a fresh batch, through
- * `IVtxoManager.recoverVtxos()` — the same batch round `packages/boltz-swap`
- * reaches via its own `joinBatch`. It reads the wallet's registered-contract
+ * `IVtxoManager.recoverVtxos()`. It reads the wallet's registered-contract
  * snapshot (`recoverVtxos` → `wallet.getVtxos({ withRecoverable: true })` →
  * `contractSnapshot()` → `contractManager.getContractsWithVtxos()`), so it
  * covers a swap lockup as soon as that lockup is registered as a contract —
@@ -203,8 +200,7 @@ export interface LockupVtxo {
  *   recovery round including this VTXO earlier is rejected. `recoverVtxos`
  *   sweeps every recoverable output in ONE settlement and has no CLTV
  *   awareness, so recovering early can fail the whole batch rather than just
- *   this output. `packages/boltz-swap` encodes the same rule as "pre-CLTV
- *   recoverable → skipped".
+ *   this output. A pre-CLTV recoverable output has to be skipped.
  */
 export class LockupNeedsRecoveryError extends Error {
     readonly name = "LockupNeedsRecoveryError";
@@ -218,7 +214,7 @@ export class LockupNeedsRecoveryError extends Error {
      * the whole batch — including unrelated outputs that were otherwise fine.
      *
      * Exposed as a value, not only inside the message, so a caller can encode
-     * `packages/boltz-swap`'s "pre-CLTV recoverable → skipped" rule without
+     * the "pre-CLTV recoverable → skipped" rule without
      * parsing prose. Seconds-based locktimes mature against the chain tip's
      * timestamp rather than wall clock, so treat this as a floor to wait past,
      * not an exact alarm.

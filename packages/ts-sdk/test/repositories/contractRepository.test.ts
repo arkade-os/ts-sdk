@@ -165,7 +165,7 @@ describe.each(contractRepositoryImplementations)("ContractRepository: $name", ({
             address: "address",
             state: "active",
             createdAt: Date.now(),
-            metadata: { provider: "boltz" },
+            metadata: { provider: "swap" },
         };
 
         await repository.saveContract(contract);

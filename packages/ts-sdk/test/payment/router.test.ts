@@ -103,7 +103,7 @@ describe("PaymentRouter", () => {
             id: "boom",
             match: () => true,
             available: () => {
-                throw new Error("boltz unreachable");
+                throw new Error("quote service unreachable");
             },
             quote: async () => ({
                 railId: "boom",

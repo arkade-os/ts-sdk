@@ -7,8 +7,8 @@ import type { DescriptorProvider } from "../identity/descriptorProvider";
 import type { GetNewAddressesOptions, NewAddress } from "./index";
 
 /**
- * Capability a wallet exposes so descriptor-blind consumers — Boltz swaps and
- * other plugins — can bind the artifacts they create to the wallet's current
+ * Capability a wallet exposes so descriptor-blind consumers — swap plugins and
+ * others — can bind the artifacts they create to the wallet's current
  * HD index and later enumerate every index that has been used.
  *
  * Probed structurally ({@link isHDWalletCapable}) rather than widening

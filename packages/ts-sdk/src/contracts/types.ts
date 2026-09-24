@@ -74,7 +74,7 @@ export function isWatchedContract(contract: Pick<Contract, "watch">): boolean {
  * determine the VtxoScript (spending paths). The wallet's default
  * receiving address is itself a contract of type "default".
  *
- * External services (Boltz swaps, atomic swaps, etc.) create additional
+ * External services (asset swaps, HTLCs, etc.) create additional
  * contracts with their own types and parameters.
  *
  * @example
@@ -371,7 +371,7 @@ export interface DiscoveredContract {
 
 /**
  * Read-only context the scanner injects into every `discoverAt` call.
- * The boltz/swap handler does NOT receive its Boltz client here — it
+ * A swap handler does not receive its client here — it
  * closes over its own client at registration time.
  */
 export interface DiscoveryDeps {

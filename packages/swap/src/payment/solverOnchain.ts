@@ -1,7 +1,7 @@
 /**
  * `solver-onchain` — pay an L1 address out of an Arkade balance through a
  * solver. Registered by the app: the SDK does not depend on this package, and
- * `RouterContext.swaps` is boltz-swap's. Every refusal is `available()`
+ * `RouterContext.swaps` belongs to the plugin that registered the rail. Every refusal is `available()`
  * returning false, so the router drops the rail and the collaborative exit
  * `onchain` wins by ranking.
  */

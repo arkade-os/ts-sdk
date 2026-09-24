@@ -1056,8 +1056,8 @@ describe("RfqSwapManager — the onchain-send L1 half", () => {
         expect(swap.state).toBe("failed");
         expect(failures[0]).toMatch(/ChainSource/);
         expect(await m.hasSwap(RFQ_ID)).toBe(false);
-        // and NOT through onSwapCompleted: a listener by that name firing on a
-        // failure is the trap this manager does not inherit from Boltz's
+        // and NOT through onSwapCompleted: a listener by that name must not
+        // fire on a failure
         expect(completed).toHaveLength(0);
     });
 

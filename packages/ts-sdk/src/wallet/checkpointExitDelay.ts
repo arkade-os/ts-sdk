@@ -12,8 +12,8 @@ export const DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS = 86_400n;
  * Wall-clock floor for the checkpoint exit delay on regtest (~2 blocks nominal).
  *
  * Deliberately lower than {@link REGTEST_MIN_BATCH_EXPIRY_SECONDS "../wallet/batchExpiry"} — this
- * repo's own regtest envs run `ARKD_CHECKPOINT_EXIT_DELAY` as low as 5 blocks
- * (`packages/boltz-swap/.env.regtest`), so the floor must clear that while still rejecting a
+ * repo's regtest envs run `ARKD_CHECKPOINT_EXIT_DELAY` as low as 5 blocks,
+ * so the floor must clear that while still rejecting a
  * 1-block attack.
  */
 export const REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS = 1_200n;

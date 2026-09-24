@@ -164,7 +164,7 @@ export function deriveDescriptorLeafPubKey(descriptor: string): Uint8Array {
 
 /**
  * Compressed (33-byte) counterpart of {@link deriveDescriptorLeafPubKey}, for
- * protocols that key on the parity byte (Boltz swap keys).
+ * protocols that key on the parity byte (compressed swap keys).
  *
  * Only HD descriptors are supported: a bare `tr(xonly)` has lost its parity and
  * synthesizing `02||xonly` would silently produce the wrong key half the time.

@@ -213,7 +213,7 @@ describe("RealmContractRepository", () => {
                 params: { sender: "ab12", receiver: "cd34", hash: "1234" },
                 createdAt: 1704067200000,
                 label: "My VHTLC",
-                metadata: { boltzId: "swap-123", nested: { a: 1 } },
+                metadata: { swapId: "swap-123", nested: { a: 1 } },
             });
 
             await repository.saveContract(contract);
@@ -231,7 +231,7 @@ describe("RealmContractRepository", () => {
             expect(retrieved.createdAt).toBe(1704067200000);
             expect(retrieved.label).toBe("My VHTLC");
             expect(retrieved.metadata).toEqual({
-                boltzId: "swap-123",
+                swapId: "swap-123",
                 nested: { a: 1 },
             });
         });

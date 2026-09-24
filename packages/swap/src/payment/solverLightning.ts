@@ -1,6 +1,6 @@
 /**
  * `solver-lightning` — the sibling of `solver-onchain` on the BOLT11 corridor.
- * Boltz's `lightning` rail matches the same invoices and both stay registered.
+ * Another lightning rail can match the same invoices and stay registered.
  * The invoice fixes the amount, so a `req.amount` that disagrees is refused
  * rather than ignored; `decodeInvoice` is injected because this package
  * carries no bolt11 dependency.

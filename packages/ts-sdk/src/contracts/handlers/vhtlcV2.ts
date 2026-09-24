@@ -566,7 +566,7 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
      * **It carries a CLTV, and callers must respect it.** A settlement built on
      * this leaf is only valid once `refundLocktime` has matured, so a recovery
      * round that sweeps this VTXO early is rejected by the server. That is the
-     * same constraint `packages/boltz-swap` encodes as "pre-CLTV recoverable →
+     * same constraint a recovery round encodes as "pre-CLTV recoverable →
      * skipped"; nothing in this handler can enforce it, because the annotation
      * is derived per contract and knows no clock. `recoverVtxos` filters on
      * {@link assertSpendableNow} for it.

@@ -17,12 +17,10 @@ import type { Wallet } from "../index";
 /**
  * Default payment router with the Wallet-only rails: `ark` (off-chain BTC send),
  * `ark-asset` (off-chain asset send) and `onchain` (collaborative exit).
- * Lightning and chain-swap rails live in `@arkade-os/boltz-swap`, which ships a
- * `createDefaultPaymentRouter(wallet, swaps)` overload composing the full set;
- * solver-routed rails live in `@arkade-os/swap` and are registered by the app.
+ * Solver-routed rails live in `@arkade-os/swap` and are registered by the app.
  *
  * The default priority is `["ark", "ark-asset", "lightning", "onchain"]`.
- * `"lightning"` is listed so it ranks correctly once the boltz rail is added.
+ * `"lightning"` is listed so a plugin rail with that id ranks correctly once registered.
  * `ark` and `ark-asset` never compete — the amount decides which is
  * available — so their order between themselves is immaterial.
  */

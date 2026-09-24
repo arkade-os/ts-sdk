@@ -43,7 +43,7 @@ const arkdExec = process.argv[2] || "docker exec -t arkd";
 
 // Alice is the sender (e.g., paying for a Lightning invoice)
 const alice = SingleKey.fromHex(hex.encode(randomPrivateKeyBytes()));
-// Bob is the receiver (e.g., swap service like Boltz)
+// Bob is the receiver (e.g., a swap service)
 const bob = SingleKey.fromHex(hex.encode(randomPrivateKeyBytes()));
 
 // The secret (preimage) that Bob will reveal

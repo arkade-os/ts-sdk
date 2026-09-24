@@ -24,8 +24,7 @@ fields still read `banco-*` — they are inside the hashed program bytes and can
 
 ## 3. Swap records: `IndexedDbAssetSwapRepository`
 
-Swap records and the restore-scan cursor now live in an `AssetSwapRepository` — the same
-repository system the wallet already uses for Boltz swaps (`IndexedDbSwapRepository`), built on
+Swap records and the restore-scan cursor now live in an `AssetSwapRepository`, built on
 the SDK's shared IndexedDB manager:
 
 ```ts
@@ -41,10 +40,9 @@ The store/scan calls become async and take the repository:
 - `getScannedTxids()` / `markTxidsScanned(txids)` →
   `await assetSwapRepository.getScannedTxids()` / `await assetSwapRepository.markTxidsScanned(txids)`
   (repository methods now; `SWAP_RESTORE_SCAN_KEY` is gone).
-- **One-time data migration** (not written yet — the wallet owns it, like
-  `migrateToSwapRepository` for Boltz): read the legacy `localStorage` keys `assetSwaps` and
-  `assetSwapsScanned` and write them into the repository with `saveSwap`/`markTxidsScanned`.
-  ~15 lines next to the existing Boltz migration call in `providers/wallet.tsx`. Order matters,
+- **One-time data migration** (not written yet — the wallet owns it): read the legacy
+  `localStorage` keys `assetSwaps` and `assetSwapsScanned` and write them into the repository
+  with `saveSwap`/`markTxidsScanned`. ~15 lines in `providers/wallet.tsx`. Order matters,
   because the package's persistence deliberately never throws:
     - `await` the migration before the first repository read, or the UI renders an empty list
       and the restore scan re-fetches history it already had.
@@ -87,8 +85,7 @@ localStorage adapter to write:
 - `createOffer` no longer returns `payload`; it returns the send-ready `extension` instead. In
   `providers/assetSwaps.tsx`: `extensions: [{ type: OFFER_PACKET_TYPE, payload: offer.payload }]`
   → `extensions: [offer.extension]` (the `OFFER_PACKET_TYPE` import can go).
-- The `Network` type on these call sites is now `@arkade-os/solver-discovery`'s `Network`, not
-  `@arkade-os/boltz-swap`'s — for the wallet's current networks they are the same strings.
+- The `Network` type on these call sites is `@arkade-os/solver-discovery`'s `Network`.
 
 ## 3c. RFQ swaps: persist what the manager is driving
 
@@ -205,8 +202,7 @@ Delete `src/test/lib/swap/` except the pieces that test wallet display code
 > arkade-os/ts-sdk#679). Smallest possible PR: add the dependency,
 > delete `src/lib/swap/`, swap imports, rename `bancoPrograms` → `swapPrograms`, construct one
 > `IndexedDbAssetSwapRepository` and await the now-async store/scan calls, add the ~15-line
-> one-time localStorage→repository data migration next to the existing Boltz
-> `migrateToSwapRepository` call in `providers/wallet.tsx`, pass that same repository plus
+> one-time localStorage→repository data migration in `providers/wallet.tsx`, pass that same repository plus
 > `{ registryUrl, localCards, logger }` through the `discoverMarkets`
 > call in `providers/assetSwaps.tsx`, keep `preFeeDisplayRate` and the quote-snapshot typing
 > wallet-side as described in the note, and move the display-only tests next to

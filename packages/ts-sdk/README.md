@@ -1135,13 +1135,11 @@ The `StorageAdapter` API is deprecated. Use repositories instead. If you omit `s
 > Anything related to contract repository migration must be handled by the
 > package that created the contracts. The SDK doesn't manage external contracts
 > in V1; data persisted by other packages remains untouched in its original
-> location. For example, see `@arkade-os/boltz-swap`'s `migrateToSwapRepository`
-> for migrating legacy `reverseSwaps` / `submarineSwaps` collections.
+> location. The package that wrote those rows owns the migration.
 
 #### Repository Versioning
 
-`WalletRepository`, `ContractRepository`, and `SwapRepository` (in
-`@arkade-os/boltz-swap`) each declare a `readonly version` field with a literal
+`WalletRepository` and `ContractRepository` each declare a `readonly version` field with a literal
 type. All built-in implementations set this to the current version. If you
 maintain a custom repository implementation, TypeScript will produce a compile
 error when the version is bumped, signaling that a semantic update is required:
@@ -1366,7 +1364,7 @@ This is required for MuSig2 settlements and cryptographic operations.
 
 ### Contract Management
 
-Both `Wallet` and `ServiceWorkerWallet` use a `ContractManager` internally to watch for virtual outputs and persist them into repositories. This provides resilient connection handling with automatic reconnection and failsafe polling - for your wallet's default address and any external contracts you register (Boltz swaps, HTLCs, etc.).
+Both `Wallet` and `ServiceWorkerWallet` use a `ContractManager` internally to watch for virtual outputs and persist them into repositories. This provides resilient connection handling with automatic reconnection and failsafe polling - for your wallet's default address and any external contracts you register (asset swaps, HTLCs, etc.).
 
 When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it uses the ContractManager under the hood, giving you automatic reconnection and repository-backed event replay for free - no code changes needed.
 
@@ -1555,7 +1553,7 @@ For integration tests, use the root commands (`pnpm run test:integration:ts-sdk`
 
 ### Releasing
 
-Package-local releases are disabled. Releases run from the monorepo root and are package-scoped: `pnpm run release -- sdk patch` bumps `@arkade-os/sdk`, creates a `@arkade-os/sdk/<version>` tag, and also bumps `@arkade-os/boltz-swap` (which depends on SDK via `workspace:*`). See the [root README](../../README.md#releasing) for full flags and `pnpm run release -- --help`.
+Package-local releases are disabled. Releases run from the monorepo root and are package-scoped: `pnpm run release -- sdk patch` bumps `@arkade-os/sdk`, creates a `@arkade-os/sdk/<version>` tag, and also bumps `@arkade-os/swap` (which depends on SDK via `workspace:*`). See the [root README](../../README.md#releasing) for full flags and `pnpm run release -- --help`.
 
 ## License
 
