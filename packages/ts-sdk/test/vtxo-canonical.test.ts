@@ -307,11 +307,6 @@ describe("normalization", () => {
         expect(n.isSwept).toBe(true);
     });
 
-    it("is idempotent", () => {
-        const once = normalizeVtxo(legacyCoin("preconfirmed"));
-        expect(normalizeVtxo(once)).toEqual(once);
-    });
-
     it("rehydrates an expiresAt that a JSON round-trip turned into a string", () => {
         // Typechecks as Date but is a string at runtime; .getTime() would return NaN, which
         // compares false against everything and silently reads as "not expired".

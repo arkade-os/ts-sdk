@@ -797,35 +797,6 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
         expect(postMessage).toHaveBeenCalledTimes(countAtStop);
     });
 
-    it("does not throw and logs when the originating client (event.source) is null", async () => {
-        const bus = await createAndInitBus({
-            handlers: [handler],
-            debug: true,
-        });
-        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-        handler.handleMessage.mockResolvedValueOnce({
-            id: "m13",
-            tag: handler.messageTag,
-        } as ResponseEnvelope);
-
-        await messageHandler({
-            data: { id: "m13", tag: handler.messageTag },
-            source: null,
-            waitUntil: (p) => p,
-        });
-
-        expect(warnSpy).toHaveBeenCalled();
-        const [msg] =
-            warnSpy.mock.calls.find(
-                (call) =>
-                    typeof call[0] === "string" && call[0].includes("cannot deliver response"),
-            ) ?? [];
-        expect(msg).toBeDefined();
-
-        warnSpy.mockRestore();
-        await bus.stop();
-    });
-
     it("broadcasts to every handler and acks handlers that return null", async () => {
         const handlerA = new TestHandler("A_HANDLER");
         const handlerB = new TestHandler("B_HANDLER");

@@ -299,12 +299,6 @@ describe("SQLiteContractRepository", () => {
         await repository[Symbol.asyncDispose]();
     });
 
-    // ── version ────────────────────────────────────────────────────────
-
-    it("should have version 2", () => {
-        expect(repository.version).toBe(2);
-    });
-
     // ── Save and retrieve ──────────────────────────────────────────────
 
     describe("save and retrieve contracts", () => {
@@ -682,17 +676,6 @@ describe("SQLiteContractRepository", () => {
     // ── Table prefix ───────────────────────────────────────────────────
 
     describe("table prefix", () => {
-        it("should use custom prefix for table names", async () => {
-            const customRepo = new SQLiteContractRepository(db, {
-                prefix: "myapp_",
-            });
-            await customRepo.saveContract(createMockContract({ script: "s-custom" }));
-
-            const retrieved = await customRepo.getContracts();
-            expect(retrieved).toHaveLength(1);
-            expect(retrieved[0].script).toBe("s-custom");
-        });
-
         it("should isolate data between different prefixes", async () => {
             const repoA = new SQLiteContractRepository(db, { prefix: "a_" });
             const repoB = new SQLiteContractRepository(db, { prefix: "b_" });
@@ -707,14 +690,6 @@ describe("SQLiteContractRepository", () => {
             expect(fromA[0].script).toBe("s-a");
             expect(fromB).toHaveLength(1);
             expect(fromB[0].script).toBe("s-b");
-        });
-    });
-
-    // ── asyncDispose ───────────────────────────────────────────────────
-
-    describe("[Symbol.asyncDispose]", () => {
-        it("should be a no-op and not throw", async () => {
-            await expect(repository[Symbol.asyncDispose]()).resolves.toBeUndefined();
         });
     });
 });

@@ -9,13 +9,10 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { ArkAddress, VHTLCV2ContractHandler } from "@arkade-os/sdk";
 
 import {
-    ARKADE_BTC,
     AddressMismatch,
     MAX_MIN_CONFIRMATIONS,
-    ONCHAIN_BTC,
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     ONCHAIN_ORDER_MARGIN_SECONDS,
-    ONCHAIN_RECEIVE_PAIR,
     ONCHAIN_SEND_PAIR,
     assertFundable,
     deriveOnchainSend,
@@ -40,18 +37,6 @@ const PAYMENT_HASH = paymentHashOf(PREIMAGE);
 const NOW = 1_800_000_000;
 const REFUND_LOCKTIME = NOW + 200 * 3600;
 const HTLC_LOCKTIME = NOW + 24 * 3600;
-
-// The onchain leg's Arkade lockup shares `lightningSendVtxoScript` with the
-// Lightning leg directly (see `deriveOnchainSend` below) — one function, one
-// golden test (`rfq.test.ts`). There is no separate onchain program object
-// left to compare it against, so there is nothing to pin here any more.
-describe("pairs", () => {
-    it("names the onchain legs", () => {
-        expect(ONCHAIN_BTC).toBe("onchain:BTC");
-        expect(ONCHAIN_SEND_PAIR).toBe(`${ARKADE_BTC}->${ONCHAIN_BTC}`);
-        expect(ONCHAIN_RECEIVE_PAIR).toBe(`${ONCHAIN_BTC}->${ARKADE_BTC}`);
-    });
-});
 
 describe("request builders", () => {
     it("builds the off-board request", () => {

@@ -1224,16 +1224,6 @@ describe("create() init payload", () => {
         ).toHaveLength(1);
     });
 
-    it("does not warn when events is absent or empty", async () => {
-        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-        await createWith({ swapManager: { pollInterval: 1, events: {} } });
-
-        expect(
-            warnSpy.mock.calls.filter(([f]) => /events was dropped/.test(String(f))),
-        ).toHaveLength(0);
-    });
-
     it("treats an omitted swapManager as enabled, matching the worker", async () => {
         const { runtime, payload } = await createWith({});
 

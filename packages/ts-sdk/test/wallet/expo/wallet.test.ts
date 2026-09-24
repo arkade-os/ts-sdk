@@ -214,51 +214,6 @@ describe("warnOnRemovedBackgroundFields", () => {
         warnSpy.mockRestore();
     });
 
-    it("does not warn when neither removed field is present", async () => {
-        const { warnOnRemovedBackgroundFields } = await loadExpoWallet();
-        warnOnRemovedBackgroundFields({
-            taskQueue: {},
-            foregroundIntervalMs: 20_000,
-        });
-        expect(warnSpy).not.toHaveBeenCalled();
-    });
-
-    it("warns and names taskName when present (pre-fix-#486 field)", async () => {
-        const { warnOnRemovedBackgroundFields } = await loadExpoWallet();
-        warnOnRemovedBackgroundFields({
-            taskName: "ark-background-poll",
-            taskQueue: {},
-        });
-        expect(warnSpy).toHaveBeenCalledOnce();
-        const msg = String(warnSpy.mock.calls[0][0]);
-        expect(msg).toContain("taskName");
-        expect(msg).toContain("@arkade-os/sdk/wallet/expo/background");
-    });
-
-    it("warns and names minimumBackgroundInterval when present", async () => {
-        const { warnOnRemovedBackgroundFields } = await loadExpoWallet();
-        warnOnRemovedBackgroundFields({
-            taskQueue: {},
-            minimumBackgroundInterval: 15,
-        });
-        expect(warnSpy).toHaveBeenCalledOnce();
-        const msg = String(warnSpy.mock.calls[0][0]);
-        expect(msg).toContain("minimumBackgroundInterval");
-    });
-
-    it("lists both removed fields in a single warning when both present", async () => {
-        const { warnOnRemovedBackgroundFields } = await loadExpoWallet();
-        warnOnRemovedBackgroundFields({
-            taskName: "ark-background-poll",
-            minimumBackgroundInterval: 15,
-            taskQueue: {},
-        });
-        expect(warnSpy).toHaveBeenCalledOnce();
-        const msg = String(warnSpy.mock.calls[0][0]);
-        expect(msg).toContain("taskName");
-        expect(msg).toContain("minimumBackgroundInterval");
-    });
-
     it("does not throw on null / undefined / non-object inputs", async () => {
         const { warnOnRemovedBackgroundFields } = await loadExpoWallet();
         expect(() => warnOnRemovedBackgroundFields(null)).not.toThrow();

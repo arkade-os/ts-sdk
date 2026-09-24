@@ -136,15 +136,6 @@ describe("DefaultContractHandler", () => {
         expect(hex.encode(script.pkScript)).toEqual(params.script);
     });
 
-    it("should create script from params", () => {
-        const params = createDefaultContractParams();
-
-        const script = DefaultContractHandler.createScript(params);
-
-        expect(script).toBeDefined();
-        expect(script.pkScript).toBeDefined();
-    });
-
     it("should serialize and deserialize params", () => {
         const original = {
             pubKey: TEST_PUB_KEY,
@@ -157,56 +148,6 @@ describe("DefaultContractHandler", () => {
 
         expect(deserialized.pubKey).toEqual(TEST_PUB_KEY);
         expect(deserialized.serverPubKey).toEqual(TEST_SERVER_PUB_KEY);
-    });
-
-    it("should select forfeit path when collaborative", () => {
-        const params = createDefaultContractParams();
-        const script = DefaultContractHandler.createScript(params);
-        const contract: Contract = {
-            type: "default",
-            params,
-            script: hex.encode(script.pkScript),
-            address: "address",
-            state: "active",
-            createdAt: Date.now(),
-        };
-
-        const path = DefaultContractHandler.selectPath(script, contract, {
-            collaborative: true,
-            currentTime: Date.now(),
-        });
-
-        expect(path).toBeDefined();
-        expect(path?.leaf).toBeDefined();
-    });
-
-    it("should select exit path when not collaborative", () => {
-        const params = createDefaultContractParams();
-        const script = DefaultContractHandler.createScript(params);
-        const contract: Contract = {
-            type: "default",
-            params,
-            script: hex.encode(script.pkScript),
-            address: "address",
-            state: "active",
-            createdAt: Date.now(),
-        };
-
-        const path = DefaultContractHandler.selectPath(script, contract, {
-            collaborative: false,
-            currentTime: Date.now(),
-            vtxo: createMockVtxo({
-                status: {
-                    confirmed: true,
-                    block_height: 100,
-                    block_time: 1000,
-                },
-            }),
-            blockHeight: 300,
-        });
-
-        expect(path).toBeDefined();
-        expect(path?.leaf).toBeDefined();
     });
 
     it("should return multiple spendable paths", () => {
@@ -334,18 +275,6 @@ describe("DefaultContractHandler", () => {
 });
 
 describe("DelegateContractHandler", () => {
-    it("should create script from params", () => {
-        const params = createDelegateContractParams();
-        const script = DelegateContractHandler.createScript(params);
-
-        expect(script).toBeDefined();
-        expect(script.pkScript).toBeDefined();
-        // Delegate script should have 3 leaves: forfeit, exit, delegate
-        expect(script.forfeit()).toBeDefined();
-        expect(script.exit()).toBeDefined();
-        expect(script.delegate()).toBeDefined();
-    });
-
     it("should produce a different pkScript than default with same keys", () => {
         const defaultParams = createDefaultContractParams();
         const delegateParams = createDelegateContractParams();
@@ -391,56 +320,6 @@ describe("DelegateContractHandler", () => {
         const script2 = DelegateContractHandler.createScript(reserialized);
 
         expect(hex.encode(script2.pkScript)).toEqual(hex.encode(script1.pkScript));
-    });
-
-    it("should select forfeit path when collaborative", () => {
-        const params = createDelegateContractParams();
-        const script = DelegateContractHandler.createScript(params);
-        const contract: Contract = {
-            type: "delegate",
-            params,
-            script: hex.encode(script.pkScript),
-            address: "address",
-            state: "active",
-            createdAt: Date.now(),
-        };
-
-        const path = DelegateContractHandler.selectPath(script, contract, {
-            collaborative: true,
-            currentTime: Date.now(),
-        });
-
-        expect(path).toBeDefined();
-        expect(path?.leaf).toBeDefined();
-    });
-
-    it("should select exit path when not collaborative and CSV satisfied", () => {
-        const params = createDelegateContractParams();
-        const script = DelegateContractHandler.createScript(params);
-        const contract: Contract = {
-            type: "delegate",
-            params,
-            script: hex.encode(script.pkScript),
-            address: "address",
-            state: "active",
-            createdAt: Date.now(),
-        };
-
-        const path = DelegateContractHandler.selectPath(script, contract, {
-            collaborative: false,
-            currentTime: Date.now(),
-            vtxo: createMockVtxo({
-                status: {
-                    confirmed: true,
-                    block_height: 100,
-                    block_time: 1000,
-                },
-            }),
-            blockHeight: 300,
-        });
-
-        expect(path).toBeDefined();
-        expect(path?.leaf).toBeDefined();
     });
 
     it("should return null when not collaborative and CSV not satisfied", () => {

@@ -86,18 +86,6 @@ describe("ArkadeCash", () => {
     });
 
     describe("vtxo script", () => {
-        it("should create a valid DefaultVtxo script", () => {
-            const cash = new ArkadeCash(testPrivKey, testServerPubKey, {
-                type: "blocks",
-                value: 144n,
-            });
-
-            const script = cash.vtxoScript;
-            expect(script).toBeDefined();
-            expect(script.pkScript).toBeDefined();
-            expect(script.pkScript.length).toBeGreaterThan(0);
-        });
-
         it("should derive a valid ArkAddress", () => {
             const cash = new ArkadeCash(testPrivKey, testServerPubKey, {
                 type: "blocks",

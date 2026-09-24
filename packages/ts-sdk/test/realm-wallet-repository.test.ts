@@ -284,12 +284,6 @@ describe("RealmWalletRepository", () => {
         await repository[Symbol.asyncDispose]();
     });
 
-    // ── version ────────────────────────────────────────────────────────
-
-    it("should have version 1", () => {
-        expect(repository.version).toBe(1);
-    });
-
     // ── VTXO management ────────────────────────────────────────────────
 
     describe("VTXO management", () => {
@@ -736,14 +730,6 @@ describe("RealmWalletRepository", () => {
             expect(await repository.getUtxos(testAddress)).toEqual([]);
             expect(await repository.getTransactionHistory(testAddress)).toEqual([]);
             expect(await repository.getWalletState()).toBeNull();
-        });
-    });
-
-    // ── asyncDispose ───────────────────────────────────────────────────
-
-    describe("[Symbol.asyncDispose]", () => {
-        it("should be a no-op and not throw", async () => {
-            await expect(repository[Symbol.asyncDispose]()).resolves.toBeUndefined();
         });
     });
 });

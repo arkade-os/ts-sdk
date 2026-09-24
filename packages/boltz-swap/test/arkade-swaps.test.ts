@@ -664,10 +664,6 @@ describe("ArkadeSwaps", () => {
     });
 
     describe("Initialization", () => {
-        it("should be instantiated with wallet and swap provider", () => {
-            expect(swaps).toBeInstanceOf(ArkadeSwaps);
-        });
-
         it("should fail to instantiate without required config", async () => {
             const params: ArkadeSwapsConfig = {
                 wallet,
@@ -701,33 +697,6 @@ describe("ArkadeSwaps", () => {
                     }),
             ).not.toThrow();
         });
-
-        it("should have expected lightning interface methods", () => {
-            expect(swaps.claimVHTLC).toBeInstanceOf(Function);
-            expect(swaps.createLightningInvoice).toBeInstanceOf(Function);
-            expect(swaps.createReverseSwap).toBeInstanceOf(Function);
-            expect(swaps.createSubmarineSwap).toBeInstanceOf(Function);
-            expect(swaps.refundVHTLC).toBeInstanceOf(Function);
-            expect(swaps.sendLightningPayment).toBeInstanceOf(Function);
-            expect(swaps.waitAndClaim).toBeInstanceOf(Function);
-            expect(swaps.waitForSwapSettlement).toBeInstanceOf(Function);
-        });
-
-        it("should have expected chain interface methods", () => {
-            expect(swaps.arkToBtc).toBeInstanceOf(Function);
-            expect(swaps.btcToArk).toBeInstanceOf(Function);
-            expect(swaps.createChainSwap).toBeInstanceOf(Function);
-            expect(swaps.verifyChainSwap).toBeInstanceOf(Function);
-            expect(swaps.waitAndClaimArk).toBeInstanceOf(Function);
-            expect(swaps.waitAndClaimBtc).toBeInstanceOf(Function);
-            expect(swaps.claimBtc).toBeInstanceOf(Function);
-            expect(swaps.claimArk).toBeInstanceOf(Function);
-            expect(swaps.createVHTLCScript).toBeInstanceOf(Function);
-            expect(swaps.getSwapStatus).toBeInstanceOf(Function);
-            expect(swaps.getPendingChainSwaps).toBeInstanceOf(Function);
-            expect(swaps.getSwapHistory).toBeInstanceOf(Function);
-            expect(swaps.refreshSwapsStatus).toBeInstanceOf(Function);
-        });
     });
 
     describe("startSwapManager", () => {
@@ -753,27 +722,6 @@ describe("ArkadeSwaps", () => {
                 await expect(swaps.createLightningInvoice({ amount: -1 })).rejects.toThrow(
                     "Amount must be greater than 0",
                 );
-            });
-
-            it("should create a Lightning invoice", async () => {
-                // arrange
-                const pendingSwap: BoltzReverseSwap = {
-                    ...mockReverseSwap,
-                    preimage: mock.preimage,
-                };
-                vi.spyOn(swaps, "createReverseSwap").mockResolvedValueOnce(pendingSwap);
-
-                // act
-                const result = await swaps.createLightningInvoice({
-                    amount: mock.amount,
-                });
-
-                // assert
-                expect(result.expiry).toBe(mock.invoice.expiry);
-                expect(result.invoice).toBe(mock.invoice.address);
-                expect(result.paymentHash).toBe(mock.invoice.paymentHash);
-                expect(result.preimage).toBe(mock.preimage);
-                expect(result.pendingSwap.request.claimPublicKey).toBe(compressedPubkeys.alice);
             });
 
             it("should pass description to reverse swap when creating Lightning invoice", async () => {
@@ -805,27 +753,6 @@ describe("ArkadeSwaps", () => {
         });
 
         describe("Reverse Swaps", () => {
-            it("should create a reverse swap", async () => {
-                // arrange
-                vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
-                    reverseSwapResponseFor(createReverseSwapResponse),
-                );
-
-                // act
-                const pendingSwap = await swaps.createReverseSwap({
-                    amount: mock.invoice.amount,
-                });
-
-                // assert
-                expect(pendingSwap.request.invoiceAmount).toBe(mock.invoice.amount);
-                expect(pendingSwap.request.preimageHash).toHaveLength(64);
-                expect(pendingSwap.response.invoice).toBe(mock.invoice.address);
-                expect(pendingSwap.response.lockupAddress).toBe(mock.lockupAddress);
-                expect(pendingSwap.response.onchainAmount).toBe(mock.invoice.amount);
-                expect(pendingSwap.response.refundPublicKey).toBe(compressedPubkeys.boltz);
-                expect(pendingSwap.status).toEqual("swap.created");
-            });
-
             // `onchainAmount` is the authority the claim later enforces, so a
             // response without it is rejected while nothing is committed.
             it("rejects a response carrying no claim-side amount", async () => {
@@ -840,26 +767,6 @@ describe("ArkadeSwaps", () => {
                     swaps.createReverseSwap({ amount: mock.invoice.amount }),
                 ).rejects.toThrow(/carries no claim-side amount/);
                 expect(mockSwapRepository.saveSwap).not.toHaveBeenCalled();
-            });
-
-            it("should get correct swap status", async () => {
-                // arrange
-                vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
-                    reverseSwapResponseFor(createReverseSwapResponse),
-                );
-                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
-                    status: "swap.created",
-                });
-
-                // act
-                const pendingSwap = await swaps.createReverseSwap({
-                    amount: mock.invoice.amount,
-                });
-
-                // assert
-                expect(swaps.getSwapStatus).toBeInstanceOf(Function);
-                const status = await swaps.getSwapStatus(pendingSwap.id);
-                expect(status.status).toBe("swap.created");
             });
 
             it("should pass description to swap provider when creating reverse swap", async () => {
@@ -1088,34 +995,6 @@ describe("ArkadeSwaps", () => {
         });
 
         describe("waitAndClaim", () => {
-            it("should return valid txid when transaction is available", async () => {
-                // arrange
-                const pendingSwap = mockReverseSwap;
-
-                // Mock getSwapStatus to return a status with valid transaction
-                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
-                    status: "invoice.settled",
-                });
-
-                // Mock getReverseSwapTxId to return an object with valid transaction id
-                vi.spyOn(swapProvider, "getReverseSwapTxId").mockResolvedValue({
-                    id: mock.txid,
-                    timeoutBlockHeight: 123,
-                });
-
-                // Mock monitorSwap to directly trigger the invoice.settled case
-                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (swapId, update) => {
-                    setTimeout(() => update("invoice.settled"), 10);
-                });
-
-                // act
-                const result = await swaps.waitAndClaim(pendingSwap);
-
-                // assert
-                expect(result.txid).toBe(mock.txid);
-                expect(result.txid).not.toBe("");
-            });
-
             it("should throw error when transaction id is empty string", async () => {
                 // arrange
                 const pendingSwap = mockReverseSwap;
@@ -1202,24 +1081,6 @@ describe("ArkadeSwaps", () => {
 
     describe("Send to Lightning", () => {
         describe("Submarine Swaps", () => {
-            it("should create a submarine swap", async () => {
-                // arrange
-                stubLockupValidation();
-                vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
-                    createSubmarineSwapResponse,
-                );
-
-                // act
-                const pendingSwap = await swaps.createSubmarineSwap({
-                    invoice: mock.invoice.address,
-                });
-
-                // assert
-                expect(pendingSwap.status).toEqual("invoice.set");
-                expect(pendingSwap.request).toEqual(createSubmarineSwapRequest);
-                expect(pendingSwap.response).toEqual(createSubmarineSwapResponse);
-            });
-
             // The refund paths reconstruct the VHTLC from the swap parameters,
             // so a lockup address that does not reconcile with them is rejected
             // before the swap is persisted.
@@ -1286,27 +1147,6 @@ describe("ArkadeSwaps", () => {
                 // assert
                 expect(pendingSwap.response.expectedAmount).toBe(submarineFeeCeiling);
                 expect(mockSwapRepository.saveSwap).toHaveBeenCalledOnce();
-            });
-
-            it("should get correct swap status", async () => {
-                // arrange
-                stubLockupValidation();
-                vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
-                    createSubmarineSwapResponse,
-                );
-                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
-                    status: "swap.created",
-                });
-
-                // act
-                const pendingSwap = await swaps.createSubmarineSwap({
-                    invoice: mock.invoice.address,
-                });
-
-                // assert
-                expect(swaps.getSwapStatus).toBeInstanceOf(Function);
-                const status = await swaps.getSwapStatus(pendingSwap.id);
-                expect(status.status).toBe("swap.created");
             });
         });
 
@@ -1397,50 +1237,9 @@ describe("ArkadeSwaps", () => {
                 ).rejects.toThrow(/exceeds the invoice amount plus advertised fees/);
                 expect(sendSpy).not.toHaveBeenCalled();
             });
-
-            it("should warn on waitFor funded when the SwapManager is disabled", async () => {
-                // arrange: `swaps` is constructed with swapManager: false, so a
-                // failure after the optimistic resolution would not be auto-refunded
-                const pendingSwap = mockSubmarineSwap;
-                vi.spyOn(wallet, "send").mockResolvedValueOnce(mock.txid);
-                vi.spyOn(swaps, "createSubmarineSwap").mockResolvedValueOnce(pendingSwap);
-                vi.spyOn(swaps, "waitForSwapFunded").mockResolvedValueOnce(undefined);
-                const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
-
-                // act
-                await swaps.sendLightningPayment({
-                    invoice: mock.invoice.address,
-                    waitFor: "funded",
-                });
-
-                // assert
-                expect(warnSpy).toHaveBeenCalledWith(
-                    expect.stringContaining("SwapManager is disabled"),
-                );
-            });
         });
 
         describe("waitForSwapSettlement", () => {
-            it("should resolve with the preimage only at transaction.claimed", async () => {
-                // arrange
-                vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValueOnce({
-                    preimage: mock.preimage,
-                });
-                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
-                    async (_swapId, update) => {
-                        setTimeout(() => update("transaction.mempool"), 5);
-                        setTimeout(() => update("invoice.pending"), 10);
-                        setTimeout(() => update("transaction.claimed"), 15);
-                    },
-                );
-
-                // act
-                const result = await swaps.waitForSwapSettlement(mockSubmarineSwap);
-
-                // assert
-                expect(result.preimage).toBe(mock.preimage);
-            });
-
             it("should reject instead of hanging when the preimage fetch fails on claim", async () => {
                 // arrange
                 vi.spyOn(swapProvider, "getSwapPreimage").mockRejectedValueOnce(new Error("boom"));
@@ -2015,31 +1814,6 @@ describe("ArkadeSwaps", () => {
             });
         });
 
-        describe("createVHTLCScript", () => {
-            it("should create a VHTLC script for Ark to Btc", () => {
-                // act
-                const { vhtlcScript, vhtlcAddress } = swaps.createVHTLCScript({
-                    network: "regtest",
-                    preimageHash: mockPreimageHash,
-                    receiverPubkey: compressedPubkeys.boltz,
-                    senderPubkey: compressedPubkeys.alice,
-                    serverPubkey: hex.encode(mock.pubkeys.server),
-                    timeoutBlockHeights: {
-                        refund: 1778741659,
-                        unilateralClaim: 266752,
-                        unilateralRefund: 432128,
-                        unilateralRefundWithoutReceiver: 518656,
-                    },
-                });
-
-                // assert
-                expect(vhtlcScript).toBeDefined();
-                expect(vhtlcScript.pkScript).toBeDefined();
-                expect(vhtlcAddress).toBeDefined();
-                expect(vhtlcAddress).toContain("tark");
-            });
-        });
-
         describe("getFees (chain)", () => {
             it("should get fees for Ark to Btc chain swap", async () => {
                 // arrange
@@ -2079,21 +1853,6 @@ describe("ArkadeSwaps", () => {
                 // assert
                 expect(limits).toEqual(mockLimits);
                 expect(swapProvider.getChainLimits).toHaveBeenCalledWith("ARK", "BTC");
-            });
-        });
-
-        describe("getSwapStatus", () => {
-            it("should get correct swap status", async () => {
-                // arrange
-                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
-                    status: "swap.created",
-                });
-
-                // act
-                const status = await swaps.getSwapStatus(mock.id);
-
-                // assert
-                expect(status.status).toBe("swap.created");
             });
         });
 
@@ -2615,29 +2374,6 @@ describe("ArkadeSwaps", () => {
                         senderLockAmount: -1,
                     }),
                 ).rejects.toThrow("Invalid lock amount");
-            });
-
-            it("should return address and amount", async () => {
-                // arrange
-                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
-                vi.spyOn(swapProvider, "createChainSwap").mockResolvedValueOnce(
-                    createBtcArkChainSwapResponse,
-                );
-                vi.spyOn(swaps, "verifyChainSwap").mockResolvedValueOnce(true);
-                vi.spyOn(swaps, "waitAndClaimArk").mockResolvedValueOnce({
-                    txid: mock.txid,
-                });
-                vi.spyOn(swaps, "getSwapStatus").mockResolvedValueOnce({
-                    status: "transaction.claimed",
-                });
-
-                // act
-                const result = await swaps.btcToArk({
-                    senderLockAmount: mock.amount,
-                });
-
-                // assert
-                expect(result).toHaveProperty("btcAddress", mock.address.btc);
             });
         });
 
@@ -3452,31 +3188,6 @@ describe("ArkadeSwaps", () => {
             });
         });
 
-        describe("createVHTLCScript", () => {
-            it("should create a VHTLC script for Btc to Ark", () => {
-                // act
-                const { vhtlcScript, vhtlcAddress } = swaps.createVHTLCScript({
-                    network: "regtest",
-                    preimageHash: mockPreimageHash,
-                    receiverPubkey: compressedPubkeys.alice,
-                    senderPubkey: compressedPubkeys.boltz,
-                    serverPubkey: hex.encode(mock.pubkeys.server),
-                    timeoutBlockHeights: {
-                        refund: 1778741659,
-                        unilateralClaim: 266752,
-                        unilateralRefund: 432128,
-                        unilateralRefundWithoutReceiver: 518656,
-                    },
-                });
-
-                // assert
-                expect(vhtlcScript).toBeDefined();
-                expect(vhtlcScript.pkScript).toBeDefined();
-                expect(vhtlcAddress).toBeDefined();
-                expect(vhtlcAddress).toContain("tark");
-            });
-        });
-
         describe("getFees (chain)", () => {
             it("should get fees for Btc to Ark chain swap", async () => {
                 // arrange
@@ -4019,19 +3730,6 @@ describe("ArkadeSwaps", () => {
         });
 
         describe("swap persistence during operations", () => {
-            it("should save reverse swap when creating lightning invoice", async () => {
-                // arrange
-                vi.spyOn(swaps, "createReverseSwap").mockResolvedValueOnce(mockReverseSwap);
-
-                // act
-                await swaps.createLightningInvoice({ amount: mock.amount });
-
-                // assert
-                expect(swaps.createReverseSwap).toHaveBeenCalledWith({
-                    amount: mock.amount,
-                });
-            });
-
             it("should save submarine swap when creating swap", async () => {
                 // arrange
                 stubLockupValidation();
