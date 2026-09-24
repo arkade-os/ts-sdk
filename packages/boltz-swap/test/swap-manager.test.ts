@@ -163,6 +163,31 @@ describe("SwapManager", () => {
             const stats = await swapManager.getStats();
             expect(stats.isRunning).toBe(false);
         });
+
+        it("should create SwapManager with custom config", () => {
+            swapManager = new SwapManager(swapProvider, {
+                ...swapManagerConfig,
+                enableAutoActions: false,
+                pollInterval: 60000,
+                reconnectDelayMs: 2000,
+            });
+            expect(swapManager).toBeDefined();
+        });
+
+        it("should accept event callbacks", () => {
+            const onSwapUpdate = vi.fn();
+            const onSwapCompleted = vi.fn();
+
+            swapManager = new SwapManager(swapProvider, {
+                ...swapManagerConfig,
+                events: {
+                    onSwapUpdate,
+                    onSwapCompleted,
+                },
+            });
+
+            expect(swapManager).toBeDefined();
+        });
     });
 
     describe("Lifecycle", () => {
@@ -185,6 +210,15 @@ describe("SwapManager", () => {
             const stats = await swapManager.getStats();
             expect(stats.isRunning).toBe(true);
             expect(stats.monitoredSwaps).toBe(2);
+        });
+
+        it("should not start if already running", async () => {
+            await swapManager.start([]);
+
+            const consoleWarnSpy = vi.spyOn(console, "warn");
+            await swapManager.start([]);
+
+            expect(consoleWarnSpy).toHaveBeenCalledWith("SwapManager is already running");
         });
 
         it("should stop manager", async () => {

@@ -47,7 +47,16 @@ describe("BoltzSwapProvider", () => {
         vi.restoreAllMocks();
     });
 
+    it("should be instantiated with network config", () => {
+        expect(provider).toBeInstanceOf(BoltzSwapProvider);
+        expect(provider.getNetwork()).toBe("regtest");
+    });
+
     describe("configuration", () => {
+        it("should return correct API URL", () => {
+            expect(provider.getApiUrl()).toBe("http://localhost:9090");
+        });
+
         it("should return correct WebSocket URL", () => {
             const wsUrl = provider.getWsUrl();
             expect(wsUrl).toBe("ws://localhost:9090/v2/ws");
@@ -1222,6 +1231,14 @@ describe("BoltzSwapProvider", () => {
                 });
             }
         });
+    });
+
+    it("should have expected interface methods", () => {
+        expect(provider.createSubmarineSwap).toBeInstanceOf(Function);
+        expect(provider.getSwapStatus).toBeInstanceOf(Function);
+        expect(provider.getNetwork).toBeInstanceOf(Function);
+        expect(provider.refundSubmarineSwap).toBeInstanceOf(Function);
+        expect(provider.monitorSwap).toBeInstanceOf(Function);
     });
 
     describe("error handling", () => {

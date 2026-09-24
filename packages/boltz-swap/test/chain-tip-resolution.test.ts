@@ -103,6 +103,29 @@ describe("ArkadeSwaps chain-tip resolution", () => {
             expect(missingProviderWarnings()).toHaveLength(1);
         });
 
+        it("latches per instance, so a second instance warns again", async () => {
+            for (const _ of [0, 1]) {
+                const swaps = makeSwaps(undefined, { identity: {} });
+                const tip = await swaps.chainTipSnapshotFor([HEIGHT_LOCKTIME]);
+                swaps.isRefundLocktimeReachedAt(HEIGHT_LOCKTIME, tip);
+            }
+
+            // A module-scoped latch would report 1 here — and would silence the
+            // warning for every test after the first, and for a second network.
+            expect(missingProviderWarnings()).toHaveLength(2);
+        });
+
+        it("does not warn when the locktime is a timestamp", async () => {
+            const swaps = makeSwaps(undefined, { identity: {} });
+            const tip = await swaps.chainTipSnapshotFor([TIMESTAMP_LOCKTIME]);
+
+            swaps.isRefundLocktimeReachedAt(TIMESTAMP_LOCKTIME, tip);
+
+            // The absent provider is harmless on the timestamp path — which is
+            // all of mainnet — so warning there would be a false alarm.
+            expect(missingProviderWarnings()).toHaveLength(0);
+        });
+
         it("does not warn when a configured provider's getChainTip rejects", async () => {
             const provider = { getChainTip: vi.fn().mockRejectedValue(new Error("network down")) };
             const swaps = makeSwaps(provider);
