@@ -326,7 +326,7 @@ describe("getSpendableVtxos", () => {
         );
         await expect(wallet.getBalance()).resolves.toMatchObject({
             total: 70_000,
-            available: 50_000,
+            available: 49_000,
         });
         // Its already-persisted funds stay owned and reported — only the
         // refresh of them is skipped.
@@ -350,8 +350,9 @@ describe("getSpendableVtxos", () => {
 
 describe("getBalance", () => {
     /**
-     * `settled + preconfirmed === available + gated + intentLocked`, and the
-     * five owned buckets sum to `total` — which is what catches a bucket added
+     * `settled + preconfirmed === available + gated + intentLocked + carrier`,
+     * where `carrier` is the one dust carrier that leaves `available` whenever an asset is available;
+     * and the five owned buckets sum to `total` — which is what catches a bucket added
      * without being counted, or counted twice.
      */
     const expectSplit = (balance: {
@@ -365,9 +366,11 @@ describe("getBalance", () => {
         unrolled: number;
         total: number;
         boarding: { total: number };
+        availableAssets: unknown[];
     }) => {
+        const carrier = balance.available > 0 && balance.availableAssets.length > 0 ? 1000 : 0;
         expect(balance.settled + balance.preconfirmed).toBe(
-            balance.available + balance.gated + balance.intentLocked,
+            balance.available + balance.gated + balance.intentLocked + carrier,
         );
         expect(balance.total).toBe(
             balance.boarding.total +
@@ -400,8 +403,9 @@ describe("getBalance", () => {
         // 40k own + 10k escrow + 10k marked + 10k unknown-type
         expect(balance.settled).toBe(70_000);
         expect(balance.total).toBe(70_000);
-        // …minus the escrowed and the unknown-type contract.
-        expect(balance.available).toBe(50_000);
+        // …minus the escrowed and the unknown-type contract, and minus the one
+        // dust carrier the available assets ride on.
+        expect(balance.available).toBe(49_000);
         expect(balance.gated).toBe(20_000);
         expect(balance.intentLocked).toBe(0);
         expectSplit(balance);
@@ -433,7 +437,7 @@ describe("getBalance", () => {
         expect(balance.total).toBe(95_000);
         expect(balance.settled).toBe(70_000);
         expect(balance.preconfirmed).toBe(0);
-        expect(balance.available).toBe(50_000);
+        expect(balance.available).toBe(49_000);
         expect(balance.recoverable).toBe(0);
         expect(balance.pendingRecovery).toBe(0);
         expectSplit(balance);
@@ -520,7 +524,7 @@ describe("getBalance", () => {
         const balance = await wallet.getBalance();
         expect(balance.gated).toBe(20_000);
         expect(balance.intentLocked).toBe(0);
-        expect(balance.available).toBe(50_000);
+        expect(balance.available).toBe(49_000);
         expectSplit(balance);
     });
 
@@ -532,7 +536,7 @@ describe("getBalance", () => {
         const balance = await wallet.getBalance();
         expect(balance.intentLocked).toBe(40_000);
         expect(balance.gated).toBe(20_000);
-        expect(balance.available).toBe(10_000); // only MARKED_SCRIPT survives
+        expect(balance.available).toBe(9_000); // only MARKED_SCRIPT survives, minus its carrier
         expectSplit(balance);
     });
 
@@ -886,7 +890,7 @@ describe("a contract whose handler rejects its stored params", () => {
     it("does not fail the reads of every other contract", async () => {
         const { wallet, defaultScript } = await withBrokenContract();
 
-        await expect(wallet.getBalance()).resolves.toMatchObject({ available: 50_000 });
+        await expect(wallet.getBalance()).resolves.toMatchObject({ available: 49_000 });
         expect(scriptsOf(await wallet.getSpendableVtxos())).toEqual(
             [defaultScript, MARKED_SCRIPT].sort(),
         );

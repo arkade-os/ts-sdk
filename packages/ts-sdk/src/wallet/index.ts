@@ -351,6 +351,7 @@ export interface WalletBalance {
      * Immediately spendable offchain balance — what generic selection would
      * pick, so nothing counted here can be refused by `send`:
      * `settled + preconfirmed - gated - intentLocked`.
+     * A dust carrier is reserved if any assets are held on outputs comprising this balance.
      */
     available: number;
     /**
