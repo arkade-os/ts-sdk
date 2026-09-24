@@ -5,6 +5,7 @@ import {
     SettleParams,
     ArkTransaction,
     ExtendedCoin,
+    ExtendedVirtualCoin,
     GetVtxosFilter,
     GetNewAddressesOptions,
     NewAddress,
@@ -111,6 +112,11 @@ import {
     ResponseDelegate,
     RequestGetDelegateInfo,
     ResponseGetDelegateInfo,
+    RequestGetDelegateeInfo,
+    ResponseGetDelegateeInfo,
+    RequestRevokeDelegatee,
+    RequestSendSelectedVtxosToSelf,
+    ResponseSendSelectedVtxosToSelf,
     RequestRecoverVtxos,
     ResponseRecoverVtxos,
     ResponseRecoverVtxosEvent,
@@ -165,6 +171,7 @@ import type {
 } from "../../contracts/contractManager";
 import type { ContractState, ContractWatchState } from "../../contracts/types";
 import type { IDelegateManager } from "../delegate";
+import type { IDelegateeManager } from "../delegatee";
 import type {
     IVtxoManager,
     MigrateDeprecatedSignerOptions,
@@ -175,6 +182,7 @@ import type {
 } from "../vtxo-manager";
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
+import type { DelegateeInfo } from "../../providers/delegatee";
 import { getRandomId } from "../utils";
 import type { VirtualCoin } from "..";
 import {
@@ -208,6 +216,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     GET_STATUS: 10_000,
     GET_CONTRACT_SYNC_STATE: 10_000,
     GET_DELEGATE_INFO: 10_000,
+    GET_DELEGATEE_INFO: 10_000,
+    REVOKE_DELEGATEE: 50_000,
     IS_CONTRACT_MANAGER_WATCHING: 10_000,
     GET_CURRENT_SIGNING_DESCRIPTOR: 10_000,
     // Allocation is a local repository write plus a fire-and-forget band
@@ -243,6 +253,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // are retained only for type completeness and are never enforced.
     SEND_BITCOIN: 50_000,
     SEND: 50_000,
+    SEND_SELECTED_VTXOS_TO_SELF: 50_000,
     SETTLE: 50_000,
     ISSUE: 50_000,
     REISSUE: 50_000,
@@ -418,10 +429,14 @@ interface ServiceWorkerWalletOptions {
     storage?: StorageConfig;
     /** Identity used to derive addresses and optionally sign operations. */
     identity: ReadonlyIdentity | Identity;
-    /** Optional delegation service URL. */
+    /** @deprecated Legacy pre-signed delegator URL; use delegateeUrl. */
     delegateUrl?: string;
     /** @deprecated alias for @see ServiceWorkerWalletOptions.delegateUrl */
     delegatorUrl?: string;
+    /** URL of the covenant-based delegatee service. */
+    delegateeUrl?: string;
+    delegateeRenewalWindow?: number;
+    delegateeMaxFee?: number;
     /**
      * Override the default tag used for messages sent to and received from the service worker.
      * @see DEFAULT_MESSAGE_TAG
@@ -500,6 +515,9 @@ type MessageBusInitConfig = {
     delegateUrl?: string;
     /** @deprecated alias for @see MessageBusInitConfig.delegateUrl */
     delegatorUrl?: string;
+    delegateeUrl?: string;
+    delegateeRenewalWindow?: number;
+    delegateeMaxFee?: number;
     indexerUrl?: string;
     esploraUrl?: string;
     timeoutMs?: number;
@@ -571,6 +589,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     protected delegateUrl?: string;
     /** @deprecated alias for @see ServiceWorkerReadonlyWallet.delegateUrl */
     protected delegatorUrl?: string;
+    protected delegateeUrl?: string;
+    protected delegateeRenewalWindow?: number;
+    protected delegateeMaxFee?: number;
     protected indexerUrl?: string;
     protected esploraUrl?: string;
     protected watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
@@ -644,6 +665,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             // (which only read delegatorUrl) keep delegating until they activate
             // a newer version.
             delegatorUrl: options.delegateUrl || options.delegatorUrl,
+            delegateeUrl: options.delegateeUrl,
+            delegateeRenewalWindow: options.delegateeRenewalWindow,
+            delegateeMaxFee: options.delegateeMaxFee,
         };
 
         // Precompute the merged timeout map so page-side waiting and
@@ -666,6 +690,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             // (which only read delegatorUrl) keep delegating until they activate
             // a newer version.
             delegatorUrl: options.delegateUrl || options.delegatorUrl,
+            delegateeUrl: options.delegateeUrl,
+            delegateeRenewalWindow: options.delegateeRenewalWindow,
+            delegateeMaxFee: options.delegateeMaxFee,
             indexerUrl: options.indexerUrl,
             esploraUrl: options.esploraUrl,
             watcherConfig: options.watcherConfig,
@@ -941,6 +968,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             // (which only read delegatorUrl) keep delegating until they activate
             // a newer version.
             delegatorUrl: this.delegateUrl || this.delegatorUrl,
+            delegateeUrl: this.delegateeUrl,
+            delegateeRenewalWindow: this.delegateeRenewalWindow,
+            delegateeMaxFee: this.delegateeMaxFee,
             indexerUrl: this.indexerUrl,
             esploraUrl: this.esploraUrl,
             watcherConfig: this.watcherConfig,
@@ -1633,6 +1663,7 @@ export class ServiceWorkerWallet
     public readonly identity: Identity;
     private readonly _assetManager: IAssetManager;
     private readonly hasDelegate: boolean;
+    private readonly hasDelegatee: boolean;
     private _restoreInFlight?: Promise<void>;
 
     protected constructor(
@@ -1642,6 +1673,7 @@ export class ServiceWorkerWallet
         contractRepository: ContractRepository,
         messageTag: string,
         hasDelegate: boolean,
+        hasDelegatee: boolean,
     ) {
         super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
         this.identity = identity;
@@ -1652,6 +1684,7 @@ export class ServiceWorkerWallet
             messageTag,
         );
         this.hasDelegate = hasDelegate;
+        this.hasDelegatee = hasDelegatee;
     }
 
     get assetManager(): IAssetManager {
@@ -1698,6 +1731,7 @@ export class ServiceWorkerWallet
             contractRepository,
             messageTag,
             !!(options.delegateUrl || options.delegatorUrl),
+            !!options.delegateeUrl,
         );
 
         // INIT_WALLET retains the legacy `key` payload for wire compatibility
@@ -1715,6 +1749,9 @@ export class ServiceWorkerWallet
             // (which only read delegatorUrl) keep delegating until they activate
             // a newer version.
             delegatorUrl: options.delegateUrl || options.delegatorUrl,
+            delegateeUrl: options.delegateeUrl,
+            delegateeRenewalWindow: options.delegateeRenewalWindow,
+            delegateeMaxFee: options.delegateeMaxFee,
         };
 
         // Precompute the merged timeout map so page-side waiting and
@@ -1737,6 +1774,9 @@ export class ServiceWorkerWallet
             // (which only read delegatorUrl) keep delegating until they activate
             // a newer version.
             delegatorUrl: options.delegateUrl || options.delegatorUrl,
+            delegateeUrl: options.delegateeUrl,
+            delegateeRenewalWindow: options.delegateeRenewalWindow,
+            delegateeMaxFee: options.delegateeMaxFee,
             indexerUrl: options.indexerUrl,
             esploraUrl: options.esploraUrl,
             settlementConfig: options.settlementConfig,
@@ -2082,6 +2122,51 @@ export class ServiceWorkerWallet
         };
 
         return manager;
+    }
+
+    async getDelegateeManager(): Promise<IDelegateeManager | undefined> {
+        if (!this.hasDelegatee) {
+            return undefined;
+        }
+
+        const wallet = this;
+        const messageTag = this.messageTag;
+        return {
+            async getInfo(): Promise<DelegateeInfo> {
+                const message: RequestGetDelegateeInfo = {
+                    type: "GET_DELEGATEE_INFO",
+                    id: getRandomId(),
+                    tag: messageTag,
+                };
+                const response = await wallet.sendMessage(message);
+                return (response as ResponseGetDelegateeInfo).payload.info;
+            },
+            async register(): Promise<never> {
+                throw new Error("Delegatee registration is performed during wallet initialization");
+            },
+            async revoke(address: string, timestamp?: number): Promise<void> {
+                const message: RequestRevokeDelegatee = {
+                    type: "REVOKE_DELEGATEE",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { address, timestamp },
+                };
+                await wallet.sendMessage(message);
+            },
+        };
+    }
+
+    async sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[]): Promise<string> {
+        const message: RequestSendSelectedVtxosToSelf = {
+            type: "SEND_SELECTED_VTXOS_TO_SELF",
+            id: getRandomId(),
+            tag: this.messageTag,
+            payload: {
+                vtxoOutpoints: inputs.map(({ txid, vout }) => ({ txid, vout })),
+            },
+        };
+        const response = await this.sendMessage(message);
+        return (response as ResponseSendSelectedVtxosToSelf).payload.txid;
     }
 
     /** @deprecated alias for @see ServiceWorkerWallet.getDelegateManager */

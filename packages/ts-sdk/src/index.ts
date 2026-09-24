@@ -67,6 +67,14 @@ import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
 import { DelegateVtxo } from "./script/delegate";
+import {
+    buildArkadeScript,
+    buildDelegateeArkadeScript,
+    DEFAULT_DELEGATEE_MAX_FEE,
+    DEFAULT_DELEGATEE_RENEWAL_WINDOW,
+    MAX_DELEGATEE_FEE,
+    MAX_DELEGATEE_RENEWAL_WINDOW,
+} from "./script/delegatee";
 import { MessageHandler, RequestEnvelope, ResponseEnvelope, MessageBus } from "./worker/messageBus";
 import {
     VtxoScript,
@@ -252,6 +260,14 @@ import {
     RestDelegateProvider,
     RestDelegatorProvider,
 } from "./providers/delegate";
+import {
+    DelegateeDelegation,
+    DelegateeInfo,
+    DelegateeNotFoundError,
+    DelegateeParams,
+    DelegateeProvider,
+    RestDelegateeProvider,
+} from "./providers/delegatee";
 import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
@@ -462,6 +478,7 @@ import {
     IDelegateManager,
     IDelegatorManager,
 } from "./wallet/delegate";
+import { DelegateeManagerImpl, IDelegateeManager } from "./wallet/delegatee";
 
 export * from "./arkfee";
 export * from "./extension";
@@ -631,8 +648,10 @@ export {
     HDDescriptorProvider,
     DelegateManagerImpl,
     DelegatorManagerImpl,
+    DelegateeManagerImpl,
     RestDelegateProvider,
     RestDelegatorProvider,
+    RestDelegateeProvider,
     // Providers
     ESPLORA_URL,
     EsploraProvider,
@@ -652,6 +671,12 @@ export {
     ArkAddress,
     DefaultVtxo,
     DelegateVtxo,
+    buildArkadeScript,
+    buildDelegateeArkadeScript,
+    DEFAULT_DELEGATEE_MAX_FEE,
+    DEFAULT_DELEGATEE_RENEWAL_WINDOW,
+    MAX_DELEGATEE_FEE,
+    MAX_DELEGATEE_RENEWAL_WINDOW,
     VtxoScript,
     VHTLC,
     assembleBtcdTaprootTree,
@@ -1090,6 +1115,12 @@ export type {
     DelegatorProvider,
     DelegateInfo,
     DelegateOptions,
+    IDelegateeManager,
+    DelegateeProvider,
+    DelegateeParams,
+    DelegateeInfo,
+    DelegateeDelegation,
+    DelegateeNotFoundError,
     // Repositories
     ManagedConnection,
     WalletRepository,

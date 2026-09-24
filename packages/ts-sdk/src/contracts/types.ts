@@ -418,6 +418,13 @@ export interface DiscoveryDeps {
     boardingTimelock?: RelativeTimelock;
     /** Present only for delegate wallets. */
     delegatePubKey?: Uint8Array;
+    /** Present only for delegatee-backed delegate wallets. */
+    delegatee?: {
+        delegatePubKey: Uint8Array;
+        emulatorPubKey: Uint8Array;
+        renewalWindow: number;
+        maxFee: number;
+    };
 }
 
 /**
@@ -426,7 +433,7 @@ export interface DiscoveryDeps {
  * {@link Discoverable.candidatesAt} serves the scan and the look-ahead band.
  */
 export type CandidateDeps = Pick<DiscoveryDeps, "network" | "serverPubKey" | "csvTimelocks"> &
-    Pick<Partial<DiscoveryDeps>, "deprecatedSignerPubKeys" | "delegatePubKey">;
+    Pick<Partial<DiscoveryDeps>, "deprecatedSignerPubKeys" | "delegatePubKey" | "delegatee">;
 
 /**
  * Optional capability a {@link ContractHandler} implements to participate
