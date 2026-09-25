@@ -98,8 +98,9 @@ function toWatchOnlyContract(params: CreateContractParams): Contract {
 
 type TapscriptMemo = Map<
     string,
-    { handler: ContractHandler<unknown>; tapscripts: ContractTapscripts }
+    { key: string; handler: ContractHandler<unknown>; tapscripts: ContractTapscripts }
 >;
+const TAPSCRIPT_MEMO_MAX_ENTRIES = 1024;
 
 /**
  * Which of `vtxos`' contracts this runtime can annotate, with the tapscripts
@@ -132,11 +133,21 @@ function annotatableIn(
             // Pure in (type, params) under one handler; a swapped or removed handler must re-derive.
             const key = `${contract.type}\u0000${script}\u0000${JSON.stringify(contract.params)}`;
             const handler = contractHandlers.get(contract.type);
-            const hit = memo?.get(key);
-            let tapscripts = hit && hit.handler === handler ? hit.tapscripts : undefined;
-            if (!tapscripts) {
+            const hit = memo?.get(script);
+            let tapscripts: ContractTapscripts;
+            if (hit && hit.key === key && hit.handler === handler) {
+                tapscripts = hit.tapscripts;
+                memo!.delete(script);
+                memo!.set(script, hit);
+            } else {
+                memo?.delete(script);
                 tapscripts = deriveContractTapscripts(contract);
-                if (handler) memo?.set(key, { handler, tapscripts });
+                if (handler && memo) {
+                    memo.set(script, { key, handler, tapscripts });
+                    if (memo.size > TAPSCRIPT_MEMO_MAX_ENTRIES) {
+                        memo.delete(memo.keys().next().value!);
+                    }
+                }
             }
             cache.set(script, tapscripts); // aliases the memo; extendVtxoFromContract clones before use
             scripts.add(script);
@@ -2023,6 +2034,7 @@ export class ContractManager implements IContractManager {
      */
     async deleteContract(script: string): Promise<void> {
         await this.config.contractRepository.deleteContract(script);
+        this.tapscriptMemo.delete(script);
         await this.watcher.removeContract(script);
     }
 

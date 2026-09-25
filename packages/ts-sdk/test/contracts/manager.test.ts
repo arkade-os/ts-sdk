@@ -884,7 +884,47 @@ describe("ContractManager", () => {
             await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
 
             expect(spy).toHaveBeenCalledTimes(2);
+            expect((Reflect.get(manager, "tapscriptMemo") as Map<string, unknown>).size).toBe(1);
             spy.mockRestore();
+        });
+
+        it("drops memoized tapscripts when a contract is deleted", async () => {
+            await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            (mockIndexer.getVtxos as any).mockResolvedValue({
+                vtxos: [createMockVtxo({ script: TEST_DEFAULT_SCRIPT })],
+            });
+            await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
+            const memo = Reflect.get(manager, "tapscriptMemo") as Map<string, unknown>;
+            expect(memo.size).toBe(1);
+
+            await manager.deleteContract(TEST_DEFAULT_SCRIPT);
+
+            expect(memo.size).toBe(0);
+        });
+
+        it("evicts the oldest memo entry at the capacity limit", async () => {
+            await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            (mockIndexer.getVtxos as any).mockResolvedValue({
+                vtxos: [createMockVtxo({ script: TEST_DEFAULT_SCRIPT })],
+            });
+            const memo = Reflect.get(manager, "tapscriptMemo") as Map<string, unknown>;
+            for (let i = 0; i < 1024; i++) memo.set(`old-${i}`, {});
+
+            await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
+
+            expect(memo.size).toBe(1024);
+            expect(memo.has("old-0")).toBe(false);
+            expect(memo.has(TEST_DEFAULT_SCRIPT)).toBe(true);
         });
 
         it("refuses a memoized contract once its handler is unregistered", async () => {
