@@ -1590,7 +1590,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         let fail = false;
         const s = spies({
             claimLockup: async () => {
-                if (fail) throw new Error("ark server unreachable");
+                if (fail) throw new Error("Arkade operator unreachable");
                 return { txid: CLAIM_TXID, amount: LOCKUP_VALUE };
             },
         });
@@ -1704,7 +1704,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         let now = BEFORE_DEADLINE;
         const s = spies({
             claimLockup: async () => {
-                throw new Error("ark server unreachable");
+                throw new Error("Arkade operator unreachable");
             },
         });
         const swap = receiveSwap();
@@ -1725,8 +1725,10 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         await m.poll();
 
         expect(swap.state).toBe("failed");
-        expect(swap.failure).toMatch(/ark server unreachable/);
-        await expect(m.waitForSwapCompletion(RFQ_ID)).rejects.toThrow(/ark server unreachable/);
+        expect(swap.failure).toMatch(/Arkade operator unreachable/);
+        await expect(m.waitForSwapCompletion(RFQ_ID)).rejects.toThrow(
+            /Arkade operator unreachable/,
+        );
     });
 
     it("keeps watching a lockup whose swap FAILED — terminal is not spent", async () => {
@@ -1739,7 +1741,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         let now = BEFORE_DEADLINE;
         const s = spies({
             claimLockup: async () => {
-                throw new Error("ark server unreachable");
+                throw new Error("Arkade operator unreachable");
             },
         });
         const swap = receiveSwap();
@@ -1782,7 +1784,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const failures: string[] = [];
         const s = spies({
             claimLockup: async () => {
-                if (attempts++ === 0) throw new Error("ark server unreachable");
+                if (attempts++ === 0) throw new Error("Arkade operator unreachable");
                 throw new Error(
                     JSON.stringify({
                         code: 6,
@@ -1811,7 +1813,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         await m.poll();
 
         expect(attempts).toBe(2);
-        expect(failures).toEqual(["ark server unreachable"]);
+        expect(failures).toEqual(["Arkade operator unreachable"]);
         expect(swap.state).toBe("claimable");
         expect(swap.claimFailure).toBeUndefined();
 
@@ -3427,7 +3429,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             const failures: string[] = [];
             const firstSpies = spies({
                 claimLockup: async () => {
-                    throw new Error("ark server unreachable");
+                    throw new Error("Arkade operator unreachable");
                 },
             });
             const first = manager({
@@ -3446,9 +3448,9 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             await first.poll();
 
             expect(store.records.get(RFQ_ID)?.state).toBe("claimable");
-            expect(store.records.get(RFQ_ID)?.claimFailure).toBe("ark server unreachable");
+            expect(store.records.get(RFQ_ID)?.claimFailure).toBe("Arkade operator unreachable");
             expect(store.records.get(RFQ_ID)?.failure).toBeUndefined();
-            expect(failures).toEqual(["ark server unreachable"]);
+            expect(failures).toEqual(["Arkade operator unreachable"]);
 
             now = REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS;
             const resumedSpies = spies();
@@ -3464,16 +3466,16 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(result.failed).toHaveLength(0);
             expect(result.restored).toHaveLength(1);
             const [swap] = result.restored;
-            expect(swap?.claimFailure).toBe("ark server unreachable");
+            expect(swap?.claimFailure).toBe("Arkade operator unreachable");
 
             await resumed.poll();
 
             expect(swap?.state).toBe("failed");
-            expect(swap?.failure).toBe("ark server unreachable");
-            expect(store.records.get(RFQ_ID)?.failure).toBe("ark server unreachable");
+            expect(swap?.failure).toBe("Arkade operator unreachable");
+            expect(store.records.get(RFQ_ID)?.failure).toBe("Arkade operator unreachable");
             expect(store.records.get(RFQ_ID)?.claimFailure).toBeUndefined();
             await expect(resumed.waitForSwapCompletion(RFQ_ID)).rejects.toThrow(
-                /ark server unreachable/,
+                /Arkade operator unreachable/,
             );
         });
 
