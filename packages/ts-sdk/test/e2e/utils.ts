@@ -70,6 +70,7 @@ export function execCommand(command: string): string {
     const result = execSync(command, { encoding: "utf8" })
         .replace(/\r/g, "")
         .split("\n")
+        // regtest.mjs logs the env override it loads to stdout before every subcommand.
         .filter((line) => !line.includes("WARN") && !line.includes("Loading overrides from"))
         .join("\n")
         .trim();

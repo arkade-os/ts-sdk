@@ -50,6 +50,7 @@ import {
     type ProviderConnectionState,
 } from "../wallet";
 import { computeOffchainBalance } from "../balance";
+import { getDustAmount } from "../utils";
 import { isHDAllocationCapable, isHDWalletCapable } from "../hdWalletCapable";
 import { gatedFrom, isGatedVtxo } from "../../contracts/spendability";
 import type {
@@ -1765,6 +1766,7 @@ export class WalletMessageHandler
             isPendingRecovery: (vtxo) => pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
             isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
+            dustCarrier: getDustAmount(this.readonlyWallet),
         });
 
         return {
