@@ -1,4 +1,4 @@
-import { WalletRepository, WalletState } from "../walletRepository";
+import { WalletRepository, WalletState, utxoEntries } from "../walletRepository";
 import { StorageAdapter } from "../../storage";
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
 import {
@@ -80,7 +80,16 @@ export class WalletRepositoryImpl implements WalletRepository {
         }
     }
 
-    async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
+    async saveUtxos(
+        addressOrBatch: string | ReadonlyMap<string, ExtendedCoin[]>,
+        utxos?: ExtendedCoin[],
+    ): Promise<void> {
+        for (const [address, list] of utxoEntries(addressOrBatch, utxos)) {
+            await this.saveUtxosForAddress(address, list);
+        }
+    }
+
+    private async saveUtxosForAddress(address: string, utxos: ExtendedCoin[]): Promise<void> {
         const storedUtxos = await this.getUtxos(address);
         utxos.forEach((utxo) => {
             const existing = storedUtxos.findIndex(

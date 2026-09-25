@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { DefaultVtxo } from "../src/script/default";
 import {
     installRestoreHarness,
@@ -91,5 +91,37 @@ describe("boarding fetch fans out across addresses", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
 
         expect(await walletRepository.getUtxos(late)).toEqual([]);
+    });
+
+    it("saves every address's coins in one write", async () => {
+        const { wallet, walletRepository } = await makeStaticWalletForTest();
+        const second = new DefaultVtxo.Script({
+            ...wallet.boardingTapscript.options,
+            pubKey: new Uint8Array(32).fill(7),
+        });
+        (wallet as any).getBoardingTapscripts = async () => [wallet.boardingTapscript, second];
+        const addresses = [wallet.boardingTapscript, second].map((s) =>
+            s.onchainAddress(wallet.network),
+        );
+        const coin = { txid: "ab".repeat(32), vout: 0, value: 5_000, status: { confirmed: true } };
+        (wallet as any).onchainProvider = {
+            getCoins: async (address: string) => (address === addresses[1] ? [coin] : []),
+        };
+        const saveUtxos = vi.spyOn(walletRepository, "saveUtxos");
+        onTestFinished(() => wallet.dispose());
+
+        await wallet.getBoardingUtxos();
+
+        // The background poll writes too; only calls carrying the second address are ours.
+        const writes = (saveUtxos.mock.calls as unknown[][]).filter(([arg]) =>
+            arg instanceof Map ? arg.has(addresses[1]) : arg === addresses[1],
+        );
+        expect(writes.length).toBeGreaterThan(0);
+        for (const args of writes) {
+            expect(args).toHaveLength(1);
+            expect([...(args[0] as Map<string, unknown>).keys()]).toEqual(addresses);
+        }
+        const [saved] = await walletRepository.getUtxos(addresses[1]);
+        expect(saved.txid).toBe(coin.txid);
     });
 });

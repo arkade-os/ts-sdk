@@ -1,5 +1,5 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
-import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
+import { WalletRepository, WalletState, VtxoRepositoryKey, utxoEntries } from "../walletRepository";
 import {
     serializeVtxo,
     serializeUtxo,
@@ -18,6 +18,12 @@ interface SQLiteWalletRepositoryOptions {
     /** Table name prefix (default: "ark_") */
     prefix?: string;
 }
+
+/**
+ * Bound parameters per statement: 999 was SQLite's limit before 3.32, and the
+ * executor is the consumer's, so its SQLite build may be that old.
+ */
+const MAX_BOUND_PARAMETERS = 999;
 
 /**
  * SQLite-based implementation of WalletRepository.
@@ -231,6 +237,28 @@ export class SQLiteWalletRepository implements WalletRepository {
         )`;
     }
 
+    /**
+     * `INSERT OR REPLACE` rows, as many to a statement as the parameter budget allows.
+     * No enclosing transaction: on the shared connection it would take in other repos' writes.
+     */
+    private async insertOrReplace(
+        table: string,
+        columns: string,
+        rows: unknown[][],
+    ): Promise<void> {
+        const width = columns.split(",").length;
+        const tuple = `(${Array(width).fill("?").join(", ")})`;
+        const rowsPerStatement = Math.floor(MAX_BOUND_PARAMETERS / width);
+        for (let i = 0; i < rows.length; i += rowsPerStatement) {
+            const chunk = rows.slice(i, i + rowsPerStatement);
+            await this.db.run(
+                `INSERT OR REPLACE INTO ${table} (${columns})
+                 VALUES ${chunk.map(() => tuple).join(", ")}`,
+                chunk.flat(),
+            );
+        }
+    }
+
     async [Symbol.asyncDispose](): Promise<void> {
         // no-op — consumer owns the SQLExecutor lifecycle
     }
@@ -258,21 +286,16 @@ export class SQLiteWalletRepository implements WalletRepository {
 
     async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
         await this.ensureInit();
-        for (const vtxo of vtxos) {
-            const s = serializeVtxo(vtxo);
-            await this.db.run(
-                `INSERT OR REPLACE INTO ${this.tables.vtxos}
-                    (txid, vout, value, address,
-                     tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
-                     status_json, virtual_status_json, created_at,
-                     is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
-                     extra_witness_json, assets_json, script)
-                 VALUES (?, ?, ?, ?,
-                         ?, ?, ?, ?, ?,
-                         ?, ?, ?,
-                         ?, ?, ?, ?, ?,
-                         ?, ?, ?)`,
-                [
+        await this.insertOrReplace(
+            this.tables.vtxos,
+            `txid, vout, value, address,
+             tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
+             status_json, virtual_status_json, created_at,
+             is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
+             extra_witness_json, assets_json, script`,
+            vtxos.map((vtxo) => {
+                const s = serializeVtxo(vtxo);
+                return [
                     s.txid,
                     s.vout,
                     s.value,
@@ -297,9 +320,9 @@ export class SQLiteWalletRepository implements WalletRepository {
                     s.extraWitness ? JSON.stringify(s.extraWitness) : null,
                     s.assets ? JSON.stringify(s.assets) : null,
                     s.script ?? null,
-                ],
-            );
-        }
+                ];
+            }),
+        );
     }
 
     async deleteVtxos(address: string): Promise<void> {
@@ -346,19 +369,15 @@ export class SQLiteWalletRepository implements WalletRepository {
         return rows.map(utxoRowToDomain);
     }
 
-    async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
+    async saveUtxos(
+        addressOrBatch: string | ReadonlyMap<string, ExtendedCoin[]>,
+        utxos?: ExtendedCoin[],
+    ): Promise<void> {
         await this.ensureInit();
-        for (const utxo of utxos) {
-            const s = serializeUtxo(utxo);
-            await this.db.run(
-                `INSERT OR REPLACE INTO ${this.tables.utxos}
-                    (txid, vout, value, address,
-                     tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
-                     status_json, extra_witness_json)
-                 VALUES (?, ?, ?, ?,
-                         ?, ?, ?, ?, ?,
-                         ?, ?)`,
-                [
+        const rows = utxoEntries(addressOrBatch, utxos).flatMap(([address, list]) =>
+            list.map((utxo) => {
+                const s = serializeUtxo(utxo);
+                return [
                     s.txid,
                     s.vout,
                     s.value,
@@ -370,9 +389,16 @@ export class SQLiteWalletRepository implements WalletRepository {
                     s.intentTapLeafScript.s,
                     JSON.stringify(s.status),
                     s.extraWitness ? JSON.stringify(s.extraWitness) : null,
-                ],
-            );
-        }
+                ];
+            }),
+        );
+        await this.insertOrReplace(
+            this.tables.utxos,
+            `txid, vout, value, address,
+             tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
+             status_json, extra_witness_json`,
+            rows,
+        );
     }
 
     async deleteUtxos(address: string): Promise<void> {
@@ -393,26 +419,22 @@ export class SQLiteWalletRepository implements WalletRepository {
 
     async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
         await this.ensureInit();
-        for (const tx of txs) {
-            await this.db.run(
-                `INSERT OR REPLACE INTO ${this.tables.transactions}
-                    (address, boarding_txid, commitment_txid, ark_txid,
-                     type, amount, settled, created_at, assets_json)
-                 VALUES (?, ?, ?, ?,
-                         ?, ?, ?, ?, ?)`,
-                [
-                    address,
-                    tx.key.boardingTxid,
-                    tx.key.commitmentTxid,
-                    tx.key.arkTxid,
-                    tx.type,
-                    tx.amount,
-                    tx.settled ? 1 : 0,
-                    tx.createdAt,
-                    tx.assets ? JSON.stringify(serializeAssets(tx.assets)) : null,
-                ],
-            );
-        }
+        await this.insertOrReplace(
+            this.tables.transactions,
+            `address, boarding_txid, commitment_txid, ark_txid,
+             type, amount, settled, created_at, assets_json`,
+            txs.map((tx) => [
+                address,
+                tx.key.boardingTxid,
+                tx.key.commitmentTxid,
+                tx.key.arkTxid,
+                tx.type,
+                tx.amount,
+                tx.settled ? 1 : 0,
+                tx.createdAt,
+                tx.assets ? JSON.stringify(serializeAssets(tx.assets)) : null,
+            ]),
+        );
     }
 
     async deleteTransactions(address: string): Promise<void> {

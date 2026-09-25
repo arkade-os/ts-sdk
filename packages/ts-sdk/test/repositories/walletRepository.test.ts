@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { IndexedDBStorageAdapter } from "../../src/storage/indexedDB";
+import { InMemoryStorageAdapter } from "../../src/storage/inMemory";
 import { WalletRepositoryImpl } from "../../src/repositories/migrations/walletRepositoryImpl";
 import {
     type ArkTransaction,
@@ -237,6 +238,31 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
 
             expect(retrieved).toEqual([]);
         });
+
+        it("should save UTXOs for several addresses in one call", async () => {
+            const otherAddress = "test-address-456";
+            const emptyAddress = "test-address-789";
+            await repository.saveUtxos(testAddress, [createMockUtxo("tx1", 0, 10000)]);
+
+            await repository.saveUtxos(
+                new Map<string, ExtendedCoin[]>([
+                    [
+                        testAddress,
+                        [createMockUtxo("tx1", 0, 15000), createMockUtxo("tx2", 1, 20000)],
+                    ],
+                    [otherAddress, [createMockUtxo("tx3", 0, 30000)]],
+                    [emptyAddress, []],
+                ]),
+            );
+
+            const mine = await repository.getUtxos(testAddress);
+            expect(mine.map((u) => `${u.txid}:${u.value}`).sort()).toEqual([
+                "tx1:15000",
+                "tx2:20000",
+            ]);
+            expect((await repository.getUtxos(otherAddress)).map((u) => u.txid)).toEqual(["tx3"]);
+            expect(await repository.getUtxos(emptyAddress)).toEqual([]);
+        });
     });
 
     describe("Transaction history", () => {
@@ -330,5 +356,21 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
             const retrieved = await repository.getWalletState();
             expect(retrieved?.settings?.theme).toBe("light");
         });
+    });
+});
+
+describe("WalletRepositoryImpl (legacy V1)", () => {
+    it("should save UTXOs for several addresses in one call", async () => {
+        const repository = new WalletRepositoryImpl(new InMemoryStorageAdapter());
+
+        await repository.saveUtxos(
+            new Map<string, ExtendedCoin[]>([
+                ["address-1", [createMockUtxo("tx1", 0, 10000)]],
+                ["address-2", [createMockUtxo("tx2", 0, 20000)]],
+            ]),
+        );
+
+        expect((await repository.getUtxos("address-1")).map((u) => u.txid)).toEqual(["tx1"]);
+        expect((await repository.getUtxos("address-2")).map((u) => u.txid)).toEqual(["tx2"]);
     });
 });

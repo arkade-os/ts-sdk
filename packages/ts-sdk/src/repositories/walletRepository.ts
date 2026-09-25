@@ -69,6 +69,8 @@ export interface WalletRepository extends AsyncDisposable {
     getUtxos(address: string): Promise<ExtendedCoin[]>;
     /** Save boarding inputs for an address. */
     saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void>;
+    /** Save boarding inputs for several addresses in one write. */
+    saveUtxos(utxosByAddress: ReadonlyMap<string, ExtendedCoin[]>): Promise<void>;
     /** Delete stored boarding inputs for an address. */
     deleteUtxos(address: string): Promise<void>;
 
@@ -83,4 +85,12 @@ export interface WalletRepository extends AsyncDisposable {
     getWalletState(): Promise<WalletState | null>;
     /** Save wallet state. */
     saveWalletState(state: WalletState): Promise<void>;
+}
+
+/** Both {@link WalletRepository.saveUtxos} call shapes, as `[address, utxos]` entries. */
+export function utxoEntries(
+    addressOrBatch: string | ReadonlyMap<string, ExtendedCoin[]>,
+    utxos: ExtendedCoin[] = [],
+): [string, ExtendedCoin[]][] {
+    return typeof addressOrBatch === "string" ? [[addressOrBatch, utxos]] : [...addressOrBatch];
 }
