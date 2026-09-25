@@ -96,6 +96,11 @@ function toWatchOnlyContract(params: CreateContractParams): Contract {
     return { ...params, state: params.state ?? "active", createdAt: Date.now() };
 }
 
+type TapscriptMemo = Map<
+    string,
+    { handler: ContractHandler<unknown>; tapscripts: ContractTapscripts }
+>;
+
 /**
  * Which of `vtxos`' contracts this runtime can annotate, with the tapscripts
  * built along the way and a reason for each that it cannot.
@@ -115,7 +120,7 @@ function toWatchOnlyContract(params: CreateContractParams): Contract {
 function annotatableIn(
     scriptToContract: ReadonlyMap<string, Contract>,
     vtxos: readonly { script: string }[],
-    memo?: Map<string, ContractTapscripts>,
+    memo?: TapscriptMemo,
 ): { scripts: Set<string>; cache: ContractTapscriptCache; failures: Map<string, string> } {
     const scripts = new Set<string>();
     const cache: ContractTapscriptCache = new Map();
@@ -124,12 +129,14 @@ function annotatableIn(
         const contract = scriptToContract.get(script);
         if (!contract) continue; // not ours; dropped by the caller's filter
         try {
-            // Pure in (type, params); keyed on both so an edited row is rebuilt.
+            // Pure in (type, params) under one handler; a swapped or removed handler must re-derive.
             const key = `${contract.type}\u0000${script}\u0000${JSON.stringify(contract.params)}`;
-            let tapscripts = memo?.get(key);
+            const handler = contractHandlers.get(contract.type);
+            const hit = memo?.get(key);
+            let tapscripts = hit && hit.handler === handler ? hit.tapscripts : undefined;
             if (!tapscripts) {
                 tapscripts = deriveContractTapscripts(contract);
-                memo?.set(key, tapscripts);
+                if (handler) memo?.set(key, { handler, tapscripts });
             }
             cache.set(script, tapscripts);
             scripts.add(script);
@@ -828,7 +835,7 @@ export class ContractManager implements IContractManager {
     private config: ContractManagerConfig;
     private watcher: ContractWatcher;
     /** Per-sync tapscript caches start empty; this outlives them. Consumers only ever see clones. */
-    private readonly tapscriptMemo = new Map<string, ContractTapscripts>();
+    private readonly tapscriptMemo: TapscriptMemo = new Map();
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;

@@ -886,6 +886,30 @@ describe("ContractManager", () => {
             expect(spy).toHaveBeenCalledTimes(2);
             spy.mockRestore();
         });
+
+        it("refuses a memoized contract once its handler is unregistered", async () => {
+            await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            (mockIndexer.getVtxos as any).mockResolvedValue({
+                vtxos: [createMockVtxo({ script: TEST_DEFAULT_SCRIPT })],
+            });
+            await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
+            const handler = contractHandlers.get("default")!;
+            contractHandlers.unregister("default");
+            try {
+                await expect(
+                    manager.assertAnnotatable([
+                        { txid: "aa".repeat(32), vout: 0, script: TEST_DEFAULT_SCRIPT },
+                    ]),
+                ).rejects.toThrow(/cannot be annotated/);
+            } finally {
+                contractHandlers.register(handler);
+            }
+        });
     });
 
     describe("refreshOutpoints", () => {
