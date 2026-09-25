@@ -14,6 +14,8 @@ import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
+    ArkError,
+    ArkErrorName,
     CSVMultisigTapscript,
     ConditionWitness,
     VHTLCV2ContractHandler,
@@ -1725,6 +1727,27 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         expect(swap.state).toBe("failed");
         expect(swap.failure).toMatch(/ark server unreachable/);
         await expect(m.waitForSwapCompletion(RFQ_ID)).rejects.toThrow(/ark server unreachable/);
+    });
+
+    it("does not report a claim that lost the race to another claimer as a failure", async () => {
+        const failures: string[] = [];
+        const s = spies({
+            claimLockup: async () => {
+                throw new ArkError(6, "vtxo already spent", ArkErrorName.VTXO_ALREADY_SPENT);
+            },
+        });
+        const swap = receiveSwap();
+        const m = manager({
+            indexer: fundedIndexer(),
+            contracts: fundedContracts(),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        m.onSwapFailed((_swap, error) => failures.push(error.message));
+        await pass(m, swap);
+
+        expect(failures).toEqual([]);
+        expect(swap.state).toBe("claimable");
     });
 
     it("reports without acting when auto-actions are off", async () => {
