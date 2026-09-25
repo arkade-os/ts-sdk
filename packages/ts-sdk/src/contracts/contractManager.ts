@@ -138,7 +138,7 @@ function annotatableIn(
                 tapscripts = deriveContractTapscripts(contract);
                 if (handler) memo?.set(key, { handler, tapscripts });
             }
-            cache.set(script, tapscripts);
+            cache.set(script, tapscripts); // aliases the memo; extendVtxoFromContract clones before use
             scripts.add(script);
         } catch (err) {
             failures.set(
