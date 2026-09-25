@@ -258,7 +258,7 @@ describe("maker-side swap loop (regtest)", () => {
         });
     }, 120_000);
 
-    it("drives status from the wallet's own spend event, with no restore call", async () => {
+    it("resolves the swap as cancelled from the wallet's own spend event, with no restore call", async () => {
         // Phase 3 end to end, and the half no unit test can reach: registration
         // makes the covenant watched, the watcher's SSE delivers `vtxo_spent`,
         // and the record resolves without anyone scanning history. A second
