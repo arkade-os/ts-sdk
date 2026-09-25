@@ -1750,6 +1750,50 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         expect(swap.state).toBe("claimable");
     });
 
+    it("clears an earlier claim error when a wire error says another claimer won", async () => {
+        let now = BEFORE_DEADLINE;
+        let attempts = 0;
+        const failures: string[] = [];
+        const s = spies({
+            claimLockup: async () => {
+                if (attempts++ === 0) throw new Error("ark server unreachable");
+                throw new Error(
+                    JSON.stringify({
+                        code: 6,
+                        message: "vtxo already spent",
+                        details: [
+                            {
+                                "@type": "type.googleapis.com/ark.v1.ErrorDetails",
+                                code: 6,
+                                message: "vtxo already spent",
+                                name: ArkErrorName.VTXO_ALREADY_SPENT,
+                            },
+                        ],
+                    }),
+                );
+            },
+        });
+        const swap = receiveSwap();
+        const m = manager({
+            indexer: fundedIndexer(),
+            contracts: fundedContracts(),
+            now: () => now,
+            spies: s,
+        });
+        m.onSwapFailed((_swap, error) => failures.push(error.message));
+        await pass(m, swap);
+        await m.poll();
+
+        expect(attempts).toBe(2);
+        expect(failures).toEqual(["ark server unreachable"]);
+        expect(swap.state).toBe("claimable");
+
+        now = REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS;
+        await m.poll();
+        expect(swap.state).toBe("refunded");
+        expect(swap.failure).toBeUndefined();
+    });
+
     it("reports without acting when auto-actions are off", async () => {
         const s = spies();
         const swap = receiveSwap();
