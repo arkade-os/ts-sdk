@@ -508,6 +508,7 @@ export interface DerivedContractTapscripts {
  * doesn't expose the legacy `forfeit()` method (e.g. program-compiled arkade
  * contracts, where the right leaf depends on the program) implement this so
  * the annotation pipeline stays type-agnostic.
+ * Must be pure in `(contract.type, contract.script, contract.params)`: `ContractManager` memoizes the result for its lifetime.
  */
 export interface TapscriptDeriving<S extends VtxoScript = VtxoScript> {
     deriveTapscripts(script: S, contract: Contract): DerivedContractTapscripts;
