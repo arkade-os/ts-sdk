@@ -5698,7 +5698,9 @@ export class Wallet
         }
 
         const vtxoMinAmount =
-            changeAmount > 0 ? ((await this.arkProvider.getInfo()).vtxoMinAmount ?? 0n) : 0n;
+            changeAmount > 0 || assetChanges.size > 0
+                ? ((await this.arkProvider.getInfo()).vtxoMinAmount ?? 0n)
+                : 0n;
         if (selectedVtxos && changeAmount > 0 && BigInt(changeAmount) < vtxoMinAmount) {
             throw new Error(
                 `send({ selectedVtxos }): ${changeAmount} sats of change is below ` +
@@ -5733,7 +5735,7 @@ export class Wallet
                 }
                 // If the balance cannot produce valid change, an exact BTC-only
                 // subset can still pay without a change output.
-                if (assetChanges.size === 0 && recipients.every((r) => r.assets.length === 0)) {
+                if (recipients.every((r) => r.assets.length === 0)) {
                     const plainCoins = virtualCoins.filter((coin) => !coin.assets?.length);
                     const exact = plainCoins.find((coin) => coin.value === totalBtcOutput);
                     let exactCoins = exact ? [exact] : undefined;
@@ -5750,6 +5752,7 @@ export class Wallet
                     }
                     if (exactCoins) {
                         selectedCoins = exactCoins;
+                        assetChanges.clear();
                         totalBtcSelected = totalBtcOutput;
                         changeAmount = 0;
                         break;

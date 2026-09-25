@@ -442,12 +442,15 @@ describe("Wallet", () => {
         });
         const address = tapscript.address("ark", TEST_SERVER_PUB_KEY).encode();
 
-        function sendWithCoins(values: number[], minimum: bigint) {
+        function sendWithCoins(values: number[], minimum: bigint, assetIndices: number[] = []) {
             const coins = values.map((value, index) => ({
                 txid: index.toString(16).padStart(64, "0"),
                 vout: 0,
                 value,
                 virtualStatus: { state: "preconfirmed", batchExpiry: index + 1 },
+                ...(assetIndices.includes(index)
+                    ? { assets: [{ assetId: "a".repeat(68), amount: 1n }] }
+                    : {}),
             }));
             const submit = vi.fn().mockResolvedValue("txid");
             const thisArg: any = {
@@ -509,6 +512,31 @@ describe("Wallet", () => {
             expect(
                 submit.mock.calls[0][1].map((output: { amount: bigint }) => output.amount),
             ).toEqual([500n]);
+        });
+
+        it("tops up zero BTC change when selected assets still need a minimum-sized output", async () => {
+            const { thisArg, submit } = sendWithCoins([505, 330, 200], 500n, [0]);
+
+            await send(thisArg, 505);
+
+            expect(thisArg.arkProvider.getInfo).toHaveBeenCalledOnce();
+            expect(submit.mock.calls[0][0]).toHaveLength(3);
+            expect(
+                submit.mock.calls[0][1]
+                    .slice(0, 2)
+                    .map((output: { amount: bigint }) => output.amount),
+            ).toEqual([505n, 530n]);
+        });
+
+        it("uses an exact BTC-only coin instead of an asset coin with unusable change", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([616, 505], 1000n, [0]);
+
+            await send(thisArg, 505);
+
+            expect(submit.mock.calls[0][0].map((coin: { txid: string }) => coin.txid)).toEqual([
+                coins[1].txid,
+            ]);
+            expect(submit.mock.calls[0][1]).toHaveLength(1);
         });
 
         it("preserves subdust change when the operator advertises no minimum", async () => {
