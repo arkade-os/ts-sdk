@@ -81,7 +81,10 @@
  */
 import { hex } from "@scure/base";
 import {
+    ArkErrorName,
+    isArkError,
     isContractVtxoEvent,
+    maybeArkError,
     type ContractEvent,
     type IContractManager,
     type VHTLC,
@@ -1843,6 +1846,15 @@ export class RfqSwapManager {
             this.setState(swap, "claimed");
             this.emitAction(swap, "claimLockup");
         } catch (error) {
+            // Lost the race to another holder of P (covclaimd): step 1 of the next pass reads that claim and settles.
+            const ark = isArkError(error) ? error : maybeArkError(error);
+            if (isArkError(ark, ArkErrorName.VTXO_ALREADY_SPENT)) {
+                if (swap.claimFailure !== undefined) {
+                    delete swap.claimFailure;
+                    this.touch(swap);
+                }
+                return;
+            }
             // The window is still open — `driveReceiveClaim` only reaches here
             // while it is — so the next pass retries. Recorded so that, if the
             // window shuts having never succeeded, the swap can end `failed`
