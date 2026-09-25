@@ -7,10 +7,20 @@ export {
     decodeOffer,
     offerVtxoScript,
     swapPrograms,
+    // The pieces an out-of-tree fill planner assembles a spend from.
+    assembleOfferFill,
+    connectFillContract,
+    resolveDeposit,
     ASSET_CARRIER_SATS,
     OFFER_PACKET_TYPE,
+    type AssembledFillLayout,
+    type FillCoin,
     type FillFunding,
+    type FillInputOwner,
+    type FillOutpoint,
+    type FillOutputRole,
     type Offer,
+    type SponsorFillInput,
 } from "./offer";
 export {
     discoverMarkets,
@@ -42,9 +52,26 @@ export {
     PreimageNotRecoverableError,
     type AssetSwap,
     type AssetSwapStatus,
+    type FundingIntent,
+    type FundingIntentInput,
+    type FundingIntentOutput,
+    type FundingIntentState,
     type PreimageBlockedReason,
     type SwapSecretsProjection,
 } from "./store";
+export {
+    assertPreparedFundingSwap,
+    FUNDING_INTENT_INPUT_LIMIT,
+    type FundingStateAdvance,
+} from "./fundingPersistence";
+export {
+    FundingNotCompletedError,
+    FundingOutcomeUnknownError,
+    FundingOutputMismatchError,
+    fundOffer,
+    type FundOfferParams,
+    type FundingExpiryFloor,
+} from "./funding";
 export {
     type AssetSwapRepository,
     type MarketsCacheEntry,
@@ -164,6 +191,15 @@ export {
     type RfqStatus,
     type RfqTransport,
 } from "./rfq";
+export {
+    assertReceiverPaidEchoMatchesExpected,
+    type ArkadeCarrierChoice,
+    type ArkadeCarrierRequest,
+    type ReceiverPaidCarrierQuote,
+    type RecycleCarrierQuote,
+    type TaxiIdentity,
+    type VerifiedCarrierTerms,
+} from "./receiveCarrier";
 export {
     LOCKTIME_THRESHOLD,
     ONCHAIN_DUST_SATS,

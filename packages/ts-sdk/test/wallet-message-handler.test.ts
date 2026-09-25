@@ -185,6 +185,54 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
+    it.each([undefined, 0, -1, 1.5, Number.NaN, "1700000001"])(
+        "rejects timed SEND with invalid deadline %s before wallet send",
+        async (validUntil) => {
+            const send = vi.fn();
+            (updater as any).readonlyWallet = {};
+            (updater as any).wallet = { send };
+
+            const response = await updater.handleMessage({
+                ...baseMessage(),
+                type: "SEND_WITH_DEADLINE",
+                payload: {
+                    recipients: [{ address: "tark1timed", amount: 2000 }],
+                    validUntil,
+                },
+            } as any);
+
+            expect(response.error?.message).toMatch(
+                /validUntil must be a positive safe integer UNIX timestamp in seconds/,
+            );
+            expect(send).not.toHaveBeenCalled();
+        },
+    );
+
+    it("forwards a timed SEND with the exact deadline and selected VTXOs", async () => {
+        const send = vi.fn().mockResolvedValue("timed-txid");
+        const recipients = [{ address: "tark1timed", amount: 2000 }] as any;
+        const selectedVtxos = [{ txid: "aa".repeat(32), vout: 1, value: 3000 }] as any;
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = { send };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "SEND_WITH_DEADLINE",
+            payload: { recipients, selectedVtxos, validUntil: 1_700_000_123 },
+        } as any);
+
+        expect(send).toHaveBeenCalledWith({
+            recipients,
+            selectedVtxos,
+            validUntil: 1_700_000_123,
+        });
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "SEND_SUCCESS",
+            payload: { txid: "timed-txid" },
+        });
+    });
+
     it("handles SIGN_TRANSACTION messages", async () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {};

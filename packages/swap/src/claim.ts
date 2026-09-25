@@ -41,6 +41,7 @@ import {
     type LockupContractSource,
     findLockupVtxos,
     type LockupVtxo,
+    lockupSpendOutputs,
     type RefundArkProvider,
 } from "./refund";
 
@@ -202,8 +203,10 @@ export async function pushClaim(
             tapTree,
         })),
         // One aggregate output: unlike the covenant refund, this leaf inspects
-        // nothing about the output set.
-        outputs: [{ script: input.destinationPkScript, amount: BigInt(locked) }],
+        // nothing about the output set. Any assets the lockup carried ride with
+        // it, declared in a packet — undeclared, arkd answers ASSET_NOT_FOUND
+        // and the claim fails after the preimage is already public.
+        outputs: lockupSpendOutputs(input.vtxos, input.destinationPkScript, BigInt(locked)),
         serverUnrollScript,
         verifyServerSignatures: { serverPubkey: input.script.options.server },
     });

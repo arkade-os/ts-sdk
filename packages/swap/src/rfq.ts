@@ -86,7 +86,25 @@ import {
 } from "@arkade-os/sdk";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
-import { ASSET_CARRIER_SATS, createOffer } from "./offer";
+import { ASSET_CARRIER_SATS, createOffer, receivePkScriptFor } from "./offer";
+import {
+    assertCarrierRequestAllowed,
+    assertReceiverPaidEchoMatchesExpected,
+    assertRecycleEchoMatchesExpected,
+    carrierNow,
+    encodeCarrierRequest,
+    normalizeXonlyHex,
+    parseCarrierEcho,
+    parseTopLevelCarrierSats,
+    validateReceiverPaidQuoteShape,
+    validateRecycleQuoteShape,
+    type ArkadeCarrierChoice,
+    type ArkadeCarrierRequest,
+    type ReceiverPaidCarrierQuote,
+    type RecycleCarrierQuote,
+    type TaxiIdentity,
+    type VerifiedCarrierTerms,
+} from "./receiveCarrier";
 
 /** Decode a solver-supplied hex field, turning a malformed value (odd length,
  * non-hex chars) into a solver-blaming diagnostic instead of a bare
@@ -380,6 +398,7 @@ export const arkadeSwapRequest = (input: {
     /** Trader's own x-only key (32 bytes), as bytes or lowercase hex. The
      * `cancel` path's `user` signer. */
     makerPublicKey: Uint8Array | string;
+    carrier?: ArkadeCarrierRequest;
 }): Record<string, unknown> => {
     if (!input.wantAsset && !input.offerAsset) {
         throw new Error(
@@ -392,6 +411,10 @@ export const arkadeSwapRequest = (input: {
         input.wantAsset ? arkadeAssetLeg(input.wantAsset) : ARKADE_BTC,
     );
     assertPairLength(pair);
+    assertCarrierRequestAllowed(input.carrier, {
+        wantAsset: input.wantAsset,
+        offerAsset: input.offerAsset,
+    });
     return {
         v: 1,
         type: "rfq_request",
@@ -405,6 +428,9 @@ export const arkadeSwapRequest = (input: {
         profile: {
             maker_pk_script: normalizeMakerPkScript(input.makerPkScript),
             maker_public_key: normalizeMakerPublicKey(input.makerPublicKey),
+            ...(input.carrier === undefined
+                ? {}
+                : { carrier: encodeCarrierRequest(input.carrier) }),
         },
     };
 };
@@ -1406,9 +1432,9 @@ const quoteCarrierSats = (quote: RfqQuote): bigint => {
  * (closed reason), {@link AddressMismatch} (never fund), or a gate error with
  * a stable `reason`.
  *
- * Funding (caller's job, immediately after, before `valid_until`):
- * - BTC->asset (`wantAsset`): `wallet.send({ address, amount: Number(fundAmount), extensions: [extension] })`
- * - asset->BTC or asset->asset (`offerAsset`): `wallet.send({ address, amount: Number(carrierSats), assets: [{ assetId: offerAsset, amount: fundAmount }], extensions: [extension] })`
+ * Funding remains the caller's next step, but should go through `fundOffer`
+ * with this result's `offerHex`, `fundAmount`, optional asset/carrier, stable
+ * `rfqId`, and a deadline no later than every verified quote expiry.
  */
 export async function requestArkadeSwap(
     wallet: IWallet,
@@ -1429,6 +1455,11 @@ export async function requestArkadeSwap(
         rfqId?: string;
         /** Co-signer key override (33-byte compressed hex); see `createOffer`. */
         emulatorPubkey?: string;
+        /** Where the fill pays; see `createOffer`. Omitted, the wallet's own
+         * address is used and the request is unchanged. */
+        receiveAddress?: string;
+        /** Opt into explicit receive-carrier negotiation (BTC->asset only). */
+        carrier?: ArkadeCarrierChoice;
         now?: number;
     },
 ): Promise<{
@@ -1449,48 +1480,151 @@ export async function requestArkadeSwap(
     offerHex: string;
     /** Ready for `wallet.send`'s `extensions`. */
     extension: { type: number; payload: Uint8Array };
+    /** Verified carrier terms when an explicit carrier was negotiated. */
+    carrier?: VerifiedCarrierTerms;
 }> {
-    if (!params.wantAsset && !params.offerAsset) {
+    const wantAsset = params.wantAsset;
+    const offerAsset = params.offerAsset;
+    const amount = params.amount;
+    const amountSide = params.amountSide ?? "from";
+    const maxFromAmount = params.maxFromAmount;
+    const minToAmount = params.minToAmount;
+    const requestedRfqId = params.rfqId;
+    const emulatorPubkey = params.emulatorPubkey;
+    const requestedReceiveAddress = params.receiveAddress;
+    const requestedNow = params.now;
+    if (!wantAsset && !offerAsset) {
         throw new Error("set at least one of wantAsset or offerAsset; BTC-to-BTC is not a swap");
     }
-    const rfqId = params.rfqId ?? newRfqId();
-    const amountSide = params.amountSide ?? "from";
+    let carrierRequest: ArkadeCarrierRequest | undefined;
+    let expectedRecycle: RecycleCarrierQuote | undefined;
+    let expectedReceiverPaid: ReceiverPaidCarrierQuote | undefined;
+    // The descriptor that fixes the receive address/asset/maker, whichever
+    // mode set it — the pre-flight checks below read only this, so recycle
+    // and recycle_receiver share one enforcement path.
+    let expectedCarrierQuote:
+        | { receiveAddress: string; makerPublicKey: string; assetId: string }
+        | undefined;
+    if (params.carrier !== undefined) {
+        const mode: unknown = (params.carrier as { mode?: unknown }).mode;
+        if (mode === "purchase") {
+            carrierRequest = { mode: "purchase" };
+        } else if (mode === "recycle") {
+            const quote = (params.carrier as { quote?: RecycleCarrierQuote }).quote;
+            if (!quote || typeof quote !== "object") {
+                throw new Error("carrier recycle quote is required");
+            }
+            expectedRecycle = {
+                quoteId: quote.quoteId,
+                receiveAddress: quote.receiveAddress,
+                makerPublicKey: quote.makerPublicKey,
+                assetId: quote.assetId,
+                physicalSats: quote.physicalSats,
+                loanSats: quote.loanSats,
+                receiptSats: quote.receiptSats,
+                serviceFareSats: quote.serviceFareSats,
+                expiresAt: quote.expiresAt,
+            };
+            validateRecycleQuoteShape(expectedRecycle);
+            carrierRequest = { mode: "recycle", quoteId: expectedRecycle.quoteId };
+            expectedCarrierQuote = expectedRecycle;
+        } else if (mode === "recycleReceiver") {
+            const quote = (params.carrier as { quote?: ReceiverPaidCarrierQuote }).quote;
+            const taxi = (params.carrier as { taxi?: TaxiIdentity }).taxi;
+            if (!quote || typeof quote !== "object") {
+                throw new Error("carrier receiver-paid quote is required");
+            }
+            if (!taxi || typeof taxi !== "object") {
+                throw new Error("carrier receiver-paid taxi identity is required");
+            }
+            expectedReceiverPaid = {
+                quoteId: quote.quoteId,
+                receiveAddress: quote.receiveAddress,
+                makerPublicKey: quote.makerPublicKey,
+                assetId: quote.assetId,
+                physicalSats: quote.physicalSats,
+                loanSats: quote.loanSats,
+                expiresAt: quote.expiresAt,
+            };
+            validateReceiverPaidQuoteShape(expectedReceiverPaid);
+            carrierRequest = {
+                mode: "recycle_receiver",
+                quoteId: expectedReceiverPaid.quoteId,
+                taxiUrl: taxi.url,
+                taxiKey: taxi.operatorKey,
+            };
+            expectedCarrierQuote = expectedReceiverPaid;
+        } else {
+            throw new Error("carrier request mode must be purchase, recycle or recycleReceiver");
+        }
+    }
+    assertCarrierRequestAllowed(carrierRequest, {
+        ...(wantAsset !== undefined ? { wantAsset } : {}),
+        ...(offerAsset !== undefined ? { offerAsset } : {}),
+    });
+    const effectiveReceiveAddress =
+        expectedCarrierQuote !== undefined
+            ? expectedCarrierQuote.receiveAddress
+            : requestedReceiveAddress;
+    if (
+        requestedReceiveAddress !== undefined &&
+        effectiveReceiveAddress !== undefined &&
+        requestedReceiveAddress !== effectiveReceiveAddress
+    ) {
+        throw new Error("receiveAddress must match the carrier quote receiveAddress");
+    }
+    const rfqId = requestedRfqId ?? newRfqId();
     const [makerAddress, makerPublicKey] = await Promise.all([
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
+    if (expectedCarrierQuote !== undefined) {
+        if (wantAsset === undefined || expectedCarrierQuote.assetId !== wantAsset.toString()) {
+            throw new Error("carrier quote assetId differs from the requested wantAsset");
+        }
+        if (normalizeXonlyHex(makerPublicKey) !== expectedCarrierQuote.makerPublicKey) {
+            throw new Error("carrier quote makerPublicKey differs from the wallet identity");
+        }
+    }
+    // Validated here, before the quote is asked for, through the same path
+    // createOffer uses below, so a substituted recipient never reaches a solver
+    // and the request profile and the derived offer cannot disagree.
+    const makerPkScript =
+        effectiveReceiveAddress === undefined
+            ? ArkAddress.decode(makerAddress).pkScript
+            : await receivePkScriptFor(arkServerUrl, effectiveReceiveAddress, makerAddress);
     const pair = rfqPair(
-        params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
-        params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
+        offerAsset ? arkadeAssetLeg(offerAsset) : ARKADE_BTC,
+        wantAsset ? arkadeAssetLeg(wantAsset) : ARKADE_BTC,
     );
     const quote = await transport.requestQuote(
         arkadeSwapRequest({
             rfqId,
-            ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
-            ...(params.wantAsset !== undefined ? { wantAsset: params.wantAsset } : {}),
-            amount: params.amount,
+            ...(offerAsset !== undefined ? { offerAsset } : {}),
+            ...(wantAsset !== undefined ? { wantAsset } : {}),
+            amount,
             amountSide,
             makerPkScript,
             makerPublicKey,
+            ...(carrierRequest !== undefined ? { carrier: carrierRequest } : {}),
         }),
     );
     if (quote.pair !== pair) {
         throw new Error(`solver quoted ${JSON.stringify(quote.pair)}, not the requested ${pair}`);
     }
-    assertArkadeFundable({ quote, ...(params.now !== undefined ? { now: params.now } : {}) });
+    assertArkadeFundable({ quote, ...(requestedNow !== undefined ? { now: requestedNow } : {}) });
     const terms = offerTermsFromQuote(quote, {
-        ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
-        ...(params.wantAsset !== undefined ? { wantAsset: params.wantAsset } : {}),
+        ...(offerAsset !== undefined ? { offerAsset } : {}),
+        ...(wantAsset !== undefined ? { wantAsset } : {}),
     });
     const quoted = amountSide === "from" ? quote.from_amount : quote.to_amount;
-    if (BigInt(quoted).toString() !== canonicalAssetAmount(params.amount)) {
+    if (BigInt(quoted).toString() !== canonicalAssetAmount(amount)) {
         throw new Error(
-            `quote ${amountSide}_amount ${quoted} does not match the requested ${canonicalAssetAmount(params.amount)}`,
+            `quote ${amountSide}_amount ${quoted} does not match the requested ${canonicalAssetAmount(amount)}`,
         );
     }
-    if (params.maxFromAmount !== undefined) {
-        const cap = BigInt(canonicalAssetAmount(params.maxFromAmount));
+    if (maxFromAmount !== undefined) {
+        const cap = BigInt(canonicalAssetAmount(maxFromAmount));
         if (BigInt(quote.from_amount) > cap) {
             throw gateError(
                 "quote_amount_rejected",
@@ -1498,8 +1632,8 @@ export async function requestArkadeSwap(
             );
         }
     }
-    if (params.minToAmount !== undefined) {
-        const floorAmount = BigInt(canonicalAssetAmount(params.minToAmount));
+    if (minToAmount !== undefined) {
+        const floorAmount = BigInt(canonicalAssetAmount(minToAmount));
         if (BigInt(quote.to_amount) < floorAmount) {
             throw gateError(
                 "quote_amount_rejected",
@@ -1507,13 +1641,85 @@ export async function requestArkadeSwap(
             );
         }
     }
+    let verifiedCarrier: VerifiedCarrierTerms | undefined;
+    if (carrierRequest !== undefined) {
+        const echoRaw = (quote.profile as Record<string, unknown> | undefined)?.carrier;
+        if (echoRaw === undefined) {
+            throw new Error("solver did not return carrier terms for an explicit carrier request");
+        }
+        const echo = parseCarrierEcho(echoRaw, {
+            mode: carrierRequest.mode,
+            ...(carrierRequest.mode === "recycle" ? { quoteId: carrierRequest.quoteId } : {}),
+            ...(carrierRequest.mode === "recycle_receiver"
+                ? {
+                      quoteId: carrierRequest.quoteId,
+                      taxiUrl: carrierRequest.taxiUrl,
+                      taxiKey: carrierRequest.taxiKey,
+                  }
+                : {}),
+        });
+        if (echo.mode === "recycle_receiver") {
+            // Nothing is netted on a receiver-paid deal, so a published
+            // carrier_sats would be false; the dust comparison is its own
+            // getInfo call, independent of the purchase branch's below.
+            if (quote.carrier_sats !== undefined) {
+                throw new Error("receiver-paid quote must publish no carrier_sats");
+            }
+            const dustInfo = await new RestArkProvider(arkServerUrl).getInfo();
+            if (echo.physicalSats !== dustInfo.dust) {
+                throw new Error("carrier receiver-paid physical differs from the server dust");
+            }
+        } else {
+            const topCarrier = parseTopLevelCarrierSats(quote.carrier_sats);
+            if (topCarrier !== echo.physicalSats) {
+                throw new Error("carrier echo physical differs from top-level carrier_sats");
+            }
+        }
+        if (quote.valid_until > echo.expiresAt) {
+            throw new Error("carrier echo expires before the quote valid_until");
+        }
+        let currentTime = carrierNow(requestedNow);
+        if (currentTime >= quote.valid_until || currentTime >= echo.expiresAt) {
+            throw gateError("quote_expired", "carrier terms lapsed before funding");
+        }
+        if (echo.mode === "purchase") {
+            const info = await new RestArkProvider(arkServerUrl).getInfo();
+            if (echo.physicalSats !== info.dust) {
+                throw new Error("carrier purchase physical differs from the server dust");
+            }
+        } else if (echo.mode === "recycle_receiver") {
+            if (expectedReceiverPaid === undefined) {
+                throw new Error("carrier receiver-paid request is missing its expected descriptor");
+            }
+            assertReceiverPaidEchoMatchesExpected(echo, expectedReceiverPaid);
+        } else {
+            if (expectedRecycle === undefined) {
+                throw new Error("carrier recycle request is missing its expected descriptor");
+            }
+            assertRecycleEchoMatchesExpected(echo, expectedRecycle);
+        }
+        currentTime = carrierNow(requestedNow);
+        if (currentTime >= quote.valid_until || currentTime >= echo.expiresAt) {
+            throw gateError("quote_expired", "carrier terms lapsed before funding");
+        }
+        verifiedCarrier = echo;
+    }
     const offer = await createOffer(wallet, arkServerUrl, {
         wantAmount: terms.wantAmount,
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
         ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),
-        ...(params.emulatorPubkey !== undefined ? { emulatorPubkey: params.emulatorPubkey } : {}),
+        ...(emulatorPubkey !== undefined ? { emulatorPubkey } : {}),
+        ...(effectiveReceiveAddress !== undefined
+            ? { receiveAddress: effectiveReceiveAddress }
+            : {}),
     });
     verifyOfferAddress(quote, offer);
+    if (verifiedCarrier !== undefined) {
+        const again = carrierNow(requestedNow);
+        if (again >= quote.valid_until || again >= verifiedCarrier.expiresAt) {
+            throw gateError("quote_expired", "carrier terms lapsed during derivation");
+        }
+    }
     const fundAmount = BigInt(quote.from_amount);
     return {
         rfqId,
@@ -1521,10 +1727,11 @@ export async function requestArkadeSwap(
         pair,
         address: offer.address,
         fundAmount,
-        carrierSats: params.offerAsset !== undefined ? quoteCarrierSats(quote) : 0n,
+        carrierSats: offerAsset !== undefined ? quoteCarrierSats(quote) : 0n,
         swapPkScript: offer.swapPkScript,
         offerHex: offer.offerHex,
         extension: offer.extension,
+        ...(verifiedCarrier !== undefined ? { carrier: verifiedCarrier } : {}),
     };
 }
 

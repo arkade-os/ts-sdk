@@ -179,6 +179,28 @@ describe("spendUpdate", () => {
         expect(spendUpdate(swap, { txid: "f".repeat(64), kind: "indeterminate" })).toBeUndefined();
     });
 
+    it("does not resolve an unfunded prepared row from a reusable-script spend", () => {
+        const legacy = swapFor(offer);
+        const prepared = {
+            ...legacy,
+            id: "operation-a",
+            fundingTxid: "",
+            swapAddress: "tark1qprepared",
+            fundingIntent: {
+                version: 1 as const,
+                state: "prepared" as const,
+                inputs: [{ txid: "11".repeat(32), vout: 0 }],
+                serverPubkey: hex.encode(SERVER_KEY),
+                arkServerUrl: "https://ark.example/",
+                output: { script: legacy.swapPkScript, value: legacy.fromAmount },
+            },
+        };
+
+        expect(
+            spendUpdate(prepared, { txid: "f".repeat(64), kind: "fulfilled", at: 42 }),
+        ).toBeUndefined();
+    });
+
     it("leaves an already-resolved swap alone, so a re-delivered event is a no-op", () => {
         for (const status of ["fulfilled", "cancelled", "recoverable"] as const) {
             const resolved = swapFor(offer, { status, spentTxid: "aa".repeat(32) });

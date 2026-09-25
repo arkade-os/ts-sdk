@@ -176,6 +176,13 @@ rather than implementing `AssetSwapRepository`. One thing is **not** reversible:
 database is at `DB_VERSION` 2, rolling the app back to `@arkade-os/swap@0.0.5` opens it at version 1
 and fails `VersionError` across the whole swap store, not just the RFQ half.
 
+## 3d. Repository version 5
+
+Custom `AssetSwapRepository` adapters must implement `getSwap`, `insertPreparedSwap`, and
+`advanceFundingState`. The insert reservation check and each state CAS must run in the backend's
+write transaction; a read-then-`saveSwap` fallback is not safe. Ordinary `saveSwap` must also merge
+inside that transaction so stale records cannot replace funding state or its write-once txid.
+
 ## 4. Not mechanical — cut with ponytail markers
 
 - **`preFeeDisplayRate`** was not ported (display-only). Keep it in the wallet (e.g. move to

@@ -6,6 +6,12 @@ import {
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
+import {
+    advanceFundingSwap,
+    canInsertPreparedSwap,
+    mergeFundingProtectedSwap,
+    type FundingStateAdvance,
+} from "../../fundingPersistence";
 
 const SWAPS = "ArkadeAssetSwap";
 const RFQ_SWAPS = "ArkadeRfqSwap";
@@ -33,23 +39,63 @@ const MARKETS = "ArkadeAssetSwapMarketsCache";
  * consumer owns the Realm lifecycle — `[Symbol.asyncDispose]` is a no-op.
  */
 export class RealmAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 4 as const;
+    readonly version = 5 as const;
 
     constructor(private readonly realm: RealmLike) {}
 
+    private writeSwap(swap: AssetSwap): void {
+        this.realm.create(
+            SWAPS,
+            {
+                id: swap.id,
+                status: swap.status,
+                createdAt: swap.createdAt,
+                data: JSON.stringify(swap),
+            },
+            "modified",
+        );
+    }
+
+    private findSwap(id: string): AssetSwap | undefined {
+        const [row] = [...this.realm.objects<{ data: string }>(SWAPS).filtered("id == $0", id)];
+        return row ? (JSON.parse(row.data) as AssetSwap) : undefined;
+    }
+
     async saveSwap(swap: AssetSwap): Promise<void> {
         this.realm.write(() => {
-            this.realm.create(
-                SWAPS,
-                {
-                    id: swap.id,
-                    status: swap.status,
-                    createdAt: swap.createdAt,
-                    data: JSON.stringify(swap),
-                },
-                "modified",
-            );
+            this.writeSwap(mergeFundingProtectedSwap(this.findSwap(swap.id), swap));
         });
+    }
+
+    async getSwap(id: string): Promise<AssetSwap | undefined> {
+        return this.findSwap(id);
+    }
+
+    async insertPreparedSwap(swap: AssetSwap): Promise<boolean> {
+        let inserted = false;
+        this.realm.write(() => {
+            const existing = [...this.realm.objects<{ data: string }>(SWAPS)].map(
+                (row) => JSON.parse(row.data) as AssetSwap,
+            );
+            if (!canInsertPreparedSwap(existing, swap)) return;
+            this.writeSwap(swap);
+            inserted = true;
+        });
+        return inserted;
+    }
+
+    async advanceFundingState(
+        id: string,
+        expected: "prepared" | "submitted",
+        next: FundingStateAdvance,
+    ): Promise<boolean> {
+        let advanced = false;
+        this.realm.write(() => {
+            const result = advanceFundingSwap(this.findSwap(id), expected, next);
+            if (result.swap) this.writeSwap(result.swap);
+            advanced = result.ok;
+        });
+        return advanced;
     }
 
     async getAllSwaps(): Promise<AssetSwap[]> {

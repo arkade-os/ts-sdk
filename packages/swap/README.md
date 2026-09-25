@@ -245,25 +245,69 @@ models by name.
 first RFQ read rather than at open. SQLite needs nothing — its DDL runs `CREATE TABLE IF NOT EXISTS`
 on every init, so the table appears on the next operation.
 
-## Creating an offer
+## Creating and funding an offer
 
-Fund the returned address with the side you deposit, embedding the payload, and the solver does
-the rest:
+`fundOffer` derives the destination again, reserves exact inputs, persists the intent before send,
+and binds the returned funding txid to one stable swap row:
 
 ```ts
 // BTC -> asset
-const o = await createOffer(wallet, ARK, { wantAmount: 1000n, wantAsset });
-await wallet.send({ address: o.address, amount: 1000, extensions: [o.extension] });
+const btcOffer = await createOffer(wallet, ARK, { wantAmount: 1000n, wantAsset });
+const btcSwap = await fundOffer(wallet, ARK, {
+    repository,
+    offerHex: btcOffer.offerHex,
+    deposit: { amount: 1000n },
+});
 
-// asset -> BTC (the sats are the VTXO carrier for the asset)
-const o = await createOffer(wallet, ARK, { wantAmount: 1000n, offerAsset });
-await wallet.send({
-    address: o.address,
-    amount: 500,
-    assets: [{ assetId, amount: 1000n }],
-    extensions: [o.extension],
+// asset -> BTC; carrierSats omitted means the dust floor (larger of operator and wallet dust)
+const assetOffer = await createOffer(wallet, ARK, { wantAmount: 1000n, offerAsset });
+const assetSwap = await fundOffer(wallet, ARK, {
+    repository,
+    offerHex: assetOffer.offerHex,
+    deposit: { assetId: offerAsset.toString(), amount: 1000n },
 });
 ```
+
+The caller authorizes the deposit asset and amount: the OFFER covenant constrains what the maker
+receives, not what was deposited. `fundOffer` never trusts caller copies of the address, script,
+maker key, operator key, or network; it decodes and verifies those facts from `offerHex`, the
+wallet, and the connected operator. `prepareNew` may add detached JSON-safe display metadata before
+insertion, but it cannot change the funding authority or serve as proof that funding happened.
+
+A deposit must clear a **dust floor**, `carrierSats` for an asset and the BTC amount itself
+otherwise: below it the wallet pays the address's `OP_RETURN` sub-dust script, which funds no
+covenant, so `fundOffer` refuses rather than spending more than the caller authorized. The floor is
+the larger of the live operator dust and the wallet's own, because a wallet freezes its dust at
+construction and can outlive a lowered operator value. An omitted `carrierSats` defaults to that
+same floor.
+
+A wallet that does not report a `dustAmount` — `ServiceWorkerWallet`, which decides in its own
+process — leaves that floor unprovable from here. For those, `fundOffer` reads the covenant output
+back from the produced transaction before recording anything as funded, and raises
+`FundingOutputMismatchError` (carrying `operationId` and `fundingTxid`) when the deposit went
+somewhere else. That operation is *not* pending verification: the payment is spent and the covenant
+was never funded, so recovery will never bind it either.
+
+Once send is entered, a throw is not proof that nothing broadcast. A
+`FundingOutcomeUnknownError` carries `operationId` (and a locally returned `fundingTxid` when
+available); show that operation as pending verification and let `restoreAssetSwapRepository`
+resolve exact input/checkpoint/final-transaction evidence instead of sending again.
+
+Only a deadline refused *before* submission releases the reserved inputs, and there are two:
+`fundOffer`'s own check before it enters send, and the wallet raising
+`SendDeadlineExceededError` from its pre-submit hook — the last step before `submitTx`. Both
+prove the operation unsent, so its record is abandoned and its inputs are selectable again. A
+`ServiceWorkerWallet` re-wraps that error across its process boundary, where it is no longer
+distinguishable, so the reservation stands there.
+
+Passing an `id` makes the call idempotent, and only a **funded** operation is returned: a row
+bound to a funding txid. A row `fundOffer` did not create, which has no stored funding intent (a
+legacy manually funded offer, for one), is refused as a conflicting intent: its id belongs to
+another operation. Anything else raises rather than reporting
+unfunded output as funded — `FundingOutcomeUnknownError` for a `submitted` row, and
+`FundingNotCompletedError` (carrying `state`) for `prepared` or `abandoned`. A retry never
+abandons or advances a `prepared` row: it did not make that reservation, and taking it could
+make an owner still in flight skip its own send.
 
 The covenant co-signer ("emulator") key defaults to the SDK's per-network pin, resolved from the
 network the Ark server reports — never fetched from the emulator itself. Pass
@@ -283,9 +327,9 @@ deposit lands at `address`.
 | `offerHex`     | The encoded offer. **Persist this** — it is the only input `cancelOffer` needs to rebuild the covenant.                                                     |
 | `swapPkScript` | The covenant's scriptPubKey: the key an indexer watches to spot the deposit and its later spend.                                                            |
 
-The minimum you must keep to stay in control of a swap is `offerHex` plus the funding txid.
-Everything else — status, amounts, timestamps — `restoreAssetSwaps` rebuilds from chain, and the
-offer bytes themselves are recoverable from the funding tx if the record is lost.
+When `fundOffer` is used, keep its repository: the stable operation id, exact input reservation,
+funding state, and any consumer display metadata survive reload. Legacy manually funded offers can
+still be rebuilt from the funding transaction by `restoreAssetSwaps`.
 
 ## Live status
 
@@ -369,6 +413,44 @@ message anywhere: **acceptance is funding**.
   releases the deposit to a fill that delivers the quoted amount, so the solver fills or nothing
   moves; an unfilled offer is cancelled cooperatively. The quote wire shape ships here; the
   reference solver serves the Lightning pair today.
+
+For a negotiated Arkade offer, pass the verified result through the same durable funding seam. The
+receive quote and its expiry-floor verification below are consumer-owned inputs; they are not
+solver assertions accepted by this package:
+
+```ts
+const negotiated = await requestArkadeSwap(wallet, ARK, transport, {
+    offerAsset,
+    wantAsset,
+    amount,
+    amountSide: "from",
+}); // production omits params.now
+
+const swap = await fundOffer(wallet, ARK, {
+    repository,
+    id: negotiated.rfqId,
+    offerHex: negotiated.offerHex,
+    deposit: offerAsset
+        ? {
+              assetId: offerAsset.toString(),
+              amount: negotiated.fundAmount,
+              carrierSats: negotiated.carrierSats,
+          }
+        : { amount: negotiated.fundAmount },
+    validUntil: Math.min(negotiated.quote.valid_until, verifiedReceiveQuote.expiresAt),
+    inputExpiryFloor: locallyVerifiedExpiryFloor,
+    prepareNew: (draft) => ({
+        ...draft,
+        quote: negotiated.quote,
+        ...(negotiated.carrier ? { carrier: negotiated.carrier } : {}),
+    }),
+});
+```
+
+The deadline must be no later than both expiries. `inputExpiryFloor` is a locally verified
+`{ kind: "height" | "time", value: bigint }`; never copy an unverified remote claim into it.
+The helper selects only synchronized wallet-owned VTXOs that meet that floor and forwards the
+deadline to the wallet's final pre-submit gate.
 
 ```ts
 import { httpTransport, requestLightningSend, SwapRefusal } from "@arkade-os/swap";

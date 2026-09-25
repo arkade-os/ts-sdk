@@ -42,6 +42,7 @@ import {
     type IWallet,
 } from "@arkade-os/sdk";
 import { RETIRABLE, retireOfferContract } from "./coverage";
+import { hasBoundFunding } from "./fundingPersistence";
 import { decodeOffer, OFFER_CONTRACT_KIND } from "./offer";
 import type { AssetSwapRepository } from "./repository";
 import { classifyDepositSpend, spendTxidsOf, type RestoreIndexer, type SpendKind } from "./restore";
@@ -68,6 +69,7 @@ export function spendUpdate(
     swap: AssetSwap,
     spend: { txid: string; kind: SpendKind; at?: number },
 ): Partial<Omit<AssetSwap, "id">> | undefined {
+    if (!hasBoundFunding(swap)) return undefined;
     if (TERMINAL.includes(swap.status)) return undefined;
     if (spend.kind === "indeterminate") return undefined;
 
@@ -205,7 +207,7 @@ export async function watchOfferSwaps({
      */
     const resolveOpenSwaps = async () => {
         const swaps = await getAssetSwaps(repository);
-        const open = swaps.filter((s) => !TERMINAL.includes(s.status));
+        const open = swaps.filter((s) => hasBoundFunding(s) && !TERMINAL.includes(s.status));
         if (open.length === 0) return;
         const script = [...new Set(open.map((s) => s.swapPkScript))];
         for (const { contract, vtxos } of await manager.getContractsWithVtxos({ script })) {
