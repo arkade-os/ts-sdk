@@ -1,6 +1,10 @@
 /**
- * The Bitcoin-L1 side of the onchain corridor: a taproot HTLC as pure local
- * derivation, spend builders, and the injected chain-access seam.
+ * The Bitcoin-L1 side of the onchain corridor: spend builders and the injected
+ * chain-access seam around {@link arkade.compileOnchainHtlc}.
+ *
+ * The HTLC itself is a Program in `@arkade-os/sdk` — two tapscript leaves, no
+ * Arkade co-signer. This file keeps what is corridor-specific: locktime policy,
+ * L1 address encoding, claim/refund transaction assembly, and {@link ChainSource}.
  *
  * One HTLC shape serves both directions — only the key roles swap:
  *
@@ -23,6 +27,7 @@ import { hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import * as btc from "@scure/btc-signer";
+import { arkade } from "@arkade-os/sdk";
 
 // ── Guardrail constants (rfq.ts re-exports these; defined here to keep the
 //    claim path free of an rfq.ts import cycle) ───────────────────────────────
@@ -165,7 +170,8 @@ export interface OnchainHtlc {
 
 /**
  * Derive the two-leaf taproot HTLC. Internal key is the BIP-341 NUMS point, so
- * there is no key-path spend, ever:
+ * there is no key-path spend, ever. Compiles {@link arkade.ONCHAIN_HTLC_PROGRAM}
+ * — claim/refund are named Program functions, not a parallel encoder.
  *
  *   claim:  `OP_SIZE 32 OP_EQUALVERIFY OP_HASH160 <h160> OP_EQUALVERIFY <claimKey> OP_CHECKSIG`
  *   refund: `<locktime> OP_CHECKLOCKTIMEVERIFY OP_DROP <refundKey> OP_CHECKSIG`
@@ -213,47 +219,26 @@ export function onchainHtlcScript(params: OnchainHtlcParams, network: OnchainNet
         );
     }
     const h160 = h160FromPaymentHash(params.paymentHash);
-    const claim = btc.Script.encode([
-        "SIZE",
-        32,
-        "EQUALVERIFY",
-        "HASH160",
-        h160,
-        "EQUALVERIFY",
-        params.claimKey,
-        "CHECKSIG",
-    ]);
-    const refund = btc.Script.encode([
-        btc.ScriptNum().encode(BigInt(params.refundLocktime)),
-        "CHECKLOCKTIMEVERIFY",
-        "DROP",
-        params.refundKey,
-        "CHECKSIG",
-    ]);
-    const payment = btc.p2tr(
-        btc.TAPROOT_UNSPENDABLE_KEY,
-        btc.taprootListToTree([{ script: claim }, { script: refund }]),
-        L1_NETWORKS[network],
-        true,
-    );
-
-    const controlBlockFor = (leaf: Uint8Array): Uint8Array => {
-        for (const [block, script] of payment.tapLeafScript ?? []) {
-            if (
-                script.length - 1 === leaf.length &&
-                hex.encode(script.subarray(0, leaf.length)) === hex.encode(leaf)
-            ) {
-                return btc.TaprootControlBlock.encode(block);
-            }
-        }
-        throw new Error("leaf missing from compiled taproot tree"); // unreachable: we just built it
-    };
+    const compiled = arkade.compileOnchainHtlc({
+        preimageHash: h160,
+        claimKey: params.claimKey,
+        refundKey: params.refundKey,
+        refundLocktime: BigInt(params.refundLocktime),
+    });
+    const claim = compiled.functionByName("claim");
+    const refund = compiled.functionByName("refund");
+    if (!claim || !refund) {
+        throw new Error("onchain HTLC program missing claim or refund");
+    }
 
     return {
-        address: payment.address!,
-        pkScript: payment.script,
-        leaves: { claim, refund },
-        controlBlocks: { claim: controlBlockFor(claim), refund: controlBlockFor(refund) },
+        address: compiled.onchainAddress(L1_NETWORKS[network]),
+        pkScript: compiled.pkScript,
+        leaves: { claim: claim.leafScript, refund: refund.leafScript },
+        controlBlocks: {
+            claim: btc.TaprootControlBlock.encode(claim.tapLeafScript[0]),
+            refund: btc.TaprootControlBlock.encode(refund.tapLeafScript[0]),
+        },
         paymentHash: params.paymentHash,
         refundLocktime: params.refundLocktime,
     };

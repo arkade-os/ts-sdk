@@ -485,7 +485,13 @@ export class ArkadeContract<P extends Program = Program> {
 
     /** Arkade funding address. */
     get address(): string {
-        return this.vtxoScript.address(this.client.network.hrp, this.keys.serverKey).encode();
+        const serverKey = this.keys.serverKey;
+        if (!serverKey) {
+            throw new Error(
+                "ArkadeContract.address: no server key — L1-only programs use vtxoScript.onchainAddress",
+            );
+        }
+        return this.vtxoScript.address(this.client.network.hrp, serverKey).encode();
     }
 
     /** Taproot output script. */
@@ -518,12 +524,18 @@ export class ArkadeContract<P extends Program = Program> {
         script: string;
         address: string;
     } {
+        const serverKey = this.keys.serverKey;
+        if (!serverKey) {
+            throw new Error(
+                "ArkadeContract.toContractParams: no server key — L1-only programs are not persisted as arkade VTXO contracts",
+            );
+        }
         return {
             type: "arkade",
             params: serializeArkadeContractParams({
                 program: this.program,
                 args: this.args,
-                serverKey: this.keys.serverKey,
+                serverKey,
                 userKey: this.keys.userKey,
                 emulatorKey: this.keys.emulatorKey,
             }),
