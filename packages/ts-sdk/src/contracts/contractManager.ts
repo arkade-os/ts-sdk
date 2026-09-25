@@ -39,6 +39,7 @@ import {
     deriveContractTapscripts,
     extendVirtualCoinForContract,
     type ContractTapscriptCache,
+    type ContractTapscripts,
 } from "../wallet/utils";
 import { UnannotatableInputError } from "./spendability";
 import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
@@ -114,6 +115,7 @@ function toWatchOnlyContract(params: CreateContractParams): Contract {
 function annotatableIn(
     scriptToContract: ReadonlyMap<string, Contract>,
     vtxos: readonly { script: string }[],
+    memo?: Map<string, ContractTapscripts>,
 ): { scripts: Set<string>; cache: ContractTapscriptCache; failures: Map<string, string> } {
     const scripts = new Set<string>();
     const cache: ContractTapscriptCache = new Map();
@@ -122,7 +124,14 @@ function annotatableIn(
         const contract = scriptToContract.get(script);
         if (!contract) continue; // not ours; dropped by the caller's filter
         try {
-            cache.set(script, deriveContractTapscripts(contract));
+            // Pure in (type, params); keyed on both so an edited row is rebuilt.
+            const key = `${contract.type}\u0000${script}\u0000${JSON.stringify(contract.params)}`;
+            let tapscripts = memo?.get(key);
+            if (!tapscripts) {
+                tapscripts = deriveContractTapscripts(contract);
+                memo?.set(key, tapscripts);
+            }
+            cache.set(script, tapscripts);
             scripts.add(script);
         } catch (err) {
             failures.set(
@@ -818,6 +827,8 @@ export type CreateContractParams = Omit<Contract, "createdAt" | "state"> & {
 export class ContractManager implements IContractManager {
     private config: ContractManagerConfig;
     private watcher: ContractWatcher;
+    /** Per-sync tapscript caches start empty; this outlives them. Consumers only ever see clones. */
+    private readonly tapscriptMemo = new Map<string, ContractTapscripts>();
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
@@ -1803,6 +1814,7 @@ export class ContractManager implements IContractManager {
         const { scripts, failures } = annotatableIn(
             new Map(contracts.map((contract) => [contract.script, contract])),
             vtxos,
+            this.tapscriptMemo,
         );
         // A script with no contract row at all fails the same way, and with the
         // same consequence, so it belongs in the same refusal.
@@ -2472,7 +2484,11 @@ export class ContractManager implements IContractManager {
 
         // Share the annotation path with external callers so the two entry
         // points can't drift.
-        const { scripts: annotatable, cache, failures } = annotatableIn(scriptToContract, vtxos);
+        const {
+            scripts: annotatable,
+            cache,
+            failures,
+        } = annotatableIn(scriptToContract, vtxos, this.tapscriptMemo);
         this.recordAnnotationFailures(annotatable, failures);
         const owned = vtxos.filter((v) => annotatable.has(v.script));
         const annotated = await this.annotateVtxos(owned, cache);
@@ -2617,7 +2633,11 @@ export class ContractManager implements IContractManager {
         // populated by the indexer, then share the annotation path with
         // external callers via annotateVtxos so the two entry points can't
         // drift.
-        const { scripts: annotatable, cache, failures } = annotatableIn(scriptToContract, vtxos);
+        const {
+            scripts: annotatable,
+            cache,
+            failures,
+        } = annotatableIn(scriptToContract, vtxos, this.tapscriptMemo);
         this.recordAnnotationFailures(annotatable, failures);
         const owned = vtxos.filter((v) => annotatable.has(v.script));
         const annotated = await this.annotateVtxos(owned, cache);

@@ -847,6 +847,45 @@ describe("ContractManager", () => {
             expect(spy).toHaveBeenCalledTimes(1);
             spy.mockRestore();
         });
+
+        it("builds the taproot tree once per contract across syncs, not once per sync", async () => {
+            await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            (mockIndexer.getVtxos as any).mockResolvedValue({
+                vtxos: [createMockVtxo({ script: TEST_DEFAULT_SCRIPT })],
+            });
+            const spy = vi.spyOn(contractHandlers.get("default")!, "createScript");
+
+            await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
+            await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
+
+            expect(spy).toHaveBeenCalledTimes(1);
+            spy.mockRestore();
+        });
+
+        it("rebuilds the taproot tree when a contract's params change", async () => {
+            await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            (mockIndexer.getVtxos as any).mockResolvedValue({
+                vtxos: [createMockVtxo({ script: TEST_DEFAULT_SCRIPT })],
+            });
+            const spy = vi.spyOn(contractHandlers.get("default")!, "createScript");
+
+            await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
+            await manager.updateContractParams(TEST_DEFAULT_SCRIPT, { note: "edited" });
+            await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
+
+            expect(spy).toHaveBeenCalledTimes(2);
+            spy.mockRestore();
+        });
     });
 
     describe("refreshOutpoints", () => {
