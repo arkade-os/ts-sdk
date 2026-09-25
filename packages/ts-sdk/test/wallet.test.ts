@@ -434,6 +434,110 @@ describe("Wallet", () => {
         });
     });
 
+    describe("offchain send minimum change", () => {
+        const tapscript = new DefaultVtxo.Script({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        });
+        const address = tapscript.address("ark", TEST_SERVER_PUB_KEY).encode();
+
+        function sendWithCoins(values: number[], minimum: bigint) {
+            const coins = values.map((value, index) => ({
+                txid: index.toString(16).padStart(64, "0"),
+                vout: 0,
+                value,
+                virtualStatus: { state: "preconfirmed", batchExpiry: index + 1 },
+            }));
+            const submit = vi.fn().mockResolvedValue("txid");
+            const thisArg: any = {
+                offchainTapscript: tapscript,
+                arkServerPublicKey: TEST_SERVER_PUB_KEY,
+                serverUnrollScript: {},
+                network: { hrp: "ark" },
+                dustAmount: 330n,
+                recipientAddressContext: () => ({
+                    hrp: "ark",
+                    signerSet: { active: hex.encode(TEST_SERVER_PUB_KEY), deprecated: new Map() },
+                }),
+                arkProvider: { getInfo: vi.fn().mockResolvedValue({ vtxoMinAmount: minimum }) },
+                getSpendableVtxos: vi.fn().mockResolvedValue(coins),
+                _submitOffchainSpend: submit,
+            };
+            return { thisArg, submit, coins };
+        }
+
+        async function send(thisArg: any, amount: number, selectedVtxos?: any[]) {
+            return (Wallet.prototype as any)._sendImpl.call(thisArg, {
+                recipients: [{ address, amount }],
+                selectedVtxos,
+            });
+        }
+
+        it("adds another coin when a Lightning funding send would create change below the operator minimum", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([616, 400], 330n);
+
+            await send(thisArg, 505);
+
+            expect(submit).toHaveBeenCalledOnce();
+            expect(submit.mock.calls[0][0].map((coin: { txid: string }) => coin.txid)).toEqual(
+                coins.map((coin) => coin.txid),
+            );
+            expect(
+                submit.mock.calls[0][1].map((output: { amount: bigint }) => output.amount),
+            ).toEqual([505n, 511n]);
+        });
+
+        it("keeps an exact payment free of change", async () => {
+            const { thisArg, submit } = sendWithCoins([505, 400], 330n);
+
+            await send(thisArg, 505);
+
+            expect(submit.mock.calls[0][1]).toHaveLength(1);
+            expect(submit.mock.calls[0][0]).toHaveLength(1);
+        });
+
+        it("uses an exact pair if adding every coin still cannot meet the minimum", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([300, 220, 200], 330n);
+
+            await send(thisArg, 500);
+
+            expect(submit.mock.calls[0][0].map((coin: { txid: string }) => coin.txid)).toEqual([
+                coins[0].txid,
+                coins[2].txid,
+            ]);
+            expect(
+                submit.mock.calls[0][1].map((output: { amount: bigint }) => output.amount),
+            ).toEqual([500n]);
+        });
+
+        it("preserves subdust change when the operator advertises no minimum", async () => {
+            const { thisArg, submit } = sendWithCoins([616], 0n);
+
+            await send(thisArg, 505);
+
+            expect(submit.mock.calls[0][1][1].amount).toBe(111n);
+        });
+
+        it("fails before submission if no valid change can be formed", async () => {
+            const { thisArg, submit } = sendWithCoins([616], 330n);
+
+            await expect(send(thisArg, 505)).rejects.toThrow("minimum change amount of 330 sats");
+            expect(submit).not.toHaveBeenCalled();
+        });
+
+        it("does not add inputs when the caller selected them", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([616, 400], 330n);
+            thisArg.logUngatedInputs = vi.fn();
+
+            await expect(send(thisArg, 505, [coins[0]])).rejects.toThrow(
+                "111 sats of change is below the operator minimum of 330 sats",
+            );
+            expect(thisArg.getSpendableVtxos).not.toHaveBeenCalled();
+            expect(submit).not.toHaveBeenCalled();
+        });
+    });
+
     describe("getInfos", () => {
         beforeEach(() => {
             mockFetch.mockReset();

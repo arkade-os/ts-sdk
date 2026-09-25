@@ -5688,23 +5688,75 @@ export class Wallet
             );
         }
 
-        // enforce minimum change amount when there are asset changes
-        if (assetChanges.size > 0 && changeAmount < Number(this.dustAmount)) {
-            if (selectedVtxos) {
-                // Asset change needs a change output at or above dust, and this path
-                // may not reach for a coin the caller did not name.
-                throw new Error(
-                    `send({ selectedVtxos }): ${changeAmount} sats of change cannot carry ` +
-                        `${assetChanges.size} asset change(s), needs ${this.dustAmount}`,
-                );
-            }
+        if (selectedVtxos && assetChanges.size > 0 && changeAmount < Number(this.dustAmount)) {
+            // Asset change needs a change output at or above dust, and this path
+            // may not reach for a coin the caller did not name.
+            throw new Error(
+                `send({ selectedVtxos }): ${changeAmount} sats of change cannot carry ` +
+                    `${assetChanges.size} asset change(s), needs ${this.dustAmount}`,
+            );
+        }
+
+        const vtxoMinAmount =
+            changeAmount > 0 ? ((await this.arkProvider.getInfo()).vtxoMinAmount ?? 0n) : 0n;
+        if (selectedVtxos && changeAmount > 0 && BigInt(changeAmount) < vtxoMinAmount) {
+            throw new Error(
+                `send({ selectedVtxos }): ${changeAmount} sats of change is below ` +
+                    `the operator minimum of ${vtxoMinAmount} sats`,
+            );
+        }
+
+        // A positive change output must meet the operator's VTXO minimum.
+        // Asset change also needs at least dust to carry the asset packet.
+        // Adding a BTC coin can introduce assets, so recheck after each selection.
+        while (
+            !selectedVtxos &&
+            ((changeAmount > 0 && BigInt(changeAmount) < vtxoMinAmount) ||
+                (assetChanges.size > 0 && BigInt(changeAmount) < this.dustAmount))
+        ) {
+            const minimumChange =
+                assetChanges.size > 0 && this.dustAmount > vtxoMinAmount
+                    ? this.dustAmount
+                    : vtxoMinAmount;
             const availableCoins = virtualCoins.filter(
                 (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
             );
-            const { inputs: extraCoins } = selectVirtualCoins(
-                availableCoins,
-                Number(this.dustAmount) - changeAmount,
-            );
+            let extraCoins: ExtendedVirtualCoin[];
+            try {
+                ({ inputs: extraCoins } = selectVirtualCoins(
+                    availableCoins,
+                    Number(minimumChange) - changeAmount,
+                ));
+            } catch (error) {
+                if (!(error instanceof Error) || error.message !== "Insufficient funds") {
+                    throw error;
+                }
+                // If the balance cannot produce valid change, an exact BTC-only
+                // subset can still pay without a change output.
+                if (assetChanges.size === 0 && recipients.every((r) => r.assets.length === 0)) {
+                    const plainCoins = virtualCoins.filter((coin) => !coin.assets?.length);
+                    const exact = plainCoins.find((coin) => coin.value === totalBtcOutput);
+                    let exactCoins = exact ? [exact] : undefined;
+                    if (!exactCoins) {
+                        const byAmount = new Map<number, NormalizedExtendedVirtualCoin>();
+                        for (const coin of plainCoins) {
+                            const partner = byAmount.get(totalBtcOutput - coin.value);
+                            if (partner) {
+                                exactCoins = [partner, coin];
+                                break;
+                            }
+                            byAmount.set(coin.value, coin);
+                        }
+                    }
+                    if (exactCoins) {
+                        selectedCoins = exactCoins;
+                        totalBtcSelected = totalBtcOutput;
+                        changeAmount = 0;
+                        break;
+                    }
+                }
+                throw new Error(`Cannot form minimum change amount of ${minimumChange} sats`);
+            }
 
             for (const coin of extraCoins) {
                 if (coin.assets) {
