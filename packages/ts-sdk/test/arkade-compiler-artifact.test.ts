@@ -238,6 +238,21 @@ describe("reading an arkadec artifact", () => {
         expect(contract.functions.spend.arkadeScript).toEqual(vtxo.functions.spend.arkadeScript);
     });
 
+    it("reads OP_CHECKTIMEVERIFY as CHECKTIME", () => {
+        const program = programFromArtifact(
+            demo({
+                functions: [
+                    {
+                        name: "spend",
+                        arkade: { inputs: [], asm: ["100", "OP_CHECKTIMEVERIFY"] },
+                        leaves: [collab("spend")],
+                    },
+                ],
+            }),
+        );
+        expect(program.functions.spend.arkadeScript?.asm).toEqual([100n, "CHECKTIME"]);
+    });
+
     it("tweaks a constructor pubkey by the named covenant", () => {
         const insurer = schnorr.getPublicKey(new Uint8Array(32).fill(0x09));
         const program = programFromArtifact(

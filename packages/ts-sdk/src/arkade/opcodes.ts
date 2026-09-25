@@ -54,7 +54,8 @@ export const ARKADE_OP = {
     MODEXP: 0xda,
     // VTXO Expiry & Emulator Clock (0xdb-0xdc)
     PUSHEXPIRY: 0xdb,
-    // compiler artifacts use OP_CHECKTIME.
+    // Emulator v0.0.8 and the compiler both name this byte OP_CHECKTIME.
+    // Earlier emulator builds called the same byte OP_CHECKTIMEVERIFY.
     CHECKTIME: 0xdc,
     // 0xdd-0xdf are unassigned (OP_UNKNOWN221-223)
 
@@ -99,6 +100,11 @@ export const ARKADE_OP = {
 } as const;
 
 export const ARKADE_OPCODES: number[] = Object.values(ARKADE_OP);
+
+/** Bare opcode key. `CHECKTIMEVERIFY` is the pre-v0.0.8 name of `CHECKTIME`. */
+export function canonicalOpcodeKey(bare: string): string {
+    return bare === "CHECKTIMEVERIFY" ? "CHECKTIME" : bare;
+}
 
 export const ARKADE_OPCODE_NAMES: Record<number, string> = Object.fromEntries(
     Object.entries(ARKADE_OP).map(([name, value]) => [value, name]),
@@ -169,6 +175,8 @@ export const OPCODE_VALUES: Record<string, number> = {
     ...Object.fromEntries(
         Object.entries(ARKADE_OPCODE_VALUES).map(([name, value]) => [`OP_${name}`, value]),
     ),
+    CHECKTIMEVERIFY: ARKADE_OP.CHECKTIME,
+    OP_CHECKTIMEVERIFY: ARKADE_OP.CHECKTIME,
 };
 
 /**
