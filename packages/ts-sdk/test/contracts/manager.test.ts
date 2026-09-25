@@ -653,6 +653,88 @@ describe("ContractManager", () => {
                 watcherConfig: { failsafePollIntervalMs: 1000, reconnectDelayMs: 500 },
             });
 
+        it.each([undefined, "watched", "awaiting-funds", "retained"] as const)(
+            "does not write or resubscribe when the stored watch state is %s",
+            async (watch) => {
+                try {
+                    const contract = await manager.createContract({
+                        type: "default",
+                        params: createDefaultContractParams(),
+                        script: TEST_DEFAULT_SCRIPT,
+                        address: "address-1",
+                        watch,
+                    });
+                    // Keep a watched script so an empty subscription cannot hide a POST.
+                    await manager.createContract({
+                        type: "default",
+                        params: SECOND_DEFAULT_PARAMS,
+                        script: SECOND_DEFAULT_SCRIPT,
+                        address: "address-2",
+                    });
+                    const save = vi.spyOn(repository, "saveContract");
+                    const subscribe = vi.mocked(mockIndexer.subscribeForScripts);
+                    subscribe.mockClear();
+
+                    await manager.setContractWatchState(contract.script, watch ?? "watched");
+                    await manager.setContractWatchState(contract.script, watch ?? "watched");
+
+                    expect(save).not.toHaveBeenCalled();
+                    expect(subscribe).not.toHaveBeenCalled();
+                    expect(await manager.getContracts({ script: contract.script })).toEqual([
+                        contract,
+                    ]);
+                } finally {
+                    await manager.dispose();
+                }
+            },
+        );
+
+        it("persists real transitions and restores the subscription when promoted", async () => {
+            try {
+                await manager.createContract({
+                    type: "default",
+                    params: createDefaultContractParams(),
+                    script: TEST_DEFAULT_SCRIPT,
+                    address: "address-1",
+                });
+                await manager.createContract({
+                    type: "default",
+                    params: SECOND_DEFAULT_PARAMS,
+                    script: SECOND_DEFAULT_SCRIPT,
+                    address: "address-2",
+                });
+                const save = vi.spyOn(repository, "saveContract");
+                const subscribe = vi.mocked(mockIndexer.subscribeForScripts);
+
+                for (const watch of ["retained", "watched", "awaiting-funds"] as const) {
+                    save.mockClear();
+                    subscribe.mockClear();
+                    await manager.setContractWatchState(TEST_DEFAULT_SCRIPT, watch);
+
+                    expect(save).toHaveBeenCalledTimes(1);
+                    expect(
+                        (await manager.getContracts({ script: TEST_DEFAULT_SCRIPT }))[0].watch,
+                    ).toBe(watch);
+                    expect(subscribe).toHaveBeenCalledTimes(1);
+                    const scripts = subscribe.mock.calls[0][0];
+                    expect(scripts).toContain(SECOND_DEFAULT_SCRIPT);
+                    expect(scripts.includes(TEST_DEFAULT_SCRIPT)).toBe(watch !== "retained");
+                }
+            } finally {
+                await manager.dispose();
+            }
+        });
+
+        it("still rejects a watch state update for a missing contract", async () => {
+            try {
+                await expect(
+                    manager.setContractWatchState(TEST_DEFAULT_SCRIPT, "watched"),
+                ).rejects.toThrow(`Contract ${TEST_DEFAULT_SCRIPT} not found`);
+            } finally {
+                await manager.dispose();
+            }
+        });
+
         it("filters by watch state through the manager, not just the repository", async () => {
             // `getContracts` rebuilds the repository filter field by field, so
             // a field it forgets is not a narrower query — it is an unfiltered

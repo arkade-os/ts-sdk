@@ -4,6 +4,7 @@ import { WalletRepository } from "../../repositories";
 import type {
     Contract,
     ContractEvent,
+    ContractWatchState,
     ContractWithVtxos,
     GetContractsFilter,
     PathSelection,
@@ -355,6 +356,20 @@ export type RequestUpdateContract = RequestEnvelope & {
 export type ResponseUpdateContract = ResponseEnvelope & {
     type: "CONTRACT_UPDATED";
     payload: { contract: Contract };
+};
+
+/**
+ * Watch-state writes have their own request so the worker can route them to
+ * `ContractManager.setContractWatchState`, whose unchanged-state comparison and
+ * repository ownership must not be bypassed by the generic UPDATE_CONTRACT path.
+ */
+export type RequestSetContractWatchState = RequestEnvelope & {
+    type: "SET_CONTRACT_WATCH_STATE";
+    payload: { script: string; watch: ContractWatchState };
+};
+export type ResponseSetContractWatchState = ResponseEnvelope & {
+    type: "CONTRACT_WATCH_STATE_SET";
+    payload: { script: string; watch: ContractWatchState };
 };
 
 export type RequestDeleteContract = RequestEnvelope & {
@@ -824,6 +839,7 @@ export type WalletUpdaterRequest =
     | RequestGetWatchedScripts
     | RequestAnnotateVtxos
     | RequestUpdateContract
+    | RequestSetContractWatchState
     | RequestDeleteContract
     | RequestGetSpendablePaths
     | RequestGetAllSpendingPaths
@@ -880,6 +896,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetWatchedScripts
         | ResponseAnnotateVtxos
         | ResponseUpdateContract
+        | ResponseSetContractWatchState
         | ResponseDeleteContract
         | ResponseGetSpendablePaths
         | ResponseGetAllSpendingPaths
@@ -1338,6 +1355,21 @@ export class WalletMessageHandler
                         id,
                         type: "CONTRACT_UPDATED",
                         payload: { contract },
+                    });
+                }
+                case "SET_CONTRACT_WATCH_STATE": {
+                    const manager = await this.readonlyWallet.getContractManager();
+                    await manager.setContractWatchState(
+                        message.payload.script,
+                        message.payload.watch,
+                    );
+                    return this.tagged({
+                        id,
+                        type: "CONTRACT_WATCH_STATE_SET",
+                        payload: {
+                            script: message.payload.script,
+                            watch: message.payload.watch,
+                        },
                     });
                 }
                 case "DELETE_CONTRACT": {

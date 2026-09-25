@@ -68,12 +68,12 @@ export interface ContractWatcherConfig {
      * Interval for failsafe polling (ms).
      * Polls even when subscription is active to catch missed events.
      *
-     * @defaultValue `60_000` (1 minute)
+     * @defaultValue `20_000` (20 seconds)
      */
     failsafePollIntervalMs?: number;
 
     /**
-     * Initial reconnection delay (ms).
+     * Initial delay for reconnection and subscription update retries (ms).
      * Uses exponential backoff on repeated failures.
      *
      * @defaultValue `1_000` (1 second)
@@ -81,14 +81,14 @@ export interface ContractWatcherConfig {
     reconnectDelayMs?: number;
 
     /**
-     * Maximum reconnection delay (ms).
+     * Maximum delay for reconnection and subscription update retries (ms).
      *
-     * @defaultValue `30_000` (30 seconds)
+     * @defaultValue `5_000` (5 seconds)
      */
     maxReconnectDelayMs?: number;
 
     /**
-     * Maximum reconnection attempts before giving up.
+     * Maximum retry attempts for each reconnection or subscription update failure.
      * Set to 0 for unlimited attempts.
      *
      * @defaultValue `0` (unlimited)
@@ -164,6 +164,11 @@ export class ContractWatcher {
     /** See {@link withCoalescedSubscription}. */
     private subscriptionBatchDepth = 0;
     private subscriptionUpdateDeferred = false;
+    /** Subscription POSTs can fail while the event stream remains healthy. */
+    private subscriptionRetryTimeoutId?: ReturnType<typeof setTimeout>;
+    private subscriptionRetryAttempts = 0;
+    /** Serialize updates so an older retry cannot overwrite a newer script set. */
+    private subscriptionUpdate: Promise<void> = Promise.resolve();
     /** See {@link reportEventSourceUnavailable} — said once, not per attempt. */
     private eventSourceReported = false;
 
@@ -422,11 +427,16 @@ export class ContractWatcher {
 
         this.eventCallback = callback;
         this.isWatching = true;
-        this.abortController = new AbortController();
+        const session = new AbortController();
+        this.abortController = session;
         this.reconnectAttempts = 0;
+        // A custom provider may ignore cancellation. Old-session requests must
+        // never keep the new session queued behind them.
+        this.subscriptionUpdate = Promise.resolve();
 
         // Start connection
         await this.connect();
+        if (session.signal.aborted) return () => this.stopWatching();
 
         // Start failsafe polling
         this.startFailsafePolling();
@@ -441,6 +451,8 @@ export class ContractWatcher {
         this.isWatching = false;
         this.connectionState = "disconnected";
         this.abortController?.abort();
+        this.cancelSubscriptionRetry();
+        this.subscriptionRetryAttempts = 0;
 
         // Clear timers
         if (this.reconnectTimeoutId) {
@@ -496,6 +508,7 @@ export class ContractWatcher {
      */
     private async connect(skipUpdate = false): Promise<void> {
         if (!this.isWatching) return;
+        const signal = this.abortController?.signal;
 
         this.connectionState = "connecting";
 
@@ -503,15 +516,18 @@ export class ContractWatcher {
             if (!skipUpdate) {
                 await this.updateSubscription();
             }
+            if (!this.isWatching || signal?.aborted) return;
 
             // Poll immediately after connection to sync state
             await this.pollAllContracts();
+            if (!this.isWatching || signal?.aborted) return;
 
             this.connectionState = "connected";
             this.reconnectAttempts = 0;
 
             // Start listening
             this.listenLoop().catch((e) => {
+                if (!this.isWatching || signal?.aborted) return;
                 // This is handled asynchronously otherwise `connect()` would hang
                 // indefinitely and block the caller.
                 // Error management must be implemented to ensure the connection
@@ -530,6 +546,7 @@ export class ContractWatcher {
                 this.scheduleReconnect();
             });
         } catch (error) {
+            if (!this.isWatching || signal?.aborted) return;
             if (!isEventSourceUnavailableError(error)) {
                 console.error("ContractWatcher connection failed:", error);
             }
@@ -574,6 +591,11 @@ export class ContractWatcher {
      */
     private scheduleReconnect(): void {
         if (!this.isWatching) return;
+        // Reconnecting sends the current script list itself. Keep
+        // subscriptionRetryAttempts so the reconnect's successful update still
+        // emits the recovery catch-up: normal stream end and cold start emit no
+        // reset, and an earlier reset may have reconciled before the repair.
+        this.cancelSubscriptionRetry();
 
         // Check max attempts
         if (
@@ -809,13 +831,16 @@ export class ContractWatcher {
             this.subscriptionUpdateDeferred = true;
             return;
         }
+        const signal = this.abortController?.signal;
         const hadSubscription = this.subscriptionId !== undefined;
         try {
             await this.updateSubscription();
         } catch (error) {
-            // nothing, the connection will be retried later
+            // An HTTP failure does not necessarily disconnect the event stream.
+            if (!signal?.aborted) this.scheduleSubscriptionRetry();
             return;
         }
+        if (!this.isWatching || signal?.aborted) return;
 
         // Cold start: `startWatching` may have run with zero scripts,
         // leaving `listenLoop` parked behind the reconnect timer. Kick
@@ -836,12 +861,62 @@ export class ContractWatcher {
         }
     }
 
+    private cancelSubscriptionRetry(): void {
+        if (this.subscriptionRetryTimeoutId !== undefined) {
+            clearTimeout(this.subscriptionRetryTimeoutId);
+            this.subscriptionRetryTimeoutId = undefined;
+        }
+    }
+
+    private scheduleSubscriptionRetry(): void {
+        if (
+            !this.isWatching ||
+            this.reconnectTimeoutId !== undefined ||
+            this.subscriptionRetryTimeoutId !== undefined
+        )
+            return;
+        if (
+            this.config.maxReconnectAttempts > 0 &&
+            this.subscriptionRetryAttempts >= this.config.maxReconnectAttempts
+        )
+            return;
+
+        const delay = computeReconnectDelay(
+            ++this.subscriptionRetryAttempts,
+            this.config.reconnectDelayMs,
+            this.config.maxReconnectDelayMs,
+        );
+        this.subscriptionRetryTimeoutId = setTimeout(() => {
+            this.subscriptionRetryTimeoutId = undefined;
+            void this.tryUpdateSubscription();
+        }, delay);
+    }
+
     /**
      * Update the subscription with scripts that should be watched.
      *
      * @see getSubscribedScripts
      */
-    private async updateSubscription(): Promise<void> {
+    private updateSubscription(): Promise<void> {
+        const signal = this.abortController?.signal;
+        const update = this.subscriptionUpdate.then(async () => {
+            if (!this.isWatching || !signal || signal.aborted) return;
+            await this.sendSubscriptionUpdate(signal);
+            if (signal.aborted) return;
+            const recovered = this.subscriptionRetryAttempts > 0;
+            this.cancelSubscriptionRetry();
+            this.subscriptionRetryAttempts = 0;
+            if (recovered) {
+                // Repository-only polling cannot discover deposits missed during
+                // the gap. Ask the manager to reconcile through its recovery path.
+                this.eventCallback?.({ type: "connection_reset", timestamp: Date.now() });
+            }
+        });
+        this.subscriptionUpdate = update.catch(() => {});
+        return update;
+    }
+
+    private async sendSubscriptionUpdate(signal: AbortSignal): Promise<void> {
         const scriptsToWatch = this.getSubscribedScripts();
 
         if (scriptsToWatch.length === 0) {
@@ -851,17 +926,21 @@ export class ContractWatcher {
                 } catch {
                     // Ignore
                 }
+                if (signal.aborted) return;
                 this.subscriptionId = undefined;
             }
             return;
         }
 
+        let subscriptionId: string;
         try {
-            this.subscriptionId = await this.config.indexerProvider.subscribeForScripts(
+            subscriptionId = await this.config.indexerProvider.subscribeForScripts(
                 scriptsToWatch,
                 this.subscriptionId,
+                signal,
             );
         } catch (error) {
+            if (signal.aborted) return;
             // If we sent a stale subscription ID that the server no longer
             // recognises, clear it and retry to create a fresh subscription.
             // Match both server phrasings: "subscription <uuid> not found" and
@@ -871,12 +950,21 @@ export class ContractWatcher {
                 error instanceof Error && /subscription\b.*\bnot\s+found/i.test(error.message);
             if (this.subscriptionId && isStale) {
                 this.subscriptionId = undefined;
-                this.subscriptionId =
-                    await this.config.indexerProvider.subscribeForScripts(scriptsToWatch);
+                subscriptionId = await this.config.indexerProvider.subscribeForScripts(
+                    scriptsToWatch,
+                    undefined,
+                    signal,
+                );
             } else {
                 throw error;
             }
         }
+        if (signal.aborted) {
+            // The POST may have completed after stopWatching unsubscribed.
+            await this.config.indexerProvider.unsubscribeForScripts(subscriptionId).catch(() => {});
+            return;
+        }
+        this.subscriptionId = subscriptionId;
     }
 
     /**

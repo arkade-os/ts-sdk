@@ -445,6 +445,7 @@ export interface IContractManager extends Disposable {
 
     /**
      * Convenience helper to update only the contract's watch state.
+     * An unchanged state is a no-op; a missing watch field means `watched`.
      *
      * `retained` is how an owner says "this script is done": it leaves
      * the subscription and the sweep, while the row — and so history,
@@ -1992,6 +1993,8 @@ export class ContractManager implements IContractManager {
 
     /** @see IContractManager.setContractWatchState */
     async setContractWatchState(script: string, watch: ContractWatchState): Promise<void> {
+        const [existing] = await this.config.contractRepository.getContracts({ script });
+        if (existing && watchStateOf(existing) === watch) return;
         await this.updateContract(script, { watch });
     }
 
