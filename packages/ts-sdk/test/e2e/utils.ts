@@ -70,7 +70,7 @@ export function execCommand(command: string): string {
     const result = execSync(command, { encoding: "utf8" })
         .replace(/\r/g, "")
         .split("\n")
-        .filter((line) => !line.includes("WARN"))
+        .filter((line) => !line.includes("WARN") && !line.includes("Loading overrides from"))
         .join("\n")
         .trim();
     if (result.startsWith("error:")) {
