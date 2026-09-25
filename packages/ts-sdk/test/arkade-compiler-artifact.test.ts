@@ -215,6 +215,29 @@ describe("reading an arkadec artifact", () => {
         ]);
     });
 
+    it("binds <CONTRACT:...> to the same parameter as <VTXO:...>", () => {
+        const read = (tag: "VTXO" | "CONTRACT") =>
+            programFromArtifact(
+                demo({
+                    constructorInputs: [{ name: "owner", type: "pubkey" }],
+                    functions: [
+                        {
+                            name: "spend",
+                            arkade: { inputs: [], asm: [`<${tag}:SingleSig(<owner>)>`, "OP_DROP"] },
+                            leaves: [collab("spend")],
+                        },
+                    ],
+                }),
+            );
+        const vtxo = read("VTXO");
+        const contract = read("CONTRACT");
+        expect(contract.params).toEqual(vtxo.params);
+        expect(contract.params?.map((p) => (typeof p === "string" ? p : p.name))).toContain(
+            "vtxo_SingleSig_owner",
+        );
+        expect(contract.functions.spend.arkadeScript).toEqual(vtxo.functions.spend.arkadeScript);
+    });
+
     it("tweaks a constructor pubkey by the named covenant", () => {
         const insurer = schnorr.getPublicKey(new Uint8Array(32).fill(0x09));
         const program = programFromArtifact(

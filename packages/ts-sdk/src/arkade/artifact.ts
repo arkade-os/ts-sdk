@@ -191,28 +191,36 @@ function opcodeToken(token: string): AsmToken {
     return name as AsmToken;
 }
 
-/** `<VTXO:SingleSig(<sellerPk>,<exit>)>` → `vtxo_SingleSig_sellerPk_exit`. */
-function instantiationParam(token: string): string {
-    return `vtxo_${token.slice("<VTXO:".length, -1).replace(/[^A-Za-z0-9]+/g, "_")}`.replace(
-        /_+$/,
-        "",
-    );
+/**
+ * `<VTXO:…>` and `<CONTRACT:…>` are the same child-output placeholder.
+ * The parameter keeps the `vtxo_` prefix so either spelling binds the same argument.
+ */
+function instantiationBody(token: string): string | undefined {
+    const inner = token.slice(1, -1);
+    if (inner.startsWith("VTXO:")) return inner.slice("VTXO:".length);
+    if (inner.startsWith("CONTRACT:")) return inner.slice("CONTRACT:".length);
+    return undefined;
+}
+
+function instantiationParam(body: string): string {
+    return `vtxo_${body.replace(/[^A-Za-z0-9]+/g, "_")}`.replace(/_+$/, "");
 }
 
 function asmToken(token: string, instantiations: Map<string, string>): AsmToken {
     if (token.startsWith("OP_")) return opcodeToken(token);
 
     if (token.startsWith("<") && token.endsWith(">")) {
-        const inner = token.slice(1, -1);
-        if (inner.startsWith("VTXO:")) {
-            const name = instantiationParam(token);
+        const body = instantiationBody(token);
+        if (body !== undefined) {
+            const name = instantiationParam(body);
             const seen = instantiations.get(name);
-            if (seen !== undefined && seen !== token) {
-                fail(`instantiations '${seen}' and '${token}' both map to parameter '${name}'`);
+            if (seen !== undefined && seen !== body) {
+                fail(`instantiations '${seen}' and '${body}' both map to parameter '${name}'`);
             }
-            instantiations.set(name, token);
+            instantiations.set(name, body);
             return `$${name}`;
         }
+        const inner = token.slice(1, -1);
         if (inner === "SERVER_KEY" || inner.startsWith("EMULATOR_KEY:")) {
             fail(`${token} is a signer role and cannot appear in a covenant`);
         }
@@ -312,7 +320,7 @@ function parseLeaf(
     };
 }
 
-/** Adds `server`, and one param per `<VTXO:...>` for the caller to bind to the child witness program. */
+/** Adds `server`, and one param per child-output placeholder for the caller to bind to that output key. */
 export function programFromArtifact(artifact: ContractArtifact): Program {
     if (!isContractArtifact(artifact)) {
         fail(
