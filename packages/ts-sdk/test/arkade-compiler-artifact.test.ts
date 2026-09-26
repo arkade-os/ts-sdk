@@ -191,7 +191,7 @@ describe("reading an arkadec artifact", () => {
                         name: "spend",
                         arkade: {
                             inputs: [{ name: "request", type: "Policy" }],
-                            asm: ["<VTXO:SingleSig(<policy.owner>,<exit>)>", "OP_DROP"],
+                            asm: ["<CONTRACT:SingleSig(<policy.owner>,<exit>)>", "OP_DROP"],
                         },
                         leaves: [collab("spend")],
                     },
@@ -215,26 +215,8 @@ describe("reading an arkadec artifact", () => {
         ]);
     });
 
-    it("binds <CONTRACT:...> to the same parameter as <VTXO:...>", () => {
-        const read = (tag: "VTXO" | "CONTRACT") =>
-            programFromArtifact(
-                demo({
-                    constructorInputs: [{ name: "owner", type: "pubkey" }],
-                    functions: [
-                        {
-                            name: "spend",
-                            arkade: { inputs: [], asm: [`<${tag}:SingleSig(<owner>)>`, "OP_DROP"] },
-                            leaves: [collab("spend")],
-                        },
-                    ],
-                }),
-            );
-        const vtxo = read("VTXO");
-        const contract = read("CONTRACT");
-        expect(contract.params).toEqual(vtxo.params);
-        expect(contract.functions.spend.arkadeScript).toEqual(vtxo.functions.spend.arkadeScript);
-
-        const both = programFromArtifact(
+    it("binds <CONTRACT:...> to a vtxo_ parameter", () => {
+        const program = programFromArtifact(
             demo({
                 constructorInputs: [{ name: "owner", type: "pubkey" }],
                 functions: [
@@ -242,11 +224,7 @@ describe("reading an arkadec artifact", () => {
                         name: "spend",
                         arkade: {
                             inputs: [],
-                            asm: [
-                                "<CONTRACT:SingleSig(<owner>)>",
-                                "<VTXO:SingleSig(<owner>)>",
-                                "OP_DROP",
-                            ],
+                            asm: ["<CONTRACT:SingleSig(<owner>)>", "OP_DROP"],
                         },
                         leaves: [collab("spend")],
                     },
@@ -254,7 +232,7 @@ describe("reading an arkadec artifact", () => {
             }),
         );
         expect(
-            both.params?.filter((p) => typeof p !== "string" && p.name.startsWith("vtxo_")),
+            program.params?.filter((p) => typeof p !== "string" && p.name.startsWith("vtxo_")),
         ).toEqual([{ name: "vtxo_SingleSig_owner", type: "hash" }]);
     });
 
@@ -451,12 +429,25 @@ describe("reading an arkadec artifact", () => {
                 functions: [
                     {
                         name: "spend",
-                        arkade: { inputs: [], asm: ["<CONTRACT:A-B>", "<VTXO:A_B>"] },
+                        arkade: { inputs: [], asm: ["<CONTRACT:A-B>", "<CONTRACT:A_B>"] },
                         leaves: [collab("spend")],
                     },
                 ],
             }),
             /instantiations 'A-B' and 'A_B' both map to parameter 'vtxo_A_B'/,
+        ],
+        [
+            "the old <VTXO:...> placeholder",
+            demo({
+                functions: [
+                    {
+                        name: "spend",
+                        arkade: { inputs: [], asm: ["<VTXO:SingleSig(<owner>)>", "OP_DROP"] },
+                        leaves: [collab("spend")],
+                    },
+                ],
+            }),
+            /compiler emits <CONTRACT:/,
         ],
         [
             "an unknown opcode",

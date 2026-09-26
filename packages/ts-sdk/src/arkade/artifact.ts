@@ -191,13 +191,12 @@ function opcodeToken(token: string): AsmToken {
     return name as AsmToken;
 }
 
-/**
- * `<VTXO:…>` and `<CONTRACT:…>` are the same child-output placeholder.
- * The parameter keeps the `vtxo_` prefix so either spelling binds the same argument.
- */
+/** `<CONTRACT:…>` is the child-output placeholder. The parameter name keeps the `vtxo_` prefix. */
 function instantiationBody(token: string): string | undefined {
     const inner = token.slice(1, -1);
-    if (inner.startsWith("VTXO:")) return inner.slice("VTXO:".length);
+    if (inner.startsWith("VTXO:")) {
+        fail(`'${token}' is not a placeholder; the compiler emits <CONTRACT:…>`);
+    }
     if (inner.startsWith("CONTRACT:")) return inner.slice("CONTRACT:".length);
     return undefined;
 }
