@@ -21,7 +21,8 @@
             "!**/coverage/",
             "!**/pnpm-lock.yaml",
             "!**/*.md",
-            "!packages/swap/src/*.program.json"
+            "!packages/swap/src/*.program.json",
+            "!**/fixtures/arkadec/**"
         ]
     },
     "linter": { "enabled": false },
