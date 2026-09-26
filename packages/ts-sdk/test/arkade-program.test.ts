@@ -204,6 +204,17 @@ describe("Typed program params — authoritative when present", () => {
         );
     });
 
+    it.each([null, 42, true, { role: "oracle" }])(
+        "rejects signer %j where a key belongs",
+        (signer) => {
+            const program = typedProgram();
+            program.functions.exit.tapscript.signers = [signer as never];
+            expect(
+                () => new arkade.ArkadeProgramScript(program, { user, exit: 144n }, keys),
+            ).toThrow(/unknown signer reference/);
+        },
+    );
+
     it("rejects a typed pubkey param bound to a 33-byte array", () => {
         expect(
             () =>
@@ -305,6 +316,33 @@ describe("Type-directed persistence", () => {
         const typed = arkade.deserializeArkadeContractParams(stored);
         expect(typed.args.exit).toBe(144n);
         expect(typed.args.user).toEqual(user);
+    });
+});
+
+describe("parseArtifact — signer validation", () => {
+    it.each([null, 42, true, { role: "oracle" }])(
+        "rejects signer %j before compilation",
+        (signer) => {
+            expect(() =>
+                arkade.parseArtifact({
+                    version: 0,
+                    functions: { exit: { tapscript: { signers: [signer] } } },
+                }),
+            ).toThrow(/tweaked signer needs string `tweak` and `fn`/);
+        },
+    );
+
+    it("round-trips a valid TweakedSigner", () => {
+        const tweaked = { tweak: "$insurer", fn: "claim" };
+        const program = arkade.parseArtifact({
+            version: 0,
+            functions: { exit: { tapscript: { signers: [tweaked] } } },
+        });
+        expect(program.functions.exit.tapscript.signers[0]).toEqual(tweaked);
+        expect(
+            arkade.parseArtifact(JSON.parse(arkade.stringifyArtifact(program))).functions.exit
+                .tapscript.signers[0],
+        ).toEqual(tweaked);
     });
 });
 

@@ -1,0 +1,24 @@
+{
+  "contractName": "BancoBtcToAsset",
+  "constructorInputs": [
+    { "name": "makerWP", "type": "pubkey" },
+    { "name": "wantAmount", "type": "int" },
+    { "name": "wantAssetTxid", "type": "bytes32" },
+    { "name": "wantAssetGroupIndex", "type": "int" },
+    { "name": "user", "type": "pubkey" }
+  ],
+  "functions": [
+    {
+      "name": "fulfill",
+      "arkade": {
+        "inputs": [],
+        "asm": ["0", "<wantAssetTxid>", "<wantAssetGroupIndex>", "OP_INSPECTOUTASSETLOOKUP", "OP_VERIFY", "<wantAmount>", "OP_GREATERTHANOREQUAL", "OP_VERIFY", "0", "OP_INSPECTOUTPUTSCRIPTPUBKEY", "1", "OP_EQUALVERIFY", "<makerWP>", "OP_EQUAL"]
+      },
+      "leaves": [{ "name": "fulfill", "asm": ["<SERVER_KEY>", "OP_CHECKSIGVERIFY", "<EMULATOR_KEY:fulfill>", "OP_CHECKSIG"] }]
+    },
+    {
+      "name": "cancel",
+      "leaves": [{ "name": "cancel", "asm": ["<user>", "OP_CHECKSIGVERIFY", "<SERVER_KEY>", "OP_CHECKSIG"] }]
+    }
+  ]
+}
