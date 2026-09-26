@@ -22,6 +22,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetNewAddressesOptions,
+    GetSpendableVtxosFilter,
     GetVtxosFilter,
     IssuanceParams,
     IssuanceResult,
@@ -212,7 +213,7 @@ export type ResponseGetVtxos = ResponseEnvelope & {
 
 export type RequestGetSpendableVtxos = RequestEnvelope & {
     type: "GET_SPENDABLE_VTXOS";
-    payload: { filter?: GetVtxosFilter };
+    payload: { filter?: GetSpendableVtxosFilter };
 };
 export type ResponseGetSpendableVtxos = ResponseEnvelope & {
     type: "SPENDABLE_VTXOS";
