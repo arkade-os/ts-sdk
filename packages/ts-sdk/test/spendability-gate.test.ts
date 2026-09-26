@@ -226,6 +226,32 @@ describe("ContractHandler.isGenericallySpendable", () => {
 });
 
 describe("getSpendableVtxos", () => {
+    it("can exclude retained contracts from a funding read without changing default reads", async () => {
+        const indexer = onlineIndexer([vtxo(MARKED_SCRIPT, 10_000)]);
+        const getVtxos = vi.spyOn(indexer, "getVtxos");
+        const { wallet, contractRepository, defaultScript } = await seededWallet({
+            indexerProvider: indexer,
+        });
+        const [marked] = await contractRepository.getContracts({ script: MARKED_SCRIPT });
+        await contractRepository.saveContract({ ...marked, watch: "retained" });
+
+        getVtxos.mockClear();
+        expect(scriptsOf(await wallet.getSpendableVtxos({ watchedOnly: true }))).toEqual([
+            defaultScript,
+        ]);
+        expect(getVtxos.mock.calls.flatMap(([options]) => options?.scripts ?? [])).not.toContain(
+            MARKED_SCRIPT,
+        );
+
+        getVtxos.mockClear();
+        expect(scriptsOf(await wallet.getSpendableVtxos())).toEqual(
+            [defaultScript, MARKED_SCRIPT].sort(),
+        );
+        expect(getVtxos.mock.calls.flatMap(([options]) => options?.scripts ?? [])).toContain(
+            MARKED_SCRIPT,
+        );
+    });
+
     it("drops gated contracts while getVtxos keeps them", async () => {
         const { wallet, defaultScript } = await seededWallet();
 

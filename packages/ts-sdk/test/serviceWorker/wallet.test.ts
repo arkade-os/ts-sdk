@@ -213,21 +213,25 @@ describe("ServiceWorkerReadonlyWallet", () => {
         // The gate reads contract-row metadata, which exists only inside the
         // worker — so this cannot be a main-thread filter over GET_VTXOS.
         const vtxos = [{ txid: "tx", vout: 0, value: 1, virtualStatus: { state: "settled" } }];
-        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
-            message.type === "GET_SPENDABLE_VTXOS"
-                ? {
-                      id: message.id,
-                      tag: messageTag,
-                      type: "SPENDABLE_VTXOS",
-                      payload: { vtxos },
-                  }
-                : null,
-        );
+        const filters: unknown[] = [];
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "GET_SPENDABLE_VTXOS") return null;
+            filters.push(message.payload.filter);
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "SPENDABLE_VTXOS",
+                payload: { vtxos },
+            };
+        });
 
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        await expect(wallet.getSpendableVtxos()).resolves.toMatchObject([{ txid: "tx" }]);
+        await expect(wallet.getSpendableVtxos({ watchedOnly: true })).resolves.toMatchObject([
+            { txid: "tx" },
+        ]);
+        expect(filters).toEqual([{ watchedOnly: true }]);
     });
 
     it("fails closed against a worker that predates the message", async () => {

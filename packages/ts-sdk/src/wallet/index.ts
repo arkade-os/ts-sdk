@@ -1023,6 +1023,11 @@ export type GetVtxosFilter = {
     withUnrolled?: boolean;
 };
 
+export type GetSpendableVtxosFilter = GetVtxosFilter & {
+    /** Exclude contracts retained for history from this spendable read. */
+    watchedOnly?: boolean;
+};
+
 /**
  * Readonly asset manager interface for asset operations that do not require wallet identity.
  *
@@ -1194,10 +1199,10 @@ export interface IReadonlyWallet {
      * Both exclusion sets are derived from one contract snapshot, so they cannot
      * disagree about which VTXOs exist.
      *
-     * @param filter - Same flags, same defaults, as {@link getVtxos}
-     * @see GetVtxosFilter
+     * @param filter - Same coin flags and defaults as {@link getVtxos}, with an optional watched-only contract scope
+     * @see GetSpendableVtxosFilter
      */
-    getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
+    getSpendableVtxos(filter?: GetSpendableVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
 
     /** @returns Onchain boarding inputs tracked by the wallet. */
     getBoardingUtxos(): Promise<ExtendedCoin[]>;

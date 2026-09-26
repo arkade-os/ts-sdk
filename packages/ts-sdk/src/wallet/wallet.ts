@@ -53,6 +53,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     GetNewAddressesOptions,
     IAssetManager,
     IReadonlyAssetManager,
@@ -1290,8 +1291,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /** @inheritdoc */
-    async getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
-        const snapshot = await this.contractSnapshot();
+    async getSpendableVtxos(
+        filter?: GetSpendableVtxosFilter,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
+        const snapshot = await this.contractSnapshot(filter?.watchedOnly);
         const vtxos = filterSnapshotVtxos(snapshot, filter, this._pendingSpendOutpoints);
         const { gated, pendingRecovery } = this.spendabilityView(snapshot);
         const selectable = vtxos.filter(
@@ -1413,9 +1416,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * otherwise the gate and the pending-recovery set answer about two different
      * points in time, and each read costs another sync.
      */
-    protected async contractSnapshot(): Promise<ContractWithVtxos[]> {
+    protected async contractSnapshot(watchedOnly = false): Promise<ContractWithVtxos[]> {
         const contractManager = await this.getContractManager();
-        return contractManager.getContractsWithVtxos();
+        return contractManager.getContractsWithVtxos(
+            watchedOnly ? { watch: ["watched", "awaiting-funds"] } : undefined,
+        );
     }
 
     /**

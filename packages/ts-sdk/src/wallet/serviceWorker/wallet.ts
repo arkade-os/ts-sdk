@@ -6,6 +6,7 @@ import {
     ArkTransaction,
     ExtendedCoin,
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     GetNewAddressesOptions,
     NewAddress,
     StorageConfig,
@@ -1170,7 +1171,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      * and falling back to `GET_VTXOS` there would silently spend ungated coins.
      * Fail closed — loud and recoverable — rather than make the gate advisory.
      */
-    async getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+    async getSpendableVtxos(
+        filter?: GetSpendableVtxosFilter,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
         const message: RequestGetSpendableVtxos = {
             id: getRandomId(),
             tag: this.messageTag,
