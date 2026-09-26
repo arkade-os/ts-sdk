@@ -232,10 +232,30 @@ describe("reading an arkadec artifact", () => {
         const vtxo = read("VTXO");
         const contract = read("CONTRACT");
         expect(contract.params).toEqual(vtxo.params);
-        expect(contract.params?.map((p) => (typeof p === "string" ? p : p.name))).toContain(
-            "vtxo_SingleSig_owner",
-        );
         expect(contract.functions.spend.arkadeScript).toEqual(vtxo.functions.spend.arkadeScript);
+
+        const both = programFromArtifact(
+            demo({
+                constructorInputs: [{ name: "owner", type: "pubkey" }],
+                functions: [
+                    {
+                        name: "spend",
+                        arkade: {
+                            inputs: [],
+                            asm: [
+                                "<CONTRACT:SingleSig(<owner>)>",
+                                "<VTXO:SingleSig(<owner>)>",
+                                "OP_DROP",
+                            ],
+                        },
+                        leaves: [collab("spend")],
+                    },
+                ],
+            }),
+        );
+        expect(
+            both.params?.filter((p) => typeof p !== "string" && p.name.startsWith("vtxo_")),
+        ).toEqual([{ name: "vtxo_SingleSig_owner", type: "hash" }]);
     });
 
     it("tweaks a constructor pubkey by the named covenant", () => {
@@ -424,6 +444,19 @@ describe("reading an arkadec artifact", () => {
                 ],
             }),
             /emulator or a tweaked constructor key/,
+        ],
+        [
+            "two child outputs that sanitize to one name",
+            demo({
+                functions: [
+                    {
+                        name: "spend",
+                        arkade: { inputs: [], asm: ["<CONTRACT:A-B>", "<VTXO:A_B>"] },
+                        leaves: [collab("spend")],
+                    },
+                ],
+            }),
+            /instantiations 'A-B' and 'A_B' both map to parameter 'vtxo_A_B'/,
         ],
         [
             "an unknown opcode",
