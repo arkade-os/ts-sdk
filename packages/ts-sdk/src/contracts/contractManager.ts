@@ -1793,7 +1793,7 @@ export class ContractManager implements IContractManager {
         }
         return contracts.map((contract) => ({
             contract,
-            vtxos: vtxosByScript.get(contract.script) ?? [],
+            vtxos: vtxosByScript.get(contract.script)?.slice() ?? [],
         }));
     }
 

@@ -367,6 +367,12 @@ describe("ContractManager", () => {
             ["cc".repeat(32), "dd".repeat(32)],
             [],
         ]);
+
+        vi.spyOn(localManager, "getContracts").mockResolvedValue([first, first]);
+        const duplicate = await localManager.getContractsWithVtxos();
+        const secondLength = duplicate[1].vtxos.length;
+        duplicate[0].vtxos.pop();
+        expect(duplicate[1].vtxos).toHaveLength(secondLength);
         localManager.dispose();
     });
 
