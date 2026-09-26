@@ -217,7 +217,13 @@ export type RequestGetSpendableVtxos = RequestEnvelope & {
 };
 export type ResponseGetSpendableVtxos = ResponseEnvelope & {
     type: "SPENDABLE_VTXOS";
-    payload: { vtxos: Awaited<ReturnType<IWallet["getSpendableVtxos"]>> };
+    payload: {
+        vtxos: Awaited<ReturnType<IWallet["getSpendableVtxos"]>>;
+        appliedContractScope?: Pick<
+            GetSpendableVtxosFilter,
+            "watchedOnly" | "genericallySpendableOnly"
+        >;
+    };
 };
 
 export type RequestGetBoardingUtxos = RequestEnvelope & {
@@ -1194,7 +1200,14 @@ export class WalletMessageHandler
                     return this.tagged({
                         id,
                         type: "SPENDABLE_VTXOS",
-                        payload: { vtxos },
+                        payload: {
+                            vtxos,
+                            appliedContractScope: {
+                                watchedOnly: message.payload.filter?.watchedOnly === true,
+                                genericallySpendableOnly:
+                                    message.payload.filter?.genericallySpendableOnly === true,
+                            },
+                        },
                     });
                 }
                 case "GET_BOARDING_UTXOS": {

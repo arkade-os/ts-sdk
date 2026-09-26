@@ -226,6 +226,26 @@ describe("ContractHandler.isGenericallySpendable", () => {
 });
 
 describe("getSpendableVtxos", () => {
+    it("can limit indexer queries to generically spendable contracts", async () => {
+        const indexer = onlineIndexer([vtxo(MARKED_SCRIPT, 10_000)]);
+        const getVtxos = vi.spyOn(indexer, "getVtxos");
+        const { wallet, defaultScript } = await seededWallet({ indexerProvider: indexer });
+
+        getVtxos.mockClear();
+        const selected = await wallet.getSpendableVtxos({ genericallySpendableOnly: true });
+        expect(scriptsOf(selected)).toEqual([defaultScript, MARKED_SCRIPT].sort());
+        const scopedQuery = getVtxos.mock.calls
+            .map(([options]) => options?.scripts ?? [])
+            .find((scripts) => scripts.includes(defaultScript) && scripts.includes(MARKED_SCRIPT));
+        expect(scopedQuery?.sort()).toEqual([defaultScript, MARKED_SCRIPT].sort());
+
+        getVtxos.mockClear();
+        expect(scriptsOf(await wallet.getSpendableVtxos())).toEqual(scriptsOf(selected));
+        expect(getVtxos.mock.calls.flatMap(([options]) => options?.scripts ?? [])).toContain(
+            ESCROW_SCRIPT,
+        );
+    });
+
     it("can exclude retained contracts from a funding read without changing default reads", async () => {
         const indexer = onlineIndexer([vtxo(MARKED_SCRIPT, 10_000)]);
         const getVtxos = vi.spyOn(indexer, "getVtxos");
@@ -242,6 +262,19 @@ describe("getSpendableVtxos", () => {
         expect(getVtxos.mock.calls.flatMap(([options]) => options?.scripts ?? [])).not.toContain(
             MARKED_SCRIPT,
         );
+
+        getVtxos.mockClear();
+        expect(
+            scriptsOf(
+                await wallet.getSpendableVtxos({
+                    watchedOnly: true,
+                    genericallySpendableOnly: true,
+                }),
+            ),
+        ).toEqual([defaultScript]);
+        expect(getVtxos.mock.calls.flatMap(([options]) => options?.scripts ?? [])).toEqual([
+            defaultScript,
+        ]);
 
         getVtxos.mockClear();
         expect(scriptsOf(await wallet.getSpendableVtxos())).toEqual(

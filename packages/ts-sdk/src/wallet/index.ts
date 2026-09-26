@@ -1026,6 +1026,8 @@ export type GetVtxosFilter = {
 export type GetSpendableVtxosFilter = GetVtxosFilter & {
     /** Exclude contracts retained for history from this spendable read. */
     watchedOnly?: boolean;
+    /** Query only contracts whose handler permits generic spending. */
+    genericallySpendableOnly?: boolean;
 };
 
 /**
@@ -1199,7 +1201,7 @@ export interface IReadonlyWallet {
      * Both exclusion sets are derived from one contract snapshot, so they cannot
      * disagree about which VTXOs exist.
      *
-     * @param filter - Same coin flags and defaults as {@link getVtxos}, with an optional watched-only contract scope
+     * @param filter - Same coin flags and defaults as {@link getVtxos}, with opt-in contract scopes
      * @see GetSpendableVtxosFilter
      */
     getSpendableVtxos(filter?: GetSpendableVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;

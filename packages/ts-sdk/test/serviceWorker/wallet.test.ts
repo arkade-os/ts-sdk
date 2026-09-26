@@ -221,17 +221,42 @@ describe("ServiceWorkerReadonlyWallet", () => {
                 id: message.id,
                 tag: messageTag,
                 type: "SPENDABLE_VTXOS",
-                payload: { vtxos },
+                payload: {
+                    vtxos,
+                    appliedContractScope: { watchedOnly: true, genericallySpendableOnly: true },
+                },
             };
         });
 
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        await expect(wallet.getSpendableVtxos({ watchedOnly: true })).resolves.toMatchObject([
-            { txid: "tx" },
-        ]);
-        expect(filters).toEqual([{ watchedOnly: true }]);
+        await expect(
+            wallet.getSpendableVtxos({ watchedOnly: true, genericallySpendableOnly: true }),
+        ).resolves.toMatchObject([{ txid: "tx" }]);
+        expect(filters).toEqual([{ watchedOnly: true, genericallySpendableOnly: true }]);
+    });
+
+    it("rejects scoped reads from a worker that ignores contract scopes", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.type === "GET_SPENDABLE_VTXOS"
+                ? {
+                      id: message.id,
+                      tag: messageTag,
+                      type: "SPENDABLE_VTXOS",
+                      payload: { vtxos: [] },
+                  }
+                : null,
+        );
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await expect(wallet.getSpendableVtxos({ watchedOnly: true })).rejects.toThrow(
+            "does not support the requested contract scope",
+        );
+        await expect(wallet.getSpendableVtxos({ genericallySpendableOnly: true })).rejects.toThrow(
+            "does not support the requested contract scope",
+        );
     });
 
     it("fails closed against a worker that predates the message", async () => {

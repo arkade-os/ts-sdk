@@ -180,12 +180,14 @@ import {
     Contract,
     ContractWithVtxos,
     DiscoveryDeps,
+    GetContractsFilter,
     isContractVtxoEvent,
 } from "../contracts/types";
 import {
     gateExclusion,
     gatedContracts,
     gatedFrom,
+    isContractGenericallySpendable,
     isGatedVtxo,
     type GatedContracts,
     logExcludedVtxos,
@@ -1294,7 +1296,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async getSpendableVtxos(
         filter?: GetSpendableVtxosFilter,
     ): Promise<NormalizedExtendedVirtualCoin[]> {
-        const snapshot = await this.contractSnapshot(filter?.watchedOnly);
+        const snapshot = await this.contractSnapshot(filter);
         const vtxos = filterSnapshotVtxos(snapshot, filter, this._pendingSpendOutpoints);
         const { gated, pendingRecovery } = this.spendabilityView(snapshot);
         const selectable = vtxos.filter(
@@ -1416,11 +1418,22 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * otherwise the gate and the pending-recovery set answer about two different
      * points in time, and each read costs another sync.
      */
-    protected async contractSnapshot(watchedOnly = false): Promise<ContractWithVtxos[]> {
+    protected async contractSnapshot(
+        filter?: GetSpendableVtxosFilter,
+    ): Promise<ContractWithVtxos[]> {
         const contractManager = await this.getContractManager();
-        return contractManager.getContractsWithVtxos(
-            watchedOnly ? { watch: ["watched", "awaiting-funds"] } : undefined,
-        );
+        const scope: GetContractsFilter | undefined = filter?.watchedOnly
+            ? { watch: ["watched", "awaiting-funds"] }
+            : undefined;
+        if (!filter?.genericallySpendableOnly) {
+            return contractManager.getContractsWithVtxos(scope);
+        }
+        const scripts = (await contractManager.getContracts(scope))
+            .filter(isContractGenericallySpendable)
+            .map((contract) => contract.script);
+        return scripts.length
+            ? contractManager.getContractsWithVtxos({ ...scope, script: scripts })
+            : [];
     }
 
     /**

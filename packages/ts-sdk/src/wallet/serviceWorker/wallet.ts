@@ -1183,7 +1183,15 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            return (response as ResponseGetSpendableVtxos).payload.vtxos.map(normalizeVtxo);
+            const payload = (response as ResponseGetSpendableVtxos).payload;
+            if (
+                (filter?.watchedOnly && payload.appliedContractScope?.watchedOnly !== true) ||
+                (filter?.genericallySpendableOnly &&
+                    payload.appliedContractScope?.genericallySpendableOnly !== true)
+            ) {
+                throw new Error("Service worker does not support the requested contract scope");
+            }
+            return payload.vtxos.map(normalizeVtxo);
         } catch (error) {
             throw new Error(`Failed to get spendable vtxos: ${error}`);
         }
