@@ -47,14 +47,6 @@ describe("Arkade Opcodes", () => {
             expect(toASM(fromASM(`OP_${name}`))).toBe(`OP_${name}`);
         },
     );
-
-    it("encodes the pre-v0.0.8 name OP_CHECKTIMEVERIFY as OP_CHECKTIME", () => {
-        expect(getOpcodeName(0xdc)).toBe("OP_CHECKTIME");
-        expect(getOpcodeValue("OP_CHECKTIMEVERIFY")).toBe(0xdc);
-        expect(getOpcodeValue("CHECKTIMEVERIFY")).toBe(0xdc);
-        expect(ArkadeScript.encode(fromASM("OP_CHECKTIMEVERIFY"))).toEqual(new Uint8Array([0xdc]));
-        expect(toASM(fromASM("OP_CHECKTIMEVERIFY"))).toBe("OP_CHECKTIME");
-    });
 });
 
 describe("Script Encoding/Decoding", () => {

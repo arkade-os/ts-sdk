@@ -11,7 +11,7 @@
 import * as P from "micro-packed";
 import { Script, type ScriptType, OP } from "@scure/btc-signer";
 import { hex } from "@scure/base";
-import { ARKADE_OP, canonicalOpcodeKey } from "./opcodes";
+import { ARKADE_OP } from "./opcodes";
 import * as BigNum from "./bignum";
 
 // Re-export Script and ScriptType from @scure
@@ -193,9 +193,9 @@ export function fromASM(asm: string): ArkadeScriptType {
         // Try opcode lookup: strip OP_ prefix to get the key in ARKADE_OPS
         let key: string | undefined;
         if (token.startsWith("OP_")) {
-            key = canonicalOpcodeKey(token.slice(3));
+            key = token.slice(3);
         } else {
-            key = canonicalOpcodeKey(token);
+            key = token;
         }
 
         if (key in ARKADE_OPS) {

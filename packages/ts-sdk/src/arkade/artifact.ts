@@ -5,7 +5,6 @@
 
 import { hex } from "@scure/base";
 
-import { canonicalOpcodeKey } from "./opcodes";
 import { ARKADE_OPS } from "./script";
 import {
     SUPPORTED_PROGRAM_VERSION,
@@ -184,7 +183,7 @@ function flatten(
 
 /** Artifact opcodes are `OP_`-prefixed; @scure keeps that prefix only on OP_0..OP_16. */
 function opcodeToken(token: string): AsmToken {
-    const base = canonicalOpcodeKey(token.slice(3));
+    const base = token.slice(3);
     const name = base === "0" || /^([1-9]|1[0-6])$/.test(base) ? token : base;
     if (!Object.hasOwn(ARKADE_OPS, name)) {
         fail(`opcode '${token}' is not in this SDK's table`);
