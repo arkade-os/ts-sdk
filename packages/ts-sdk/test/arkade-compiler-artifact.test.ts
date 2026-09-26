@@ -132,7 +132,7 @@ describe("reading an arkadec artifact", () => {
         });
     });
 
-    it("reads hash conditions and flattens structs, natives, arrays, and VTXO params", () => {
+    it("reads hash conditions and flattens structs, natives, arrays, and child outputs", () => {
         const hash = programFromArtifact(
             demo({
                 constructorInputs: [
@@ -198,42 +198,21 @@ describe("reading an arkadec artifact", () => {
                 ],
             }),
         );
-        expect(program.params?.map((p) => (typeof p === "string" ? p : p.name))).toEqual([
-            "policy.owner",
-            "policy.threshold",
-            "point.x",
-            "point.y",
-            "votes.0",
-            "votes.1",
-            "exit",
-            "server",
-            "contract_SingleSig_policy_owner_exit",
+        expect(program.params).toEqual([
+            { name: "policy.owner", type: "pubkey" },
+            { name: "policy.threshold", type: "int" },
+            { name: "point.x", type: "int" },
+            { name: "point.y", type: "int" },
+            { name: "votes.0", type: "int" },
+            { name: "votes.1", type: "int" },
+            { name: "exit", type: "int" },
+            { name: "server", type: "pubkey" },
+            { name: "contract_SingleSig_policy_owner_exit", type: "hash" },
         ]);
         expect(program.functions.spend.arkadeScript?.witness).toEqual([
             "request.threshold",
             "request.owner",
         ]);
-    });
-
-    it("binds <CONTRACT:...> to a contract_ parameter", () => {
-        const program = programFromArtifact(
-            demo({
-                constructorInputs: [{ name: "owner", type: "pubkey" }],
-                functions: [
-                    {
-                        name: "spend",
-                        arkade: {
-                            inputs: [],
-                            asm: ["<CONTRACT:SingleSig(<owner>)>", "OP_DROP"],
-                        },
-                        leaves: [collab("spend")],
-                    },
-                ],
-            }),
-        );
-        expect(
-            program.params?.filter((p) => typeof p !== "string" && p.name.startsWith("contract_")),
-        ).toEqual([{ name: "contract_SingleSig_owner", type: "hash" }]);
     });
 
     it("tweaks a constructor pubkey by the named covenant", () => {

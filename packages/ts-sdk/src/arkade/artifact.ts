@@ -191,16 +191,7 @@ function opcodeToken(token: string): AsmToken {
     return name as AsmToken;
 }
 
-/** `<CONTRACT:…>` is the child-output placeholder. The parameter is `contract_` plus the sanitized body. */
-function instantiationBody(token: string): string | undefined {
-    const inner = token.slice(1, -1);
-    if (inner.startsWith("VTXO:")) {
-        fail(`'${token}' is not a placeholder; the compiler emits <CONTRACT:…>`);
-    }
-    if (inner.startsWith("CONTRACT:")) return inner.slice("CONTRACT:".length);
-    return undefined;
-}
-
+/** `SingleSig(<sellerPk>,<exit>)` → `contract_SingleSig_sellerPk_exit`. */
 function instantiationParam(body: string): string {
     return `contract_${body.replace(/[^A-Za-z0-9]+/g, "_")}`.replace(/_+$/, "");
 }
@@ -209,8 +200,9 @@ function asmToken(token: string, instantiations: Map<string, string>): AsmToken 
     if (token.startsWith("OP_")) return opcodeToken(token);
 
     if (token.startsWith("<") && token.endsWith(">")) {
-        const body = instantiationBody(token);
-        if (body !== undefined) {
+        const inner = token.slice(1, -1);
+        if (inner.startsWith("CONTRACT:")) {
+            const body = inner.slice("CONTRACT:".length);
             const name = instantiationParam(body);
             const seen = instantiations.get(name);
             if (seen !== undefined && seen !== body) {
@@ -219,7 +211,9 @@ function asmToken(token: string, instantiations: Map<string, string>): AsmToken 
             instantiations.set(name, body);
             return `$${name}`;
         }
-        const inner = token.slice(1, -1);
+        if (inner.startsWith("VTXO:")) {
+            fail(`'${token}' is not a placeholder; the compiler emits <CONTRACT:…>`);
+        }
         if (inner === "SERVER_KEY" || inner.startsWith("EMULATOR_KEY:")) {
             fail(`${token} is a signer role and cannot appear in a covenant`);
         }
