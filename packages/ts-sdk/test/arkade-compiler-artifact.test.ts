@@ -207,7 +207,7 @@ describe("reading an arkadec artifact", () => {
             "votes.1",
             "exit",
             "server",
-            "vtxo_SingleSig_policy_owner_exit",
+            "contract_SingleSig_policy_owner_exit",
         ]);
         expect(program.functions.spend.arkadeScript?.witness).toEqual([
             "request.threshold",
@@ -215,7 +215,7 @@ describe("reading an arkadec artifact", () => {
         ]);
     });
 
-    it("binds <CONTRACT:...> to a vtxo_ parameter", () => {
+    it("binds <CONTRACT:...> to a contract_ parameter", () => {
         const program = programFromArtifact(
             demo({
                 constructorInputs: [{ name: "owner", type: "pubkey" }],
@@ -232,8 +232,8 @@ describe("reading an arkadec artifact", () => {
             }),
         );
         expect(
-            program.params?.filter((p) => typeof p !== "string" && p.name.startsWith("vtxo_")),
-        ).toEqual([{ name: "vtxo_SingleSig_owner", type: "hash" }]);
+            program.params?.filter((p) => typeof p !== "string" && p.name.startsWith("contract_")),
+        ).toEqual([{ name: "contract_SingleSig_owner", type: "hash" }]);
     });
 
     it("tweaks a constructor pubkey by the named covenant", () => {
@@ -434,7 +434,7 @@ describe("reading an arkadec artifact", () => {
                     },
                 ],
             }),
-            /instantiations 'A-B' and 'A_B' both map to parameter 'vtxo_A_B'/,
+            /instantiations 'A-B' and 'A_B' both map to parameter 'contract_A_B'/,
         ],
         [
             "the old <VTXO:...> placeholder",

@@ -191,7 +191,7 @@ function opcodeToken(token: string): AsmToken {
     return name as AsmToken;
 }
 
-/** `<CONTRACT:…>` is the child-output placeholder. The parameter name keeps the `vtxo_` prefix. */
+/** `<CONTRACT:…>` is the child-output placeholder. The parameter is `contract_` plus the sanitized body. */
 function instantiationBody(token: string): string | undefined {
     const inner = token.slice(1, -1);
     if (inner.startsWith("VTXO:")) {
@@ -202,7 +202,7 @@ function instantiationBody(token: string): string | undefined {
 }
 
 function instantiationParam(body: string): string {
-    return `vtxo_${body.replace(/[^A-Za-z0-9]+/g, "_")}`.replace(/_+$/, "");
+    return `contract_${body.replace(/[^A-Za-z0-9]+/g, "_")}`.replace(/_+$/, "");
 }
 
 function asmToken(token: string, instantiations: Map<string, string>): AsmToken {
