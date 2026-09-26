@@ -204,6 +204,11 @@ describe("RestArkProvider.getInfo transaction limits", () => {
         expect(info.maxOpReturnOutputs).toBe(3n);
     });
 
+    it("reads the maximum offchain transaction fee and defaults older operators to zero", async () => {
+        expect((await infoResponse({ maxOffchainTxFee: "329" })).maxOffchainTxFee).toBe(329n);
+        expect((await infoResponse({})).maxOffchainTxFee).toBe(0n);
+    });
+
     it("leaves them undefined when the operator advertises neither", async () => {
         // 0n would read as a weight budget of nothing and OP_RETURN forbidden,
         // which an older arkd is not saying.
