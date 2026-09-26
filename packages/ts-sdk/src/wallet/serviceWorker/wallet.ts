@@ -2006,17 +2006,25 @@ export class ServiceWorkerWallet
 
     async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         const [first] = args;
-        const { recipients, selectedVtxos } =
+        const { recipients, selectedVtxos, maxChangeFee } =
             args.length === 1 && first && "recipients" in first
                 ? (first as SendParams)
-                : { recipients: args as [Recipient, ...Recipient[]], selectedVtxos: undefined };
+                : {
+                      recipients: args as [Recipient, ...Recipient[]],
+                      selectedVtxos: undefined,
+                      maxChangeFee: undefined,
+                  };
         const message: RequestSend = {
             tag: this.messageTag,
             type: "SEND",
             id: getRandomId(),
             // Omitted rather than sent as `undefined`, so an older worker sees
             // exactly the payload it saw before.
-            payload: selectedVtxos ? { recipients, selectedVtxos } : { recipients },
+            payload: {
+                recipients,
+                ...(selectedVtxos ? { selectedVtxos } : {}),
+                ...(maxChangeFee !== undefined ? { maxChangeFee } : {}),
+            },
         };
 
         try {

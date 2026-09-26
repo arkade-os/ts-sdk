@@ -206,6 +206,8 @@ export interface ArkInfo {
      * as a server that forbids them outright.
      */
     maxOpReturnOutputs?: bigint;
+    /** Maximum fee the operator accepts in an offchain transaction; zero on older operators. */
+    maxOffchainTxFee?: bigint;
     /**
      * Maximum boarding input amount.
      *
@@ -539,6 +541,7 @@ export class RestArkProvider implements ArkProvider {
                 fromServer.vtxoTreeExpiry != null ? BigInt(fromServer.vtxoTreeExpiry) : undefined,
             maxTxWeight: advertisedLimit(fromServer.maxTxWeight),
             maxOpReturnOutputs: advertisedLimit(fromServer.maxOpReturnOutputs),
+            maxOffchainTxFee: BigInt(fromServer.maxOffchainTxFee ?? 0),
             utxoMaxAmount: BigInt(fromServer.utxoMaxAmount ?? -1),
             utxoMinAmount: BigInt(fromServer.utxoMinAmount ?? 0),
             version: fromServer.version ?? "",
