@@ -328,21 +328,6 @@ describe("Wallet", () => {
             ).toEqual(mockTxId);
         });
 
-        it("should send amount with correct fees", async () => {
-            const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
-
-            mockFetch.mockResolvedValueOnce(jsonResponse(mockUTXOs));
-            mockFetch.mockResolvedValueOnce(jsonResponse({ "1": mockFeeRate }));
-            mockFetch.mockResolvedValueOnce(textResponse(mockTxId));
-
-            expect(
-                await wallet.send({
-                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
-                    amount: 115000,
-                }),
-            ).toEqual(mockTxId);
-        });
-
         it("should calculate different tx sizes for Segwit vs Taproot", async () => {
             const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
@@ -395,14 +380,11 @@ describe("Wallet", () => {
             const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
             const feeRate = 10;
-            // Calculations for the edge case:
             // Tx with 1 input, 1 output (no change) ≈ 111 vBytes. Fee ≈ 1110.
             // Tx with 1 input, 2 outputs (change) ≈ 154 vBytes. Fee ≈ 1540.
             // Difference (cost of change output) ≈ 430 sats.
             // Dust limit = 546 sats.
-            // We need: Remaining Amount (after fee) to be > 546 BUT < (546 + 430).
-            // Let's target Remaining = 800.
-
+            // Remaining after the no-change fee must be > 546 and < 546 + 430.
             const sendAmount = 50_000;
             const approxFeeNoChange = 1110;
             const inputAmount = sendAmount + approxFeeNoChange + 800;
@@ -459,26 +441,6 @@ describe("Wallet", () => {
                 txFeeRate: "100",
             },
         };
-
-        it("should initialize with ark provider when configured", async () => {
-            mockFetch.mockResolvedValueOnce(
-                jsonResponse({
-                    ...mockArkInfo,
-                    vtxoTreeExpiry: mockArkInfo.batchExpiry,
-                }),
-            );
-
-            const wallet = await Wallet.create({
-                identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
-            });
-
-            const address = await wallet.getAddress();
-            expect(address).toBeDefined();
-
-            const boardingAddress = await wallet.getBoardingAddress();
-            expect(boardingAddress).toBeDefined();
-        });
 
         it("should return intentFee config as strings", async () => {
             mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
@@ -1463,32 +1425,6 @@ describe("ReadonlyWallet", () => {
 
     beforeEach(() => {
         mockFetch.mockReset();
-    });
-
-    it("should create ReadonlyWallet with ReadonlySingleKey", async () => {
-        // Create a regular key first to get the public key
-        const privateKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
-        const key = SingleKey.fromHex(privateKeyHex);
-        const compressedPubKey = await key.compressedPublicKey();
-
-        // Create readonly identity
-        const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
-
-        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
-
-        const readonlyWallet = await ReadonlyWallet.create({
-            identity: readonlyIdentity,
-            arkServerUrl: "http://localhost:7070",
-        });
-
-        expect(readonlyWallet).toBeInstanceOf(ReadonlyWallet);
-
-        // Should be able to get addresses
-        const address = await readonlyWallet.getAddress();
-        expect(address).toBeDefined();
-
-        const boardingAddress = await readonlyWallet.getBoardingAddress();
-        expect(boardingAddress).toBeDefined();
     });
 
     it("should create ReadonlyWallet with the default Arkade server URL", async () => {

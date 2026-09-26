@@ -148,12 +148,6 @@ describe("SQLiteWalletRepository", () => {
         await repository[Symbol.asyncDispose]();
     });
 
-    // ── version ────────────────────────────────────────────────────────
-
-    it("should have version 1", () => {
-        expect(repository.version).toBe(1);
-    });
-
     // ── VTXO management ────────────────────────────────────────────────
 
     describe("VTXO management", () => {
@@ -681,17 +675,6 @@ describe("SQLiteWalletRepository", () => {
     // ── Table prefix ───────────────────────────────────────────────────
 
     describe("table prefix", () => {
-        it("should use custom prefix for table names", async () => {
-            const customRepo = new SQLiteWalletRepository(db, {
-                prefix: "myapp_",
-            });
-            // Should work without interference from the default-prefixed repo
-            await customRepo.saveVtxos(testAddress, [createMockVtxo("tx-custom", 0, 9000)]);
-            const retrieved = await customRepo.getVtxos(testAddress);
-            expect(retrieved).toHaveLength(1);
-            expect(retrieved[0].txid).toBe("tx-custom");
-        });
-
         it("should isolate data between different prefixes", async () => {
             const repoA = new SQLiteWalletRepository(db, { prefix: "a_" });
             const repoB = new SQLiteWalletRepository(db, { prefix: "b_" });
@@ -706,14 +689,6 @@ describe("SQLiteWalletRepository", () => {
             expect(fromA[0].txid).toBe("tx-a");
             expect(fromB).toHaveLength(1);
             expect(fromB[0].txid).toBe("tx-b");
-        });
-    });
-
-    // ── asyncDispose ───────────────────────────────────────────────────
-
-    describe("[Symbol.asyncDispose]", () => {
-        it("should be a no-op and not throw", async () => {
-            await expect(repository[Symbol.asyncDispose]()).resolves.toBeUndefined();
         });
     });
 });

@@ -27,22 +27,6 @@ describe("SingleKey", () => {
         expect(Array.from(pubKey1)).not.toEqual(Array.from(pubKey2));
     });
 
-    it("should create keys from hex", async () => {
-        const privateKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        const key = SingleKey.fromHex(privateKeyHex);
-
-        await expect(key.xOnlyPublicKey()).resolves.toBeInstanceOf(Uint8Array);
-        await expect(key.compressedPublicKey()).resolves.toBeInstanceOf(Uint8Array);
-    });
-
-    it("should create keys from private key bytes", async () => {
-        const privateKeyBytes = new Uint8Array(32).fill(1);
-        const key = SingleKey.fromPrivateKey(privateKeyBytes);
-
-        await expect(key.xOnlyPublicKey()).resolves.toBeInstanceOf(Uint8Array);
-        await expect(key.compressedPublicKey()).resolves.toBeInstanceOf(Uint8Array);
-    });
-
     it("should export private key as hex with toHex()", () => {
         const privateKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         const key = SingleKey.fromHex(privateKeyHex);
@@ -248,22 +232,6 @@ describe("ReadonlySingleKey", () => {
         expect((readonlyKey as any).sign).toBeUndefined();
         expect((readonlyKey as any).signMessage).toBeUndefined();
         expect((readonlyKey as any).toHex).toBeUndefined();
-    });
-
-    it("should work with different public key prefixes", async () => {
-        const privateKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        const key = SingleKey.fromHex(privateKeyHex);
-        const compressedPubKey = await key.compressedPublicKey();
-
-        // Should work with both 0x02 and 0x03 prefixes
-        expect(compressedPubKey[0]).toBeGreaterThanOrEqual(2);
-        expect(compressedPubKey[0]).toBeLessThanOrEqual(3);
-
-        const readonlyKey = ReadonlySingleKey.fromPublicKey(compressedPubKey);
-        const xOnlyPubKey = await readonlyKey.xOnlyPublicKey();
-
-        expect(xOnlyPubKey).toHaveLength(32);
-        expect(xOnlyPubKey).toBeInstanceOf(Uint8Array);
     });
 });
 

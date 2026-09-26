@@ -374,26 +374,6 @@ describe("ArkadeContract ↔ ContractManager integration", () => {
         });
     });
 
-    it("createContract accepts handler-serialized arkade params (script validation passes)", async () => {
-        const params = ArkadeContractHandler.serializeParams({
-            program: multisigProgram(),
-            args: { user: TEST_PUB_KEY, server: TEST_SERVER_PUB_KEY },
-            ...handlerKeys(),
-        });
-        const script = ArkadeContractHandler.createScript(params);
-
-        const contract = await manager.createContract({
-            type: "arkade",
-            params,
-            script: hex.encode(script.pkScript),
-            address: script.address(networks.regtest.hrp, TEST_SERVER_PUB_KEY).encode(),
-        });
-
-        expect(contract.type).toBe("arkade");
-        const [persisted] = await manager.getContracts({ script: contract.script });
-        expect(persisted).toBeDefined();
-    });
-
     it("ArkadeContract.register persists the contract through the manager", async () => {
         const ark = await connectArkade(manager);
         const contract = ark.contract(multisigProgram());

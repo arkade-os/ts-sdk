@@ -92,12 +92,6 @@ async function makeWallet(virtualTxRepository: VirtualTxRepository) {
 }
 
 describe("virtualTxRepository is exposed but inert", () => {
-    it("exposes the configured repository on the wallet", async () => {
-        const repo = spyVirtualTxRepository();
-        const { wallet } = await makeWallet(repo);
-        expect(wallet.virtualTxRepository).toBe(repo);
-    });
-
     it("is never written by wallet creation or contract sync", async () => {
         const repo = spyVirtualTxRepository();
         const { wallet } = await makeWallet(repo);

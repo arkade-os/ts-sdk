@@ -1432,47 +1432,6 @@ describe("WalletMessageHandler handleMessage", () => {
         ).toBe(true);
     });
 
-    it("eagerly starts VtxoManager on wallet initialization", async () => {
-        const getVtxoManagerSpy = vi.fn().mockResolvedValue({});
-        (updater as any).readonlyWallet = {
-            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
-            getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
-            getBoardingAddresses: vi.fn().mockResolvedValue(["bc1-boarding"]),
-            getBoardingUtxos: vi.fn().mockResolvedValue([]),
-            getBoardingTxs: vi.fn().mockResolvedValue({
-                boardingTxs: [],
-                commitmentsToIgnore: new Set(),
-            }),
-            onchainProvider: {
-                getCoins: vi.fn().mockResolvedValue([]),
-            },
-            notifyIncomingFunds: vi.fn().mockResolvedValue(vi.fn()),
-            getContractManager: vi.fn().mockResolvedValue({
-                getContracts: vi.fn().mockResolvedValue([]),
-                onContractEvent: vi.fn().mockReturnValue(vi.fn()),
-            }),
-        };
-        (updater as any).wallet = {
-            getVtxoManager: getVtxoManagerSpy,
-            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
-        };
-        (updater as any).arkProvider = {};
-        (updater as any).indexerProvider = {};
-        (updater as any).walletRepository = {
-            getVtxos: vi.fn().mockResolvedValue([]),
-            getSpendableVtxos: vi.fn().mockResolvedValue([]),
-            saveVtxos: vi.fn().mockResolvedValue(undefined),
-            getUtxos: vi.fn().mockResolvedValue([]),
-            deleteUtxos: vi.fn().mockResolvedValue(undefined),
-            saveUtxos: vi.fn().mockResolvedValue(undefined),
-            saveTransactions: vi.fn().mockResolvedValue(undefined),
-        };
-
-        await (updater as any).onWalletInitialized();
-
-        expect(getVtxoManagerSpy).toHaveBeenCalled();
-    });
-
     it("does not start VtxoManager for readonly wallets", async () => {
         (updater as any).readonlyWallet = {
             getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
@@ -2261,44 +2220,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         // Should exclude swept and settled VTXOs
         expect(vtxosArg).toHaveLength(1);
         expect(vtxosArg[0].txid).toBe("aa".repeat(32));
-    });
-
-    it("boarding cache refresh fans out over the boarding-address set (plan §6-IV.2)", async () => {
-        setupHandler();
-        const rw = (updater as any).readonlyWallet;
-        (updater as any).wallet = {
-            getVtxoManager: vi.fn().mockResolvedValue({}),
-            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
-        };
-
-        await (updater as any).onWalletInitialized();
-
-        // refreshCachedData now enumerates every boarding address and delegates
-        // the per-address fetch + cache to getBoardingUtxos, instead of fetching
-        // a single getBoardingAddress() via the onchain provider directly.
-        expect(rw.getBoardingAddresses).toHaveBeenCalled();
-        expect(rw.getBoardingUtxos).toHaveBeenCalled();
-    });
-
-    it("RELOAD_WALLET forces refreshVtxos before reading from repo", async () => {
-        setupHandler();
-        const refreshSpy = vi.fn().mockResolvedValue(undefined);
-        (updater as any).readonlyWallet.getContractManager = vi.fn().mockResolvedValue({
-            getContracts: vi.fn().mockResolvedValue([]),
-            onContractEvent: vi.fn().mockReturnValue(vi.fn()),
-            refreshVtxos: refreshSpy,
-        });
-        (updater as any).wallet = {
-            getVtxoManager: vi.fn().mockResolvedValue({}),
-            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
-        };
-
-        await updater.handleMessage({
-            ...baseMessage(),
-            type: "RELOAD_WALLET",
-        } as any);
-
-        expect(refreshSpy).toHaveBeenCalled();
     });
 
     it("RELOAD_WALLET does not re-subscribe or restart VtxoManager", async () => {

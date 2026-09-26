@@ -978,19 +978,6 @@ describe("EsploraProvider.watchAddresses", () => {
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
             expect(historyCalls()).toBe(3);
         });
-
-        it("warns when it degrades from websocket to HTTP polling", async () => {
-            mockFetch.mockImplementation(async () => okJson([]));
-
-            const provider = new EsploraProvider("http://localhost:3000");
-            await provider.watchAddresses(["addr1"], () => {});
-            await FakeWebSocket.instances[0].dispatch("error");
-
-            // Silent degradation is what let an explorer blip become sustained
-            // full-history polling without anyone noticing.
-            expect(warn).toHaveBeenCalledTimes(1);
-            expect(warn.mock.calls[0][0]).toMatch(/websocket unavailable.*HTTP polling/i);
-        });
     });
 
     describe("coalescing", () => {

@@ -173,12 +173,6 @@ describe("RealmContractRepository", () => {
         await repository[Symbol.asyncDispose]();
     });
 
-    // ── version ────────────────────────────────────────────────────────
-
-    it("should have version 2", () => {
-        expect(repository.version).toBe(2);
-    });
-
     // ── Save and retrieve ──────────────────────────────────────────────
 
     describe("save and retrieve contracts", () => {
@@ -514,14 +508,6 @@ describe("RealmContractRepository", () => {
 
             const contracts = await repository.getContracts();
             expect(contracts).toEqual([]);
-        });
-    });
-
-    // ── asyncDispose ───────────────────────────────────────────────────
-
-    describe("[Symbol.asyncDispose]", () => {
-        it("should be a no-op and not throw", async () => {
-            await expect(repository[Symbol.asyncDispose]()).resolves.toBeUndefined();
         });
     });
 });

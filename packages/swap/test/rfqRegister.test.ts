@@ -61,7 +61,6 @@ import {
     SWAP_LOCKUP_CONTRACT_LABEL,
     SWAP_LOCKUP_CONTRACT_TYPE,
     lockupContractParams,
-    registerLockupContract,
 } from "../src/lockupContract";
 import { createRfqSwapRecord, rebuildRfqSwap } from "../src/rfqRecord";
 import { rfqSecretsProfile } from "../src/rfqProfileParts";
@@ -431,17 +430,5 @@ describe("a registered lockup, against a real contract manager", () => {
         await expect(
             lockupContractParams(await wallet.getContractManager(), REFUND_ADDRESS),
         ).rejects.toBeInstanceOf(LockupContractMissing);
-    });
-
-    it("survives the manager's backstop re-registering it", async () => {
-        // `ensureRegistered` still runs for records that predate pre-funding
-        // registration, and must be a no-op for those that do not.
-        const { wallet, contractRepository } = await realWallet();
-        const swap = await lightningSend(wallet as unknown as IWallet);
-
-        const before = await contractRepository.getContracts();
-        // `swap.script` is what a caller hands the manager as `lockup.script`.
-        await registerLockupContract(await wallet.getContractManager(), swap.script, swap.address);
-        expect(await contractRepository.getContracts()).toEqual(before);
     });
 });

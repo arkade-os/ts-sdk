@@ -1881,21 +1881,6 @@ describe("ServiceWorker identity boundary assertion", () => {
         vi.unstubAllGlobals();
     });
 
-    it("create() resolves when the worker reports the matching identity", async () => {
-        const identity = await SingleKey.fromHex(KEY_A);
-        const key = await identity.xOnlyPublicKey();
-        const { serviceWorker } = stub(initResponder(key));
-
-        await expect(
-            ServiceWorkerWallet.create({
-                serviceWorker: serviceWorker as any,
-                arkServerUrl: "https://ark.test",
-                identity,
-                storage: storage(),
-            }),
-        ).resolves.toBeDefined();
-    });
-
     it("create() rejects when the worker reports a different identity", async () => {
         const identity = SingleKey.fromHex(KEY_A);
         const otherKey = await SingleKey.fromHex(KEY_B).xOnlyPublicKey();

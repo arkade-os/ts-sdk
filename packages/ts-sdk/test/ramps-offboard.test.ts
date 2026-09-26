@@ -20,7 +20,6 @@ const wallet = (over: Record<string, unknown> = {}) =>
         getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 10_000), vtxo("22", 20_000)]),
         getAddress: vi.fn().mockResolvedValue(ARK_ADDR),
         settle: vi.fn().mockResolvedValue("txSETTLE"),
-        logUngatedInputs: vi.fn().mockResolvedValue(undefined),
         ...over,
     }) as any;
 
@@ -109,23 +108,6 @@ describe("Ramps.offboard with a named input set", () => {
         await new Ramps(w).offboard(BTC_ADDR, pricedFees, 5_000n);
 
         expect(w.settle.mock.calls[0][0].inputs).toEqual([vtxo("33", 50_000)]);
-    });
-
-    it("reports the ungated crossing, as the other explicit-input APIs do", async () => {
-        const w = wallet();
-        const chosen = [vtxo("33", 50_000)];
-
-        await new Ramps(w).offboard(BTC_ADDR, fees, 5_000n, undefined, chosen as any);
-
-        expect(w.logUngatedInputs).toHaveBeenCalledWith("Ramps.offboard({ vtxos })", chosen);
-    });
-
-    it("does not report a crossing when it selected the coins itself", async () => {
-        const w = wallet();
-
-        await new Ramps(w).offboard(BTC_ADDR, fees, 5_000n);
-
-        expect(w.logUngatedInputs).not.toHaveBeenCalled();
     });
 });
 

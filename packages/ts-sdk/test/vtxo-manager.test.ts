@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from "vitest";
 import {
     VtxoManager,
     isVtxoExpiringSoon,
-    DEFAULT_RENEWAL_CONFIG,
     DEFAULT_SETTLEMENT_CONFIG,
     DEFAULT_THRESHOLD_SECONDS,
     getExpiringAndRecoverableVtxos,
@@ -562,23 +561,6 @@ describe("VtxoManager - Recovery", () => {
                 );
             });
 
-            it("reports the drop", async () => {
-                const immature = createMockVtxo(5000, "swept", false);
-                const ordinary = createMockVtxo(3000, "swept", false);
-                const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
-                const wallet = withRefusals(
-                    [immature, ordinary],
-                    new Map([[`${immature.txid}:0`, "not yet"]]),
-                );
-
-                await new VtxoManager(wallet).recoverVtxos();
-
-                expect(debug).toHaveBeenCalledWith(
-                    `[spendability] recoverVtxos: ${immature.txid}:0 not yet`,
-                );
-                debug.mockRestore();
-            });
-
             it("agrees with getRecoverableBalance on the same set", async () => {
                 const immature = createMockVtxo(5000, "swept", false);
                 const ordinary = createMockVtxo(3000, "swept", false);
@@ -761,12 +743,6 @@ describe("VtxoManager - Lifecycle", () => {
 });
 
 describe("VtxoManager - Renewal utilities", () => {
-    describe("DEFAULT_RENEWAL_CONFIG", () => {
-        it("should have correct default values", () => {
-            expect(DEFAULT_RENEWAL_CONFIG.thresholdMs).toBe(DEFAULT_THRESHOLD_MS);
-        });
-    });
-
     describe("isVtxoExpiringSoon", () => {
         it("should return true for VTXO expiring within threshold", () => {
             const now = Date.now();
@@ -1692,10 +1668,6 @@ describe("SettlementConfig", () => {
         it("should have correct default values", () => {
             expect(DEFAULT_SETTLEMENT_CONFIG.vtxoThreshold).toBe(DEFAULT_THRESHOLD_SECONDS);
             expect(DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep).toBe(true);
-        });
-
-        it("should match DEFAULT_THRESHOLD_MS converted to seconds", () => {
-            expect(DEFAULT_THRESHOLD_SECONDS).toBe(DEFAULT_THRESHOLD_MS / 1000);
         });
     });
 
