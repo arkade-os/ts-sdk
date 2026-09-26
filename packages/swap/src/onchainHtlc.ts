@@ -27,23 +27,32 @@ import * as btc from "@scure/btc-signer";
 // ── Guardrail constants (rfq.ts re-exports these; defined here to keep the
 //    claim path free of an rfq.ts import cycle) ───────────────────────────────
 
-/** L1 confirmation-depth and reorg margin between dependent timelocks. */
+/** L1 confirmation-depth and reorg margin between dependent timelocks.
+ *
+ */
 export const ONCHAIN_ORDER_MARGIN_SECONDS = 2 * 60 * 60;
 /** Don't broadcast a claim with less than this before the refund leaf opens:
  * MTP lag plus confirmation time. Past this point the safe move is to let the
  * swap die and take the covenant refund — claiming into the counterparty's
- * live refund window risks losing the race AND publishing P. */
+ * live refund window risks losing the race AND publishing P.
+ *
+ */
 export const ONCHAIN_CLAIM_MARGIN_SECONDS = 90 * 60;
-/** Bounds on the confirmation depth a quote may demand. */
+/** Bounds on the confirmation depth a quote may demand.
+ *
+ */
 export const MAX_MIN_CONFIRMATIONS = 6;
 /**
  * BIP65's boundary between the two things an absolute locktime can mean.
  * Below it consensus reads the value as a block height; at or above it, as a
  * unix timestamp. 500,000,000 itself is 1985-07-05 and is a timestamp, so the
  * comparison against it is strict.
+ *
  */
 export const LOCKTIME_THRESHOLD = 500_000_000;
-/** Conservative block interval for converting depths into wall-clock time. */
+/** Conservative block interval for converting depths into wall-clock time.
+ *
+ */
 export const ONCHAIN_SECONDS_PER_BLOCK = 600;
 /**
  * Outputs below this are unspendable in practice; builders refuse them.
@@ -66,15 +75,36 @@ export const ONCHAIN_SECONDS_PER_BLOCK = 600;
  * directly by consumers that target lower — forcing every one of them to
  * raise their own target for a single constant. The compiled output is
  * identical.
+ *
  */
 export const ONCHAIN_DUST_SATS = BigInt(330);
 
+/**
+ * vsize of the trader's claim transaction, for pricing it before it is built.
+ *
+ * The claim is one-in-one-out with a fixed witness — a 64-byte DEFAULT-sighash
+ * signature, the 32-byte preimage, the claim leaf and its control block — so
+ * the only variable is the payout script, and this is the largest standard one
+ * (P2TR, 34 bytes; P2WPKH measures 140 and P2PKH 143). Rounded UP on purpose:
+ * a rail quoting a claim fee must not under-charge, since the shortfall would
+ * come out of the recipient's payout.
+ *
+ * Pinned against a real sizing pass in `onchainHtlc.test.ts` — the number is an
+ * estimate of a transaction this module builds, so a change to the leaf shape
+ * has to move both together.
+ */
+export const ONCHAIN_CLAIM_VSIZE = 152;
+
 // ── Preimage utilities ───────────────────────────────────────────────────────
 
-/** 32 random bytes. The user generates P for BOTH onchain directions. */
+/** 32 random bytes. The user generates P for BOTH onchain directions.
+ *
+ */
 export const newPreimage = (): Uint8Array => crypto.getRandomValues(new Uint8Array(32));
 
-/** `sha256(P)`, hex — the wire `payment_hash`, same convention as BOLT11. */
+/** `sha256(P)`, hex — the wire `payment_hash`, same convention as BOLT11.
+ *
+ */
 export const paymentHashOf = (preimage: Uint8Array): string => hex.encode(sha256(preimage));
 
 /** The script-level commitment: `ripemd160(sha256(P))`, from the wire hash. */
@@ -84,7 +114,17 @@ const h160FromPaymentHash = (paymentHash: string): Uint8Array => ripemd160(hex.d
 
 export type OnchainNetwork = "bitcoin" | "testnet" | "regtest";
 
-/** `OnchainNetwork` → that chain's address/script parameters. */
+/**
+ * The `@scure/btc-signer` parameters each L1 network is addressed under.
+ *
+ * Exported because it is the only table in the workspace that maps an
+ * {@link OnchainNetwork} to address parameters, and the onchain corridor's
+ * network check needs exactly it — the alternative was a third hand-written
+ * copy. Three members, not five: `signet` and `mutinynet` are indistinguishable
+ * from `testnet` at the address level, which is why {@link l1NetworkFromArk}
+ * folds them together and why no caller can claim a signet-versus-testnet
+ * rejection.
+ */
 export const L1_NETWORKS: Record<OnchainNetwork, typeof btc.NETWORK> = {
     bitcoin: btc.NETWORK,
     testnet: btc.TEST_NETWORK,
@@ -96,6 +136,7 @@ export const L1_NETWORKS: Record<OnchainNetwork, typeof btc.NETWORK> = {
  * the claim's output is the spender's own choice, so nothing that survives a
  * send screen names it, and a destination that cannot be encoded must be
  * refused before the swap is negotiated rather than at claim time.
+ *
  */
 export const l1ScriptForAddress = (address: string, network: OnchainNetwork): Uint8Array =>
     btc.OutScript.encode(btc.Address(L1_NETWORKS[network]).decode(address));
@@ -136,6 +177,7 @@ export interface OnchainHtlc {
  *
  * Pure derivation — pinned byte-for-byte by the golden test; any drift here
  * changes addresses on BOTH sides of a swap.
+ *
  */
 export function onchainHtlcScript(params: OnchainHtlcParams, network: OnchainNetwork): OnchainHtlc {
     if (params.claimKey.length !== 32 || params.refundKey.length !== 32) {
@@ -298,7 +340,9 @@ const buildLeafSpend = async (input: {
 
 /** Script-path spend of the claim leaf; the witness reveals P — that is how
  * the counterparty learns it, so never build this unless the claim will win
- * (see {@link claimOnchainFill}). `sign` is BIP340 over the claim key. */
+ * (see {@link claimOnchainFill}). `sign` is BIP340 over the claim key.
+ *
+ */
 export const buildHtlcClaim = async (input: {
     htlc: OnchainHtlc;
     utxo: HtlcUtxo;
@@ -325,7 +369,9 @@ export const buildHtlcClaim = async (input: {
 
 /** Script-path spend of the refund leaf; consensus-valid only once nLockTime
  * has matured against median-time-past — gate on {@link ChainSource.getMtp},
- * not wall clock. `sign` is BIP340 over the refund key. */
+ * not wall clock. `sign` is BIP340 over the refund key.
+ *
+ */
 export const buildHtlcRefund = (input: {
     htlc: OnchainHtlc;
     utxo: HtlcUtxo;
@@ -355,7 +401,11 @@ export interface ChainUtxo extends HtlcUtxo {
 
 /** The package's whole view of Bitcoin L1. An esplora-backed implementation
  * belongs to the caller (a reference one lives in the test suite); the package
- * itself stays backend-free. */
+ * itself stays backend-free.
+ *
+ * A root export because `CorridorOverrides.onchain.chain` takes it: a caller
+ * wiring that override names this type.
+ */
 export interface ChainSource {
     /** Confirmed+mempool outputs paying a script; used to detect the fill. */
     getScriptUtxos(pkScript: Uint8Array): Promise<ChainUtxo[]>;
@@ -373,7 +423,9 @@ export interface ChainSource {
 
 /** Read P out of a claim spend's witness: the 32-byte item whose sha256 is the
  * payment hash. Null when the tx reveals no matching preimage (e.g. a refund
- * spend, or an unrelated tx). */
+ * spend, or an unrelated tx).
+ *
+ */
 export function extractPreimage(txHex: string, paymentHash: string): Uint8Array | null {
     let raw;
     try {
@@ -395,7 +447,9 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 /** Poll {@link ChainSource} until the HTLC is funded to the required depth.
  * Picks the largest qualifying output when several exist. Throws (reason
- * `fill_timeout`) once `deadline` (unix seconds) passes without one. */
+ * `fill_timeout`) once `deadline` (unix seconds) passes without one.
+ *
+ */
 export async function awaitOnchainFill(
     chain: ChainSource,
     htlc: OnchainHtlc,
@@ -427,6 +481,7 @@ export async function awaitOnchainFill(
  * {@link ONCHAIN_CLAIM_MARGIN_SECONDS} remains before the refund leaf opens:
  * past that point, let the swap die and take the covenant refund instead of
  * racing the counterparty's refund with P exposed.
+ *
  */
 export async function claimOnchainFill(
     chain: ChainSource,
@@ -456,7 +511,9 @@ export async function claimOnchainFill(
 
 /** Where an onchain HTLC stands, for crash recovery (see the store docs:
  * persisting the record BEFORE funding is what makes this classification —
- * and the claim — possible after a restart). */
+ * and the claim — possible after a restart).
+ *
+ */
 export type OnchainHtlcPhase =
     | { phase: "unfunded" }
     | { phase: "awaiting_confirmations"; utxo: ChainUtxo }
@@ -480,6 +537,7 @@ export type OnchainHtlcPhase =
  *
  * `claimed` carries the preimage read from the spend's witness — the receipt;
  * `swept` is a spend that reveals no preimage (the counterparty's refund).
+ *
  */
 export async function classifyOnchainHtlc(
     chain: ChainSource,

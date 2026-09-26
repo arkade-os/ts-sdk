@@ -73,7 +73,7 @@ describe("asset swap store", () => {
 
     it("reports failed add writes and keeps update writes best-effort", async () => {
         const broken = (existing: AssetSwap[] = []): AssetSwapRepository => ({
-            version: 4,
+            version: 5,
             saveSwap: async () => {
                 throw new Error("quota exceeded");
             },
@@ -82,6 +82,10 @@ describe("asset swap store", () => {
             getRfqSwap: async () => undefined,
             getAllRfqSwaps: async () => [],
             removeRfqSwap: async () => {},
+            saveSwapRecord: async () => {},
+            getSwapRecord: async () => undefined,
+            getAllSwapRecords: async () => [],
+            removeSwapRecord: async () => {},
             getScannedTxids: async () => new Set(),
             markTxidsScanned: async () => {},
             getCachedMarkets: async () => undefined,
@@ -111,7 +115,7 @@ describe("asset swap store", () => {
 
     it("reads a failed read as empty history, but never writes on one", async () => {
         const broken: AssetSwapRepository = {
-            version: 4,
+            version: 5,
             saveSwap: async () => {},
             getAllSwaps: async () => {
                 throw new Error("backend gone");
@@ -120,6 +124,10 @@ describe("asset swap store", () => {
             getRfqSwap: async () => undefined,
             getAllRfqSwaps: async () => [],
             removeRfqSwap: async () => {},
+            saveSwapRecord: async () => {},
+            getSwapRecord: async () => undefined,
+            getAllSwapRecords: async () => [],
+            removeSwapRecord: async () => {},
             getScannedTxids: async () => new Set(),
             markTxidsScanned: async () => {},
             getCachedMarkets: async () => undefined,

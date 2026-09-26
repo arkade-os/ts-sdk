@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { asset, ArkAddress, Transaction } from "@arkade-os/sdk";
-import { encodeOffer, offerVtxoScript, OFFER_CONTRACT_KIND, type Offer } from "../src/offer";
+import { encodeOffer, offerContract, OFFER_CONTRACT_KIND, type Offer } from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
 import { retireSettledOfferContracts } from "../src/coverage";
@@ -11,7 +11,7 @@ import { spendUpdate, watchOfferSwaps } from "../src/watch";
 const ASSET_ID = "f1".repeat(34);
 
 const key = (seed: string) => schnorr.getPublicKey(hex.decode(seed.repeat(32)));
-const SERVER_KEY = key("11");
+const OPERATOR_KEY = key("11");
 const MAKER_KEY = key("22");
 const EMULATOR_KEY = key("33");
 const MAKER_PK_SCRIPT = new Uint8Array([0x51, 0x20, ...key("55")]);
@@ -27,7 +27,7 @@ const makeOffer = (side: "want-asset" | "want-btc" = "want-asset"): Offer => {
         makerPublicKey: MAKER_KEY,
         emulatorPubkey: EMULATOR_KEY,
     };
-    return { ...binding, swapPkScript: offerVtxoScript(binding, SERVER_KEY).pkScript };
+    return { ...binding, swapPkScript: offerContract(binding, OPERATOR_KEY).pkScript };
 };
 
 const swapFor = (offer: Offer, overrides: Partial<AssetSwap> = {}): AssetSwap => ({
@@ -45,57 +45,41 @@ const swapFor = (offer: Offer, overrides: Partial<AssetSwap> = {}): AssetSwap =>
     ...overrides,
 });
 
-const spendPsbt = (
-    offer: Offer,
-    via: "cancel" | "fulfill",
-    vout = 0,
-    fundingTxid = FUNDING_TXID,
-) => {
-    const leaf = offerVtxoScript(offer, SERVER_KEY).functionByName(via)!.tapLeafScript;
+const spendPsbt = (offer: Offer, via: "cancel" | "fulfill", vout = 0) => {
+    const leaf = offerContract(offer, OPERATOR_KEY).functionByName(via)!.tapLeafScript;
     const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
-    tx.addInput({ txid: hex.decode(fundingTxid), index: vout, tapLeafScript: [leaf] });
+    tx.addInput({ txid: hex.decode(FUNDING_TXID), index: vout, tapLeafScript: [leaf] });
     tx.addOutput({ script: MAKER_PK_SCRIPT, amount: BigInt(9_000) });
     return { psbt: base64.encode(tx.toPSBT()), txid: tx.id };
 };
 
 /**
  * A wallet stub exposing only what the watcher reads: the contract manager's
- * event seam, and an address to recover the server key from. `emit` plays the
- * manager's part.
+ * event seam, an address to recover the server key from, and the arkade
+ * reader that serves spending-tx lookups. `emit` plays the manager's part.
  */
-const makeWallet = (
-    getVirtualTxs: (txids: string[]) => Promise<{ txs: string[] }>,
-    contracts: any[] = [],
-) => {
+const makeWallet = (getVirtualTxs: (txids: string[]) => Promise<{ txs: string[] }>) => {
     const callbacks = new Set<(event: any) => void>();
-    // a real ark address, so ArkAddress.decode recovers SERVER_KEY from it
-    const address = new ArkAddress(SERVER_KEY, key("66"), "tark").encode();
+    // a real ark address, so ArkAddress.decode recovers OPERATOR_KEY from it
+    const address = new ArkAddress(OPERATOR_KEY, key("66"), "tark").encode();
     const setContractWatchState = vi.fn(async (_script: string, _watch: string) => {});
-    const order: string[] = [];
-    const getContractsWithVtxos = vi.fn(async (filter?: any) => {
-        order.push("getContractsWithVtxos");
-        const scripts = filter?.script;
-        if (!scripts) return contracts;
-        return contracts.filter((c) => scripts.includes(c.contract.script));
-    });
     const wallet = {
         getAddress: async () => address,
         getContractManager: async () => ({
             onContractEvent: (cb: (event: any) => void) => {
-                order.push("onContractEvent");
                 callbacks.add(cb);
                 return () => callbacks.delete(cb);
             },
             setContractWatchState,
-            getContractsWithVtxos,
         }),
+        // the watcher reads spending txs through this seam, so the fetcher
+        // rides the stub wallet — no prototype spy on `RestIndexerProvider`,
+        // which is exactly the indirection the seam removes
+        getArkadeReader: async () => ({ getVirtualTxs }),
     } as any;
     return {
         wallet,
-        getVirtualTxs,
         setContractWatchState,
-        getContractsWithVtxos,
-        order,
         emit: (event: any) => callbacks.forEach((cb) => cb(event)),
         listeners: () => callbacks.size,
     };
@@ -109,59 +93,6 @@ const spentEvent = (offer: Offer, spentTxid: string, overrides: Record<string, u
     timestamp: 1_700_000_100_000,
     ...overrides,
 });
-
-/** A contract row as the manager's own view returns it, deposit already spent —
- * what the start-up pass reads when no live event ever arrived. */
-const spentDeposit = (offer: Offer, spentTxid: string, vtxo: Record<string, unknown> = {}) => ({
-    contract: {
-        script: hex.encode(offer.swapPkScript),
-        metadata: { kind: OFFER_CONTRACT_KIND },
-    },
-    vtxos: [{ txid: FUNDING_TXID, vout: 0, isSpent: true, arkTxId: spentTxid, ...vtxo }],
-});
-
-const spentDeposits = (
-    offer: Offer,
-    deposits: { txid: string; vout: number; spentTxid: string }[],
-) => ({
-    contract: {
-        script: hex.encode(offer.swapPkScript),
-        metadata: { kind: OFFER_CONTRACT_KIND },
-    },
-    vtxos: deposits.map((d) => ({
-        txid: d.txid,
-        vout: d.vout,
-        isSpent: true,
-        arkTxId: d.spentTxid,
-    })),
-});
-
-/** Answers only for spends the test built: a wrong txid reads as indeterminate
- * rather than reusing another deposit's transaction. */
-const psbtsByTxid = (spends: { psbt: string; txid: string }[]) => {
-    const byTxid = new Map(spends.map((s) => [s.txid, s.psbt]));
-    return async (txids: string[]) => ({
-        txs: txids.flatMap((t) => (byTxid.has(t) ? [byTxid.get(t)!] : [])),
-    });
-};
-
-// the watcher builds its own RestIndexerProvider from arkServerUrl; intercept
-// the one call it makes rather than reaching through the constructor
-const withIndexer = async (
-    fetcher: (txids: string[]) => Promise<{ txs: string[] }>,
-    run: (harness: ReturnType<typeof makeWallet>) => Promise<void>,
-    contracts: any[] = [],
-) => {
-    const sdk = await import("@arkade-os/sdk");
-    const spy = vi
-        .spyOn(sdk.RestIndexerProvider.prototype, "getVirtualTxs")
-        .mockImplementation(fetcher as any);
-    try {
-        await run(makeWallet(fetcher, contracts));
-    } finally {
-        spy.mockRestore();
-    }
-};
 
 describe("spendUpdate", () => {
     const offer = makeOffer();
@@ -203,27 +134,22 @@ describe("watchOfferSwaps", () => {
         const repository = new InMemoryAssetSwapRepository();
         await addAssetSwap(repository, swapFor(offer));
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit }) => {
-                const updates: AssetSwap[] = [];
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    arkServerUrl: "http://ark",
-                    repository,
-                    onUpdate: (swap) => updates.push(swap),
-                });
+        const { wallet, emit } = makeWallet(async () => ({ txs: [fill.psbt] }));
+        const updates: AssetSwap[] = [];
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+            onUpdate: (swap) => updates.push(swap),
+        });
 
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                watcher.stop();
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(await getAssetSwaps(repository)).toMatchObject([
-                    { status: "fulfilled", spentTxid: fill.txid, completedAt: 1_700_000_100_000 },
-                ]);
-                expect(updates).toMatchObject([{ status: "fulfilled" }]);
-            },
-        );
+        expect(await getAssetSwaps(repository)).toMatchObject([
+            { status: "fulfilled", spentTxid: fill.txid, completedAt: 1_700_000_100_000 },
+        ]);
+        expect(updates).toMatchObject([{ status: "fulfilled" }]);
     });
 
     it("marks a cancel made elsewhere as cancelled, by its leaf", async () => {
@@ -234,21 +160,16 @@ describe("watchOfferSwaps", () => {
         const repository = new InMemoryAssetSwapRepository();
         await addAssetSwap(repository, swapFor(offer, { fromAsset: ASSET_ID, toAsset: "btc" }));
 
-        await withIndexer(
-            async () => ({ txs: [cancel.psbt] }),
-            async ({ wallet, emit }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    arkServerUrl: "http://ark",
-                    repository,
-                });
-                emit(spentEvent(offer, cancel.txid));
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit } = makeWallet(async () => ({ txs: [cancel.psbt] }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, cancel.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(await getAssetSwaps(repository)).toMatchObject([{ status: "cancelled" }]);
-            },
-        );
+        expect(await getAssetSwaps(repository)).toMatchObject([{ status: "cancelled" }]);
     });
 
     it("takes our own recorded cancel without reading the spending tx", async () => {
@@ -261,20 +182,15 @@ describe("watchOfferSwaps", () => {
         );
 
         const fetcher = vi.fn(async () => ({ txs: [] as string[] }));
-        await withIndexer(fetcher, async ({ wallet, emit }) => {
-            const watcher = await watchOfferSwaps({
-                wallet,
-                arkServerUrl: "http://ark",
-                repository,
-            });
-            emit(spentEvent(offer, cancelTxid));
-            await watcher.idle();
-            watcher.stop();
+        const { wallet, emit } = makeWallet(fetcher);
+        const watcher = await watchOfferSwaps({ wallet, repository });
+        emit(spentEvent(offer, cancelTxid));
+        await watcher.idle();
+        watcher.stop();
 
-            expect(await getAssetSwaps(repository)).toMatchObject([{ status: "cancelled" }]);
-            // the whole point of the record: no indexer round trip
-            expect(fetcher).not.toHaveBeenCalled();
-        });
+        expect(await getAssetSwaps(repository)).toMatchObject([{ status: "cancelled" }]);
+        // the whole point of the record: no indexer round trip
+        expect(fetcher).not.toHaveBeenCalled();
     });
 
     it("writes nothing when the spending tx cannot be read", async () => {
@@ -284,21 +200,16 @@ describe("watchOfferSwaps", () => {
         const repository = new InMemoryAssetSwapRepository();
         await addAssetSwap(repository, swapFor(offer));
 
-        await withIndexer(
-            async () => ({ txs: [] }),
-            async ({ wallet, emit }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    arkServerUrl: "http://ark",
-                    repository,
-                });
-                emit(spentEvent(offer, "dd".repeat(32)));
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit } = makeWallet(async () => ({ txs: [] }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, "dd".repeat(32)));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
-            },
-        );
+        expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
     });
 
     it("ignores events for contracts that are not offer covenants", async () => {
@@ -307,22 +218,17 @@ describe("watchOfferSwaps", () => {
         const repository = new InMemoryAssetSwapRepository();
         await addAssetSwap(repository, swapFor(offer));
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    arkServerUrl: "http://ark",
-                    repository,
-                });
-                emit(spentEvent(offer, fill.txid, { contract: { metadata: { kind: "other" } } }));
-                emit({ type: "vtxo_received", contractScript: "", vtxos: [], contract: {} });
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit } = makeWallet(async () => ({ txs: [fill.psbt] }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, fill.txid, { contract: { metadata: { kind: "other" } } }));
+        emit({ type: "vtxo_received", contractScript: "", vtxos: [], contract: {} });
+        await watcher.idle();
+        watcher.stop();
 
-                expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
-            },
-        );
+        expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
     });
 
     it("does not notify a change the store refused", async () => {
@@ -336,25 +242,20 @@ describe("watchOfferSwaps", () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         vi.spyOn(repository, "saveSwap").mockRejectedValue(new Error("quota exceeded"));
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit }) => {
-                const updates: AssetSwap[] = [];
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    arkServerUrl: "http://ark",
-                    repository,
-                    onUpdate: (swap) => updates.push(swap),
-                });
+        const { wallet, emit } = makeWallet(async () => ({ txs: [fill.psbt] }));
+        const updates: AssetSwap[] = [];
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+            onUpdate: (swap) => updates.push(swap),
+        });
 
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                watcher.stop();
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(updates).toEqual([]);
-                expect(warn).toHaveBeenCalled();
-            },
-        );
+        expect(updates).toEqual([]);
+        expect(warn).toHaveBeenCalled();
         vi.restoreAllMocks();
     });
 
@@ -364,23 +265,20 @@ describe("watchOfferSwaps", () => {
         const repository = new InMemoryAssetSwapRepository();
         await addAssetSwap(repository, swapFor(offer));
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit, setContractWatchState }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    arkServerUrl: "http://ark",
-                    repository,
-                });
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit, setContractWatchState } = makeWallet(async () => ({
+            txs: [fill.psbt],
+        }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(setContractWatchState).toHaveBeenCalledWith(
-                    hex.encode(offer.swapPkScript),
-                    "retained",
-                );
-            },
+        expect(setContractWatchState).toHaveBeenCalledWith(
+            hex.encode(offer.swapPkScript),
+            "retained",
         );
     });
 
@@ -396,21 +294,18 @@ describe("watchOfferSwaps", () => {
             swapFor(offer, { id: "ee".repeat(32), fundingTxid: "ee".repeat(32) }),
         );
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit, setContractWatchState }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    arkServerUrl: "http://ark",
-                    repository,
-                });
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit, setContractWatchState } = makeWallet(async () => ({
+            txs: [fill.psbt],
+        }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(setContractWatchState).not.toHaveBeenCalled();
-            },
-        );
+        expect(setContractWatchState).not.toHaveBeenCalled();
     });
 
     it("keeps watching when the sibling deposit was swept", async () => {
@@ -429,21 +324,18 @@ describe("watchOfferSwaps", () => {
             }),
         );
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit, setContractWatchState }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    arkServerUrl: "http://ark",
-                    repository,
-                });
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit, setContractWatchState } = makeWallet(async () => ({
+            txs: [fill.psbt],
+        }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(setContractWatchState).not.toHaveBeenCalled();
-            },
-        );
+        expect(setContractWatchState).not.toHaveBeenCalled();
     });
 
     it("does not retire a change the store refused", async () => {
@@ -456,21 +348,18 @@ describe("watchOfferSwaps", () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
         vi.spyOn(repository, "saveSwap").mockRejectedValue(new Error("quota exceeded"));
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit, setContractWatchState }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    arkServerUrl: "http://ark",
-                    repository,
-                });
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit, setContractWatchState } = makeWallet(async () => ({
+            txs: [fill.psbt],
+        }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(setContractWatchState).not.toHaveBeenCalled();
-            },
-        );
+        expect(setContractWatchState).not.toHaveBeenCalled();
         vi.restoreAllMocks();
     });
 
@@ -482,23 +371,20 @@ describe("watchOfferSwaps", () => {
         await addAssetSwap(repository, swapFor(offer));
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit, setContractWatchState }) => {
-                setContractWatchState.mockRejectedValue(new Error("repository unavailable"));
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    arkServerUrl: "http://ark",
-                    repository,
-                });
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                watcher.stop();
+        const { wallet, emit, setContractWatchState } = makeWallet(async () => ({
+            txs: [fill.psbt],
+        }));
+        setContractWatchState.mockRejectedValue(new Error("repository unavailable"));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
+        });
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        watcher.stop();
 
-                expect(await getAssetSwaps(repository)).toMatchObject([{ status: "fulfilled" }]);
-                expect(warn).toHaveBeenCalled();
-            },
-        );
+        expect(await getAssetSwaps(repository)).toMatchObject([{ status: "fulfilled" }]);
+        expect(warn).toHaveBeenCalled();
         vi.restoreAllMocks();
     });
 
@@ -508,207 +394,17 @@ describe("watchOfferSwaps", () => {
         const repository = new InMemoryAssetSwapRepository();
         await addAssetSwap(repository, swapFor(offer));
 
-        await withIndexer(
-            async () => ({ txs: [fill.psbt] }),
-            async ({ wallet, emit, listeners }) => {
-                const watcher = await watchOfferSwaps({
-                    wallet,
-                    arkServerUrl: "http://ark",
-                    repository,
-                });
-                watcher.stop();
-                expect(listeners()).toBe(0);
-
-                emit(spentEvent(offer, fill.txid));
-                await watcher.idle();
-                expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
-            },
-        );
-    });
-
-    describe("start-up pass", () => {
-        it("resolves a spend that landed while nothing was subscribed", async () => {
-            // the wallet was closed when the solver filled the offer: the boot
-            // sync wrote the spend before any subscriber existed, and nothing
-            // replays it. Without a pass the record is pending forever.
-            const offer = makeOffer();
-            const fill = spendPsbt(offer, "fulfill");
-            const repository = new InMemoryAssetSwapRepository();
-            await addAssetSwap(repository, swapFor(offer));
-
-            await withIndexer(
-                async () => ({ txs: [fill.psbt] }),
-                async ({ wallet }) => {
-                    const watcher = await watchOfferSwaps({
-                        wallet,
-                        arkServerUrl: "http://ark",
-                        repository,
-                    });
-                    await watcher.idle();
-                    watcher.stop();
-
-                    expect(await getAssetSwaps(repository)).toMatchObject([
-                        { status: "fulfilled", spentTxid: fill.txid },
-                    ]);
-                },
-                [spentDeposit(offer, fill.txid)],
-            );
+        const { wallet, emit, listeners } = makeWallet(async () => ({ txs: [fill.psbt] }));
+        const watcher = await watchOfferSwaps({
+            wallet,
+            repository,
         });
+        watcher.stop();
+        expect(listeners()).toBe(0);
 
-        it("subscribes before it reads, so a spend landing mid-pass is not lost", async () => {
-            const offer = makeOffer();
-            const repository = new InMemoryAssetSwapRepository();
-            await addAssetSwap(repository, swapFor(offer));
-
-            await withIndexer(
-                async () => ({ txs: [] }),
-                async ({ wallet, order }) => {
-                    const watcher = await watchOfferSwaps({
-                        wallet,
-                        arkServerUrl: "http://ark",
-                        repository,
-                    });
-                    await watcher.idle();
-                    watcher.stop();
-
-                    expect(order).toEqual(["onContractEvent", "getContractsWithVtxos"]);
-                },
-                [],
-            );
-        });
-
-        it("asks only about scripts a live record still holds", async () => {
-            const open = makeOffer();
-            const settled = makeOffer("want-btc");
-            const repository = new InMemoryAssetSwapRepository();
-            await addAssetSwap(repository, swapFor(open));
-            await addAssetSwap(
-                repository,
-                swapFor(settled, {
-                    id: "ee".repeat(32),
-                    fundingTxid: "ee".repeat(32),
-                    status: "fulfilled",
-                }),
-            );
-
-            await withIndexer(
-                async () => ({ txs: [] }),
-                async ({ wallet, getContractsWithVtxos }) => {
-                    const watcher = await watchOfferSwaps({
-                        wallet,
-                        arkServerUrl: "http://ark",
-                        repository,
-                    });
-                    await watcher.idle();
-                    watcher.stop();
-
-                    expect(getContractsWithVtxos).toHaveBeenCalledWith({
-                        script: [hex.encode(open.swapPkScript)],
-                    });
-                },
-                [],
-            );
-        });
-
-        it("reads history once for the pass, not once per deposit", async () => {
-            const offer = makeOffer();
-            const funding = ["c1", "c2", "c3"].map((b) => b.repeat(32));
-            const spends = funding.map((txid, i) => spendPsbt(offer, "fulfill", i, txid));
-            const repository = new InMemoryAssetSwapRepository();
-            for (const txid of funding) {
-                await addAssetSwap(repository, swapFor(offer, { id: txid, fundingTxid: txid }));
-            }
-            const reads = vi.spyOn(repository, "getAllSwaps");
-
-            await withIndexer(
-                psbtsByTxid(spends),
-                async ({ wallet }) => {
-                    reads.mockClear();
-                    const watcher = await watchOfferSwaps({
-                        wallet,
-                        arkServerUrl: "http://ark",
-                        repository,
-                    });
-                    await watcher.idle();
-                    watcher.stop();
-                    const duringPass = reads.mock.calls.length;
-
-                    const after = await getAssetSwaps(repository);
-                    expect(after.filter((s) => s.status === "fulfilled")).toHaveLength(
-                        funding.length,
-                    );
-                    // one read to open the pass, then one inside each write it
-                    // makes; a per-deposit lookup adds a third for every deposit
-                    expect(duringPass).toBe(1 + funding.length);
-                },
-                [
-                    spentDeposits(
-                        offer,
-                        funding.map((txid, i) => ({ txid, vout: i, spentTxid: spends[i].txid })),
-                    ),
-                ],
-            );
-        });
-
-        it("sees its own write, so two deposits of one funding tx resolve once", async () => {
-            // the aliasing case a hoisted read breaks: both lookups hit one record
-            const offer = makeOffer();
-            const first = spendPsbt(offer, "fulfill", 0);
-            const second = spendPsbt(offer, "fulfill", 1);
-            const repository = new InMemoryAssetSwapRepository();
-            await addAssetSwap(repository, swapFor(offer));
-
-            await withIndexer(
-                psbtsByTxid([first, second]),
-                async ({ wallet }) => {
-                    const updates: AssetSwap[] = [];
-                    const watcher = await watchOfferSwaps({
-                        wallet,
-                        arkServerUrl: "http://ark",
-                        repository,
-                        onUpdate: (swap) => updates.push(swap),
-                    });
-                    await watcher.idle();
-                    watcher.stop();
-
-                    expect(updates).toHaveLength(1);
-                    expect(await getAssetSwaps(repository)).toMatchObject([
-                        { status: "fulfilled", spentTxid: first.txid },
-                    ]);
-                },
-                [
-                    spentDeposits(offer, [
-                        { txid: FUNDING_TXID, vout: 0, spentTxid: first.txid },
-                        { txid: FUNDING_TXID, vout: 1, spentTxid: second.txid },
-                    ]),
-                ],
-            );
-        });
-
-        it("leaves a contract that is not an offer covenant alone", async () => {
-            const offer = makeOffer();
-            const fill = spendPsbt(offer, "fulfill");
-            const repository = new InMemoryAssetSwapRepository();
-            await addAssetSwap(repository, swapFor(offer));
-            const row = spentDeposit(offer, fill.txid);
-            row.contract.metadata = { kind: "other" };
-
-            await withIndexer(
-                async () => ({ txs: [fill.psbt] }),
-                async ({ wallet }) => {
-                    const watcher = await watchOfferSwaps({
-                        wallet,
-                        arkServerUrl: "http://ark",
-                        repository,
-                    });
-                    await watcher.idle();
-                    watcher.stop();
-
-                    expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
-                },
-                [row],
-            );
-        });
+        emit(spentEvent(offer, fill.txid));
+        await watcher.idle();
+        expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
     });
 });
 

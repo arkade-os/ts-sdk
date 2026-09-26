@@ -178,7 +178,7 @@ describe("Indexer provider", () => {
     });
 
     it("should subscribe to scripts", { timeout: 60000 }, async () => {
-        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        vi.spyOn(console, "error").mockImplementation(() => {});
         const start = Date.now();
         const fundAmount = 1000;
         const delayMilliseconds = 2100;
@@ -340,7 +340,7 @@ describe("Indexer provider", () => {
 
         // then alice sends a vtxo to herself via an offchain tx
         const aliceOffchainAddress = await alice.wallet.getAddress();
-        const arkTxId = await alice.wallet.sendBitcoin({
+        const arkTxId = await alice.wallet.send({
             address: aliceOffchainAddress,
             amount: fundAmount,
         });

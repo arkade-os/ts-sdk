@@ -1,6 +1,6 @@
 import { ExtendedCoin, IWallet } from ".";
 import { toOffchainInputFeeParams, type NormalizedExtendedVirtualCoin } from "./vtxo";
-import { ArkInfo, FeeInfo, SettlementEvent } from "../providers/ark";
+import { ArkadeInfo, FeeInfo, SettlementEvent } from "../providers/ark";
 import { Estimator } from "../arkfee";
 import { Address, OutScript } from "@scure/btc-signer";
 import { hex } from "@scure/base";
@@ -156,7 +156,7 @@ function filterOffboardInputs(
 /** The server's per-output ceiling, `undefined` on a wallet with no provider
  *  (mocks, watch-only). `-1` is the server's own "no limit" sentinel. */
 async function serverVtxoMaxAmount(wallet: IWallet): Promise<bigint | undefined> {
-    const provider = (wallet as { arkProvider?: { getInfo(): Promise<ArkInfo> } }).arkProvider;
+    const provider = (wallet as { arkProvider?: { getInfo(): Promise<ArkadeInfo> } }).arkProvider;
     if (!provider) return undefined;
     return (await provider.getInfo()).vtxoMaxAmount;
 }

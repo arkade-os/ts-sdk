@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { Script } from "@scure/btc-signer";
-import { Wallet, SingleKey, type Recipient } from "../src";
+import { Wallet, SingleKey, RestArkProvider, type Recipient } from "../src";
 import { VtxoScript } from "../src/script/base";
 import { ArkAddress } from "../src/script/address";
 import {
-    assertRecipientArkAddress,
+    assertRecipientArkadeAddress,
     validateRecipients,
-    type RecipientAddressContext,
+    type RecipientArkadeAddressContext,
 } from "../src/wallet/utils";
 import { jsonResponse } from "./helpers/response";
 
@@ -32,7 +32,7 @@ const encodeAddr = (serverPubKey: Uint8Array, hrp: string) =>
 
 const NOW_SECONDS = Math.floor(Date.now() / 1000);
 
-function makeContext(deprecated?: Map<string, bigint>): RecipientAddressContext {
+function makeContext(deprecated?: Map<string, bigint>): RecipientArkadeAddressContext {
     return {
         hrp: "tark",
         signerSet: {
@@ -42,25 +42,25 @@ function makeContext(deprecated?: Map<string, bigint>): RecipientAddressContext 
     };
 }
 
-describe("assertRecipientArkAddress", () => {
+describe("assertRecipientArkadeAddress", () => {
     it("rejects an address with another network's prefix", () => {
         const encoded = encodeAddr(SERVER_XONLY, "ark");
         expect(() =>
-            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), makeContext()),
+            assertRecipientArkadeAddress(encoded, ArkAddress.decode(encoded), makeContext()),
         ).toThrow(/expected prefix "tark", got "ark"/);
     });
 
     it("rejects an address embedding an unknown operator signer key", () => {
         const encoded = encodeAddr(FOREIGN_XONLY, "tark");
         expect(() =>
-            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), makeContext()),
+            assertRecipientArkadeAddress(encoded, ArkAddress.decode(encoded), makeContext()),
         ).toThrow(/unknown operator signer key/);
     });
 
     it("accepts an address embedding the current signer key", () => {
         const encoded = encodeAddr(SERVER_XONLY, "tark");
         expect(() =>
-            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), makeContext()),
+            assertRecipientArkadeAddress(encoded, ArkAddress.decode(encoded), makeContext()),
         ).not.toThrow();
     });
 
@@ -68,7 +68,11 @@ describe("assertRecipientArkAddress", () => {
         const encoded = encodeAddr(DEPRECATED_XONLY, "tark");
         const deprecated = new Map([[hex.encode(DEPRECATED_XONLY), BigInt(NOW_SECONDS + 100_000)]]);
         expect(() =>
-            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), makeContext(deprecated)),
+            assertRecipientArkadeAddress(
+                encoded,
+                ArkAddress.decode(encoded),
+                makeContext(deprecated),
+            ),
         ).not.toThrow();
     });
 
@@ -76,7 +80,11 @@ describe("assertRecipientArkAddress", () => {
         const encoded = encodeAddr(DEPRECATED_XONLY, "tark");
         const deprecated = new Map([[hex.encode(DEPRECATED_XONLY), 0n]]);
         expect(() =>
-            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), makeContext(deprecated)),
+            assertRecipientArkadeAddress(
+                encoded,
+                ArkAddress.decode(encoded),
+                makeContext(deprecated),
+            ),
         ).not.toThrow();
     });
 
@@ -84,7 +92,11 @@ describe("assertRecipientArkAddress", () => {
         const encoded = encodeAddr(DEPRECATED_XONLY, "tark");
         const deprecated = new Map([[hex.encode(DEPRECATED_XONLY), 1n]]);
         expect(() =>
-            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), makeContext(deprecated)),
+            assertRecipientArkadeAddress(
+                encoded,
+                ArkAddress.decode(encoded),
+                makeContext(deprecated),
+            ),
         ).toThrow(/past its rotation cutoff/);
     });
 });
@@ -231,7 +243,7 @@ describe("Wallet recipient address binding", () => {
     it("send rejects an address from another network before spending", async () => {
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
         });
         const fetchCallsAfterCreate = mockFetch.mock.calls.length;
 
@@ -241,16 +253,15 @@ describe("Wallet recipient address binding", () => {
         expect(mockFetch.mock.calls.length).toBe(fetchCallsAfterCreate);
     });
 
-    it("sendBitcoin with selected vtxos rejects a foreign-operator address", async () => {
+    it("send with selected vtxos rejects a foreign-operator address", async () => {
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
         });
 
         await expect(
-            wallet.sendBitcoin({
-                address: encodeAddr(FOREIGN_XONLY, "tark"),
-                amount: 2000,
+            wallet.send({
+                recipients: [{ address: encodeAddr(FOREIGN_XONLY, "tark"), amount: 2000 }],
                 selectedVtxos: [{ value: 100_000 } as never],
             }),
         ).rejects.toThrow(/unknown operator signer key/);
@@ -270,24 +281,24 @@ describe("Wallet recipient address binding", () => {
 
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
         });
 
         const context = (
-            wallet as unknown as { recipientAddressContext(): RecipientAddressContext }
+            wallet as unknown as { recipientAddressContext(): RecipientArkadeAddressContext }
         ).recipientAddressContext();
         expect(context.signerSet.deprecated.get(hex.encode(DEPRECATED_XONLY))).toBe(cutoff);
 
         const encoded = encodeAddr(DEPRECATED_XONLY, "tark");
         expect(() =>
-            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), context),
+            assertRecipientArkadeAddress(encoded, ArkAddress.decode(encoded), context),
         ).not.toThrow();
     });
 
     it("settle rejects a foreign offchain output with the binding error", async () => {
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
         });
 
         await expect(
@@ -333,7 +344,10 @@ describe("send with caller-selected vtxos", () => {
         ({ value, ...(assets ? { assets } : {}) }) as never;
 
     const makeWallet = () =>
-        Wallet.create({ identity: mockIdentity, arkServerUrl: "http://localhost:7070" });
+        Wallet.create({
+            identity: mockIdentity,
+            arkProvider: new RestArkProvider("http://localhost:7070"),
+        });
 
     beforeEach(() => {
         mockFetch.mockReset();
@@ -468,7 +482,10 @@ describe("send argument dispatch", () => {
     };
 
     const makeWallet = () =>
-        Wallet.create({ identity: mockIdentity, arkServerUrl: "http://localhost:7070" });
+        Wallet.create({
+            identity: mockIdentity,
+            arkProvider: new RestArkProvider("http://localhost:7070"),
+        });
 
     beforeEach(() => {
         mockFetch.mockReset();

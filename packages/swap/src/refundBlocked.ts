@@ -14,6 +14,7 @@ import {
     type IWallet,
 } from "@arkade-os/sdk";
 
+/** @deprecated Recovery is internal to the drive; use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export type RefundBlockedReason =
     /** The record carries no `signingDescriptor`. */
     | "no-secrets"

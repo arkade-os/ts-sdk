@@ -15,7 +15,9 @@
 
 import {
     InMemoryContractRepository,
+    EsploraProvider,
     InMemoryWalletRepository,
+    RestArkProvider,
     SingleKey,
     Wallet,
     Ramps,
@@ -58,8 +60,8 @@ async function main() {
     // In-memory wallet
     const bobWallet = await Wallet.create({
         identity: bob,
-        arkServerUrl: "http://localhost:7070",
-        esploraUrl: "http://localhost:3000/api",
+        arkProvider: new RestArkProvider("http://localhost:7070"),
+        onchainProvider: new EsploraProvider("http://localhost:3000/api"),
         storage: {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
@@ -74,8 +76,8 @@ async function main() {
 
     const aliceWallet = await Wallet.create({
         identity: alice,
-        arkServerUrl: "http://localhost:7070",
-        esploraUrl: "http://localhost:3000/api",
+        arkProvider: new RestArkProvider("http://localhost:7070"),
+        onchainProvider: new EsploraProvider("http://localhost:3000/api"),
         storage: {
             walletRepository: new SQLiteWalletRepository(executor),
             contractRepository: new SQLiteContractRepository(executor),

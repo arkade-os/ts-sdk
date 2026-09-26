@@ -371,7 +371,12 @@ describe("discoverMarkets caching", () => {
     it("follows the network default when registryUrl is omitted, caching under the resolved URL", async () => {
         const resolved = registryIndexUrl("mutinynet");
         const fetchImpl = jsonFetch([registryIndex()]);
-        const markets = await discoverMarkets({ network: "mutinynet", repository, fetchImpl });
+        const markets = await discoverMarkets({
+            network: "mutinynet",
+            repository,
+            fetchImpl,
+            registryUrl: undefined,
+        });
         expect(markets).toHaveLength(1);
         expect(fetchImpl.mock.calls[0][0]).toBe(resolved);
         expect((await repository.getCachedMarkets("mutinynet", resolved))?.markets).toHaveLength(1);
@@ -379,7 +384,12 @@ describe("discoverMarkets caching", () => {
         // a second omitted-URL call serves that cache instead of refetching
         const again = jsonFetch([registryIndex()]);
         expect(
-            await discoverMarkets({ network: "mutinynet", repository, fetchImpl: again }),
+            await discoverMarkets({
+                network: "mutinynet",
+                repository,
+                fetchImpl: again,
+                registryUrl: undefined,
+            }),
         ).toHaveLength(1);
         expect(again).not.toHaveBeenCalled();
     });
@@ -407,6 +417,7 @@ describe("discoverMarkets caching", () => {
             network: "not-a-network" as Network,
             repository,
             fetchImpl,
+            registryUrl: undefined,
         });
         expect(markets).toEqual([]);
         expect(fetchImpl).not.toHaveBeenCalled();

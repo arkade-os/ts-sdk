@@ -1,8 +1,9 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     asset,
+    CSVMultisigTapscript,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     ProviderUnavailableError,
@@ -18,62 +19,60 @@ import { createOffer, decodeOffer, OFFER_CONTRACT_KIND, OFFER_CONTRACT_LABEL } f
 import { requestArkadeSwap, type RfqTransport } from "../src/rfq";
 
 // the covenant derivation, Arkade.connect, ArkadeContract and register() are
-// all real here — only the network seam (the three Rest* providers) and the
-// contract manager are stubbed, so a writer that omits or misspells the escrow
-// marker fails this test rather than passing on a hand-built fixture
+// all real here — only the wallet's view of the server and the contract manager
+// are stubbed, so a writer that omits or misspells the escrow marker fails this
+// test rather than passing on a hand-built fixture
 const makerKey = hex.decode("3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1");
 const makerAddress =
     "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65wq0wnmwgr4nglzx999xqx7xahllp4gfh6638wkrjt5tl3k7c8vy6frzj2";
 
-const state = vi.hoisted(() => ({
+// ── The server both wallets below answer for ────────────────────────────────
+//
+// `createOffer` reads its info off the wallet, so this is the single source of
+// truth for the covenant: the fake wallet hands it back directly and the real
+// `ReadonlyWallet` further down resolves it through a stubbed `arkProvider`.
+// One fixture, so the two derive against the same server.
+
+const SIGNER_PUBKEY = "02" + "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
+
+// derived from the signer key rather than pinned, the way arkd advertises it:
+// a checkpoint committing to some other key would describe a different server
+const checkpointTapscript = hex.encode(
+    CSVMultisigTapscript.encode({
+        timelock: { type: "blocks", value: 10n },
+        pubkeys: [hex.decode(SIGNER_PUBKEY.slice(2))],
+    }).script,
+);
+
+const arkInfo = () => ({
+    boardingExitDelay: 144n,
+    checkpointTapscript,
+    deprecatedSigners: [],
+    digest: "d",
+    dust: 1000n,
+    fees: { intentFee: {}, txFeeRate: "0" },
+    forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+    forfeitPubkey: SIGNER_PUBKEY,
+    network: "regtest",
+    serviceStatus: {},
+    sessionDuration: 3600n,
+    signerPubkey: SIGNER_PUBKEY,
+    unilateralExitDelay: 4096n,
+    utxoMaxAmount: -1n,
+    utxoMinAmount: 0n,
+    version: "1",
+    vtxoMaxAmount: -1n,
+    vtxoMinAmount: 0n,
+});
+
+const state = {
     created: [] as Record<string, unknown>[],
     watched: [] as [string, string][],
     createContract: undefined as ((params: Record<string, unknown>) => unknown) | undefined,
     // what the server advertises as its unilateral exit delay; createOffer
     // builds the offer's exit closure from it unless the caller opts out
     unilateralExitDelay: BigInt(4096),
-}));
-
-vi.mock("@arkade-os/sdk", async (importOriginal) => {
-    const mod = await importOriginal<typeof import("@arkade-os/sdk")>();
-    // the factory is hoisted above this file's imports, so re-import inside it
-    const { hex } = await import("@scure/base");
-    const checkpointTapscript = hex.encode(
-        mod.CSVMultisigTapscript.encode({
-            timelock: { type: "blocks", value: 10n },
-            pubkeys: [
-                hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"),
-            ],
-        }).script,
-    );
-    return {
-        ...mod,
-        RestArkProvider: class {
-            async getInfo() {
-                return {
-                    signerPubkey:
-                        "02" + "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
-                    checkpointTapscript,
-                    network: "regtest",
-                    unilateralExitDelay: state.unilateralExitDelay,
-                };
-            }
-        },
-        RestIndexerProvider: class {
-            async getVtxos() {
-                return { vtxos: [] };
-            }
-        },
-        RestEmulatorProvider: class {
-            async getInfo() {
-                return {
-                    signerPubkey:
-                        "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
-                };
-            }
-        },
-    };
-});
+};
 
 const contractManager = {
     createContract: async (params: Record<string, unknown>) => {
@@ -89,6 +88,7 @@ const contractManager = {
 const wallet = {
     identity: { xOnlyPublicKey: async () => makerKey },
     getAddress: async () => makerAddress,
+    getArkadeInfo: async () => ({ ...arkInfo(), unilateralExitDelay: state.unilateralExitDelay }),
     getContractManager: async () => contractManager,
 } as unknown as IWallet;
 
@@ -96,7 +96,7 @@ const wallet = {
 const emulatorPubkey = "02466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27";
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
 const create = (maker: IWallet = wallet) =>
-    createOffer(maker, "http://ark", {
+    createOffer(maker, {
         wantAmount: BigInt(50_000),
         wantAsset: testAsset,
         emulatorPubkey,
@@ -116,7 +116,7 @@ describe("offer contract registration", () => {
     // check passes by construction and from_amount is whatever the solver asked.
     it("refuses an exact-out quote whose from_amount exceeds the caller's cap", async () => {
         const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
-        const expected = await createOffer(wallet, "http://ark", {
+        const expected = await createOffer(wallet, {
             wantAmount: BigInt(50_000),
             wantAsset: testAsset,
             emulatorPubkey,
@@ -125,8 +125,8 @@ describe("offer contract registration", () => {
         const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
         const gouging: RfqTransport = {
             requestQuote: vi.fn(async () => ({
-                v: 1,
-                type: "rfq_quote",
+                v: 1 as const,
+                type: "rfq_quote" as const,
                 rfq_id: rfqId,
                 pair,
                 // 1000x a fair deposit, while to_amount echoes the request.
@@ -152,21 +152,21 @@ describe("offer contract registration", () => {
             now: 1_800_000_000,
         };
         // Unbounded, the caller funds it: the named side matches, so nothing objects.
+        await expect(requestArkadeSwap(wallet, gouging, request)).resolves.toMatchObject({
+            fundAmount: 700_000n,
+        });
         await expect(
-            requestArkadeSwap(wallet, "http://ark", gouging, request),
-        ).resolves.toMatchObject({ fundAmount: 700_000n });
-        await expect(
-            requestArkadeSwap(wallet, "http://ark", gouging, { ...request, maxFromAmount: 1000n }),
+            requestArkadeSwap(wallet, gouging, { ...request, maxFromAmount: 1000n }),
         ).rejects.toMatchObject({ reason: "quote_amount_rejected" });
         await expect(
-            requestArkadeSwap(wallet, "http://ark", gouging, {
+            requestArkadeSwap(wallet, gouging, {
                 ...request,
                 maxFromAmount: 700_000n,
             }),
         ).resolves.toMatchObject({ fundAmount: 700_000n });
         // The mirror bound, for exact-IN where the solver picks the payout.
         await expect(
-            requestArkadeSwap(wallet, "http://ark", gouging, {
+            requestArkadeSwap(wallet, gouging, {
                 ...request,
                 amountSide: "from",
                 amount: 700_000n,
@@ -177,7 +177,7 @@ describe("offer contract registration", () => {
 
     it("requests an asset-to-asset RFQ and derives a want-asset-only offer", async () => {
         const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
-        const expected = await createOffer(wallet, "http://ark", {
+        const expected = await createOffer(wallet, {
             wantAmount: BigInt(50_000),
             wantAsset: testAsset,
             emulatorPubkey,
@@ -186,8 +186,8 @@ describe("offer contract registration", () => {
         const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
         const transport: RfqTransport = {
             requestQuote: vi.fn(async () => ({
-                v: 1,
-                type: "rfq_quote",
+                v: 1 as const,
+                type: "rfq_quote" as const,
                 rfq_id: rfqId,
                 pair,
                 from_amount: "700",
@@ -203,7 +203,7 @@ describe("offer contract registration", () => {
             close: vi.fn(async () => undefined),
         };
 
-        const swap = await requestArkadeSwap(wallet, "http://ark", transport, {
+        const swap = await requestArkadeSwap(wallet, transport, {
             offerAsset,
             wantAsset: testAsset,
             amount: 700n,
@@ -230,8 +230,8 @@ describe("offer contract registration", () => {
         const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
         const quoteWith = (carrier?: string): RfqTransport => ({
             requestQuote: vi.fn(async () => ({
-                v: 1,
-                type: "rfq_quote",
+                v: 1 as const,
+                type: "rfq_quote" as const,
                 rfq_id: rfqId,
                 pair,
                 from_amount: "700",
@@ -248,7 +248,7 @@ describe("offer contract registration", () => {
             close: vi.fn(async () => undefined),
         });
         const request = (transport: RfqTransport) =>
-            requestArkadeSwap(wallet, "http://ark", transport, {
+            requestArkadeSwap(wallet, transport, {
                 offerAsset,
                 wantAsset: testAsset,
                 amount: 700n,
@@ -343,7 +343,7 @@ describe("a new offer's unilateral exit", () => {
     });
 
     it("takes an explicit delay over the server's", async () => {
-        const created = await createOffer(wallet, "http://ark", {
+        const created = await createOffer(wallet, {
             wantAmount: BigInt(50_000),
             wantAsset: testAsset,
             emulatorPubkey,
@@ -357,7 +357,7 @@ describe("a new offer's unilateral exit", () => {
 
     it("is omitted on noExit, which also moves the swap address", async () => {
         const withExit = await create();
-        const without = await createOffer(wallet, "http://ark", {
+        const without = await createOffer(wallet, {
             wantAmount: BigInt(50_000),
             wantAsset: testAsset,
             emulatorPubkey,
@@ -369,7 +369,7 @@ describe("a new offer's unilateral exit", () => {
     });
 
     const withExitDelay = (exitDelay: RelativeTimelock) =>
-        createOffer(wallet, "http://ark", {
+        createOffer(wallet, {
             wantAmount: BigInt(50_000),
             wantAsset: testAsset,
             emulatorPubkey,
@@ -414,30 +414,6 @@ describe("a new offer's unilateral exit", () => {
 
 // ── Re-offering a retired script, against a real contract manager ────────────
 
-const SIGNER_PUBKEY = "02" + "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
-
-const arkInfo = () => ({
-    boardingExitDelay: 144n,
-    checkpointTapscript:
-        "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
-    deprecatedSigners: [],
-    digest: "d",
-    dust: 1000n,
-    fees: { intentFee: {}, txFeeRate: "0" },
-    forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
-    forfeitPubkey: SIGNER_PUBKEY,
-    network: "regtest",
-    serviceStatus: {},
-    sessionDuration: 3600n,
-    signerPubkey: SIGNER_PUBKEY,
-    unilateralExitDelay: 4096n,
-    utxoMaxAmount: -1n,
-    utxoMinAmount: 0n,
-    version: "1",
-    vtxoMaxAmount: -1n,
-    vtxoMinAmount: 0n,
-});
-
 /** Offline: every indexer read fails retryably, so the row still persists. */
 const offlineIndexer = () =>
     ({
@@ -452,7 +428,6 @@ const offlineIndexer = () =>
 const realWallet = async () => {
     const contractRepository = new InMemoryContractRepository();
     const wallet = await ReadonlyWallet.create({
-        arkServerUrl: "http://localhost:7070",
         arkProvider: { getInfo: async () => arkInfo() } as Partial<ArkProvider> as ArkProvider,
         indexerProvider: offlineIndexer(),
         onchainProvider: {

@@ -190,7 +190,7 @@ describe("Common", () => {
                 const vtxo = virtualCoins[0];
                 expect(vtxo.txid).toBeDefined();
                 expect(vtxo.value).toBe(fundAmount);
-                expect(vtxo.virtualStatus.state).toBe("preconfirmed");
+                expect(vtxo.isPreconfirmed).toBe(true);
 
                 // Check Alice's balance after funding
                 const aliceBalanceAfterFunding = await alice.wallet.getBalance();
@@ -562,7 +562,9 @@ describe("Common", () => {
                 expect(exits.length).toBeGreaterThan(0);
 
                 const txStatus = await alice.wallet.onchainProvider.getTxStatus(unrolled.txid);
-                expect(txStatus.confirmed).toBe(true);
+                // `expect` does not narrow, and the unconfirmed arm carries no
+                // block fields — assert through the guard so it does.
+                if (!txStatus.confirmed) throw new Error("unroll tx is not confirmed");
 
                 // Keep this aligned with availableExitPath() selection logic,
                 // which currently returns the first mature exit path.
@@ -658,7 +660,9 @@ describe("Common", () => {
                 expect(exits.length).toBeGreaterThan(0);
 
                 const txStatus = await alice.wallet.onchainProvider.getTxStatus(unrolled.txid);
-                expect(txStatus.confirmed).toBe(true);
+                // `expect` does not narrow, and the unconfirmed arm carries no
+                // block fields — assert through the guard so it does.
+                if (!txStatus.confirmed) throw new Error("unroll tx is not confirmed");
 
                 // Recomputing maturity here can disagree with completeUnroll's and mine nothing.
                 await waitFor(
@@ -756,7 +760,8 @@ describe("Common", () => {
                 expect(vtxos).toHaveLength(1);
                 const vtxo = vtxos[0];
                 expect(vtxo.txid).toBeDefined();
-                expect(vtxo.virtualStatus.state).toBe("settled");
+                expect(vtxo.isPreconfirmed).toBe(false);
+                expect(vtxo.isSwept).toBe(false);
 
                 // generate 25 blocks to make the vtxo swept (expiry set to 20 blocks)
                 execCommand(`node regtest/regtest.mjs mine 25`);
@@ -766,7 +771,7 @@ describe("Common", () => {
                     const v = await alice.wallet.getVtxos({
                         withRecoverable: true,
                     });
-                    return v.some((c) => c.txid === vtxo.txid && c.virtualStatus.state === "swept");
+                    return v.some((c) => c.txid === vtxo.txid && c.isSwept);
                 });
 
                 // get vtxos including the recoverable ones
@@ -778,7 +783,7 @@ describe("Common", () => {
                 expect(vtxosAfterSweep).toHaveLength(1);
                 const vtxoAfterSweep = vtxosAfterSweep[0];
                 expect(vtxoAfterSweep.txid).toBe(vtxo.txid);
-                expect(vtxoAfterSweep.virtualStatus.state).toBe("swept");
+                expect(vtxoAfterSweep.isSwept).toBe(true);
                 expect(vtxoAfterSweep.spentBy).toBe("");
 
                 const settleTxid = await alice.wallet.settle({
@@ -813,7 +818,7 @@ describe("Common", () => {
                     expect(newVtxos).toHaveLength(1);
                     expect(newVtxos[0].spentBy).toBeFalsy();
                     expect(newVtxos[0].value).toBe(fundAmount);
-                    expect(newVtxos[0].virtualStatus.state).toBe("preconfirmed");
+                    expect(newVtxos[0].isPreconfirmed).toBe(true);
                     const age = now.getTime() - newVtxos[0].createdAt.getTime();
                     expect(age).toBeLessThanOrEqual(4000);
                     notified = true;
@@ -889,7 +894,7 @@ describe("Common", () => {
                 expect(newVtxos).toHaveLength(1);
                 expect(newVtxos[0].spentBy).toBeFalsy();
                 expect(newVtxos[0].value).toBe(fundAmount);
-                expect(newVtxos[0].virtualStatus.state).toBe("preconfirmed");
+                expect(newVtxos[0].isPreconfirmed).toBe(true);
                 const age = now.getTime() - newVtxos[0].createdAt.getTime();
                 expect(age).toBeLessThanOrEqual(4000);
             });
@@ -1183,7 +1188,9 @@ describe("Delegate", () => {
 
         const delegateManager = await alice.wallet.getDelegateManager();
         await delegateManager?.delegate(
-            [vtxoBeforeDelegate],
+            // `delegate` takes ContractVtxo; the wallet's own read does not carry
+            // `contractScript`, so name it the way the worker handler does.
+            [{ ...vtxoBeforeDelegate, contractScript: vtxoBeforeDelegate.script }],
             await alice.wallet.getAddress(),
             new Date(Date.now() + 1000),
         );
@@ -1218,7 +1225,7 @@ describe("Delegate Lifecycle", () => {
         // Phase 1 — No delegate
         const wallet1 = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1236,7 +1243,7 @@ describe("Delegate Lifecycle", () => {
         // Phase 2 — Add delegate
         const wallet2 = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),
@@ -1306,7 +1313,7 @@ describe("Delegate Lifecycle", () => {
         // Phase 3 — Remove delegate
         const wallet3 = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1387,7 +1394,7 @@ describe("Cross-contract spending", () => {
         // Step 1 — No delegate: receive 1000 to default address
         const wallet1 = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1405,7 +1412,7 @@ describe("Cross-contract spending", () => {
         // Step 2 — Enable delegate: receive 1000 to delegate address
         const wallet2 = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),
@@ -1511,7 +1518,7 @@ describe("Cross-contract spending", () => {
         // Step 1 — No delegate: receive 1000 to default address
         const wallet1 = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1523,7 +1530,7 @@ describe("Cross-contract spending", () => {
         // Step 2 — Enable delegate: receive 1000 to delegate address
         const wallet2 = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),

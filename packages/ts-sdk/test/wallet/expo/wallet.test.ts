@@ -5,11 +5,15 @@ import { CONTRACT_POLL_TASK_TYPE } from "../../../src/worker/expo/processors";
 const walletCreateMock = vi.fn();
 const runTasksMock = vi.fn();
 
-vi.mock("../../../src/wallet/wallet", () => ({
-    Wallet: {
-        create: walletCreateMock,
-    },
-}));
+vi.mock("../../../src/wallet/wallet", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../../src/wallet/wallet")>();
+    return {
+        ...actual,
+        Wallet: {
+            create: walletCreateMock,
+        },
+    };
+});
 
 vi.mock("../../../src/worker/expo/taskRunner", async () => {
     const actual = await vi.importActual<any>("../../../src/worker/expo/taskRunner");
@@ -23,7 +27,7 @@ const loadExpoWallet = async () => import("../../../src/wallet/expo/wallet");
 
 const createWalletStub = () => ({
     identity: { kind: "test-identity" },
-    arkProvider: { name: "ark-provider" },
+    arkProvider: { name: "ark-provider", serverUrl: "https://ark.example" },
     indexerProvider: { name: "indexer-provider" },
     walletRepository: { name: "wallet-repo" },
     contractRepository: { name: "contract-repo" },
@@ -36,6 +40,9 @@ const createWalletStub = () => ({
     },
     getAddress: vi.fn().mockResolvedValue("arkade1-address"),
     getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
+    getArkadeInfo: vi.fn().mockResolvedValue({ network: "regtest", dust: 1n }),
+    getArkadeReader: vi.fn().mockResolvedValue({ id: "reader" }),
+    getArkadeBroadcaster: vi.fn().mockResolvedValue({ id: "broadcaster" }),
     getBalance: vi.fn().mockResolvedValue({ offchain: 1, onchain: 2 }),
     getVtxos: vi.fn().mockResolvedValue([{ txid: "v1" }]),
     getBoardingUtxos: vi.fn().mockResolvedValue([{ txid: "u1" }]),
@@ -45,7 +52,7 @@ const createWalletStub = () => ({
         .fn()
         .mockReturnValue({ mode: "degraded", source: "cache", provider: "arkade", reason: "down" }),
     getDelegateManager: vi.fn().mockResolvedValue({ id: "delegate" }),
-    sendBitcoin: vi.fn().mockResolvedValue("send-txid"),
+    send: vi.fn().mockResolvedValue("send-txid"),
     settle: vi.fn().mockResolvedValue("settle-txid"),
     dispose: vi.fn().mockResolvedValue(undefined),
 });
@@ -164,6 +171,14 @@ describe("ExpoWallet", () => {
 
         await expect(wallet.getAddress()).resolves.toBe("arkade1-address");
         await expect(wallet.getBoardingAddress()).resolves.toBe("bc1-boarding");
+        await expect(wallet.getArkadeInfo()).resolves.toEqual({
+            network: "regtest",
+            dust: 1n,
+        });
+        // distinct sentinels, so a reader wired to the broadcaster (or vice
+        // versa) fails here rather than in a consumer
+        await expect(wallet.getArkadeReader()).resolves.toEqual({ id: "reader" });
+        await expect(wallet.getArkadeBroadcaster()).resolves.toEqual({ id: "broadcaster" });
         await expect(wallet.getBalance()).resolves.toEqual({
             offchain: 1,
             onchain: 2,
@@ -183,7 +198,7 @@ describe("ExpoWallet", () => {
         await expect(wallet.getDelegateManager()).resolves.toEqual({
             id: "delegate",
         });
-        await expect(wallet.sendBitcoin({ amount: 1 } as any)).resolves.toBe("send-txid");
+        await expect(wallet.send({ address: "addr", amount: 1 } as any)).resolves.toBe("send-txid");
         await expect(wallet.settle()).resolves.toBe("settle-txid");
 
         expect(walletStub.getAddress).toHaveBeenCalledTimes(1);
@@ -195,7 +210,7 @@ describe("ExpoWallet", () => {
         expect(walletStub.getContractManager).toHaveBeenCalledTimes(1);
         expect(walletStub.getProviderConnectionState).toHaveBeenCalledTimes(1);
         expect(walletStub.getDelegateManager).toHaveBeenCalledTimes(1);
-        expect(walletStub.sendBitcoin).toHaveBeenCalledWith({ amount: 1 });
+        expect(walletStub.send).toHaveBeenCalledWith({ address: "addr", amount: 1 });
         expect(walletStub.settle).toHaveBeenCalledTimes(1);
 
         await wallet.dispose();

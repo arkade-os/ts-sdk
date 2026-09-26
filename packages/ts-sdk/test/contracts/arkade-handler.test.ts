@@ -231,7 +231,7 @@ describe("ArkadeContractHandler", () => {
         const baseContext: PathContext = {
             collaborative: true,
             currentTime: Date.now(),
-            walletPubKey: TEST_PUB_KEY_HEX,
+            walletDescriptor: `tr(${TEST_PUB_KEY_HEX})`,
         };
 
         function makeContract(

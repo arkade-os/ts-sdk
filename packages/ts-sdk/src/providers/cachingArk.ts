@@ -1,7 +1,7 @@
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { Intent } from "../intent";
 import {
-    ArkInfo,
+    ArkadeInfo,
     ArkProvider,
     PendingTx,
     SettlementEvent,
@@ -12,7 +12,7 @@ import {
 const DEFAULT_TTL_MS = 60_000;
 
 type ServerInfoEventSource = Partial<{
-    onServerInfoChanged(listener: (info: ArkInfo) => void): () => void;
+    onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void;
 }>;
 
 /**
@@ -22,9 +22,9 @@ type ServerInfoEventSource = Partial<{
  * lives in `arkInfoSnapshot`.
  */
 export class CachingArkProvider implements ArkProvider {
-    private cached?: ArkInfo;
+    private cached?: ArkadeInfo;
     private expiresAt = 0;
-    private inflight?: Promise<ArkInfo>;
+    private inflight?: Promise<ArkadeInfo>;
     /** Bumped on every event-driven cache write; see {@link getInfo}. */
     private generation = 0;
     private readonly unsubscribe: () => void;
@@ -51,7 +51,7 @@ export class CachingArkProvider implements ArkProvider {
         return typeof url === "string" ? url : undefined;
     }
 
-    async getInfo(): Promise<ArkInfo> {
+    async getInfo(): Promise<ArkadeInfo> {
         if (this.cached && Date.now() < this.expiresAt) return this.cached;
         if (!this.inflight) {
             // A rotation event can land while this request is in flight, making
@@ -118,7 +118,7 @@ export class CachingArkProvider implements ArkProvider {
         return this.inner.getPendingTxs(intent);
     }
 
-    onServerInfoChanged(listener: (info: ArkInfo) => void): () => void {
+    onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void {
         return (this.inner as ServerInfoEventSource).onServerInfoChanged?.(listener) ?? (() => {});
     }
 }

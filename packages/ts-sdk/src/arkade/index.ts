@@ -79,4 +79,5 @@ export {
     type CallableFunctions,
     type ContractFunctions,
     type ArkadeConnectOptions,
+    type ArkadeServerProvider,
 } from "./contract";

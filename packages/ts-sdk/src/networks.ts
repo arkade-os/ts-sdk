@@ -28,6 +28,21 @@ export const getNetwork = (network: NetworkName): Network => {
     return found;
 };
 
+/**
+ * The {@link Network} an Arkade server's info names.
+ *
+ * `ArkadeInfo.network` is a plain string on the wire, so every consumer that
+ * wanted a `Network` from it was writing the same unchecked narrowing. This
+ * owns it once: {@link getNetwork} fails closed on a name it does not know, so
+ * an unrecognized server network throws here rather than silently resolving to
+ * mainnet parameters downstream.
+ *
+ * Structurally typed rather than importing `ArkadeInfo`, which would make the
+ * network table depend on the provider layer.
+ */
+export const networkFromArkadeInfo = (info: { network: string }): Network =>
+    getNetwork(info.network as NetworkName);
+
 export const networks = {
     bitcoin: withArkPrefix(NETWORK, "ark", "bitcoin"),
     testnet: withArkPrefix(TEST_NETWORK, "tark", "testnet"),

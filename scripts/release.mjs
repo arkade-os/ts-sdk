@@ -24,35 +24,20 @@ const PACKAGES = [
         order: 1,
     },
     {
-        key: "boltz-swap",
-        name: "@arkade-os/boltz-swap",
-        dir: path.join(ROOT_DIR, "packages/boltz-swap"),
-        pkgJson: path.join(ROOT_DIR, "packages/boltz-swap/package.json"),
-        tagPrefix: "@arkade-os/boltz-swap/",
-        order: 2,
-        dependsOnSdk: true,
-        bumpFlag: "--boltz-bump",
-        // Released only when named outright (`release.mjs boltz-swap <bump>`):
-        // out of `all`, and not dragged along by an SDK release either. The cost
-        // is that its published build keeps pinning whatever SDK it shipped with.
-        excludeFromAll: true,
-    },
-    {
         key: "swap",
         name: "@arkade-os/swap",
         dir: path.join(ROOT_DIR, "packages/swap"),
         pkgJson: path.join(ROOT_DIR, "packages/swap/package.json"),
         tagPrefix: "@arkade-os/swap/",
-        order: 3,
+        order: 2,
         dependsOnSdk: true,
         bumpFlag: "--swap-bump",
     },
 ];
 
 const PACKAGE_BY_KEY = Object.fromEntries(PACKAGES.map((p) => [p.key, p]));
-const ACTIVE_PACKAGES = PACKAGES.filter((p) => !p.excludedFromRelease);
-const ALL_KEYS = ACTIVE_PACKAGES.map((p) => p.key);
-const DEPENDENT_PACKAGES = ACTIVE_PACKAGES.filter((p) => p.dependsOnSdk);
+const ALL_KEYS = PACKAGES.map((p) => p.key);
+const DEPENDENT_PACKAGES = PACKAGES.filter((p) => p.dependsOnSdk);
 const PACKAGE_BY_BUMP_FLAG = Object.fromEntries(
     DEPENDENT_PACKAGES.map((p) => [p.bumpFlag, p.key]),
 );
@@ -331,10 +316,6 @@ function parseArgs(argv) {
 
 function validateTarget(target) {
     if (!VALID_TARGETS.has(target)) {
-        const excluded = PACKAGES.find((p) => p.key === target && p.excludedFromRelease);
-        if (excluded) {
-            die(`${excluded.name} is excluded from the release cycle until further notice.`);
-        }
         die(`Invalid target: ${target}. Use ${[...ALL_KEYS, "all"].join(", ")}.`);
     }
 }
@@ -724,8 +705,14 @@ function release(args) {
             console.log(`Set ${pkg.name} to ${plan.get(key).next}`);
         }
 
-        console.log("Building packages...");
-        run("pnpm", ["-r", "build"]);
+        if (!selectedKeys.includes("sdk")) {
+            // Dependents resolve @arkade-os/sdk to its built dist via the workspace
+            // link, so it must be fresh even when SDK isn't part of this release.
+            // When SDK *is* selected, its own publish below builds it (via `prepack`)
+            // before any dependent's turn, since packages publish in dependency order.
+            console.log("Building @arkade-os/sdk (workspace dependency)...");
+            run("pnpm", ["run", "build"], { cwd: PACKAGE_BY_KEY.sdk.dir });
+        }
 
         const manifestPaths = selectedKeys.map((k) => PACKAGE_BY_KEY[k].pkgJson);
         run("git", ["add", ...manifestPaths]);
