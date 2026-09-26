@@ -1785,9 +1785,15 @@ export class ContractManager implements IContractManager {
             }
         }
         const vtxos = await this.getVtxosForContracts(contracts);
+        const vtxosByScript = new Map<string, ExtendedContractVtxo[]>();
+        for (const vtxo of vtxos) {
+            const group = vtxosByScript.get(vtxo.contractScript) ?? [];
+            group.push(vtxo);
+            vtxosByScript.set(vtxo.contractScript, group);
+        }
         return contracts.map((contract) => ({
             contract,
-            vtxos: vtxos.filter((vtxo) => vtxo.contractScript === contract.script),
+            vtxos: vtxosByScript.get(contract.script) ?? [],
         }));
     }
 
