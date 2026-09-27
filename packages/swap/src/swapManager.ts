@@ -108,6 +108,7 @@ import { lockupContractParams, registerLockupContract } from "./lockupContract";
 import {
     assertSameSwap,
     createRfqSwapRecord,
+    RFQ_SWAP_RETENTION_SECONDS,
     rebuildRfqSwap,
     rfqSwapOriginOf,
     shouldRetainRfqSwap,
@@ -572,6 +573,7 @@ export interface RfqSwapRecordStore {
     getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined>;
     getAllRfqSwaps(): Promise<RfqSwapRecord[]>;
     removeRfqSwap(rfqId: string): Promise<void>;
+    pruneRetiredRfqSwaps?(cutoff: number): Promise<string[]>;
 }
 
 /**
@@ -742,6 +744,7 @@ const notify = <T extends (...args: never[]) => void>(
  *   submitted something.
  */
 export class RfqSwapManager {
+    private static readonly POLL_CONCURRENCY = 16;
     private readonly deps: RfqSwapManagerDeps;
     private readonly config: Required<Omit<RfqSwapManagerConfig, "events">>;
     private callbacks: AvailableRfqSwapManagerCallbacks | null = null;
@@ -910,11 +913,11 @@ export class RfqSwapManager {
         const repository = this.requireRepository("restoreFromRepository");
         const params = options.params ?? this.paramsFromContracts();
 
-        // One read for both halves: retention and the rebuild want the same
-        // records, and asking twice would let a write between the two reads
-        // hand the rebuild a record retention had already dropped.
+        const fastPruned = repository.pruneRetiredRfqSwaps
+            ? await this.pruneStored(repository)
+            : undefined;
         const records = await repository.getAllRfqSwaps();
-        const pruned = await this.dropRetired(repository, records);
+        const pruned = fastPruned ?? (await this.dropRetired(repository, records));
         const retired = new Set(pruned);
 
         const restored: RfqSwap[] = [];
@@ -937,16 +940,8 @@ export class RfqSwapManager {
             restored.push(swap);
         }
 
-        // One concurrent sweep rather than a poll per swap as they are added:
-        // a restore is the case with the most swaps and the most already past a
-        // deadline, and serialising it would make the last one wait out all the
-        // others' network round trips.
         if (this.running) {
-            await Promise.allSettled(
-                restored
-                    .filter((swap) => this.monitored.has(swap.rfqId))
-                    .map((swap) => this.pollSwap(swap)),
-            );
+            await this.pollMany(restored.filter((swap) => this.monitored.has(swap.rfqId)));
         }
         return { restored, failed, pruned };
     }
@@ -968,7 +963,17 @@ export class RfqSwapManager {
     async pruneRetiredSwaps(): Promise<string[]> {
         const repository = this.deps.repository;
         if (!repository) return [];
-        return this.dropRetired(repository, await repository.getAllRfqSwaps());
+        return repository.pruneRetiredRfqSwaps
+            ? this.pruneStored(repository)
+            : this.dropRetired(repository, await repository.getAllRfqSwaps());
+    }
+
+    private async pruneStored(repository: RfqSwapRecordStore): Promise<string[]> {
+        const dropped = await repository.pruneRetiredRfqSwaps!(
+            this.config.now() - RFQ_SWAP_RETENTION_SECONDS,
+        );
+        for (const id of dropped) this.forgetRetired(id);
+        return dropped;
     }
 
     private async dropRetired(
@@ -980,25 +985,17 @@ export class RfqSwapManager {
         for (const record of records) {
             if (shouldRetainRfqSwap(record, now)) continue;
             await repository.removeRfqSwap(record.rfqId);
-            // The in-memory copies go with it. `finished` is only there so a
-            // late `waitForSwapCompletion` can answer, and answering from a
-            // record the store has just dropped is the one thing retention is
-            // meant to stop growing.
-            this.finished.delete(record.rfqId);
-            // The origin outlives the record for a swap still being monitored.
-            // A stored record can be terminal and retention-aged while its swap
-            // is still tracked: `save` counts a pass as persisted only when
-            // BOTH sinks took it, so a canonical write that landed alongside a
-            // `saveSwap` that keeps rejecting leaves the swap dirty and
-            // monitored with a terminal record ageing behind it. Dropping the
-            // origin there would leave the next pass unable to recreate the
-            // record it just deleted — `originOrThrow` throwing
-            // `RfqSwapOriginRequired` every poll, for a swap the manager is
-            // otherwise driving correctly.
-            if (!this.monitored.has(record.rfqId)) this.origins.delete(record.rfqId);
+            this.forgetRetired(record.rfqId);
             dropped.push(record.rfqId);
         }
         return dropped;
+    }
+
+    private forgetRetired(rfqId: string): void {
+        // A retained in-memory answer cannot outlive its record.
+        this.finished.delete(rfqId);
+        // A monitored swap may still need its origin to rewrite a failed secondary save.
+        if (!this.monitored.has(rfqId)) this.origins.delete(rfqId);
     }
 
     private requireRepository(method: string): RfqSwapRecordStore {
@@ -1208,7 +1205,17 @@ export class RfqSwapManager {
      * no-op for any swap already being worked on.
      */
     async poll(): Promise<void> {
-        await Promise.allSettled([...this.monitored.values()].map((swap) => this.pollSwap(swap)));
+        await this.pollMany([...this.monitored.values()]);
+    }
+
+    private async pollMany(swaps: readonly RfqSwap[]): Promise<void> {
+        for (let i = 0; i < swaps.length; i += RfqSwapManager.POLL_CONCURRENCY) {
+            await Promise.allSettled(
+                swaps
+                    .slice(i, i + RfqSwapManager.POLL_CONCURRENCY)
+                    .map((swap) => this.pollSwap(swap)),
+            );
+        }
     }
 
     /**

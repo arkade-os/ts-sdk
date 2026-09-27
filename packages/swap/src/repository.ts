@@ -1,6 +1,7 @@
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
+import { isRfqSwapTerminal } from "./rfqSwapState";
 
 /** A registry discovery result held for reuse. Refetchable — unlike a swap
  * record, losing it costs one network round trip — but it must survive a cold
@@ -69,6 +70,8 @@ export interface AssetSwapRepository extends AsyncDisposable {
     getAllRfqSwaps(): Promise<RfqSwapRecord[]>;
     /** Drop one, once it is past retention — see `shouldRetainRfqSwap`. */
     removeRfqSwap(rfqId: string): Promise<void>;
+    /** Optional backend fast path; cutoff is inclusive Unix seconds. */
+    pruneRetiredRfqSwaps?(cutoff: number): Promise<string[]>;
 
     /** Sent txids already checked for offer packets (see restore.ts). */
     getScannedTxids(): Promise<Set<string>>;
@@ -110,6 +113,16 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
 
     async removeRfqSwap(rfqId: string): Promise<void> {
         this.rfqSwaps.delete(rfqId);
+    }
+
+    async pruneRetiredRfqSwaps(cutoff: number): Promise<string[]> {
+        const removed: string[] = [];
+        for (const [id, record] of this.rfqSwaps) {
+            if (!isRfqSwapTerminal(record.state) || record.updatedAt > cutoff) continue;
+            this.rfqSwaps.delete(id);
+            removed.push(id);
+        }
+        return removed;
     }
 
     async getScannedTxids(): Promise<Set<string>> {

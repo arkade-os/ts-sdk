@@ -332,6 +332,37 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
         expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId)).toEqual(["r2"]);
     });
 
+    it("prunes only terminal RFQ records at or before the retention cutoff", async () => {
+        await using repository = create();
+        await repository.saveRfqSwap({
+            ...rfqRecord("old-settled"),
+            state: "settled",
+            updatedAt: 99,
+        });
+        await repository.saveRfqSwap({
+            ...rfqRecord("edge-refunded"),
+            state: "refunded",
+            updatedAt: 100,
+        });
+        await repository.saveRfqSwap({ ...rfqRecord("old-failed"), state: "failed", updatedAt: 1 });
+        await repository.saveRfqSwap({
+            ...rfqRecord("live"),
+            state: "needs_counterparty",
+            updatedAt: 1,
+        });
+        await repository.saveRfqSwap({ ...rfqRecord("recent"), state: "settled", updatedAt: 101 });
+
+        expect((await repository.pruneRetiredRfqSwaps!(100)).sort()).toEqual([
+            "edge-refunded",
+            "old-failed",
+            "old-settled",
+        ]);
+        expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId).sort()).toEqual([
+            "live",
+            "recent",
+        ]);
+    });
+
     it("keeps rfq swaps and asset swaps in separate stores", async () => {
         await using repository = create();
         await repository.saveSwap(swap("a"));
@@ -363,7 +394,7 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
  * version *increase* — so the bump is what makes the new store exist at all for
  * an existing user, and the existing stores must come through untouched.
  */
-describe("IndexedDB v1 -> v2 migration", () => {
+describe("IndexedDB migrations", () => {
     it("adds the rfqSwaps store while keeping swaps, scan state and markets", async () => {
         const dbName = `migrate-${Math.random()}`;
         const markets = { markets: [], fetchedAt: 42 };
@@ -392,8 +423,7 @@ describe("IndexedDB v1 -> v2 migration", () => {
             open.onerror = () => reject(open.error);
         });
 
-        // Open at v2 through the repository: onupgradeneeded must add only the
-        // new store and leave the existing three alone.
+        // The repository upgrade adds the RFQ store and its retention index.
         await using repository = new IndexedDbAssetSwapRepository(dbName);
         expect((await repository.getAllSwaps()).map((s) => s.id)).toEqual(["legacy"]);
         expect(await repository.getScannedTxids()).toEqual(new Set(["t1"]));
@@ -403,6 +433,65 @@ describe("IndexedDB v1 -> v2 migration", () => {
         // and the new store is usable immediately, not only after a reopen
         await repository.saveRfqSwap(rfqRecord("r1"));
         expect(await repository.getAllRfqSwaps()).toHaveLength(1);
+    });
+
+    it("adds the retention index to an existing v2 RFQ store", async () => {
+        const dbName = `retention-upgrade-${Math.random()}`;
+        await new Promise<void>((resolve, reject) => {
+            const open = indexedDB.open(dbName, 2);
+            open.onupgradeneeded = () => {
+                const db = open.result;
+                db.createObjectStore("swaps", { keyPath: "id" });
+                db.createObjectStore("rfqSwaps", { keyPath: "rfqId" });
+                db.createObjectStore("scannedTxids");
+                db.createObjectStore("markets");
+            };
+            open.onsuccess = () => {
+                const db = open.result;
+                const tx = db.transaction(["rfqSwaps"], "readwrite");
+                tx.objectStore("rfqSwaps").put({
+                    ...rfqRecord("old"),
+                    state: "settled",
+                    updatedAt: 1,
+                });
+                tx.oncomplete = () => {
+                    db.close();
+                    resolve();
+                };
+                tx.onerror = () => reject(tx.error);
+            };
+            open.onerror = () => reject(open.error);
+        });
+
+        await using repository = new IndexedDbAssetSwapRepository(dbName);
+        expect(await repository.pruneRetiredRfqSwaps(100)).toEqual(["old"]);
+        expect(await repository.getAllRfqSwaps()).toEqual([]);
+    });
+
+    it("prunes across IndexedDB transaction chunks", async () => {
+        const dbName = `retention-chunks-${Math.random()}`;
+        await using repository = new IndexedDbAssetSwapRepository(dbName);
+        await repository.getAllRfqSwaps();
+        await new Promise<void>((resolve, reject) => {
+            const open = indexedDB.open(dbName, 3);
+            open.onsuccess = () => {
+                const db = open.result;
+                const tx = db.transaction(["rfqSwaps"], "readwrite");
+                const store = tx.objectStore("rfqSwaps");
+                for (let i = 0; i < 1001; i++) {
+                    store.put({ ...rfqRecord(`old-${i}`), state: "settled", updatedAt: 1 });
+                }
+                tx.oncomplete = () => {
+                    db.close();
+                    resolve();
+                };
+                tx.onerror = () => reject(tx.error);
+            };
+            open.onerror = () => reject(open.error);
+        });
+
+        expect(await repository.pruneRetiredRfqSwaps(100)).toHaveLength(1001);
+        expect(await repository.getAllRfqSwaps()).toEqual([]);
     });
 });
 

@@ -6,6 +6,7 @@ import {
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
+import { RFQ_SWAP_TERMINAL_STATES } from "../../rfqSwapState";
 
 const SWAPS = "ArkadeAssetSwap";
 const RFQ_SWAPS = "ArkadeRfqSwap";
@@ -92,6 +93,19 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
                 this.realm.objects<{ rfqId: string }>(RFQ_SWAPS).filtered("rfqId == $0", rfqId),
             );
         });
+    }
+
+    async pruneRetiredRfqSwaps(cutoff: number): Promise<string[]> {
+        const matches = this.realm
+            .objects<{ rfqId: string }>(RFQ_SWAPS)
+            .filtered(
+                "(state == $0 OR state == $1 OR state == $2) AND updatedAt <= $3",
+                ...RFQ_SWAP_TERMINAL_STATES,
+                cutoff,
+            );
+        const removed = [...matches].map((row) => row.rfqId);
+        if (removed.length) this.realm.write(() => this.realm.delete(matches));
+        return removed;
     }
 
     async getScannedTxids(): Promise<Set<string>> {
