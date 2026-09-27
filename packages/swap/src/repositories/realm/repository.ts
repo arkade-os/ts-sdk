@@ -96,13 +96,11 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
     }
 
     async pruneRetiredRfqSwaps(cutoff: number): Promise<string[]> {
+        const states = RFQ_SWAP_TERMINAL_STATES;
+        const statePredicate = states.map((_, index) => `state == $${index}`).join(" OR ");
         const matches = this.realm
             .objects<{ rfqId: string }>(RFQ_SWAPS)
-            .filtered(
-                "(state == $0 OR state == $1 OR state == $2) AND updatedAt <= $3",
-                ...RFQ_SWAP_TERMINAL_STATES,
-                cutoff,
-            );
+            .filtered(`(${statePredicate}) AND updatedAt <= $${states.length}`, ...states, cutoff);
         const removed = [...matches].map((row) => row.rfqId);
         if (removed.length) this.realm.write(() => this.realm.delete(matches));
         return removed;
