@@ -717,8 +717,9 @@ in `failed`. Terminal history remains in the repository; `waitForSwapCompletion(
 terminal record on demand. `prunedCount` reports expired records removed, while `pruned` is empty
 on the bounded path; pass `{ includePrunedIds: true }` if those IDs are needed. Pass
 `{ includeTerminal: true }` for the previous all-record restore result, which can use substantial
-memory. Built-in backends page active states by `rfqId`; custom
-repositories without `getRfqSwapsPage` retain the all-record fallback. A record that cannot be
+memory. Built-in backends page active states by `rfqId`; custom repositories need both
+`getRfqSwapsPage` and a prune method to use bounded restore. Other custom repositories retain the
+all-record fallback. A record that cannot be
 rebuilt — no contract row (`LockupContractMissing`), mismatched covenant params, or missing corridor
 handler — stays in the store and never strands the others. Retention removes terminal records older
 than `RFQ_SWAP_RETENTION_SECONDS`, never `needs_counterparty`. It runs first;

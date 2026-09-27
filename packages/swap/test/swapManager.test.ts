@@ -3485,6 +3485,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             const receiveId = "b2".repeat(32);
             const onchainId = "c3".repeat(32);
             const failedId = "d4".repeat(32);
+            const settledReceiveId = "e5".repeat(32);
             const store = fakeStore([
                 storedSend({
                     state: "refunded",
@@ -3497,6 +3498,13 @@ describe("RfqSwapManager — manager-owned persistence", () => {
                     state: "refunded",
                     updatedAt: SAFE_NOW,
                     profile: { claimArkTxid: "bb".repeat(32) },
+                }),
+                storedSend({
+                    rfqId: settledReceiveId,
+                    kind: "lightning_receive",
+                    state: "settled",
+                    updatedAt: SAFE_NOW,
+                    profile: { claimArkTxid: "ee".repeat(32) },
                 }),
                 storedSend({
                     rfqId: onchainId,
@@ -3521,6 +3529,10 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             await expect(m.waitForSwapCompletion(receiveId)).resolves.toEqual({
                 state: "refunded",
                 txid: undefined,
+            });
+            await expect(m.waitForSwapCompletion(settledReceiveId)).resolves.toEqual({
+                state: "settled",
+                txid: "ee".repeat(32),
             });
             await expect(m.waitForSwapCompletion(onchainId)).resolves.toEqual({
                 state: "settled",

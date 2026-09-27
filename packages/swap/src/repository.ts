@@ -78,7 +78,8 @@ export interface AssetSwapRepository extends AsyncDisposable {
     getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined>;
     /** Every stored RFQ swap record, in no particular order. Unbounded. */
     getAllRfqSwaps(): Promise<RfqSwapRecord[]>;
-    /** Optional keyset page, ordered by rfqId within one state. `afterId` is exclusive; limit 1–500. */
+    /** Optional keyset page, ordered by rfqId within one state. `afterId` is exclusive; limit 1–500.
+     * Bounded restore also requires one of the optional prune methods below. */
     getRfqSwapsPage?(
         state: RfqSwapState,
         afterId: string | undefined,
@@ -88,7 +89,7 @@ export interface AssetSwapRepository extends AsyncDisposable {
     removeRfqSwap(rfqId: string): Promise<void>;
     /** Optional backend fast path; cutoff is inclusive Unix seconds. */
     pruneRetiredRfqSwaps?(cutoff: number): Promise<string[]>;
-    /** Count-only retention for bounded restore; unlike the ID-returning method, this does not allocate per row. */
+    /** Count-only retention for bounded restore; implementations may allocate bounded batches, not all removed IDs. */
     pruneRetiredRfqSwapsCount?(cutoff: number): Promise<number>;
 
     /** Sent txids already checked for offer packets (see restore.ts). */

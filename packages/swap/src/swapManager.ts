@@ -648,7 +648,7 @@ export interface RfqRestoreResult {
     /** Removed IDs when requested or when the backend lacks count-only pruning. */
     pruned: string[];
     /** Total removed: terminal and past `RFQ_SWAP_RETENTION_SECONDS`. */
-    prunedCount: number;
+    prunedCount?: number;
 }
 
 /** The observation seams. None is owned by the manager, and none holds keys —
@@ -829,6 +829,7 @@ export class RfqSwapManager {
     private unsubscribeContracts: (() => void) | null = null;
     /** Recent terminal swaps; older durable outcomes are read from the record store on demand. */
     private readonly finished = new Map<string, RfqSwap>();
+    /** Explicit removals stay suppressed for this manager lifetime; normal completions never enter this set. */
     private readonly removed = new Set<string>();
     private readonly waiters = new Map<
         string,
