@@ -103,6 +103,19 @@ describe("Realm migration: runArkRealmMigrations", () => {
         ).toEqual(["live", null, null, null]);
     });
 
+    it("reads Realm fields directly when managed properties are not enumerable", () => {
+        const row = Object.create(null) as Record<string, unknown>;
+        for (const [key, value] of Object.entries({
+            script: "script-a",
+            isSpent: true,
+            virtualStatusJson: '{"state":"spent"}',
+        })) {
+            Object.defineProperty(row, key, { value, writable: true, configurable: true });
+        }
+        runArkRealmMigrations(makeRealm(3, [row]), makeRealm(4, [row]));
+        expect(row.activeScript).toBeNull();
+    });
+
     // A Realm handle exposing both `.schema` and multi-type `.objects`, needed
     // for the v3 → v4 ArkVirtualTx.hex → psbt rename backfill.
     function makeRealmWithVirtualTxs(

@@ -253,7 +253,14 @@ export function runArkRealmMigrations(oldRealm: any, newRealm: any): void {
             newVtxo.activeScript = null;
             continue;
         }
-        newVtxo.activeScript = activeScriptForVtxo({ ...newVtxo, virtualStatus }) ?? null;
+        newVtxo.activeScript =
+            activeScriptForVtxo({
+                script: newVtxo.script,
+                isSpent: newVtxo.isSpent,
+                spentBy: newVtxo.spentBy,
+                settledBy: newVtxo.settledBy,
+                virtualStatus,
+            }) ?? null;
     }
 
     // v3 → v4: ArkVirtualTx.hex was renamed to psbt (both hold the same
