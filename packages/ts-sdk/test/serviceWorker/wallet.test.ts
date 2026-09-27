@@ -224,6 +224,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
                 payload: {
                     vtxos,
                     appliedContractScope: { watchedOnly: true, genericallySpendableOnly: true },
+                    appliedRequireSynced: true,
                 },
             };
         });
@@ -232,9 +233,21 @@ describe("ServiceWorkerReadonlyWallet", () => {
 
         const wallet = createWallet(serviceWorker as any, messageTag);
         await expect(
-            wallet.getSpendableVtxos({ watchedOnly: true, genericallySpendableOnly: true }),
+            wallet.getSpendableVtxos({
+                watchedOnly: true,
+                genericallySpendableOnly: true,
+                maxSyncAgeMs: 60_000,
+                requireSynced: true,
+            }),
         ).resolves.toMatchObject([{ txid: "tx" }]);
-        expect(filters).toEqual([{ watchedOnly: true, genericallySpendableOnly: true }]);
+        expect(filters).toEqual([
+            {
+                watchedOnly: true,
+                genericallySpendableOnly: true,
+                maxSyncAgeMs: 60_000,
+                requireSynced: true,
+            },
+        ]);
     });
 
     it("rejects scoped reads from a worker that ignores contract scopes", async () => {
@@ -256,6 +269,9 @@ describe("ServiceWorkerReadonlyWallet", () => {
         );
         await expect(wallet.getSpendableVtxos({ genericallySpendableOnly: true })).rejects.toThrow(
             "does not support the requested contract scope",
+        );
+        await expect(wallet.getSpendableVtxos({ requireSynced: true })).rejects.toThrow(
+            "does not support the requested freshness check",
         );
     });
 
@@ -370,7 +386,22 @@ describe("ServiceWorkerReadonlyWallet", () => {
             } as any),
         ).resolves.toEqual(contract);
         await expect(manager.getContracts()).resolves.toEqual(contracts);
-        await expect(manager.getContractsWithVtxos({} as any)).resolves.toEqual(contractsWithVtxos);
+        await expect(
+            manager.getContractsWithVtxos({} as any, undefined, {
+                maxSyncAgeMs: 60_000,
+                nonterminalOnly: true,
+            }),
+        ).resolves.toEqual(contractsWithVtxos);
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "GET_CONTRACTS_WITH_VTXOS",
+                payload: {
+                    filter: {},
+                    maxSyncAgeMs: 60_000,
+                    nonterminalOnly: true,
+                },
+            }),
+        );
         await expect(manager.updateContract("c1", { label: "new" })).resolves.toEqual(contract);
         await expect(manager.deleteContract("c1")).resolves.toBeUndefined();
         await expect(manager.getSpendablePaths({ contractScript: "c1" } as any)).resolves.toEqual(

@@ -1191,6 +1191,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             ) {
                 throw new Error("Service worker does not support the requested contract scope");
             }
+            if (filter?.requireSynced && payload.appliedRequireSynced !== true) {
+                throw new Error("Service worker does not support the requested freshness check");
+            }
             return payload.vtxos.map(normalizeVtxo);
         } catch (error) {
             throw new Error(`Failed to get spendable vtxos: ${error}`);
@@ -1303,12 +1306,20 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
-            async getContractsWithVtxos(filter: GetContractsFilter): Promise<ContractWithVtxos[]> {
+            async getContractsWithVtxos(
+                filter?: GetContractsFilter,
+                _pageSize?: number,
+                options?: { maxSyncAgeMs?: number; nonterminalOnly?: boolean },
+            ): Promise<ContractWithVtxos[]> {
                 const message: RequestGetContractsWithVtxos = {
                     type: "GET_CONTRACTS_WITH_VTXOS",
                     id: getRandomId(),
                     tag: messageTag,
-                    payload: { filter },
+                    payload: {
+                        filter,
+                        maxSyncAgeMs: options?.maxSyncAgeMs,
+                        nonterminalOnly: options?.nonterminalOnly,
+                    },
                 };
                 try {
                     const response = await sendContractMessage(message);

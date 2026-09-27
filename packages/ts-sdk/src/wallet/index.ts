@@ -1028,6 +1028,12 @@ export type GetSpendableVtxosFilter = GetVtxosFilter & {
     watchedOnly?: boolean;
     /** Query only contracts whose handler permits generic spending. */
     genericallySpendableOnly?: boolean;
+
+    /** Maximum age of a successful sync reused by this read, in milliseconds. Default: 0. */
+    maxSyncAgeMs?: number;
+
+    /** Reject repository fallback when the selected contracts could not be synced. */
+    requireSynced?: boolean;
 };
 
 /**

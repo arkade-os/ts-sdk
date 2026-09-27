@@ -111,6 +111,12 @@ export class SQLiteWalletRepository implements WalletRepository {
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_script ON ${this.tables.vtxos} (script)`,
         );
         await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_live_script ON ${this.tables.vtxos} (script)
+             WHERE (is_spent IS NULL OR is_spent = 0)
+               AND (spent_by IS NULL OR spent_by = '')
+               AND (settled_by IS NULL OR settled_by = '')`,
+        );
+        await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}utxos_address ON ${this.tables.utxos} (address)`,
         );
         await this.db.run(
@@ -314,6 +320,29 @@ export class SQLiteWalletRepository implements WalletRepository {
             [script],
         );
         return rows.map(vtxoRowToDomain);
+    }
+
+    async getVtxosForScripts(
+        scripts: string[],
+        options?: { nonterminalOnly?: boolean },
+    ): Promise<ExtendedVirtualCoin[]> {
+        if (scripts.length === 0) return [];
+        await this.ensureInit();
+        const unique = [...new Set(scripts)];
+        const result: ExtendedVirtualCoin[] = [];
+        for (let i = 0; i < unique.length; i += 500) {
+            const chunk = unique.slice(i, i + 500);
+            const rows = await this.db.all<VtxoRow>(
+                `SELECT * FROM ${this.tables.vtxos} WHERE script IN (${chunk.map(() => "?").join(",")})${
+                    options?.nonterminalOnly
+                        ? " AND (is_spent IS NULL OR is_spent = 0) AND (spent_by IS NULL OR spent_by = '') AND (settled_by IS NULL OR settled_by = '')"
+                        : ""
+                }`,
+                chunk,
+            );
+            result.push(...rows.map(vtxoRowToDomain));
+        }
+        return result;
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {

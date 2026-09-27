@@ -257,9 +257,8 @@ export type VtxoScriptQuery = Omit<GetVtxosOptions, "scripts" | "outpoints" | "p
  *
  * @remarks
  * Scripts travel in the query string, so a wallet-derived list must be chunked
- * at {@link SCRIPT_QUERY_CHUNK_SIZE} or the request `414`s. Chunks run
- * sequentially — that pacing is the point, since this path can now run wide —
- * and each is paged to exhaustion, so callers cannot silently receive page one.
+ * at {@link SCRIPT_QUERY_CHUNK_SIZE} or the request `414`s. At most four chunks
+ * run together; each is paged to exhaustion.
  */
 export async function getAllNormalizedVtxos(
     provider: Pick<IndexerProvider, "getVtxos">,
@@ -269,8 +268,13 @@ export async function getAllNormalizedVtxos(
     const { pageSize = DEFAULT_PAGE_SIZE, ...filters } = opts;
     const all: NormalizedVirtualCoin[] = [];
 
+    const chunks: string[][] = [];
     for (let i = 0; i < scripts.length; i += SCRIPT_QUERY_CHUNK_SIZE) {
-        const chunk = scripts.slice(i, i + SCRIPT_QUERY_CHUNK_SIZE);
+        chunks.push(scripts.slice(i, i + SCRIPT_QUERY_CHUNK_SIZE));
+    }
+
+    const fetchChunk = async (chunk: string[]): Promise<NormalizedVirtualCoin[]> => {
+        const result: NormalizedVirtualCoin[] = [];
         let pageIndex = 0;
         let hasMore = true;
 
@@ -281,7 +285,7 @@ export async function getAllNormalizedVtxos(
                 pageIndex,
                 pageSize,
             });
-            all.push(...vtxos);
+            result.push(...vtxos);
 
             // A short page means the last one: providers that omit `page`
             // entirely are treated as unpaged.
@@ -289,6 +293,12 @@ export async function getAllNormalizedVtxos(
             pageIndex++;
             if (hasMore) await new Promise((r) => setTimeout(r, 500));
         }
+        return result;
+    };
+
+    for (let i = 0; i < chunks.length; i += 4) {
+        const batch = await Promise.all(chunks.slice(i, i + 4).map(fetchChunk));
+        for (const result of batch) all.push(...result);
     }
 
     return all;

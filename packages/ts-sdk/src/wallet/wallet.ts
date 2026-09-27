@@ -1296,7 +1296,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async getSpendableVtxos(
         filter?: GetSpendableVtxosFilter,
     ): Promise<NormalizedExtendedVirtualCoin[]> {
-        const snapshot = await this.contractSnapshot(filter);
+        const snapshot = await this.contractSnapshot(filter, {
+            nonterminalOnly: !filter?.withUnrolled,
+        });
         const vtxos = filterSnapshotVtxos(snapshot, filter, this._pendingSpendOutpoints);
         const { gated, pendingRecovery } = this.spendabilityView(snapshot);
         const selectable = vtxos.filter(
@@ -1420,20 +1422,36 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     protected async contractSnapshot(
         filter?: GetSpendableVtxosFilter,
+        options?: { nonterminalOnly?: boolean },
     ): Promise<ContractWithVtxos[]> {
         const contractManager = await this.getContractManager();
         const scope: GetContractsFilter | undefined = filter?.watchedOnly
             ? { watch: ["watched", "awaiting-funds"] }
             : undefined;
-        if (!filter?.genericallySpendableOnly) {
-            return contractManager.getContractsWithVtxos(scope);
+        let query = scope;
+        if (filter?.genericallySpendableOnly) {
+            const scripts = (await contractManager.getContracts(scope))
+                .filter(isContractGenericallySpendable)
+                .map((contract) => contract.script);
+            if (scripts.length === 0) return [];
+            query = { ...scope, script: scripts };
         }
-        const scripts = (await contractManager.getContracts(scope))
-            .filter(isContractGenericallySpendable)
-            .map((contract) => contract.script);
-        return scripts.length
-            ? contractManager.getContractsWithVtxos({ ...scope, script: scripts })
-            : [];
+        const snapshot = await contractManager.getContractsWithVtxos(query, undefined, {
+            maxSyncAgeMs: filter?.maxSyncAgeMs,
+            nonterminalOnly: options?.nonterminalOnly,
+        });
+        if (filter?.requireSynced) {
+            const state = contractManager.getSyncState();
+            if (
+                state.mode !== "online" ||
+                (filter.maxSyncAgeMs &&
+                    (state.lastSyncedAt === undefined ||
+                        Date.now() - state.lastSyncedAt > filter.maxSyncAgeMs))
+            ) {
+                throw new Error("Spendable VTXO read requires an online contract sync");
+            }
+        }
+        return snapshot;
     }
 
     /**

@@ -368,6 +368,32 @@ describe("ContractManager", () => {
             [],
         ]);
 
+        const bulk = vi.fn(async (scripts: string[]) =>
+            [
+                row(first.script, "aa"),
+                row(first.script, "bb"),
+                { ...row(first.script, "ee"), isSpent: true },
+                row(second.script, "cc"),
+                row(second.script, "dd"),
+                row("5120" + "ff".repeat(32), "ee"),
+            ].filter((vtxo) => scripts.includes(vtxo.script!)),
+        );
+        (
+            walletRepo as InMemoryWalletRepository & { getVtxosForScripts: typeof bulk }
+        ).getVtxosForScripts = bulk;
+        const perScript = vi.spyOn(walletRepo, "getVtxosForScript");
+        const batched = await localManager.getContractsWithVtxos();
+        expect(bulk).toHaveBeenCalledTimes(1);
+        expect(perScript).not.toHaveBeenCalled();
+        expect(batched.map(({ vtxos }) => vtxos.length)).toEqual([3, 2, 0]);
+        const nonterminal = await localManager.getContractsWithVtxos(undefined, undefined, {
+            nonterminalOnly: true,
+        });
+        expect(nonterminal.map(({ vtxos }) => vtxos.length)).toEqual([2, 2, 0]);
+        expect(bulk).toHaveBeenLastCalledWith([first.script, second.script, empty.script], {
+            nonterminalOnly: true,
+        });
+
         vi.spyOn(localManager, "getContracts").mockResolvedValue([first, first]);
         const duplicate = await localManager.getContractsWithVtxos();
         const secondLength = duplicate[1].vtxos.length;
