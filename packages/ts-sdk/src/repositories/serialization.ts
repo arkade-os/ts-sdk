@@ -9,6 +9,21 @@ export type SerializedVtxo = ReturnType<typeof serializeVtxo>;
 export type SerializedUtxo = ReturnType<typeof serializeUtxo>;
 export type SerializedTransaction = ReturnType<typeof serializeTransaction>;
 
+/** Repository-only index key. Terminal rows retain their full historical
+ * record but have no key in the active-script index. */
+export function activeScriptForVtxo(vtxo: {
+    script?: string | null;
+    isSpent?: boolean | null;
+    spentBy?: string | null;
+    settledBy?: string | null;
+    virtualStatus?: { state?: string } | null;
+}): string | undefined {
+    if (!vtxo.script) return undefined;
+    if (vtxo.isSpent ?? vtxo.virtualStatus?.state === "spent") return undefined;
+    if (vtxo.spentBy || vtxo.settledBy) return undefined;
+    return vtxo.script;
+}
+
 // `Asset.amount` is a `bigint`, which `JSON.stringify` cannot serialize
 // (`TypeError: Do not know how to serialize a BigInt`). Persist it as a
 // decimal string so SQLite/Realm/legacy localStorage paths round-trip

@@ -158,7 +158,11 @@ import { contractHandlers } from "../contracts/handlers";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
-import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoOwnership";
+import {
+    validateVtxosForScript,
+    saveVtxosForContract,
+    vtxoOutpoint,
+} from "../contracts/vtxoOwnership";
 import {
     WalletReceiveRotator,
     buildReceiveContract,
@@ -5630,6 +5634,29 @@ export class Wallet
                 }
             }
         } else {
+            // Index asset candidates once. A wallet with many VTXOs and several
+            // asset recipients must not scan the full inventory for each asset
+            // or linearly search every already-selected input on each pass.
+            const requestedAssetIds = new Set(
+                recipients.flatMap((recipient) =>
+                    (recipient.assets ?? []).map((asset) => asset.assetId),
+                ),
+            );
+            const coinsByAsset = new Map<string, NormalizedExtendedVirtualCoin[]>();
+            if (requestedAssetIds.size > 0) {
+                for (const coin of virtualCoins) {
+                    if (!coin.assets?.length) continue;
+                    const seenAssetIds = new Set<string>();
+                    for (const { assetId } of coin.assets) {
+                        if (!requestedAssetIds.has(assetId) || seenAssetIds.has(assetId)) continue;
+                        seenAssetIds.add(assetId);
+                        const coins = coinsByAsset.get(assetId) ?? [];
+                        coins.push(coin);
+                        coinsByAsset.set(assetId, coins);
+                    }
+                }
+            }
+            const selectedOutpoints = new Set<string>();
             // select assets
             for (const recipient of recipients) {
                 if (!recipient.assets) {
@@ -5652,9 +5679,8 @@ export class Wallet
                         assetChanges.delete(receiverAsset.assetId);
                     }
 
-                    const availableCoins = virtualCoins.filter(
-                        (c) =>
-                            !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
+                    const availableCoins = (coinsByAsset.get(receiverAsset.assetId) ?? []).filter(
+                        (coin) => !selectedOutpoints.has(vtxoOutpoint(coin)),
                     );
 
                     const { selected, totalAssetAmount } = selectCoinsWithAsset(
@@ -5665,6 +5691,7 @@ export class Wallet
 
                     for (const coin of selected) {
                         selectedCoins.push(coin);
+                        selectedOutpoints.add(vtxoOutpoint(coin));
                         // asset coins contain btc, subtract from total amount to select
                         btcAmountToSelect -= coin.value;
                         // coin may contain other assets, add them to asset changes
@@ -5690,7 +5717,7 @@ export class Wallet
             // select remaining btc
             if (btcAmountToSelect > 0) {
                 const availableCoins = virtualCoins.filter(
-                    (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
+                    (coin) => !selectedOutpoints.has(vtxoOutpoint(coin)),
                 );
                 const { inputs: btcCoins } = selectVirtualCoins(availableCoins, btcAmountToSelect);
 
@@ -5705,6 +5732,7 @@ export class Wallet
                 }
 
                 selectedCoins = [...selectedCoins, ...btcCoins];
+                for (const coin of btcCoins) selectedOutpoints.add(vtxoOutpoint(coin));
             }
         }
 
@@ -5739,8 +5767,9 @@ export class Wallet
                         `${assetChanges.size} asset change(s), needs ${this.dustAmount}`,
                 );
             }
+            const selectedOutpoints = new Set(selectedCoins.map(vtxoOutpoint));
             const availableCoins = virtualCoins.filter(
-                (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
+                (coin) => !selectedOutpoints.has(vtxoOutpoint(coin)),
             );
             const { inputs: extraCoins } = selectVirtualCoins(
                 availableCoins,

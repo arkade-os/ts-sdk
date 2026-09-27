@@ -444,6 +444,58 @@ describe("send with caller-selected vtxos", () => {
     });
 });
 
+describe("send automatic asset selection", () => {
+    it("selects each asset outpoint once from a large mixed inventory", async () => {
+        const identity = SingleKey.fromHex(
+            "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
+        );
+        mockFetch.mockReset();
+        mockFetch.mockResolvedValueOnce(
+            jsonResponse({
+                signerPubkey: SERVER_KEY_HEX,
+                forfeitPubkey: SERVER_KEY_HEX,
+                batchExpiry: 144n,
+                unilateralExitDelay: 144n,
+                boardingExitDelay: 144n,
+                roundInterval: 144n,
+                network: "mutinynet",
+                dust: 1000n,
+                forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                checkpointTapscript:
+                    "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+            }),
+        );
+        const wallet = await Wallet.create({ identity, arkServerUrl: "http://localhost:7070" });
+        const assetA = "aa".repeat(34);
+        const assetB = "bb".repeat(34);
+        const coin = (
+            txid: string,
+            value: number,
+            assets?: { assetId: string; amount: bigint }[],
+        ) => ({ txid, vout: 0, value, assets }) as never;
+        const inventory = [
+            coin("a-small", 1200, [{ assetId: assetA, amount: 30n }]),
+            coin("a-large", 1300, [{ assetId: assetA, amount: 80n }]),
+            coin("b", 1400, [{ assetId: assetB, amount: 100n }]),
+            coin("btc", 3000),
+            ...Array.from({ length: 500 }, (_, i) => coin(`filler-${i}`, 100)),
+        ];
+        vi.spyOn(wallet, "getSpendableVtxos").mockResolvedValue(inventory);
+        const submit = vi
+            .spyOn(wallet as never, "_submitOffchainSpend")
+            .mockResolvedValue("test-tx");
+        const address = encodeAddr(SERVER_XONLY, "tark");
+        await wallet.send({
+            recipients: [
+                { address, amount: 2000, assets: [{ assetId: assetA, amount: 100n }] },
+                { address, amount: 2000, assets: [{ assetId: assetB, amount: 100n }] },
+            ],
+        });
+        const selected = submit.mock.calls[0][0] as Array<{ txid: string }>;
+        expect(selected.map((row) => row.txid)).toEqual(["a-small", "a-large", "b", "btc"]);
+    });
+});
+
 /**
  * The two call forms are told apart by the presence of `recipients`, not by
  * argument count — a single recipient produces one argument either way.

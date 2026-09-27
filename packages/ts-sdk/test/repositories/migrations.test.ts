@@ -4,12 +4,16 @@ import { TaprootControlBlock } from "@scure/btc-signer";
 import Database from "better-sqlite3";
 import { ArkAddress } from "../../src";
 import type { TapLeafScript } from "../../src/script/base";
-import { runArkRealmMigrations } from "../../src/repositories/realm/schemas";
+import {
+    ARK_REALM_SCHEMA_VERSION,
+    runArkRealmMigrations,
+} from "../../src/repositories/realm/schemas";
 import { openDatabase, closeDatabase } from "../../src/repositories/indexedDB/manager";
 import {
     initDatabase,
     STORE_VTXOS,
     backfillVtxoScripts,
+    backfillActiveVtxoScripts,
     DB_VERSION,
 } from "../../src/repositories/indexedDB/schema";
 import { IndexedDBWalletRepository } from "../../src/repositories/indexedDB/walletRepository";
@@ -84,6 +88,21 @@ describe("Realm migration: runArkRealmMigrations", () => {
         expect(newVtxos[0].script).toBe(EXPECTED_PK_SCRIPT_HEX);
     });
 
+    it("backfills the indexed active script without dropping spent history", () => {
+        expect(ARK_REALM_SCHEMA_VERSION).toBe(4);
+        const rows = [
+            { script: "live", isSpent: null, virtualStatusJson: '{"state":"settled"}' },
+            { script: "spent", isSpent: true, virtualStatusJson: '{"state":"spent"}' },
+            { script: "legacy", isSpent: null, virtualStatusJson: '{"state":"spent"}' },
+            { script: "settled", isSpent: false, settledBy: "batch" },
+        ];
+        const realm = makeRealm(3, rows);
+        runArkRealmMigrations(realm, realm);
+        expect(
+            rows.map((row) => (row as typeof row & { activeScript?: string | null }).activeScript),
+        ).toEqual(["live", null, null, null]);
+    });
+
     // A Realm handle exposing both `.schema` and multi-type `.objects`, needed
     // for the v3 → v4 ArkVirtualTx.hex → psbt rename backfill.
     function makeRealmWithVirtualTxs(
@@ -151,6 +170,102 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
         controlBlockBytes[0] = 0xc0;
         return [TaprootControlBlock.decode(controlBlockBytes), new Uint8Array(20).fill(2)];
     }
+
+    it("backfills the active index and preserves terminal rows in the store", async () => {
+        const dbName = getUniqueDbName();
+        const db = await openDatabase(dbName, DB_VERSION, initDatabase);
+        try {
+            await new Promise<void>((resolve, reject) => {
+                const tx = db.transaction([STORE_VTXOS], "readwrite");
+                const store = tx.objectStore(STORE_VTXOS);
+                for (const row of [
+                    { txid: "live", script: "script-a", isSpent: false },
+                    { txid: "spent", script: "script-a", isSpent: true },
+                    { txid: "legacy", script: "script-a", virtualStatus: { state: "spent" } },
+                ]) {
+                    store.put({ address: TEST_ARK_ADDRESS, vout: 0, ...row });
+                }
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+            await new Promise<void>((resolve, reject) => {
+                const tx = db.transaction([STORE_VTXOS], "readwrite");
+                backfillActiveVtxoScripts(tx);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+            const tx = db.transaction([STORE_VTXOS], "readonly");
+            const store = tx.objectStore(STORE_VTXOS);
+            const active = await new Promise<Array<{ txid: string }>>((resolve, reject) => {
+                const request = store.index("activeScript").getAll("script-a");
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+            expect(active.map((row) => row.txid)).toEqual(["live"]);
+            expect(
+                await new Promise((resolve) => {
+                    const request = store.count();
+                    request.onsuccess = () => resolve(request.result);
+                }),
+            ).toBe(3);
+        } finally {
+            await closeDatabase(dbName);
+        }
+    });
+
+    it.each([2, 3])(
+        "upgrades an existing v%d database to the active-script index",
+        async (version) => {
+            const dbName = getUniqueDbName();
+            const oldDb = await new Promise<IDBDatabase>((resolve, reject) => {
+                const request = indexedDB.open(dbName, version);
+                request.onupgradeneeded = () => {
+                    const store = request.result.createObjectStore(STORE_VTXOS, {
+                        keyPath: ["address", "txid", "vout"],
+                    });
+                    if (version >= 3) store.createIndex("script", "script", { unique: false });
+                };
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+            await new Promise<void>((resolve, reject) => {
+                const transaction = oldDb.transaction([STORE_VTXOS], "readwrite");
+                const store = transaction.objectStore(STORE_VTXOS);
+                store.put({
+                    address: TEST_ARK_ADDRESS,
+                    txid: "live",
+                    vout: 0,
+                    ...(version >= 3 ? { script: "script-a" } : {}),
+                });
+                store.put({
+                    address: TEST_ARK_ADDRESS,
+                    txid: "spent",
+                    vout: 0,
+                    ...(version >= 3 ? { script: "script-a" } : {}),
+                    virtualStatus: { state: "spent" },
+                });
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () => reject(transaction.error);
+            });
+            oldDb.close();
+            const upgraded = await openDatabase(dbName, DB_VERSION, initDatabase);
+            try {
+                expect(upgraded.version).toBe(6);
+                const active = await new Promise<Array<{ txid: string }>>((resolve, reject) => {
+                    const request = upgraded
+                        .transaction([STORE_VTXOS], "readonly")
+                        .objectStore(STORE_VTXOS)
+                        .index("activeScript")
+                        .getAll(version >= 3 ? "script-a" : EXPECTED_PK_SCRIPT_HEX);
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+                expect(active.map((row) => row.txid)).toEqual(["live"]);
+            } finally {
+                await closeDatabase(dbName);
+            }
+        },
+    );
 
     it("backfills script on legacy rows missing it", async () => {
         const dbName = getUniqueDbName();
@@ -289,7 +404,7 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
     });
 
     it("creates the `script` index and populates it via backfill", async () => {
-        // Covers two things: (1) opening at DB_VERSION=3 creates a `script`
+        // Covers two things: (1) opening at the current DB_VERSION creates a `script`
         // index on the vtxos store, (2) rows inserted without `script` are
         // added to the index automatically when the backfill's
         // `cursor.update()` sets the field.

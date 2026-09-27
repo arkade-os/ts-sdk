@@ -10,6 +10,7 @@
  */
 
 import { scriptFromArkAddress } from "../scriptFromAddress";
+import { activeScriptForVtxo } from "../serialization";
 
 export const ArkVtxoSchema = {
     name: "ArkVtxo",
@@ -40,6 +41,9 @@ export const ArkVtxoSchema = {
         // Required as of schema v2; legacy rows are backfilled from `address`
         // during migration (see `runArkRealmMigrations`).
         script: { type: "string", indexed: true },
+        // Null for terminal history. Nonterminal inventory reads use this
+        // index instead of materializing every old row under `script`.
+        activeScript: { type: "string", optional: true, indexed: true },
     },
 } as const;
 
@@ -170,8 +174,8 @@ export const ArkRealmSchemas = [
  * @experimental Schemas for the inert intent/virtualtx persistence layer.
  *
  * Deliberately kept OUT of {@link ArkRealmSchemas} and {@link
- * ARK_REALM_SCHEMA_VERSION} so upgrading the SDK never migrates an existing
- * consumer's Realm. A consumer opting in must register these schemas and bump
+ * ARK_REALM_SCHEMA_VERSION} so they never trigger an additional migration of an
+ * existing consumer's Realm. A consumer opting in must register these schemas and bump
  * their own `schemaVersion` themselves:
  *
  * ```ts
@@ -190,6 +194,8 @@ export const ArkExperimentalRealmSchemas = [
  *
  * Consumers opening Realm must pass a `schemaVersion` at least this high so
  * legacy databases get migrated; merge it with your own app's version:
+ * If the app's version is already >= 4, increment that app version once when
+ * adopting this schema so Realm runs `onMigration` and fills activeScript.
  *
  * ```ts
  * await Realm.open({
@@ -209,6 +215,7 @@ export const ArkExperimentalRealmSchemas = [
  *   - v3: ArkContract.watch added (nullable). No data migration: a row
  *     without one reads as `watched`, which is the coverage every
  *     existing contract has today.
+ *   - v4: ArkVtxo.activeScript added and backfilled from spend status.
  *
  * The intent/virtualtx schemas ({@link ArkExperimentalRealmSchemas}) are NOT
  * counted here: they are experimental and inert, so they never move the
@@ -216,7 +223,7 @@ export const ArkExperimentalRealmSchemas = [
  * intent-schema migration steps (guarded per-schema) for consumers who opt in
  * and bump their own version.
  */
-export const ARK_REALM_SCHEMA_VERSION = 3;
+export const ARK_REALM_SCHEMA_VERSION = 4;
 
 /**
  * Run every Arkade schema migration applicable to the open Realm.
@@ -235,6 +242,18 @@ export function runArkRealmMigrations(oldRealm: any, newRealm: any): void {
         if (!newVtxo.script) {
             newVtxo.script = scriptFromArkAddress(newVtxo.address);
         }
+        let virtualStatus: { state?: string } | undefined;
+        try {
+            virtualStatus = newVtxo.virtualStatusJson
+                ? JSON.parse(newVtxo.virtualStatusJson)
+                : undefined;
+        } catch {
+            // A corrupt historical row was already unreadable. Preserve it
+            // while keeping it out of the active spendable index.
+            newVtxo.activeScript = null;
+            continue;
+        }
+        newVtxo.activeScript = activeScriptForVtxo({ ...newVtxo, virtualStatus }) ?? null;
     }
 
     // v3 → v4: ArkVirtualTx.hex was renamed to psbt (both hold the same

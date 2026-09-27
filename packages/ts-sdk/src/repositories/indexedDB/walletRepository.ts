@@ -19,6 +19,7 @@ import { scriptFromArkAddress } from "../scriptFromAddress";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
 import { hasTerminalSpend } from "../../wallet/vtxo";
+import { activeScriptForVtxo } from "../serialization";
 
 /**
  * IndexedDB-based implementation of WalletRepository.
@@ -73,7 +74,11 @@ export class IndexedDBWalletRepository implements WalletRepository {
             const store = transaction.objectStore(STORE_VTXOS);
             for (const vtxo of vtxos) {
                 const serialized: SerializedVtxo = serializeVtxo(vtxo);
-                store.put({ address, ...serialized });
+                store.put({
+                    address,
+                    ...serialized,
+                    activeScript: activeScriptForVtxo(vtxo),
+                });
             }
             await awaitTransaction(transaction);
         } catch (error) {
@@ -141,7 +146,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
                 const rows = await getAllByIndexValues<SerializedVtxo & { address: string }>(
                     store,
-                    "script",
+                    options?.nonterminalOnly ? "activeScript" : "script",
                     chunk,
                 );
                 for (const row of rows) {
@@ -149,6 +154,27 @@ export class IndexedDBWalletRepository implements WalletRepository {
                     const key = `${row.script}:${row.txid}:${row.vout}`;
                     const existing = byOutpoint.get(key);
                     if (!existing || shouldReplaceVtxo(existing, row)) byOutpoint.set(key, row);
+                }
+            }
+            if (options?.nonterminalOnly && byOutpoint.size > 0) {
+                // An old address bucket may duplicate a live outpoint with a
+                // newer terminal canonical row. Resolve only the active
+                // candidates against that txid's rows, not full wallet history.
+                const txids = [...new Set([...byOutpoint.values()].map((row) => row.txid))];
+                for (let i = 0; i < txids.length; i += 64) {
+                    const store = db
+                        .transaction([STORE_VTXOS], "readonly")
+                        .objectStore(STORE_VTXOS);
+                    const matches = await getAllByIndexValues<SerializedVtxo & { address: string }>(
+                        store,
+                        "txid",
+                        txids.slice(i, i + 64),
+                    );
+                    for (const row of matches) {
+                        const key = `${row.script}:${row.txid}:${row.vout}`;
+                        const existing = byOutpoint.get(key);
+                        if (existing && shouldReplaceVtxo(existing, row)) byOutpoint.set(key, row);
+                    }
                 }
             }
             const result: ExtendedVirtualCoin[] = [];
@@ -315,6 +341,9 @@ export class IndexedDBWalletRepository implements WalletRepository {
 // legacy row is ever read before the upgrade-path completes, derive `script`
 // from `address` the same way the indexer would have populated it.
 function deserializeVtxoWithBackfill(o: SerializedVtxo & { address: string }): ExtendedVirtualCoin {
+    // The active index is repository metadata, not part of the public VTXO.
+    const { activeScript: _activeScript, ...row } = o as typeof o & { activeScript?: string };
+    o = row;
     if (!o.script) {
         o = { ...o, script: scriptFromArkAddress(o.address) };
     }
