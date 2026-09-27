@@ -3394,6 +3394,141 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(store.records.get(RFQ_ID)?.state).toBe("settled");
         });
 
+        it("pages only active swaps and resolves terminal history on demand", async () => {
+            const terminalId = "b2".repeat(32);
+            const store = fakeStore([
+                storedSend(),
+                storedSend({ rfqId: terminalId, state: "settled", updatedAt: SAFE_NOW - 1 }),
+            ]);
+            store.pruneRetiredRfqSwaps = vi.fn(async () => []);
+            store.getRfqSwapsPage = vi.fn(async (state, afterId, limit) =>
+                [...store.records.values()]
+                    .filter(
+                        (record) => record.state === state && (!afterId || record.rfqId > afterId),
+                    )
+                    .sort((a, b) => (a.rfqId < b.rfqId ? -1 : 1))
+                    .slice(0, limit),
+            );
+            const readAll = vi.spyOn(store, "getAllRfqSwaps");
+            const m = manager({
+                contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
+                repository: store,
+                now: SAFE_NOW,
+                spies: spies(),
+            });
+
+            const result = await m.restoreFromRepository();
+
+            expect(result.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
+            expect(result.failed).toEqual([]);
+            expect(readAll).not.toHaveBeenCalled();
+            expect((await m.getStats()).finishedSwaps).toBe(0);
+            await expect(m.waitForSwapCompletion(terminalId)).resolves.toEqual({
+                state: "settled",
+                txid: undefined,
+            });
+            await m.removeSwap(terminalId);
+            await expect(m.waitForSwapCompletion(terminalId)).rejects.toThrow(/not monitored/);
+        });
+
+        it("keeps the legacy terminal restore available explicitly", async () => {
+            const store = fakeStore([storedSend({ state: "settled", updatedAt: SAFE_NOW - 1 })]);
+            const m = manager({
+                contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
+                repository: store,
+                now: SAFE_NOW,
+                spies: spies(),
+            });
+
+            const result = await m.restoreFromRepository({ includeTerminal: true });
+
+            expect(result.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
+            await expect(m.waitForSwapCompletion(RFQ_ID)).resolves.toMatchObject({
+                state: "settled",
+            });
+        });
+
+        it("uses count-only pruning when paging and allows explicit pruned IDs", async () => {
+            const store = fakeStore([
+                storedSend({
+                    state: "settled",
+                    updatedAt: SAFE_NOW - RFQ_SWAP_RETENTION_SECONDS - 1,
+                }),
+            ]);
+            store.pruneRetiredRfqSwapsCount = vi.fn(async () => {
+                store.records.delete(RFQ_ID);
+                return 1;
+            });
+            store.pruneRetiredRfqSwaps = vi.fn(async () => {
+                store.records.delete(RFQ_ID);
+                return [RFQ_ID];
+            });
+            store.getRfqSwapsPage = vi.fn(async () => []);
+            const m = manager({ repository: store, now: SAFE_NOW, spies: spies() });
+
+            expect(await m.restoreFromRepository()).toMatchObject({ pruned: [], prunedCount: 1 });
+            expect(store.pruneRetiredRfqSwaps).not.toHaveBeenCalled();
+            store.records.set(
+                RFQ_ID,
+                storedSend({
+                    state: "settled",
+                    updatedAt: SAFE_NOW - RFQ_SWAP_RETENTION_SECONDS - 1,
+                }),
+            );
+            expect(await m.restoreFromRepository({ includePrunedIds: true })).toMatchObject({
+                pruned: [RFQ_ID],
+                prunedCount: 1,
+            });
+        });
+
+        it("answers persisted terminal outcomes without a covenant lookup", async () => {
+            const receiveId = "b2".repeat(32);
+            const onchainId = "c3".repeat(32);
+            const failedId = "d4".repeat(32);
+            const store = fakeStore([
+                storedSend({
+                    state: "refunded",
+                    updatedAt: SAFE_NOW,
+                    refundArkTxid: "aa".repeat(32),
+                }),
+                storedSend({
+                    rfqId: receiveId,
+                    kind: "lightning_receive",
+                    state: "refunded",
+                    updatedAt: SAFE_NOW,
+                    profile: { claimArkTxid: "bb".repeat(32) },
+                }),
+                storedSend({
+                    rfqId: onchainId,
+                    kind: "onchain_send",
+                    state: "settled",
+                    updatedAt: SAFE_NOW,
+                    profile: { claimTxid: "cc".repeat(32) },
+                }),
+                storedSend({
+                    rfqId: failedId,
+                    state: "failed",
+                    updatedAt: SAFE_NOW,
+                    failure: "claim window closed",
+                }),
+            ]);
+            const m = manager({ repository: store, now: SAFE_NOW, spies: spies() });
+
+            await expect(m.waitForSwapCompletion(RFQ_ID)).resolves.toEqual({
+                state: "refunded",
+                txid: "aa".repeat(32),
+            });
+            await expect(m.waitForSwapCompletion(receiveId)).resolves.toEqual({
+                state: "refunded",
+                txid: undefined,
+            });
+            await expect(m.waitForSwapCompletion(onchainId)).resolves.toEqual({
+                state: "settled",
+                txid: "cc".repeat(32),
+            });
+            await expect(m.waitForSwapCompletion(failedId)).rejects.toThrow("claim window closed");
+        });
+
         it("carries a restored swap's origin, so its record can be rewritten", async () => {
             // The store losing a record mid-life is the case the in-memory
             // origin map exists for: without it the next write would have
@@ -3663,7 +3798,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
                 spies: s,
             });
 
-            const result = await m.restoreFromRepository();
+            const result = await m.restoreFromRepository({ includeTerminal: true });
 
             expect(result.restored[0].lockupSpendArkTxids).toEqual([ARK_TXID]);
         });

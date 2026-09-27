@@ -28,7 +28,16 @@ function makeRow(data: Row): Row {
 function withFiltered(rows: Row[]): Row[] {
     const arr = rows as Row[] & {
         filtered: (q: string, ...a: unknown[]) => Row[];
+        sorted: (keypath: string, reverse?: boolean) => Row[];
     };
+    arr.sorted = (keypath: string, reverse = false) =>
+        withFiltered(
+            [...arr].sort((a, b) => {
+                const left = String(a[keypath]);
+                const right = String(b[keypath]);
+                return (left < right ? -1 : left > right ? 1 : 0) * (reverse ? -1 : 1);
+            }),
+        );
     arr.filtered = (q: string, ...a: unknown[]) => {
         const matched = arr.filter((row) =>
             q.split(/\s+AND\s+/i).every((clause) =>
@@ -36,7 +45,7 @@ function withFiltered(rows: Row[]): Row[] {
                     .replace(/[()]/g, "")
                     .split(/\s+OR\s+/i)
                     .some((c) => {
-                        const m = c.trim().match(/^(\w+)\s*(==|<=)\s*(?:\$(\d+)|(null))$/);
+                        const m = c.trim().match(/^(\w+)\s*(==|<=|>)\s*(?:\$(\d+)|(null))$/);
                         // Fail loudly on an unsupported shape: silently matching
                         // it would hide real query mismatches from the tests.
                         if (!m) {
@@ -51,6 +60,7 @@ function withFiltered(rows: Row[]): Row[] {
                         if (m[4]) return row[m[1]] === null || row[m[1]] === undefined;
                         const value = a[Number(m[3])];
                         if (m[2] === "<=") return Number(row[m[1]]) <= Number(value);
+                        if (m[2] === ">") return String(row[m[1]]) > String(value);
                         return row[m[1]] === value;
                     }),
             ),

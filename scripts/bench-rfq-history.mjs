@@ -7,9 +7,13 @@ import { join } from "node:path";
 
 const count = Number(process.argv[2] ?? 1000);
 const mode = process.argv[3] ?? "prune";
-if (!Number.isSafeInteger(count) || count < 1 || !["read", "prune", "upgrade"].includes(mode)) {
+if (
+    !Number.isSafeInteger(count) ||
+    count < 1 ||
+    !["read", "prune", "upgrade", "restore-recent", "restore-expired", "page-recent"].includes(mode)
+) {
     throw new Error(
-        "usage: node --expose-gc --experimental-sqlite scripts/bench-rfq-history.mjs <count> <read|prune|upgrade>",
+        "usage: node --expose-gc --experimental-sqlite scripts/bench-rfq-history.mjs <count> <read|prune|upgrade|restore-recent|restore-expired|page-recent>",
     );
 }
 
@@ -55,7 +59,7 @@ for (let i = 0; i < count; i++) {
         lockupAddress: "tark1q",
         profile: {},
         createdAt: 1,
-        updatedAt: 1,
+        updatedAt: mode.endsWith("-recent") ? 1_800_000_000 : 1,
     };
     insert.run(rfqId, record.state, record.updatedAt, JSON.stringify(record));
 }
@@ -63,6 +67,13 @@ db.exec("COMMIT");
 const seedMs = Math.round(performance.now() - seedStarted);
 global.gc?.();
 const before = process.memoryUsage();
+let peakRss = before.rss;
+let peakHeap = before.heapUsed;
+const sample = setInterval(() => {
+    const usage = process.memoryUsage();
+    peakRss = Math.max(peakRss, usage.rss);
+    peakHeap = Math.max(peakHeap, usage.heapUsed);
+}, 25);
 
 const started = performance.now();
 let returned;
@@ -70,12 +81,37 @@ if (mode === "read") {
     let records = await repository.getAllRfqSwaps();
     returned = records.length;
     records = undefined;
+} else if (mode === "restore-recent" || mode === "restore-expired") {
+    const manager = new RfqSwapManager({ indexer: {}, repository }, { now: () => 1_800_000_000 });
+    const result = await manager.restoreFromRepository({
+        params: async () => {
+            throw new Error("no active records expected");
+        },
+    });
+    returned = {
+        restored: result.restored.length,
+        failed: result.failed.length,
+        pruned: result.pruned.length,
+        prunedCount: result.prunedCount,
+    };
+} else if (mode === "page-recent") {
+    returned = 0;
+    let cursor;
+    for (;;) {
+        const page = await repository.getRfqSwapsPage("settled", cursor, 500);
+        returned += page.length;
+        if (page.length < 500) break;
+        cursor = page[page.length - 1].rfqId;
+    }
 } else {
     const manager = new RfqSwapManager({ indexer: {}, repository }, { now: () => 1_800_000_000 });
     returned = (await manager.pruneRetiredSwaps()).length;
 }
 const elapsedMs = Math.round(performance.now() - started);
+clearInterval(sample);
 const after = process.memoryUsage();
+peakRss = Math.max(peakRss, after.rss);
+peakHeap = Math.max(peakHeap, after.heapUsed);
 const remaining = db.prepare("SELECT COUNT(*) AS n FROM arkade_rfq_swaps").get().n;
 const dbMiB = Math.round(statSync(file).size / 1048576);
 db.close();
@@ -98,6 +134,10 @@ console.log(
         afterMiB: {
             rss: Math.round(after.rss / 1048576),
             heap: Math.round(after.heapUsed / 1048576),
+        },
+        peakMiB: {
+            rss: Math.round(peakRss / 1048576),
+            heap: Math.round(peakHeap / 1048576),
         },
     }),
 );

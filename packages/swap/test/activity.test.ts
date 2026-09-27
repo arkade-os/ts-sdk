@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { ArkTransaction } from "@arkade-os/sdk";
 import {
     rfqSwapActivityInputs,
+    rfqSwapActivityInputsPage,
     swapActivityResolver,
     type SwapActivityInput,
 } from "../src/activity";
@@ -202,6 +203,73 @@ describe("rfqSwapActivityInputs", () => {
         expect(await rfqSwapActivityInputs({ repository })).toEqual([
             { rfqId: "r1", kind: "lightning_send", state: "refunded", txids: ["fund", "refund"] },
         ]);
+    });
+
+    it("returns bounded activity pages with an exclusive cursor", async () => {
+        const repository = await storeOf(
+            record({ rfqId: "r3", state: "refunded", fundingArkTxid: "f3", refundArkTxid: "x3" }),
+            record({ rfqId: "r1", state: "refunded", fundingArkTxid: "f1", refundArkTxid: "x1" }),
+            record({ rfqId: "r2", state: "refunded", fundingArkTxid: "f2", refundArkTxid: "x2" }),
+            record({ rfqId: "active", state: "pending" }),
+        );
+
+        const first = await rfqSwapActivityInputsPage({ repository }, "refunded", undefined, 2);
+        expect(first.inputs.map((input) => input.rfqId)).toEqual(["r1", "r2"]);
+        expect(first.nextCursor).toBe("r2");
+        const second = await rfqSwapActivityInputsPage(
+            { repository },
+            "refunded",
+            first.nextCursor,
+            2,
+        );
+        expect(second.inputs.map((input) => input.rfqId)).toEqual(["r3"]);
+        expect(second.nextCursor).toBeUndefined();
+        await expect(
+            rfqSwapActivityInputsPage({ repository }, "refunded", undefined, 501),
+        ).rejects.toThrow(RangeError);
+    });
+
+    it("refuses an unpaged repository instead of loading all history", async () => {
+        const readAll = async () => {
+            throw new Error("must not load all records");
+        };
+        await expect(
+            rfqSwapActivityInputsPage(
+                { repository: { getAllRfqSwaps: readAll } },
+                "settled",
+                undefined,
+                10,
+            ),
+        ).rejects.toThrow(/does not support paged/);
+    });
+
+    it("bounds indexer fallbacks within a page", async () => {
+        const repository = await storeOf(
+            ...Array.from({ length: 40 }, (_, i) =>
+                record({ rfqId: `r${i.toString().padStart(2, "0")}`, fundingArkTxid: "fund" }),
+            ),
+        );
+        let active = 0;
+        let peak = 0;
+        const indexer = {
+            async getVtxos() {
+                active++;
+                peak = Math.max(peak, active);
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                active--;
+                return { vtxos: [] };
+            },
+        } as unknown as LockupSpendIndexer;
+
+        const result = await rfqSwapActivityInputsPage(
+            { repository, indexer },
+            "settled",
+            undefined,
+            40,
+        );
+
+        expect(result.inputs).toHaveLength(40);
+        expect(peak).toBeLessThanOrEqual(16);
     });
 
     it("takes each corridor's own claim txid from its handler", async () => {

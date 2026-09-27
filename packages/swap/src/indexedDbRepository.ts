@@ -4,22 +4,29 @@ import {
     promisifyRequest,
     type ManagedConnection,
 } from "@arkade-os/sdk";
-import { marketsCacheKey, type AssetSwapRepository, type MarketsCacheEntry } from "./repository";
+import {
+    assertRfqSwapPageLimit,
+    marketsCacheKey,
+    type AssetSwapRepository,
+    type MarketsCacheEntry,
+} from "./repository";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
 import { RFQ_SWAP_TERMINAL_STATES } from "./rfqSwapState";
+import type { RfqSwapState } from "./rfqSwapState";
 
 const DEFAULT_DB_NAME = "arkade-intents";
 /** Bump when adding an object store or index. `initDatabase` only runs inside
  * `onupgradeneeded`, which fires on a version *increase* — its contains-guard
  * cannot backfill a store into a database already open at this version, so a
  * new store added without a bump is simply missing for existing users. */
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const STORE_SWAPS = "swaps";
 const STORE_RFQ_SWAPS = "rfqSwaps";
 const STORE_SCANNED = "scannedTxids";
 const STORE_MARKETS = "markets";
 const RETENTION_INDEX = "byStateAndUpdatedAt";
+const PAGE_INDEX = "byStateAndRfqId";
 const PRUNE_CHUNK = 1000;
 
 /** Every store, declared once. `clear()` wipes exactly this list, so a store
@@ -53,6 +60,9 @@ function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTrans
     const rfq = transaction?.objectStore(STORE_RFQ_SWAPS);
     if (rfq && !rfq.indexNames.contains(RETENTION_INDEX)) {
         rfq.createIndex(RETENTION_INDEX, ["state", "updatedAt"]);
+    }
+    if (rfq && !rfq.indexNames.contains(PAGE_INDEX)) {
+        rfq.createIndex(PAGE_INDEX, ["state", "rfqId"]);
     }
 }
 
@@ -108,6 +118,21 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         return promisifyRequest((await this.readStore(STORE_RFQ_SWAPS)).getAll());
     }
 
+    async getRfqSwapsPage(
+        state: RfqSwapState,
+        afterId: string | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        const range = IDBKeyRange.bound(
+            [state, afterId ?? ""],
+            [state, "\uffff"],
+            afterId !== undefined,
+        );
+        const index = (await this.readStore(STORE_RFQ_SWAPS)).index(PAGE_INDEX);
+        return promisifyRequest(index.getAll(range, limit));
+    }
+
     async removeRfqSwap(rfqId: string): Promise<void> {
         await this.write(STORE_RFQ_SWAPS, (store) => {
             store.delete(rfqId);
@@ -135,6 +160,33 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
                 });
                 await done;
                 removed.push(...keys);
+                if (keys.length < PRUNE_CHUNK) break;
+            }
+        }
+        return removed;
+    }
+
+    async pruneRetiredRfqSwapsCount(cutoff: number): Promise<number> {
+        if (cutoff < 0) return 0;
+        const db = await this.ensureDb();
+        let removed = 0;
+        for (const state of RFQ_SWAP_TERMINAL_STATES) {
+            const range = IDBKeyRange.bound([state, 0], [state, cutoff]);
+            for (;;) {
+                const tx = db.transaction([STORE_RFQ_SWAPS], "readwrite");
+                const done = awaitTransaction(tx);
+                const store = tx.objectStore(STORE_RFQ_SWAPS);
+                const keys = await new Promise<string[]>((resolve, reject) => {
+                    const request = store.index(RETENTION_INDEX).getAllKeys(range, PRUNE_CHUNK);
+                    request.onsuccess = () => {
+                        const batch = request.result as string[];
+                        for (const key of batch) store.delete(key);
+                        resolve(batch);
+                    };
+                    request.onerror = () => reject(request.error);
+                });
+                await done;
+                removed += keys.length;
                 if (keys.length < PRUNE_CHUNK) break;
             }
         }

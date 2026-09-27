@@ -11,7 +11,7 @@ import { rfqCorridorHandlers } from "./rfqCorridor";
 // Side-effecting, as in `rfqRecord.ts`: the type-only import below erases, so
 // nothing else here would register the handlers this reads.
 import "./rfqCorridors";
-import type { AssetSwapRepository } from "./repository";
+import { assertRfqSwapPageLimit, type AssetSwapRepository } from "./repository";
 import type { RfqSwapRecord } from "./rfqRecord";
 
 /**
@@ -122,7 +122,7 @@ export function swapActivityResolver(deps: {
 }
 
 export interface RfqSwapActivityDeps {
-    repository: Pick<AssetSwapRepository, "getAllRfqSwaps">;
+    repository: Pick<AssetSwapRepository, "getAllRfqSwaps" | "getRfqSwapsPage">;
     /**
      * Consulted only for what a record cannot answer: a record written before
      * `fundingArkTxid` existed, and the counterparty's spend on a swap that
@@ -153,6 +153,43 @@ export async function rfqSwapActivityInputs(
 ): Promise<SwapActivityInput[]> {
     const records = await deps.repository.getAllRfqSwaps();
     return Promise.all(records.map((record) => activityInputOf(record, deps.indexer)));
+}
+
+export interface RfqSwapActivityPage {
+    inputs: SwapActivityInput[];
+    nextCursor?: string;
+}
+
+export async function rfqSwapActivityInputsPage(
+    deps: RfqSwapActivityDeps,
+    state: RfqSwapState,
+    afterId: string | undefined,
+    limit: number,
+): Promise<RfqSwapActivityPage> {
+    assertRfqSwapPageLimit(limit);
+    const page = deps.repository.getRfqSwapsPage;
+    if (!page) throw new Error("repository does not support paged RFQ activity reads");
+    const records = await page.call(deps.repository, state, afterId, limit);
+    if (records.length > limit) throw new Error("getRfqSwapsPage exceeded its requested limit");
+    let cursor = afterId ?? "";
+    for (const record of records) {
+        if (record.state !== state || record.rfqId <= cursor) {
+            throw new Error("getRfqSwapsPage returned an unordered or mismatched page");
+        }
+        cursor = record.rfqId;
+    }
+    const inputs: SwapActivityInput[] = [];
+    for (let i = 0; i < records.length; i += 16) {
+        inputs.push(
+            ...(await Promise.all(
+                records.slice(i, i + 16).map((record) => activityInputOf(record, deps.indexer)),
+            )),
+        );
+    }
+    return {
+        inputs,
+        ...(records.length === limit && records.length > 0 ? { nextCursor: cursor } : {}),
+    };
 }
 
 async function activityInputOf(

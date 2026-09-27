@@ -118,14 +118,19 @@ import {
     type RfqSwapRecord,
 } from "./rfqRecord";
 import { RefundNotLocallyPossibleError } from "./refundBlocked";
-import { isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
+import { RFQ_SWAP_ACTIVE_STATES, isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
 
 // ── Records ──────────────────────────────────────────────────────────────────
 
 // Re-exported so this module stays the one place a consumer imports the swap
 // vocabulary from; the definitions live in `rfqSwapState.ts` because the record
 // layer needs them too and must not import the manager at runtime.
-export { RFQ_SWAP_TERMINAL_STATES, isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
+export {
+    RFQ_SWAP_ACTIVE_STATES,
+    RFQ_SWAP_TERMINAL_STATES,
+    isRfqSwapTerminal,
+    type RfqSwapState,
+} from "./rfqSwapState";
 
 /**
  * What the manager needs to register a swap's lockup with the wallet, so the
@@ -572,8 +577,14 @@ export interface RfqSwapRecordStore {
     saveRfqSwap(record: RfqSwapRecord): Promise<void>;
     getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined>;
     getAllRfqSwaps(): Promise<RfqSwapRecord[]>;
+    getRfqSwapsPage?(
+        state: RfqSwapState,
+        afterId: string | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]>;
     removeRfqSwap(rfqId: string): Promise<void>;
     pruneRetiredRfqSwaps?(cutoff: number): Promise<string[]>;
+    pruneRetiredRfqSwapsCount?(cutoff: number): Promise<number>;
 }
 
 /**
@@ -622,17 +633,22 @@ export interface RfqRestoreOptions {
      * override cannot produce a swap watching the wrong covenant.
      */
     params?: (record: RfqSwapRecord) => Promise<LockupParams>;
+    /** Include terminal history in the returned array. Expensive for large wallets. */
+    includeTerminal?: boolean;
+    /** Return every pruned ID instead of a count-only result. Unbounded. */
+    includePrunedIds?: boolean;
 }
 
-/** What {@link RfqSwapManager.restoreFromRepository} did. Every stored record
- * is in exactly one of the three lists. */
+/** What {@link RfqSwapManager.restoreFromRepository} did. */
 export interface RfqRestoreResult {
-    /** Rebuilt: monitored, or kept as finished when already terminal. */
+    /** Rebuilt active swaps, plus terminal history when `includeTerminal` is set. */
     restored: RfqSwap[];
     /** Kept in the store, but not rebuildable right now. */
     failed: RfqRestoreFailure[];
-    /** Removed: terminal and past `RFQ_SWAP_RETENTION_SECONDS`. */
+    /** Removed IDs when requested or when the backend lacks count-only pruning. */
     pruned: string[];
+    /** Total removed: terminal and past `RFQ_SWAP_RETENTION_SECONDS`. */
+    prunedCount: number;
 }
 
 /** The observation seams. None is owned by the manager, and none holds keys —
@@ -811,9 +827,9 @@ export class RfqSwapManager {
     private readonly claimedOutpoints = new Map<string, Set<string>>();
     /** Live `onContractEvent` subscription, held so `stop()` can drop it. */
     private unsubscribeContracts: (() => void) | null = null;
-    /** Terminal records, kept so a late {@link waitForSwapCompletion} still
-     * answers instead of throwing "not found". Cleared by {@link removeSwap}. */
+    /** Recent terminal swaps; older durable outcomes are read from the record store on demand. */
     private readonly finished = new Map<string, RfqSwap>();
+    private readonly removed = new Set<string>();
     private readonly waiters = new Map<
         string,
         Set<{ resolve: (v: RfqSwapOutcome) => void; reject: (e: Error) => void }>
@@ -904,6 +920,11 @@ export class RfqSwapManager {
      * `RFQ_SWAP_RETENTION_SECONDS` costs no contract lookup on its way to being
      * dropped.
      *
+     * The default loads only active states through bounded pages when the
+     * repository supports them. Terminal history stays durable and a late
+     * completion lookup reads one record by key. `includeTerminal` opts into
+     * the previous all-record result when a caller needs it.
+     *
      * **A record that cannot be rebuilt is reported, never swallowed and never
      * fatal.** `rebuildRfqSwap` throws by design when the covenant params do
      * not derive the funded address, and `lockupContractParams` throws
@@ -915,17 +936,28 @@ export class RfqSwapManager {
         const repository = this.requireRepository("restoreFromRepository");
         const params = options.params ?? this.paramsFromContracts();
 
-        const fastPruned = repository.pruneRetiredRfqSwaps
-            ? await this.pruneStored(repository)
-            : undefined;
-        const records = await repository.getAllRfqSwaps();
-        const pruned = fastPruned ?? (await this.dropRetired(repository, records));
-        const retired = new Set(pruned);
-
+        const countOnlyPruned =
+            !options.includePrunedIds &&
+            !options.includeTerminal &&
+            repository.getRfqSwapsPage &&
+            repository.pruneRetiredRfqSwapsCount
+                ? await repository.pruneRetiredRfqSwapsCount(
+                      this.config.now() - RFQ_SWAP_RETENTION_SECONDS,
+                  )
+                : undefined;
+        const fastPruned =
+            countOnlyPruned === undefined && repository.pruneRetiredRfqSwaps
+                ? await this.pruneStored(repository)
+                : undefined;
+        if (countOnlyPruned !== undefined) {
+            for (const id of this.finished.keys()) {
+                if (!(await repository.getRfqSwap(id))) this.forgetRetired(id);
+            }
+        }
         const restored: RfqSwap[] = [];
         const failed: RfqRestoreFailure[] = [];
-        for (const record of records) {
-            if (retired.has(record.rfqId)) continue;
+        const restore = async (record: RfqSwapRecord) => {
+            if (!options.includeTerminal && isRfqSwapTerminal(record.state)) return;
             let swap: RfqSwap;
             try {
                 swap = rebuildRfqSwap(record, await params(record));
@@ -934,18 +966,57 @@ export class RfqSwapManager {
                     rfqId: record.rfqId,
                     error: error instanceof Error ? error : new Error(errorMessage(error)),
                 });
-                continue;
+                return;
             }
-            this.origins.set(record.rfqId, rfqSwapOriginOf(record));
-            if (isRfqSwapTerminal(swap.state)) this.finished.set(swap.rfqId, swap);
-            else this.track(swap);
+            this.removed.delete(record.rfqId);
+            if (isRfqSwapTerminal(swap.state)) this.rememberFinished(swap, true);
+            else {
+                this.origins.set(record.rfqId, rfqSwapOriginOf(record));
+                this.track(swap);
+            }
             restored.push(swap);
+        };
+
+        let pruned = fastPruned ?? [];
+        if (
+            repository.getRfqSwapsPage &&
+            (fastPruned || countOnlyPruned !== undefined) &&
+            !options.includeTerminal
+        ) {
+            for (const state of RFQ_SWAP_ACTIVE_STATES) {
+                let afterId: string | undefined;
+                for (;;) {
+                    const page = await repository.getRfqSwapsPage(state, afterId, 256);
+                    if (page.length === 0) break;
+                    if (page.length > 256)
+                        throw new Error("getRfqSwapsPage exceeded its requested limit");
+                    let cursor = afterId ?? "";
+                    for (const record of page) {
+                        if (record.state !== state || record.rfqId <= cursor) {
+                            throw new Error(
+                                "getRfqSwapsPage returned an unordered or mismatched page",
+                            );
+                        }
+                        cursor = record.rfqId;
+                        await restore(record);
+                    }
+                    afterId = cursor;
+                    if (page.length < 256) break;
+                }
+            }
+        } else {
+            const records = await repository.getAllRfqSwaps();
+            pruned = fastPruned ?? (await this.dropRetired(repository, records));
+            const retired = new Set(pruned);
+            for (const record of records) {
+                if (!retired.has(record.rfqId)) await restore(record);
+            }
         }
 
         if (this.running) {
             await this.pollMany(restored.filter((swap) => this.monitored.has(swap.rfqId)));
         }
-        return { restored, failed, pruned };
+        return { restored, failed, pruned, prunedCount: countOnlyPruned ?? pruned.length };
     }
 
     /**
@@ -1028,8 +1099,7 @@ export class RfqSwapManager {
     /**
      * Load records and begin monitoring. Runs one pass immediately — a caller
      * resuming after a restart may be well past a deadline already — then
-     * every `pollIntervalMs`. Records that are already terminal are kept only
-     * so {@link waitForSwapCompletion} can answer for them.
+     * every `pollIntervalMs`. Terminal outcomes in a repository are read on demand.
      *
      * Calling it again while running loads the records and returns rather than
      * re-arming — dropping them silently would strand a funded swap on a
@@ -1046,8 +1116,11 @@ export class RfqSwapManager {
     async start(swaps: readonly RfqSwap[] = []): Promise<void> {
         for (const swap of swaps) await this.admit(swap);
         for (const swap of swaps) {
-            if (isRfqSwapTerminal(swap.state)) this.finished.set(swap.rfqId, swap);
-            else this.track(swap);
+            this.removed.delete(swap.rfqId);
+            if (isRfqSwapTerminal(swap.state)) {
+                this.rememberFinished(swap);
+                this.origins.delete(swap.rfqId);
+            } else this.track(swap);
         }
         if (this.running) return;
         this.running = true;
@@ -1094,8 +1167,10 @@ export class RfqSwapManager {
      */
     async addSwap(swap: RfqSwap, origin?: RfqSwapOrigin): Promise<void> {
         await this.admit(swap, origin);
+        this.removed.delete(swap.rfqId);
         if (isRfqSwapTerminal(swap.state)) {
-            this.finished.set(swap.rfqId, swap);
+            this.rememberFinished(swap);
+            this.origins.delete(swap.rfqId);
             return;
         }
         this.track(swap);
@@ -1149,6 +1224,7 @@ export class RfqSwapManager {
      * manager stops driving the swap. Retiring the row is reserved for a swap
      * that reached a terminal state, where the lockup is provably done. */
     async removeSwap(rfqId: string): Promise<void> {
+        this.removed.add(rfqId);
         this.untrack(rfqId);
         this.finished.delete(rfqId);
         this.registered.delete(rfqId);
@@ -1254,6 +1330,20 @@ export class RfqSwapManager {
      */
     async waitForSwapCompletion(rfqId: string): Promise<RfqSwapOutcome> {
         const swap = this.monitored.get(rfqId) ?? this.finished.get(rfqId);
+        if (!swap && !this.removed.has(rfqId) && this.deps.repository) {
+            const record = await this.deps.repository.getRfqSwap(rfqId);
+            if (
+                record &&
+                !this.removed.has(rfqId) &&
+                isRfqSwapTerminal(record.state) &&
+                shouldRetainRfqSwap(record, this.config.now())
+            ) {
+                if (record.state === "failed") {
+                    throw new Error(record.failure ?? `swap ${rfqId} failed`);
+                }
+                return outcomeOfRecord(record);
+            }
+        }
         if (!swap) throw new Error(`swap ${rfqId} is not monitored`);
         if (swap.state === "failed") throw new Error(swap.failure ?? `swap ${rfqId} failed`);
         if (isPayoutDecided(swap)) return outcomeOf(swap);
@@ -2143,8 +2233,10 @@ export class RfqSwapManager {
     private finalize(swap: RfqSwap): void {
         if (!this.monitored.has(swap.rfqId)) return;
         this.untrack(swap.rfqId);
-        this.finished.set(swap.rfqId, swap);
+        this.rememberFinished(swap, true);
         this.retireContract(swap);
+        this.registered.delete(swap.rfqId);
+        this.origins.delete(swap.rfqId);
         if (swap.state === "failed") {
             notify(this.swapFailedListeners, (listener) =>
                 listener(swap, new Error(swap.failure ?? `swap ${swap.rfqId} failed`)),
@@ -2152,6 +2244,11 @@ export class RfqSwapManager {
             return;
         }
         notify(this.swapCompletedListeners, (listener) => listener(swap));
+    }
+
+    private rememberFinished(swap: RfqSwap, durable = false): void {
+        if (durable && this.deps.repository) this.finished.delete(swap.rfqId);
+        else this.finished.set(swap.rfqId, swap);
     }
 
     private settleWaiters(swap: RfqSwap): void {
@@ -2219,6 +2316,23 @@ const outcomeOf = (swap: RfqSwap): RfqSwapOutcome => {
     return {
         state: swap.state,
         txid: lostReceive ? swap.refundArkTxid : (traderClaimTxid(swap) ?? swap.refundArkTxid),
+    };
+};
+
+const outcomeOfRecord = (record: RfqSwapRecord): RfqSwapOutcome => {
+    const profileClaim =
+        record.kind === "onchain_send"
+            ? record.profile.claimTxid
+            : record.kind === "lightning_receive"
+              ? record.profile.claimArkTxid
+              : undefined;
+    const claimTxid = typeof profileClaim === "string" ? profileClaim : undefined;
+    return {
+        state: record.state,
+        txid:
+            record.kind === "lightning_receive" && record.state === "refunded"
+                ? record.refundArkTxid
+                : (claimTxid ?? record.refundArkTxid),
     };
 };
 

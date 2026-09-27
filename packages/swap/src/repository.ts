@@ -2,6 +2,17 @@ import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
 import { isRfqSwapTerminal } from "./rfqSwapState";
+import type { RfqSwapState } from "./rfqSwapState";
+
+export const RFQ_SWAP_MAX_PAGE_SIZE = 500;
+
+export function assertRfqSwapPageLimit(limit: number): void {
+    if (!Number.isInteger(limit) || limit < 1 || limit > RFQ_SWAP_MAX_PAGE_SIZE) {
+        throw new RangeError(
+            `RFQ swap page limit must be an integer from 1 to ${RFQ_SWAP_MAX_PAGE_SIZE}`,
+        );
+    }
+}
 
 /** A registry discovery result held for reuse. Refetchable — unlike a swap
  * record, losing it costs one network round trip — but it must survive a cold
@@ -27,9 +38,8 @@ export const marketsCacheKey = (network: string, registry: string) =>
  * lifetime: all three belong to one wallet on one device, and a consumer
  * that wipes one wants all three gone.
  *
- * ponytail: no query filters — every consumer reads all swaps and filters
- * in memory; mirror the Boltz plugin's GetSwapsFilter when a consumer needs
- * subset queries.
+ * RFQ history also has an optional state-scoped cursor read. Custom stores
+ * without it keep the legacy all-record fallback.
  */
 export interface AssetSwapRepository extends AsyncDisposable {
     /** 4 adds `getRfqSwap`. 3 added the other RFQ methods below; 2 was the
@@ -66,12 +76,20 @@ export interface AssetSwapRepository extends AsyncDisposable {
     /** One record by key. `undefined` on a miss — retention prunes terminal
      * records, so absence is ordinary and not an error. */
     getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined>;
-    /** Every stored RFQ swap record, in no particular order. */
+    /** Every stored RFQ swap record, in no particular order. Unbounded. */
     getAllRfqSwaps(): Promise<RfqSwapRecord[]>;
+    /** Optional keyset page, ordered by rfqId within one state. `afterId` is exclusive; limit 1–500. */
+    getRfqSwapsPage?(
+        state: RfqSwapState,
+        afterId: string | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]>;
     /** Drop one, once it is past retention — see `shouldRetainRfqSwap`. */
     removeRfqSwap(rfqId: string): Promise<void>;
     /** Optional backend fast path; cutoff is inclusive Unix seconds. */
     pruneRetiredRfqSwaps?(cutoff: number): Promise<string[]>;
+    /** Count-only retention for bounded restore; unlike the ID-returning method, this does not allocate per row. */
+    pruneRetiredRfqSwapsCount?(cutoff: number): Promise<number>;
 
     /** Sent txids already checked for offer packets (see restore.ts). */
     getScannedTxids(): Promise<Set<string>>;
@@ -111,6 +129,21 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
         return [...this.rfqSwaps.values()];
     }
 
+    async getRfqSwapsPage(
+        state: RfqSwapState,
+        afterId: string | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        return [...this.rfqSwaps.values()]
+            .filter(
+                (record) =>
+                    record.state === state && (afterId === undefined || record.rfqId > afterId),
+            )
+            .sort((a, b) => (a.rfqId < b.rfqId ? -1 : a.rfqId > b.rfqId ? 1 : 0))
+            .slice(0, limit);
+    }
+
     async removeRfqSwap(rfqId: string): Promise<void> {
         this.rfqSwaps.delete(rfqId);
     }
@@ -121,6 +154,16 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
             if (!isRfqSwapTerminal(record.state) || record.updatedAt > cutoff) continue;
             this.rfqSwaps.delete(id);
             removed.push(id);
+        }
+        return removed;
+    }
+
+    async pruneRetiredRfqSwapsCount(cutoff: number): Promise<number> {
+        let removed = 0;
+        for (const [id, record] of this.rfqSwaps) {
+            if (!isRfqSwapTerminal(record.state) || record.updatedAt > cutoff) continue;
+            this.rfqSwaps.delete(id);
+            removed++;
         }
         return removed;
     }

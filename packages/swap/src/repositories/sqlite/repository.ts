@@ -5,12 +5,14 @@ import {
 } from "@arkade-os/sdk/repositories/sqlite";
 import {
     marketsCacheKey,
+    assertRfqSwapPageLimit,
     type AssetSwapRepository,
     type MarketsCacheEntry,
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
 import { RFQ_SWAP_TERMINAL_STATES } from "../../rfqSwapState";
+import type { RfqSwapState } from "../../rfqSwapState";
 
 const DEFAULT_PREFIX = "arkade_";
 // SQLite's default parameter ceiling is 999; stay well under it per statement.
@@ -104,6 +106,9 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
             await this.db.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_retention ON ${this.rfqSwaps} (state, updated_at)`,
             );
+            await this.db.run(
+                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_page ON ${this.rfqSwaps} (state, rfq_id)`,
+            );
             await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.scanned} (txid TEXT PRIMARY KEY)`);
             await this.db.run(
                 `CREATE TABLE IF NOT EXISTS ${this.markets} (cache_key TEXT PRIMARY KEY, data TEXT NOT NULL)`,
@@ -164,6 +169,20 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         return rows.map((r) => JSON.parse(r.data) as RfqSwapRecord);
     }
 
+    async getRfqSwapsPage(
+        state: RfqSwapState,
+        afterId: string | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        await this.ensureInit();
+        const rows = await this.db.all<{ data: string }>(
+            `SELECT data FROM ${this.rfqSwaps} WHERE state = ? AND rfq_id > ? ORDER BY rfq_id LIMIT ?`,
+            [state, afterId ?? "", limit],
+        );
+        return rows.map((row) => JSON.parse(row.data) as RfqSwapRecord);
+    }
+
     async removeRfqSwap(rfqId: string): Promise<void> {
         await this.ensureInit();
         await this.withTx(async () => {
@@ -185,6 +204,24 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
             if (rows.length === 0) return;
             await this.db.run(`DELETE FROM ${this.rfqSwaps} WHERE ${predicate}`, params);
             removed = rows.map((row) => row.rfq_id);
+        });
+        return removed;
+    }
+
+    async pruneRetiredRfqSwapsCount(cutoff: number): Promise<number> {
+        await this.ensureInit();
+        const states = [...RFQ_SWAP_TERMINAL_STATES];
+        const predicate = `state IN (${states.map(() => "?").join(", ")}) AND updated_at <= ?`;
+        const params = [...states, cutoff];
+        let removed = 0;
+        await this.withTx(async () => {
+            const row = await this.db.get<{ count: number }>(
+                `SELECT COUNT(*) AS count FROM ${this.rfqSwaps} WHERE ${predicate}`,
+                params,
+            );
+            removed = row?.count ?? 0;
+            if (removed)
+                await this.db.run(`DELETE FROM ${this.rfqSwaps} WHERE ${predicate}`, params);
         });
         return removed;
     }

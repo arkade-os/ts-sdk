@@ -1,12 +1,14 @@
 import type { RealmLike } from "@arkade-os/sdk/repositories/realm";
 import {
     marketsCacheKey,
+    assertRfqSwapPageLimit,
     type AssetSwapRepository,
     type MarketsCacheEntry,
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
 import { RFQ_SWAP_TERMINAL_STATES } from "../../rfqSwapState";
+import type { RfqSwapState } from "../../rfqSwapState";
 
 const SWAPS = "ArkadeAssetSwap";
 const RFQ_SWAPS = "ArkadeRfqSwap";
@@ -87,6 +89,24 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
         );
     }
 
+    async getRfqSwapsPage(
+        state: RfqSwapState,
+        afterId: string | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        const rows = this.realm
+            .objects<{ data: string }>(RFQ_SWAPS)
+            .filtered("state == $0 AND rfqId > $1", state, afterId ?? "")
+            .sorted("rfqId");
+        const page: RfqSwapRecord[] = [];
+        for (const row of rows) {
+            page.push(JSON.parse(row.data) as RfqSwapRecord);
+            if (page.length === limit) break;
+        }
+        return page;
+    }
+
     async removeRfqSwap(rfqId: string): Promise<void> {
         this.realm.write(() => {
             this.realm.delete(
@@ -103,6 +123,17 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
             .filtered(`(${statePredicate}) AND updatedAt <= $${states.length}`, ...states, cutoff);
         const removed = [...matches].map((row) => row.rfqId);
         if (removed.length) this.realm.write(() => this.realm.delete(matches));
+        return removed;
+    }
+
+    async pruneRetiredRfqSwapsCount(cutoff: number): Promise<number> {
+        const states = RFQ_SWAP_TERMINAL_STATES;
+        const statePredicate = states.map((_, index) => `state == $${index}`).join(" OR ");
+        const matches = this.realm
+            .objects(RFQ_SWAPS)
+            .filtered(`(${statePredicate}) AND updatedAt <= $${states.length}`, ...states, cutoff);
+        const removed = matches.length;
+        if (removed) this.realm.write(() => this.realm.delete(matches));
         return removed;
     }
 

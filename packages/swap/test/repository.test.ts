@@ -283,6 +283,30 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
         expect(records.find((r) => r.rfqId === "r1")?.state).toBe("settled");
     });
 
+    it("pages one state by an exclusive rfqId cursor", async () => {
+        await using repository = create();
+        for (const id of ["r3", "r1", "r2"]) {
+            await repository.saveRfqSwap(rfqRecord(id));
+        }
+        await repository.saveRfqSwap({ ...rfqRecord("r0"), state: "settled" });
+
+        expect(
+            (await repository.getRfqSwapsPage!("pending", undefined, 2)).map((r) => r.rfqId),
+        ).toEqual(["r1", "r2"]);
+        expect((await repository.getRfqSwapsPage!("pending", "r2", 2)).map((r) => r.rfqId)).toEqual(
+            ["r3"],
+        );
+        expect(
+            (await repository.getRfqSwapsPage!("settled", undefined, 2)).map((r) => r.rfqId),
+        ).toEqual(["r0"]);
+        await expect(repository.getRfqSwapsPage!("pending", undefined, 0)).rejects.toThrow(
+            RangeError,
+        );
+        await expect(repository.getRfqSwapsPage!("pending", undefined, 501)).rejects.toThrow(
+            RangeError,
+        );
+    });
+
     it("stores the record whole, down to the fields nothing else can recover", async () => {
         // The covenant lives in the contract row, but what is here is here
         // because nothing rebuilds it: `paymentHash` is one-way inside the tree,
@@ -357,6 +381,25 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
             "old-failed",
             "old-settled",
         ]);
+        expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId).sort()).toEqual([
+            "live",
+            "recent",
+        ]);
+    });
+
+    it("counts expired RFQ records without returning their IDs", async () => {
+        await using repository = create();
+        await repository.saveRfqSwap({ ...rfqRecord("old-a"), state: "settled", updatedAt: 99 });
+        await repository.saveRfqSwap({ ...rfqRecord("old-b"), state: "failed", updatedAt: 100 });
+        await repository.saveRfqSwap({
+            ...rfqRecord("live"),
+            state: "needs_counterparty",
+            updatedAt: 1,
+        });
+        await repository.saveRfqSwap({ ...rfqRecord("recent"), state: "refunded", updatedAt: 101 });
+
+        expect(await repository.pruneRetiredRfqSwapsCount!(100)).toBe(2);
+        expect(await repository.pruneRetiredRfqSwapsCount!(100)).toBe(0);
         expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId).sort()).toEqual([
             "live",
             "recent",
@@ -468,12 +511,44 @@ describe("IndexedDB migrations", () => {
         expect(await repository.getAllRfqSwaps()).toEqual([]);
     });
 
+    it("adds the page index to an existing v3 RFQ store", async () => {
+        const dbName = `page-upgrade-${Math.random()}`;
+        await new Promise<void>((resolve, reject) => {
+            const open = indexedDB.open(dbName, 3);
+            open.onupgradeneeded = () => {
+                const db = open.result;
+                db.createObjectStore("swaps", { keyPath: "id" });
+                const rfq = db.createObjectStore("rfqSwaps", { keyPath: "rfqId" });
+                rfq.createIndex("byStateAndUpdatedAt", ["state", "updatedAt"]);
+                db.createObjectStore("scannedTxids");
+                db.createObjectStore("markets");
+            };
+            open.onsuccess = () => {
+                const db = open.result;
+                const tx = db.transaction(["rfqSwaps"], "readwrite");
+                tx.objectStore("rfqSwaps").put(rfqRecord("existing"));
+                tx.oncomplete = () => {
+                    db.close();
+                    resolve();
+                };
+                tx.onerror = () => reject(tx.error);
+            };
+            open.onerror = () => reject(open.error);
+        });
+
+        await using repository = new IndexedDbAssetSwapRepository(dbName);
+        expect(
+            (await repository.getRfqSwapsPage("pending", undefined, 1)).map((r) => r.rfqId),
+        ).toEqual(["existing"]);
+        expect(await repository.getRfqSwap("existing")).toEqual(rfqRecord("existing"));
+    });
+
     it("prunes across IndexedDB transaction chunks", async () => {
         const dbName = `retention-chunks-${Math.random()}`;
         await using repository = new IndexedDbAssetSwapRepository(dbName);
         await repository.getAllRfqSwaps();
         await new Promise<void>((resolve, reject) => {
-            const open = indexedDB.open(dbName, 3);
+            const open = indexedDB.open(dbName, 4);
             open.onsuccess = () => {
                 const db = open.result;
                 const tx = db.transaction(["rfqSwaps"], "readwrite");
