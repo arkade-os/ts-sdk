@@ -53,7 +53,7 @@ export interface WalletRepository extends AsyncDisposable {
      */
     getVtxosForScript?(script: string): Promise<ExtendedVirtualCoin[]>;
 
-    /** Fetch VTXOs for a script set in one repository operation when supported. */
+    /** Fetch a script set without one read per contract; `nonterminalOnly` omits spent rows. */
     getVtxosForScripts?(
         scripts: string[],
         options?: { nonterminalOnly?: boolean },

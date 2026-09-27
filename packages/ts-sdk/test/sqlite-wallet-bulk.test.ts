@@ -40,12 +40,18 @@ describe("SQLiteWalletRepository.getVtxosForScripts", () => {
                 txid: "05".padStart(64, "0"),
                 settledBy: "settled",
             }),
+            createMockExtendedVtxo({
+                ...rows[0],
+                txid: "06".padStart(64, "0"),
+                isSpent: undefined,
+                virtualStatus: { ...rows[0].virtualStatus, state: "spent" },
+            }),
         );
         await repository.saveVtxos("address", rows);
 
         expect(await repository.getVtxosForScripts([])).toEqual([]);
         const result = await repository.getVtxosForScripts(scripts);
-        expect(result).toHaveLength(5);
+        expect(result).toHaveLength(6);
         const live = await repository.getVtxosForScripts(scripts, { nonterminalOnly: true });
         expect(live.map((row) => row.script)).toEqual([scripts[0], scripts[500]]);
     });

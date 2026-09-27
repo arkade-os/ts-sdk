@@ -2395,10 +2395,13 @@ export class ContractManager implements IContractManager {
                 [...byScript],
                 options,
             );
-            return rows
-                .filter((vtxo) => vtxo.script !== undefined && byScript.has(vtxo.script))
-                .filter((vtxo) => !options?.nonterminalOnly || !hasTerminalSpend(vtxo))
-                .map((vtxo) => ({ ...normalizeVtxo(vtxo), contractScript: vtxo.script! }));
+            return (
+                rows
+                    .filter((vtxo) => vtxo.script !== undefined && byScript.has(vtxo.script))
+                    // Custom repositories may ignore the optional query hint.
+                    .filter((vtxo) => !options?.nonterminalOnly || !hasTerminalSpend(vtxo))
+                    .map((vtxo) => ({ ...normalizeVtxo(vtxo), contractScript: vtxo.script! }))
+            );
         }
         const res = await Promise.all(
             contracts.map((contract) =>

@@ -1433,7 +1433,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
             const scripts = (await contractManager.getContracts(scope))
                 .filter(isContractGenericallySpendable)
                 .map((contract) => contract.script);
-            if (scripts.length === 0) return [];
+            if (scripts.length === 0) {
+                if (filter.requireSynced) {
+                    throw new Error("No generically spendable contracts to sync");
+                }
+                return [];
+            }
             query = { ...scope, script: scripts };
         }
         const snapshot = await contractManager.getContractsWithVtxos(query, undefined, {

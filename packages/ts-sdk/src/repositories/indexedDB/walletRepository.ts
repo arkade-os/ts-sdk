@@ -12,12 +12,13 @@ import {
     SerializedVtxo,
     DB_VERSION,
 } from "./db";
-import { awaitTransaction, deleteByIndex, promisifyRequest } from "./idbUtils";
+import { awaitTransaction, deleteByIndex, getAllByIndexValues, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
 import { initDatabase } from "./schema";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
+import { hasTerminalSpend } from "../../wallet/vtxo";
 
 /**
  * IndexedDB-based implementation of WalletRepository.
@@ -121,6 +122,46 @@ export class IndexedDBWalletRepository implements WalletRepository {
             return Array.from(byOutpoint.values()).map(deserializeVtxoWithBackfill);
         } catch (error) {
             console.error(`Failed to get VTXOs for script ${script}:`, error);
+            throw error;
+        }
+    }
+
+    async getVtxosForScripts(
+        scripts: string[],
+        options?: { nonterminalOnly?: boolean },
+    ): Promise<ExtendedVirtualCoin[]> {
+        const unique = [...new Set(scripts)].filter(Boolean);
+        if (unique.length === 0) return [];
+        try {
+            const db = await this.getDB();
+            const byOutpoint = new Map<string, SerializedVtxo & { address: string }>();
+            for (let i = 0; i < unique.length; i += 64) {
+                const chunk = unique.slice(i, i + 64);
+                const selected = new Set(chunk);
+                const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
+                const rows = await getAllByIndexValues<SerializedVtxo & { address: string }>(
+                    store,
+                    "script",
+                    chunk,
+                );
+                for (const row of rows) {
+                    if (!selected.has(row.script!)) continue;
+                    const key = `${row.script}:${row.txid}:${row.vout}`;
+                    const existing = byOutpoint.get(key);
+                    if (!existing || shouldReplaceVtxo(existing, row)) byOutpoint.set(key, row);
+                }
+            }
+            const result: ExtendedVirtualCoin[] = [];
+            for (const row of byOutpoint.values()) {
+                if (options?.nonterminalOnly && (row.isSpent || row.spentBy || row.settledBy)) {
+                    continue;
+                }
+                const vtxo = deserializeVtxoWithBackfill(row);
+                if (!options?.nonterminalOnly || !hasTerminalSpend(vtxo)) result.push(vtxo);
+            }
+            return result;
+        } catch (error) {
+            console.error("Failed to get VTXOs for scripts:", error);
             throw error;
         }
     }

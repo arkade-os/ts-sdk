@@ -252,13 +252,16 @@ export async function getNormalizedVtxos(
 /** Everything a script query can filter on, minus the cursor this reader owns. */
 export type VtxoScriptQuery = Omit<GetVtxosOptions, "scripts" | "outpoints" | "pageIndex">;
 
+const SCRIPT_CHUNK_CONCURRENCY = 4;
+
 /**
  * Read every virtual output for an arbitrary number of scripts.
  *
  * @remarks
  * Scripts travel in the query string, so a wallet-derived list must be chunked
- * at {@link SCRIPT_QUERY_CHUNK_SIZE} or the request `414`s. At most four chunks
- * run together; each is paged to exhaustion.
+ * at {@link SCRIPT_QUERY_CHUNK_SIZE} or the request `414`s. Bounded concurrency
+ * cuts serial latency without letting a large wallet flood the indexer; each
+ * chunk is paged to exhaustion.
  */
 export async function getAllNormalizedVtxos(
     provider: Pick<IndexerProvider, "getVtxos">,
@@ -296,8 +299,10 @@ export async function getAllNormalizedVtxos(
         return result;
     };
 
-    for (let i = 0; i < chunks.length; i += 4) {
-        const batch = await Promise.all(chunks.slice(i, i + 4).map(fetchChunk));
+    for (let i = 0; i < chunks.length; i += SCRIPT_CHUNK_CONCURRENCY) {
+        const batch = await Promise.all(
+            chunks.slice(i, i + SCRIPT_CHUNK_CONCURRENCY).map(fetchChunk),
+        );
         for (const result of batch) all.push(...result);
     }
 

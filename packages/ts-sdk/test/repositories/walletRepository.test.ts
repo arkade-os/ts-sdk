@@ -110,6 +110,42 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
     });
 
     describe("Script-scoped VTXO management", () => {
+        it("reads a script set with the same nonterminal selection", async () => {
+            const liveA = { ...createMockVtxo("live-a", 0, 1000), script: "script-a" };
+            const liveB = { ...createMockVtxo("live-b", 0, 2000), script: "script-b" };
+            const spent = {
+                ...createMockVtxo("spent", 0, 3000),
+                script: "script-a",
+                isSpent: true,
+            };
+            const legacySpent = {
+                ...createMockVtxo("legacy-spent", 0, 3000),
+                script: "script-a",
+                isSpent: undefined,
+                virtualStatus: { state: "spent" as const },
+            };
+            const foreign = { ...createMockVtxo("foreign", 0, 4000), script: "foreign" };
+            await repository.saveVtxos("address-a", [liveA, spent, legacySpent]);
+            await repository.saveVtxos("address-b", [liveB, foreign]);
+
+            const scripts = [
+                "script-a",
+                ...Array.from({ length: 64 }, (_, i) => `missing-${i}`),
+                "script-b",
+                "script-a",
+            ];
+            expect(await repository.getVtxosForScripts!([])).toEqual([]);
+            const all = await repository.getVtxosForScripts!(scripts);
+            expect(all.map((row) => row.txid).sort()).toEqual([
+                "legacy-spent",
+                "live-a",
+                "live-b",
+                "spent",
+            ]);
+            const live = await repository.getVtxosForScripts!(scripts, { nonterminalOnly: true });
+            expect(live.map((row) => row.txid).sort()).toEqual(["live-a", "live-b"]);
+        });
+
         it("should return empty array when no VTXOs exist for script", async () => {
             const vtxos = await repository.getVtxosForScript!("script1");
             expect(vtxos).toEqual([]);
@@ -193,6 +229,8 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
 
                 const retrieved = await repository.getVtxosForScript!(script1);
                 expect(retrieved).toHaveLength(1);
+                const bulk = await repository.getVtxosForScripts!([script1, script1]);
+                expect(bulk).toHaveLength(1);
             });
         }
     });

@@ -229,6 +229,19 @@ describe("ContractHandler.isGenericallySpendable", () => {
 });
 
 describe("getSpendableVtxos", () => {
+    it("fails closed when a synced scoped read has no eligible contracts", async () => {
+        const { wallet } = await seededWallet();
+        const manager = await wallet.getContractManager();
+        vi.spyOn(manager, "getContracts").mockResolvedValue([]);
+
+        await expect(
+            wallet.getSpendableVtxos({ genericallySpendableOnly: true, requireSynced: true }),
+        ).rejects.toThrow("No generically spendable contracts to sync");
+        await expect(wallet.getSpendableVtxos({ genericallySpendableOnly: true })).resolves.toEqual(
+            [],
+        );
+    });
+
     it("can require a successful provider sync before returning funding inputs", async () => {
         const { wallet } = await seededWallet();
         await expect(wallet.getSpendableVtxos({ requireSynced: true })).rejects.toThrow(
