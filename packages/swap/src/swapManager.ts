@@ -835,6 +835,8 @@ export class RfqSwapManager {
     private readonly dirty = new Set<string>();
     /** Race guard: one action at a time per swap. */
     private readonly inProgress = new Set<string>();
+    private activePolls = 0;
+    private readonly pollWaiters = new Set<() => void>();
 
     private timer: ReturnType<typeof setTimeout> | null = null;
     private running = false;
@@ -1218,6 +1220,23 @@ export class RfqSwapManager {
         }
     }
 
+    private async acquirePollSlot(): Promise<() => void> {
+        if (this.activePolls < RfqSwapManager.POLL_CONCURRENCY) {
+            this.activePolls++;
+        } else {
+            await new Promise<void>((resolve) => this.pollWaiters.add(resolve));
+        }
+        return () => {
+            const next = this.pollWaiters.values().next().value;
+            if (next) {
+                this.pollWaiters.delete(next);
+                next();
+            } else {
+                this.activePolls--;
+            }
+        };
+    }
+
     /**
      * Resolve once this swap's PAYOUT is decided — which for onchain-send is
      * the L1 claim, not the end of the record's life: once `claimTxid` is set
@@ -1415,8 +1434,9 @@ export class RfqSwapManager {
         if (this.inProgress.has(swap.rfqId)) return;
         if (!this.monitored.has(swap.rfqId)) return;
         this.inProgress.add(swap.rfqId);
+        const release = await this.acquirePollSlot();
         try {
-            await this.runPass(swap);
+            if (this.monitored.has(swap.rfqId)) await this.runPass(swap);
         } finally {
             // Waiters settle AFTER the write, not from `setState`: a caller
             // that awaits completion and then reads its own storage must not
@@ -1430,19 +1450,18 @@ export class RfqSwapManager {
             // the stale record, replaying action callbacks for a swap the
             // caller already treated as done. Leaving it dirty and monitored
             // makes the next pass retry the write instead.
-            const persisted = this.dirty.has(swap.rfqId) ? await this.save(swap) : true;
-            if (persisted) {
-                this.dirty.delete(swap.rfqId);
-                this.settleWaiters(swap);
-                if (isRfqSwapTerminal(swap.state)) this.finalize(swap);
+            try {
+                const persisted = this.dirty.has(swap.rfqId) ? await this.save(swap) : true;
+                if (persisted) {
+                    this.dirty.delete(swap.rfqId);
+                    this.settleWaiters(swap);
+                    if (isRfqSwapTerminal(swap.state)) this.finalize(swap);
+                }
+            } finally {
+                // Release after every write and callback, even when a save fails.
+                this.inProgress.delete(swap.rfqId);
+                release();
             }
-            // Released LAST, after every await above. Dropped before the
-            // `save` yield, it let a direct `poll()` — the timer path is
-            // serialised by `arm()`, explicit calls are not — clear the
-            // in-progress guard and re-enter `runPass` for this same swap,
-            // firing `claimOnchain`/`refundArkade` a second time before
-            // `finalize` had taken it out of `monitored`.
-            this.inProgress.delete(swap.rfqId);
         }
     }
 
