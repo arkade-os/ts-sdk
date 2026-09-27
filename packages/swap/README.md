@@ -730,7 +730,7 @@ For a bounded history read, call `getRfqSwapsPage(state, afterId, limit)` on a b
 Pages are ordered by `rfqId` within one state; the cursor is exclusive and the limit is 1–500.
 `rfqSwapActivityInputsPage({ repository, indexer }, state, afterId, limit)` projects one such page
 with at most 16 concurrent indexer fallbacks. `getAllRfqSwaps()`, `rfqSwapActivityInputs()`, and the
-wallet's full `getActivities()` still return complete arrays and should not be used for million-row
+wallet's full `getActivityHistory()` still return complete arrays and should not be used for million-row
 history displays. IndexedDB upgrades its RFQ store from version 3 to 4 to add the page index; the
 upgrade preserves records but an older package opening that same database name cannot roll back.
 
