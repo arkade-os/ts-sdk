@@ -110,6 +110,7 @@ import {
     isSubdust,
     isRecoverable,
     isExpired,
+    hasTerminalSpend,
     // VTXO capability predicates
     canRecoverOnchain,
     canSpendOffchain,
@@ -827,6 +828,7 @@ export {
     isSpendable,
     isSubdust,
     isExpired,
+    hasTerminalSpend,
     getSequence,
     // VTXO capability predicates
     canRecoverOnchain,

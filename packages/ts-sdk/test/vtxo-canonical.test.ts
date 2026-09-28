@@ -6,6 +6,7 @@ import {
     canSweepOnchain,
     convertVtxo,
     getNormalizedVtxos,
+    hasTerminalSpend,
     isVtxoSpent,
     isExpired,
     isPastExpiry,
@@ -369,6 +370,20 @@ describe("height-based expiry", () => {
 });
 
 describe("deprecated compatibility wrappers", () => {
+    it("hasTerminalSpend aliases isVtxoSpent across canonical, legacy, and unwrapped inputs", () => {
+        for (const state of ["settled", "spent", "swept", "preconfirmed"] as const) {
+            const legacy = legacyCoin(state);
+            expect(hasTerminalSpend(legacy)).toBe(isVtxoSpent(legacy));
+        }
+        expect(hasTerminalSpend(coin({ isSpent: true }))).toBe(true);
+        expect(hasTerminalSpend(coin())).toBe(false);
+
+        // JS callers can hand over raw storage rows with no virtualStatus at all; the alias
+        // normalizes the same way the canonical predicate does, as it wraps it.
+        const unwrapped = { ...coin(), virtualStatus: undefined, isSpent: true } as never;
+        expect(hasTerminalSpend(unwrapped)).toBe(isVtxoSpent(unwrapped));
+    });
+
     it("isRecoverable stays swept-only and is NOT canRecoverOnchain", () => {
         const expiredUnswept = coin({ expiresAt: PAST });
         expect(isRecoverable(expiredUnswept)).toBe(false);

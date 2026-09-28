@@ -974,6 +974,7 @@ export {
     convertVtxo,
     getAllNormalizedVtxos,
     getNormalizedVtxos,
+    hasTerminalSpend,
     isVtxoSpent,
     isExpired,
     isPastExpiry,
