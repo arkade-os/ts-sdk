@@ -10,6 +10,7 @@ import {
     initDatabase,
     STORE_VTXOS,
     backfillVtxoScripts,
+    backfillUnspentVtxos,
     DB_VERSION,
 } from "../../src/repositories/indexedDB/schema";
 import { IndexedDBWalletRepository } from "../../src/repositories/indexedDB/walletRepository";
@@ -152,6 +153,103 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
         return [TaprootControlBlock.decode(controlBlockBytes), new Uint8Array(20).fill(2)];
     }
 
+    it("backfills the unspent index and preserves spent rows in the store", async () => {
+        const dbName = getUniqueDbName();
+        const db = await openDatabase(dbName, DB_VERSION, initDatabase);
+        try {
+            await new Promise<void>((resolve, reject) => {
+                const tx = db.transaction([STORE_VTXOS], "readwrite");
+                const store = tx.objectStore(STORE_VTXOS);
+                for (const row of [
+                    { txid: "live", script: "script-a", isSpent: false },
+                    { txid: "spent", script: "script-a", isSpent: true },
+                    { txid: "legacy", script: "script-a", virtualStatus: { state: "spent" } },
+                ]) {
+                    store.put({ address: TEST_ARK_ADDRESS, vout: 0, ...row });
+                }
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+            await new Promise<void>((resolve, reject) => {
+                const tx = db.transaction([STORE_VTXOS], "readwrite");
+                backfillUnspentVtxos(tx);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+            const tx = db.transaction([STORE_VTXOS], "readonly");
+            const store = tx.objectStore(STORE_VTXOS);
+            expect(store.index("scriptUnspent").keyPath).toEqual(["script", "unspent"]);
+            const unspent = await new Promise<Array<{ txid: string }>>((resolve, reject) => {
+                const request = store.index("scriptUnspent").getAll(["script-a", 1]);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+            expect(unspent.map((row) => row.txid)).toEqual(["live"]);
+            expect(
+                await new Promise((resolve) => {
+                    const request = store.count();
+                    request.onsuccess = () => resolve(request.result);
+                }),
+            ).toBe(3);
+        } finally {
+            await closeDatabase(dbName);
+        }
+    });
+
+    it.each([2, 3])(
+        "upgrades an existing v%d database to the unspent inventory index",
+        async (version) => {
+            const dbName = getUniqueDbName();
+            const oldDb = await new Promise<IDBDatabase>((resolve, reject) => {
+                const request = indexedDB.open(dbName, version);
+                request.onupgradeneeded = () => {
+                    const store = request.result.createObjectStore(STORE_VTXOS, {
+                        keyPath: ["address", "txid", "vout"],
+                    });
+                    if (version >= 3) store.createIndex("script", "script", { unique: false });
+                };
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+            await new Promise<void>((resolve, reject) => {
+                const transaction = oldDb.transaction([STORE_VTXOS], "readwrite");
+                const store = transaction.objectStore(STORE_VTXOS);
+                store.put({
+                    address: TEST_ARK_ADDRESS,
+                    txid: "live",
+                    vout: 0,
+                    ...(version >= 3 ? { script: "script-a" } : {}),
+                });
+                store.put({
+                    address: TEST_ARK_ADDRESS,
+                    txid: "spent",
+                    vout: 0,
+                    ...(version >= 3 ? { script: "script-a" } : {}),
+                    virtualStatus: { state: "spent" },
+                });
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () => reject(transaction.error);
+            });
+            oldDb.close();
+            const upgraded = await openDatabase(dbName, DB_VERSION, initDatabase);
+            try {
+                expect(upgraded.version).toBe(6);
+                const unspent = await new Promise<Array<{ txid: string }>>((resolve, reject) => {
+                    const request = upgraded
+                        .transaction([STORE_VTXOS], "readonly")
+                        .objectStore(STORE_VTXOS)
+                        .index("scriptUnspent")
+                        .getAll([version >= 3 ? "script-a" : EXPECTED_PK_SCRIPT_HEX, 1]);
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+                expect(unspent.map((row) => row.txid)).toEqual(["live"]);
+            } finally {
+                await closeDatabase(dbName);
+            }
+        },
+    );
+
     it("backfills script on legacy rows missing it", async () => {
         const dbName = getUniqueDbName();
         const db = await openDatabase(dbName, 3, initDatabase);
@@ -289,7 +387,7 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
     });
 
     it("creates the `script` index and populates it via backfill", async () => {
-        // Covers two things: (1) opening at DB_VERSION=3 creates a `script`
+        // Covers two things: (1) opening at the current DB_VERSION creates a `script`
         // index on the vtxos store, (2) rows inserted without `script` are
         // added to the index automatically when the backfill's
         // `cursor.update()` sets the field.

@@ -1,4 +1,5 @@
 import { scriptFromArkAddress } from "../scriptFromAddress";
+import { unspentIndexFlagForVtxo } from "../serialization";
 
 // Store names introduced in V2, they are all new to the migration
 export const STORE_VTXOS = "vtxos";
@@ -20,23 +21,20 @@ export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
 //        `vtxo.script` from `vtxo.address` so the field is always present
 //        at read time. Matches the `script` indexing already in place for
 //        Realm (`realm/schemas.ts`) and SQLite (`sqlite/walletRepository.ts`).
-//
-// The shared wallet/contract DB is pinned at v3 so upgrading the SDK never
-// migrates an existing user's database. The intent/virtualtx persistence
-// stores (v4/v5 below) are experimental and inert: they are created only by
-// the opt-in `IndexedDBIntentRepository`/`IndexedDBVirtualTxRepository`, which
-// open at `INTENT_DB_VERSION` with `initDatabaseWithIntents` on a *dedicated*
-// DB name — never through the default wallet path.
-export const DB_VERSION = 3;
-
 //   v4 — add intent + virtualtx persistence: `intents`, `virtualTxs`,
 //        `vtxoBranches` object stores (new, empty — no backfill).
 //   v5 — make `intents.intentId` unique (was non-unique in v4), matching the
 //        "unique when present" contract enforced by the other backends.
-// Experimental activation version for intent/virtualtx persistence. Reaching
-// it requires deliberately constructing the opt-in repos; the shared wallet
-// DB never advertises this version.
-export const INTENT_DB_VERSION = 5;
+//   v6 — index (script, unspent) for each unspent VTXO. Existing rows are
+//        backfilled in the upgrade transaction; spent history stays stored.
+// A database opened at v6 cannot be reopened by an older SDK requesting v3.
+// Consumers must coordinate the SDK upgrade across tabs.
+export const DB_VERSION = 6;
+
+// Intent/virtualtx persistence is still opt-in: these stores are created only
+// by initDatabaseWithIntents on a dedicated DB name, never by initDatabase on
+// the shared wallet path. Both paths now open at v6 for the active VTXO index.
+export const INTENT_DB_VERSION = 6;
 
 export function initDatabase(
     db: IDBDatabase,
@@ -105,6 +103,9 @@ export function initDatabase(
                 unique: false,
             });
         }
+        vtxosStore.createIndex("scriptUnspent", ["script", "unspent"], {
+            unique: false,
+        });
     }
 
     if (!db.objectStoreNames.contains(STORE_UTXOS)) {
@@ -208,8 +209,56 @@ export function initDatabase(
         if (!vtxosStore.indexNames.contains("script")) {
             vtxosStore.createIndex("script", "script", { unique: false });
         }
-        backfillVtxoScripts(transaction);
+        // The v6 backfill below fills both script and unspent in one
+        // cursor pass, avoiding two concurrent updates to the same legacy row.
     }
+
+    if (oldVersion >= 1 && oldVersion < 6 && transaction) {
+        const vtxosStore = transaction.objectStore(STORE_VTXOS);
+        if (!vtxosStore.indexNames.contains("scriptUnspent")) {
+            vtxosStore.createIndex("scriptUnspent", ["script", "unspent"], {
+                unique: false,
+            });
+        }
+        backfillUnspentVtxos(transaction);
+    }
+}
+
+/** Populate the unspent index without dropping any historical VTXO rows. */
+export function backfillUnspentVtxos(transaction: IDBTransaction): void {
+    const request = transaction.objectStore(STORE_VTXOS).openCursor();
+    request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        const value = cursor.value as {
+            address: string;
+            script?: string;
+            unspent?: 1;
+            isSpent?: boolean;
+            spentBy?: string;
+            settledBy?: string;
+            virtualStatus?: { state?: string };
+        };
+        let script = value.script;
+        if (!script) {
+            try {
+                script = scriptFromArkAddress(value.address);
+            } catch {
+                // Keep a corrupt legacy row in history; it cannot enter the
+                // active index without a trustworthy owner script.
+                cursor.continue();
+                return;
+            }
+        }
+        const unspent = unspentIndexFlagForVtxo({ ...value, script });
+        if (value.script !== script || value.unspent !== unspent) {
+            value.script = script;
+            if (unspent) value.unspent = unspent;
+            else delete value.unspent;
+            cursor.update(value);
+        }
+        cursor.continue();
+    };
 }
 
 // Experimental / inert: creates the intent, virtualtx and vtxoBranch stores on

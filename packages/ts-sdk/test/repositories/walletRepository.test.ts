@@ -204,6 +204,19 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
         });
 
         if (name.includes("IndexedDB")) {
+            it("does not resurrect a live duplicate after its canonical row is spent", async () => {
+                const live = { ...createMockVtxo("duplicate", 0, 1000), script: "script-a" };
+                const spent = { ...live, isSpent: true, spentBy: "spent-tx" };
+                await repository.saveVtxos("old-address", [live]);
+                await repository.saveVtxos("new-address", [spent]);
+                expect(
+                    (await repository.getVtxosForScripts!(["script-a"])).map((row) => row.spentBy),
+                ).toEqual(["spent-tx"]);
+                expect(
+                    await repository.getVtxosForScripts!(["script-a"], { nonterminalOnly: true }),
+                ).toEqual([]);
+            });
+
             it("should dedup same outpoint across address buckets in getVtxosForScript", async () => {
                 const script1 = "script1";
                 const address1 = "address1";
