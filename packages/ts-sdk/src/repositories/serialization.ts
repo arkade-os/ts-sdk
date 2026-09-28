@@ -9,20 +9,20 @@ export type SerializedVtxo = ReturnType<typeof serializeVtxo>;
 export type SerializedUtxo = ReturnType<typeof serializeUtxo>;
 export type SerializedTransaction = ReturnType<typeof serializeTransaction>;
 
-/** Repository-only index key. Terminal rows retain their full historical
- * record but have no key in the active-script index. */
-export function activeScriptForVtxo(vtxo: {
+/** Repository-only index flag. Terminal rows retain their history but have no
+ * entry in the compound (script, active) index. */
+export function activeIndexFlagForVtxo(vtxo: {
     script?: string | null;
     isSpent?: boolean | null;
     spentBy?: string | null;
     settledBy?: string | null;
     virtualStatus?: { state?: string } | null;
-}): string | undefined {
+}): 1 | undefined {
     if (!vtxo.script) return undefined;
     if (vtxo.isSpent === true) return undefined;
     if (vtxo.isSpent == null && vtxo.virtualStatus?.state === "spent") return undefined;
     if (vtxo.spentBy || vtxo.settledBy) return undefined;
-    return vtxo.script;
+    return 1;
 }
 
 // `Asset.amount` is a `bigint`, which `JSON.stringify` cannot serialize

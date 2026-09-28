@@ -1,5 +1,5 @@
 import { scriptFromArkAddress } from "../scriptFromAddress";
-import { activeScriptForVtxo } from "../serialization";
+import { activeIndexFlagForVtxo } from "../serialization";
 
 // Store names introduced in V2, they are all new to the migration
 export const STORE_VTXOS = "vtxos";
@@ -25,7 +25,7 @@ export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
 //        `vtxoBranches` object stores (new, empty — no backfill).
 //   v5 — make `intents.intentId` unique (was non-unique in v4), matching the
 //        "unique when present" contract enforced by the other backends.
-//   v6 — index the script of each nonterminal VTXO. Existing rows are
+//   v6 — index (script, active) for each nonterminal VTXO. Existing rows are
 //        backfilled in the upgrade transaction; spent history stays stored.
 // A database opened at v6 cannot be reopened by an older SDK requesting v3.
 // Consumers must coordinate the SDK upgrade across tabs.
@@ -103,7 +103,7 @@ export function initDatabase(
                 unique: false,
             });
         }
-        vtxosStore.createIndex("activeScript", "activeScript", { unique: false });
+        vtxosStore.createIndex("scriptActive", ["script", "active"], { unique: false });
     }
 
     if (!db.objectStoreNames.contains(STORE_UTXOS)) {
@@ -207,21 +207,21 @@ export function initDatabase(
         if (!vtxosStore.indexNames.contains("script")) {
             vtxosStore.createIndex("script", "script", { unique: false });
         }
-        // The v6 backfill below fills both script and activeScript in one
+        // The v6 backfill below fills both script and active in one
         // cursor pass, avoiding two concurrent updates to the same legacy row.
     }
 
     if (oldVersion >= 1 && oldVersion < 6 && transaction) {
         const vtxosStore = transaction.objectStore(STORE_VTXOS);
-        if (!vtxosStore.indexNames.contains("activeScript")) {
-            vtxosStore.createIndex("activeScript", "activeScript", { unique: false });
+        if (!vtxosStore.indexNames.contains("scriptActive")) {
+            vtxosStore.createIndex("scriptActive", ["script", "active"], { unique: false });
         }
-        backfillActiveVtxoScripts(transaction);
+        backfillActiveVtxos(transaction);
     }
 }
 
 /** Populate the active index without dropping any historical VTXO rows. */
-export function backfillActiveVtxoScripts(transaction: IDBTransaction): void {
+export function backfillActiveVtxos(transaction: IDBTransaction): void {
     const request = transaction.objectStore(STORE_VTXOS).openCursor();
     request.onsuccess = () => {
         const cursor = request.result;
@@ -229,7 +229,7 @@ export function backfillActiveVtxoScripts(transaction: IDBTransaction): void {
         const value = cursor.value as {
             address: string;
             script?: string;
-            activeScript?: string;
+            active?: 1;
             isSpent?: boolean;
             spentBy?: string;
             settledBy?: string;
@@ -246,11 +246,11 @@ export function backfillActiveVtxoScripts(transaction: IDBTransaction): void {
                 return;
             }
         }
-        const activeScript = activeScriptForVtxo({ ...value, script });
-        if (value.script !== script || value.activeScript !== activeScript) {
+        const active = activeIndexFlagForVtxo({ ...value, script });
+        if (value.script !== script || value.active !== active) {
             value.script = script;
-            if (activeScript) value.activeScript = activeScript;
-            else delete value.activeScript;
+            if (active) value.active = active;
+            else delete value.active;
             cursor.update(value);
         }
         cursor.continue();

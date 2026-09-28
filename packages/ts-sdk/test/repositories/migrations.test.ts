@@ -10,7 +10,7 @@ import {
     initDatabase,
     STORE_VTXOS,
     backfillVtxoScripts,
-    backfillActiveVtxoScripts,
+    backfillActiveVtxos,
     DB_VERSION,
 } from "../../src/repositories/indexedDB/schema";
 import { IndexedDBWalletRepository } from "../../src/repositories/indexedDB/walletRepository";
@@ -172,14 +172,15 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
             });
             await new Promise<void>((resolve, reject) => {
                 const tx = db.transaction([STORE_VTXOS], "readwrite");
-                backfillActiveVtxoScripts(tx);
+                backfillActiveVtxos(tx);
                 tx.oncomplete = () => resolve();
                 tx.onerror = () => reject(tx.error);
             });
             const tx = db.transaction([STORE_VTXOS], "readonly");
             const store = tx.objectStore(STORE_VTXOS);
+            expect(store.index("scriptActive").keyPath).toEqual(["script", "active"]);
             const active = await new Promise<Array<{ txid: string }>>((resolve, reject) => {
-                const request = store.index("activeScript").getAll("script-a");
+                const request = store.index("scriptActive").getAll(["script-a", 1]);
                 request.onsuccess = () => resolve(request.result);
                 request.onerror = () => reject(request.error);
             });
@@ -196,7 +197,7 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
     });
 
     it.each([2, 3])(
-        "upgrades an existing v%d database to the active-script index",
+        "upgrades an existing v%d database to the active inventory index",
         async (version) => {
             const dbName = getUniqueDbName();
             const oldDb = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -237,8 +238,8 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
                     const request = upgraded
                         .transaction([STORE_VTXOS], "readonly")
                         .objectStore(STORE_VTXOS)
-                        .index("activeScript")
-                        .getAll(version >= 3 ? "script-a" : EXPECTED_PK_SCRIPT_HEX);
+                        .index("scriptActive")
+                        .getAll([version >= 3 ? "script-a" : EXPECTED_PK_SCRIPT_HEX, 1]);
                     request.onsuccess = () => resolve(request.result);
                     request.onerror = () => reject(request.error);
                 });

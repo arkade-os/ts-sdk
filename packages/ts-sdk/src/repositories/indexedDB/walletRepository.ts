@@ -19,7 +19,7 @@ import { scriptFromArkAddress } from "../scriptFromAddress";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
 import { hasTerminalSpend } from "../../wallet/vtxo";
-import { activeScriptForVtxo } from "../serialization";
+import { activeIndexFlagForVtxo } from "../serialization";
 
 /**
  * IndexedDB-based implementation of WalletRepository.
@@ -77,7 +77,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 store.put({
                     address,
                     ...serialized,
-                    activeScript: activeScriptForVtxo(vtxo),
+                    active: activeIndexFlagForVtxo(vtxo),
                 });
             }
             await awaitTransaction(transaction);
@@ -146,8 +146,8 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
                 const rows = await getAllByIndexValues<SerializedVtxo & { address: string }>(
                     store,
-                    options?.nonterminalOnly ? "activeScript" : "script",
-                    chunk,
+                    options?.nonterminalOnly ? "scriptActive" : "script",
+                    options?.nonterminalOnly ? chunk.map((script) => [script, 1]) : chunk,
                 );
                 for (const row of rows) {
                     if (!selected.has(row.script!)) continue;
@@ -342,7 +342,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
 // from `address` the same way the indexer would have populated it.
 function deserializeVtxoWithBackfill(o: SerializedVtxo & { address: string }): ExtendedVirtualCoin {
     // The active index is repository metadata, not part of the public VTXO.
-    const { activeScript: _activeScript, ...row } = o as typeof o & { activeScript?: string };
+    const { active: _active, ...row } = o as typeof o & { active?: 1 };
     o = row;
     if (!o.script) {
         o = { ...o, script: scriptFromArkAddress(o.address) };
