@@ -16,7 +16,7 @@
  * side does: arkd's parameters, the covenant, the contract row, the funding
  * transaction, the indexer sync and the spendability gate.
  */
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
@@ -71,17 +71,15 @@ const execCommand = (command: string): string => {
     return result;
 };
 
-const waitFor = async (
-    fn: () => Promise<boolean>,
-    { timeout = 30_000, interval = 500 } = {},
-): Promise<void> => {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        if (await fn()) return;
-        await new Promise((r) => setTimeout(r, interval));
-    }
-    throw new Error("timeout in waitFor");
-};
+// expect.poll would do, but it refuses to run outside a test (the beforeAll
+// faucet wait needs this too); vi.waitFor polls anywhere
+const waitFor = (fn: () => Promise<boolean>, timeout = 30_000): Promise<void> =>
+    vi.waitFor(
+        async () => {
+            if (!(await fn())) throw new Error("waiting");
+        },
+        { timeout },
+    );
 
 const indexer = new RestIndexerProvider(OPERATOR_URL);
 let wallet: Wallet;

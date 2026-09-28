@@ -4,7 +4,7 @@
  * tests reach only the two in TypeScript. The property: the client never calls
  * `pushClaim`, yet the money arrives. Unstamped, the lockup sits until expiry.
  */
-import { beforeAll, describe, expect, it, onTestFinished } from "vitest";
+import { beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { execSync, spawn } from "child_process";
 import { base64, hex } from "@scure/base";
 import {
@@ -46,17 +46,17 @@ const execCommand = (command: string): string =>
 const lncli = (node: string, args: string): string =>
     execCommand(`docker exec -t ${node} lncli --network=regtest ${args}`);
 
-const waitFor = async (
+// vi.waitFor over expect.poll: the timeout error gets to name what never happened
+const waitFor = (
     fn: () => Promise<boolean>,
-    { timeout = 180_000, interval = 2_000, what = "condition" } = {},
-): Promise<void> => {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        if (await fn()) return;
-        await new Promise((r) => setTimeout(r, interval));
-    }
-    throw new Error(`timeout waiting for ${what}`);
-};
+    { timeout = 180_000, what = "condition" } = {},
+): Promise<void> =>
+    vi.waitFor(
+        async () => {
+            if (!(await fn())) throw new Error(`waiting for ${what}`);
+        },
+        { timeout },
+    );
 
 const decodeInvoice = (raw: string): InvoiceFacts => {
     const d = JSON.parse(lncli("lnd-peer", `decodepayreq ${raw}`));
