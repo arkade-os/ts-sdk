@@ -265,8 +265,9 @@ describe("getSpendableVtxos", () => {
     it("does not reuse the manager's default sync age for a required read", async () => {
         const indexer = onlineIndexer([]);
         const getVtxos = vi.spyOn(indexer, "getVtxos");
-        const { wallet } = await seededWallet({ indexerProvider: indexer, minimal: true });
+        const { wallet } = await seededWallet({ indexerProvider: indexer });
         const manager = await wallet.getContractManager();
+        expect((await manager.getContracts()).length).toBeGreaterThan(0);
         await wallet.getSpendableVtxos({ requireSynced: true });
         manager.setVtxoSyncMaxAge(60_000);
         getVtxos.mockClear();
