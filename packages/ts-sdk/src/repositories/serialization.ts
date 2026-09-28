@@ -19,7 +19,8 @@ export function activeScriptForVtxo(vtxo: {
     virtualStatus?: { state?: string } | null;
 }): string | undefined {
     if (!vtxo.script) return undefined;
-    if (vtxo.isSpent ?? vtxo.virtualStatus?.state === "spent") return undefined;
+    if (vtxo.isSpent === true) return undefined;
+    if (vtxo.isSpent == null && vtxo.virtualStatus?.state === "spent") return undefined;
     if (vtxo.spentBy || vtxo.settledBy) return undefined;
     return vtxo.script;
 }
