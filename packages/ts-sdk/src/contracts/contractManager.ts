@@ -31,7 +31,7 @@ import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import {
     getAllNormalizedVtxos,
     getNormalizedVtxos,
-    hasTerminalSpend,
+    isVtxoSpent,
     isVirtualCoin,
     normalizeVtxo,
     type NormalizedExtendedVirtualCoin,
@@ -2399,7 +2399,7 @@ export class ContractManager implements IContractManager {
                 rows
                     .filter((vtxo) => vtxo.script !== undefined && byScript.has(vtxo.script))
                     // Custom repositories may ignore the optional query hint.
-                    .filter((vtxo) => !options?.unspentOnly || !hasTerminalSpend(vtxo))
+                    .filter((vtxo) => !options?.unspentOnly || !isVtxoSpent(vtxo))
                     .map((vtxo) => ({ ...normalizeVtxo(vtxo), contractScript: vtxo.script! }))
             );
         }
@@ -2416,7 +2416,7 @@ export class ContractManager implements IContractManager {
             ),
         );
         const rows = res.flat();
-        return options?.unspentOnly ? rows.filter((vtxo) => !hasTerminalSpend(vtxo)) : rows;
+        return options?.unspentOnly ? rows.filter((vtxo) => !isVtxoSpent(vtxo)) : rows;
     }
 
     /**

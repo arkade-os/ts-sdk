@@ -34,7 +34,7 @@ import {
     fetchVtxoCreatedAtByTxid,
     getAllNormalizedVtxos,
     getNormalizedVtxos,
-    hasTerminalSpend,
+    isVtxoSpent,
     isVirtualCoin,
     normalizeVtxo,
     parseLegacyExpiry,
@@ -441,7 +441,7 @@ export function filterSnapshotVtxos(
             if (vtxo.isUnrolled) {
                 return !!f.withUnrolled;
             }
-            if (hasTerminalSpend(vtxo)) {
+            if (isVtxoSpent(vtxo)) {
                 return false;
             }
             if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
@@ -1328,7 +1328,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 "getSpendableVtxos",
                 snapshot
                     .flatMap((contract) => contract.vtxos)
-                    .filter((vtxo) => vtxo.isUnrolled && !hasTerminalSpend(vtxo)),
+                    .filter((vtxo) => vtxo.isUnrolled && !isVtxoSpent(vtxo)),
                 [() => UNROLLED_REASON],
             );
         }
@@ -5324,7 +5324,7 @@ export class Wallet
         const unclaimed: ArkadeCashUnclaimedVtxo[] = [];
 
         for (const vtxo of vtxos) {
-            if (hasTerminalSpend(vtxo)) {
+            if (isVtxoSpent(vtxo)) {
                 unclaimed.push(cashReport(vtxo, "already-spent"));
             } else if (vtxo.isUnrolled) {
                 // Exited onchain. The thin sweep is an offchain spend, so it

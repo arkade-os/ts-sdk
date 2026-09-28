@@ -7,7 +7,7 @@ import type { ExtendedVirtualCoin, ExtendedCoin, ArkTransaction, TxType } from "
 import type { TapLeafScript } from "../src/script/base";
 import type { WalletState } from "../src/repositories/walletRepository";
 import { createMockSQLExecutor } from "./helpers/mockSqlExecutor";
-import { hasTerminalSpend } from "../src/wallet/vtxo";
+import { isVtxoSpent } from "../src/wallet/vtxo";
 
 // ── Test fixtures ───────────────────────────────────────────────────────
 
@@ -298,7 +298,7 @@ describe("SQLiteWalletRepository", () => {
 
             // The fixture is preconfirmed, so the derivation says "not spent".
             expect(retrieved.isSpent).toBe(false);
-            expect(hasTerminalSpend(retrieved)).toBe(false);
+            expect(isVtxoSpent(retrieved)).toBe(false);
         });
 
         it("derives isSpent as true for a spent VTXO stored with a null is_spent column", async () => {
@@ -310,7 +310,7 @@ describe("SQLiteWalletRepository", () => {
             const [retrieved] = await repository.getVtxos(testAddress);
 
             expect(retrieved.isSpent).toBe(true);
-            expect(hasTerminalSpend(retrieved)).toBe(true);
+            expect(isVtxoSpent(retrieved)).toBe(true);
         });
 
         describe("Script-scoped VTXO management", () => {

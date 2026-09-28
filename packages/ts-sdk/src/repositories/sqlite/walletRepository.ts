@@ -13,7 +13,7 @@ import { scriptFromArkAddress } from "../scriptFromAddress";
 import { SQLExecutor } from "./types";
 import { runInTransaction } from "./transaction";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
-import { hasTerminalSpend } from "../../wallet/vtxo";
+import { isVtxoSpent } from "../../wallet/vtxo";
 
 interface SQLiteWalletRepositoryOptions {
     /** Table name prefix (default: "ark_") */
@@ -343,9 +343,7 @@ export class SQLiteWalletRepository implements WalletRepository {
             );
             const decoded = rows.map(vtxoRowToDomain);
             result.push(
-                ...(options?.unspentOnly
-                    ? decoded.filter((vtxo) => !hasTerminalSpend(vtxo))
-                    : decoded),
+                ...(options?.unspentOnly ? decoded.filter((vtxo) => !isVtxoSpent(vtxo)) : decoded),
             );
         }
         return result;

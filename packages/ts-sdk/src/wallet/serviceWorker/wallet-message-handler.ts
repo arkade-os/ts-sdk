@@ -39,11 +39,7 @@ import {
     WalletBalance,
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
-import {
-    fetchVtxoCreatedAtByTxid,
-    hasTerminalSpend,
-    type NormalizedExtendedVirtualCoin,
-} from "../vtxo";
+import { fetchVtxoCreatedAtByTxid, isVtxoSpent, type NormalizedExtendedVirtualCoin } from "../vtxo";
 import {
     ReadonlyWallet,
     spendableVtxosExcludingLocked,
@@ -2106,7 +2102,7 @@ export class WalletMessageHandler
             if (v.isUnrolled) {
                 return withUnrolled;
             }
-            if (hasTerminalSpend(v)) {
+            if (isVtxoSpent(v)) {
                 return false;
             }
             if (includeRecoverable) {

@@ -11,7 +11,7 @@ import {
 } from "../serialization";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
-import { hasTerminalSpend } from "../../wallet/vtxo";
+import { isVtxoSpent } from "../../wallet/vtxo";
 import { RealmLike } from "./types";
 
 /**
@@ -135,7 +135,7 @@ export class RealmWalletRepository implements WalletRepository {
                     continue;
                 }
                 const vtxo = vtxoObjectToDomain(row);
-                if (!options?.unspentOnly || !hasTerminalSpend(vtxo)) rows.push(vtxo);
+                if (!options?.unspentOnly || !isVtxoSpent(vtxo)) rows.push(vtxo);
             }
         }
         return rows;

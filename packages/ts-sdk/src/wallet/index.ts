@@ -736,7 +736,7 @@ export interface Status {
  * @deprecated Use the canonical facts on {@link VirtualCoin} — `isSwept`, `isPreconfirmed`,
  * `isSpent`, `expiresAt`, `expiresAtHeight`, `commitmentTxIds`, `spentBy`, `settledBy` — and the
  * capability predicates {@link canSpendOffchain}, {@link canRecoverOnchain},
- * {@link hasTerminalSpend}, {@link isPastExpiry}. `state` collapses independent facts into one
+ * {@link isVtxoSpent}, {@link isPastExpiry}. `state` collapses independent facts into one
  * lossy label; this object is retained only as a backward-compatible projection.
  */
 export interface VirtualStatus {
@@ -801,7 +801,7 @@ export interface Coin extends Outpoint {
  * {@link IndexerProvider} and {@link WalletRepository} implementations may hand back coins without
  * them. The SDK normalizes every incoming coin, so coins it returns always carry the facts that are
  * determinable; do not read these fields off a coin the SDK has not returned to you — use
- * {@link canSpendOffchain} / {@link canRecoverOnchain} / {@link hasTerminalSpend} /
+ * {@link canSpendOffchain} / {@link canRecoverOnchain} / {@link isVtxoSpent} /
  * {@link isPastExpiry}, which normalize defensively.
  *
  * @see Coin
@@ -974,7 +974,7 @@ export {
     convertVtxo,
     getAllNormalizedVtxos,
     getNormalizedVtxos,
-    hasTerminalSpend,
+    isVtxoSpent,
     isExpired,
     isPastExpiry,
     isRecoverable,

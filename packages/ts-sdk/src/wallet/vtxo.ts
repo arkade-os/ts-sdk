@@ -356,7 +356,7 @@ export async function fetchVtxoCreatedAtByTxid(
  * it was consumed. Mirrors NArk's `ArkVtxo.IsSpent()`. The location axis is {@link canSweepOnchain},
  * which the two capability predicates below subtract instead.
  */
-export function hasTerminalSpend(vtxo: VirtualCoin): boolean {
+export function isVtxoSpent(vtxo: VirtualCoin): boolean {
     const n = normalizeVtxo(vtxo);
     return !!n.isSpent || !!n.spentBy || !!n.settledBy;
 }
@@ -385,7 +385,7 @@ export function isPastExpiry(vtxo: VirtualCoin, now: TimeHeight): boolean {
 /** Whether a virtual output can be spent in an offchain transaction. The send/coin-selection test. */
 export function canSpendOffchain(vtxo: VirtualCoin, now: TimeHeight): boolean {
     const n = normalizeVtxo(vtxo);
-    return !hasTerminalSpend(n) && !n.isUnrolled && !(n.isSwept || isPastExpiry(n, now));
+    return !isVtxoSpent(n) && !n.isUnrolled && !(n.isSwept || isPastExpiry(n, now));
 }
 
 /**
@@ -394,7 +394,7 @@ export function canSpendOffchain(vtxo: VirtualCoin, now: TimeHeight): boolean {
  */
 export function canRecoverOnchain(vtxo: VirtualCoin, now: TimeHeight): boolean {
     const n = normalizeVtxo(vtxo);
-    return !hasTerminalSpend(n) && !n.isUnrolled && (n.isSwept || isPastExpiry(n, now));
+    return !isVtxoSpent(n) && !n.isUnrolled && (n.isSwept || isPastExpiry(n, now));
 }
 
 /**
@@ -410,7 +410,7 @@ export function canRecoverOnchain(vtxo: VirtualCoin, now: TimeHeight): boolean {
  */
 export function canSweepOnchain(vtxo: VirtualCoin): boolean {
     const n = normalizeVtxo(vtxo);
-    return !hasTerminalSpend(n) && !!n.isUnrolled;
+    return !isVtxoSpent(n) && !!n.isUnrolled;
 }
 
 // --- fee estimation ----------------------------------------------------------------------------
@@ -472,7 +472,7 @@ export function isVirtualCoin<T>(input: T): input is T & VirtualCoin {
  * in fact be spent offchain. Use {@link canSpendOffchain}.
  */
 export function isSpendable(vtxo: VirtualCoin): boolean {
-    return !hasTerminalSpend(vtxo);
+    return !isVtxoSpent(vtxo);
 }
 
 /**
@@ -487,7 +487,7 @@ export function isSpendable(vtxo: VirtualCoin): boolean {
  */
 export function isRecoverable(vtxo: VirtualCoin): boolean {
     const n = normalizeVtxo(vtxo);
-    return n.isSwept && !hasTerminalSpend(n);
+    return n.isSwept && !isVtxoSpent(n);
 }
 
 /**

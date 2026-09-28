@@ -1,7 +1,7 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
 import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
-import { hasTerminalSpend } from "../../wallet/vtxo";
+import { isVtxoSpent } from "../../wallet/vtxo";
 
 /**
  * In-memory implementation of WalletRepository.
@@ -48,7 +48,7 @@ export class InMemoryWalletRepository implements WalletRepository {
             }
         }
         const rows = [...byOutpoint.values()];
-        return options?.unspentOnly ? rows.filter((vtxo) => !hasTerminalSpend(vtxo)) : rows;
+        return options?.unspentOnly ? rows.filter((vtxo) => !isVtxoSpent(vtxo)) : rows;
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {

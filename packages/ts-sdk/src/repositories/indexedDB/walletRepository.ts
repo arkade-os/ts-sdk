@@ -18,7 +18,7 @@ import { initDatabase } from "./schema";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
-import { hasTerminalSpend } from "../../wallet/vtxo";
+import { isVtxoSpent } from "../../wallet/vtxo";
 import { unspentIndexFlagForVtxo } from "../serialization";
 
 /**
@@ -184,7 +184,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
                     continue;
                 }
                 const vtxo = deserializeVtxoWithBackfill(row);
-                if (!options?.unspentOnly || !hasTerminalSpend(vtxo)) result.push(vtxo);
+                if (!options?.unspentOnly || !isVtxoSpent(vtxo)) result.push(vtxo);
             }
             return result;
         } catch (error) {

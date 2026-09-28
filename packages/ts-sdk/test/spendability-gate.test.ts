@@ -563,7 +563,7 @@ describe("getBalance", () => {
     });
 
     it("drops an unrolled-AND-spent VTXO from every bucket", async () => {
-        // The `hasTerminalSpend` guard in the bucketer is what does this: the
+        // The `isVtxoSpent` guard in the bucketer is what does this: the
         // filter now hands unrolled coins over WITHOUT testing spend first.
         const { wallet, walletRepository, defaultScript } = await seededWallet();
         await walletRepository.saveVtxos(await wallet.getAddress(), [
