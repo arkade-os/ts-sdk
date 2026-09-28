@@ -11,9 +11,12 @@
  * Fill suite, against the stack's solverd: discover the market from the
  * solver's own card, price the offer off its feed, fund the covenant, and
  * watch the wallet's own event stream resolve the record as fulfilled — no
- * restore scan anywhere. The covered corridor is the round trip: all BTC
- * into the asset, then all of the asset back into BTC — which also returns
- * the solver's inventory, so the suite stays re-runnable on a live stack.
+ * restore scan anywhere. The covered corridor is the round trip, all-in and
+ * partial: all BTC into the asset and all of it back, then a quarter each
+ * way leaving change. The all-in legs hand the solver's inventory back on
+ * the next; the change legs strand three quarters of one buy per run in the
+ * discarded wallet, and the float is sized for that (SOLVER_INIT_ASSET_* in
+ * .env.regtest).
  * The minted asset id changes on every regtest boot, so nothing here may
  * hardcode it: the card (`GET /v1/card`) is the one source of truth, which
  * is also the discovery path a real wallet takes.
@@ -512,5 +515,91 @@ describe("solverd round trip (regtest)", () => {
         expect(balance.available).toBeLessThan(depositSats);
         const left = balance.assets.find((a) => a.assetId === assetLeg.id);
         expect(BigInt(left?.amount ?? 0)).toBe(BigInt(0));
+    }, 180_000);
+
+    it("swaps a quarter of the BTC for the asset, leaving change", async () => {
+        // a partial deposit this time: the other three quarters must not move
+        const startAvailable = (await wallet.getBalance()).available;
+        const quarter = Math.floor(startAvailable / 4);
+        const plan = await quoteOffer(market, {
+            give: btcSide,
+            giveAmount: BigInt(quarter),
+            safetyBps: QUOTE_OPTIONS.safetyBps,
+        });
+        expect(plan.receive.asset.id).toBe(assetLeg.id);
+        expect(plan.receive.atomic).toBeGreaterThan(BigInt(0));
+
+        const offer = await createOffer(wallet, OPERATOR_URL, {
+            wantAmount: plan.receive.atomic,
+            wantAsset: asset.AssetId.fromString(assetLeg.id),
+        });
+        await fundAndAwaitFill(
+            offer,
+            { amount: quarter },
+            {
+                fromAsset: "btc",
+                toAsset: assetLeg.id,
+                fromAmount: String(quarter),
+                toAmount: plan.receive.atomic.toString(),
+            },
+        );
+
+        // the asset landed in full, and the BTC left behind is exactly the
+        // other three quarters: the asset's carrier sats ride with the asset,
+        // so they never count toward available
+        await waitFor(async () => {
+            const balance = await wallet.getBalance();
+            const held = balance.assets.find((a) => a.assetId === assetLeg.id);
+            return (
+                Boolean(held && BigInt(held.amount) >= plan.receive.atomic) &&
+                balance.available === startAvailable - quarter
+            );
+        });
+    }, 180_000);
+
+    it("swaps a quarter of the asset back to BTC, leaving change", async () => {
+        const held = (await wallet.getBalance()).assets.find((a) => a.assetId === assetLeg.id);
+        const assetAmount = BigInt(held?.amount ?? 0);
+        expect(assetAmount).toBeGreaterThan(BigInt(0));
+        const quarter = assetAmount / BigInt(4);
+
+        const startAvailable = (await wallet.getBalance()).available;
+        const plan = await quoteOffer(market, {
+            give: btcSide === "base" ? "quote" : "base",
+            giveAmount: quarter,
+            safetyBps: QUOTE_OPTIONS.safetyBps,
+        });
+        expect(plan.receive.asset.id).toBe("btc");
+        expect(plan.receive.atomic).toBeGreaterThan(BigInt(0));
+
+        const offer = await createOffer(wallet, OPERATOR_URL, {
+            wantAmount: plan.receive.atomic,
+            offerAsset: asset.AssetId.fromString(assetLeg.id),
+        });
+        await fundAndAwaitFill(
+            offer,
+            {
+                amount: Number(ASSET_CARRIER_SATS),
+                assets: [{ assetId: assetLeg.id, amount: quarter }],
+            },
+            {
+                fromAsset: assetLeg.id,
+                toAsset: "btc",
+                fromAmount: quarter.toString(),
+                toAmount: plan.receive.atomic.toString(),
+            },
+        );
+
+        // the other three quarters of the asset stay put, and the BTC comes
+        // back at the quoted amount, absorbing the carriers
+        await waitFor(async () => {
+            const balance = await wallet.getBalance();
+            const left = balance.assets.find((a) => a.assetId === assetLeg.id);
+            return (
+                BigInt(left?.amount ?? 0) === assetAmount - quarter &&
+                balance.available >=
+                    startAvailable + Number(plan.receive.atomic) - Number(ASSET_CARRIER_SATS)
+            );
+        });
     }, 180_000);
 });
