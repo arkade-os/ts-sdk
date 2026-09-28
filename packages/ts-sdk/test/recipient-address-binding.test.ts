@@ -466,6 +466,7 @@ describe("send automatic asset selection", () => {
             }),
         );
         const wallet = await Wallet.create({ identity, arkServerUrl: "http://localhost:7070" });
+        vi.spyOn(wallet.arkProvider, "getInfo").mockResolvedValue({ vtxoMinAmount: 330n } as never);
         const assetA = "aa".repeat(34);
         const assetB = "bb".repeat(34);
         const coin = (
