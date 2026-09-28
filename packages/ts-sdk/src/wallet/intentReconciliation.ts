@@ -7,7 +7,7 @@ import {
     isTerminalIntentState,
 } from "../repositories/intentRepository";
 import type { Outpoint, VirtualCoin } from ".";
-import { getNormalizedVtxos, hasTerminalSpend } from "./vtxo";
+import { getNormalizedVtxos, isVtxoSpent } from "./vtxo";
 
 /**
  * Intent states a persisted intent can be stuck in after a crash: none of
@@ -33,7 +33,7 @@ export interface IntentReconciliationDeps {
 
 /** A VTXO is consumed once the indexer reports it spent (offchain) or settled onchain. */
 function isConsumed(vtxo: VirtualCoin | undefined): boolean {
-    return vtxo !== undefined && hasTerminalSpend(vtxo);
+    return vtxo !== undefined && isVtxoSpent(vtxo);
 }
 
 /**

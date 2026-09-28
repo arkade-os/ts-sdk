@@ -208,7 +208,7 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         const vtxos = await getVtxosForContract(repository, contract);
         expect(vtxos).toHaveLength(1);
         expect(vtxos[0]?.isSpent).toBe(false);
-        // Provenance must go too: `hasTerminalSpend` hides on it alone.
+        // Provenance must go too: `isVtxoSpent` hides on it alone.
         expect(vtxos[0]?.spentBy).toBeFalsy();
         expect(vtxos[0]?.arkTxId).toBeFalsy();
     });

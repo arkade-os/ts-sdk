@@ -10,7 +10,7 @@ import {
 import {
     canRecoverOnchain,
     canSpendOffchain,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     normalizeVtxo,
     resolveTimeHeight,
@@ -78,7 +78,7 @@ export function selectPendingRecoveryOutpoints(
             // Exited coins are excluded: their remedy is `completeUnroll`,
             // not a signer rotation, and reporting them here would blame the
             // rotation for a coin the user took onchain themselves.
-            if (!hasTerminalSpend(v) && !v.isSwept && !v.isUnrolled) {
+            if (!isVtxoSpent(v) && !v.isSwept && !v.isUnrolled) {
                 out.add(`${v.txid}:${v.vout}`);
             }
         }
@@ -2352,8 +2352,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // report over-counts migratable value and announces the coin as
             // recovering through the sweep path, which will never happen.
             const live = vtxos.filter((v) => !v.isUnrolled);
-            const recoverable = live.filter((v) => v.isSwept && !hasTerminalSpend(v));
-            const spendable = live.filter((v) => !hasTerminalSpend(v) && !v.isSwept);
+            const recoverable = live.filter((v) => v.isSwept && !isVtxoSpent(v));
+            const spendable = live.filter((v) => !isVtxoSpent(v) && !v.isSwept);
 
             const value = spendable.reduce((sum, v) => sum + v.value, 0);
 

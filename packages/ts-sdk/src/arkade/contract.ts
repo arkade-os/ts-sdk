@@ -80,7 +80,7 @@ import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
 import type { Identity } from "../identity";
 import type { VirtualCoin } from "../wallet";
-import { getNormalizedVtxos, hasTerminalSpend } from "../wallet";
+import { getNormalizedVtxos, isVtxoSpent } from "../wallet";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
 import { toXOnly } from "../utils/keys";
@@ -558,9 +558,7 @@ export class ArkadeContract<P extends Program = Program> {
                 // Not `canSpendOffchain`: that would also drop swept coins,
                 // which this accessor has always returned. Only the exited ones
                 // are new, and they are spendable by nothing offchain.
-                return (withVtxos?.vtxos ?? []).filter(
-                    (v) => !hasTerminalSpend(v) && !v.isUnrolled,
-                );
+                return (withVtxos?.vtxos ?? []).filter((v) => !isVtxoSpent(v) && !v.isUnrolled);
             }
         }
         if (!this.client.indexer) {
@@ -573,7 +571,7 @@ export class ArkadeContract<P extends Program = Program> {
         // Same guard as the manager branch above, kept alongside the server-side
         // ask rather than instead of it: what the server calls spendable is its
         // answer, not a fact this accessor may lean on.
-        return vtxos.filter((v) => !hasTerminalSpend(v) && !v.isUnrolled);
+        return vtxos.filter((v) => !isVtxoSpent(v) && !v.isUnrolled);
     }
 
     /** Total spendable balance (requires an indexer). */

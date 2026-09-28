@@ -118,15 +118,18 @@ async function seededWallet(opts?: {
     intents?: InMemoryIntentRepository;
     signing?: boolean;
     indexerProvider?: IndexerProvider;
+    minimal?: boolean;
 }) {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
 
-    const rows = [
-        contract(ESCROW_SCRIPT, "arkade"),
-        contract(MARKED_SCRIPT, "arkade", { genericallySpendable: true }),
-        contract(UNKNOWN_SCRIPT, "not-a-registered-type"),
-    ];
+    const rows = opts?.minimal
+        ? []
+        : [
+              contract(ESCROW_SCRIPT, "arkade"),
+              contract(MARKED_SCRIPT, "arkade", { genericallySpendable: true }),
+              contract(UNKNOWN_SCRIPT, "not-a-registered-type"),
+          ];
     for (const row of rows) {
         await contractRepository.saveContract(row);
         await walletRepository.saveVtxos(row.address, [
@@ -226,6 +229,39 @@ describe("ContractHandler.isGenericallySpendable", () => {
 });
 
 describe("getSpendableVtxos", () => {
+    it("fails closed when a synced scoped read has no eligible contracts", async () => {
+        const { wallet } = await seededWallet();
+        const manager = await wallet.getContractManager();
+        vi.spyOn(manager, "getContracts").mockResolvedValue([]);
+
+        await expect(
+            wallet.getSpendableVtxos({ genericallySpendableOnly: true, requireSynced: true }),
+        ).rejects.toThrow("No generically spendable contracts to sync");
+        await expect(wallet.getSpendableVtxos({ genericallySpendableOnly: true })).resolves.toEqual(
+            [],
+        );
+    });
+
+    it("can require a successful provider sync before returning funding inputs", async () => {
+        const { wallet } = await seededWallet();
+        await expect(wallet.getSpendableVtxos({ requireSynced: true })).rejects.toThrow(
+            "requires an online contract sync",
+        );
+    });
+
+    it("accepts an online bounded-age funding read", async () => {
+        const indexer = onlineIndexer([]);
+        const getVtxos = vi.spyOn(indexer, "getVtxos");
+        const { wallet } = await seededWallet({ indexerProvider: indexer, minimal: true });
+        await wallet.getSpendableVtxos({ requireSynced: true });
+        getVtxos.mockClear();
+
+        await expect(
+            wallet.getSpendableVtxos({ maxSyncAgeMs: 60_000, requireSynced: true }),
+        ).resolves.toHaveLength(1);
+        expect(getVtxos).not.toHaveBeenCalled();
+    });
+
     it("can limit indexer queries to generically spendable contracts", async () => {
         const indexer = onlineIndexer([vtxo(MARKED_SCRIPT, 10_000)]);
         const getVtxos = vi.spyOn(indexer, "getVtxos");
@@ -527,7 +563,7 @@ describe("getBalance", () => {
     });
 
     it("drops an unrolled-AND-spent VTXO from every bucket", async () => {
-        // The `hasTerminalSpend` guard in the bucketer is what does this: the
+        // The `isVtxoSpent` guard in the bucketer is what does this: the
         // filter now hands unrolled coins over WITHOUT testing spend first.
         const { wallet, walletRepository, defaultScript } = await seededWallet();
         await walletRepository.saveVtxos(await wallet.getAddress(), [

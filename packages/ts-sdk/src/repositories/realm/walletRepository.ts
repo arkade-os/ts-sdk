@@ -11,6 +11,7 @@ import {
 } from "../serialization";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
+import { isVtxoSpent } from "../../wallet/vtxo";
 import { RealmLike } from "./types";
 
 /**
@@ -110,6 +111,34 @@ export class RealmWalletRepository implements WalletRepository {
         await this.ensureInit();
         const results = this.realm.objects("ArkVtxo").filtered("script == $0", script);
         return [...results].map(vtxoObjectToDomain);
+    }
+
+    async getVtxosForScripts(
+        scripts: string[],
+        options?: { unspentOnly?: boolean },
+    ): Promise<ExtendedVirtualCoin[]> {
+        const unique = [...new Set(scripts)].filter(Boolean);
+        if (unique.length === 0) return [];
+        await this.ensureInit();
+        const rows: ExtendedVirtualCoin[] = [];
+        for (let i = 0; i < unique.length; i += 64) {
+            const chunk = unique.slice(i, i + 64);
+            const selected = new Set(chunk);
+            const scriptsQuery = `(${chunk.map((_, index) => `script == $${index}`).join(" OR ")})`;
+            const query = options?.unspentOnly
+                ? `${scriptsQuery} AND (isSpent == null OR isSpent == $${chunk.length}) AND (spentBy == null OR spentBy == $${chunk.length + 1}) AND (settledBy == null OR settledBy == $${chunk.length + 1})`
+                : scriptsQuery;
+            const results = this.realm.objects("ArkVtxo").filtered(query, ...chunk, false, "");
+            for (const row of results) {
+                if (!selected.has(row.script as string)) continue;
+                if (options?.unspentOnly && (row.isSpent || row.spentBy || row.settledBy)) {
+                    continue;
+                }
+                const vtxo = vtxoObjectToDomain(row);
+                if (!options?.unspentOnly || !isVtxoSpent(vtxo)) rows.push(vtxo);
+            }
+        }
+        return rows;
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {

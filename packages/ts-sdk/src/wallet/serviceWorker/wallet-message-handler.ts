@@ -39,11 +39,7 @@ import {
     WalletBalance,
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
-import {
-    fetchVtxoCreatedAtByTxid,
-    hasTerminalSpend,
-    type NormalizedExtendedVirtualCoin,
-} from "../vtxo";
+import { fetchVtxoCreatedAtByTxid, isVtxoSpent, type NormalizedExtendedVirtualCoin } from "../vtxo";
 import {
     ReadonlyWallet,
     spendableVtxosExcludingLocked,
@@ -223,6 +219,7 @@ export type ResponseGetSpendableVtxos = ResponseEnvelope & {
             GetSpendableVtxosFilter,
             "watchedOnly" | "genericallySpendableOnly"
         >;
+        appliedRequireSynced?: boolean;
     };
 };
 
@@ -305,7 +302,7 @@ export type ResponseGetContracts = ResponseEnvelope & {
 
 export type RequestGetContractsWithVtxos = RequestEnvelope & {
     type: "GET_CONTRACTS_WITH_VTXOS";
-    payload: { filter?: GetContractsFilter };
+    payload: { filter?: GetContractsFilter; maxSyncAgeMs?: number; unspentOnly?: boolean };
 };
 export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     type: "CONTRACTS_WITH_VTXOS";
@@ -1207,6 +1204,7 @@ export class WalletMessageHandler
                                 genericallySpendableOnly:
                                     message.payload.filter?.genericallySpendableOnly === true,
                             },
+                            appliedRequireSynced: message.payload.filter?.requireSynced === true,
                         },
                     });
                 }
@@ -1291,7 +1289,14 @@ export class WalletMessageHandler
                 }
                 case "GET_CONTRACTS_WITH_VTXOS": {
                     const manager = await this.readonlyWallet.getContractManager();
-                    const contracts = await manager.getContractsWithVtxos(message.payload.filter);
+                    const contracts = await manager.getContractsWithVtxos(
+                        message.payload.filter,
+                        undefined,
+                        {
+                            maxSyncAgeMs: message.payload.maxSyncAgeMs,
+                            unspentOnly: message.payload.unspentOnly,
+                        },
+                    );
                     return this.tagged({
                         id,
                         type: "CONTRACTS_WITH_VTXOS",
@@ -2097,7 +2102,7 @@ export class WalletMessageHandler
             if (v.isUnrolled) {
                 return withUnrolled;
             }
-            if (hasTerminalSpend(v)) {
+            if (isVtxoSpent(v)) {
                 return false;
             }
             if (includeRecoverable) {
