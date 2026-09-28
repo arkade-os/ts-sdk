@@ -324,7 +324,7 @@ describe("RealmWalletRepository", () => {
                 "live-b",
                 "spent",
             ]);
-            const live = await repository.getVtxosForScripts(scripts, { nonterminalOnly: true });
+            const live = await repository.getVtxosForScripts(scripts, { unspentOnly: true });
             expect(live.map((row) => row.txid).sort()).toEqual(["live-a", "live-b"]);
         });
 

@@ -1301,7 +1301,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         filter?: GetSpendableVtxosFilter,
     ): Promise<NormalizedExtendedVirtualCoin[]> {
         const snapshot = await this.contractSnapshot(filter, {
-            nonterminalOnly: !filter?.withUnrolled,
+            unspentOnly: !filter?.withUnrolled,
         });
         const vtxos = filterSnapshotVtxos(snapshot, filter, this._pendingSpendOutpoints);
         const { gated, pendingRecovery } = this.spendabilityView(snapshot);
@@ -1426,7 +1426,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     protected async contractSnapshot(
         filter?: GetSpendableVtxosFilter,
-        options?: { nonterminalOnly?: boolean },
+        options?: { unspentOnly?: boolean },
     ): Promise<ContractWithVtxos[]> {
         const contractManager = await this.getContractManager();
         const scope: GetContractsFilter | undefined = filter?.watchedOnly
@@ -1447,7 +1447,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
         const snapshot = await contractManager.getContractsWithVtxos(query, undefined, {
             maxSyncAgeMs: filter?.maxSyncAgeMs,
-            nonterminalOnly: options?.nonterminalOnly,
+            unspentOnly: options?.unspentOnly,
         });
         if (filter?.requireSynced) {
             const state = contractManager.getSyncState();

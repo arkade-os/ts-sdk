@@ -110,7 +110,7 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
     });
 
     describe("Script-scoped VTXO management", () => {
-        it("reads a script set with the same nonterminal selection", async () => {
+        it("reads a script set with the same unspent selection", async () => {
             const liveA = { ...createMockVtxo("live-a", 0, 1000), script: "script-a" };
             const liveB = { ...createMockVtxo("live-b", 0, 2000), script: "script-b" };
             const spent = {
@@ -142,7 +142,7 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
                 "live-b",
                 "spent",
             ]);
-            const live = await repository.getVtxosForScripts!(scripts, { nonterminalOnly: true });
+            const live = await repository.getVtxosForScripts!(scripts, { unspentOnly: true });
             expect(live.map((row) => row.txid).sort()).toEqual(["live-a", "live-b"]);
         });
 
@@ -213,7 +213,7 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
                     (await repository.getVtxosForScripts!(["script-a"])).map((row) => row.spentBy),
                 ).toEqual(["spent-tx"]);
                 expect(
-                    await repository.getVtxosForScripts!(["script-a"], { nonterminalOnly: true }),
+                    await repository.getVtxosForScripts!(["script-a"], { unspentOnly: true }),
                 ).toEqual([]);
             });
 

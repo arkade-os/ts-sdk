@@ -325,7 +325,7 @@ export class SQLiteWalletRepository implements WalletRepository {
 
     async getVtxosForScripts(
         scripts: string[],
-        options?: { nonterminalOnly?: boolean },
+        options?: { unspentOnly?: boolean },
     ): Promise<ExtendedVirtualCoin[]> {
         if (scripts.length === 0) return [];
         await this.ensureInit();
@@ -335,7 +335,7 @@ export class SQLiteWalletRepository implements WalletRepository {
             const chunk = unique.slice(i, i + 500);
             const rows = await this.db.all<VtxoRow>(
                 `SELECT * FROM ${this.tables.vtxos} WHERE script IN (${chunk.map(() => "?").join(",")})${
-                    options?.nonterminalOnly
+                    options?.unspentOnly
                         ? " AND (is_spent IS NULL OR is_spent = 0) AND (spent_by IS NULL OR spent_by = '') AND (settled_by IS NULL OR settled_by = '')"
                         : ""
                 }`,
@@ -343,7 +343,7 @@ export class SQLiteWalletRepository implements WalletRepository {
             );
             const decoded = rows.map(vtxoRowToDomain);
             result.push(
-                ...(options?.nonterminalOnly
+                ...(options?.unspentOnly
                     ? decoded.filter((vtxo) => !hasTerminalSpend(vtxo))
                     : decoded),
             );

@@ -306,7 +306,7 @@ export type ResponseGetContracts = ResponseEnvelope & {
 
 export type RequestGetContractsWithVtxos = RequestEnvelope & {
     type: "GET_CONTRACTS_WITH_VTXOS";
-    payload: { filter?: GetContractsFilter; maxSyncAgeMs?: number; nonterminalOnly?: boolean };
+    payload: { filter?: GetContractsFilter; maxSyncAgeMs?: number; unspentOnly?: boolean };
 };
 export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     type: "CONTRACTS_WITH_VTXOS";
@@ -1298,7 +1298,7 @@ export class WalletMessageHandler
                         undefined,
                         {
                             maxSyncAgeMs: message.payload.maxSyncAgeMs,
-                            nonterminalOnly: message.payload.nonterminalOnly,
+                            unspentOnly: message.payload.unspentOnly,
                         },
                     );
                     return this.tagged({

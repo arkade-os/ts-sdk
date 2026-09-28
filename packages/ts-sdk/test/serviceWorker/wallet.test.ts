@@ -389,7 +389,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         await expect(
             manager.getContractsWithVtxos({} as any, undefined, {
                 maxSyncAgeMs: 60_000,
-                nonterminalOnly: true,
+                unspentOnly: true,
             }),
         ).resolves.toEqual(contractsWithVtxos);
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
@@ -398,7 +398,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
                 payload: {
                     filter: {},
                     maxSyncAgeMs: 60_000,
-                    nonterminalOnly: true,
+                    unspentOnly: true,
                 },
             }),
         );

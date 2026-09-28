@@ -115,7 +115,7 @@ export class RealmWalletRepository implements WalletRepository {
 
     async getVtxosForScripts(
         scripts: string[],
-        options?: { nonterminalOnly?: boolean },
+        options?: { unspentOnly?: boolean },
     ): Promise<ExtendedVirtualCoin[]> {
         const unique = [...new Set(scripts)].filter(Boolean);
         if (unique.length === 0) return [];
@@ -125,17 +125,17 @@ export class RealmWalletRepository implements WalletRepository {
             const chunk = unique.slice(i, i + 64);
             const selected = new Set(chunk);
             const scriptsQuery = `(${chunk.map((_, index) => `script == $${index}`).join(" OR ")})`;
-            const query = options?.nonterminalOnly
+            const query = options?.unspentOnly
                 ? `${scriptsQuery} AND (isSpent == null OR isSpent == $${chunk.length}) AND (spentBy == null OR spentBy == $${chunk.length + 1}) AND (settledBy == null OR settledBy == $${chunk.length + 1})`
                 : scriptsQuery;
             const results = this.realm.objects("ArkVtxo").filtered(query, ...chunk, false, "");
             for (const row of results) {
                 if (!selected.has(row.script as string)) continue;
-                if (options?.nonterminalOnly && (row.isSpent || row.spentBy || row.settledBy)) {
+                if (options?.unspentOnly && (row.isSpent || row.spentBy || row.settledBy)) {
                     continue;
                 }
                 const vtxo = vtxoObjectToDomain(row);
-                if (!options?.nonterminalOnly || !hasTerminalSpend(vtxo)) rows.push(vtxo);
+                if (!options?.unspentOnly || !hasTerminalSpend(vtxo)) rows.push(vtxo);
             }
         }
         return rows;

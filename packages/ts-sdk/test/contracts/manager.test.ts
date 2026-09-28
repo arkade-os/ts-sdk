@@ -386,12 +386,12 @@ describe("ContractManager", () => {
         expect(bulk).toHaveBeenCalledTimes(1);
         expect(perScript).not.toHaveBeenCalled();
         expect(batched.map(({ vtxos }) => vtxos.length)).toEqual([3, 2, 0]);
-        const nonterminal = await localManager.getContractsWithVtxos(undefined, undefined, {
-            nonterminalOnly: true,
+        const unspent = await localManager.getContractsWithVtxos(undefined, undefined, {
+            unspentOnly: true,
         });
-        expect(nonterminal.map(({ vtxos }) => vtxos.length)).toEqual([2, 2, 0]);
+        expect(unspent.map(({ vtxos }) => vtxos.length)).toEqual([2, 2, 0]);
         expect(bulk).toHaveBeenLastCalledWith([first.script, second.script, empty.script], {
-            nonterminalOnly: true,
+            unspentOnly: true,
         });
 
         vi.spyOn(localManager, "getContracts").mockResolvedValue([first, first]);

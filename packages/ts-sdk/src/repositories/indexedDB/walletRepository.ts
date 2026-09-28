@@ -134,7 +134,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
 
     async getVtxosForScripts(
         scripts: string[],
-        options?: { nonterminalOnly?: boolean },
+        options?: { unspentOnly?: boolean },
     ): Promise<ExtendedVirtualCoin[]> {
         const unique = [...new Set(scripts)].filter(Boolean);
         if (unique.length === 0) return [];
@@ -147,8 +147,8 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
                 const rows = await getAllByIndexValues<SerializedVtxo & { address: string }>(
                     store,
-                    options?.nonterminalOnly ? "scriptUnspent" : "script",
-                    options?.nonterminalOnly ? chunk.map((script) => [script, 1]) : chunk,
+                    options?.unspentOnly ? "scriptUnspent" : "script",
+                    options?.unspentOnly ? chunk.map((script) => [script, 1]) : chunk,
                 );
                 for (const row of rows) {
                     if (!selected.has(row.script!)) continue;
@@ -157,7 +157,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
                     if (!existing || shouldReplaceVtxo(existing, row)) byOutpoint.set(key, row);
                 }
             }
-            if (options?.nonterminalOnly && byOutpoint.size > 0) {
+            if (options?.unspentOnly && byOutpoint.size > 0) {
                 // An old address bucket may duplicate a live outpoint with a
                 // newer terminal canonical row. Resolve only the active
                 // candidates against that txid's rows, not full wallet history.
@@ -180,11 +180,11 @@ export class IndexedDBWalletRepository implements WalletRepository {
             }
             const result: ExtendedVirtualCoin[] = [];
             for (const row of byOutpoint.values()) {
-                if (options?.nonterminalOnly && (row.isSpent || row.spentBy || row.settledBy)) {
+                if (options?.unspentOnly && (row.isSpent || row.spentBy || row.settledBy)) {
                     continue;
                 }
                 const vtxo = deserializeVtxoWithBackfill(row);
-                if (!options?.nonterminalOnly || !hasTerminalSpend(vtxo)) result.push(vtxo);
+                if (!options?.unspentOnly || !hasTerminalSpend(vtxo)) result.push(vtxo);
             }
             return result;
         } catch (error) {

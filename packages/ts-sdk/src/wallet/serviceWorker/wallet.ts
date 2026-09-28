@@ -1309,7 +1309,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             async getContractsWithVtxos(
                 filter?: GetContractsFilter,
                 _pageSize?: number,
-                options?: { maxSyncAgeMs?: number; nonterminalOnly?: boolean },
+                options?: { maxSyncAgeMs?: number; unspentOnly?: boolean },
             ): Promise<ContractWithVtxos[]> {
                 const message: RequestGetContractsWithVtxos = {
                     type: "GET_CONTRACTS_WITH_VTXOS",
@@ -1318,7 +1318,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     payload: {
                         filter,
                         maxSyncAgeMs: options?.maxSyncAgeMs,
-                        nonterminalOnly: options?.nonterminalOnly,
+                        unspentOnly: options?.unspentOnly,
                     },
                 };
                 try {

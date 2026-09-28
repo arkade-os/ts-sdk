@@ -372,13 +372,13 @@ export interface IContractManager extends Disposable {
      * List contracts and their current virtual outputs.
      *
      * If no filter is provided, returns all contracts with their virtual outputs.
-     * `nonterminalOnly` omits consumed outputs from the repository result; it
+     * `unspentOnly` omits spent VTXOs from the repository result; it
      * does not narrow the provider sync or change the full-history default.
      */
     getContractsWithVtxos(
         filter?: GetContractsFilter,
         pageSize?: number,
-        options?: { maxSyncAgeMs?: number; nonterminalOnly?: boolean },
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean },
     ): Promise<ContractWithVtxos[]>;
 
     /**
@@ -1771,7 +1771,7 @@ export class ContractManager implements IContractManager {
     async getContractsWithVtxos(
         filter?: GetContractsFilter,
         pageSize?: number,
-        options?: { maxSyncAgeMs?: number; nonterminalOnly?: boolean },
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean },
     ): Promise<ContractWithVtxos[]> {
         if (
             options?.maxSyncAgeMs !== undefined &&
@@ -2386,7 +2386,7 @@ export class ContractManager implements IContractManager {
 
     private async getVtxosForContracts(
         contracts: Contract[],
-        options?: { nonterminalOnly?: boolean },
+        options?: { unspentOnly?: boolean },
     ): Promise<ExtendedContractVtxo[]> {
         if (contracts.length === 0) return [];
         if (this.config.walletRepository.getVtxosForScripts) {
@@ -2399,7 +2399,7 @@ export class ContractManager implements IContractManager {
                 rows
                     .filter((vtxo) => vtxo.script !== undefined && byScript.has(vtxo.script))
                     // Custom repositories may ignore the optional query hint.
-                    .filter((vtxo) => !options?.nonterminalOnly || !hasTerminalSpend(vtxo))
+                    .filter((vtxo) => !options?.unspentOnly || !hasTerminalSpend(vtxo))
                     .map((vtxo) => ({ ...normalizeVtxo(vtxo), contractScript: vtxo.script! }))
             );
         }
@@ -2416,7 +2416,7 @@ export class ContractManager implements IContractManager {
             ),
         );
         const rows = res.flat();
-        return options?.nonterminalOnly ? rows.filter((vtxo) => !hasTerminalSpend(vtxo)) : rows;
+        return options?.unspentOnly ? rows.filter((vtxo) => !hasTerminalSpend(vtxo)) : rows;
     }
 
     /**

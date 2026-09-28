@@ -35,7 +35,7 @@ export class InMemoryWalletRepository implements WalletRepository {
 
     async getVtxosForScripts(
         scripts: string[],
-        options?: { nonterminalOnly?: boolean },
+        options?: { unspentOnly?: boolean },
     ): Promise<ExtendedVirtualCoin[]> {
         if (scripts.length === 0) return [];
         const selected = new Set(scripts);
@@ -48,7 +48,7 @@ export class InMemoryWalletRepository implements WalletRepository {
             }
         }
         const rows = [...byOutpoint.values()];
-        return options?.nonterminalOnly ? rows.filter((vtxo) => !hasTerminalSpend(vtxo)) : rows;
+        return options?.unspentOnly ? rows.filter((vtxo) => !hasTerminalSpend(vtxo)) : rows;
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {

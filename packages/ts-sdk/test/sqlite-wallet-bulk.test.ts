@@ -52,7 +52,7 @@ describe("SQLiteWalletRepository.getVtxosForScripts", () => {
         expect(await repository.getVtxosForScripts([])).toEqual([]);
         const result = await repository.getVtxosForScripts(scripts);
         expect(result).toHaveLength(6);
-        const live = await repository.getVtxosForScripts(scripts, { nonterminalOnly: true });
+        const live = await repository.getVtxosForScripts(scripts, { unspentOnly: true });
         expect(live.map((row) => row.script)).toEqual([scripts[0], scripts[500]]);
     });
 });
