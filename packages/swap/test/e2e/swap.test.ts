@@ -1,20 +1,30 @@
 /**
- * The maker-side swap loop against the real regtest stack: derive an offer
- * (arkd + emulator infos), fund its covenant address with the offer packet
- * embedded, rebuild the record from chain data alone, cancel cooperatively
- * (the 2-of-2 maker+server spend), and restore the cancel classification.
+ * The swap loop end to end against the real regtest stack, in two suites.
  *
- * This is the package's persistence contract exercised end to end: offerHex +
+ * Offer suite: derive an offer (arkd + emulator infos), fund its covenant
+ * address with the offer packet embedded, rebuild the record from chain data
+ * alone, and cancel cooperatively (the 2-of-2 maker+server spend). This is
+ * the package's persistence contract exercised end to end: offerHex +
  * fundingTxid is all a maker must keep — everything else comes back from the
- * indexer. The fill path is NOT covered here: it needs a taker holding the
- * want-asset (no solver runs in this stack) and is scoped separately.
+ * indexer.
+ *
+ * Fill suite, against the stack's solverd: discover the market from the
+ * solver's own card, price the offer off its feed, fund the covenant, and
+ * watch the wallet's own event stream resolve the record as fulfilled — no
+ * restore scan anywhere. The covered corridor is the round trip: all BTC
+ * into the asset, then all of the asset back into BTC — which also returns
+ * the solver's inventory, so the suite stays re-runnable on a live stack.
+ * The minted asset id changes on every regtest boot, so nothing here may
+ * hardcode it: the card (`GET /v1/card`) is the one source of truth, which
+ * is also the discovery path a real wallet takes.
  */
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import {
     ArkAddress,
     asset,
+    type Asset,
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
@@ -22,13 +32,16 @@ import {
     SingleKey,
     Wallet,
 } from "@arkade-os/sdk";
+import { discover, quoteOffer, type Market } from "@arkade-os/solver-discovery";
 import {
     addAssetSwap,
+    ASSET_CARRIER_SATS,
     cancelOffer,
     createOffer,
     decodeOffer,
     getAssetSwaps,
     InMemoryAssetSwapRepository,
+    QUOTE_OPTIONS,
     restoreAssetSwaps,
     watchOfferSwaps,
     type AssetSwap,
@@ -38,6 +51,9 @@ import {
 const ARK_URL = "http://localhost:7070";
 // mempool serves the Esplora REST API under `/api`; the root path is the HTML UI
 const ESPLORA_API_URL = "http://localhost:3000/api";
+// solverd's HTTP API and the mock price feed, on their host-published ports
+const SOLVER_HTTP_URL = "http://localhost:7091";
+const PRICEFEED_URL = "http://localhost:8088";
 const arkdExec = "docker exec -t arkd";
 
 const FAUCET_SATS = 30_000;
@@ -334,5 +350,166 @@ describe("maker-side swap loop (regtest)", () => {
         } finally {
             watcher.stop();
         }
+    }, 180_000);
+});
+
+/** The solver's BTC market, discovered from its own published card. */
+const solverMarket = async (): Promise<Market> => {
+    const response = await fetch(`${SOLVER_HTTP_URL}/v1/card`);
+    if (!response.ok) throw new Error(`solver card: HTTP ${response.status}`);
+    const card = await response.json();
+    // the card names the feed by its in-docker hostname; the same feed is
+    // published to the host, and nothing else about the market changes
+    for (const m of card.markets ?? []) {
+        if (typeof m.price_feed === "string" && m.price_feed.startsWith("http://pricefeed")) {
+            m.price_feed = m.price_feed.replace("http://pricefeed", PRICEFEED_URL);
+        }
+    }
+    // registries: [] — hermetic: the local card is the only source, never the
+    // network's published default index (discoverMarkets cannot express this)
+    const { markets, warnings } = await discover({
+        registries: [],
+        localCards: [{ card }],
+        network: "regtest",
+    });
+    const market = markets.find((m) => m.base_asset.id === "btc" || m.quote_asset.id === "btc");
+    if (!market) {
+        throw new Error(`solverd card advertises no BTC market (${warnings.join("; ")})`);
+    }
+    return market;
+};
+
+/** Fund an offer and wait for solverd to fill it. The record and the watcher
+ * exist BEFORE funding: the solver may fill within seconds, and only a
+ * registered, recorded offer resolves live off the wallet's own spend event —
+ * no restore scan anywhere. */
+const fundAndAwaitFill = async (
+    offer: Awaited<ReturnType<typeof createOffer>>,
+    deposit: { amount: number; assets?: Asset[] },
+    legs: { fromAsset: string; toAsset: string; fromAmount: string; toAmount: string },
+): Promise<void> => {
+    const repository = new InMemoryAssetSwapRepository();
+    const watcher = await watchOfferSwaps({ wallet, arkServerUrl: ARK_URL, repository });
+    const fundingTxid = await wallet.send({
+        address: offer.address,
+        extensions: [offer.extension],
+        ...deposit,
+    });
+    await addAssetSwap(repository, {
+        id: fundingTxid,
+        ...legs,
+        swapAddress: offer.address,
+        swapPkScript: hex.encode(offer.swapPkScript),
+        offerHex: offer.offerHex,
+        fundingTxid,
+        status: "pending",
+        createdAt: Date.now(),
+    });
+
+    let resolved: AssetSwap | undefined;
+    try {
+        await waitFor(async () => {
+            await watcher.idle();
+            [resolved] = await getAssetSwaps(repository);
+            return resolved?.status === "fulfilled";
+        }, 120_000);
+        expect(resolved?.spentTxid).toBeTruthy();
+    } finally {
+        watcher.stop();
+    }
+};
+
+describe("solverd round trip (regtest)", () => {
+    // must run last — it drains the wallet, so nothing after it could fund an offer
+    let market: Market;
+    let btcSide: "base" | "quote";
+    // the regtest asset leg — the market's non-BTC side, discovered once
+    let assetLeg: Market["base_asset"];
+    // the wallet's whole available balance going into the round trip
+    let depositSats: number;
+
+    it("swaps all BTC for the asset", async () => {
+        market = await solverMarket();
+        btcSide = market.base_asset.id === "btc" ? "base" : "quote";
+        assetLeg = btcSide === "base" ? market.quote_asset : market.base_asset;
+
+        // swap ALL the BTC: the deposit is the wallet's whole available balance
+        depositSats = (await wallet.getBalance()).available;
+        const plan = await quoteOffer(market, {
+            give: btcSide,
+            giveAmount: BigInt(depositSats),
+            safetyBps: QUOTE_OPTIONS.safetyBps,
+        });
+        expect(plan.receive.asset.id).toBe(assetLeg.id);
+        expect(plan.receive.atomic).toBeGreaterThan(BigInt(0));
+
+        const offer = await createOffer(wallet, ARK_URL, {
+            wantAmount: plan.receive.atomic,
+            wantAsset: asset.AssetId.fromString(assetLeg.id),
+        });
+        await fundAndAwaitFill(
+            offer,
+            { amount: depositSats },
+            {
+                fromAsset: "btc",
+                toAsset: assetLeg.id,
+                fromAmount: String(depositSats),
+                toAmount: plan.receive.atomic.toString(),
+            },
+        );
+
+        // and the want asset landed in the wallet, in full
+        await waitFor(async () => {
+            const balance = await wallet.getBalance();
+            const held = balance.assets.find((a) => a.assetId === assetLeg.id);
+            return Boolean(held && BigInt(held.amount) >= plan.receive.atomic);
+        });
+    }, 180_000);
+
+    it("swaps all of the asset back to BTC", async () => {
+        // the asset bought above is the give side now — ALL of it
+        const held = (await wallet.getBalance()).assets.find((a) => a.assetId === assetLeg.id);
+        const assetAmount = BigInt(held?.amount ?? 0);
+        expect(assetAmount).toBeGreaterThan(BigInt(0));
+
+        const plan = await quoteOffer(market, {
+            give: btcSide === "base" ? "quote" : "base",
+            giveAmount: assetAmount,
+            safetyBps: QUOTE_OPTIONS.safetyBps,
+        });
+        expect(plan.receive.asset.id).toBe("btc");
+        expect(plan.receive.atomic).toBeGreaterThan(BigInt(0));
+
+        const offer = await createOffer(wallet, ARK_URL, {
+            wantAmount: plan.receive.atomic,
+            offerAsset: asset.AssetId.fromString(assetLeg.id),
+        });
+        // the sats are only the asset's VTXO carrier — after swapping all the
+        // BTC, the carrier on the received asset VTXO is exactly what this
+        // deposit spends
+        await fundAndAwaitFill(
+            offer,
+            {
+                amount: Number(ASSET_CARRIER_SATS),
+                assets: [{ assetId: assetLeg.id, amount: assetAmount }],
+            },
+            {
+                fromAsset: assetLeg.id,
+                toAsset: "btc",
+                fromAmount: assetAmount.toString(),
+                toAmount: plan.receive.atomic.toString(),
+            },
+        );
+
+        // the round trip ends where it started, minus the solver's fee on
+        // both legs: the carrier nets out (the inbound fill pays it, the
+        // reversal's deposit spends it) and no asset is left
+        await waitFor(
+            async () => (await wallet.getBalance()).available >= Number(plan.receive.atomic),
+        );
+        const balance = await wallet.getBalance();
+        expect(balance.available).toBeLessThan(depositSats);
+        const left = balance.assets.find((a) => a.assetId === assetLeg.id);
+        expect(BigInt(left?.amount ?? 0)).toBe(BigInt(0));
     }, 180_000);
 });
