@@ -262,6 +262,22 @@ describe("getSpendableVtxos", () => {
         expect(getVtxos).not.toHaveBeenCalled();
     });
 
+    it("does not reuse the manager's default sync age for a required read", async () => {
+        const indexer = onlineIndexer([]);
+        const getVtxos = vi.spyOn(indexer, "getVtxos");
+        const { wallet } = await seededWallet({ indexerProvider: indexer, minimal: true });
+        const manager = await wallet.getContractManager();
+        await wallet.getSpendableVtxos({ requireSynced: true });
+        manager.setVtxoSyncMaxAge(60_000);
+        getVtxos.mockClear();
+        getVtxos.mockRejectedValue(new ProviderUnavailableError("operator down"));
+
+        await expect(wallet.getSpendableVtxos({ requireSynced: true })).rejects.toThrow(
+            "requires an online contract sync",
+        );
+        expect(getVtxos).toHaveBeenCalled();
+    });
+
     it("can limit indexer queries to generically spendable contracts", async () => {
         const indexer = onlineIndexer([vtxo(MARKED_SCRIPT, 10_000)]);
         const getVtxos = vi.spyOn(indexer, "getVtxos");

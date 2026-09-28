@@ -392,6 +392,9 @@ describe("ServiceWorkerReadonlyWallet", () => {
                 unspentOnly: true,
             }),
         ).resolves.toEqual(contractsWithVtxos);
+        await expect(
+            manager.getContractsWithVtxos({} as any, undefined, { requireSynced: true }),
+        ).rejects.toThrow("Failed to get contracts with vtxos");
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: "GET_CONTRACTS_WITH_VTXOS",
@@ -399,7 +402,14 @@ describe("ServiceWorkerReadonlyWallet", () => {
                     filter: {},
                     maxSyncAgeMs: 60_000,
                     unspentOnly: true,
+                    requireSynced: undefined,
                 },
+            }),
+        );
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "GET_CONTRACTS_WITH_VTXOS",
+                payload: expect.objectContaining({ requireSynced: true }),
             }),
         );
         await expect(manager.updateContract("c1", { label: "new" })).resolves.toEqual(contract);

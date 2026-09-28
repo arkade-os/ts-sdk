@@ -1448,18 +1448,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const snapshot = await contractManager.getContractsWithVtxos(query, undefined, {
             maxSyncAgeMs: filter?.maxSyncAgeMs,
             unspentOnly: options?.unspentOnly,
+            requireSynced: filter?.requireSynced,
         });
-        if (filter?.requireSynced) {
-            const state = contractManager.getSyncState();
-            if (
-                state.mode !== "online" ||
-                (filter.maxSyncAgeMs &&
-                    (state.lastSyncedAt === undefined ||
-                        Date.now() - state.lastSyncedAt > filter.maxSyncAgeMs))
-            ) {
-                throw new Error("Spendable VTXO read requires an online contract sync");
-            }
-        }
         return snapshot;
     }
 

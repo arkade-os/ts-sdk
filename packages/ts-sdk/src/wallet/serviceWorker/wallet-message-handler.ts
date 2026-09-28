@@ -302,11 +302,16 @@ export type ResponseGetContracts = ResponseEnvelope & {
 
 export type RequestGetContractsWithVtxos = RequestEnvelope & {
     type: "GET_CONTRACTS_WITH_VTXOS";
-    payload: { filter?: GetContractsFilter; maxSyncAgeMs?: number; unspentOnly?: boolean };
+    payload: {
+        filter?: GetContractsFilter;
+        maxSyncAgeMs?: number;
+        unspentOnly?: boolean;
+        requireSynced?: boolean;
+    };
 };
 export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     type: "CONTRACTS_WITH_VTXOS";
-    payload: { contracts: ContractWithVtxos[] };
+    payload: { contracts: ContractWithVtxos[]; appliedRequireSynced?: boolean };
 };
 
 function unsupportedByManager(method: string): Error {
@@ -1295,12 +1300,16 @@ export class WalletMessageHandler
                         {
                             maxSyncAgeMs: message.payload.maxSyncAgeMs,
                             unspentOnly: message.payload.unspentOnly,
+                            requireSynced: message.payload.requireSynced,
                         },
                     );
                     return this.tagged({
                         id,
                         type: "CONTRACTS_WITH_VTXOS",
-                        payload: { contracts },
+                        payload: {
+                            contracts,
+                            appliedRequireSynced: message.payload.requireSynced === true,
+                        },
                     });
                 }
                 case "WATCH_SCRIPT": {

@@ -1309,7 +1309,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             async getContractsWithVtxos(
                 filter?: GetContractsFilter,
                 _pageSize?: number,
-                options?: { maxSyncAgeMs?: number; unspentOnly?: boolean },
+                options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
             ): Promise<ContractWithVtxos[]> {
                 const message: RequestGetContractsWithVtxos = {
                     type: "GET_CONTRACTS_WITH_VTXOS",
@@ -1319,10 +1319,20 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                         filter,
                         maxSyncAgeMs: options?.maxSyncAgeMs,
                         unspentOnly: options?.unspentOnly,
+                        requireSynced: options?.requireSynced,
                     },
                 };
                 try {
                     const response = await sendContractMessage(message);
+                    if (
+                        options?.requireSynced &&
+                        (response as ResponseGetContractsWithVtxos).payload.appliedRequireSynced !==
+                            true
+                    ) {
+                        throw new Error(
+                            "Service worker does not support the requested freshness check",
+                        );
+                    }
                     // A best-effort sync ran on the worker; it may have degraded
                     // to repository data or recovered — refresh the cached view.
                     await refreshSyncState();

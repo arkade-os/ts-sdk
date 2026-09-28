@@ -378,7 +378,7 @@ export interface IContractManager extends Disposable {
     getContractsWithVtxos(
         filter?: GetContractsFilter,
         pageSize?: number,
-        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean },
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
     ): Promise<ContractWithVtxos[]>;
 
     /**
@@ -1771,7 +1771,7 @@ export class ContractManager implements IContractManager {
     async getContractsWithVtxos(
         filter?: GetContractsFilter,
         pageSize?: number,
-        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean },
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
     ): Promise<ContractWithVtxos[]> {
         if (
             options?.maxSyncAgeMs !== undefined &&
@@ -1785,7 +1785,11 @@ export class ContractManager implements IContractManager {
         // failed sync writes no partial state and does not advance the cursor
         // (targeted subset queries never do). Terminal failures still propagate.
         if (
-            this.syncedWithin(contracts, options?.maxSyncAgeMs ?? this.config.vtxoSyncMaxAgeMs ?? 0)
+            this.syncedWithin(
+                contracts,
+                options?.maxSyncAgeMs ??
+                    (options?.requireSynced ? 0 : (this.config.vtxoSyncMaxAgeMs ?? 0)),
+            )
         ) {
             // Skipping the fetch must not skip the demotion it carries: that
             // half is repository-only, and an `awaiting-funds` contract left
@@ -1798,6 +1802,11 @@ export class ContractManager implements IContractManager {
             } catch (err) {
                 if (!isRetryableProviderError(err)) throw err;
                 this.markSyncDegraded(err);
+                if (options?.requireSynced) {
+                    throw new Error("Spendable VTXO read requires an online contract sync", {
+                        cause: err,
+                    });
+                }
             }
         }
         const vtxos = await this.getVtxosForContracts(contracts, options);
