@@ -74,10 +74,11 @@ export class IndexedDBWalletRepository implements WalletRepository {
             const store = transaction.objectStore(STORE_VTXOS);
             for (const vtxo of vtxos) {
                 const serialized: SerializedVtxo = serializeVtxo(vtxo);
+                const active = activeIndexFlagForVtxo(vtxo);
                 store.put({
                     address,
                     ...serialized,
-                    active: activeIndexFlagForVtxo(vtxo),
+                    ...(active ? { active } : {}),
                 });
             }
             await awaitTransaction(transaction);
