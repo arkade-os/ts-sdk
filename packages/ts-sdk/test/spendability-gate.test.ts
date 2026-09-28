@@ -776,7 +776,10 @@ describe("spending sites consume the accessor", () => {
         const manager = new VtxoManager(wallet as never);
 
         await expect(manager.getExpiringVtxos()).resolves.toEqual([]);
-        expect(wallet.getSpendableVtxos).toHaveBeenCalled();
+        expect(wallet.getSpendableVtxos).toHaveBeenCalledWith({
+            withRecoverable: true,
+            genericallySpendableOnly: true,
+        });
     });
 
     it("offboard does not see gated VTXOs", async () => {
@@ -790,7 +793,11 @@ describe("spending sites consume the accessor", () => {
                 txFeeRate: "1",
             }),
         ).rejects.toThrow();
-        expect(wallet.getSpendableVtxos).toHaveBeenCalled();
+        expect(wallet.getSpendableVtxos).toHaveBeenCalledWith({
+            withRecoverable: true,
+            withUnrolled: false,
+            genericallySpendableOnly: true,
+        });
     });
 });
 

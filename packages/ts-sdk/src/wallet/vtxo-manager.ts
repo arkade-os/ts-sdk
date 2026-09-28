@@ -1581,7 +1581,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return [];
         }
 
-        const vtxos = await this.wallet.getSpendableVtxos({ withRecoverable: true });
+        const vtxos = await this.wallet.getSpendableVtxos({
+            withRecoverable: true,
+            genericallySpendableOnly: true,
+        });
 
         // Resolve threshold: method param > settlementConfig (seconds→ms) > renewalConfig > default
         let threshold: number;

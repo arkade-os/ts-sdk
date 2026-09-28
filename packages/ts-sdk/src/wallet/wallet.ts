@@ -4021,7 +4021,10 @@ export class Wallet
                 amount += utxo.value - inputFee.satoshis;
             }
 
-            const vtxos = await this.getSpendableVtxos({ withRecoverable: true });
+            const vtxos = await this.getSpendableVtxos({
+                withRecoverable: true,
+                genericallySpendableOnly: true,
+            });
 
             // Cap the VTXOs per settlement to stay under the server's
             // intent-size limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its
@@ -5585,6 +5588,7 @@ export class Wallet
         if (!selectedVtxos) {
             virtualCoins = await this.getSpendableVtxos({
                 withRecoverable: false,
+                genericallySpendableOnly: true,
             });
         }
 

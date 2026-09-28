@@ -2132,7 +2132,10 @@ describe("Wallet._settleImpl", () => {
             ).rejects.toBe(sentinel);
 
             expect(getCaptured()!.map((v: any) => v.txid)).toEqual(["vtxo-7000-1", "vtxo-5000-0"]);
-            expect(thisArg.getSpendableVtxos).toHaveBeenCalled();
+            expect(thisArg.getSpendableVtxos).toHaveBeenCalledWith({
+                withRecoverable: true,
+                genericallySpendableOnly: true,
+            });
         });
 
         it("caps the number of auto-selected VTXOs at MAX_VTXOS_PER_SETTLEMENT", async () => {
