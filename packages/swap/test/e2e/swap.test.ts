@@ -61,7 +61,7 @@ const execCommand = (command: string): string => {
 const waitFor = (fn: () => Promise<boolean>, timeout = 30_000): Promise<void> =>
     vi.waitFor(
         async () => {
-            if (!(await fn())) throw new Error("waiting");
+            if (!(await fn())) throw new Error("timeout in waitFor");
         },
         { timeout },
     );

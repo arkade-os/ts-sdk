@@ -53,7 +53,7 @@ const waitFor = (
 ): Promise<void> =>
     vi.waitFor(
         async () => {
-            if (!(await fn())) throw new Error(`waiting for ${what}`);
+            if (!(await fn())) throw new Error(`timeout waiting for ${what}`);
         },
         { timeout },
     );
