@@ -172,7 +172,11 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
                         record.updatedAt > after.updatedAt ||
                         (record.updatedAt === after.updatedAt && record.rfqId > after.rfqId)),
             )
-            .sort((a, b) => a.updatedAt - b.updatedAt || a.rfqId.localeCompare(b.rfqId))
+            .sort(
+                (a, b) =>
+                    a.updatedAt - b.updatedAt ||
+                    (a.rfqId < b.rfqId ? -1 : a.rfqId > b.rfqId ? 1 : 0),
+            )
             .slice(0, limit);
     }
 

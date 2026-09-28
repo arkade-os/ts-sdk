@@ -312,6 +312,7 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
         for (const [rfqId, updatedAt] of [
             ["old", 1],
             ["b", 100],
+            ["B", 100],
             ["a", 100],
             ["c", 101],
         ] as const) {
@@ -320,10 +321,10 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
         await repository.saveRfqSwap({ ...rfqRecord("active"), updatedAt: 101 });
 
         const first = await repository.getRfqSwapsUpdatedPage!("settled", 100, undefined, 2);
-        expect(first.map((record) => record.rfqId)).toEqual(["a", "b"]);
+        expect(first.map((record) => record.rfqId)).toEqual(["B", "a"]);
         const after = { updatedAt: first[1].updatedAt, rfqId: first[1].rfqId };
         const second = await repository.getRfqSwapsUpdatedPage!("settled", 100, after, 2);
-        expect(second.map((record) => record.rfqId)).toEqual(["c"]);
+        expect(second.map((record) => record.rfqId)).toEqual(["b", "c"]);
         expect((await repository.getAllRfqSwaps()).map((record) => record.rfqId)).toContain("old");
     });
 
