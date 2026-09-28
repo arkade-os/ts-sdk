@@ -193,9 +193,7 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         assertRfqSwapPageLimit(limit);
         assertRfqSwapSince(since);
         await this.ensureInit();
-        const cursor = after
-            ? "AND (updated_at > ? OR (updated_at = ? AND rfq_id > ?))"
-            : "";
+        const cursor = after ? "AND (updated_at > ? OR (updated_at = ? AND rfq_id > ?))" : "";
         const rows = await this.db.all<{ data: string }>(
             `SELECT data FROM ${this.rfqSwaps} WHERE state = ? AND updated_at >= ? ${cursor} ORDER BY updated_at, rfq_id LIMIT ?`,
             after

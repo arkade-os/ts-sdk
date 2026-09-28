@@ -210,7 +210,8 @@ export async function rfqSwapActivityInputsSincePage(
     const page = deps.repository.getRfqSwapsUpdatedPage;
     if (!page) throw new Error("repository does not support date-filtered RFQ history pages");
     const records = await page.call(deps.repository, state, since, after, limit);
-    if (records.length > limit) throw new Error("getRfqSwapsUpdatedPage exceeded its requested limit");
+    if (records.length > limit)
+        throw new Error("getRfqSwapsUpdatedPage exceeded its requested limit");
     let cursor = after;
     for (const record of records) {
         if (

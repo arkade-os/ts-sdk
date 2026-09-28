@@ -1283,11 +1283,7 @@ export class RfqSwapManager {
         const swap = this.monitored.get(rfqId) ?? this.finished.get(rfqId);
         if (!swap && !this.removed.has(rfqId) && this.deps.repository) {
             const record = await this.deps.repository.getRfqSwap(rfqId);
-            if (
-                record &&
-                !this.removed.has(rfqId) &&
-                isRfqSwapTerminal(record.state)
-            ) {
+            if (record && !this.removed.has(rfqId) && isRfqSwapTerminal(record.state)) {
                 if (record.state === "failed") {
                     throw new Error(record.failure ?? `swap ${rfqId} failed`);
                 }
