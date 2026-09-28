@@ -10,7 +10,7 @@ import {
     initDatabase,
     STORE_VTXOS,
     backfillVtxoScripts,
-    backfillActiveVtxos,
+    backfillNonterminalVtxos,
     DB_VERSION,
 } from "../../src/repositories/indexedDB/schema";
 import { IndexedDBWalletRepository } from "../../src/repositories/indexedDB/walletRepository";
@@ -153,7 +153,7 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
         return [TaprootControlBlock.decode(controlBlockBytes), new Uint8Array(20).fill(2)];
     }
 
-    it("backfills the active index and preserves terminal rows in the store", async () => {
+    it("backfills the nonterminal index and preserves terminal rows in the store", async () => {
         const dbName = getUniqueDbName();
         const db = await openDatabase(dbName, DB_VERSION, initDatabase);
         try {
@@ -172,19 +172,19 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
             });
             await new Promise<void>((resolve, reject) => {
                 const tx = db.transaction([STORE_VTXOS], "readwrite");
-                backfillActiveVtxos(tx);
+                backfillNonterminalVtxos(tx);
                 tx.oncomplete = () => resolve();
                 tx.onerror = () => reject(tx.error);
             });
             const tx = db.transaction([STORE_VTXOS], "readonly");
             const store = tx.objectStore(STORE_VTXOS);
-            expect(store.index("scriptActive").keyPath).toEqual(["script", "active"]);
-            const active = await new Promise<Array<{ txid: string }>>((resolve, reject) => {
-                const request = store.index("scriptActive").getAll(["script-a", 1]);
+            expect(store.index("scriptNonterminal").keyPath).toEqual(["script", "nonterminal"]);
+            const nonterminal = await new Promise<Array<{ txid: string }>>((resolve, reject) => {
+                const request = store.index("scriptNonterminal").getAll(["script-a", 1]);
                 request.onsuccess = () => resolve(request.result);
                 request.onerror = () => reject(request.error);
             });
-            expect(active.map((row) => row.txid)).toEqual(["live"]);
+            expect(nonterminal.map((row) => row.txid)).toEqual(["live"]);
             expect(
                 await new Promise((resolve) => {
                     const request = store.count();
@@ -197,7 +197,7 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
     });
 
     it.each([2, 3])(
-        "upgrades an existing v%d database to the active inventory index",
+        "upgrades an existing v%d database to the nonterminal inventory index",
         async (version) => {
             const dbName = getUniqueDbName();
             const oldDb = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -234,16 +234,18 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
             const upgraded = await openDatabase(dbName, DB_VERSION, initDatabase);
             try {
                 expect(upgraded.version).toBe(6);
-                const active = await new Promise<Array<{ txid: string }>>((resolve, reject) => {
-                    const request = upgraded
-                        .transaction([STORE_VTXOS], "readonly")
-                        .objectStore(STORE_VTXOS)
-                        .index("scriptActive")
-                        .getAll([version >= 3 ? "script-a" : EXPECTED_PK_SCRIPT_HEX, 1]);
-                    request.onsuccess = () => resolve(request.result);
-                    request.onerror = () => reject(request.error);
-                });
-                expect(active.map((row) => row.txid)).toEqual(["live"]);
+                const nonterminal = await new Promise<Array<{ txid: string }>>(
+                    (resolve, reject) => {
+                        const request = upgraded
+                            .transaction([STORE_VTXOS], "readonly")
+                            .objectStore(STORE_VTXOS)
+                            .index("scriptNonterminal")
+                            .getAll([version >= 3 ? "script-a" : EXPECTED_PK_SCRIPT_HEX, 1]);
+                        request.onsuccess = () => resolve(request.result);
+                        request.onerror = () => reject(request.error);
+                    },
+                );
+                expect(nonterminal.map((row) => row.txid)).toEqual(["live"]);
             } finally {
                 await closeDatabase(dbName);
             }

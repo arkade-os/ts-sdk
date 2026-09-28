@@ -1,5 +1,5 @@
 import { scriptFromArkAddress } from "../scriptFromAddress";
-import { activeIndexFlagForVtxo } from "../serialization";
+import { nonterminalIndexFlagForVtxo } from "../serialization";
 
 // Store names introduced in V2, they are all new to the migration
 export const STORE_VTXOS = "vtxos";
@@ -25,7 +25,7 @@ export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
 //        `vtxoBranches` object stores (new, empty — no backfill).
 //   v5 — make `intents.intentId` unique (was non-unique in v4), matching the
 //        "unique when present" contract enforced by the other backends.
-//   v6 — index (script, active) for each nonterminal VTXO. Existing rows are
+//   v6 — index (script, nonterminal) for each unspent VTXO. Existing rows are
 //        backfilled in the upgrade transaction; spent history stays stored.
 // A database opened at v6 cannot be reopened by an older SDK requesting v3.
 // Consumers must coordinate the SDK upgrade across tabs.
@@ -103,7 +103,9 @@ export function initDatabase(
                 unique: false,
             });
         }
-        vtxosStore.createIndex("scriptActive", ["script", "active"], { unique: false });
+        vtxosStore.createIndex("scriptNonterminal", ["script", "nonterminal"], {
+            unique: false,
+        });
     }
 
     if (!db.objectStoreNames.contains(STORE_UTXOS)) {
@@ -207,21 +209,23 @@ export function initDatabase(
         if (!vtxosStore.indexNames.contains("script")) {
             vtxosStore.createIndex("script", "script", { unique: false });
         }
-        // The v6 backfill below fills both script and active in one
+        // The v6 backfill below fills both script and nonterminal in one
         // cursor pass, avoiding two concurrent updates to the same legacy row.
     }
 
     if (oldVersion >= 1 && oldVersion < 6 && transaction) {
         const vtxosStore = transaction.objectStore(STORE_VTXOS);
-        if (!vtxosStore.indexNames.contains("scriptActive")) {
-            vtxosStore.createIndex("scriptActive", ["script", "active"], { unique: false });
+        if (!vtxosStore.indexNames.contains("scriptNonterminal")) {
+            vtxosStore.createIndex("scriptNonterminal", ["script", "nonterminal"], {
+                unique: false,
+            });
         }
-        backfillActiveVtxos(transaction);
+        backfillNonterminalVtxos(transaction);
     }
 }
 
-/** Populate the active index without dropping any historical VTXO rows. */
-export function backfillActiveVtxos(transaction: IDBTransaction): void {
+/** Populate the nonterminal index without dropping any historical VTXO rows. */
+export function backfillNonterminalVtxos(transaction: IDBTransaction): void {
     const request = transaction.objectStore(STORE_VTXOS).openCursor();
     request.onsuccess = () => {
         const cursor = request.result;
@@ -229,7 +233,7 @@ export function backfillActiveVtxos(transaction: IDBTransaction): void {
         const value = cursor.value as {
             address: string;
             script?: string;
-            active?: 1;
+            nonterminal?: 1;
             isSpent?: boolean;
             spentBy?: string;
             settledBy?: string;
@@ -246,11 +250,11 @@ export function backfillActiveVtxos(transaction: IDBTransaction): void {
                 return;
             }
         }
-        const active = activeIndexFlagForVtxo({ ...value, script });
-        if (value.script !== script || value.active !== active) {
+        const nonterminal = nonterminalIndexFlagForVtxo({ ...value, script });
+        if (value.script !== script || value.nonterminal !== nonterminal) {
             value.script = script;
-            if (active) value.active = active;
-            else delete value.active;
+            if (nonterminal) value.nonterminal = nonterminal;
+            else delete value.nonterminal;
             cursor.update(value);
         }
         cursor.continue();

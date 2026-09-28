@@ -10,8 +10,8 @@ export type SerializedUtxo = ReturnType<typeof serializeUtxo>;
 export type SerializedTransaction = ReturnType<typeof serializeTransaction>;
 
 /** Repository-only index flag. Terminal rows retain their history but have no
- * entry in the compound (script, active) index. */
-export function activeIndexFlagForVtxo(vtxo: {
+ * entry in the compound (script, nonterminal) index. */
+export function nonterminalIndexFlagForVtxo(vtxo: {
     script?: string | null;
     isSpent?: boolean | null;
     spentBy?: string | null;

@@ -19,7 +19,7 @@ import { scriptFromArkAddress } from "../scriptFromAddress";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
 import { hasTerminalSpend } from "../../wallet/vtxo";
-import { activeIndexFlagForVtxo } from "../serialization";
+import { nonterminalIndexFlagForVtxo } from "../serialization";
 
 /**
  * IndexedDB-based implementation of WalletRepository.
@@ -74,11 +74,11 @@ export class IndexedDBWalletRepository implements WalletRepository {
             const store = transaction.objectStore(STORE_VTXOS);
             for (const vtxo of vtxos) {
                 const serialized: SerializedVtxo = serializeVtxo(vtxo);
-                const active = activeIndexFlagForVtxo(vtxo);
+                const nonterminal = nonterminalIndexFlagForVtxo(vtxo);
                 store.put({
                     address,
                     ...serialized,
-                    ...(active ? { active } : {}),
+                    ...(nonterminal ? { nonterminal } : {}),
                 });
             }
             await awaitTransaction(transaction);
@@ -147,7 +147,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
                 const rows = await getAllByIndexValues<SerializedVtxo & { address: string }>(
                     store,
-                    options?.nonterminalOnly ? "scriptActive" : "script",
+                    options?.nonterminalOnly ? "scriptNonterminal" : "script",
                     options?.nonterminalOnly ? chunk.map((script) => [script, 1]) : chunk,
                 );
                 for (const row of rows) {
@@ -342,8 +342,8 @@ export class IndexedDBWalletRepository implements WalletRepository {
 // legacy row is ever read before the upgrade-path completes, derive `script`
 // from `address` the same way the indexer would have populated it.
 function deserializeVtxoWithBackfill(o: SerializedVtxo & { address: string }): ExtendedVirtualCoin {
-    // The active index is repository metadata, not part of the public VTXO.
-    const { active: _active, ...row } = o as typeof o & { active?: 1 };
+    // The nonterminal index is repository metadata, not part of the public VTXO.
+    const { nonterminal: _nonterminal, ...row } = o as typeof o & { nonterminal?: 1 };
     o = row;
     if (!o.script) {
         o = { ...o, script: scriptFromArkAddress(o.address) };
