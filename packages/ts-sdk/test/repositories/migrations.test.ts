@@ -10,7 +10,7 @@ import {
     initDatabase,
     STORE_VTXOS,
     backfillVtxoScripts,
-    backfillNonterminalVtxos,
+    backfillUnspentVtxos,
     DB_VERSION,
 } from "../../src/repositories/indexedDB/schema";
 import { IndexedDBWalletRepository } from "../../src/repositories/indexedDB/walletRepository";
@@ -153,7 +153,7 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
         return [TaprootControlBlock.decode(controlBlockBytes), new Uint8Array(20).fill(2)];
     }
 
-    it("backfills the nonterminal index and preserves terminal rows in the store", async () => {
+    it("backfills the unspent index and preserves spent rows in the store", async () => {
         const dbName = getUniqueDbName();
         const db = await openDatabase(dbName, DB_VERSION, initDatabase);
         try {
@@ -172,19 +172,19 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
             });
             await new Promise<void>((resolve, reject) => {
                 const tx = db.transaction([STORE_VTXOS], "readwrite");
-                backfillNonterminalVtxos(tx);
+                backfillUnspentVtxos(tx);
                 tx.oncomplete = () => resolve();
                 tx.onerror = () => reject(tx.error);
             });
             const tx = db.transaction([STORE_VTXOS], "readonly");
             const store = tx.objectStore(STORE_VTXOS);
-            expect(store.index("scriptNonterminal").keyPath).toEqual(["script", "nonterminal"]);
-            const nonterminal = await new Promise<Array<{ txid: string }>>((resolve, reject) => {
-                const request = store.index("scriptNonterminal").getAll(["script-a", 1]);
+            expect(store.index("scriptUnspent").keyPath).toEqual(["script", "unspent"]);
+            const unspent = await new Promise<Array<{ txid: string }>>((resolve, reject) => {
+                const request = store.index("scriptUnspent").getAll(["script-a", 1]);
                 request.onsuccess = () => resolve(request.result);
                 request.onerror = () => reject(request.error);
             });
-            expect(nonterminal.map((row) => row.txid)).toEqual(["live"]);
+            expect(unspent.map((row) => row.txid)).toEqual(["live"]);
             expect(
                 await new Promise((resolve) => {
                     const request = store.count();
@@ -197,7 +197,7 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
     });
 
     it.each([2, 3])(
-        "upgrades an existing v%d database to the nonterminal inventory index",
+        "upgrades an existing v%d database to the unspent inventory index",
         async (version) => {
             const dbName = getUniqueDbName();
             const oldDb = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -234,18 +234,16 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
             const upgraded = await openDatabase(dbName, DB_VERSION, initDatabase);
             try {
                 expect(upgraded.version).toBe(6);
-                const nonterminal = await new Promise<Array<{ txid: string }>>(
-                    (resolve, reject) => {
-                        const request = upgraded
-                            .transaction([STORE_VTXOS], "readonly")
-                            .objectStore(STORE_VTXOS)
-                            .index("scriptNonterminal")
-                            .getAll([version >= 3 ? "script-a" : EXPECTED_PK_SCRIPT_HEX, 1]);
-                        request.onsuccess = () => resolve(request.result);
-                        request.onerror = () => reject(request.error);
-                    },
-                );
-                expect(nonterminal.map((row) => row.txid)).toEqual(["live"]);
+                const unspent = await new Promise<Array<{ txid: string }>>((resolve, reject) => {
+                    const request = upgraded
+                        .transaction([STORE_VTXOS], "readonly")
+                        .objectStore(STORE_VTXOS)
+                        .index("scriptUnspent")
+                        .getAll([version >= 3 ? "script-a" : EXPECTED_PK_SCRIPT_HEX, 1]);
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+                expect(unspent.map((row) => row.txid)).toEqual(["live"]);
             } finally {
                 await closeDatabase(dbName);
             }
