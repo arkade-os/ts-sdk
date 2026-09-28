@@ -307,6 +307,26 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
         );
     });
 
+    it("pages history from a date without losing equal-timestamp records", async () => {
+        await using repository = create();
+        for (const [rfqId, updatedAt] of [
+            ["old", 1],
+            ["b", 100],
+            ["a", 100],
+            ["c", 101],
+        ] as const) {
+            await repository.saveRfqSwap({ ...rfqRecord(rfqId), state: "settled", updatedAt });
+        }
+        await repository.saveRfqSwap({ ...rfqRecord("active"), updatedAt: 101 });
+
+        const first = await repository.getRfqSwapsUpdatedPage!("settled", 100, undefined, 2);
+        expect(first.map((record) => record.rfqId)).toEqual(["a", "b"]);
+        const after = { updatedAt: first[1].updatedAt, rfqId: first[1].rfqId };
+        const second = await repository.getRfqSwapsUpdatedPage!("settled", 100, after, 2);
+        expect(second.map((record) => record.rfqId)).toEqual(["c"]);
+        expect((await repository.getAllRfqSwaps()).map((record) => record.rfqId)).toContain("old");
+    });
+
     it("stores the record whole, down to the fields nothing else can recover", async () => {
         // The covenant lives in the contract row, but what is here is here
         // because nothing rebuilds it: `paymentHash` is one-way inside the tree,
@@ -337,7 +357,6 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
         await repository.saveRfqSwap(rfqRecord("r1"));
         await repository.saveRfqSwap(rfqRecord("r2"));
         expect(await repository.getRfqSwap("r2")).toEqual(rfqRecord("r2"));
-        // retention prunes terminal records, so a miss is ordinary
         expect(await repository.getRfqSwap("gone")).toBeUndefined();
     });
 
@@ -354,56 +373,6 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
         await repository.saveRfqSwap(rfqRecord("r2"));
         await repository.removeRfqSwap("r1");
         expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId)).toEqual(["r2"]);
-    });
-
-    it("prunes only terminal RFQ records at or before the retention cutoff", async () => {
-        await using repository = create();
-        await repository.saveRfqSwap({
-            ...rfqRecord("old-settled"),
-            state: "settled",
-            updatedAt: 99,
-        });
-        await repository.saveRfqSwap({
-            ...rfqRecord("edge-refunded"),
-            state: "refunded",
-            updatedAt: 100,
-        });
-        await repository.saveRfqSwap({ ...rfqRecord("old-failed"), state: "failed", updatedAt: 1 });
-        await repository.saveRfqSwap({
-            ...rfqRecord("live"),
-            state: "needs_counterparty",
-            updatedAt: 1,
-        });
-        await repository.saveRfqSwap({ ...rfqRecord("recent"), state: "settled", updatedAt: 101 });
-
-        expect((await repository.pruneRetiredRfqSwaps!(100)).sort()).toEqual([
-            "edge-refunded",
-            "old-failed",
-            "old-settled",
-        ]);
-        expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId).sort()).toEqual([
-            "live",
-            "recent",
-        ]);
-    });
-
-    it("counts expired RFQ records without returning their IDs", async () => {
-        await using repository = create();
-        await repository.saveRfqSwap({ ...rfqRecord("old-a"), state: "settled", updatedAt: 99 });
-        await repository.saveRfqSwap({ ...rfqRecord("old-b"), state: "failed", updatedAt: 100 });
-        await repository.saveRfqSwap({
-            ...rfqRecord("live"),
-            state: "needs_counterparty",
-            updatedAt: 1,
-        });
-        await repository.saveRfqSwap({ ...rfqRecord("recent"), state: "refunded", updatedAt: 101 });
-
-        expect(await repository.pruneRetiredRfqSwapsCount!(100)).toBe(2);
-        expect(await repository.pruneRetiredRfqSwapsCount!(100)).toBe(0);
-        expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId).sort()).toEqual([
-            "live",
-            "recent",
-        ]);
     });
 
     it("keeps rfq swaps and asset swaps in separate stores", async () => {
@@ -478,7 +447,7 @@ describe("IndexedDB migrations", () => {
         expect(await repository.getAllRfqSwaps()).toHaveLength(1);
     });
 
-    it("adds the retention index to an existing v2 RFQ store", async () => {
+    it("preserves existing v2 RFQ history during the index upgrade", async () => {
         const dbName = `retention-upgrade-${Math.random()}`;
         await new Promise<void>((resolve, reject) => {
             const open = indexedDB.open(dbName, 2);
@@ -507,8 +476,8 @@ describe("IndexedDB migrations", () => {
         });
 
         await using repository = new IndexedDbAssetSwapRepository(dbName);
-        expect(await repository.pruneRetiredRfqSwaps(100)).toEqual(["old"]);
-        expect(await repository.getAllRfqSwaps()).toEqual([]);
+        expect((await repository.getRfqSwapsPage("settled", undefined, 1))[0]?.rfqId).toBe("old");
+        expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId)).toEqual(["old"]);
     });
 
     it("adds the page index to an existing v3 RFQ store", async () => {
@@ -543,8 +512,8 @@ describe("IndexedDB migrations", () => {
         expect(await repository.getRfqSwap("existing")).toEqual(rfqRecord("existing"));
     });
 
-    it("prunes across IndexedDB transaction chunks", async () => {
-        const dbName = `retention-chunks-${Math.random()}`;
+    it("pages a large IndexedDB history without deleting it", async () => {
+        const dbName = `history-pages-${Math.random()}`;
         await using repository = new IndexedDbAssetSwapRepository(dbName);
         await repository.getAllRfqSwaps();
         await new Promise<void>((resolve, reject) => {
@@ -565,8 +534,8 @@ describe("IndexedDB migrations", () => {
             open.onerror = () => reject(open.error);
         });
 
-        expect(await repository.pruneRetiredRfqSwaps(100)).toHaveLength(1001);
-        expect(await repository.getAllRfqSwaps()).toEqual([]);
+        expect(await repository.getRfqSwapsPage("settled", undefined, 500)).toHaveLength(500);
+        expect(await repository.getAllRfqSwaps()).toHaveLength(1001);
     });
 });
 

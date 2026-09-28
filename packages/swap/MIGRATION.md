@@ -103,9 +103,8 @@ three existing stores are untouched), and the wallet writes the records.
 - **At boot**, `getAllRfqSwaps()`, then per record `lockupContractParams(contractManager,
   record.lockupAddress)` and `rebuildRfqSwap(record, params)`, and hand the results to
   `RfqSwapManager.start`.
-- **Prune** with `shouldRetainRfqSwap(record, now)` → `removeRfqSwap(record.rfqId)`. `now` is unix
-  **seconds** (`Math.floor(Date.now() / 1000)`); milliseconds against a seconds window retires every
-  terminal record after ~43 minutes.
+- **Keep terminal history** and load only active records for monitoring. The legacy
+  `shouldRetainRfqSwap`/`removeRfqSwap` path is an explicit data deletion choice, not a boot step.
 
 ### How to fill `profile`, per corridor
 

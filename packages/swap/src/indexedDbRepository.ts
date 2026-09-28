@@ -6,13 +6,14 @@ import {
 } from "@arkade-os/sdk";
 import {
     assertRfqSwapPageLimit,
+    assertRfqSwapSince,
     marketsCacheKey,
     type AssetSwapRepository,
     type MarketsCacheEntry,
+    type RfqHistoryCursor,
 } from "./repository";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
-import { RFQ_SWAP_TERMINAL_STATES } from "./rfqSwapState";
 import type { RfqSwapState } from "./rfqSwapState";
 
 const DEFAULT_DB_NAME = "arkade-intents";
@@ -25,9 +26,8 @@ const STORE_SWAPS = "swaps";
 const STORE_RFQ_SWAPS = "rfqSwaps";
 const STORE_SCANNED = "scannedTxids";
 const STORE_MARKETS = "markets";
-const RETENTION_INDEX = "byStateAndUpdatedAt";
+const HISTORY_INDEX = "byStateUpdatedAtAndRfqId";
 const PAGE_INDEX = "byStateAndRfqId";
-const PRUNE_CHUNK = 1000;
 
 /** Every store, declared once. `clear()` wipes exactly this list, so a store
  * added here cannot be forgotten there — which would leave a partial wipe the
@@ -58,8 +58,8 @@ function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTrans
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, options);
     }
     const rfq = transaction?.objectStore(STORE_RFQ_SWAPS);
-    if (rfq && !rfq.indexNames.contains(RETENTION_INDEX)) {
-        rfq.createIndex(RETENTION_INDEX, ["state", "updatedAt"]);
+    if (rfq && !rfq.indexNames.contains(HISTORY_INDEX)) {
+        rfq.createIndex(HISTORY_INDEX, ["state", "updatedAt", "rfqId"]);
     }
     if (rfq && !rfq.indexNames.contains(PAGE_INDEX)) {
         rfq.createIndex(PAGE_INDEX, ["state", "rfqId"]);
@@ -133,64 +133,28 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         return promisifyRequest(index.getAll(range, limit));
     }
 
+    async getRfqSwapsUpdatedPage(
+        state: RfqSwapState,
+        since: number,
+        after: RfqHistoryCursor | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        assertRfqSwapSince(since);
+        const useCursor = after !== undefined && after.updatedAt >= since;
+        const range = IDBKeyRange.bound(
+            useCursor ? [state, after!.updatedAt, after!.rfqId] : [state, since, ""],
+            [state, Number.MAX_SAFE_INTEGER, "\uffff"],
+            useCursor,
+        );
+        const index = (await this.readStore(STORE_RFQ_SWAPS)).index(HISTORY_INDEX);
+        return promisifyRequest(index.getAll(range, limit));
+    }
+
     async removeRfqSwap(rfqId: string): Promise<void> {
         await this.write(STORE_RFQ_SWAPS, (store) => {
             store.delete(rfqId);
         });
-    }
-
-    async pruneRetiredRfqSwaps(cutoff: number): Promise<string[]> {
-        if (cutoff < 0) return [];
-        const db = await this.ensureDb();
-        const removed: string[] = [];
-        for (const state of RFQ_SWAP_TERMINAL_STATES) {
-            const range = IDBKeyRange.bound([state, 0], [state, cutoff]);
-            for (;;) {
-                const tx = db.transaction([STORE_RFQ_SWAPS], "readwrite");
-                const done = awaitTransaction(tx);
-                const store = tx.objectStore(STORE_RFQ_SWAPS);
-                const keys = await new Promise<string[]>((resolve, reject) => {
-                    const request = store.index(RETENTION_INDEX).getAllKeys(range, PRUNE_CHUNK);
-                    request.onsuccess = () => {
-                        const batch = request.result as string[];
-                        for (const key of batch) store.delete(key);
-                        resolve(batch);
-                    };
-                    request.onerror = () => reject(request.error);
-                });
-                await done;
-                removed.push(...keys);
-                if (keys.length < PRUNE_CHUNK) break;
-            }
-        }
-        return removed;
-    }
-
-    async pruneRetiredRfqSwapsCount(cutoff: number): Promise<number> {
-        if (cutoff < 0) return 0;
-        const db = await this.ensureDb();
-        let removed = 0;
-        for (const state of RFQ_SWAP_TERMINAL_STATES) {
-            const range = IDBKeyRange.bound([state, 0], [state, cutoff]);
-            for (;;) {
-                const tx = db.transaction([STORE_RFQ_SWAPS], "readwrite");
-                const done = awaitTransaction(tx);
-                const store = tx.objectStore(STORE_RFQ_SWAPS);
-                const keys = await new Promise<string[]>((resolve, reject) => {
-                    const request = store.index(RETENTION_INDEX).getAllKeys(range, PRUNE_CHUNK);
-                    request.onsuccess = () => {
-                        const batch = request.result as string[];
-                        for (const key of batch) store.delete(key);
-                        resolve(batch);
-                    };
-                    request.onerror = () => reject(request.error);
-                });
-                await done;
-                removed += keys.length;
-                if (keys.length < PRUNE_CHUNK) break;
-            }
-        }
-        return removed;
     }
 
     async getScannedTxids(): Promise<Set<string>> {

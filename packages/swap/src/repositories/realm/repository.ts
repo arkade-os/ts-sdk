@@ -2,12 +2,13 @@ import type { RealmLike } from "@arkade-os/sdk/repositories/realm";
 import {
     marketsCacheKey,
     assertRfqSwapPageLimit,
+    assertRfqSwapSince,
     type AssetSwapRepository,
     type MarketsCacheEntry,
+    type RfqHistoryCursor,
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
-import { RFQ_SWAP_TERMINAL_STATES } from "../../rfqSwapState";
 import type { RfqSwapState } from "../../rfqSwapState";
 
 const SWAPS = "ArkadeAssetSwap";
@@ -107,34 +108,44 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
         return page;
     }
 
+    async getRfqSwapsUpdatedPage(
+        state: RfqSwapState,
+        since: number,
+        after: RfqHistoryCursor | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        assertRfqSwapSince(since);
+        const rows = after
+            ? this.realm
+                  .objects<{ data: string }>(RFQ_SWAPS)
+                  .filtered(
+                      "state == $0 AND updatedAt >= $1 AND (updatedAt > $2 OR (updatedAt == $2 AND rfqId > $3))",
+                      state,
+                      since,
+                      after.updatedAt,
+                      after.rfqId,
+                  )
+            : this.realm
+                  .objects<{ data: string }>(RFQ_SWAPS)
+                  .filtered("state == $0 AND updatedAt >= $1", state, since);
+        const page: RfqSwapRecord[] = [];
+        for (const row of rows.sorted([
+            ["updatedAt", false],
+            ["rfqId", false],
+        ])) {
+            page.push(JSON.parse(row.data) as RfqSwapRecord);
+            if (page.length === limit) break;
+        }
+        return page;
+    }
+
     async removeRfqSwap(rfqId: string): Promise<void> {
         this.realm.write(() => {
             this.realm.delete(
                 this.realm.objects<{ rfqId: string }>(RFQ_SWAPS).filtered("rfqId == $0", rfqId),
             );
         });
-    }
-
-    async pruneRetiredRfqSwaps(cutoff: number): Promise<string[]> {
-        const states = RFQ_SWAP_TERMINAL_STATES;
-        const statePredicate = states.map((_, index) => `state == $${index}`).join(" OR ");
-        const matches = this.realm
-            .objects<{ rfqId: string }>(RFQ_SWAPS)
-            .filtered(`(${statePredicate}) AND updatedAt <= $${states.length}`, ...states, cutoff);
-        const removed = [...matches].map((row) => row.rfqId);
-        if (removed.length) this.realm.write(() => this.realm.delete(matches));
-        return removed;
-    }
-
-    async pruneRetiredRfqSwapsCount(cutoff: number): Promise<number> {
-        const states = RFQ_SWAP_TERMINAL_STATES;
-        const statePredicate = states.map((_, index) => `state == $${index}`).join(" OR ");
-        const matches = this.realm
-            .objects(RFQ_SWAPS)
-            .filtered(`(${statePredicate}) AND updatedAt <= $${states.length}`, ...states, cutoff);
-        const removed = matches.length;
-        if (removed) this.realm.write(() => this.realm.delete(matches));
-        return removed;
     }
 
     async getScannedTxids(): Promise<Set<string>> {

@@ -3,6 +3,7 @@ import type { ArkTransaction } from "@arkade-os/sdk";
 import {
     rfqSwapActivityInputs,
     rfqSwapActivityInputsPage,
+    rfqSwapActivityInputsSincePage,
     swapActivityResolver,
     type SwapActivityInput,
 } from "../src/activity";
@@ -227,6 +228,34 @@ describe("rfqSwapActivityInputs", () => {
         await expect(
             rfqSwapActivityInputsPage({ repository }, "refunded", undefined, 501),
         ).rejects.toThrow(RangeError);
+    });
+
+    it("filters by date and pages equal timestamps without deleting older history", async () => {
+        const repository = await storeOf(
+            record({ rfqId: "old", updatedAt: 1 }),
+            record({ rfqId: "b", updatedAt: 100 }),
+            record({ rfqId: "a", updatedAt: 100 }),
+            record({ rfqId: "c", updatedAt: 101 }),
+        );
+
+        const first = await rfqSwapActivityInputsSincePage(
+            { repository },
+            "settled",
+            100,
+            undefined,
+            2,
+        );
+        expect(first.inputs.map((input) => input.rfqId)).toEqual(["a", "b"]);
+        expect(first.nextCursor).toEqual({ updatedAt: 100, rfqId: "b" });
+        const second = await rfqSwapActivityInputsSincePage(
+            { repository },
+            "settled",
+            100,
+            first.nextCursor,
+            2,
+        );
+        expect(second.inputs.map((input) => input.rfqId)).toEqual(["c"]);
+        expect((await repository.getAllRfqSwaps()).map((row) => row.rfqId)).toContain("old");
     });
 
     it("refuses an unpaged repository instead of loading all history", async () => {

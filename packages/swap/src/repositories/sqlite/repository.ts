@@ -6,12 +6,13 @@ import {
 import {
     marketsCacheKey,
     assertRfqSwapPageLimit,
+    assertRfqSwapSince,
     type AssetSwapRepository,
     type MarketsCacheEntry,
+    type RfqHistoryCursor,
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
-import { RFQ_SWAP_TERMINAL_STATES } from "../../rfqSwapState";
 import type { RfqSwapState } from "../../rfqSwapState";
 
 const DEFAULT_PREFIX = "arkade_";
@@ -93,7 +94,7 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
             // A separate table rather than a `kind` column on the one above: the
             // two record types have different keys and no consumer wants them
             // interleaved. `state` and `updated_at` are mapped out for querying
-            // and for the retention sweep; the record itself still goes in whole.
+            // and for bounded history reads; the record itself still goes in whole.
             await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.rfqSwaps} (
                 rfq_id TEXT PRIMARY KEY,
                 state TEXT NOT NULL,
@@ -104,7 +105,7 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_state ON ${this.rfqSwaps} (state)`,
             );
             await this.db.run(
-                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_retention ON ${this.rfqSwaps} (state, updated_at)`,
+                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_history ON ${this.rfqSwaps} (state, updated_at, rfq_id)`,
             );
             await this.db.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_page ON ${this.rfqSwaps} (state, rfq_id)`,
@@ -183,47 +184,32 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         return rows.map((row) => JSON.parse(row.data) as RfqSwapRecord);
     }
 
+    async getRfqSwapsUpdatedPage(
+        state: RfqSwapState,
+        since: number,
+        after: RfqHistoryCursor | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        assertRfqSwapSince(since);
+        await this.ensureInit();
+        const cursor = after
+            ? "AND (updated_at > ? OR (updated_at = ? AND rfq_id > ?))"
+            : "";
+        const rows = await this.db.all<{ data: string }>(
+            `SELECT data FROM ${this.rfqSwaps} WHERE state = ? AND updated_at >= ? ${cursor} ORDER BY updated_at, rfq_id LIMIT ?`,
+            after
+                ? [state, since, after.updatedAt, after.updatedAt, after.rfqId, limit]
+                : [state, since, limit],
+        );
+        return rows.map((row) => JSON.parse(row.data) as RfqSwapRecord);
+    }
+
     async removeRfqSwap(rfqId: string): Promise<void> {
         await this.ensureInit();
         await this.withTx(async () => {
             await this.db.run(`DELETE FROM ${this.rfqSwaps} WHERE rfq_id = ?`, [rfqId]);
         });
-    }
-
-    async pruneRetiredRfqSwaps(cutoff: number): Promise<string[]> {
-        await this.ensureInit();
-        const states = [...RFQ_SWAP_TERMINAL_STATES];
-        const predicate = `state IN (${states.map(() => "?").join(", ")}) AND updated_at <= ?`;
-        const params = [...states, cutoff];
-        let removed: string[] = [];
-        await this.withTx(async () => {
-            const rows = await this.db.all<{ rfq_id: string }>(
-                `SELECT rfq_id FROM ${this.rfqSwaps} WHERE ${predicate}`,
-                params,
-            );
-            if (rows.length === 0) return;
-            await this.db.run(`DELETE FROM ${this.rfqSwaps} WHERE ${predicate}`, params);
-            removed = rows.map((row) => row.rfq_id);
-        });
-        return removed;
-    }
-
-    async pruneRetiredRfqSwapsCount(cutoff: number): Promise<number> {
-        await this.ensureInit();
-        const states = [...RFQ_SWAP_TERMINAL_STATES];
-        const predicate = `state IN (${states.map(() => "?").join(", ")}) AND updated_at <= ?`;
-        const params = [...states, cutoff];
-        let removed = 0;
-        await this.withTx(async () => {
-            const row = await this.db.get<{ count: number }>(
-                `SELECT COUNT(*) AS count FROM ${this.rfqSwaps} WHERE ${predicate}`,
-                params,
-            );
-            removed = row?.count ?? 0;
-            if (removed)
-                await this.db.run(`DELETE FROM ${this.rfqSwaps} WHERE ${predicate}`, params);
-        });
-        return removed;
     }
 
     async getScannedTxids(): Promise<Set<string>> {

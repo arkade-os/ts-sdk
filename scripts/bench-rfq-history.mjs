@@ -6,14 +6,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const count = Number(process.argv[2] ?? 1000);
-const mode = process.argv[3] ?? "prune";
+const mode = process.argv[3] ?? "page-since";
 if (
     !Number.isSafeInteger(count) ||
     count < 1 ||
-    !["read", "prune", "upgrade", "restore-recent", "restore-expired", "page-recent"].includes(mode)
+    !["read", "upgrade", "restore-recent", "restore-expired", "page-recent", "page-since"].includes(mode)
 ) {
     throw new Error(
-        "usage: node --expose-gc --experimental-sqlite scripts/bench-rfq-history.mjs <count> <read|prune|upgrade|restore-recent|restore-expired|page-recent>",
+        "usage: node --expose-gc --experimental-sqlite scripts/bench-rfq-history.mjs <count> <read|upgrade|restore-recent|restore-expired|page-recent|page-since>",
     );
 }
 
@@ -59,7 +59,14 @@ for (let i = 0; i < count; i++) {
         lockupAddress: "tark1q",
         profile: {},
         createdAt: 1,
-        updatedAt: mode.endsWith("-recent") ? 1_800_000_000 : 1,
+        updatedAt:
+            mode === "page-since"
+                ? i >= count - 1000
+                    ? 1_800_000_000
+                    : 1
+                : mode.endsWith("-recent")
+                  ? 1_800_000_000
+                  : 1,
     };
     insert.run(rfqId, record.state, record.updatedAt, JSON.stringify(record));
 }
@@ -92,7 +99,6 @@ if (mode === "read") {
         restored: result.restored.length,
         failed: result.failed.length,
         pruned: result.pruned.length,
-        prunedCount: result.prunedCount,
     };
 } else if (mode === "page-recent") {
     returned = 0;
@@ -103,9 +109,16 @@ if (mode === "read") {
         if (page.length < 500) break;
         cursor = page[page.length - 1].rfqId;
     }
-} else {
-    const manager = new RfqSwapManager({ indexer: {}, repository }, { now: () => 1_800_000_000 });
-    returned = (await manager.pruneRetiredSwaps()).length;
+} else if (mode === "page-since") {
+    returned = 0;
+    let cursor;
+    for (;;) {
+        const page = await repository.getRfqSwapsUpdatedPage("settled", 1_800_000_000, cursor, 500);
+        returned += page.length;
+        if (page.length < 500) break;
+        const last = page[page.length - 1];
+        cursor = { updatedAt: last.updatedAt, rfqId: last.rfqId };
+    }
 }
 const elapsedMs = Math.round(performance.now() - started);
 clearInterval(sample);

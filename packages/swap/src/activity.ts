@@ -11,7 +11,12 @@ import { rfqCorridorHandlers } from "./rfqCorridor";
 // Side-effecting, as in `rfqRecord.ts`: the type-only import below erases, so
 // nothing else here would register the handlers this reads.
 import "./rfqCorridors";
-import { assertRfqSwapPageLimit, type AssetSwapRepository } from "./repository";
+import {
+    assertRfqSwapPageLimit,
+    assertRfqSwapSince,
+    type AssetSwapRepository,
+    type RfqHistoryCursor,
+} from "./repository";
 import type { RfqSwapRecord } from "./rfqRecord";
 
 /**
@@ -122,7 +127,10 @@ export function swapActivityResolver(deps: {
 }
 
 export interface RfqSwapActivityDeps {
-    repository: Pick<AssetSwapRepository, "getAllRfqSwaps" | "getRfqSwapsPage">;
+    repository: Pick<
+        AssetSwapRepository,
+        "getAllRfqSwaps" | "getRfqSwapsPage" | "getRfqSwapsUpdatedPage"
+    >;
     /**
      * Consulted only for what a record cannot answer: a record written before
      * `fundingArkTxid` existed, and the counterparty's spend on a swap that
@@ -178,18 +186,63 @@ export async function rfqSwapActivityInputsPage(
         }
         cursor = record.rfqId;
     }
-    const inputs: SwapActivityInput[] = [];
-    for (let i = 0; i < records.length; i += 16) {
-        inputs.push(
-            ...(await Promise.all(
-                records.slice(i, i + 16).map((record) => activityInputOf(record, deps.indexer)),
-            )),
-        );
-    }
+    const inputs = await projectActivityInputs(records, deps.indexer);
     return {
         inputs,
         ...(records.length === limit && records.length > 0 ? { nextCursor: cursor } : {}),
     };
+}
+
+export interface RfqSwapDatedActivityPage {
+    inputs: SwapActivityInput[];
+    nextCursor?: RfqHistoryCursor;
+}
+
+export async function rfqSwapActivityInputsSincePage(
+    deps: RfqSwapActivityDeps,
+    state: RfqSwapState,
+    since: number,
+    after: RfqHistoryCursor | undefined,
+    limit: number,
+): Promise<RfqSwapDatedActivityPage> {
+    assertRfqSwapPageLimit(limit);
+    assertRfqSwapSince(since);
+    const page = deps.repository.getRfqSwapsUpdatedPage;
+    if (!page) throw new Error("repository does not support date-filtered RFQ history pages");
+    const records = await page.call(deps.repository, state, since, after, limit);
+    if (records.length > limit) throw new Error("getRfqSwapsUpdatedPage exceeded its requested limit");
+    let cursor = after;
+    for (const record of records) {
+        if (
+            record.state !== state ||
+            record.updatedAt < since ||
+            (cursor &&
+                (record.updatedAt < cursor.updatedAt ||
+                    (record.updatedAt === cursor.updatedAt && record.rfqId <= cursor.rfqId)))
+        ) {
+            throw new Error("getRfqSwapsUpdatedPage returned an unordered or mismatched page");
+        }
+        cursor = { updatedAt: record.updatedAt, rfqId: record.rfqId };
+    }
+    return {
+        inputs: await projectActivityInputs(records, deps.indexer),
+        ...(records.length === limit && cursor ? { nextCursor: cursor } : {}),
+    };
+}
+
+async function projectActivityInputs(
+    records: RfqSwapRecord[],
+    indexer?: LockupSpendIndexer,
+): Promise<SwapActivityInput[]> {
+    const inputs: SwapActivityInput[] = [];
+    for (let i = 0; i < records.length; i += 16) {
+        inputs.push(
+            ...(await Promise.all(
+                records.slice(i, i + 16).map((record) => activityInputOf(record, indexer)),
+            )),
+        );
+    }
+    return inputs;
 }
 
 async function activityInputOf(

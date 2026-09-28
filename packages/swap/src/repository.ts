@@ -1,16 +1,26 @@
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
-import { isRfqSwapTerminal } from "./rfqSwapState";
 import type { RfqSwapState } from "./rfqSwapState";
 
 export const RFQ_SWAP_MAX_PAGE_SIZE = 500;
+
+export interface RfqHistoryCursor {
+    updatedAt: number;
+    rfqId: string;
+}
 
 export function assertRfqSwapPageLimit(limit: number): void {
     if (!Number.isInteger(limit) || limit < 1 || limit > RFQ_SWAP_MAX_PAGE_SIZE) {
         throw new RangeError(
             `RFQ swap page limit must be an integer from 1 to ${RFQ_SWAP_MAX_PAGE_SIZE}`,
         );
+    }
+}
+
+export function assertRfqSwapSince(since: number): void {
+    if (!Number.isSafeInteger(since) || since < 0) {
+        throw new RangeError("RFQ history since must be a non-negative Unix timestamp in seconds");
     }
 }
 
@@ -73,24 +83,24 @@ export interface AssetSwapRepository extends AsyncDisposable {
      * as a refund that cannot be signed, long after the write.
      */
     saveRfqSwap(record: RfqSwapRecord): Promise<void>;
-    /** One record by key. `undefined` on a miss — retention prunes terminal
-     * records, so absence is ordinary and not an error. */
+    /** One record by key. */
     getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined>;
     /** Every stored RFQ swap record, in no particular order. Unbounded. */
     getAllRfqSwaps(): Promise<RfqSwapRecord[]>;
-    /** Optional keyset page, ordered by rfqId within one state. `afterId` is exclusive; limit 1–500.
-     * Bounded restore also requires one of the optional prune methods below. */
+    /** Optional keyset page, ordered by rfqId within one state. `afterId` is exclusive; limit 1–500. */
     getRfqSwapsPage?(
         state: RfqSwapState,
         afterId: string | undefined,
         limit: number,
     ): Promise<RfqSwapRecord[]>;
+    getRfqSwapsUpdatedPage?(
+        state: RfqSwapState,
+        since: number,
+        after: RfqHistoryCursor | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]>;
     /** Drop one, once it is past retention — see `shouldRetainRfqSwap`. */
     removeRfqSwap(rfqId: string): Promise<void>;
-    /** Optional backend fast path; cutoff is inclusive Unix seconds. */
-    pruneRetiredRfqSwaps?(cutoff: number): Promise<string[]>;
-    /** Count-only retention for bounded restore; implementations may allocate bounded batches, not all removed IDs. */
-    pruneRetiredRfqSwapsCount?(cutoff: number): Promise<number>;
 
     /** Sent txids already checked for offer packets (see restore.ts). */
     getScannedTxids(): Promise<Set<string>>;
@@ -145,28 +155,29 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
             .slice(0, limit);
     }
 
+    async getRfqSwapsUpdatedPage(
+        state: RfqSwapState,
+        since: number,
+        after: RfqHistoryCursor | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        assertRfqSwapSince(since);
+        return [...this.rfqSwaps.values()]
+            .filter(
+                (record) =>
+                    record.state === state &&
+                    record.updatedAt >= since &&
+                    (!after ||
+                        record.updatedAt > after.updatedAt ||
+                        (record.updatedAt === after.updatedAt && record.rfqId > after.rfqId)),
+            )
+            .sort((a, b) => a.updatedAt - b.updatedAt || a.rfqId.localeCompare(b.rfqId))
+            .slice(0, limit);
+    }
+
     async removeRfqSwap(rfqId: string): Promise<void> {
         this.rfqSwaps.delete(rfqId);
-    }
-
-    async pruneRetiredRfqSwaps(cutoff: number): Promise<string[]> {
-        const removed: string[] = [];
-        for (const [id, record] of this.rfqSwaps) {
-            if (!isRfqSwapTerminal(record.state) || record.updatedAt > cutoff) continue;
-            this.rfqSwaps.delete(id);
-            removed.push(id);
-        }
-        return removed;
-    }
-
-    async pruneRetiredRfqSwapsCount(cutoff: number): Promise<number> {
-        let removed = 0;
-        for (const [id, record] of this.rfqSwaps) {
-            if (!isRfqSwapTerminal(record.state) || record.updatedAt > cutoff) continue;
-            this.rfqSwaps.delete(id);
-            removed++;
-        }
-        return removed;
     }
 
     async getScannedTxids(): Promise<Set<string>> {

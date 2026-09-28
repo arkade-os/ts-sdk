@@ -3400,7 +3400,6 @@ describe("RfqSwapManager — manager-owned persistence", () => {
                 storedSend(),
                 storedSend({ rfqId: terminalId, state: "settled", updatedAt: SAFE_NOW - 1 }),
             ]);
-            store.pruneRetiredRfqSwaps = vi.fn(async () => []);
             store.getRfqSwapsPage = vi.fn(async (state, afterId, limit) =>
                 [...store.records.values()]
                     .filter(
@@ -3445,39 +3444,6 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(result.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
             await expect(m.waitForSwapCompletion(RFQ_ID)).resolves.toMatchObject({
                 state: "settled",
-            });
-        });
-
-        it("uses count-only pruning when paging and allows explicit pruned IDs", async () => {
-            const store = fakeStore([
-                storedSend({
-                    state: "settled",
-                    updatedAt: SAFE_NOW - RFQ_SWAP_RETENTION_SECONDS - 1,
-                }),
-            ]);
-            store.pruneRetiredRfqSwapsCount = vi.fn(async () => {
-                store.records.delete(RFQ_ID);
-                return 1;
-            });
-            store.pruneRetiredRfqSwaps = vi.fn(async () => {
-                store.records.delete(RFQ_ID);
-                return [RFQ_ID];
-            });
-            store.getRfqSwapsPage = vi.fn(async () => []);
-            const m = manager({ repository: store, now: SAFE_NOW, spies: spies() });
-
-            expect(await m.restoreFromRepository()).toMatchObject({ pruned: [], prunedCount: 1 });
-            expect(store.pruneRetiredRfqSwaps).not.toHaveBeenCalled();
-            store.records.set(
-                RFQ_ID,
-                storedSend({
-                    state: "settled",
-                    updatedAt: SAFE_NOW - RFQ_SWAP_RETENTION_SECONDS - 1,
-                }),
-            );
-            expect(await m.restoreFromRepository({ includePrunedIds: true })).toMatchObject({
-                pruned: [RFQ_ID],
-                prunedCount: 1,
             });
         });
 
@@ -3661,7 +3627,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(store.records.has(RFQ_ID)).toBe(true);
         });
 
-        it("prunes before the rebuild, so a retired record costs no lookup", async () => {
+        it("restores old terminal history without deleting its record", async () => {
             const contracts = fakeContracts({ preexisting: [rowFor(LOCKUP, LOCKUP_ADDRESS)] });
             const store = fakeStore([storedSend({ state: "settled", updatedAt: LONG_AGO })]);
             const s = spies();
@@ -3674,29 +3640,13 @@ describe("RfqSwapManager — manager-owned persistence", () => {
 
             const result = await m.restoreFromRepository();
 
-            expect(result.pruned).toEqual([RFQ_ID]);
-            expect(result.restored).toHaveLength(0);
-            expect(result.failed).toHaveLength(0);
-        });
-
-        it("uses repository pruning before loading records when supported", async () => {
-            const store = fakeStore([storedSend({ state: "settled", updatedAt: LONG_AGO })]);
-            const load = vi.spyOn(store, "getAllRfqSwaps");
-            const prune = vi.fn(async () => {
-                store.records.delete(RFQ_ID);
-                return [RFQ_ID];
-            });
-            store.pruneRetiredRfqSwaps = prune;
-            const m = manager({ repository: store, now: SAFE_NOW, spies: spies() });
-
-            const result = await m.restoreFromRepository();
-
-            expect(result.pruned).toEqual([RFQ_ID]);
+            expect(result.pruned).toEqual([]);
             expect(result.restored).toEqual([]);
-            expect(prune).toHaveBeenCalledWith(SAFE_NOW - RFQ_SWAP_RETENTION_SECONDS);
-            expect(prune.mock.invocationCallOrder[0]).toBeLessThan(
-                load.mock.invocationCallOrder[0]!,
-            );
+            expect(result.failed).toHaveLength(0);
+            expect(store.records.has(RFQ_ID)).toBe(true);
+            await expect(m.waitForSwapCompletion(RFQ_ID)).resolves.toMatchObject({
+                state: "settled",
+            });
         });
 
         it("keeps a still-monitored swap's origin, so the next pass can rewrite its record", async () => {
