@@ -8,7 +8,6 @@ import {
     serializeAssets,
     deserializeAssets,
     SerializedTapLeaf,
-    activeScriptForVtxo,
 } from "../serialization";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
@@ -93,7 +92,6 @@ export class RealmWalletRepository implements WalletRepository {
                         extraWitnessJson: s.extraWitness ? JSON.stringify(s.extraWitness) : null,
                         assetsJson: s.assets ? JSON.stringify(s.assets) : null,
                         script: s.script ?? null,
-                        activeScript: activeScriptForVtxo(vtxo) ?? null,
                     },
                     "modified",
                 );
@@ -126,9 +124,11 @@ export class RealmWalletRepository implements WalletRepository {
         for (let i = 0; i < unique.length; i += 64) {
             const chunk = unique.slice(i, i + 64);
             const selected = new Set(chunk);
-            const field = options?.nonterminalOnly ? "activeScript" : "script";
-            const query = `(${chunk.map((_, index) => `${field} == $${index}`).join(" OR ")})`;
-            const results = this.realm.objects("ArkVtxo").filtered(query, ...chunk);
+            const scriptsQuery = `(${chunk.map((_, index) => `script == $${index}`).join(" OR ")})`;
+            const query = options?.nonterminalOnly
+                ? `${scriptsQuery} AND (isSpent == null OR isSpent == $${chunk.length}) AND (spentBy == null OR spentBy == $${chunk.length + 1}) AND (settledBy == null OR settledBy == $${chunk.length + 1})`
+                : scriptsQuery;
+            const results = this.realm.objects("ArkVtxo").filtered(query, ...chunk, false, "");
             for (const row of results) {
                 if (!selected.has(row.script as string)) continue;
                 if (options?.nonterminalOnly && (row.isSpent || row.spentBy || row.settledBy)) {

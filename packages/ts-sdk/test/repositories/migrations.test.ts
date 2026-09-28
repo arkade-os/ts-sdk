@@ -4,10 +4,7 @@ import { TaprootControlBlock } from "@scure/btc-signer";
 import Database from "better-sqlite3";
 import { ArkAddress } from "../../src";
 import type { TapLeafScript } from "../../src/script/base";
-import {
-    ARK_REALM_SCHEMA_VERSION,
-    runArkRealmMigrations,
-} from "../../src/repositories/realm/schemas";
+import { runArkRealmMigrations } from "../../src/repositories/realm/schemas";
 import { openDatabase, closeDatabase } from "../../src/repositories/indexedDB/manager";
 import {
     initDatabase,
@@ -86,34 +83,6 @@ describe("Realm migration: runArkRealmMigrations", () => {
         runArkRealmMigrations(makeRealm(10, newVtxos), makeRealm(11, newVtxos));
 
         expect(newVtxos[0].script).toBe(EXPECTED_PK_SCRIPT_HEX);
-    });
-
-    it("backfills the indexed active script without dropping spent history", () => {
-        expect(ARK_REALM_SCHEMA_VERSION).toBe(4);
-        const rows = [
-            { script: "live", isSpent: null, virtualStatusJson: '{"state":"settled"}' },
-            { script: "spent", isSpent: true, virtualStatusJson: '{"state":"spent"}' },
-            { script: "legacy", isSpent: null, virtualStatusJson: '{"state":"spent"}' },
-            { script: "settled", isSpent: false, settledBy: "batch" },
-        ];
-        const realm = makeRealm(3, rows);
-        runArkRealmMigrations(realm, realm);
-        expect(
-            rows.map((row) => (row as typeof row & { activeScript?: string | null }).activeScript),
-        ).toEqual(["live", null, null, null]);
-    });
-
-    it("reads Realm fields directly when managed properties are not enumerable", () => {
-        const row = Object.create(null) as Record<string, unknown>;
-        for (const [key, value] of Object.entries({
-            script: "script-a",
-            isSpent: true,
-            virtualStatusJson: '{"state":"spent"}',
-        })) {
-            Object.defineProperty(row, key, { value, writable: true, configurable: true });
-        }
-        runArkRealmMigrations(makeRealm(3, [row]), makeRealm(4, [row]));
-        expect(row.activeScript).toBeNull();
     });
 
     // A Realm handle exposing both `.schema` and multi-type `.objects`, needed
