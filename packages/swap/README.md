@@ -687,8 +687,7 @@ const manager = new RfqSwapManager({
 });
 manager.setCallbacks({ refundArkade, claimLockup });
 
-// Rebuild what was stored: retention first, then each record's covenant from
-// its own contract row, then `rebuildRfqSwap`. No caller input at all.
+// Rebuild what was stored from each record's covenant. History stays stored.
 const { restored, failed, pruned } = await manager.restoreFromRepository();
 await manager.start();
 
@@ -713,13 +712,12 @@ An origin whose `kind` or `lockupAddress` is not this swap's is refused at that 
 same reason: the write that would catch it happens a pass later, with the funding broadcast.
 `start(swaps)` applies the same rule and is otherwise unchanged. Restored swaps carry their own.
 
-`restoreFromRepository` returns three disjoint lists, and every stored record is in exactly one.
+`restoreFromRepository` returns restored and failed records without deleting history.
 A record that cannot be rebuilt — no contract row (`LockupContractMissing`), covenant params that
 do not derive the funded address, a corridor with no handler — lands in `failed` with its error and
-stays in the store; it never strands the others and it is never silently dropped. `pruned` names
-what retention removed: terminal and more than `RFQ_SWAP_RETENTION_SECONDS` past `updatedAt`, never
-`needs_counterparty`. Retention runs first, so a retired record costs no contract lookup on its way
-out; `pruneRetiredSwaps()` is public for a process that wants it on its own cadence. Pass
+stays in the store; it never strands the others and it is never silently dropped. `pruned` remains
+an empty compatibility field. The explicit `pruneRetiredSwaps()` method still exists for callers
+that intentionally discard old terminal records. Pass
 `{ params }` to take covenants from somewhere other than the contract store.
 
 **Two sinks, and both gate.** With a repository wired the canonical `RfqSwapRecord` is written
@@ -1061,14 +1059,10 @@ scanned? })` — the server key is required because a spend is classified by reb
     `RfqSwapManagerDeps.repository`: `restoreFromRepository()` is this loop, over every stored
     record, with retention in front of it.
 
-- **Pruning is the consumer's unless the manager holds the repository.** `shouldRetainRfqSwap(record,
-  now)` answers whether a record is still worth keeping — live swaps and `needs_counterparty`
-  always, terminal ones for `RFQ_SWAP_RETENTION_SECONDS` (30 days) after `updatedAt`. Sweep with it
-  at boot and pass the rejects to `removeRfqSwap`; skip it and a hot wallet's `rfqSwaps` store grows
-  without bound. `now` is **unix seconds**, the unit `RfqSwap.updatedAt` carries — `Date.now()` would
-  retire every terminal record after ~43 minutes. **Superseded** for a consumer that wires
-  `RfqSwapManagerDeps.repository`: `pruneRetiredSwaps()` is that sweep, and
-  `restoreFromRepository()` runs it first.
+- **RFQ history is durable.** Restore no longer prunes terminal records. Read history in pages
+  (see the follow-up paging API) instead of deleting it to bound memory. The older
+  `pruneRetiredSwaps()` and `shouldRetainRfqSwap` APIs remain available only for callers who
+  explicitly choose retention; their time arguments are Unix seconds.
 - **A write that gates something irreversible throws; one that follows it does not.**
   `addAssetSwap` and `updateAssetSwap` throw on a failed read or write — nothing irreversible may
   happen until the record is durable, which is why `cancelOffer` writes its `cancelling` marker

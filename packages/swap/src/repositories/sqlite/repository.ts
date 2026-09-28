@@ -10,7 +10,6 @@ import {
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
-import { RFQ_SWAP_TERMINAL_STATES } from "../../rfqSwapState";
 
 const DEFAULT_PREFIX = "arkade_";
 // SQLite's default parameter ceiling is 999; stay well under it per statement.
@@ -101,9 +100,6 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
             await this.db.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_state ON ${this.rfqSwaps} (state)`,
             );
-            await this.db.run(
-                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_retention ON ${this.rfqSwaps} (state, updated_at)`,
-            );
             await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.scanned} (txid TEXT PRIMARY KEY)`);
             await this.db.run(
                 `CREATE TABLE IF NOT EXISTS ${this.markets} (cache_key TEXT PRIMARY KEY, data TEXT NOT NULL)`,
@@ -169,24 +165,6 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         await this.withTx(async () => {
             await this.db.run(`DELETE FROM ${this.rfqSwaps} WHERE rfq_id = ?`, [rfqId]);
         });
-    }
-
-    async pruneRetiredRfqSwaps(cutoff: number): Promise<string[]> {
-        await this.ensureInit();
-        const states = [...RFQ_SWAP_TERMINAL_STATES];
-        const predicate = `state IN (${states.map(() => "?").join(", ")}) AND updated_at <= ?`;
-        const params = [...states, cutoff];
-        let removed: string[] = [];
-        await this.withTx(async () => {
-            const rows = await this.db.all<{ rfq_id: string }>(
-                `SELECT rfq_id FROM ${this.rfqSwaps} WHERE ${predicate}`,
-                params,
-            );
-            if (rows.length === 0) return;
-            await this.db.run(`DELETE FROM ${this.rfqSwaps} WHERE ${predicate}`, params);
-            removed = rows.map((row) => row.rfq_id);
-        });
-        return removed;
     }
 
     async getScannedTxids(): Promise<Set<string>> {

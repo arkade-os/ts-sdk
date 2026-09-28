@@ -3514,7 +3514,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(store.records.has(RFQ_ID)).toBe(true);
         });
 
-        it("prunes before the rebuild, so a retired record costs no lookup", async () => {
+        it("restores old terminal history without deleting its record", async () => {
             const contracts = fakeContracts({ preexisting: [rowFor(LOCKUP, LOCKUP_ADDRESS)] });
             const store = fakeStore([storedSend({ state: "settled", updatedAt: LONG_AGO })]);
             const s = spies();
@@ -3527,29 +3527,10 @@ describe("RfqSwapManager — manager-owned persistence", () => {
 
             const result = await m.restoreFromRepository();
 
-            expect(result.pruned).toEqual([RFQ_ID]);
-            expect(result.restored).toHaveLength(0);
+            expect(result.pruned).toEqual([]);
+            expect(result.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
             expect(result.failed).toHaveLength(0);
-        });
-
-        it("uses repository pruning before loading records when supported", async () => {
-            const store = fakeStore([storedSend({ state: "settled", updatedAt: LONG_AGO })]);
-            const load = vi.spyOn(store, "getAllRfqSwaps");
-            const prune = vi.fn(async () => {
-                store.records.delete(RFQ_ID);
-                return [RFQ_ID];
-            });
-            store.pruneRetiredRfqSwaps = prune;
-            const m = manager({ repository: store, now: SAFE_NOW, spies: spies() });
-
-            const result = await m.restoreFromRepository();
-
-            expect(result.pruned).toEqual([RFQ_ID]);
-            expect(result.restored).toEqual([]);
-            expect(prune).toHaveBeenCalledWith(SAFE_NOW - RFQ_SWAP_RETENTION_SECONDS);
-            expect(prune.mock.invocationCallOrder[0]).toBeLessThan(
-                load.mock.invocationCallOrder[0]!,
-            );
+            expect(store.records.has(RFQ_ID)).toBe(true);
         });
 
         it("keeps a still-monitored swap's origin, so the next pass can rewrite its record", async () => {

@@ -108,7 +108,6 @@ import { lockupContractParams, registerLockupContract } from "./lockupContract";
 import {
     assertSameSwap,
     createRfqSwapRecord,
-    RFQ_SWAP_RETENTION_SECONDS,
     rebuildRfqSwap,
     rfqSwapOriginOf,
     shouldRetainRfqSwap,
@@ -573,7 +572,6 @@ export interface RfqSwapRecordStore {
     getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined>;
     getAllRfqSwaps(): Promise<RfqSwapRecord[]>;
     removeRfqSwap(rfqId: string): Promise<void>;
-    pruneRetiredRfqSwaps?(cutoff: number): Promise<string[]>;
 }
 
 /**
@@ -889,8 +887,7 @@ export class RfqSwapManager {
      * Rebuild every stored swap and take over monitoring them.
      *
      * The composition a consumer otherwise writes by hand, and the one place
-     * all four pieces meet: retention decides what to keep
-     * (`shouldRetainRfqSwap`), the lockup's contract row supplies the covenant
+     * three pieces meet: the lockup's contract row supplies the covenant
      * (`lockupContractParams`), `rebuildRfqSwap` turns a record back into a
      * live swap, and each rebuilt swap arrives with its own origin, so nothing
      * is asked of the caller.
@@ -899,10 +896,6 @@ export class RfqSwapManager {
      * look at its records — count them, show them, prune and stop — is not
      * forced to start driving money to do it. Call this first and `start()`
      * after; a manager already running polls the restored swaps at once.
-     *
-     * Retention runs BEFORE the rebuild, so a record past
-     * `RFQ_SWAP_RETENTION_SECONDS` costs no contract lookup on its way to being
-     * dropped.
      *
      * **A record that cannot be rebuilt is reported, never swallowed and never
      * fatal.** `rebuildRfqSwap` throws by design when the covenant params do
@@ -915,17 +908,11 @@ export class RfqSwapManager {
         const repository = this.requireRepository("restoreFromRepository");
         const params = options.params ?? this.paramsFromContracts();
 
-        const fastPruned = repository.pruneRetiredRfqSwaps
-            ? await this.pruneStored(repository)
-            : undefined;
         const records = await repository.getAllRfqSwaps();
-        const pruned = fastPruned ?? (await this.dropRetired(repository, records));
-        const retired = new Set(pruned);
 
         const restored: RfqSwap[] = [];
         const failed: RfqRestoreFailure[] = [];
         for (const record of records) {
-            if (retired.has(record.rfqId)) continue;
             let swap: RfqSwap;
             try {
                 swap = rebuildRfqSwap(record, await params(record));
@@ -945,7 +932,7 @@ export class RfqSwapManager {
         if (this.running) {
             await this.pollMany(restored.filter((swap) => this.monitored.has(swap.rfqId)));
         }
-        return { restored, failed, pruned };
+        return { restored, failed, pruned: [] };
     }
 
     /**
@@ -965,17 +952,7 @@ export class RfqSwapManager {
     async pruneRetiredSwaps(): Promise<string[]> {
         const repository = this.deps.repository;
         if (!repository) return [];
-        return repository.pruneRetiredRfqSwaps
-            ? this.pruneStored(repository)
-            : this.dropRetired(repository, await repository.getAllRfqSwaps());
-    }
-
-    private async pruneStored(repository: RfqSwapRecordStore): Promise<string[]> {
-        const dropped = await repository.pruneRetiredRfqSwaps!(
-            this.config.now() - RFQ_SWAP_RETENTION_SECONDS,
-        );
-        for (const id of dropped) this.forgetRetired(id);
-        return dropped;
+        return this.dropRetired(repository, await repository.getAllRfqSwaps());
     }
 
     private async dropRetired(

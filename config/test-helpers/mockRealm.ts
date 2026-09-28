@@ -36,7 +36,7 @@ function withFiltered(rows: Row[]): Row[] {
                     .replace(/[()]/g, "")
                     .split(/\s+OR\s+/i)
                     .some((c) => {
-                        const m = c.trim().match(/^(\w+)\s*(==|<=)\s*(?:\$(\d+)|(null))$/);
+                        const m = c.trim().match(/^(\w+)\s*==\s*(?:\$(\d+)|(null))$/);
                         // Fail loudly on an unsupported shape: silently matching
                         // it would hide real query mismatches from the tests.
                         if (!m) {
@@ -48,10 +48,8 @@ function withFiltered(rows: Row[]): Row[] {
                         // what the query means for rows written before the
                         // property existed, which is the only reason a
                         // repository emits the clause.
-                        if (m[4]) return row[m[1]] === null || row[m[1]] === undefined;
-                        const value = a[Number(m[3])];
-                        if (m[2] === "<=") return Number(row[m[1]]) <= Number(value);
-                        return row[m[1]] === value;
+                        if (m[3]) return row[m[1]] === null || row[m[1]] === undefined;
+                        return row[m[1]] === a[Number(m[2])];
                     }),
             ),
         );

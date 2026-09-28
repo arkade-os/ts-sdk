@@ -7,20 +7,17 @@ import {
 import { marketsCacheKey, type AssetSwapRepository, type MarketsCacheEntry } from "./repository";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
-import { RFQ_SWAP_TERMINAL_STATES } from "./rfqSwapState";
 
 const DEFAULT_DB_NAME = "arkade-intents";
 /** Bump when adding an object store or index. `initDatabase` only runs inside
  * `onupgradeneeded`, which fires on a version *increase* — its contains-guard
  * cannot backfill a store into a database already open at this version, so a
  * new store added without a bump is simply missing for existing users. */
-const DB_VERSION = 3;
+const DB_VERSION = 2;
 const STORE_SWAPS = "swaps";
 const STORE_RFQ_SWAPS = "rfqSwaps";
 const STORE_SCANNED = "scannedTxids";
 const STORE_MARKETS = "markets";
-const RETENTION_INDEX = "byStateAndUpdatedAt";
-const PRUNE_CHUNK = 1000;
 
 /** Every store, declared once. `clear()` wipes exactly this list, so a store
  * added here cannot be forgotten there — which would leave a partial wipe the
@@ -47,12 +44,9 @@ const STORES: readonly [name: string, options?: IDBObjectStoreParameters][] = [
  */
 function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTransaction | null) {
     void oldVersion;
+    void transaction;
     for (const [name, options] of STORES) {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, options);
-    }
-    const rfq = transaction?.objectStore(STORE_RFQ_SWAPS);
-    if (rfq && !rfq.indexNames.contains(RETENTION_INDEX)) {
-        rfq.createIndex(RETENTION_INDEX, ["state", "updatedAt"]);
     }
 }
 
@@ -112,33 +106,6 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         await this.write(STORE_RFQ_SWAPS, (store) => {
             store.delete(rfqId);
         });
-    }
-
-    async pruneRetiredRfqSwaps(cutoff: number): Promise<string[]> {
-        if (cutoff < 0) return [];
-        const db = await this.ensureDb();
-        const removed: string[] = [];
-        for (const state of RFQ_SWAP_TERMINAL_STATES) {
-            const range = IDBKeyRange.bound([state, 0], [state, cutoff]);
-            for (;;) {
-                const tx = db.transaction([STORE_RFQ_SWAPS], "readwrite");
-                const done = awaitTransaction(tx);
-                const store = tx.objectStore(STORE_RFQ_SWAPS);
-                const keys = await new Promise<string[]>((resolve, reject) => {
-                    const request = store.index(RETENTION_INDEX).getAllKeys(range, PRUNE_CHUNK);
-                    request.onsuccess = () => {
-                        const batch = request.result as string[];
-                        for (const key of batch) store.delete(key);
-                        resolve(batch);
-                    };
-                    request.onerror = () => reject(request.error);
-                });
-                await done;
-                removed.push(...keys);
-                if (keys.length < PRUNE_CHUNK) break;
-            }
-        }
-        return removed;
     }
 
     async getScannedTxids(): Promise<Set<string>> {
