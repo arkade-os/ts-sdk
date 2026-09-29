@@ -18,6 +18,7 @@ import {
     SingleKey,
     Transaction,
     getArkPsbtFields,
+    getNetwork,
     type ArkProvider,
 } from "@arkade-os/sdk";
 
@@ -418,6 +419,23 @@ describe("pushClaim", () => {
             await expect(claim(operator)).rejects.toThrow(
                 /does not match the advertised forfeitPubkey/,
             );
+            expect(operator.submitted).toEqual([]);
+        });
+
+        it("floors against the caller's pinned network, not the one the operator names", async () => {
+            // The operator names regtest, whose floor admits this block-typed script: only the pin rejects it.
+            const operator = fakeOperator();
+            await expect(
+                pushClaim(operator, {
+                    contract: swapScript(),
+                    receiver: RECEIVER,
+                    preimage: PREIMAGE,
+                    vtxos: VTXOS,
+                    destinationPkScript: DESTINATION_PK_SCRIPT,
+                    expectedAmount: EXPECTED_AMOUNT,
+                    network: getNetwork("bitcoin"),
+                }),
+            ).rejects.toThrow(/checkpoint exit delay rejected/);
             expect(operator.submitted).toEqual([]);
         });
     });
