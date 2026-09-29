@@ -1641,6 +1641,10 @@ export async function requestArkadeSwap(
             );
         }
     }
+    const assertCarrierLive = (expiresAt: number, lapse: string): void => {
+        const now = carrierNow(requestedNow);
+        if (now >= quote.valid_until || now >= expiresAt) throw gateError("quote_expired", lapse);
+    };
     let verifiedCarrier: VerifiedCarrierTerms | undefined;
     if (carrierRequest !== undefined) {
         const echoRaw = (quote.profile as Record<string, unknown> | undefined)?.carrier;
@@ -1678,10 +1682,7 @@ export async function requestArkadeSwap(
         if (quote.valid_until > echo.expiresAt) {
             throw new Error("carrier echo expires before the quote valid_until");
         }
-        let currentTime = carrierNow(requestedNow);
-        if (currentTime >= quote.valid_until || currentTime >= echo.expiresAt) {
-            throw gateError("quote_expired", "carrier terms lapsed before funding");
-        }
+        assertCarrierLive(echo.expiresAt, "carrier terms lapsed before funding");
         if (echo.mode === "purchase") {
             const info = await new RestArkProvider(arkServerUrl).getInfo();
             if (echo.physicalSats !== info.dust) {
@@ -1698,10 +1699,7 @@ export async function requestArkadeSwap(
             }
             assertRecycleEchoMatchesExpected(echo, expectedRecycle);
         }
-        currentTime = carrierNow(requestedNow);
-        if (currentTime >= quote.valid_until || currentTime >= echo.expiresAt) {
-            throw gateError("quote_expired", "carrier terms lapsed before funding");
-        }
+        assertCarrierLive(echo.expiresAt, "carrier terms lapsed before funding");
         verifiedCarrier = echo;
     }
     const offer = await createOffer(wallet, arkServerUrl, {
@@ -1715,10 +1713,7 @@ export async function requestArkadeSwap(
     });
     verifyOfferAddress(quote, offer);
     if (verifiedCarrier !== undefined) {
-        const again = carrierNow(requestedNow);
-        if (again >= quote.valid_until || again >= verifiedCarrier.expiresAt) {
-            throw gateError("quote_expired", "carrier terms lapsed during derivation");
-        }
+        assertCarrierLive(verifiedCarrier.expiresAt, "carrier terms lapsed during derivation");
     }
     const fundAmount = BigInt(quote.from_amount);
     return {

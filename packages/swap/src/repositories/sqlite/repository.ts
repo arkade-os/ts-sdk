@@ -131,25 +131,24 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         );
     }
 
-    async saveSwap(swap: AssetSwap): Promise<void> {
-        await this.ensureInit();
-        await this.withTx(async () => {
-            const row = await this.db.get<{ data: string }>(
-                `SELECT data FROM ${this.swaps} WHERE id = ?`,
-                [swap.id],
-            );
-            const existing = row ? (JSON.parse(row.data) as AssetSwap) : undefined;
-            await this.writeSwap(mergeFundingProtectedSwap(existing, swap));
-        });
-    }
-
-    async getSwap(id: string): Promise<AssetSwap | undefined> {
-        await this.ensureInit();
+    private async findSwap(id: string): Promise<AssetSwap | undefined> {
         const row = await this.db.get<{ data: string }>(
             `SELECT data FROM ${this.swaps} WHERE id = ?`,
             [id],
         );
         return row ? (JSON.parse(row.data) as AssetSwap) : undefined;
+    }
+
+    async saveSwap(swap: AssetSwap): Promise<void> {
+        await this.ensureInit();
+        await this.withTx(async () => {
+            await this.writeSwap(mergeFundingProtectedSwap(await this.findSwap(swap.id), swap));
+        });
+    }
+
+    async getSwap(id: string): Promise<AssetSwap | undefined> {
+        await this.ensureInit();
+        return this.findSwap(id);
     }
 
     async insertPreparedSwap(swap: AssetSwap): Promise<boolean> {
@@ -173,12 +172,7 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         await this.ensureInit();
         let advanced = false;
         await this.withTx(async () => {
-            const row = await this.db.get<{ data: string }>(
-                `SELECT data FROM ${this.swaps} WHERE id = ?`,
-                [id],
-            );
-            const existing = row ? (JSON.parse(row.data) as AssetSwap) : undefined;
-            const result = advanceFundingSwap(existing, expected, next);
+            const result = advanceFundingSwap(await this.findSwap(id), expected, next);
             if (result.swap) await this.writeSwap(result.swap);
             advanced = result.ok;
         });

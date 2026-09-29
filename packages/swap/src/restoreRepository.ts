@@ -113,14 +113,7 @@ export async function restoreAssetSwapRepository(
     }
     const existing =
         recovered.changes.length > 0 ? await getAssetSwapsOrThrow(repository) : initial;
-    if (signal?.aborted) {
-        return {
-            swaps: existing,
-            changes: recovered.changes,
-            scannedTxids: [],
-            aborted: true,
-        };
-    }
+    if (signal?.aborted) return aborted(existing, recovered.changes);
 
     let scan: Awaited<ReturnType<typeof restoreAssetSwaps>>;
     try {
