@@ -9,8 +9,8 @@ export const sdkVersion = `ts-sdk/${version}`;
 
 /**
  * The version headers arkd's compatibility guard reads, for callers that need
- * them as data rather than as a wrapper — {@link fetch} sets the same pair, so
- * a header added to one belongs in the other. They go to the Arkade server and
+ * them as data rather than as a wrapper — {@link fetch} sets exactly these.
+ * They go to the Arkade server and
  * nowhere else: another origin rejects them in the CORS preflight.
  */
 export const ARKADE_VERSION_HEADERS: Readonly<Record<string, string>> = {
@@ -130,8 +130,7 @@ export function baseFetch(input: RequestInfo | URL, init?: RequestInit): Promise
  */
 export function fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const headers = new Headers(init?.headers);
-    headers.set("X-Build-Version", buildVersion);
-    headers.set("X-SDK-VERSION", sdkVersion);
+    for (const [name, value] of Object.entries(ARKADE_VERSION_HEADERS)) headers.set(name, value);
     return baseFetch(input, { ...init, headers });
 }
 
@@ -144,23 +143,8 @@ function describeRequest(
     input: RequestInfo | URL,
     init?: RequestInit,
 ): { url: string; method: string } {
-    let url: string;
-    if (typeof input === "string") {
-        url = input;
-    } else if (input instanceof URL) {
-        url = input.href;
-    } else {
-        url = input.url;
-    }
-
-    let method: string;
-    if (init?.method !== undefined) {
-        method = init.method;
-    } else if (input instanceof Request) {
-        method = input.method;
-    } else {
-        method = "GET";
-    }
-
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const method =
+        init?.method !== undefined ? init.method : input instanceof Request ? input.method : "GET";
     return { url, method };
 }

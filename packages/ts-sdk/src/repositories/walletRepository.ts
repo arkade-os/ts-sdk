@@ -16,15 +16,6 @@ export interface WalletState {
     lastSyncTime?: number;
 }
 
-/** Stored commitment transaction metadata. */
-export type CommitmentTxRecord = {
-    /** Commitment transaction id. */
-    txid: string;
-
-    /** Creation timestamp in milliseconds. */
-    createdAt: number;
-};
-
 export interface VtxoRepositoryKey {
     /** Authoritative ownership key. */
     script: string;

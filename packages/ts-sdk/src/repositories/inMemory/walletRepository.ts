@@ -1,6 +1,6 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
 import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
-import { isVtxoForScript } from "../../contracts/vtxoOwnership";
+import { checkSaveVtxosForScript, isVtxoForScript } from "../../contracts/vtxoOwnership";
 
 /**
  * In-memory implementation of WalletRepository.
@@ -42,17 +42,10 @@ export class InMemoryWalletRepository implements WalletRepository {
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
-        if (!key.address) {
-            throw new Error("InMemoryWalletRepository requires an address");
-        }
-        for (const vtxo of vtxos) {
-            if (!isVtxoForScript(vtxo, key.script)) {
-                throw new Error(
-                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`,
-                );
-            }
-        }
-        return this.saveVtxos(key.address, vtxos);
+        return this.saveVtxos(
+            checkSaveVtxosForScript("InMemoryWalletRepository", key, vtxos),
+            vtxos,
+        );
     }
 
     async deleteVtxosForScript(script: string): Promise<void> {

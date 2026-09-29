@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { AssetRefType } from "./types";
 import { AssetId } from "./assetId";
-import { BufferReader, BufferWriter } from "../utils";
+import { BufferReader, BufferWriter, hexOrThrow } from "../utils";
 
 type AssetRefByID = {
     type: AssetRefType.ByID;
@@ -62,13 +62,7 @@ export class AssetRef {
      * @see toString
      */
     static fromString(s: string): AssetRef {
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(s);
-        } catch {
-            throw new Error("invalid asset ref format, must be hex");
-        }
-        return AssetRef.fromBytes(buf);
+        return AssetRef.fromBytes(hexOrThrow(s, "invalid asset ref format, must be hex"));
     }
 
     /**

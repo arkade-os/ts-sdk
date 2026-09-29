@@ -936,11 +936,7 @@ function attachExtension(tx: Transaction, newPackets: ExtensionPacket[]): void {
 
     const lastIdx = tx.outputsLength - 1;
     const lastOut = tx.getOutput(lastIdx);
-    if (
-        lastOut?.script &&
-        lastOut.script.length === ANCHOR_PKSCRIPT.length &&
-        lastOut.script.every((b, j) => b === ANCHOR_PKSCRIPT[j])
-    ) {
+    if (lastOut?.script && equalBytes(lastOut.script, ANCHOR_PKSCRIPT)) {
         tx.updateOutput(lastIdx, { script: newOut.script, amount: newOut.amount });
         tx.addOutput({ script: lastOut.script, amount: lastOut.amount ?? 0n });
         return;

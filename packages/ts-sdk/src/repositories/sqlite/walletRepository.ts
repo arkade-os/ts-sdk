@@ -8,12 +8,14 @@ import {
     serializeAssets,
     deserializeAssets,
     SerializedTapLeaf,
+    createdAtToIso,
 } from "../serialization";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { legacyVtxoFacts } from "../legacyVtxoFacts";
 import { SQLExecutor } from "./types";
 import { runInTransaction } from "./transaction";
-import { isVtxoForScript } from "../../contracts/vtxoOwnership";
+import { sanitizeTablePrefix } from "./prefix";
+import { checkSaveVtxosForScript } from "../../contracts/vtxoOwnership";
 
 interface SQLiteWalletRepositoryOptions {
     /** Table name prefix (default: "ark_") */
@@ -44,7 +46,7 @@ export class SQLiteWalletRepository implements WalletRepository {
         private readonly db: SQLExecutor,
         options?: SQLiteWalletRepositoryOptions,
     ) {
-        this.prefix = sanitizePrefix(options?.prefix ?? "ark_");
+        this.prefix = sanitizeTablePrefix(options?.prefix ?? "ark_");
         this.tables = {
             vtxos: `${this.prefix}vtxos`,
             utxos: `${this.prefix}utxos`,
@@ -357,11 +359,7 @@ export class SQLiteWalletRepository implements WalletRepository {
                     s.intentTapLeafScript.cb,
                     s.intentTapLeafScript.s,
                     JSON.stringify(s.status),
-                    typeof s.createdAt === "string"
-                        ? s.createdAt
-                        : s.createdAt instanceof Date
-                          ? s.createdAt.toISOString()
-                          : new Date(s.createdAt).toISOString(),
+                    createdAtToIso(s.createdAt),
                     s.isUnrolled ? 1 : 0,
                     s.isSpent === undefined ? null : s.isSpent ? 1 : 0,
                     s.isSwept === undefined ? null : s.isSwept ? 1 : 0,
@@ -399,17 +397,7 @@ export class SQLiteWalletRepository implements WalletRepository {
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
-        if (!key.address) {
-            throw new Error("SQLiteWalletRepository requires an address");
-        }
-        for (const vtxo of vtxos) {
-            if (!isVtxoForScript(vtxo, key.script)) {
-                throw new Error(
-                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`,
-                );
-            }
-        }
-        return this.saveVtxos(key.address, vtxos);
+        return this.saveVtxos(checkSaveVtxosForScript("SQLiteWalletRepository", key, vtxos), vtxos);
     }
 
     async deleteVtxosForScript(script: string): Promise<void> {
@@ -594,17 +582,6 @@ interface WalletStateRow {
     key: string;
     settings_json: string | null;
     last_sync_time: number | null;
-}
-
-const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
-
-function sanitizePrefix(prefix: string): string {
-    if (!SAFE_PREFIX.test(prefix)) {
-        throw new Error(
-            `Invalid table prefix "${prefix}": only letters, digits, and underscores are allowed`,
-        );
-    }
-    return prefix;
 }
 
 // ── Row → Domain converters ────────────────────────────────────────────

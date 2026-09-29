@@ -3,11 +3,7 @@ import { SigHash, TaprootControlBlock } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 import { sequenceToTimelock } from "../utils/timelock";
 import { ChainTx, ChainTxType, IndexerProvider } from "../providers/indexer";
-import {
-    ChainedTxType,
-    type VirtualTx,
-    type VirtualTxRepository,
-} from "../repositories/virtualTxRepository";
+import { type VirtualTx, type VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { AnchorBumper } from "../utils/anchor";
 import { OnchainProvider } from "../providers/onchain";
 import { Outpoint } from ".";
@@ -16,30 +12,11 @@ import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Wallet } from "./wallet";
 import { Transaction } from "../utils/transaction";
 import { DUST_AMOUNT } from "./utils";
+import { chainTxTypeToChainedExit } from "./exit/chain";
 import { finalizeVirtualTx } from "./exit/finalizeVirtualTx";
 import { resolveUnilateralPath } from "./exit/path";
 import { exitObserverFor, notifyExitObserved, type OnExitObserved } from "./exitObserver";
 import { canSweepOnchain } from "./vtxo";
-
-/**
- * Local ChainTxType → ChainedTxType map. Duplicated (not imported from
- * contractManager) deliberately: keeps the unilateral-exit path free of a
- * cross-module dependency on the contract layer.
- */
-function chainTxTypeToChainedExit(t: ChainTxType): ChainedTxType {
-    switch (t) {
-        case ChainTxType.COMMITMENT:
-            return ChainedTxType.Commitment;
-        case ChainTxType.ARK:
-            return ChainedTxType.Ark;
-        case ChainTxType.TREE:
-            return ChainedTxType.Tree;
-        case ChainTxType.CHECKPOINT:
-            return ChainedTxType.Checkpoint;
-        default:
-            return ChainedTxType.Unspecified;
-    }
-}
 
 export namespace Unroll {
     export enum StepType {

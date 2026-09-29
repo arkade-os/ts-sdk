@@ -1862,7 +1862,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // exit leaf shares the same template (Alice + CSV) and so has an
         // identical serialized size regardless of HD index — the actual
         // per-UTXO leaf is resolved in the input loop below.
-        const exitTapLeafScript = this.getBoardingExitLeaf();
+        const exitTapLeafScript = this.getSweepWallet().boardingTapscript.exit();
 
         // TapLeafScript: [{version, internalKey, merklePath}, scriptWithVersion]
         const leafScript = exitTapLeafScript[1];
@@ -2656,11 +2656,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             hex.decode(wallet.boardingTapscript.exitScript),
         );
         return exitScript.params.timelock;
-    }
-
-    /** Returns the TapLeafScript for the boarding tapscript's exit (CSV) path. */
-    private getBoardingExitLeaf() {
-        return this.getSweepWallet().boardingTapscript.exit();
     }
 
     /** Returns the onchain provider for fee estimation and broadcasting. */

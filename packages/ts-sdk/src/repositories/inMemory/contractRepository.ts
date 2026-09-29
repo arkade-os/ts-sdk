@@ -7,13 +7,9 @@ import { Contract, watchStateOf } from "../../contracts";
  */
 export class InMemoryContractRepository implements ContractRepository {
     readonly version = 2 as const;
-    private readonly contractData = new Map<string, unknown>();
-    private readonly collections = new Map<string, unknown[]>();
     private readonly contractsByScript = new Map<string, Contract>();
 
     async clear(): Promise<void> {
-        this.contractData.clear();
-        this.collections.clear();
         this.contractsByScript.clear();
     }
 

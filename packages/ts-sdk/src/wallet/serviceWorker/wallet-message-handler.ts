@@ -1277,9 +1277,6 @@ export class WalletMessageHandler
                     };
                 }
                 case "GET_SPENDABLE_VTXOS": {
-                    if (!this.readonlyWallet) {
-                        throw new WalletNotInitializedError();
-                    }
                     const vtxos = await this.readonlyWallet.getSpendableVtxos(
                         message.payload.filter,
                     );

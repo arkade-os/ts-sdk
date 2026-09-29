@@ -1,6 +1,5 @@
-import { RestIndexerProvider, SubscriptionResponse } from "./indexer";
+import { RestIndexerProvider, SubscriptionResponse, toSubscriptionResponse } from "./indexer";
 import { isFetchTimeoutError } from "./ark";
-import { convertVtxo } from "../wallet/vtxo";
 import { getExpoFetch, sseStreamIterator } from "./expoUtils";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 
@@ -59,15 +58,7 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
                         }
                         // Process event messages
                         if (data.event) {
-                            return {
-                                txid: data.event.txid,
-                                scripts: data.event.scripts || [],
-                                newVtxos: (data.event.newVtxos || []).map(convertVtxo),
-                                spentVtxos: (data.event.spentVtxos || []).map(convertVtxo),
-                                sweptVtxos: (data.event.sweptVtxos || []).map(convertVtxo),
-                                tx: data.event.tx,
-                                checkpointTxs: data.event.checkpointTxs,
-                            };
+                            return toSubscriptionResponse(data.event);
                         }
                         return null;
                     },

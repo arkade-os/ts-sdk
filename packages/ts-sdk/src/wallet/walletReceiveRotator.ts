@@ -6,6 +6,7 @@ import { isHDCapableIdentity } from "../identity/hdCapableIdentity";
 import { ContractRepository } from "../repositories/contractRepository";
 import { WalletRepository } from "../repositories/walletRepository";
 import { CreateContractParams, IContractManager } from "../contracts/contractManager";
+import type { Contract } from "../contracts/types";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
@@ -142,6 +143,29 @@ const TRAILING_CHILD_INDEX = /\/(\d+)\)\s*$/;
 export function signingDescriptorIndex(descriptor: unknown): number {
     if (typeof descriptor !== "string") return 0;
     return strictSigningDescriptorIndex(descriptor) ?? 0;
+}
+
+/**
+ * The newest {@link WALLET_RECEIVE_SOURCE}-tagged contract for this server:
+ * latest `createdAt`, ties broken by highest signing-descriptor index.
+ */
+export function newestWalletReceiveContract(
+    contracts: Contract[],
+    serverPubKeyHex: string,
+): Contract | undefined {
+    return contracts
+        .filter(
+            (c) =>
+                c.params.serverPubKey === serverPubKeyHex &&
+                c.metadata?.source === WALLET_RECEIVE_SOURCE,
+        )
+        .sort((a, b) => {
+            if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt;
+            return (
+                signingDescriptorIndex(b.metadata?.signingDescriptor) -
+                signingDescriptorIndex(a.metadata?.signingDescriptor)
+            );
+        })[0];
 }
 
 /**
@@ -736,21 +760,7 @@ async function pickActiveReceive(
         type: expectedType ? [expectedType] : ["default", "delegate"],
         state: "active",
     });
-    const serverPubKeyHex = hex.encode(serverPubKey);
-    const matching = candidates
-        .filter(
-            (c) =>
-                c.params.serverPubKey === serverPubKeyHex &&
-                c.metadata?.source === WALLET_RECEIVE_SOURCE,
-        )
-        .sort((a, b) => {
-            if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt;
-            return (
-                signingDescriptorIndex(b.metadata?.signingDescriptor) -
-                signingDescriptorIndex(a.metadata?.signingDescriptor)
-            );
-        });
-    const newest = matching[0];
+    const newest = newestWalletReceiveContract(candidates, hex.encode(serverPubKey));
     if (!newest?.params.pubKey) return undefined;
     try {
         return {

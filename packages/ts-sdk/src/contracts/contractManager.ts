@@ -959,6 +959,17 @@ export class ContractManager implements IContractManager {
         }
     }
 
+    /** A retryable failure degrades sync state instead of propagating; terminal ones still throw. */
+    private async trySync(sync: () => Promise<unknown>): Promise<void> {
+        try {
+            await sync();
+            this.markSyncOnline();
+        } catch (err) {
+            if (!isRetryableProviderError(err)) throw err;
+            this.markSyncDegraded(err);
+        }
+    }
+
     private markSyncDegraded(err: unknown): void {
         this.syncDegradedReason = err instanceof Error ? err.message : String(err);
     }
@@ -1005,13 +1016,7 @@ export class ContractManager implements IContractManager {
         // fail construction. Record degraded state and continue with repository
         // data — the watcher still starts below and reconciles when the operator
         // returns. Terminal failures still propagate.
-        try {
-            await this.reconcileWatched();
-            this.markSyncOnline();
-        } catch (err) {
-            if (!isRetryableProviderError(err)) throw err;
-            this.markSyncDegraded(err);
-        }
+        await this.trySync(() => this.reconcileWatched());
 
         this.initialized = true;
 
@@ -1319,13 +1324,7 @@ export class ContractManager implements IContractManager {
             // indexer failure the contract stays persisted and is still watched,
             // so it hydrates on the next reconcile — wallet construction (which
             // registers baseline contracts) survives an offline operator.
-            try {
-                await this.fetchContractVxosFromIndexer([contract]);
-                this.markSyncOnline();
-            } catch (err) {
-                if (!isRetryableProviderError(err)) throw err;
-                this.markSyncDegraded(err);
-            }
+            await this.trySync(() => this.fetchContractVxosFromIndexer([contract]));
             await this.watcher.addContract(contract);
         }
         return contract;
@@ -1358,13 +1357,7 @@ export class ContractManager implements IContractManager {
 
             const fresh = upserted.filter((u) => u.persisted).map((u) => u.contract);
             if (fresh.length > 0) {
-                try {
-                    await this.fetchContractVxosFromIndexer(fresh);
-                    this.markSyncOnline();
-                } catch (err) {
-                    if (!isRetryableProviderError(err)) throw err;
-                    this.markSyncDegraded(err);
-                }
+                await this.trySync(() => this.fetchContractVxosFromIndexer(fresh));
                 for (const contract of fresh) await this.watcher.addContract(contract);
             }
             return upserted.map((u) => u.contract);
@@ -1764,13 +1757,7 @@ export class ContractManager implements IContractManager {
             // undemoted keeps a watch it no longer needs.
             await this.demoteFundedAwaitingContracts(contracts);
         } else {
-            try {
-                await this.syncContracts({ contracts, pageSize });
-                this.markSyncOnline();
-            } catch (err) {
-                if (!isRetryableProviderError(err)) throw err;
-                this.markSyncDegraded(err);
-            }
+            await this.trySync(() => this.syncContracts({ contracts, pageSize }));
         }
         const vtxos = await this.getVtxosForContracts(contracts);
         return contracts.map((contract) => ({
@@ -1953,23 +1940,7 @@ export class ContractManager implements IContractManager {
         script: string,
         updates: Partial<Omit<Contract, "script" | "createdAt">>,
     ): Promise<Contract> {
-        const contracts = await this.config.contractRepository.getContracts({
-            script,
-        });
-        const existing = contracts[0];
-        if (!existing) {
-            throw new Error(`Contract ${script} not found`);
-        }
-
-        const updated: Contract = {
-            ...existing,
-            ...updates,
-        };
-
-        await this.config.contractRepository.saveContract(updated);
-        await this.watcher.updateContract(updated);
-
-        return updated;
+        return this.updateExistingContract(script, (existing) => ({ ...existing, ...updates }));
     }
 
     /**
@@ -1980,6 +1951,16 @@ export class ContractManager implements IContractManager {
      * @param updates - The new values to merge with existing params
      */
     async updateContractParams(script: string, updates: Contract["params"]): Promise<Contract> {
+        return this.updateExistingContract(script, (existing) => ({
+            ...existing,
+            params: { ...existing.params, ...updates },
+        }));
+    }
+
+    private async updateExistingContract(
+        script: string,
+        update: (existing: Contract) => Contract,
+    ): Promise<Contract> {
         const contracts = await this.config.contractRepository.getContracts({
             script,
         });
@@ -1988,10 +1969,7 @@ export class ContractManager implements IContractManager {
             throw new Error(`Contract ${script} not found`);
         }
 
-        const updated: Contract = {
-            ...existing,
-            params: { ...existing.params, ...updates },
-        };
+        const updated = update(existing);
 
         await this.config.contractRepository.saveContract(updated);
         await this.watcher.updateContract(updated);
@@ -2523,24 +2501,31 @@ export class ContractManager implements IContractManager {
             // The bucket is keyed by contract address, so the script filter
             // here is the same as the contract's. Skip wrong-script rows
             // rather than crash the reconcile loop.
-            const contract = contractByAddress.get(addr)!;
-            const filtered = warnAndFilterVtxosForScript(
+            await this.persistContractVtxos(
+                contractByAddress.get(addr)!,
                 contractVtxos,
-                contract.script,
                 "ContractManager.reconcilePendingFrontier",
             );
-            if (filtered.length === 0) continue;
-            await saveVtxosForContract(
-                this.config.walletRepository,
-                contract,
-                filtered as ExtendedVirtualCoin[],
-            );
-            if (this.config.onVtxosPersisted) {
-                try {
-                    await this.config.onVtxosPersisted(contract, filtered as ExtendedVirtualCoin[]);
-                } catch {
-                    // capture is best-effort; never block reconciliation
-                }
+        }
+    }
+
+    private async persistContractVtxos(
+        contract: Contract,
+        vtxos: ExtendedContractVtxo[],
+        context: string,
+    ): Promise<void> {
+        const filtered = warnAndFilterVtxosForScript(
+            vtxos,
+            contract.script,
+            context,
+        ) as ExtendedVirtualCoin[];
+        if (filtered.length === 0) return;
+        await saveVtxosForContract(this.config.walletRepository, contract, filtered);
+        if (this.config.onVtxosPersisted) {
+            try {
+                await this.config.onVtxosPersisted(contract, filtered);
+            } catch {
+                // capture is best-effort; never block sync or reconciliation
             }
         }
     }
@@ -2563,27 +2548,11 @@ export class ContractManager implements IContractManager {
             const contract =
                 promoted.get(contractScript) ?? contracts.find((c) => c.script === contractScript);
             if (contract) {
-                const filtered = warnAndFilterVtxosForScript(
+                await this.persistContractVtxos(
+                    contract,
                     vtxos,
-                    contract.script,
                     "ContractManager.fetchContractVxosFromIndexer",
                 );
-                if (filtered.length === 0) continue;
-                await saveVtxosForContract(
-                    this.config.walletRepository,
-                    contract,
-                    filtered as ExtendedVirtualCoin[],
-                );
-                if (this.config.onVtxosPersisted) {
-                    try {
-                        await this.config.onVtxosPersisted(
-                            contract,
-                            filtered as ExtendedVirtualCoin[],
-                        );
-                    } catch {
-                        // capture is best-effort; never block sync
-                    }
-                }
             }
         }
         return result;

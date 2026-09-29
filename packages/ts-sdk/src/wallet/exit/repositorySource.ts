@@ -5,7 +5,7 @@ import { Transaction } from "../../utils/transaction";
 import { Outpoint } from "../index";
 import { ExitDataSource } from "./resolver";
 
-/** Reverse of `chainTxTypeToChainedExit` (unroll.ts:27): numeric repo enum → indexer string enum. */
+/** Reverse of `chainTxTypeToChainedExit` (./chain): numeric repo enum → indexer string enum. */
 export function chainedTxTypeToChainTxType(t: ChainedTxType): ChainTxType {
     switch (t) {
         case ChainedTxType.Commitment:
@@ -23,7 +23,10 @@ export function chainedTxTypeToChainTxType(t: ChainedTxType): ChainTxType {
 
 /** Prevout txids (display order) of every input of a base64 PSBT — the physical `spends`. */
 export function psbtInputTxids(psbtBase64: string): string[] {
-    const tx = Transaction.fromPSBT(base64.decode(psbtBase64));
+    return txInputTxids(Transaction.fromPSBT(base64.decode(psbtBase64)));
+}
+
+export function txInputTxids(tx: Transaction): string[] {
     const ids: string[] = [];
     for (let i = 0; i < tx.inputsLength; i++) {
         const txid = tx.getInput(i).txid;

@@ -28,24 +28,16 @@ function normalizeOptions(
     pathOrOptions: string | SetupServiceWorkerOptions,
 ): Required<Omit<SetupServiceWorkerOptions, "onNeedRefresh" | "onUpdated">> &
     Pick<SetupServiceWorkerOptions, "onNeedRefresh" | "onUpdated"> {
-    if (typeof pathOrOptions === "string") {
-        return {
-            path: pathOrOptions,
-            updateViaCache: "none",
-            autoReload: true,
-            debug: false,
-            activationTimeoutMs: 10_000,
-        };
-    }
-
+    const o: SetupServiceWorkerOptions =
+        typeof pathOrOptions === "string" ? { path: pathOrOptions } : pathOrOptions;
     return {
-        path: pathOrOptions.path,
-        updateViaCache: pathOrOptions.updateViaCache ?? "none",
-        autoReload: pathOrOptions.autoReload ?? true,
-        onNeedRefresh: pathOrOptions.onNeedRefresh,
-        onUpdated: pathOrOptions.onUpdated,
-        debug: pathOrOptions.debug ?? false,
-        activationTimeoutMs: pathOrOptions.activationTimeoutMs ?? 10_000,
+        path: o.path,
+        updateViaCache: o.updateViaCache ?? "none",
+        autoReload: o.autoReload ?? true,
+        onNeedRefresh: o.onNeedRefresh,
+        onUpdated: o.onUpdated,
+        debug: o.debug ?? false,
+        activationTimeoutMs: o.activationTimeoutMs ?? 10_000,
     };
 }
 

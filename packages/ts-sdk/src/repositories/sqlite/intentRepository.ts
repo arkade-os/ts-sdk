@@ -10,12 +10,7 @@ import {
 } from "../intentRepository";
 import { SQLExecutor } from "./types";
 import { runInTransaction } from "./transaction";
-
-const SAFE_PREFIX = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-function sanitizePrefix(p: string): string {
-    if (!SAFE_PREFIX.test(p)) throw new Error(`Invalid table prefix "${p}"`);
-    return p;
-}
+import { sanitizeTablePrefix } from "./prefix";
 
 interface IntentRow {
     intent_tx_id: string;
@@ -47,7 +42,7 @@ export class SQLiteIntentRepository implements IntentRepository {
         private readonly db: SQLExecutor,
         options?: { prefix?: string },
     ) {
-        this.prefix = sanitizePrefix(options?.prefix ?? "ark_");
+        this.prefix = sanitizeTablePrefix(options?.prefix ?? "ark_");
         this.t = `${this.prefix}intents`;
     }
 
@@ -84,15 +79,11 @@ export class SQLiteIntentRepository implements IntentRepository {
         );
     }
 
-    private withTx(fn: () => Promise<void>): Promise<void> {
-        return runInTransaction(this.db, fn);
-    }
-
     async clear(): Promise<void> {
         await this.ensureInit();
         // Route through the same serialized write chain as saveIntent so a
         // clear can't interleave with an in-flight transaction on this executor.
-        await this.withTx(async () => {
+        await runInTransaction(this.db, async () => {
             await this.db.run(`DELETE FROM ${this.t}`);
         });
     }
@@ -100,7 +91,7 @@ export class SQLiteIntentRepository implements IntentRepository {
     async saveIntent(intent: ArkIntent): Promise<void> {
         await this.ensureInit();
         const now = Date.now();
-        await this.withTx(async () => {
+        await runInTransaction(this.db, async () => {
             // Upsert by the primary key only. INSERT OR REPLACE would also fire
             // on the intent_id unique index, silently deleting the *other* row
             // that holds it; ON CONFLICT(intent_tx_id) updates in place and lets

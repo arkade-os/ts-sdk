@@ -4,7 +4,6 @@ import { Contract, ContractHandler, Discoverable, PathContext, PathSelection } f
 import type { DiscoveredContract, DiscoveryDeps } from "../types";
 import { DefaultContractHandler, DefaultContractParams } from "./default";
 import { deriveDescriptorLeafPubKey } from "../../identity/descriptor";
-import { timelockToSequence } from "../../utils/timelock";
 import { rotatedReceiveMetadata } from "./helpers";
 
 /**
@@ -148,7 +147,6 @@ export const BoardingContractHandler: ContractHandler<BoardingContractParams, De
         if (coins.length === 0) return [];
 
         const scriptHex = hex.encode(script.pkScript);
-        const boardingSeq = timelockToSequence(deps.boardingTimelock);
 
         // Always `type: "boarding"` (see method doc). The equal-delay
         // same-script collision is resolved first-wins at persistence, and the
@@ -159,11 +157,11 @@ export const BoardingContractHandler: ContractHandler<BoardingContractParams, De
         return [
             {
                 type: "boarding",
-                params: {
-                    pubKey: hex.encode(pubKey),
-                    serverPubKey: hex.encode(deps.serverPubKey),
-                    csvTimelock: boardingSeq.toString(),
-                },
+                params: BoardingContractHandler.serializeParams({
+                    pubKey,
+                    serverPubKey: deps.serverPubKey,
+                    csvTimelock: deps.boardingTimelock,
+                }),
                 script: scriptHex,
                 // The persisted row's `address` is the *Ark* address (not the
                 // on-chain P2TR), matching the row registered at init so the

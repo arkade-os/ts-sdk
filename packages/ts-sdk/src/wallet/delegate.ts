@@ -109,25 +109,29 @@ export class DelegateManagerImpl implements IDelegateManager {
             return { delegated: [], failed: [] };
         }
 
-        // if explicit delegateAt is provided, delegate all virtual outputs at once without sorting
-        if (delegateAt) {
+        const delegateAll = async (group: NormalizedExtendedVirtualCoin[]) => {
             try {
                 await delegate(
                     this.identity,
                     this.delegateProvider,
                     arkInfo,
                     delegateInfo,
-                    eligible,
+                    group,
                     destinationScript,
                     delegateAt,
                 );
             } catch (error) {
                 return {
                     delegated: [],
-                    failed: [{ outpoints: eligible, error }],
+                    failed: [{ outpoints: group, error }],
                 };
             }
-            return { delegated: eligible, failed: [] };
+            return { delegated: group, failed: [] };
+        };
+
+        // if explicit delegateAt is provided, delegate all virtual outputs at once without sorting
+        if (delegateAt) {
+            return delegateAll(eligible);
         }
 
         // if no explicit delegateAt is provided, sort virtual outputs by expiry and delegate in groups of the same expiry day
@@ -151,23 +155,7 @@ export class DelegateManagerImpl implements IDelegateManager {
 
         // if no groups, it means we only need to delegate the recoverable virtual outputs
         if (groupByExpiry.size === 0) {
-            try {
-                await delegate(
-                    this.identity,
-                    this.delegateProvider,
-                    arkInfo,
-                    delegateInfo,
-                    recoverableVtxos,
-                    destinationScript,
-                    delegateAt,
-                );
-            } catch (error) {
-                return {
-                    delegated: [],
-                    failed: [{ outpoints: recoverableVtxos, error }],
-                };
-            }
-            return { delegated: recoverableVtxos, failed: [] };
+            return delegateAll(recoverableVtxos);
         }
 
         // search for the earliest group, include recoverable virtual outputs into it

@@ -82,6 +82,7 @@ import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { classifyAgainstSignerSet, signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
 import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "./batchExpiry";
 import type { BatchExpiryPolicy } from "./batchExpiry";
+import { toTimelock } from "./timelockPolicy";
 import { runWalletRestoreHooks } from "./restoreHooks";
 import {
     assertValidServerUnrollScript,
@@ -163,6 +164,7 @@ import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoO
 import {
     WalletReceiveRotator,
     buildReceiveContract,
+    newestWalletReceiveContract,
     signingDescriptorIndex,
     strictSigningDescriptorIndex,
 } from "./walletReceiveRotator";
@@ -276,13 +278,6 @@ export const MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD = 1_000;
 // legacy address after arkd starts advertising a different delay.
 const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
 
-function delayToTimelock(delay: bigint): RelativeTimelock {
-    return {
-        value: delay,
-        type: delay < 512n ? "blocks" : "seconds",
-    };
-}
-
 function dedupeTimelocks(timelocks: RelativeTimelock[]): RelativeTimelock[] {
     const seen = new Set<string>();
     const deduped: RelativeTimelock[] = [];
@@ -295,30 +290,6 @@ function dedupeTimelocks(timelocks: RelativeTimelock[]): RelativeTimelock[] {
     }
 
     return deduped;
-}
-
-/**
- * Register a wallet baseline contract (`default` / `boarding`) idempotently.
- *
- * Thin pass-through to {@link ContractManager.createContract}, which is now the
- * single source of truth for the degenerate `default`/`boarding` same-script
- * collision: contracts are keyed by pkScript, so when the two derive a
- * byte-identical script (a misconfigured server whose `boardingExitDelay`
- * coincides with the offchain unilateral-exit delay) only one row can exist for
- * it, and `createContract` resolves the clash FIRST-WINS — it keeps the row
- * already persisted for the shared script instead of throwing (see
- * {@link areCoalescibleContractTypes}). The wallet-layer "default wins +
- * promote" coalescing this helper used to carry has been consolidated into that
- * one place so init and the restore scan share a single rule (see
- * docs/hd-wallets_onchain_rotation_collision_fix.md §5.1, §5.3).
- *
- * @internal Exported for unit tests; not part of the public API surface.
- */
-export async function ensureWalletContract(
-    manager: ContractManager,
-    params: CreateContractParams,
-): Promise<void> {
-    await manager.createContract(params);
 }
 
 /**
@@ -344,24 +315,11 @@ export async function resolveBoardingBootTapscript(
     serverPubKey: Bytes,
     baseline: DefaultVtxo.Script,
 ): Promise<DefaultVtxo.Script> {
-    const serverPubKeyHex = hex.encode(serverPubKey);
     const candidates = await contractRepository.getContracts({
         type: ["boarding"],
         state: "active",
     });
-    const newest = candidates
-        .filter(
-            (c) =>
-                c.params.serverPubKey === serverPubKeyHex &&
-                c.metadata?.source === WALLET_RECEIVE_SOURCE,
-        )
-        .sort((a, b) => {
-            if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt;
-            return (
-                signingDescriptorIndex(b.metadata?.signingDescriptor) -
-                signingDescriptorIndex(a.metadata?.signingDescriptor)
-            );
-        })[0];
+    const newest = newestWalletReceiveContract(candidates, hex.encode(serverPubKey));
     if (!newest?.params.pubKey) return baseline;
     try {
         const pubKey = hex.decode(newest.params.pubKey);
@@ -1119,7 +1077,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
 
-        const arkdExitTimelock = delayToTimelock(info.unilateralExitDelay);
+        const arkdExitTimelock = toTimelock(info.unilateralExitDelay);
 
         // create unilateral exit timelock
         const exitTimelock: RelativeTimelock = config.exitTimelock ?? arkdExitTimelock;
@@ -1129,7 +1087,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             : dedupeTimelocks([
                   arkdExitTimelock,
                   ...(info.network === "bitcoin"
-                      ? [delayToTimelock(MAINNET_UNILATERAL_EXIT_DELAY)]
+                      ? [toTimelock(MAINNET_UNILATERAL_EXIT_DELAY)]
                       : []),
               ]);
 
@@ -1142,10 +1100,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
 
         // create boarding timelock
-        const boardingTimelock: RelativeTimelock = config.boardingTimelock ?? {
-            value: info.boardingExitDelay,
-            type: info.boardingExitDelay < 512n ? "blocks" : "seconds",
-        };
+        const boardingTimelock: RelativeTimelock =
+            config.boardingTimelock ?? toTimelock(info.boardingExitDelay);
 
         // Generate tapscripts for offchain and boarding address
         const serverPubKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
@@ -2241,15 +2197,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
                 if (!seenBaselineScripts.has(defaultScriptHex)) {
                     seenBaselineScripts.add(defaultScriptHex);
-                    // ensureWalletContract (a thin pass-through to createContract) so a
-                    // default baseline whose script collides with an already-persisted
-                    // `boarding` row is tolerated FIRST-WINS at the persistence layer
-                    // instead of throwing a type mismatch. The default matrix is
-                    // persisted before the boarding baseline below, so at index 0 the
+                    // createContract tolerates a default baseline whose script collides
+                    // with an already-persisted `boarding` row FIRST-WINS at the
+                    // persistence layer instead of throwing a type mismatch. The default
+                    // matrix is persisted before the boarding baseline below, so at index 0 the
                     // `default` row wins. Degenerate guard only: a sound server keeps
                     // the unilateral-exit and boarding-exit delays distinct, so these
                     // scripts never actually collide.
-                    await ensureWalletContract(manager, {
+                    await manager.createContract({
                         type: "default",
                         params: {
                             pubKey: hex.encode(defaultScript.options.pubKey),
@@ -2305,7 +2260,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // derives from `this.boardingTapscript` directly), keeping the lazy
         // contract-manager lifecycle intact.
         //
-        // Create-if-missing via ensureWalletContract (idempotent): contracts
+        // Create-if-missing via createContract (idempotent): contracts
         // are keyed by script. In the degenerate case where boardingExitDelay
         // coincides with a baseline `default` timelock (a misconfigured server;
         // sound servers keep them distinct), the boarding script is
@@ -2337,7 +2292,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             const boardingScriptHex = hex.encode(baselineBoarding.pkScript);
             if (seenBaselineScripts.has(boardingScriptHex)) continue;
             seenBaselineScripts.add(boardingScriptHex);
-            await ensureWalletContract(manager, {
+            await manager.createContract({
                 type: "boarding",
                 params: {
                     pubKey: hex.encode(baselineBoarding.options.pubKey),

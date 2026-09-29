@@ -59,6 +59,14 @@ export const serializeVtxo = (v: ExtendedVirtualCoin) => ({
     assets: serializeAssets(v.assets),
 });
 
+/** Legacy rows may carry `createdAt` as a string or epoch number rather than a Date. */
+export const createdAtToIso = (createdAt: Date | string | number): string =>
+    typeof createdAt === "string"
+        ? createdAt
+        : createdAt instanceof Date
+          ? createdAt.toISOString()
+          : new Date(createdAt).toISOString();
+
 export const serializeUtxo = (u: ExtendedCoin) => ({
     ...u,
     tapTree: hex.encode(u.tapTree),

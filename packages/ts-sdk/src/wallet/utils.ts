@@ -12,7 +12,6 @@ import { contractHandlers } from "../contracts/handlers";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
 import { VtxoScript } from "../script/base";
-import type { ReadonlyWallet } from "./wallet";
 import { classifyAgainstSignerSet, type SignerSet } from "./signerRotation";
 import { hex } from "@scure/base";
 import { Bytes } from "@scure/btc-signer/utils.js";
@@ -49,19 +48,6 @@ export function extendCoinWithTapscript(
         intentTapLeafScript: boardingTapscript.forfeit(),
         tapTree: boardingTapscript.encode(),
     };
-}
-
-/**
- * Annotate a boarding {@link Coin} with the wallet's *current* boarding
- * tapscript. Kept for callers that only ever deal with the current boarding
- * address; the multi-address spending path uses {@link extendCoinWithTapscript}
- * with the per-UTXO tapscript instead.
- */
-export function extendCoin(
-    wallet: { boardingTapscript: ReadonlyWallet["boardingTapscript"] },
-    utxo: Coin,
-): ExtendedCoin {
-    return extendCoinWithTapscript(wallet.boardingTapscript, utxo);
 }
 
 /**
@@ -204,15 +190,6 @@ function resolveContract(
 export function getRandomId(): string {
     const randomValue = crypto.getRandomValues(new Uint8Array(16));
     return hex.encode(randomValue);
-}
-
-export function isValidArkAddress(address: string): boolean {
-    try {
-        ArkAddress.decode(address);
-        return true;
-    } catch (e) {
-        return false;
-    }
 }
 
 type ValidatedRecipient = Required<Omit<Recipient, "extensions" | "tapTree">> & {

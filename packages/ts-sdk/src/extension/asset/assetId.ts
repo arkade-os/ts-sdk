@@ -1,6 +1,6 @@
 import { hex } from "@scure/base";
 import { TX_HASH_SIZE, ASSET_ID_SIZE } from "./types";
-import { BufferReader, BufferWriter } from "../utils";
+import { BufferReader, BufferWriter, hexOrThrow } from "../utils";
 import { isZeroBytes } from "./utils";
 
 /**
@@ -38,12 +38,7 @@ export class AssetId {
             throw new Error("missing txid");
         }
 
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(txid);
-        } catch {
-            throw new Error("invalid txid format, must be hex");
-        }
+        const buf = hexOrThrow(txid, "invalid txid format, must be hex");
 
         if (buf.length !== TX_HASH_SIZE) {
             throw new Error(
@@ -65,13 +60,7 @@ export class AssetId {
      * @see toString
      */
     static fromString(s: string): AssetId {
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(s);
-        } catch {
-            throw new Error("invalid asset id format, must be hex");
-        }
-        return AssetId.fromBytes(buf);
+        return AssetId.fromBytes(hexOrThrow(s, "invalid asset id format, must be hex"));
     }
 
     /**

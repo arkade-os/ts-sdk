@@ -9,17 +9,11 @@ type SetupServiceWorkerOptions = {
 function normalizeOptions(
     pathOrOptions: string | SetupServiceWorkerOptions,
 ): Required<SetupServiceWorkerOptions> {
-    if (typeof pathOrOptions === "string") {
-        return {
-            path: pathOrOptions,
-            activationTimeoutMs: DEFAULT_SERVICE_WORKER_ACTIVATION_TIMEOUT_MS,
-        };
-    }
-
+    const o: SetupServiceWorkerOptions =
+        typeof pathOrOptions === "string" ? { path: pathOrOptions } : pathOrOptions;
     return {
-        path: pathOrOptions.path,
-        activationTimeoutMs:
-            pathOrOptions.activationTimeoutMs ?? DEFAULT_SERVICE_WORKER_ACTIVATION_TIMEOUT_MS,
+        path: o.path,
+        activationTimeoutMs: o.activationTimeoutMs ?? DEFAULT_SERVICE_WORKER_ACTIVATION_TIMEOUT_MS,
     };
 }
 

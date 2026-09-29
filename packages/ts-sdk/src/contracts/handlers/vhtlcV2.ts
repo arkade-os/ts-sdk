@@ -9,7 +9,13 @@ import {
     PathSelection,
     TapscriptDeriving,
 } from "../types";
-import { assertVhtlcSpendableNow, isCltvSatisfied, isCsvSpendable, resolveRole } from "./helpers";
+import {
+    assertVhtlcSpendableNow,
+    deriveVhtlcTapscripts,
+    selectVhtlcPath,
+    vhtlcAllSpendingPaths,
+    vhtlcSpendablePaths,
+} from "./helpers";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
 
 /**
@@ -367,52 +373,7 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
         contract: Contract,
         context: PathContext,
     ): PathSelection | null {
-        const role = resolveRole(contract, context);
-        const preimage = contract.params?.preimage;
-        const refundLocktime = BigInt(contract.params.refundLocktime);
-
-        if (!role) {
-            return null;
-        }
-
-        if (context.collaborative) {
-            if (role === "receiver" && preimage) {
-                return {
-                    leaf: script.claim(),
-                    extraWitness: [hex.decode(preimage)],
-                };
-            }
-
-            if (role === "sender" && isCltvSatisfied(context, refundLocktime)) {
-                return {
-                    leaf: script.refundWithoutReceiver(),
-                };
-            }
-
-            return null;
-        }
-
-        // Unilateral paths
-        if (role === "receiver" && preimage) {
-            const sequence = Number(contract.params.claimDelay);
-            if (!isCsvSpendable(context, sequence)) return null;
-            return {
-                leaf: script.unilateralClaim(),
-                extraWitness: [hex.decode(preimage)],
-                sequence,
-            };
-        }
-
-        if (role === "sender") {
-            const sequence = Number(contract.params.refundNoReceiverDelay);
-            if (!isCsvSpendable(context, sequence)) return null;
-            return {
-                leaf: script.unilateralRefundWithoutReceiver(),
-                sequence,
-            };
-        }
-
-        return null;
+        return selectVhtlcPath(script, contract, context);
     },
 
     /**
@@ -427,48 +388,7 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
         contract: Contract,
         context: PathContext,
     ): PathSelection[] {
-        const role = resolveRole(contract, context);
-        const paths: PathSelection[] = [];
-
-        if (!role) {
-            return paths;
-        }
-
-        const preimage = contract.params?.preimage;
-
-        if (context.collaborative) {
-            // Collaborative paths (no timelock checks)
-            if (role === "receiver" && preimage) {
-                paths.push({
-                    leaf: script.claim(),
-                    extraWitness: [hex.decode(preimage)],
-                });
-            }
-            if (role === "sender") {
-                paths.push({
-                    leaf: script.refundWithoutReceiver(),
-                });
-            }
-        } else {
-            // Unilateral paths (no timelock checks)
-            if (role === "receiver" && preimage) {
-                const sequence = Number(contract.params.claimDelay);
-                paths.push({
-                    leaf: script.unilateralClaim(),
-                    extraWitness: [hex.decode(preimage)],
-                    sequence,
-                });
-            }
-            if (role === "sender") {
-                const sequence = Number(contract.params.refundNoReceiverDelay);
-                paths.push({
-                    leaf: script.unilateralRefundWithoutReceiver(),
-                    sequence,
-                });
-            }
-        }
-
-        return paths;
+        return vhtlcAllSpendingPaths(script, contract, context);
     },
 
     getSpendablePaths(
@@ -476,52 +396,7 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
         contract: Contract,
         context: PathContext,
     ): PathSelection[] {
-        const role = resolveRole(contract, context);
-        const paths: PathSelection[] = [];
-
-        if (!role) {
-            return paths;
-        }
-
-        const preimage = contract.params?.preimage;
-        const refundLocktime = BigInt(contract.params.refundLocktime);
-
-        if (context.collaborative) {
-            if (role === "receiver" && preimage) {
-                paths.push({
-                    leaf: script.claim(),
-                    extraWitness: [hex.decode(preimage)],
-                });
-            }
-            if (role === "sender" && isCltvSatisfied(context, refundLocktime)) {
-                paths.push({
-                    leaf: script.refundWithoutReceiver(),
-                });
-            }
-            return paths;
-        }
-
-        if (role === "receiver" && preimage) {
-            const sequence = Number(contract.params.claimDelay);
-            if (isCsvSpendable(context, sequence)) {
-                paths.push({
-                    leaf: script.unilateralClaim(),
-                    extraWitness: [hex.decode(preimage)],
-                    sequence,
-                });
-            }
-        }
-        if (role === "sender") {
-            const sequence = Number(contract.params.refundNoReceiverDelay);
-            if (isCsvSpendable(context, sequence)) {
-                paths.push({
-                    leaf: script.unilateralRefundWithoutReceiver(),
-                    sequence,
-                });
-            }
-        }
-
-        return paths;
+        return vhtlcSpendablePaths(script, contract, context);
     },
 
     /**
@@ -584,11 +459,6 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
      * lockup's `sender` key and fails at intent registration for anyone else.
      */
     deriveTapscripts(script: VHTLC.ScriptV2): DerivedContractTapscripts {
-        const leaf = script.refundWithoutReceiver();
-        return {
-            forfeitTapLeafScript: leaf,
-            intentTapLeafScript: leaf,
-            tapTree: script.encode(),
-        };
+        return deriveVhtlcTapscripts(script);
     },
 };

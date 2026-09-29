@@ -341,17 +341,7 @@ export class Ramps {
         eventCallback?: (event: SettlementEvent) => void,
         vtxos?: NormalizedExtendedVirtualCoin[],
     ): ReturnType<IWallet["settle"]> {
-        const named = vtxos !== undefined;
-        if (vtxos) reportUngatedInputs(this.wallet, vtxos);
-        const spendable =
-            vtxos ??
-            (await this.wallet.getSpendableVtxos({
-                withRecoverable: true,
-                withUnrolled: false,
-            }));
-
-        const estimator = new Estimator(feeInfo?.intentFee ?? {});
-        const { inputs, subtotal } = filterOffboardInputs(spendable, feeInfo, named);
+        const { estimator, inputs, subtotal } = await this.offboardInputs(feeInfo, vtxos);
 
         if (amount && amount > subtotal) {
             throw new Error("Amount is greater than total amount of vtxos after fees");
@@ -401,17 +391,7 @@ export class Ramps {
             throw new Error(`offboard amount must be positive, got ${amount}`);
         }
 
-        const named = vtxos !== undefined;
-        if (vtxos) reportUngatedInputs(this.wallet, vtxos);
-        const spendable =
-            vtxos ??
-            (await this.wallet.getSpendableVtxos({
-                withRecoverable: true,
-                withUnrolled: false,
-            }));
-
-        const estimator = new Estimator(feeInfo?.intentFee ?? {});
-        const { inputs, subtotal } = filterOffboardInputs(spendable, feeInfo, named);
+        const { estimator, inputs, subtotal } = await this.offboardInputs(feeInfo, vtxos);
 
         const outputFee = BigInt(
             estimator.evalOnchainOutput({
@@ -432,6 +412,20 @@ export class Ramps {
         const outputs = [{ address: destinationAddress, amount }];
         if (change > 0n) outputs.push({ address: changeAddress!, amount: change });
         return this.wallet.settle({ inputs, outputs }, eventCallback);
+    }
+
+    private async offboardInputs(feeInfo: FeeInfo, vtxos?: NormalizedExtendedVirtualCoin[]) {
+        const named = vtxos !== undefined;
+        if (vtxos) reportUngatedInputs(this.wallet, vtxos);
+        const spendable =
+            vtxos ??
+            (await this.wallet.getSpendableVtxos({
+                withRecoverable: true,
+                withUnrolled: false,
+            }));
+
+        const estimator = new Estimator(feeInfo?.intentFee ?? {});
+        return { estimator, ...filterOffboardInputs(spendable, feeInfo, named) };
     }
 
     /** Fund the change output: pay its own fee, then judge it against both
