@@ -161,6 +161,7 @@ export class SQLiteIntentRepository implements IntentRepository {
         await this.ensureInit();
         const rows: ArkIntent[] = [];
         let after = page.after;
+        // Match the shared filter in TypeScript; the key cursor advances past rejected rows.
         while (rows.length <= page.limit) {
             const batch = await this.db.all<IntentRow>(
                 `SELECT * FROM ${this.t} WHERE intent_tx_id > ? ORDER BY intent_tx_id LIMIT ?`,

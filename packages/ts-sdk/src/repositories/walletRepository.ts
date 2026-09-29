@@ -103,6 +103,8 @@ export interface WalletRepository extends AsyncDisposable {
 
     /**
      * Fetch stored virtual outputs for a script.
+     * An outpoint may appear more than once across address buckets, including
+     * within one page. Deduplicate by outpoint or use collectScriptVtxos.
      * @optional SDK backends implement this; custom backends fall back to Tier 1.
      */
     getVtxosForScriptPage?(
@@ -192,6 +194,7 @@ function shouldReplaceScriptVtxo(existing: StoredVtxo, incoming: StoredVtxo): bo
         }
     };
     if (canonical(incoming) !== canonical(existing)) return canonical(incoming);
+    // A recorded spend wins over an unspent duplicate of the same outpoint.
     if (
         existing.vtxo.isSpent !== incoming.vtxo.isSpent &&
         (existing.vtxo.isSpent === true || incoming.vtxo.isSpent === true)

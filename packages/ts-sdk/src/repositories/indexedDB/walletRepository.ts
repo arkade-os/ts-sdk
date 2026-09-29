@@ -253,6 +253,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
             .transaction([STORE_TRANSACTIONS], "readonly")
             .objectStore(STORE_TRANSACTIONS);
         const since = Math.max(filter.since ?? 0, page.after?.createdAt ?? 0);
+        // TODO: add an (address, createdAt) index in wallet DB v4 to avoid scanning other addresses.
         const request = store.index("createdAt").openCursor(IDBKeyRange.lowerBound(since));
         return new Promise((resolve, reject) => {
             const rows: ArkTransaction[] = [];

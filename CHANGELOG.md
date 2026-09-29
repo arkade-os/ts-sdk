@@ -11,6 +11,13 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **Repository collection reads are replaced by bounded pages.** Custom SDK
+  contract, intent, or wallet repositories and swap repositories must implement
+  the new page methods. Intent pages now sort by `intentTxId` rather than
+  `(createdAt, intentTxId)`, so consumers displaying intents in time order
+  should sort the collected result explicitly. `IntentFilter.skip` and `take`
+  are replaced by `PageRequest` cursors.
+
 - **`@arkade-os/boltz-swap` is removed from the repo and will not be
   published on the 0.5 line.** The package's Boltz-routed rails are
   superseded by the `@arkade-os/swap` v2 client (`createSwapClient` on the
