@@ -15,6 +15,7 @@
  */
 import {
     type Identity,
+    type Network,
     type VHTLC,
     claimWithPreimageIdentity,
     signAndSubmitOffchainTx,
@@ -95,6 +96,8 @@ export async function pushClaim(
          * by then, so the value gate protects nothing and would only strand
          * the remainder. */
         partiallyClaimed?: boolean;
+        /** @see operatorUnrollScript */
+        network?: Network;
     },
 ): Promise<{ txid: string; amount: number }> {
     if (input.vtxos.length === 0) throw new Error("nothing to claim: no funded outputs");
@@ -114,7 +117,7 @@ export async function pushClaim(
 
     assertPreimageMatches(input.preimage, input.contract.options.preimageHash);
 
-    const serverUnrollScript = await operatorUnrollScript(operator);
+    const serverUnrollScript = await operatorUnrollScript(operator, input.network);
 
     const leaf = input.contract.claim();
 

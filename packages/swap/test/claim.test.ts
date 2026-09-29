@@ -60,12 +60,12 @@ const swapScript = () =>
         payoutPkScript: p2tr(key(5)),
     });
 
-const CHECKPOINT_TAPSCRIPT = hex.encode(
-    CSVMultisigTapscript.encode({
-        timelock: { type: "blocks", value: BigInt(144) },
-        pubkeys: [key(3)],
-    }).script,
-);
+const checkpointTapscriptOf = (
+    timelock: { type: "blocks" | "seconds"; value: bigint },
+    pubkey: Uint8Array = key(3),
+): string => hex.encode(CSVMultisigTapscript.encode({ timelock, pubkeys: [pubkey] }).script);
+
+const CHECKPOINT_TAPSCRIPT = checkpointTapscriptOf({ type: "blocks", value: BigInt(144) });
 
 const VTXOS: LockupVtxo[] = [
     { txid: "11".repeat(32), vout: 0, value: 60_000, recoverable: false },
@@ -90,6 +90,7 @@ const operatorCosign = async (psbt: string): Promise<string> =>
  * those signatures before finalizing, so a mute fake would prove nothing. */
 const fakeOperator = (
     over: {
+        checkpointTapscript?: string;
         checkpointsFor?: (submitted: string[]) => string[];
         /** Answer without countersigning, as a server that never signed. */
         cosign?: boolean;
@@ -102,7 +103,11 @@ const fakeOperator = (
     return {
         submitted,
         finalized,
-        getInfo: async () => ({ checkpointTapscript: CHECKPOINT_TAPSCRIPT }),
+        getInfo: async () => ({
+            checkpointTapscript: over.checkpointTapscript ?? CHECKPOINT_TAPSCRIPT,
+            network: "regtest",
+            forfeitPubkey: hex.encode(key(3)),
+        }),
         submitTx: async (tx: string, checkpoints: string[]) => {
             submitted.push({ tx, checkpoints });
             const answered = over.checkpointsFor ? over.checkpointsFor(checkpoints) : checkpoints;
@@ -381,6 +386,40 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(/nothing to claim/);
+    });
+
+    describe("the checkpoint script the operator hands out is gated", () => {
+        // Refusing after submit has already published `P`, so both refusals precede signing.
+        const claim = (operator: FakeOperator) =>
+            pushClaim(operator, {
+                contract: swapScript(),
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+                vtxos: VTXOS,
+                destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
+            });
+
+        it("refuses a checkpoint exit delay below the network's floor", async () => {
+            const operator = fakeOperator({
+                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(1) }),
+            });
+            await expect(claim(operator)).rejects.toThrow(/checkpoint exit delay rejected/);
+            expect(operator.submitted).toEqual([]);
+        });
+
+        it("refuses a checkpoint pinned to a key other than the advertised forfeit key", async () => {
+            const operator = fakeOperator({
+                checkpointTapscript: checkpointTapscriptOf(
+                    { type: "blocks", value: BigInt(144) },
+                    key(4),
+                ),
+            });
+            await expect(claim(operator)).rejects.toThrow(
+                /does not match the advertised forfeitPubkey/,
+            );
+            expect(operator.submitted).toEqual([]);
+        });
     });
 });
 

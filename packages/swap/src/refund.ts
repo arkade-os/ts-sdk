@@ -28,14 +28,19 @@ import {
     type IContractManager,
     type Identity,
     type ArkProvider,
+    type Network,
     RestIndexerProvider,
     Transaction,
     VHTLC,
     assertSubmittedArkTxid,
+    assertValidServerUnrollScript,
     buildOffchainTx,
     getArkPsbtFields,
     hasTerminalSpend,
     matchServerCheckpoints,
+    networkFromArkadeInfo,
+    resolveCheckpointExitDelayPolicy,
+    toXOnly,
     type IWallet,
 } from "@arkade-os/sdk";
 
@@ -363,15 +368,27 @@ export const assertNoneSwept = (
     }
 };
 
+/**
+ * The checkpoint outputs' server-claim leaf, validated through the SDK's gate: a sub-floor or
+ * wrong-key script lets the operator sweep an in-flight checkpoint before it settles.
+ *
+ * `network` pins the exit-delay floor to what the CALLER resolved — without it the bound comes
+ * from the very response being checked, so an operator naming `regtest` relaxes its own. The
+ * forfeit key is that response's own, as `Wallet.create` does at first contact.
+ *
+ * @throws {ServerResponseMismatchError} when the script is malformed or out of policy.
+ */
 export const operatorUnrollScript = async (
     operator: SwapOperator,
+    network?: Network,
 ): Promise<CSVMultisigTapscript.Type> => {
     const info = await operator.getInfo();
-    try {
-        return CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
-    } catch {
-        throw new Error("invalid checkpointTapscript from the operator");
-    }
+    return assertValidServerUnrollScript(
+        info.checkpointTapscript,
+        resolveCheckpointExitDelayPolicy(network ?? networkFromArkadeInfo(info), {
+            advertisedForfeitPubkey: toXOnly(hex.decode(info.forfeitPubkey), "forfeit key"),
+        }),
+    );
 };
 
 /** Every lockup output as an offchain input spending `leaf`. */
@@ -417,6 +434,8 @@ export async function pushRefundWithoutReceiver(
         vtxos: readonly LockupVtxo[];
         /** Defaults to the contract's own committed refund destination. */
         refundPkScript?: Uint8Array;
+        /** @see operatorUnrollScript */
+        network?: Network;
     },
 ): Promise<{ txid: string; amount: number }> {
     if (input.vtxos.length === 0) throw new Error("nothing to refund: no funded outputs");
@@ -431,7 +450,7 @@ export async function pushRefundWithoutReceiver(
         );
     }
 
-    const serverUnrollScript = await operatorUnrollScript(operator);
+    const serverUnrollScript = await operatorUnrollScript(operator, input.network);
 
     const leaf = input.contract.refundWithoutReceiver();
     const amount = input.vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
