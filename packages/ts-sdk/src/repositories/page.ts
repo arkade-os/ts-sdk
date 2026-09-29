@@ -9,6 +9,17 @@ export interface PageResult<Item, Cursor = string> {
 }
 
 export const MAX_PAGE_SIZE = 500;
+const MAX_COLLECT_PAGES = 10_000;
+
+function assertCursorAdvanced<Cursor>(after: Cursor | undefined, next: Cursor | undefined): void {
+    if (
+        after !== undefined &&
+        next !== undefined &&
+        JSON.stringify(after) === JSON.stringify(next)
+    ) {
+        throw new Error("page cursor did not advance");
+    }
+}
 
 export function assertPageRequest(request: PageRequest<unknown>): void {
     if (
@@ -37,6 +48,7 @@ export async function* iteratePages<Item, Cursor>(
     let after: Cursor | undefined;
     do {
         const page = await read({ limit: MAX_PAGE_SIZE, after });
+        assertCursorAdvanced(after, page.nextCursor);
         for (const item of page.items) yield item;
         after = page.nextCursor;
     } while (after !== undefined);
@@ -47,8 +59,11 @@ export async function collectPages<Item, Cursor>(
 ): Promise<Item[]> {
     const items: Item[] = [];
     let after: Cursor | undefined;
+    let pages = 0;
     do {
+        if (++pages > MAX_COLLECT_PAGES) throw new Error("collectPages: page limit exceeded");
         const page = await read({ limit: MAX_PAGE_SIZE, after });
+        assertCursorAdvanced(after, page.nextCursor);
         items.push(...page.items);
         after = page.nextCursor;
     } while (after !== undefined);

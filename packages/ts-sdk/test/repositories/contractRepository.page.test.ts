@@ -1,5 +1,6 @@
 import { collectContracts } from "../../src/repositories/contractRepository";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { IDBObjectStore as FakeIDBObjectStore } from "fake-indexeddb";
 import { createMockRealm } from "../../../../config/test-helpers/mockRealm";
 import { createNodeSQLExecutor } from "../../../../config/test-helpers/nodeSqlExecutor";
 import type { Contract } from "../../src/contracts/types";
@@ -46,4 +47,42 @@ describe.each(backends)("contract pages (%s)", (_, create) => {
             RangeError,
         );
     });
+});
+
+it("uses keyed IndexedDB reads for a script-filtered contract page", async () => {
+    await using repository = new IndexedDBContractRepository(
+        `keyed-contract-${crypto.randomUUID()}`,
+    );
+    for (const script of ["a", "b", "c"]) {
+        await repository.saveContract({
+            script,
+            address: `address-${script}`,
+            type: "default",
+            state: script === "b" ? "inactive" : "active",
+            params: {},
+            createdAt: 1,
+        });
+    }
+    const get = vi.spyOn(FakeIDBObjectStore.prototype, "get");
+    const openCursor = vi.spyOn(FakeIDBObjectStore.prototype, "openCursor");
+    try {
+        const page = await repository.getContractsPage(
+            { script: ["c", "a", "b", "a"], state: "active" },
+            { limit: 1 },
+        );
+        expect(page.items.map((contract) => contract.script)).toEqual(["a"]);
+        expect(page.nextCursor).toBe("a");
+        expect(get).toHaveBeenCalledTimes(3);
+        const next = await repository.getContractsPage(
+            { script: ["c", "a", "b", "a"], state: "active" },
+            { limit: 1, after: page.nextCursor },
+        );
+        expect(next.items.map((contract) => contract.script)).toEqual(["c"]);
+        expect(next.nextCursor).toBeUndefined();
+        expect(get).toHaveBeenCalledTimes(5);
+        expect(openCursor).not.toHaveBeenCalled();
+    } finally {
+        get.mockRestore();
+        openCursor.mockRestore();
+    }
 });

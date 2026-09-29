@@ -2,7 +2,7 @@ import { DB_VERSION, STORE_CONTRACTS } from "./db";
 import { Contract, watchStateOf } from "../../contracts";
 import { ContractFilter, ContractRepository } from "../contractRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
-import { awaitTransaction } from "./idbUtils";
+import { awaitTransaction, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
 import { initDatabase } from "./schema";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
@@ -39,10 +39,24 @@ export class IndexedDBContractRepository implements ContractRepository {
         assertPageRequest(page);
         const db = await this.getDB();
         const store = db.transaction([STORE_CONTRACTS], "readonly").objectStore(STORE_CONTRACTS);
+        const normalized = normalizeFilter(filter ?? {});
+        const scripts = normalized.get("script");
+        if (scripts) {
+            const keys = [...new Set(scripts)]
+                .filter((script) => page.after === undefined || script > page.after)
+                .sort();
+            const contracts = await Promise.all(
+                keys.map((script) => promisifyRequest<Contract | undefined>(store.get(script))),
+            );
+            return pageResult(
+                this.applyContractFilter(contracts, normalized),
+                page.limit,
+                (contract) => contract.script,
+            );
+        }
         const range =
             page.after === undefined ? undefined : IDBKeyRange.lowerBound(page.after, true);
         const cursorRequest = store.openCursor(range);
-        const normalized = normalizeFilter(filter ?? {});
         return new Promise((resolve, reject) => {
             const rows: Contract[] = [];
             cursorRequest.onerror = () => reject(cursorRequest.error);
