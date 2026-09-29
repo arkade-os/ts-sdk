@@ -1,4 +1,4 @@
-import type { IWallet } from "@arkade-os/sdk";
+import { ArkAddress, type IWallet } from "@arkade-os/sdk";
 import { restoreOfferCoverage } from "./offer";
 import type { AssetSwapRepository } from "./repository";
 import { restoreAssetSwaps, type RestoreIndexer, type Tx } from "./restore";
@@ -71,9 +71,12 @@ export async function restoreAssetSwapRepository(
     opts: RestoreAssetSwapRepositoryOptions,
 ): Promise<RestoreAssetSwapRepositoryResult> {
     const { wallet, indexer, repository, txs, operatorPubkey, prepareNew, signal } = opts;
-    const [existing, scanned] = await Promise.all([
+    // The wallet's own address carries the prefix a rebuilt record's `swapAddress` needs; without
+    // it cancel() can no longer pin the operator key the deposit was funded against.
+    const [existing, scanned, address] = await Promise.all([
         getAssetSwapsOrThrow(repository),
         repository.getScannedTxids(),
+        wallet.getAddress(),
     ]);
     if (signal?.aborted) return aborted(existing);
 
@@ -83,6 +86,7 @@ export async function restoreAssetSwapRepository(
             operatorPubkey,
             scanned,
             reopen: existing.filter((swap) => isOpen(swap) && isOfferSwap(swap)),
+            hrp: ArkAddress.decode(address).hrp,
         });
     } catch (scanError) {
         // Coverage for records already on disk must not depend on the chain scan
