@@ -122,7 +122,7 @@ async function main() {
     console.log("[Alice]\tSettlement txid:", txid);
 
     const bobOffChainAddress = await bobWallet.getAddress();
-    await aliceWallet.sendBitcoin({
+    await aliceWallet.send({
         address: bobOffChainAddress,
         amount: 50000,
     });
