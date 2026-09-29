@@ -124,13 +124,15 @@ export class SQLiteWalletRepository implements WalletRepository {
     /**
      * Bring the `vtxos` table to the current schema (v1 = `script` NOT NULL).
      *
-     * Three cases:
+     * Four cases:
      *   - Fresh install: create the v1 schema directly.
      *   - Legacy install without a `script` column: add it, backfill from
      *     `address`, then rebuild the table with NOT NULL (SQLite cannot add
      *     the NOT NULL constraint in place).
      *   - Legacy install with a nullable `script` column: backfill the NULLs
      *     and rebuild.
+     *   - 0.4.x install: `script` is already NOT NULL but `virtual_status_json
+     *     NOT NULL` is still there, and `saveVtxos` no longer writes it.
      *
      * The backfill derives `script` from the Ark address, matching what the
      * indexer would have returned — new rows from the indexer always carry a
@@ -180,10 +182,11 @@ export class SQLiteWalletRepository implements WalletRepository {
             // there to read. Without the copy a swept row comes back `isSwept: false`, spendable,
             // until the first indexer sync. Runs before the rebuild below, whose INSERT…SELECT
             // carries these columns across.
-            if (addedCanonicalColumns && cols.some((c) => c.name === "virtual_status_json")) {
+            const hasLegacyBlob = cols.some((c) => c.name === "virtual_status_json");
+            if (addedCanonicalColumns && hasLegacyBlob) {
                 await this.backfillCanonicalVtxoColumns();
             }
-            if (scriptCol && scriptCol.notnull === 1) {
+            if (scriptCol && scriptCol.notnull === 1 && !hasLegacyBlob) {
                 // Already on v1 schema.
                 return;
             }
