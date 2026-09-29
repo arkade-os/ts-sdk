@@ -78,6 +78,24 @@ import {
 } from "./script/base";
 import { assembleBtcdTaprootTree } from "./script/taprootTree";
 import {
+    assessVhtlcLockup,
+    diagnoseFundingOnServer,
+    diagnoseFundingPsbt,
+    diagnoseOptionsFromServer,
+    formatFundingReport,
+    MAINNET_LEGACY_EXIT_TIMELOCK,
+    reportFunding,
+    senderWalletScripts,
+} from "./rescue/diagnoseFunding";
+import type {
+    DiagnoseOptions,
+    FundingReport,
+    FundingTxDiagnosis,
+    ReportedOutput,
+    ServerSignerInfo,
+    VhtlcLockupAssessment,
+} from "./rescue/diagnoseFunding";
+import {
     TxType,
     IWallet,
     IReadonlyWallet,
@@ -834,6 +852,21 @@ export {
     hasTerminalSpend,
     isPastExpiry,
     isVirtualCoin,
+    // Swept lockup diagnosis (Boltz VHTLC and any foreign script)
+    assessVhtlcLockup,
+    diagnoseFundingOnServer,
+    diagnoseFundingPsbt,
+    diagnoseOptionsFromServer,
+    formatFundingReport,
+    MAINNET_LEGACY_EXIT_TIMELOCK,
+    reportFunding,
+    senderWalletScripts,
+    type DiagnoseOptions,
+    type FundingReport,
+    type FundingTxDiagnosis,
+    type ReportedOutput,
+    type ServerSignerInfo,
+    type VhtlcLockupAssessment,
     // Contracts
     ContractManager,
     ContractWatcher,
