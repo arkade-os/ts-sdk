@@ -757,6 +757,51 @@ describe("SQLite migration: migrateVtxosTable", () => {
         expect(tempTableExists(db)).toBe(false);
     });
 
+    it("keeps canonical columns a pre-fix v0.5 build already populated", async () => {
+        // The broken build added the columns but kept the blob; values written since then (e.g.
+        // an indexer sync) must survive the rebuild rather than be re-derived from the stale blob.
+        db.exec(LEGACY_V04_SCHEMA);
+        for (const [name, type] of [
+            ["is_swept", "INTEGER"],
+            ["is_preconfirmed", "INTEGER"],
+            ["commitment_txids_json", "TEXT"],
+            ["expires_at", "TEXT"],
+            ["expires_at_height", "INTEGER"],
+        ]) {
+            db.exec(`ALTER TABLE ark_vtxos ADD COLUMN ${name} ${type}`);
+        }
+        insertV04Row(db, "synced-1", TEST_ARK_ADDRESS, EXPECTED_PK_SCRIPT_HEX, {
+            state: "swept",
+            commitmentTxIds: ["stale"],
+            batchExpiry: 1_800_000_000_000,
+        });
+        db.prepare(
+            `UPDATE ark_vtxos SET is_swept = 0, is_preconfirmed = 1,
+                    commitment_txids_json = '["c2"]', expires_at = '2030-01-01T00:00:00.000Z',
+                    expires_at_height = NULL
+             WHERE txid = 'synced-1'`,
+        ).run();
+
+        await repo.saveVtxos(TEST_ARK_ADDRESS, [createMockVtxo("fresh-1", 0, 2000)]);
+
+        expect(vtxosCols(db).some((c) => c.name === "virtual_status_json")).toBe(false);
+        expect(
+            db
+                .prepare(
+                    `SELECT is_swept, is_preconfirmed, commitment_txids_json, expires_at,
+                            expires_at_height
+                     FROM ark_vtxos WHERE txid = 'synced-1'`,
+                )
+                .get(),
+        ).toEqual({
+            is_swept: 0,
+            is_preconfirmed: 1,
+            commitment_txids_json: '["c2"]',
+            expires_at: "2030-01-01T00:00:00.000Z",
+            expires_at_height: null,
+        });
+    });
+
     it("recovers canonical facts from virtual_status_json", async () => {
         // `ALTER TABLE ADD COLUMN` leaves every existing row NULL, and SQLite cannot drop the old
         // blob column — so it is still there to read. Without the copy a swept row reads
