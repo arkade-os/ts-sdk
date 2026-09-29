@@ -2,7 +2,7 @@ import { hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { contractPreimage } from "@arkade-os/sdk";
 import type { IWallet, ProvisionedClaimSecret, ProvisionedKey } from "@arkade-os/sdk";
-import type { AssetSwapRepository } from "./repository";
+import { collectAssetSwaps, type AssetSwapRepository } from "./repository";
 
 /** @deprecated Use `Outcome`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export type AssetSwapStatus =
@@ -117,7 +117,7 @@ const byNewest = (a: AssetSwap, b: AssetSwap): number => b.createdAt - a.created
 export const getAssetSwapsOrThrow = async (
     repository: AssetSwapRepository,
 ): Promise<AssetSwap[]> => {
-    return (await repository.getAllSwaps())
+    return (await collectAssetSwaps(repository))
         .filter(
             (s) =>
                 s &&

@@ -1,3 +1,4 @@
+import { collectContracts } from "../src/repositories/contractRepository";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
     Wallet,
@@ -151,7 +152,7 @@ describe("Wallet boarding rotation", () => {
             // The rotated boarding script is persisted as a tagged, active
             // `boarding` contract.
             const rotatedScript = hexEncode(wallet.boardingTapscript.pkScript);
-            const row = (await contractRepo.getContracts({})).find(
+            const row = (await collectContracts(contractRepo, {})).find(
                 (c) => c.script === rotatedScript,
             );
             expect(row).toBeDefined();

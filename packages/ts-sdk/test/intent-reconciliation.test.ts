@@ -1,3 +1,4 @@
+import { collectIntents } from "../src/repositories/intentRepository";
 import { describe, it, expect, vi } from "vitest";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
 import { reconcileIntents, type IntentReconcilerIndexer } from "../src/wallet/intentReconciliation";
@@ -32,7 +33,7 @@ const seed = async (repo: InMemoryIntentRepository, i: ArkIntent) => {
 };
 
 const stateOf = async (repo: InMemoryIntentRepository, id = "i1"): Promise<ArkIntentState> =>
-    (await repo.getIntents({ intentTxIds: [id] }))[0].state;
+    (await collectIntents(repo, { intentTxIds: [id] }))[0].state;
 
 describe("reconcileIntents", () => {
     it("marks batch_succeeded when all inputs are consumed by a batch", async () => {
@@ -46,7 +47,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");
         expect(done.commitmentTransactionId).toBe("commitment-tx");
         // Succeeded intent no longer locks its inputs.
@@ -62,7 +63,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");
         expect(done.commitmentTransactionId).toBe("known-ctx");
     });
@@ -76,7 +77,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
         expect(done.state).toBe("cancelled");
         expect(done.cancellationReason).toMatch(/never submitted/i);
         expect(await repo.getLockedVtxoOutpoints()).toEqual([]);
@@ -109,7 +110,7 @@ describe("reconcileIntents", () => {
             now: () => 1000,
         });
 
-        const done = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
         expect(done.state).toBe("cancelled");
         expect(done.cancellationReason).toMatch(/expired/i);
     });
@@ -145,7 +146,7 @@ describe("reconcileIntents", () => {
 
     it("is a no-op (no throw) when the intent store read fails", async () => {
         const repo = new InMemoryIntentRepository();
-        vi.spyOn(repo, "getIntents").mockRejectedValueOnce(new Error("db corrupt"));
+        vi.spyOn(repo, "getIntentsPage").mockRejectedValueOnce(new Error("db corrupt"));
         const getVtxos = vi.fn();
 
         await expect(
@@ -203,7 +204,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
         expect(done.state).toBe("cancelled");
         expect(done.cancellationReason).toMatch(/unilaterally exited/i);
         // The whole point: without the exit branch these stay locked forever.
@@ -221,7 +222,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");
         expect(done.commitmentTransactionId).toBe("commitment-tx");
     });
@@ -245,7 +246,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");
         expect(done.commitmentTransactionId).toBeUndefined();
         expect(await repo.getLockedVtxoOutpoints()).toEqual([]);
@@ -261,7 +262,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
         expect(done.state).toBe("waiting_for_batch");
         expect(done.commitmentTransactionId).toBeUndefined();
         expect(await repo.getLockedVtxoOutpoints()).toEqual([{ txid: "v", vout: 0 }]);

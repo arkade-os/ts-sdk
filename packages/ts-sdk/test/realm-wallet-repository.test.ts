@@ -1,3 +1,7 @@
+import { createMockRealm as mockRealm } from "../../../config/test-helpers/mockRealm";
+import { collectTransactionHistory } from "../src/repositories/walletRepository";
+import { collectVtxos } from "../src/repositories/walletRepository";
+import { collectUtxos } from "../src/repositories/walletRepository";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
@@ -6,144 +10,6 @@ import type { ExtendedVirtualCoin, ExtendedCoin, ArkTransaction, TxType } from "
 import type { TapLeafScript } from "../src/script/base";
 import type { WalletState } from "../src/repositories/walletRepository";
 import { hasTerminalSpend } from "../src/wallet/vtxo";
-
-// ── Mock Realm ──────────────────────────────────────────────────────────
-// A lightweight in-memory mock that simulates the Realm API surface
-// used by RealmWalletRepository.
-
-function createMockRealm() {
-    // schema name -> (primary key value -> object)
-    const store = new Map<string, Map<string, any>>();
-
-    // Map schema names to their PK fields
-    const pkFields: Record<string, string> = {
-        ArkVtxo: "pk",
-        ArkUtxo: "pk",
-        ArkTransaction: "pk",
-        ArkWalletState: "key",
-        ArkContract: "script",
-    };
-
-    function getSchemaStore(schemaName: string): Map<string, any> {
-        if (!store.has(schemaName)) {
-            store.set(schemaName, new Map());
-        }
-        return store.get(schemaName)!;
-    }
-
-    function getPk(schemaName: string, obj: any): string {
-        const field = pkFields[schemaName] ?? "pk";
-        return String(obj[field]);
-    }
-
-    /**
-     * Parse a Realm-style filter string and evaluate it against an object.
-     * Supports: `field == $N`, `AND`, `OR`, and parentheses grouping.
-     */
-    function matchesFilter(obj: any, query: string, args: any[]): boolean {
-        // Split on AND (top level)
-        // For simplicity handle OR inside parentheses
-        const andParts = splitTopLevel(query, " AND ");
-        return andParts.every((part) => {
-            const trimmed = part.trim();
-            // Handle OR groups like (field == $0 OR field == $1)
-            if (trimmed.startsWith("(") && trimmed.endsWith(")")) {
-                const inner = trimmed.slice(1, -1);
-                const orParts = inner.split(" OR ");
-                return orParts.some((orPart) => evaluateCondition(obj, orPart.trim(), args));
-            }
-            return evaluateCondition(obj, trimmed, args);
-        });
-    }
-
-    function splitTopLevel(str: string, delimiter: string): string[] {
-        const parts: string[] = [];
-        let depth = 0;
-        let current = "";
-        let i = 0;
-        while (i < str.length) {
-            if (str[i] === "(") depth++;
-            if (str[i] === ")") depth--;
-            if (depth === 0 && str.substring(i, i + delimiter.length) === delimiter) {
-                parts.push(current);
-                current = "";
-                i += delimiter.length;
-                continue;
-            }
-            current += str[i];
-            i++;
-        }
-        if (current) parts.push(current);
-        return parts;
-    }
-
-    function evaluateCondition(obj: any, condition: string, args: any[]): boolean {
-        const match = condition.match(/(\w+)\s*==\s*\$(\d+)/);
-        if (!match) return true; // skip unknown conditions
-        const field = match[1];
-        const argIdx = parseInt(match[2], 10);
-        return obj[field] === args[argIdx];
-    }
-
-    function createFilteredResult(items: any[], schemaName: string) {
-        const result: any = {
-            filtered(query: string, ...args: any[]) {
-                const filtered = items.filter((item) => matchesFilter(item, query, args));
-                return createFilteredResult(filtered, schemaName);
-            },
-            [Symbol.iterator]: () => items[Symbol.iterator](),
-            length: items.length,
-            snapshot() {
-                return [...items];
-            },
-        };
-        return result;
-    }
-
-    const realm = {
-        write(callback: () => void) {
-            callback();
-        },
-
-        create(schemaName: string, obj: any, mode?: string) {
-            const schemaStore = getSchemaStore(schemaName);
-            const pk = getPk(schemaName, obj);
-            if (mode === "modified") {
-                // upsert: merge with existing
-                const existing = schemaStore.get(pk);
-                if (existing) {
-                    schemaStore.set(pk, { ...existing, ...obj });
-                } else {
-                    schemaStore.set(pk, { ...obj });
-                }
-            } else {
-                schemaStore.set(pk, { ...obj });
-            }
-        },
-
-        objects(schemaName: string) {
-            const schemaStore = getSchemaStore(schemaName);
-            const items = [...schemaStore.values()];
-            return createFilteredResult(items, schemaName);
-        },
-
-        delete(objects: any) {
-            // Handle both arrays and filtered results (iterables)
-            const toRemove = [...objects];
-            for (const [schemaName, schemaStore] of store) {
-                const pkField = pkFields[schemaName] ?? "pk";
-                for (const item of toRemove) {
-                    const pk = String(item[pkField]);
-                    if (schemaStore.has(pk)) {
-                        schemaStore.delete(pk);
-                    }
-                }
-            }
-        },
-    };
-
-    return realm;
-}
 
 // ── Test fixtures ───────────────────────────────────────────────────────
 
@@ -265,12 +131,18 @@ function createMockTransaction(
 // ── Tests ───────────────────────────────────────────────────────────────
 
 describe("RealmWalletRepository", () => {
-    let realm: ReturnType<typeof createMockRealm>;
+    let realm: ReturnType<typeof mockRealm>;
     let repository: RealmWalletRepository;
     const testAddress = "test-address-123";
 
     beforeEach(() => {
-        realm = createMockRealm();
+        realm = mockRealm({
+            ArkVtxo: "pk",
+            ArkUtxo: "pk",
+            ArkTransaction: "pk",
+            ArkWalletState: "key",
+            ArkContract: "script",
+        });
         repository = new RealmWalletRepository(realm);
     });
 
@@ -289,7 +161,7 @@ describe("RealmWalletRepository", () => {
 
     describe("VTXO management", () => {
         it("should return empty array when no VTXOs exist", async () => {
-            const vtxos = await repository.getVtxos(testAddress);
+            const vtxos = await collectVtxos(repository, testAddress);
             expect(vtxos).toEqual([]);
         });
 
@@ -298,7 +170,7 @@ describe("RealmWalletRepository", () => {
             const vtxo2 = createMockVtxo("tx2", 1, 20000);
 
             await repository.saveVtxos(testAddress, [vtxo1, vtxo2]);
-            const retrieved = await repository.getVtxos(testAddress);
+            const retrieved = await collectVtxos(repository, testAddress);
 
             expect(retrieved).toHaveLength(2);
             const sorted = retrieved.sort((a, b) => a.txid.localeCompare(b.txid));
@@ -313,7 +185,7 @@ describe("RealmWalletRepository", () => {
         it("should round-trip VTXOs with all optional fields", async () => {
             const vtxo = createMockVtxoWithExtras("tx-full", 0, 50000);
             await repository.saveVtxos(testAddress, [vtxo]);
-            const [retrieved] = await repository.getVtxos(testAddress);
+            const [retrieved] = await collectVtxos(repository, testAddress);
 
             expect(retrieved.txid).toBe("tx-full");
             expect(retrieved.value).toBe(50000);
@@ -337,7 +209,7 @@ describe("RealmWalletRepository", () => {
         it("should round-trip tap tree and leaf scripts", async () => {
             const vtxo = createMockVtxo("tx-tap", 0, 5000);
             await repository.saveVtxos(testAddress, [vtxo]);
-            const [retrieved] = await repository.getVtxos(testAddress);
+            const [retrieved] = await collectVtxos(repository, testAddress);
 
             // tapTree should survive serialization
             expect(retrieved.tapTree).toBeInstanceOf(Uint8Array);
@@ -362,7 +234,7 @@ describe("RealmWalletRepository", () => {
             const vtxo1Updated = createMockVtxo("tx1", 0, 15000);
             await repository.saveVtxos(testAddress, [vtxo1Updated]);
 
-            const retrieved = await repository.getVtxos(testAddress);
+            const retrieved = await collectVtxos(repository, testAddress);
             expect(retrieved).toHaveLength(1);
             expect(retrieved[0].value).toBe(15000);
         });
@@ -372,7 +244,7 @@ describe("RealmWalletRepository", () => {
             await repository.saveVtxos(testAddress, [vtxo1]);
 
             await repository.deleteVtxos(testAddress);
-            const retrieved = await repository.getVtxos(testAddress);
+            const retrieved = await collectVtxos(repository, testAddress);
 
             expect(retrieved).toEqual([]);
         });
@@ -386,8 +258,8 @@ describe("RealmWalletRepository", () => {
             await repository.saveVtxos(address1, [vtxo1]);
             await repository.saveVtxos(address2, [vtxo2]);
 
-            const retrieved1 = await repository.getVtxos(address1);
-            const retrieved2 = await repository.getVtxos(address2);
+            const retrieved1 = await collectVtxos(repository, address1);
+            const retrieved2 = await collectVtxos(repository, address2);
 
             expect(retrieved1).toHaveLength(1);
             expect(retrieved1[0].txid).toBe("tx1");
@@ -403,8 +275,8 @@ describe("RealmWalletRepository", () => {
 
             await repository.deleteVtxos(address1);
 
-            expect(await repository.getVtxos(address1)).toEqual([]);
-            expect(await repository.getVtxos(address2)).toHaveLength(1);
+            expect(await collectVtxos(repository, address1)).toEqual([]);
+            expect(await collectVtxos(repository, address2)).toHaveLength(1);
         });
 
         it("should preserve createdAt date through round-trip", async () => {
@@ -412,7 +284,7 @@ describe("RealmWalletRepository", () => {
             vtxo.createdAt = new Date("2024-06-15T10:30:00.000Z");
 
             await repository.saveVtxos(testAddress, [vtxo]);
-            const [retrieved] = await repository.getVtxos(testAddress);
+            const [retrieved] = await collectVtxos(repository, testAddress);
 
             expect(retrieved.createdAt).toBeInstanceOf(Date);
             expect(retrieved.createdAt.toISOString()).toBe("2024-06-15T10:30:00.000Z");
@@ -425,7 +297,7 @@ describe("RealmWalletRepository", () => {
             (vtxo as any).isSpent = undefined;
 
             await repository.saveVtxos(testAddress, [vtxo]);
-            const [retrieved] = await repository.getVtxos(testAddress);
+            const [retrieved] = await collectVtxos(repository, testAddress);
 
             // The fixture is preconfirmed, so the derivation says "not spent".
             expect(retrieved.isSpent).toBe(false);
@@ -438,7 +310,7 @@ describe("RealmWalletRepository", () => {
             vtxo.spentBy = "spent-by-tx";
 
             await repository.saveVtxos(testAddress, [vtxo]);
-            const [retrieved] = await repository.getVtxos(testAddress);
+            const [retrieved] = await collectVtxos(repository, testAddress);
 
             expect(retrieved.isSpent).toBe(false);
             expect(retrieved.spentBy).toBe("spent-by-tx");
@@ -450,7 +322,7 @@ describe("RealmWalletRepository", () => {
 
     describe("UTXO management", () => {
         it("should return empty array when no UTXOs exist", async () => {
-            const utxos = await repository.getUtxos(testAddress);
+            const utxos = await collectUtxos(repository, testAddress);
             expect(utxos).toEqual([]);
         });
 
@@ -459,7 +331,7 @@ describe("RealmWalletRepository", () => {
             const utxo2 = createMockUtxo("tx2", 1, 20000);
 
             await repository.saveUtxos(testAddress, [utxo1, utxo2]);
-            const retrieved = await repository.getUtxos(testAddress);
+            const retrieved = await collectUtxos(repository, testAddress);
 
             expect(retrieved).toHaveLength(2);
             const sorted = retrieved.sort((a, b) => a.txid.localeCompare(b.txid));
@@ -471,7 +343,7 @@ describe("RealmWalletRepository", () => {
         it("should round-trip UTXOs with extraWitness", async () => {
             const utxo = createMockUtxoWithExtras("tx-extra", 0, 30000);
             await repository.saveUtxos(testAddress, [utxo]);
-            const [retrieved] = await repository.getUtxos(testAddress);
+            const [retrieved] = await collectUtxos(repository, testAddress);
 
             expect(retrieved.txid).toBe("tx-extra");
             expect(retrieved.value).toBe(30000);
@@ -487,7 +359,7 @@ describe("RealmWalletRepository", () => {
             const utxo1Updated = createMockUtxo("tx1", 0, 15000);
             await repository.saveUtxos(testAddress, [utxo1Updated]);
 
-            const retrieved = await repository.getUtxos(testAddress);
+            const retrieved = await collectUtxos(repository, testAddress);
             expect(retrieved).toHaveLength(1);
             expect(retrieved[0].value).toBe(15000);
         });
@@ -497,7 +369,7 @@ describe("RealmWalletRepository", () => {
             await repository.saveUtxos(testAddress, [utxo1]);
 
             await repository.deleteUtxos(testAddress);
-            const retrieved = await repository.getUtxos(testAddress);
+            const retrieved = await collectUtxos(repository, testAddress);
 
             expect(retrieved).toEqual([]);
         });
@@ -508,8 +380,8 @@ describe("RealmWalletRepository", () => {
             await repository.saveUtxos(address1, [createMockUtxo("tx1", 0, 10000)]);
             await repository.saveUtxos(address2, [createMockUtxo("tx2", 0, 20000)]);
 
-            const retrieved1 = await repository.getUtxos(address1);
-            const retrieved2 = await repository.getUtxos(address2);
+            const retrieved1 = await collectUtxos(repository, address1);
+            const retrieved2 = await collectUtxos(repository, address2);
 
             expect(retrieved1).toHaveLength(1);
             expect(retrieved1[0].txid).toBe("tx1");
@@ -520,7 +392,7 @@ describe("RealmWalletRepository", () => {
         it("should round-trip tap tree and leaf scripts for UTXOs", async () => {
             const utxo = createMockUtxo("tx-tap-utxo", 0, 7000);
             await repository.saveUtxos(testAddress, [utxo]);
-            const [retrieved] = await repository.getUtxos(testAddress);
+            const [retrieved] = await collectUtxos(repository, testAddress);
 
             expect(retrieved.tapTree).toBeInstanceOf(Uint8Array);
             expect(hex.encode(retrieved.tapTree)).toBe(hex.encode(utxo.tapTree));
@@ -534,7 +406,7 @@ describe("RealmWalletRepository", () => {
 
     describe("Transaction history", () => {
         it("should return empty array when no transactions exist", async () => {
-            const txs = await repository.getTransactionHistory(testAddress);
+            const txs = await collectTransactionHistory(repository, testAddress);
             expect(txs).toEqual([]);
         });
 
@@ -554,7 +426,7 @@ describe("RealmWalletRepository", () => {
             );
 
             await repository.saveTransactions(testAddress, [tx1, tx2, tx3]);
-            const retrieved = await repository.getTransactionHistory(testAddress);
+            const retrieved = await collectTransactionHistory(repository, testAddress);
 
             expect(retrieved).toHaveLength(3);
             // sorted by createdAt ASC
@@ -582,7 +454,7 @@ describe("RealmWalletRepository", () => {
             const tx3 = createMockTransaction({ arkTxid: "atx-mid" }, "SENT" as TxType, 3000, 2000);
 
             await repository.saveTransactions(testAddress, [tx1, tx2, tx3]);
-            const retrieved = await repository.getTransactionHistory(testAddress);
+            const retrieved = await collectTransactionHistory(repository, testAddress);
 
             expect(retrieved).toHaveLength(3);
             expect(retrieved[0].key.arkTxid).toBe("atx-early");
@@ -602,7 +474,7 @@ describe("RealmWalletRepository", () => {
             );
             await repository.saveTransactions(testAddress, [tx1Updated]);
 
-            const retrieved = await repository.getTransactionHistory(testAddress);
+            const retrieved = await collectTransactionHistory(repository, testAddress);
             expect(retrieved).toHaveLength(1);
             expect(retrieved[0].amount).toBe(15000);
         });
@@ -612,7 +484,7 @@ describe("RealmWalletRepository", () => {
             await repository.saveTransactions(testAddress, [tx1]);
 
             await repository.deleteTransactions(testAddress);
-            const retrieved = await repository.getTransactionHistory(testAddress);
+            const retrieved = await collectTransactionHistory(repository, testAddress);
 
             expect(retrieved).toEqual([]);
         });
@@ -635,7 +507,7 @@ describe("RealmWalletRepository", () => {
             };
 
             await repository.saveTransactions(testAddress, [tx]);
-            const [retrieved] = await repository.getTransactionHistory(testAddress);
+            const [retrieved] = await collectTransactionHistory(repository, testAddress);
 
             expect(retrieved.settled).toBe(true);
             expect(retrieved.assets).toEqual([
@@ -659,8 +531,8 @@ describe("RealmWalletRepository", () => {
             await repository.saveTransactions(address1, [tx1]);
             await repository.saveTransactions(address2, [tx2]);
 
-            const retrieved1 = await repository.getTransactionHistory(address1);
-            const retrieved2 = await repository.getTransactionHistory(address2);
+            const retrieved1 = await collectTransactionHistory(repository, address1);
+            const retrieved2 = await collectTransactionHistory(repository, address2);
 
             expect(retrieved1).toHaveLength(1);
             expect(retrieved1[0].key.arkTxid).toBe("atx1");
@@ -729,9 +601,9 @@ describe("RealmWalletRepository", () => {
             ]);
             await repository.clear();
 
-            expect(await repository.getVtxos(testAddress)).toEqual([]);
-            expect(await repository.getUtxos(testAddress)).toEqual([]);
-            expect(await repository.getTransactionHistory(testAddress)).toEqual([]);
+            expect(await collectVtxos(repository, testAddress)).toEqual([]);
+            expect(await collectUtxos(repository, testAddress)).toEqual([]);
+            expect(await collectTransactionHistory(repository, testAddress)).toEqual([]);
             expect(await repository.getWalletState()).toBeNull();
         });
     });

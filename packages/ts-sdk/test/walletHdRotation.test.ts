@@ -1,3 +1,5 @@
+import { collectContracts } from "../src/repositories/contractRepository";
+import { collectVtxos } from "../src/repositories/walletRepository";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { hex, base64 } from "@scure/base";
 import { Transaction } from "@scure/btc-signer";
@@ -145,7 +147,7 @@ describe("Wallet HD rotation", () => {
             const contractRepo = new InMemoryContractRepository();
             const wallet = await makeHdWallet(walletRepo, contractRepo);
 
-            const contracts = await contractRepo.getContracts({
+            const contracts = await collectContracts(contractRepo, {
                 type: "default",
                 state: "active",
             });
@@ -170,7 +172,7 @@ describe("Wallet HD rotation", () => {
             const contractRepo = new InMemoryContractRepository();
             const wallet = await makeHdWallet(walletRepo, contractRepo);
 
-            const all = await contractRepo.getContracts({});
+            const all = await collectContracts(contractRepo, {});
             expect(all.length).toBeGreaterThan(0);
             const tagged = all.filter((c) => c.metadata?.source === "wallet-receive");
             expect(tagged).toHaveLength(0);
@@ -292,7 +294,7 @@ describe("Wallet HD rotation", () => {
             }
             await (wallet as any)._receiveRotator?.drain();
 
-            const after = await contractRepo.getContracts({
+            const after = await collectContracts(contractRepo, {
                 type: "default",
                 state: "active",
             });
@@ -512,7 +514,7 @@ describe("Wallet HD rotation", () => {
             }
             await (wallet as any)._receiveRotator?.drain();
 
-            const baseline = (await contractRepo.getContracts({})).find(
+            const baseline = (await collectContracts(contractRepo, {})).find(
                 (c) => c.script === baselineScript,
             );
             expect(baseline).toBeDefined();
@@ -558,18 +560,18 @@ describe("Wallet HD rotation", () => {
             const tagged2Script = wallet.defaultContractScript;
             expect(tagged2Script).not.toBe(tagged1Script);
 
-            const tagged1 = (await contractRepo.getContracts({})).find(
+            const tagged1 = (await collectContracts(contractRepo, {})).find(
                 (c) => c.script === tagged1Script,
             );
             expect(tagged1).toBeDefined();
             expect(tagged1!.state).toBe("inactive");
 
             // Baseline still active. tagged-2 is the new active display.
-            const baseline = (await contractRepo.getContracts({})).find(
+            const baseline = (await collectContracts(contractRepo, {})).find(
                 (c) => c.script === baselineScript,
             );
             expect(baseline!.state).toBe("active");
-            const tagged2 = (await contractRepo.getContracts({})).find(
+            const tagged2 = (await collectContracts(contractRepo, {})).find(
                 (c) => c.script === tagged2Script,
             );
             expect(tagged2!.state).toBe("active");
@@ -613,10 +615,10 @@ describe("Wallet HD rotation", () => {
             // the rotated pubkey. `initializeContractManager` runs
             // again and must register the matrix at the IDENTITY
             // pubkey, not at the rotated pubkey.
-            const beforeCount = (await contractRepo.getContracts({})).length;
+            const beforeCount = (await collectContracts(contractRepo, {})).length;
             const second = await makeHdWallet(walletRepo, contractRepo);
             await second.getContractManager();
-            const all = await contractRepo.getContracts({});
+            const all = await collectContracts(contractRepo, {});
 
             // The rotated display is exactly ONE tagged contract.
             const tagged = all.filter((c) => c.metadata?.source === "wallet-receive");
@@ -670,7 +672,7 @@ describe("Wallet HD rotation", () => {
             // Display has moved to index-1, but the baseline contract
             // at index 0 is still in the repo, still active, still
             // untagged.
-            const baseline = (await contractRepo.getContracts({})).find(
+            const baseline = (await collectContracts(contractRepo, {})).find(
                 (c) => c.script === baselineScript,
             );
             expect(baseline).toBeDefined();
@@ -678,7 +680,7 @@ describe("Wallet HD rotation", () => {
             expect(baseline!.metadata?.source).toBeUndefined();
 
             // Exactly one tagged contract exists — the rotated display.
-            const tagged = (await contractRepo.getContracts({})).filter(
+            const tagged = (await collectContracts(contractRepo, {})).filter(
                 (c) => c.metadata?.source === "wallet-receive",
             );
             expect(tagged).toHaveLength(1);
@@ -968,7 +970,7 @@ describe("Wallet HD rotation", () => {
             const rotatedScript = wallet.defaultContractScript;
             expect(rotatedScript).not.toBe(scriptBefore);
 
-            const rotated = (await contractRepo.getContracts({})).find(
+            const rotated = (await collectContracts(contractRepo, {})).find(
                 (c) => c.script === rotatedScript && c.metadata?.source === "wallet-receive",
             );
             if (!rotated) {
@@ -1107,7 +1109,7 @@ describe("Wallet HD rotation", () => {
             // initializeContractManager does, so the router can
             // resolve coin1.script → baseline contract → identity sign.
             const baselineScript = wallet.defaultContractScript;
-            const baseline = (await contractRepo.getContracts({})).find(
+            const baseline = (await collectContracts(contractRepo, {})).find(
                 (c) => c.script === baselineScript,
             )!;
             expect(baseline.metadata?.source).toBeUndefined();
@@ -1156,7 +1158,7 @@ describe("Wallet HD rotation", () => {
             // it without throwing during script construction.
             const orphanPubKeyHex =
                 "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
-            const baseline = (await contractRepo.getContracts({})).find(
+            const baseline = (await collectContracts(contractRepo, {})).find(
                 (c) => c.script === wallet.defaultContractScript,
             )!;
             const orphanScript = new DefaultVtxo.Script({
@@ -1345,7 +1347,7 @@ describe("Wallet HD rotation", () => {
             const contractRepo = new InMemoryContractRepository();
             const wallet = await makeHdWallet(walletRepo, contractRepo);
 
-            const baseline = (await contractRepo.getContracts({})).find(
+            const baseline = (await collectContracts(contractRepo, {})).find(
                 (c) => c.script === wallet.defaultContractScript,
             )!;
             const baselinePubKeyHex = baseline.params.pubKey;
@@ -1397,7 +1399,7 @@ describe("Wallet HD rotation", () => {
             const signSpy = vi.spyOn(provider, "signWithDescriptor");
 
             const baselineScript = wallet.defaultContractScript;
-            const baseline = (await contractRepo.getContracts({})).find(
+            const baseline = (await collectContracts(contractRepo, {})).find(
                 (c) => c.script === baselineScript,
             )!;
             const coin = makeVtxoForContract(baseline);
@@ -1940,7 +1942,8 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             ]),
         );
 
-        const persisted = await (wallet as any).walletRepository.getVtxos(
+        const persisted = await collectVtxos(
+            (wallet as any).walletRepository,
             await wallet.getAddress(),
         );
         for (const coin of coins) {
@@ -1967,7 +1970,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         // even though there is no separate change output, on the wallet's own
         // primary (active-signer) address.
         const primaryAddress = await wallet.getAddress();
-        const persisted = await (wallet as any).walletRepository.getVtxos(primaryAddress);
+        const persisted = await collectVtxos((wallet as any).walletRepository, primaryAddress);
         const self = persisted.filter((v: ExtendedVirtualCoin) => v.txid === arkTxid && !v.isSpent);
         expect(self).toHaveLength(1);
         expect(self[0].vout).toBe(0);
@@ -1999,7 +2002,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         const arkTxid = await wallet.sendSelectedVtxosToSelf([coin]);
 
         const primaryAddress = await wallet.getAddress();
-        const persisted = await (wallet as any).walletRepository.getVtxos(primaryAddress);
+        const persisted = await collectVtxos((wallet as any).walletRepository, primaryAddress);
         const self = persisted.find((v: ExtendedVirtualCoin) => v.txid === arkTxid && !v.isSpent)!;
         expect(self.assets).toEqual([
             { assetId: assetA, amount: 42n },

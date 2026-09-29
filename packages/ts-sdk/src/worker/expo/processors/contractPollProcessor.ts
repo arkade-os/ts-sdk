@@ -1,3 +1,4 @@
+import { collectContracts } from "../../../repositories/contractRepository";
 import type { TaskItem, TaskResult } from "../taskQueue";
 import type { TaskProcessor, TaskDependencies } from "../taskRunner";
 import type { ExtendedVirtualCoin } from "../../../wallet";
@@ -37,7 +38,7 @@ export const contractPollProcessor: TaskProcessor = {
 
         // Background channel, so it covers exactly what the watcher's
         // subscription covers: `retained` rows are kept for reads only.
-        const contracts = (await contractRepository.getContracts()).filter(isWatchedContract);
+        const contracts = (await collectContracts(contractRepository)).filter(isWatchedContract);
         let contractsProcessed = 0;
         let vtxosSaved = 0;
 

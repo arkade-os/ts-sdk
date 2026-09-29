@@ -1,3 +1,4 @@
+import { collectScriptVtxos } from "../src/repositories/walletRepository";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import {
@@ -795,7 +796,7 @@ describe("WalletMessageHandler handleMessage", () => {
             },
         };
         (updater as any).walletRepository = {
-            getVtxos: vi.fn().mockResolvedValue([]),
+            getVtxosPage: vi.fn().mockResolvedValue({ items: [] }),
             getSpendableVtxos: vi.fn().mockResolvedValue([]),
         };
         // wallet is NOT set — readonly only
@@ -1583,10 +1584,10 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).arkProvider = {};
         (updater as any).indexerProvider = {};
         (updater as any).walletRepository = {
-            getVtxos: vi.fn().mockResolvedValue([]),
+            getVtxosPage: vi.fn().mockResolvedValue({ items: [] }),
             getSpendableVtxos: vi.fn().mockResolvedValue([]),
             saveVtxos: vi.fn().mockResolvedValue(undefined),
-            getUtxos: vi.fn().mockResolvedValue([]),
+            getUtxosPage: vi.fn().mockResolvedValue({ items: [] }),
             deleteUtxos: vi.fn().mockResolvedValue(undefined),
             saveUtxos: vi.fn().mockResolvedValue(undefined),
             saveTransactions: vi.fn().mockResolvedValue(undefined),
@@ -1620,10 +1621,10 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).arkProvider = {};
         (updater as any).indexerProvider = {};
         (updater as any).walletRepository = {
-            getVtxos: vi.fn().mockResolvedValue([]),
+            getVtxosPage: vi.fn().mockResolvedValue({ items: [] }),
             getSpendableVtxos: vi.fn().mockResolvedValue([]),
             saveVtxos: vi.fn().mockResolvedValue(undefined),
-            getUtxos: vi.fn().mockResolvedValue([]),
+            getUtxosPage: vi.fn().mockResolvedValue({ items: [] }),
             deleteUtxos: vi.fn().mockResolvedValue(undefined),
             saveUtxos: vi.fn().mockResolvedValue(undefined),
             saveTransactions: vi.fn().mockResolvedValue(undefined),
@@ -2708,7 +2709,7 @@ describe("WalletMessageHandler event-push generations", () => {
 
         expect(emitted("VTXO_UPDATE")).toBe(false);
         expect(nextBroadcast).not.toHaveBeenCalled();
-        expect(await repository.getVtxosForScript(TEST_DEFAULT_SCRIPT)).toEqual([]);
+        expect(await collectScriptVtxos(repository, TEST_DEFAULT_SCRIPT)).toEqual([]);
     });
 
     it("does not re-arm the tick queue with progress events emitted after stop()", async () => {
@@ -2772,7 +2773,7 @@ describe("WalletMessageHandler event-push generations", () => {
         await inFlight;
 
         expect(emitted("VTXO_UPDATE")).toBe(false);
-        expect(await repository.getVtxosForScript(TEST_DEFAULT_SCRIPT)).toEqual([]);
+        expect(await collectScriptVtxos(repository, TEST_DEFAULT_SCRIPT)).toEqual([]);
         // clear() does not end the bus generation, so the channel survives it.
         expect((updater as any).channel).toBeDefined();
     });
@@ -2861,7 +2862,7 @@ describe("WalletMessageHandler event-push generations", () => {
 
         expect(callbacks).toHaveLength(2);
         expect(emitted("VTXO_UPDATE")).toBe(false);
-        expect(await repository.getVtxosForScript(TEST_DEFAULT_SCRIPT)).toEqual([]);
+        expect(await collectScriptVtxos(repository, TEST_DEFAULT_SCRIPT)).toEqual([]);
     });
 
     it("keeps CONTRACT_EVENT delivery alive when a stale setup lands after stop()", async () => {

@@ -2,11 +2,9 @@ import { Outpoint } from "../../wallet";
 import {
     ArkIntent,
     assertIntentIdUnique,
-    IntentFilter,
     IntentPageFilter,
     IntentRepository,
     intentMatchesFilter,
-    intentPageBounds,
     isTerminalIntentState,
 } from "../intentRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
@@ -27,15 +25,6 @@ export class InMemoryIntentRepository implements IntentRepository {
             partialForfeits: [...intent.partialForfeits],
             updatedAt: Date.now(),
         });
-    }
-
-    async getIntents(filter?: IntentFilter): Promise<ArkIntent[]> {
-        let out = [...this.byId.values()];
-        if (filter) out = out.filter((i) => intentMatchesFilter(i, filter));
-        // Stable order shared with all persistent backends: (createdAt, intentTxId).
-        out.sort((a, b) => a.createdAt - b.createdAt || a.intentTxId.localeCompare(b.intentTxId));
-        const { skip, end } = intentPageBounds(filter, out.length);
-        return out.slice(skip, end).map(clone);
     }
 
     async getIntentsPage(

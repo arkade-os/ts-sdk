@@ -13,7 +13,7 @@ import { rfqCorridorHandlers } from "./rfqCorridor";
 // themselves on import, and nothing here should rely on another module having
 // pulled them in first.
 import "./rfqCorridors";
-import type { AssetSwapRepository } from "./repository";
+import { collectRfqSwaps, type AssetSwapRepository } from "./repository";
 import { normalizeRfqSwapRecord, type RfqSwapRecord } from "./rfqRecord";
 
 /**
@@ -115,7 +115,7 @@ export function swapActivityResolver(deps: {
 
 /** @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface RfqSwapActivityDeps {
-    repository: Pick<AssetSwapRepository, "getAllRfqSwaps">;
+    repository: Pick<AssetSwapRepository, "getRfqSwapsPage">;
     /**
      * Consulted only for what a record cannot answer: a record written before
      * `fundingTxid` existed, and the counterparty's spend on a swap that
@@ -144,7 +144,7 @@ export interface RfqSwapActivityDeps {
 export async function rfqSwapActivityInputs(
     deps: RfqSwapActivityDeps,
 ): Promise<SwapActivityInput[]> {
-    const records = await deps.repository.getAllRfqSwaps();
+    const records = await collectRfqSwaps(deps.repository);
     return Promise.all(records.map((record) => activityInputOf(record, deps.indexer)));
 }
 

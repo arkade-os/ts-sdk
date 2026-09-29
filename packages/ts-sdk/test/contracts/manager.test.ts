@@ -1,3 +1,4 @@
+import { collectVtxos } from "../../src/repositories/walletRepository";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import {
@@ -238,7 +239,7 @@ describe("ContractManager", () => {
         expect(bootstrapCall[0].spendableOnly).toBeUndefined();
 
         // Both settled and spent VTXOs should be in the repo
-        const repoVtxos = await walletRepo.getVtxos("address");
+        const repoVtxos = await collectVtxos(walletRepo, "address");
         expect(repoVtxos).toHaveLength(2);
     });
 
@@ -273,7 +274,7 @@ describe("ContractManager", () => {
             walletRepository: walletRepo,
         });
 
-        const savedVtxos = await walletRepo.getVtxos("contract-address");
+        const savedVtxos = await collectVtxos(walletRepo, "contract-address");
         expect(savedVtxos).toHaveLength(2);
         const states = savedVtxos.map((v) => v.virtualStatus.state);
         expect(states).toContain("settled");
@@ -606,7 +607,7 @@ describe("ContractManager", () => {
                 });
 
                 expect(collectRequestedScripts(mockIndexer).has(TEST_DEFAULT_SCRIPT)).toBe(true);
-                const stored = await walletRepo.getVtxos("retired-address");
+                const stored = await collectVtxos(walletRepo, "retired-address");
                 expect(stored.map((v) => v.txid)).toContain(incoming.txid);
             } finally {
                 await mgr.dispose();
@@ -752,7 +753,7 @@ describe("ContractManager", () => {
                 await mgr.refreshVtxos();
 
                 expect(
-                    (await walletRepo.getVtxos("awaiting-address")).map((v) => v.txid),
+                    (await collectVtxos(walletRepo, "awaiting-address")).map((v) => v.txid),
                 ).toContain(incoming.txid);
                 expect((await mgr.getContracts({ script: TEST_DEFAULT_SCRIPT }))[0]?.watch).toBe(
                     "retained",
@@ -993,7 +994,7 @@ describe("ContractManager", () => {
             });
 
             // The wallet repo now reflects the spent flag for this address.
-            const stored = await walletRepo.getVtxos("address");
+            const stored = await collectVtxos(walletRepo, "address");
             const found = stored.find((v) => v.txid === spent.txid && v.vout === spent.vout);
             expect(found).toBeDefined();
             expect(found!.isSpent).toBe(true);
@@ -1026,7 +1027,7 @@ describe("ContractManager", () => {
             await localManager.refreshOutpoints([{ txid: "aa".repeat(32), vout: 0 }]);
 
             expect(mockIndexer.getVtxos).toHaveBeenCalled();
-            const stored = await walletRepo.getVtxos("address");
+            const stored = await collectVtxos(walletRepo, "address");
             expect(stored).toEqual([]);
         });
 
@@ -1168,7 +1169,7 @@ describe("ContractManager", () => {
                 expect(args[0]?.after).toBe(0);
             }
 
-            const stored = await repo.getVtxos("address");
+            const stored = await collectVtxos(repo, "address");
             expect(stored).toHaveLength(1);
             expect(stored[0].createdAt).toEqual(ancient);
 
@@ -1220,7 +1221,7 @@ describe("ContractManager", () => {
             });
 
             // The wallet repo now reflects the spent flag for this address.
-            const stored = await walletRepo.getVtxos("address");
+            const stored = await collectVtxos(walletRepo, "address");
             const found = stored.find((v) => v.txid === spent.txid && v.vout === spent.vout);
             expect(found).toBeDefined();
             expect(found!.isSpent).toBe(true);
@@ -1253,7 +1254,7 @@ describe("ContractManager", () => {
             await localManager.refreshOutpoints([{ txid: "aa".repeat(32), vout: 0 }]);
 
             expect(mockIndexer.getVtxos).toHaveBeenCalled();
-            const stored = await walletRepo.getVtxos("address");
+            const stored = await collectVtxos(walletRepo, "address");
             expect(stored).toEqual([]);
         });
 
@@ -1390,7 +1391,7 @@ describe("ContractManager", () => {
             }),
         ).resolves.toBeDefined();
 
-        const saved = await walletRepo.getVtxos("contract-addr");
+        const saved = await collectVtxos(walletRepo, "contract-addr");
         // The badVtxo must have been filtered out; the good one persists.
         expect(saved.find((v) => v.txid === "aa".repeat(32))).toBeDefined();
         expect(saved.find((v) => v.txid === "bb".repeat(32))).toBeUndefined();

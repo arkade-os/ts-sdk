@@ -1,5 +1,5 @@
 import { Outpoint } from "../wallet";
-import type { PageRequest, PageResult } from "./page";
+import { collectPages, type PageRequest, type PageResult } from "./page";
 
 export type ArkIntentState =
     | "waiting_to_submit"
@@ -70,18 +70,15 @@ export interface IntentFilter {
     validAt?: number;
     /** Substring match over intentId, batchId, commitmentTransactionId. */
     searchText?: string;
-    skip?: number;
-    take?: number;
 }
 
-export type IntentPageFilter = Omit<IntentFilter, "skip" | "take">;
+export type IntentPageFilter = IntentFilter;
 
 export interface IntentRepository extends AsyncDisposable {
     readonly version: 1;
     clear(): Promise<void>;
     /** Upsert by `intentTxId`; implementation sets `updatedAt = Date.now()`. */
     saveIntent(intent: ArkIntent): Promise<void>;
-    getIntents(filter?: IntentFilter): Promise<ArkIntent[]>;
     /** Bounded intents in `intentTxId` order; `after` is exclusive. */
     getIntentsPage(
         filter: IntentPageFilter | undefined,
@@ -101,6 +98,11 @@ export interface IntentRepository extends AsyncDisposable {
      */
     getLockedVtxoOutpoints(): Promise<Outpoint[]>;
 }
+
+export const collectIntents = (
+    repository: Pick<IntentRepository, "getIntentsPage">,
+    filter?: IntentPageFilter,
+) => collectPages((page: PageRequest) => repository.getIntentsPage(filter, page));
 
 /**
  * Enforce the "intentId unique when present" contract for backends without a
@@ -140,18 +142,4 @@ export function intentMatchesFilter(i: ArkIntent, f: IntentFilter): boolean {
         if (!hay.includes(f.searchText)) return false;
     }
     return true;
-}
-
-/**
- * Clamp {@link IntentFilter} pagination to a `[skip, end]` slice window over
- * `total` rows. Negative `skip`/`take` clamp to 0 (avoiding `slice`'s
- * relative-to-end behavior); a missing `take` means "all remaining".
- */
-export function intentPageBounds(
-    filter: IntentFilter | undefined,
-    total: number,
-): { skip: number; end: number } {
-    const skip = Math.max(0, filter?.skip ?? 0);
-    const take = filter?.take === undefined ? total : Math.max(0, filter.take);
-    return { skip, end: skip + take };
 }

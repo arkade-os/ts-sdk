@@ -97,10 +97,6 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         });
     }
 
-    async getAllSwaps(): Promise<AssetSwap[]> {
-        return promisifyRequest((await this.readStore(STORE_SWAPS)).getAll());
-    }
-
     async getAssetSwapsPage(page: PageRequest): Promise<PageResult<AssetSwap>> {
         return this.pageStore(STORE_SWAPS, page);
     }
@@ -113,10 +109,6 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
 
     async getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined> {
         return promisifyRequest((await this.readStore(STORE_RFQ_SWAPS)).get(rfqId));
-    }
-
-    async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
-        return promisifyRequest((await this.readStore(STORE_RFQ_SWAPS)).getAll());
     }
 
     async getRfqSwapsPage(
@@ -178,10 +170,6 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
 
     async getSwapRecord(id: string): Promise<SwapRecord | undefined> {
         return promisifyRequest((await this.readStore(STORE_SWAP_RECORDS)).get(id));
-    }
-
-    async getAllSwapRecords(): Promise<SwapRecord[]> {
-        return promisifyRequest((await this.readStore(STORE_SWAP_RECORDS)).getAll());
     }
 
     async getSwapRecordsPage(page: PageRequest): Promise<PageResult<SwapRecord>> {

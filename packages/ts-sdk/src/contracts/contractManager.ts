@@ -1,3 +1,4 @@
+import { collectContracts } from "../repositories/contractRepository";
 import { hex } from "@scure/base";
 import { IndexerProvider } from "../providers/indexer";
 import { isRetryableProviderError } from "../providers/availability";
@@ -976,7 +977,7 @@ export class ContractManager implements IContractManager {
         // starting to poll, so it's cheap, and it populates
         // `getWatchedContracts()` so the sync below can scope itself to the
         // real watched set instead of every contract ever persisted.
-        const contracts = await this.config.contractRepository.getContracts();
+        const contracts = await collectContracts(this.config.contractRepository);
         for (const contract of contracts) {
             await this.watcher.addContract(contract);
         }
@@ -1187,7 +1188,7 @@ export class ContractManager implements IContractManager {
         // One coalesced subscription update for the whole band: N eager
         // `addContract` calls would otherwise send N growing POSTs.
         await this.watcher.withCoalescedSubscription(async () => {
-            const persisted = await this.config.contractRepository.getContracts({
+            const persisted = await collectContracts(this.config.contractRepository, {
                 script: [...band.keys()],
             });
             const persistedScripts = new Set(persisted.map((c) => c.script));
@@ -1219,7 +1220,9 @@ export class ContractManager implements IContractManager {
                 // Only unwatch scripts that are still speculative: a script
                 // that gained a repository row (promotion, `rotate()`, an
                 // idempotent re-`createContract`) must keep its subscription.
-                const rows = await this.config.contractRepository.getContracts({ script: stale });
+                const rows = await collectContracts(this.config.contractRepository, {
+                    script: stale,
+                });
                 const nowPersisted = new Set(rows.map((c) => c.script));
                 for (const script of stale) {
                     this.lookAheadEntries.delete(script);
@@ -1746,7 +1749,7 @@ export class ContractManager implements IContractManager {
      */
     async getContracts(filter?: GetContractsFilter): Promise<Contract[]> {
         const dbFilter = this.buildContractsDbFilter(filter ?? {});
-        return await this.config.contractRepository.getContracts(dbFilter);
+        return await collectContracts(this.config.contractRepository, dbFilter);
     }
 
     async getContractsWithVtxos(
@@ -1788,7 +1791,7 @@ export class ContractManager implements IContractManager {
         const scripts = Array.from(new Set(vtxos.map((v) => v.script)));
 
         const byScript = new Map<string, Contract>();
-        const contracts = await this.config.contractRepository.getContracts({
+        const contracts = await collectContracts(this.config.contractRepository, {
             script: scripts,
         });
         for (const contract of contracts) {
@@ -1814,7 +1817,7 @@ export class ContractManager implements IContractManager {
         vtxos: readonly { txid: string; vout: number; script: string }[],
     ): Promise<void> {
         if (vtxos.length === 0) return;
-        const contracts = await this.config.contractRepository.getContracts({
+        const contracts = await collectContracts(this.config.contractRepository, {
             script: Array.from(new Set(vtxos.map((vtxo) => vtxo.script))),
         });
         const { scripts, failures } = annotatableIn(
@@ -1863,7 +1866,7 @@ export class ContractManager implements IContractManager {
     ): Promise<Map<string, string>> {
         const refused = new Map<string, string>();
         if (vtxos.length === 0) return refused;
-        const contracts = await this.config.contractRepository.getContracts({
+        const contracts = await collectContracts(this.config.contractRepository, {
             script: Array.from(new Set(vtxos.map((vtxo) => vtxo.script))),
         });
         const byScript = new Map(contracts.map((contract) => [contract.script, contract]));
@@ -1953,7 +1956,7 @@ export class ContractManager implements IContractManager {
         script: string,
         updates: Partial<Omit<Contract, "script" | "createdAt">>,
     ): Promise<Contract> {
-        const contracts = await this.config.contractRepository.getContracts({
+        const contracts = await collectContracts(this.config.contractRepository, {
             script,
         });
         const existing = contracts[0];
@@ -1980,7 +1983,7 @@ export class ContractManager implements IContractManager {
      * @param updates - The new values to merge with existing params
      */
     async updateContractParams(script: string, updates: Contract["params"]): Promise<Contract> {
-        const contracts = await this.config.contractRepository.getContracts({
+        const contracts = await collectContracts(this.config.contractRepository, {
             script,
         });
         const existing = contracts[0];
@@ -2217,7 +2220,7 @@ export class ContractManager implements IContractManager {
         // contract so we can write through to the right per-address entry
         // in the wallet repository.
         const scripts = Array.from(new Set(vtxos.map((v) => v.script)));
-        const contracts = await this.config.contractRepository.getContracts({
+        const contracts = await collectContracts(this.config.contractRepository, {
             script: scripts,
         });
         const scriptToContract = new Map(contracts.map((c) => [c.script, c]));
@@ -2405,7 +2408,7 @@ export class ContractManager implements IContractManager {
         const contracts =
             options.contracts ??
             (options.includeInactive
-                ? await this.config.contractRepository.getContracts({})
+                ? await collectContracts(this.config.contractRepository, {})
                 : this.watcher.getWatchedContracts());
 
         const requestStartedAt = Date.now();

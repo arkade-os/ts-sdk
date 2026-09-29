@@ -1,3 +1,4 @@
+import { collectContracts } from "../src/repositories/contractRepository";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { hex } from "@scure/base";
 import {
@@ -1519,7 +1520,7 @@ describe("Wallet.restore", () => {
             await wallet.restore({ gapLimit: 5 });
 
             // Persisted as a boarding-typed contract at the rotated index.
-            const boardingRows = await wallet.contractRepository.getContracts({
+            const boardingRows = await collectContracts(wallet.contractRepository, {
                 type: ["boarding"],
             });
             expect(boardingRows.map((c) => c.script)).toContain(scriptHex);
@@ -1573,7 +1574,7 @@ describe("Wallet.restore", () => {
             await wallet.restore({ gapLimit: 5 });
 
             // Resolved to a boarding row (boarding probed first, first-wins).
-            const boardingRows = await wallet.contractRepository.getContracts({
+            const boardingRows = await collectContracts(wallet.contractRepository, {
                 type: ["boarding"],
             });
             expect(boardingRows.map((c) => c.script)).toContain(scriptHex);
@@ -1639,7 +1640,7 @@ describe("Wallet.restore", () => {
 
             // The spent boarding index 2 is NOT recovered: no boarding row for
             // its script (the documented blind spot).
-            const boardingRows = await wallet.contractRepository.getContracts({
+            const boardingRows = await collectContracts(wallet.contractRepository, {
                 type: ["boarding"],
             });
             expect(boardingRows.map((c) => c.script)).not.toContain(boardingScriptHexAt(2));
@@ -1697,7 +1698,7 @@ describe("Wallet.restore", () => {
             expect(await hdProvider.getCurrentSigningDescriptor()).toBe(
                 hdProvider.materializeDescriptorAt(4),
             );
-            const boardingRows = await wallet.contractRepository.getContracts({
+            const boardingRows = await collectContracts(wallet.contractRepository, {
                 type: ["boarding"],
             });
             const boardingScript4 = hex.encode(
@@ -1782,7 +1783,7 @@ describe("Wallet.restore", () => {
             // BOTH the persisted params and the encoded Ark address — so later
             // signing/forfeit resolves the key the VTXO was actually minted
             // under, not the current one.
-            const rows = await contractRepository.getContracts({ type: ["default"] });
+            const rows = await collectContracts(contractRepository, { type: ["default"] });
             const match = rows.find((c) => c.script === deprecatedScriptHex);
             expect(match).toBeDefined();
             expect(match!.params.serverPubKey).toBe(deprecatedXOnly);

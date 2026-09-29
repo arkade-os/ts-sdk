@@ -1,3 +1,4 @@
+import { collectAssetSwaps, collectRfqSwaps, collectSwapRecords } from "../src/repository";
 import "fake-indexeddb/auto";
 import { describe, expect, it } from "vitest";
 import type { AssetSwap } from "../src/store";
@@ -127,6 +128,20 @@ const backends: [string, () => AssetSwapRepository][] = [
 ];
 
 describe.each(backends)("AssetSwapRepository (%s)", (_, create) => {
+    it("includes an empty key on the first page", async () => {
+        await using repository = create();
+        await repository.saveSwap(swap(""));
+        await repository.saveSwap(swap("a"));
+        await repository.saveSwapRecord(swapRecord(""));
+        await repository.saveSwapRecord(swapRecord("a"));
+        expect(
+            (await repository.getAssetSwapsPage({ limit: 1 })).items.map((row) => row.id),
+        ).toEqual([""]);
+        expect(
+            (await repository.getSwapRecordsPage({ limit: 1 })).items.map((row) => row.id),
+        ).toEqual([""]);
+    });
+
     it("pages legacy and v2 records while retaining complete history", async () => {
         await using repository = create();
         for (const id of ["b", "B", "a"]) {
@@ -146,7 +161,7 @@ describe.each(backends)("AssetSwapRepository (%s)", (_, create) => {
             expect(second.nextCursor).toBeUndefined();
             await expect(read({ limit: 0 })).rejects.toThrow(RangeError);
         }
-        expect(await repository.getAllSwapRecords()).toHaveLength(3);
+        expect(await collectSwapRecords(repository)).toHaveLength(3);
     });
 
     it("upserts by id and returns all swaps", async () => {
@@ -154,7 +169,7 @@ describe.each(backends)("AssetSwapRepository (%s)", (_, create) => {
         await repository.saveSwap(swap("a"));
         await repository.saveSwap(swap("b"));
         await repository.saveSwap({ ...swap("a"), status: "fulfilled" });
-        const swaps = await repository.getAllSwaps();
+        const swaps = await collectAssetSwaps(repository);
         expect(swaps).toHaveLength(2);
         expect(swaps.find((s) => s.id === "a")?.status).toBe("fulfilled");
     });
@@ -176,7 +191,7 @@ describe.each(backends)("AssetSwapRepository (%s)", (_, create) => {
             preimageSaltHex: "22".repeat(32),
         };
         await repository.saveSwap(secretive);
-        expect(await repository.getAllSwaps()).toEqual([secretive]);
+        expect(await collectAssetSwaps(repository)).toEqual([secretive]);
     });
 
     it("keys the markets cache by network AND registry", async () => {
@@ -204,7 +219,7 @@ describe.each(backends)("AssetSwapRepository (%s)", (_, create) => {
         };
         const extended = { ...swap("a"), quote } as AssetSwap;
         await repository.saveSwap(extended);
-        expect(await repository.getAllSwaps()).toEqual([extended]);
+        expect(await collectAssetSwaps(repository)).toEqual([extended]);
     });
 
     // All three stores, because clear() is all-or-nothing across them and a
@@ -215,7 +230,7 @@ describe.each(backends)("AssetSwapRepository (%s)", (_, create) => {
         await repository.markTxidsScanned(["t1"]);
         await repository.saveCachedMarkets("regtest", REGISTRY, { markets: [], fetchedAt: 1 });
         await repository.clear();
-        expect(await repository.getAllSwaps()).toEqual([]);
+        expect(await collectAssetSwaps(repository)).toEqual([]);
         expect(await repository.getScannedTxids()).toEqual(new Set());
         expect(await repository.getCachedMarkets("regtest", REGISTRY)).toBeUndefined();
     });
@@ -242,7 +257,7 @@ describe("SQLiteAssetSwapRepository", () => {
         const log: string[] = [];
         const db = recording(createNodeSQLExecutor(), log);
         await using repository = new SQLiteAssetSwapRepository(db);
-        await repository.getAllSwaps(); // force ensureInit BEFORE the gate
+        await collectAssetSwaps(repository); // force ensureInit BEFORE the gate
 
         const inTx = deferred<void>();
         const release = deferred<void>();
@@ -268,7 +283,7 @@ describe("SQLiteAssetSwapRepository", () => {
         await expect(neighbour).rejects.toThrow("neighbour fails");
         await write;
 
-        expect((await repository.getAllSwaps()).map((s) => s.id)).toEqual(["a"]);
+        expect((await collectAssetSwaps(repository)).map((s) => s.id)).toEqual(["a"]);
 
         // Survival alone would still pass if the write had landed before the
         // gate; the ordering is what proves it queued.
@@ -298,10 +313,10 @@ describe("SQLiteAssetSwapRepository", () => {
         };
         await using repository = new SQLiteAssetSwapRepository(flaky);
 
-        await expect(repository.getAllSwaps()).rejects.toThrow("database is locked");
+        await expect(collectAssetSwaps(repository)).rejects.toThrow("database is locked");
 
         await repository.saveSwap(swap("a"));
-        expect((await repository.getAllSwaps()).map((s) => s.id)).toEqual(["a"]);
+        expect((await collectAssetSwaps(repository)).map((s) => s.id)).toEqual(["a"]);
     });
 
     it("isolates two prefixes on one connection", async () => {
@@ -310,12 +325,12 @@ describe("SQLiteAssetSwapRepository", () => {
         await using dflt = new SQLiteAssetSwapRepository(db);
         await app.saveSwap(swap("a"));
         await app.saveRfqSwap(rfqRecord("r1"));
-        expect((await app.getAllSwaps()).map((s) => s.id)).toEqual(["a"]);
-        expect(await dflt.getAllSwaps()).toEqual([]);
+        expect((await collectAssetSwaps(app)).map((s) => s.id)).toEqual(["a"]);
+        expect(await collectAssetSwaps(dflt)).toEqual([]);
         // the rfq table is prefixed too — a hardcoded name would leak records
         // between two apps sharing one connection
-        expect((await app.getAllRfqSwaps()).map((r) => r.rfqId)).toEqual(["r1"]);
-        expect(await dflt.getAllRfqSwaps()).toEqual([]);
+        expect((await collectRfqSwaps(app)).map((r) => r.rfqId)).toEqual(["r1"]);
+        expect(await collectRfqSwaps(dflt)).toEqual([]);
     });
 
     // The counterpart of the IndexedDB migration test below, and the same
@@ -339,9 +354,9 @@ describe("SQLiteAssetSwapRepository", () => {
 
         await using repository = new SQLiteAssetSwapRepository(db);
         await repository.saveRfqSwap(rfqRecord("r1"));
-        expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId)).toEqual(["r1"]);
+        expect((await collectRfqSwaps(repository)).map((r) => r.rfqId)).toEqual(["r1"]);
         // and the rows that were already there are untouched
-        expect((await repository.getAllSwaps()).map((s) => s.id)).toEqual(["legacy"]);
+        expect((await collectAssetSwaps(repository)).map((s) => s.id)).toEqual(["legacy"]);
     });
 
     it("rejects a prefix that is not a SQL identifier", () => {
@@ -380,7 +395,7 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
         });
         expect(second.items.map((row) => row.rfqId)).toEqual(["b"]);
         expect(second.nextCursor).toBeUndefined();
-        expect((await repository.getAllRfqSwaps()).map((row) => row.rfqId)).toContain("old");
+        expect((await collectRfqSwaps(repository)).map((row) => row.rfqId)).toContain("old");
         await expect(repository.getRfqSwapsPage({ since: -1 }, { limit: 2 })).rejects.toThrow(
             RangeError,
         );
@@ -391,7 +406,7 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
         await repository.saveRfqSwap(rfqRecord("r1"));
         await repository.saveRfqSwap(rfqRecord("r2"));
         await repository.saveRfqSwap({ ...rfqRecord("r1"), state: "settled" });
-        const records = await repository.getAllRfqSwaps();
+        const records = await collectRfqSwaps(repository);
         expect(records).toHaveLength(2);
         expect(records.find((r) => r.rfqId === "r1")?.state).toBe("settled");
     });
@@ -417,7 +432,7 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
             },
         };
         await repository.saveRfqSwap(record);
-        const [restored] = await repository.getAllRfqSwaps();
+        const [restored] = await collectRfqSwaps(repository);
         expect(restored).toEqual(record);
     });
 
@@ -442,7 +457,7 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
         await repository.saveRfqSwap(rfqRecord("r1"));
         await repository.saveRfqSwap(rfqRecord("r2"));
         await repository.removeRfqSwap("r1");
-        expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId)).toEqual(["r2"]);
+        expect((await collectRfqSwaps(repository)).map((r) => r.rfqId)).toEqual(["r2"]);
     });
 
     it("keeps rfq swaps and asset swaps in separate stores", async () => {
@@ -450,10 +465,10 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
         await repository.saveSwap(swap("a"));
         await repository.saveRfqSwap(rfqRecord("a"));
         // same key, different kind of record: neither may shadow the other
-        expect(await repository.getAllSwaps()).toHaveLength(1);
-        expect(await repository.getAllRfqSwaps()).toHaveLength(1);
-        expect((await repository.getAllSwaps())[0].id).toBe("a");
-        expect((await repository.getAllRfqSwaps())[0].rfqId).toBe("a");
+        expect(await collectAssetSwaps(repository)).toHaveLength(1);
+        expect(await collectRfqSwaps(repository)).toHaveLength(1);
+        expect((await collectAssetSwaps(repository))[0].id).toBe("a");
+        expect((await collectRfqSwaps(repository))[0].rfqId).toBe("a");
     });
 
     it("clears rfq swaps along with everything else", async () => {
@@ -463,8 +478,8 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
         await repository.saveSwap(swap("a"));
         await repository.markTxidsScanned(["t1"]);
         await repository.clear();
-        expect(await repository.getAllRfqSwaps()).toEqual([]);
-        expect(await repository.getAllSwaps()).toEqual([]);
+        expect(await collectRfqSwaps(repository)).toEqual([]);
+        expect(await collectAssetSwaps(repository)).toEqual([]);
         expect(await repository.getScannedTxids()).toEqual(new Set());
     });
 });
@@ -498,7 +513,7 @@ describe.each(backends)("v2 swap records (%s)", (_, create) => {
         await repository.saveSwapRecord(swapRecord("q2"));
 
         expect(await repository.getSwapRecord("q1")).toEqual(swapRecord("q1"));
-        expect((await repository.getAllSwapRecords()).map((r) => r.id).sort()).toEqual([
+        expect((await collectSwapRecords(repository)).map((r) => r.id).sort()).toEqual([
             "q1",
             "q2",
         ]);
@@ -531,7 +546,7 @@ describe.each(backends)("v2 swap records (%s)", (_, create) => {
         await repository.saveSwapRecord(swapRecord("q1"));
         await repository.saveSwapRecord({ ...swapRecord("q1"), fundingTxid: "ab".repeat(32) });
 
-        const all = await repository.getAllSwapRecords();
+        const all = await collectSwapRecords(repository);
         expect(all).toHaveLength(1);
         expect(all[0]?.fundingTxid).toBe("ab".repeat(32));
     });
@@ -540,7 +555,7 @@ describe.each(backends)("v2 swap records (%s)", (_, create) => {
         await using repository = create();
         await repository.saveSwapRecord(swapRecord("q1"));
         await repository.removeSwapRecord("q1");
-        expect(await repository.getAllSwapRecords()).toEqual([]);
+        expect(await collectSwapRecords(repository)).toEqual([]);
     });
 
     it("keeps the two families in separate key spaces", async () => {
@@ -554,8 +569,8 @@ describe.each(backends)("v2 swap records (%s)", (_, create) => {
         await repository.saveRfqSwap(rfqRecord("shared-id"));
 
         expect(await repository.getSwapRecord("shared-id")).toMatchObject({ family: "rfq" });
-        expect((await repository.getAllSwaps()).map((s) => s.id)).toEqual(["shared-id"]);
-        expect(await repository.getAllSwapRecords()).toHaveLength(1);
+        expect((await collectAssetSwaps(repository)).map((s) => s.id)).toEqual(["shared-id"]);
+        expect(await collectSwapRecords(repository)).toHaveLength(1);
     });
 
     it("hides v2 rows from the v1 readers, and v1 rows from the v2 reader", async () => {
@@ -566,8 +581,8 @@ describe.each(backends)("v2 swap records (%s)", (_, create) => {
         // Asserted, not tolerated: the two histories are disjoint for the
         // deprecation window, which is what keeps the v2 shape from being
         // pinned by v1's drop-anything-without-offerHex predicate.
-        expect((await repository.getAllSwaps()).map((s) => s.id)).toEqual(["v1-swap"]);
-        expect((await repository.getAllSwapRecords()).map((r) => r.id)).toEqual(["q1"]);
+        expect((await collectAssetSwaps(repository)).map((s) => s.id)).toEqual(["v1-swap"]);
+        expect((await collectSwapRecords(repository)).map((r) => r.id)).toEqual(["q1"]);
     });
 
     it("shares one scan cursor and one markets cache across both families", async () => {
@@ -596,8 +611,8 @@ describe.each(backends)("v2 swap records (%s)", (_, create) => {
 
         // A partial wipe must not be observable: leaving the cursor behind
         // would have the restore scan permanently skip those funding txs.
-        expect(await repository.getAllSwapRecords()).toEqual([]);
-        expect(await repository.getAllSwaps()).toEqual([]);
+        expect(await collectSwapRecords(repository)).toEqual([]);
+        expect(await collectAssetSwaps(repository)).toEqual([]);
         expect(await repository.getScannedTxids()).toEqual(new Set());
     });
 });
@@ -639,9 +654,9 @@ describe("IndexedDB migrations", () => {
         });
 
         await using repository = new IndexedDbAssetSwapRepository(dbName);
-        expect(await repository.getAllSwaps()).toEqual([swap("legacy")]);
-        expect(await repository.getAllRfqSwaps()).toEqual([rfq]);
-        expect(await repository.getAllSwapRecords()).toEqual([swapRecord("legacy-record")]);
+        expect(await collectAssetSwaps(repository)).toEqual([swap("legacy")]);
+        expect(await collectRfqSwaps(repository)).toEqual([rfq]);
+        expect(await collectSwapRecords(repository)).toEqual([swapRecord("legacy-record")]);
         expect(
             await repository.getRfqSwapsPage({ state: "pending", since: 42 }, { limit: 1 }),
         ).toEqual({
@@ -680,14 +695,14 @@ describe("IndexedDB migrations", () => {
         // Open at v2 through the repository: onupgradeneeded must add only the
         // new store and leave the existing three alone.
         await using repository = new IndexedDbAssetSwapRepository(dbName);
-        expect((await repository.getAllSwaps()).map((s) => s.id)).toEqual(["legacy"]);
+        expect((await collectAssetSwaps(repository)).map((s) => s.id)).toEqual(["legacy"]);
         expect(await repository.getScannedTxids()).toEqual(new Set(["t1"]));
         expect(await repository.getCachedMarkets("regtest", "http://r")).toEqual(markets);
-        expect(await repository.getAllRfqSwaps()).toEqual([]);
+        expect(await collectRfqSwaps(repository)).toEqual([]);
 
         // and the new store is usable immediately, not only after a reopen
         await repository.saveRfqSwap(rfqRecord("r1"));
-        expect(await repository.getAllRfqSwaps()).toHaveLength(1);
+        expect(await collectRfqSwaps(repository)).toHaveLength(1);
     });
 
     it("adds the v2 record store to a v2 database and rewrites no row", async () => {
@@ -731,15 +746,15 @@ describe("IndexedDB migrations", () => {
         // what keeps `initDatabase`'s `oldVersion`/`transaction` parameters
         // unused. Disjoint v1 and v2 histories are exactly the choice that
         // stops this being the migration that rewrites rows.
-        expect(await repository.getAllSwaps()).toEqual([swap("legacy")]);
-        expect(await repository.getAllRfqSwaps()).toEqual([rfqRecord("legacy-rfq")]);
+        expect(await collectAssetSwaps(repository)).toEqual([swap("legacy")]);
+        expect(await collectRfqSwaps(repository)).toEqual([rfqRecord("legacy-rfq")]);
         expect(await repository.getScannedTxids()).toEqual(new Set(["t1"]));
         expect(await repository.getCachedMarkets("regtest", "http://r")).toEqual(markets);
 
         // and the new store exists, which is the whole reason for the bump
-        expect(await repository.getAllSwapRecords()).toEqual([]);
+        expect(await collectSwapRecords(repository)).toEqual([]);
         await repository.saveSwapRecord(swapRecord("q1"));
-        expect(await repository.getAllSwapRecords()).toHaveLength(1);
+        expect(await collectSwapRecords(repository)).toHaveLength(1);
     });
 });
 
@@ -772,7 +787,7 @@ describe("a repository whose connection went away", () => {
         // the recreated database is empty but usable — the point being that the
         // repository opens one at all rather than reusing a closed handle
         await repository.saveRfqSwap(rfqRecord("r2"));
-        expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId)).toEqual(["r2"]);
+        expect((await collectRfqSwaps(repository)).map((r) => r.rfqId)).toEqual(["r2"]);
     });
 
     it("fails honestly, and repeatably, when another tab upgraded past it", async () => {

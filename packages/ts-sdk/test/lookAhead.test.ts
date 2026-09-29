@@ -1,3 +1,4 @@
+import { collectContracts } from "../src/repositories/contractRepository";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { hex } from "@scure/base";
 import { ContractManager, InMemoryContractRepository, InMemoryWalletRepository } from "../src";
@@ -171,7 +172,7 @@ describe("HD look-ahead band composition", () => {
             deps: { delegatePubKey: DELEGATE_PUBKEY },
         });
         try {
-            const rows = await contractRepository.getContracts({ script: [fundedScript] });
+            const rows = await collectContracts(contractRepository, { script: [fundedScript] });
             expect(rows).toHaveLength(1);
             // The funded variant, not the wallet's own delegate shape.
             expect(rows[0].type).toBe("default");
@@ -189,7 +190,7 @@ describe("HD look-ahead band composition", () => {
             deps: { delegatePubKey: DELEGATE_PUBKEY },
         });
         try {
-            expect(await contractRepository.getContracts({})).toEqual([]);
+            expect(await collectContracts(contractRepository, {})).toEqual([]);
         } finally {
             manager.dispose();
         }
@@ -248,7 +249,7 @@ describe("HD look-ahead band composition", () => {
         });
 
         // The boot band was [0, 1] and none of it is funded.
-        expect(await contractRepository.getContracts({})).toEqual([]);
+        expect(await collectContracts(contractRepository, {})).toEqual([]);
         const fetchesBeforeDispose = indexer.getVtxosCalls.length;
 
         await manager.advanceSigningDescriptorWatermark(watermark);
@@ -260,7 +261,7 @@ describe("HD look-ahead band composition", () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(indexer.getVtxosCalls).toHaveLength(fetchesBeforeDispose);
-        expect(await contractRepository.getContracts({})).toEqual([]);
+        expect(await collectContracts(contractRepository, {})).toEqual([]);
     });
 });
 
@@ -293,7 +294,7 @@ describe("Wallet HD look-ahead", () => {
         );
         try {
             expect(wallet.offchainTapscript).toBeInstanceOf(DelegateVtxo.Script);
-            const rows = await contractRepository.getContracts({ script: [issued] });
+            const rows = await collectContracts(contractRepository, { script: [issued] });
             expect(rows).toHaveLength(1);
             expect(rows[0].type).toBe("default");
             expect(rows[0].metadata?.source).not.toBe(WALLET_RECEIVE_SOURCE);

@@ -1,3 +1,4 @@
+import { collectContracts } from "../repositories/contractRepository";
 import { hex } from "@scure/base";
 import { Transaction } from "@scure/btc-signer";
 import { Identity } from "../identity";
@@ -85,7 +86,7 @@ export class InputSignerRouter {
         }
 
         const distinctScripts = Array.from(new Set(jobs.map((j) => hex.encode(j.lookupScript))));
-        const contracts = await this.deps.contractRepository.getContracts({
+        const contracts = await collectContracts(this.deps.contractRepository, {
             script: distinctScripts,
         });
         // Repo may yield duplicates if seeded oddly; keep the first one

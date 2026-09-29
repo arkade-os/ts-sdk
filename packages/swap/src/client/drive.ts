@@ -51,7 +51,7 @@ import { rebuildRfqSwap, rfqSwapOriginOf } from "../rfqRecord";
 import { isRfqSwapTerminal } from "../rfqSwapState";
 import { restoreAssetSwaps, type Tx } from "../restore";
 import { preimageForSwapRecord } from "../store";
-import type { AssetSwapRepository } from "../repository";
+import { collectSwapRecords, type AssetSwapRepository } from "../repository";
 import {
     RfqSwapManager,
     isRfqConfigurationRefusal,
@@ -370,7 +370,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             // exclusion is on the manager's read, not the record: the drive's
             // own `records` registry keeps every readable record, and the
             // index still learns an excluded record's `rfqId` (see
-            // `getAllRfqSwaps`), so a consumer handing its swap to the manager
+            // `getRfqSwapsPage`), so a consumer handing its swap to the manager
             // directly keeps resolving.
             (r) => !undrivable.has(r.id) && !isRfqSwapTerminal(r.state),
         ));
@@ -831,7 +831,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         });
 
         // After the scan: a record `accept()` persisted meanwhile is matched, not rebuilt.
-        const { offer } = splitRecords(await store.getAllSwapRecords());
+        const { offer } = splitRecords(await collectSwapRecords(store));
         const current = new Map(offer.map((record) => [record.id, record]));
         const byDeposit = new Map(
             offer
@@ -961,7 +961,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         if (!repository) return;
         // The one read `ready` may reject on: a client that cannot read its own
         // records cannot drive them safely, so nothing proceeds from there.
-        const all = await repository.getAllSwapRecords();
+        const all = await collectSwapRecords(repository);
         const { corridor, offer } = splitRecords(all.filter(readableRecord));
         for (const record of [...corridor, ...offer]) records.set(record.id, record);
 

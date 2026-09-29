@@ -33,7 +33,7 @@ describe("IndexedDB default path is inert", () => {
         const contract = new IndexedDBContractRepository(dbName);
         try {
             await wallet.getWalletState();
-            await contract.getContracts();
+            await contract.getContractsPage(undefined, { limit: 1 });
 
             const { version, names } = await storeNames(dbName);
             expect(version).toBe(3);

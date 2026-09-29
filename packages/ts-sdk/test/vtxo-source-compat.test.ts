@@ -1,3 +1,4 @@
+import { collectVtxos } from "../src/repositories/walletRepository";
 import { describe, expect, it } from "vitest";
 import { getNormalizedVtxos, normalizeVtxo } from "../src/wallet/vtxo";
 import type { GetVtxosOptions, IndexerProvider, PageResponse } from "../src/providers/indexer";
@@ -24,8 +25,8 @@ class MinimalIndexerProvider {
 
 class MinimalWalletRepository {
     readonly version = 2 as const;
-    async getVtxos(_address: string): Promise<ExtendedVirtualCoin[]> {
-        return [MINIMAL_COIN as ExtendedVirtualCoin];
+    async getVtxosPage(_address: string): Promise<{ items: ExtendedVirtualCoin[] }> {
+        return { items: [MINIMAL_COIN as ExtendedVirtualCoin] };
     }
     async saveVtxos(_address: string, _vtxos: ExtendedVirtualCoin[]): Promise<void> {}
 }
@@ -40,9 +41,9 @@ describe("public VTXO construction shape", () => {
     });
 
     it("a custom WalletRepository still satisfies the read/write surface", async () => {
-        const repo: Pick<WalletRepository, "getVtxos" | "saveVtxos" | "version"> =
+        const repo: Pick<WalletRepository, "getVtxosPage" | "saveVtxos"> =
             new MinimalWalletRepository();
-        const loaded = await repo.getVtxos("ark1x");
+        const loaded = await collectVtxos(repo, "ark1x");
         await repo.saveVtxos("ark1x", [normalizeVtxo(loaded[0])]);
         expect(normalizeVtxo(loaded[0]).commitmentTxIds).toEqual([]);
     });

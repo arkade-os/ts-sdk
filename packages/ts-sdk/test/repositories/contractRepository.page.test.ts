@@ -1,3 +1,4 @@
+import { collectContracts } from "../../src/repositories/contractRepository";
 import { describe, expect, it } from "vitest";
 import { createMockRealm } from "../../../../config/test-helpers/mockRealm";
 import { createNodeSQLExecutor } from "../../../../config/test-helpers/nodeSqlExecutor";
@@ -40,7 +41,7 @@ describe.each(backends)("contract pages (%s)", (_, create) => {
         );
         expect(second.items.map((row) => row.script)).toEqual(["b"]);
         expect(second.nextCursor).toBeUndefined();
-        expect(await repository.getContracts()).toHaveLength(4);
+        expect(await collectContracts(repository)).toHaveLength(4);
         await expect(repository.getContractsPage(undefined, { limit: 0 })).rejects.toThrow(
             RangeError,
         );

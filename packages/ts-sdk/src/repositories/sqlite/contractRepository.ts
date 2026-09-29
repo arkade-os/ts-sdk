@@ -88,28 +88,6 @@ export class SQLiteContractRepository implements ContractRepository {
 
     // ── Contract management ────────────────────────────────────────────
 
-    async getContracts(filter?: ContractFilter): Promise<Contract[]> {
-        await this.ensureInit();
-
-        const conditions: string[] = [];
-        const params: unknown[] = [];
-
-        if (filter) {
-            this.addFilterCondition(conditions, params, "script", filter.script);
-            this.addFilterCondition(conditions, params, "state", filter.state);
-            this.addFilterCondition(conditions, params, "type", filter.type);
-            this.addWatchCondition(conditions, params, filter.watch);
-        }
-
-        let sql = `SELECT * FROM ${this.table}`;
-        if (conditions.length > 0) {
-            sql += ` WHERE ${conditions.join(" AND ")}`;
-        }
-
-        const rows = await this.db.all<ContractRow>(sql, params);
-        return rows.map(contractRowToDomain);
-    }
-
     async getContractsPage(
         filter: ContractFilter | undefined,
         page: PageRequest,

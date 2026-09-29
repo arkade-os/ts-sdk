@@ -1,4 +1,5 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
+import type { Outpoint } from "../../wallet";
 import {
     WalletRepository,
     WalletState,
@@ -7,6 +8,8 @@ import {
     compareHistoryCursors,
     type TransactionHistoryPageFilter,
     type TransactionHistoryPageCursor,
+    type ScriptVtxoCursor,
+    type StoredVtxo,
 } from "../walletRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import {
@@ -60,10 +63,11 @@ export class RealmWalletRepository implements WalletRepository {
 
     // ── VTXO management ────────────────────────────────────────────────
 
-    async getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
-        await this.ensureInit();
-        const results = this.realm.objects("ArkVtxo").filtered("address == $0", address);
-        return [...results].map(vtxoObjectToDomain);
+    async getVtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedVirtualCoin, Outpoint>> {
+        return this.pageByAddress("ArkVtxo", address, page, vtxoObjectToDomain);
     }
 
     async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -126,10 +130,37 @@ export class RealmWalletRepository implements WalletRepository {
         });
     }
 
-    async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
+    async getVtxosForScriptPage(
+        script: string,
+        page: PageRequest<ScriptVtxoCursor>,
+    ): Promise<PageResult<StoredVtxo, ScriptVtxoCursor>> {
+        assertPageRequest(page);
         await this.ensureInit();
-        const results = this.realm.objects("ArkVtxo").filtered("script == $0", script);
-        return [...results].map(vtxoObjectToDomain);
+        let results = this.realm
+            .objects<{ address: string; txid: string; vout: number }>("ArkVtxo")
+            .filtered("script == $0", script);
+        if (page.after) {
+            results = results.filtered(
+                "address > $0 OR (address == $0 AND (txid > $1 OR (txid == $1 AND vout > $2)))",
+                page.after.address,
+                page.after.txid,
+                page.after.vout,
+            );
+        }
+        const rows: StoredVtxo[] = [];
+        for (const row of results.sorted([
+            ["address", false],
+            ["txid", false],
+            ["vout", false],
+        ])) {
+            rows.push({ address: row.address, vtxo: vtxoObjectToDomain(row) });
+            if (rows.length > page.limit) break;
+        }
+        return pageResult(rows, page.limit, (row) => ({
+            address: row.address,
+            txid: row.vtxo.txid,
+            vout: row.vtxo.vout,
+        }));
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -156,10 +187,41 @@ export class RealmWalletRepository implements WalletRepository {
 
     // ── UTXO management ────────────────────────────────────────────────
 
-    async getUtxos(address: string): Promise<ExtendedCoin[]> {
+    async getUtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedCoin, Outpoint>> {
+        return this.pageByAddress("ArkUtxo", address, page, utxoObjectToDomain);
+    }
+
+    private async pageByAddress<Item>(
+        schema: string,
+        address: string,
+        page: PageRequest<Outpoint>,
+        deserialize: (row: any) => Item,
+    ): Promise<PageResult<Item, Outpoint>> {
+        assertPageRequest(page);
         await this.ensureInit();
-        const results = this.realm.objects("ArkUtxo").filtered("address == $0", address);
-        return [...results].map(utxoObjectToDomain);
+        let results = this.realm
+            .objects<{ txid: string; vout: number }>(schema)
+            .filtered("address == $0", address);
+        if (page.after) {
+            results = results.filtered(
+                "txid > $0 OR (txid == $0 AND vout > $1)",
+                page.after.txid,
+                page.after.vout,
+            );
+        }
+        const rows: { key: Outpoint; item: Item }[] = [];
+        for (const row of results.sorted([
+            ["txid", false],
+            ["vout", false],
+        ])) {
+            rows.push({ key: { txid: row.txid, vout: row.vout }, item: deserialize(row) });
+            if (rows.length > page.limit) break;
+        }
+        const result = pageResult(rows, page.limit, (row) => row.key);
+        return { items: result.items.map((row) => row.item), nextCursor: result.nextCursor };
     }
 
     async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
@@ -198,14 +260,6 @@ export class RealmWalletRepository implements WalletRepository {
     }
 
     // ── Transaction history ────────────────────────────────────────────
-
-    async getTransactionHistory(address: string): Promise<ArkTransaction[]> {
-        await this.ensureInit();
-        const results = this.realm.objects("ArkTransaction").filtered("address == $0", address);
-        const txs = [...results].map(txObjectToDomain);
-        txs.sort((a, b) => a.createdAt - b.createdAt);
-        return txs;
-    }
 
     async getTransactionHistoryPage(
         filter: TransactionHistoryPageFilter,

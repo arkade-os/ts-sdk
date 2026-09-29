@@ -1,3 +1,4 @@
+import { collectIntents } from "../src/repositories/intentRepository";
 import { describe, it, expect } from "vitest";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
 import { applySettlementEventToIntent } from "../src/wallet/intentStateReducer";
@@ -27,7 +28,7 @@ describe("settle intent persistence contract", () => {
 
         expect(await repo.getLockedVtxoOutpoints()).toEqual([{ txid: "v", vout: 0 }]);
 
-        const cur = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        const cur = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
         const next = applySettlementEventToIntent(cur, {
             type: SettlementEventType.BatchFinalized,
             id: "batch-1",
@@ -36,7 +37,7 @@ describe("settle intent persistence contract", () => {
         expect(next).toBeDefined();
         if (next) await repo.saveIntent(next);
 
-        const done = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");
         expect(done.commitmentTransactionId).toBe("ctx");
         expect(done.batchId).toBe("batch-1");

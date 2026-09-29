@@ -156,12 +156,6 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         });
     }
 
-    async getAllSwaps(): Promise<AssetSwap[]> {
-        await this.ensureInit();
-        const rows = await this.db.all<{ data: string }>(`SELECT data FROM ${this.swaps}`);
-        return rows.map((r) => JSON.parse(r.data) as AssetSwap);
-    }
-
     async getAssetSwapsPage(page: PageRequest): Promise<PageResult<AssetSwap>> {
         return this.pageTable<AssetSwap>(this.swaps, "id", page);
     }
@@ -184,12 +178,6 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
             [rfqId],
         );
         return row ? (JSON.parse(row.data) as RfqSwapRecord) : undefined;
-    }
-
-    async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
-        await this.ensureInit();
-        const rows = await this.db.all<{ data: string }>(`SELECT data FROM ${this.rfqSwaps}`);
-        return rows.map((r) => JSON.parse(r.data) as RfqSwapRecord);
     }
 
     async getRfqSwapsPage(
@@ -256,12 +244,6 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         return row ? (JSON.parse(row.data) as SwapRecord) : undefined;
     }
 
-    async getAllSwapRecords(): Promise<SwapRecord[]> {
-        await this.ensureInit();
-        const rows = await this.db.all<{ data: string }>(`SELECT data FROM ${this.swapRecords}`);
-        return rows.map((r) => JSON.parse(r.data) as SwapRecord);
-    }
-
     async getSwapRecordsPage(page: PageRequest): Promise<PageResult<SwapRecord>> {
         return this.pageTable<SwapRecord>(this.swapRecords, "id", page);
     }
@@ -274,8 +256,10 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         assertPageRequest(page);
         await this.ensureInit();
         const rows = await this.db.all<{ key: string; data: string }>(
-            `SELECT ${key} AS key, data FROM ${table} WHERE ${key} > ? ORDER BY ${key} LIMIT ?`,
-            [page.after ?? "", page.limit + 1],
+            page.after === undefined
+                ? `SELECT ${key} AS key, data FROM ${table} ORDER BY ${key} LIMIT ?`
+                : `SELECT ${key} AS key, data FROM ${table} WHERE ${key} > ? ORDER BY ${key} LIMIT ?`,
+            page.after === undefined ? [page.limit + 1] : [page.after, page.limit + 1],
         );
         const result = pageResult(rows, page.limit, (row) => row.key);
         return {

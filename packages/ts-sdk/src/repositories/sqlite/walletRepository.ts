@@ -1,4 +1,5 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
+import type { Outpoint } from "../../wallet";
 import {
     WalletRepository,
     WalletState,
@@ -6,6 +7,8 @@ import {
     assertHistoryPageFilter,
     type TransactionHistoryPageFilter,
     type TransactionHistoryPageCursor,
+    type ScriptVtxoCursor,
+    type StoredVtxo,
 } from "../walletRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import {
@@ -120,7 +123,16 @@ export class SQLiteWalletRepository implements WalletRepository {
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_script ON ${this.tables.vtxos} (script)`,
         );
         await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_script_page ON ${this.tables.vtxos} (script, address, txid, vout)`,
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_address_page ON ${this.tables.vtxos} (address, txid, vout)`,
+        );
+        await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}utxos_address ON ${this.tables.utxos} (address)`,
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}utxos_address_page ON ${this.tables.utxos} (address, txid, vout)`,
         );
         await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}transactions_address ON ${this.tables.transactions} (address)`,
@@ -330,13 +342,11 @@ export class SQLiteWalletRepository implements WalletRepository {
 
     // ── VTXO management ────────────────────────────────────────────────
 
-    async getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
-        await this.ensureInit();
-        const rows = await this.db.all<VtxoRow>(
-            `SELECT * FROM ${this.tables.vtxos} WHERE address = ?`,
-            [address],
-        );
-        return rows.map(vtxoRowToDomain);
+    async getVtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedVirtualCoin, Outpoint>> {
+        return this.pageByAddress(this.tables.vtxos, address, page, vtxoRowToDomain);
     }
 
     async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -400,13 +410,35 @@ export class SQLiteWalletRepository implements WalletRepository {
         await this.db.run(`DELETE FROM ${this.tables.vtxos} WHERE address = ?`, [address]);
     }
 
-    async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
+    async getVtxosForScriptPage(
+        script: string,
+        page: PageRequest<ScriptVtxoCursor>,
+    ): Promise<PageResult<StoredVtxo, ScriptVtxoCursor>> {
+        assertPageRequest(page);
         await this.ensureInit();
+        const after = page.after;
         const rows = await this.db.all<VtxoRow>(
-            `SELECT * FROM ${this.tables.vtxos} WHERE script = ?`,
-            [script],
+            `SELECT * FROM ${this.tables.vtxos} WHERE script = ?
+             ${after ? "AND (address > ? OR (address = ? AND (txid > ? OR (txid = ? AND vout > ?))))" : ""}
+             ORDER BY address, txid, vout LIMIT ?`,
+            after
+                ? [
+                      script,
+                      after.address,
+                      after.address,
+                      after.txid,
+                      after.txid,
+                      after.vout,
+                      page.limit + 1,
+                  ]
+                : [script, page.limit + 1],
         );
-        return rows.map(vtxoRowToDomain);
+        const items = rows.map((row) => ({ address: row.address, vtxo: vtxoRowToDomain(row) }));
+        return pageResult(items, page.limit, (row) => ({
+            address: row.address,
+            txid: row.vtxo.txid,
+            vout: row.vtxo.vout,
+        }));
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -430,13 +462,28 @@ export class SQLiteWalletRepository implements WalletRepository {
 
     // ── UTXO management ────────────────────────────────────────────────
 
-    async getUtxos(address: string): Promise<ExtendedCoin[]> {
+    async getUtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedCoin, Outpoint>> {
+        return this.pageByAddress(this.tables.utxos, address, page, utxoRowToDomain);
+    }
+
+    private async pageByAddress<Row extends Outpoint, Item>(
+        table: string,
+        address: string,
+        page: PageRequest<Outpoint>,
+        deserialize: (row: Row) => Item,
+    ): Promise<PageResult<Item, Outpoint>> {
+        assertPageRequest(page);
         await this.ensureInit();
-        const rows = await this.db.all<UtxoRow>(
-            `SELECT * FROM ${this.tables.utxos} WHERE address = ?`,
-            [address],
+        const rows = await this.db.all<Row>(
+            `SELECT * FROM ${table} WHERE address = ? AND (txid, vout) > (?, ?)
+             ORDER BY txid, vout LIMIT ?`,
+            [address, page.after?.txid ?? "", page.after?.vout ?? -1, page.limit + 1],
         );
-        return rows.map(utxoRowToDomain);
+        const result = pageResult(rows, page.limit, ({ txid, vout }) => ({ txid, vout }));
+        return { items: result.items.map(deserialize), nextCursor: result.nextCursor };
     }
 
     async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
@@ -474,15 +521,6 @@ export class SQLiteWalletRepository implements WalletRepository {
     }
 
     // ── Transaction history ────────────────────────────────────────────
-
-    async getTransactionHistory(address: string): Promise<ArkTransaction[]> {
-        await this.ensureInit();
-        const rows = await this.db.all<TransactionRow>(
-            `SELECT * FROM ${this.tables.transactions} WHERE address = ? ORDER BY created_at ASC`,
-            [address],
-        );
-        return rows.map(txRowToDomain);
-    }
 
     async getTransactionHistoryPage(
         filter: TransactionHistoryPageFilter,

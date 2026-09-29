@@ -1,11 +1,9 @@
 import { Outpoint } from "../../wallet";
 import {
     ArkIntent,
-    IntentFilter,
     IntentPageFilter,
     IntentRepository,
     intentMatchesFilter,
-    intentPageBounds,
     isTerminalIntentState,
 } from "../intentRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
@@ -48,16 +46,6 @@ export class IndexedDBIntentRepository implements IntentRepository {
         const transaction = db.transaction([STORE_INTENTS], "readwrite");
         transaction.objectStore(STORE_INTENTS).put({ ...intent, updatedAt: Date.now() });
         await awaitTransaction(transaction);
-    }
-
-    async getIntents(filter?: IntentFilter): Promise<ArkIntent[]> {
-        const db = await this.getDB();
-        const store = db.transaction([STORE_INTENTS], "readonly").objectStore(STORE_INTENTS);
-        const all = (await promisifyRequest(store.getAll())) as ArkIntent[];
-        all.sort((a, b) => a.createdAt - b.createdAt || a.intentTxId.localeCompare(b.intentTxId));
-        const out = filter ? all.filter((i) => intentMatchesFilter(i, filter)) : all;
-        const { skip, end } = intentPageBounds(filter, out.length);
-        return out.slice(skip, end);
     }
 
     async getIntentsPage(

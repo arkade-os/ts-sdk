@@ -2,11 +2,9 @@ import { Outpoint } from "../../wallet";
 import {
     ArkIntent,
     ArkIntentState,
-    IntentFilter,
     IntentPageFilter,
     IntentRepository,
     intentMatchesFilter,
-    intentPageBounds,
     isTerminalIntentState,
 } from "../intentRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
@@ -153,17 +151,6 @@ export class SQLiteIntentRepository implements IntentRepository {
                 ],
             );
         });
-    }
-
-    async getIntents(filter?: IntentFilter): Promise<ArkIntent[]> {
-        await this.ensureInit();
-        const rows = await this.db.all<IntentRow>(
-            `SELECT * FROM ${this.t} ORDER BY created_at ASC, intent_tx_id ASC`,
-        );
-        let out = rows.map(rowToIntent);
-        if (filter) out = out.filter((i) => intentMatchesFilter(i, filter));
-        const { skip, end } = intentPageBounds(filter, out.length);
-        return out.slice(skip, end);
     }
 
     async getIntentsPage(

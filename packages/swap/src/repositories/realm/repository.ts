@@ -58,12 +58,6 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
         });
     }
 
-    async getAllSwaps(): Promise<AssetSwap[]> {
-        return [...this.realm.objects<{ data: string }>(SWAPS)].map(
-            (o) => JSON.parse(o.data) as AssetSwap,
-        );
-    }
-
     async getAssetSwapsPage(page: PageRequest): Promise<PageResult<AssetSwap>> {
         return this.pageRealm(SWAPS, "id", page);
     }
@@ -88,12 +82,6 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
             ...this.realm.objects<{ data: string }>(RFQ_SWAPS).filtered("rfqId == $0", rfqId),
         ];
         return found ? (JSON.parse(found.data) as RfqSwapRecord) : undefined;
-    }
-
-    async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
-        return [...this.realm.objects<{ data: string }>(RFQ_SWAPS)].map(
-            (o) => JSON.parse(o.data) as RfqSwapRecord,
-        );
     }
 
     async getRfqSwapsPage(
@@ -157,12 +145,6 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
             ...this.realm.objects<{ data: string }>(SWAP_RECORDS).filtered("id == $0", id),
         ];
         return found ? (JSON.parse(found.data) as SwapRecord) : undefined;
-    }
-
-    async getAllSwapRecords(): Promise<SwapRecord[]> {
-        return [...this.realm.objects<{ data: string }>(SWAP_RECORDS)].map(
-            (o) => JSON.parse(o.data) as SwapRecord,
-        );
     }
 
     async getSwapRecordsPage(page: PageRequest): Promise<PageResult<SwapRecord>> {

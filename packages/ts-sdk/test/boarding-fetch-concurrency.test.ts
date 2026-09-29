@@ -1,3 +1,4 @@
+import { collectUtxos } from "../src/repositories/walletRepository";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 import { DefaultVtxo } from "../src/script/default";
 import {
@@ -90,6 +91,6 @@ describe("boarding fetch fans out across addresses", () => {
         release();
         await new Promise((resolve) => setTimeout(resolve, 20));
 
-        expect(await walletRepository.getUtxos(late)).toEqual([]);
+        expect(await collectUtxos(walletRepository, late)).toEqual([]);
     });
 });

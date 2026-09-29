@@ -108,6 +108,7 @@ import {
     type LockupVtxo,
 } from "./refund";
 import { lockupContractParams, registerLockupContract } from "./lockupContract";
+import { collectRfqSwaps, type AssetSwapRepository } from "./repository";
 import {
     assertSameSwap,
     createRfqSwapRecord,
@@ -643,7 +644,7 @@ export type SwapContractRegistry = Pick<
 export interface RfqSwapRecordStore {
     saveRfqSwap(record: RfqSwapRecord): Promise<void>;
     getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined>;
-    getAllRfqSwaps(): Promise<RfqSwapRecord[]>;
+    getRfqSwapsPage: AssetSwapRepository["getRfqSwapsPage"];
     removeRfqSwap(rfqId: string): Promise<void>;
 }
 
@@ -984,7 +985,7 @@ export class RfqSwapManager {
         // One read for both halves: retention and the rebuild want the same
         // records, and asking twice would let a write between the two reads
         // hand the rebuild a record retention had already dropped.
-        const records = await repository.getAllRfqSwaps();
+        const records = await collectRfqSwaps(repository);
         const pruned = await this.dropRetired(repository, records);
         const retired = new Set(pruned);
 
@@ -1039,7 +1040,7 @@ export class RfqSwapManager {
     async pruneRetiredSwaps(): Promise<string[]> {
         const repository = this.deps.repository;
         if (!repository) return [];
-        return this.dropRetired(repository, await repository.getAllRfqSwaps());
+        return this.dropRetired(repository, await collectRfqSwaps(repository));
     }
 
     private async dropRetired(

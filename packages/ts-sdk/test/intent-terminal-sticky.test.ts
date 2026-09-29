@@ -1,3 +1,4 @@
+import { collectIntents } from "../src/repositories/intentRepository";
 import { describe, it, expect } from "vitest";
 import { Wallet } from "../src/wallet/wallet";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
@@ -52,7 +53,7 @@ describe("persistIntentSnapshot terminal stickiness", () => {
             },
         );
 
-        const got = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
+        const got = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
         expect(got.state).toBe("batch_succeeded");
         expect(got.commitmentTransactionId).toBe("ctx");
         expect(got.cancellationReason).toBeUndefined();
@@ -64,7 +65,7 @@ describe("persistIntentSnapshot terminal stickiness", () => {
 
         await persistIntentSnapshot.call({ intentRepository: repo }, "i1", "cancelled", {}, {}, []);
 
-        expect((await repo.getIntents({ intentTxIds: ["i1"] }))[0].state).toBe("batch_failed");
+        expect((await collectIntents(repo, { intentTxIds: ["i1"] }))[0].state).toBe("batch_failed");
     });
 
     it("is a no-op when no intent repository is configured", async () => {

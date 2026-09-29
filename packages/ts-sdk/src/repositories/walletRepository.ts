@@ -1,6 +1,7 @@
-import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../wallet";
+import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin, type Outpoint } from "../wallet";
 import type { TxKey } from "../wallet";
-import type { PageRequest, PageResult } from "./page";
+import { collectPages, MAX_PAGE_SIZE, type PageRequest, type PageResult } from "./page";
+import { scriptFromArkAddress } from "./scriptFromAddress";
 
 export interface TransactionHistoryPageFilter {
     address: string;
@@ -26,6 +27,10 @@ export function compareHistoryCursors(
     b: TransactionHistoryPageCursor,
 ): number {
     return a.createdAt - b.createdAt || compareTxKeys(a.key, b.key);
+}
+
+export function compareOutpoints(a: Outpoint, b: Outpoint): number {
+    return a.txid < b.txid ? -1 : a.txid > b.txid ? 1 : a.vout - b.vout;
 }
 
 export function assertHistoryPageFilter(filter: TransactionHistoryPageFilter): void {
@@ -66,6 +71,19 @@ export interface VtxoRepositoryKey {
     address?: string;
 }
 
+export interface ScriptVtxoCursor extends Outpoint {
+    address: string;
+}
+
+export interface StoredVtxo {
+    address: string;
+    vtxo: ExtendedVirtualCoin;
+}
+
+export function compareScriptVtxoCursors(a: ScriptVtxoCursor, b: ScriptVtxoCursor): number {
+    return a.address < b.address ? -1 : a.address > b.address ? 1 : compareOutpoints(a, b);
+}
+
 export interface WalletRepository extends AsyncDisposable {
     readonly version: 1;
 
@@ -74,8 +92,10 @@ export interface WalletRepository extends AsyncDisposable {
      */
     clear(): Promise<void>;
 
-    /** Fetch stored virtual outputs for an address. */
-    getVtxos(address: string): Promise<ExtendedVirtualCoin[]>;
+    getVtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedVirtualCoin, Outpoint>>;
     /** Save virtual outputs for an address. */
     saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void>;
     /** Delete stored virtual outputs for an address. */
@@ -85,7 +105,10 @@ export interface WalletRepository extends AsyncDisposable {
      * Fetch stored virtual outputs for a script.
      * @optional SDK backends implement this; custom backends fall back to Tier 1.
      */
-    getVtxosForScript?(script: string): Promise<ExtendedVirtualCoin[]>;
+    getVtxosForScriptPage?(
+        script: string,
+        page: PageRequest<ScriptVtxoCursor>,
+    ): Promise<PageResult<StoredVtxo, ScriptVtxoCursor>>;
 
     /**
      * Save virtual outputs for a script.
@@ -99,15 +122,15 @@ export interface WalletRepository extends AsyncDisposable {
      */
     deleteVtxosForScript?(script: string): Promise<void>;
 
-    /** Fetch stored boarding inputs for an address. */
-    getUtxos(address: string): Promise<ExtendedCoin[]>;
+    getUtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedCoin, Outpoint>>;
     /** Save boarding inputs for an address. */
     saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void>;
     /** Delete stored boarding inputs for an address. */
     deleteUtxos(address: string): Promise<void>;
 
-    /** Fetch stored transaction history for an address. */
-    getTransactionHistory(address: string): Promise<ArkTransaction[]>;
     /** History in ascending creation time and transaction-key order; `after` is exclusive. */
     getTransactionHistoryPage(
         filter: TransactionHistoryPageFilter,
@@ -122,4 +145,66 @@ export interface WalletRepository extends AsyncDisposable {
     getWalletState(): Promise<WalletState | null>;
     /** Save wallet state. */
     saveWalletState(state: WalletState): Promise<void>;
+}
+
+export const collectVtxos = (repository: Pick<WalletRepository, "getVtxosPage">, address: string) =>
+    collectPages((page: PageRequest<Outpoint>) => repository.getVtxosPage(address, page));
+
+export const collectUtxos = (repository: Pick<WalletRepository, "getUtxosPage">, address: string) =>
+    collectPages((page: PageRequest<Outpoint>) => repository.getUtxosPage(address, page));
+
+export const collectTransactionHistory = (
+    repository: Pick<WalletRepository, "getTransactionHistoryPage">,
+    address: string,
+) =>
+    collectPages((page: PageRequest<TransactionHistoryPageCursor>) =>
+        repository.getTransactionHistoryPage({ address }, page),
+    );
+
+export async function collectScriptVtxos(
+    repository: WalletRepository,
+    script: string,
+): Promise<ExtendedVirtualCoin[]> {
+    if (!repository.getVtxosForScriptPage) throw new Error("script VTXO paging is unavailable");
+    const byOutpoint = new Map<string, StoredVtxo>();
+    let after: ScriptVtxoCursor | undefined;
+    do {
+        const page = await repository.getVtxosForScriptPage(script, {
+            limit: MAX_PAGE_SIZE,
+            after,
+        });
+        for (const row of page.items) {
+            const key = `${row.vtxo.txid}:${row.vtxo.vout}`;
+            const previous = byOutpoint.get(key);
+            if (!previous || shouldReplaceScriptVtxo(previous, row)) byOutpoint.set(key, row);
+        }
+        after = page.nextCursor;
+    } while (after !== undefined);
+    return [...byOutpoint.values()].map((row) => row.vtxo);
+}
+
+function shouldReplaceScriptVtxo(existing: StoredVtxo, incoming: StoredVtxo): boolean {
+    const canonical = (row: StoredVtxo) => {
+        try {
+            return scriptFromArkAddress(row.address) === row.vtxo.script;
+        } catch {
+            return false;
+        }
+    };
+    if (canonical(incoming) !== canonical(existing)) return canonical(incoming);
+    if (
+        existing.vtxo.isSpent !== incoming.vtxo.isSpent &&
+        (existing.vtxo.isSpent === true || incoming.vtxo.isSpent === true)
+    ) {
+        return incoming.vtxo.isSpent === true;
+    }
+    const weight = (row: StoredVtxo) =>
+        Number(row.vtxo.isSpent !== undefined) +
+        2 * Number(!!row.vtxo.spentBy) +
+        2 * Number(!!row.vtxo.settledBy) +
+        2 * Number(!!row.vtxo.arkTxId);
+    return (
+        weight(incoming) > weight(existing) ||
+        (weight(incoming) === weight(existing) && incoming.address < existing.address)
+    );
 }

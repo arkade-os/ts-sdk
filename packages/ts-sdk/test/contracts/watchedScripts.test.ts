@@ -1,3 +1,4 @@
+import { collectScriptVtxos } from "../../src/repositories/walletRepository";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import {
@@ -527,7 +528,7 @@ describe("ContractWatcher watch-only scripts", () => {
         manager.onContractEvent((e) => seen.push(e));
         await manager.watchScript!(FOREIGN_SCRIPT);
 
-        expect(await walletRepository.getVtxosForScript!(TEST_DEFAULT_SCRIPT)).toEqual([]);
+        expect(await collectScriptVtxos(walletRepository, TEST_DEFAULT_SCRIPT)).toEqual([]);
 
         (indexer.getVtxos as any).mockImplementation((opts: { scripts?: string[] }) =>
             Promise.resolve({
@@ -544,11 +545,11 @@ describe("ContractWatcher watch-only scripts", () => {
         });
 
         await vi.waitFor(async () => {
-            expect(await walletRepository.getVtxosForScript!(TEST_DEFAULT_SCRIPT)).not.toEqual([]);
+            expect(await collectScriptVtxos(walletRepository, TEST_DEFAULT_SCRIPT)).not.toEqual([]);
         });
 
         // The owned side above is what stops this one passing vacuously.
-        expect(await walletRepository.getVtxosForScript!(FOREIGN_SCRIPT)).toEqual([]);
+        expect(await collectScriptVtxos(walletRepository, FOREIGN_SCRIPT)).toEqual([]);
 
         const watchOnly = seen.filter((e) => e.type === "vtxo_received" && !isContractVtxoEvent(e));
         expect(watchOnly.length).toBeGreaterThan(0);
@@ -747,8 +748,8 @@ describe("watch-only scripts stay out of the wallet", () => {
         expect(balance.total).toBe(OWNED_VALUE);
 
         // The root cause of every "absent" above: nothing was persisted.
-        expect(await walletRepository.getVtxosForScript!(FOREIGN_SCRIPT)).toEqual([]);
-        expect(await walletRepository.getVtxosForScript!(owned.script)).not.toEqual([]);
+        expect(await collectScriptVtxos(walletRepository, FOREIGN_SCRIPT)).toEqual([]);
+        expect(await collectScriptVtxos(walletRepository, owned.script)).not.toEqual([]);
 
         manager.dispose();
     });

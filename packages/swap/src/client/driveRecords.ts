@@ -2,7 +2,7 @@
  * The three seams between the v2 record store and v1's drive machinery.
  *
  * **The record bridge is the load-bearing one.** `RfqSwapManager` restores from
- * `getAllRfqSwaps()`, while `accept()` writes `saveSwapRecord` into a keyspace
+ * `getRfqSwapsPage()`, while `accept()` writes `saveSwapRecord` into a keyspace
  * `repository.ts` rules disjoint from it by design. So without this file the
  * manager's restore-read returns nothing for every v2-accepted swap, and the
  * whole drive — `ready`, arm-on-live-work, the outcome projections, recovery —
@@ -29,13 +29,17 @@
  *   manager still drops its in-memory copies, so an aged terminal record is not
  *   rebuilt; the record itself survives.
  */
-import type { AssetSwapRepository } from "../repository";
+import {
+    assertRfqSwapPageFilter,
+    collectSwapRecords,
+    type AssetSwapRepository,
+} from "../repository";
 import type { RfqSwapRecord } from "../rfqRecord";
 import type { RfqSwapRecordStore } from "../swapManager";
 import type { LockupSpendIndexer } from "../refund";
 import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "../store";
 import type { OfferSpendChanges, OfferSwapFacts, OfferSwapSource } from "../watch";
-import { asset, type IWallet } from "@arkade-os/sdk";
+import { asset, assertPageRequest, pageResult, type IWallet } from "@arkade-os/sdk";
 import { toAtomicDecimal } from "./amount";
 import { arkadeAsset, btcOn, type AssetId, type NetworkRef } from "./assetId";
 import type { QuoteId } from "./quote";
@@ -181,7 +185,7 @@ export const corridorRecordStore = (
         // directly, or a record written by another client on the same store.
         // One scan is the honest answer; a miss here is what would make
         // `arkadeRefunder` report a permanent refusal on a refundable swap.
-        const { corridor } = splitRecords(await repository.getAllSwapRecords());
+        const { corridor } = splitRecords(await collectSwapRecords(repository));
         for (const record of corridor) index(record);
         const found = byRfqId.get(rfqId);
         return found === undefined ? undefined : corridor.find((r) => r.id === found);
@@ -191,13 +195,36 @@ export const corridorRecordStore = (
         index,
         quoteIdOf: (rfqId) => byRfqId.get(rfqId),
 
-        async getAllRfqSwaps() {
-            const { corridor } = splitRecords(await repository.getAllSwapRecords());
+        async getRfqSwapsPage(filter, page) {
+            assertPageRequest(page);
+            assertRfqSwapPageFilter(filter);
+            const { corridor } = splitRecords(await collectSwapRecords(repository));
             // Indexed before the filter: an excluded record still has to be
             // findable by `rfqId`, because a consumer may hand its swap to the
             // manager directly.
             for (const record of corridor) index(record);
-            return corridor.filter(admits).map(rfqRecordOf);
+            const rows = corridor
+                .filter(admits)
+                .map(rfqRecordOf)
+                .filter(
+                    (record) =>
+                        (filter.state === undefined || record.state === filter.state) &&
+                        (filter.since === undefined || record.updatedAt >= filter.since) &&
+                        (!page.after ||
+                            record.updatedAt > page.after.updatedAt ||
+                            (record.updatedAt === page.after.updatedAt &&
+                                record.rfqId > page.after.rfqId)),
+                )
+                .sort(
+                    (a, b) =>
+                        a.updatedAt - b.updatedAt ||
+                        (a.rfqId < b.rfqId ? -1 : a.rfqId > b.rfqId ? 1 : 0),
+                )
+                .slice(0, page.limit + 1);
+            return pageResult(rows, page.limit, (record) => ({
+                updatedAt: record.updatedAt,
+                rfqId: record.rfqId,
+            }));
         },
 
         async getRfqSwap(rfqId) {
@@ -251,7 +278,7 @@ export const offerRecordSource = (
     now: () => number = () => Math.floor(Date.now() / 1000),
 ): OfferSwapSource<OfferSwapFacts & { id: QuoteId }> => {
     const list = async () => {
-        const { offer } = splitRecords(await repository.getAllSwapRecords());
+        const { offer } = splitRecords(await collectSwapRecords(repository));
         return offer.map(offerFactsOf);
     };
     return {

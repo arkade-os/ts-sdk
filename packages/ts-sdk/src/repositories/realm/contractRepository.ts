@@ -38,48 +38,6 @@ export class RealmContractRepository implements ContractRepository {
 
     // ── Contract management ────────────────────────────────────────────
 
-    async getContracts(filter?: ContractFilter): Promise<Contract[]> {
-        await this.ensureInit();
-
-        let results = this.realm.objects("ArkContract");
-
-        if (filter) {
-            const filterParts: string[] = [];
-            const filterArgs: unknown[] = [];
-
-            let argIndex = 0;
-            argIndex = this.addFilterCondition(
-                filterParts,
-                filterArgs,
-                "script",
-                filter.script,
-                argIndex,
-            );
-            argIndex = this.addFilterCondition(
-                filterParts,
-                filterArgs,
-                "state",
-                filter.state,
-                argIndex,
-            );
-            argIndex = this.addFilterCondition(
-                filterParts,
-                filterArgs,
-                "type",
-                filter.type,
-                argIndex,
-            );
-            argIndex = this.addWatchCondition(filterParts, filterArgs, filter.watch, argIndex);
-
-            if (filterParts.length > 0) {
-                const query = filterParts.join(" AND ");
-                results = results.filtered(query, ...filterArgs);
-            }
-        }
-
-        return [...results].map(contractObjectToDomain);
-    }
-
     async getContractsPage(
         filter: ContractFilter | undefined,
         page: PageRequest,

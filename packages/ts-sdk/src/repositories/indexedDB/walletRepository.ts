@@ -1,4 +1,5 @@
 import { ExtendedCoin, ExtendedVirtualCoin, ArkTransaction } from "../../wallet";
+import type { Outpoint } from "../../wallet";
 import {
     WalletRepository,
     WalletState,
@@ -7,6 +8,9 @@ import {
     compareHistoryCursors,
     type TransactionHistoryPageFilter,
     type TransactionHistoryPageCursor,
+    type ScriptVtxoCursor,
+    type StoredVtxo,
+    compareScriptVtxoCursors,
 } from "../walletRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import {
@@ -57,22 +61,11 @@ export class IndexedDBWalletRepository implements WalletRepository {
         await this.connection[Symbol.asyncDispose]();
     }
 
-    async getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
-        try {
-            const db = await this.getDB();
-            const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
-            const results = await promisifyRequest<(SerializedVtxo & { address: string })[]>(
-                store.index("address").getAll(address),
-            );
-            // A bad row (e.g. a legacy VTXO whose address can't be decoded
-            // during backfill) throws here, in ordinary async code, so the
-            // outer catch reports it rather than it being lost inside an IDB
-            // event handler.
-            return (results || []).map(deserializeVtxoWithBackfill);
-        } catch (error) {
-            console.error(`Failed to get VTXOs for address ${address}:`, error);
-            return [];
-        }
+    async getVtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedVirtualCoin, Outpoint>> {
+        return this.pageByAddress(STORE_VTXOS, address, page, deserializeVtxoWithBackfill);
     }
 
     async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -103,36 +96,49 @@ export class IndexedDBWalletRepository implements WalletRepository {
         }
     }
 
-    async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
-        try {
-            const db = await this.getDB();
-            const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
-            const results = await promisifyRequest<(SerializedVtxo & { address: string })[]>(
-                store.index("script").getAll(script),
-            );
-
-            // Defensive filter: only rows whose script matches.
-            const matching = (results || []).filter((r) => r.script === script);
-
-            // Dedup same outpoint rows across address buckets. Work on raw rows
-            // so the address field is available for the canonicality tiebreaker.
-            const byOutpoint = new Map<string, SerializedVtxo & { address: string }>();
-            for (const row of matching) {
-                const outpoint = `${row.txid}:${row.vout}`;
-                const existing = byOutpoint.get(outpoint);
-                if (!existing) {
-                    byOutpoint.set(outpoint, row);
-                    continue;
+    async getVtxosForScriptPage(
+        script: string,
+        page: PageRequest<ScriptVtxoCursor>,
+    ): Promise<PageResult<StoredVtxo, ScriptVtxoCursor>> {
+        assertPageRequest(page);
+        const db = await this.getDB();
+        const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
+        const request = store.index("script").openCursor(IDBKeyRange.only(script));
+        return new Promise((resolve, reject) => {
+            const rows: StoredVtxo[] = [];
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                try {
+                    const cursor = request.result;
+                    if (!cursor) {
+                        resolve(pageResult(rows, page.limit, scriptVtxoCursorOf));
+                        return;
+                    }
+                    const row = cursor.value as SerializedVtxo & { address: string };
+                    const key = { address: row.address, txid: row.txid, vout: row.vout };
+                    if (page.after && compareScriptVtxoCursors(key, page.after) <= 0) {
+                        if (compareScriptVtxoCursors(key, page.after) < 0) {
+                            cursor.continuePrimaryKey(script, [
+                                page.after.address,
+                                page.after.txid,
+                                page.after.vout,
+                            ]);
+                        } else {
+                            cursor.continue();
+                        }
+                        return;
+                    }
+                    rows.push({ address: row.address, vtxo: deserializeVtxoWithBackfill(row) });
+                    if (rows.length > page.limit) {
+                        resolve(pageResult(rows, page.limit, scriptVtxoCursorOf));
+                        return;
+                    }
+                    cursor.continue();
+                } catch (error) {
+                    reject(error);
                 }
-                if (shouldReplaceVtxo(existing, row)) {
-                    byOutpoint.set(outpoint, row);
-                }
-            }
-            return Array.from(byOutpoint.values()).map(deserializeVtxoWithBackfill);
-        } catch (error) {
-            console.error(`Failed to get VTXOs for script ${script}:`, error);
-            throw error;
-        }
+            };
+        });
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -161,16 +167,54 @@ export class IndexedDBWalletRepository implements WalletRepository {
         }
     }
 
-    async getUtxos(address: string): Promise<ExtendedCoin[]> {
-        try {
-            const db = await this.getDB();
-            const store = db.transaction([STORE_UTXOS], "readonly").objectStore(STORE_UTXOS);
-            const results = await promisifyRequest(store.index("address").getAll(address));
-            return (results || []).map(deserializeUtxo);
-        } catch (error) {
-            console.error(`Failed to get UTXOs for address ${address}:`, error);
-            return [];
-        }
+    async getUtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedCoin, Outpoint>> {
+        return this.pageByAddress(STORE_UTXOS, address, page, deserializeUtxo);
+    }
+
+    private async pageByAddress<Item>(
+        name: string,
+        address: string,
+        page: PageRequest<Outpoint>,
+        deserialize: (row: any) => Item,
+    ): Promise<PageResult<Item, Outpoint>> {
+        assertPageRequest(page);
+        const db = await this.getDB();
+        const store = db.transaction([name], "readonly").objectStore(name);
+        const key = page.after ? [address, page.after.txid, page.after.vout] : [address];
+        const request = store.openCursor(IDBKeyRange.lowerBound(key, page.after !== undefined));
+        return new Promise((resolve, reject) => {
+            const rows: { key: Outpoint; item: Item }[] = [];
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                try {
+                    const cursor = request.result;
+                    if (!cursor || (cursor.key as unknown[])[0] !== address) {
+                        const result = pageResult(rows, page.limit, (row) => row.key);
+                        resolve({
+                            items: result.items.map((row) => row.item),
+                            nextCursor: result.nextCursor,
+                        });
+                        return;
+                    }
+                    const [, txid, vout] = cursor.key as [string, string, number];
+                    rows.push({ key: { txid, vout }, item: deserialize(cursor.value) });
+                    if (rows.length > page.limit) {
+                        const result = pageResult(rows, page.limit, (row) => row.key);
+                        resolve({
+                            items: result.items.map((row) => row.item),
+                            nextCursor: result.nextCursor,
+                        });
+                        return;
+                    }
+                    cursor.continue();
+                } catch (error) {
+                    reject(error);
+                }
+            };
+        });
     }
 
     async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
@@ -195,22 +239,6 @@ export class IndexedDBWalletRepository implements WalletRepository {
         } catch (error) {
             console.error(`Failed to clear UTXOs for address ${address}:`, error);
             throw error;
-        }
-    }
-
-    async getTransactionHistory(address: string): Promise<ArkTransaction[]> {
-        try {
-            const db = await this.getDB();
-            const store = db
-                .transaction([STORE_TRANSACTIONS], "readonly")
-                .objectStore(STORE_TRANSACTIONS);
-            const results = await promisifyRequest<ArkTransaction[]>(
-                store.index("address").getAll(address),
-            );
-            return (results || []).sort((a, b) => a.createdAt - b.createdAt);
-        } catch (error) {
-            console.error(`Failed to get transaction history for address ${address}:`, error);
-            return [];
         }
     }
 
@@ -360,39 +388,8 @@ function deserializeVtxoWithBackfill(o: SerializedVtxo & { address: string }): E
     return deserializeVtxo(o);
 }
 
-type RawVtxoRow = SerializedVtxo & { address: string };
-
-function isCanonicalRow(row: RawVtxoRow): boolean {
-    try {
-        return scriptFromArkAddress(row.address) === row.script;
-    } catch {
-        return false;
-    }
-}
-
-function shouldReplaceVtxo(existing: RawVtxoRow, incoming: RawVtxoRow): boolean {
-    const existingCanonical = isCanonicalRow(existing);
-    const incomingCanonical = isCanonicalRow(incoming);
-
-    if (incomingCanonical && !existingCanonical) return true;
-    if (existingCanonical && !incomingCanonical) return false;
-
-    // Tie on canonicality, check lifecycle completeness
-    const existingWeight = getLifecycleWeight(existing);
-    const incomingWeight = getLifecycleWeight(incoming);
-
-    if (incomingWeight > existingWeight) return true;
-    if (existingWeight > incomingWeight) return false;
-
-    // Tie on weight, stable sort by address
-    return incoming.address < existing.address;
-}
-
-function getLifecycleWeight(v: RawVtxoRow): number {
-    let weight = 0;
-    if (v.isSpent !== undefined) weight += 1;
-    if (v.spentBy) weight += 2;
-    if (v.settledBy) weight += 2;
-    if (v.arkTxId) weight += 2;
-    return weight;
-}
+const scriptVtxoCursorOf = (row: StoredVtxo): ScriptVtxoCursor => ({
+    address: row.address,
+    txid: row.vtxo.txid,
+    vout: row.vtxo.vout,
+});

@@ -21,6 +21,7 @@ import {
     VHTLCV2ContractHandler,
     buildOffchainTx,
     setArkPsbtField,
+    pageResult,
     type Contract,
     type ContractEvent,
     type CreateContractParams,
@@ -3153,9 +3154,24 @@ describe("RfqSwapManager — manager-owned persistence", () => {
                 if (store.failRead) throw new Error("record store unavailable");
                 return store.records.get(rfqId);
             },
-            async getAllRfqSwaps() {
+            async getRfqSwapsPage(filter, page) {
                 if (store.failRead) throw new Error("record store unavailable");
-                return [...store.records.values()];
+                const rows = [...store.records.values()]
+                    .filter(
+                        (row) =>
+                            (filter.state === undefined || row.state === filter.state) &&
+                            (filter.since === undefined || row.updatedAt >= filter.since) &&
+                            (!page.after ||
+                                row.updatedAt > page.after.updatedAt ||
+                                (row.updatedAt === page.after.updatedAt &&
+                                    row.rfqId > page.after.rfqId)),
+                    )
+                    .sort((a, b) => a.updatedAt - b.updatedAt || a.rfqId.localeCompare(b.rfqId))
+                    .slice(0, page.limit + 1);
+                return pageResult(rows, page.limit, (row) => ({
+                    updatedAt: row.updatedAt,
+                    rfqId: row.rfqId,
+                }));
             },
             async removeRfqSwap(rfqId) {
                 store.removed.push(rfqId);

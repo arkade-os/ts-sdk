@@ -1,8 +1,9 @@
+import { collectRfqSwaps, collectSwapRecords } from "../../src/repository";
 /**
  * The drive: the record bridge it stands on, the lifecycle, and the stream.
  *
  * The first test in this file is the one that fails outright if the bridge is
- * skipped — `restoreFromRepository` reads `getAllRfqSwaps()`, while `accept()`
+ * skipped — `restoreFromRepository` reads `getRfqSwapsPage()`, while `accept()`
  * writes into a keyspace ruled disjoint from it, so without the adapter every
  * v2 swap is invisible to the thing meant to drive it. Everything after it
  * assumes that read works.
@@ -210,7 +211,7 @@ const build = async (
 describe("the record bridge", () => {
     it("finds a v2-accepted swap through the construction restore and drives it", async () => {
         // The one test that fails outright if the bridge is skipped: without it
-        // `getAllRfqSwaps()` answers empty and this swap is never seen.
+        // `getRfqSwapsPage()` answers empty and this swap is never seen.
         const record = signable({ fundingTxid: "aa".repeat(32) });
         const h = await build({ records: [record], vtxos: unspent() });
 
@@ -232,7 +233,7 @@ describe("the record bridge", () => {
         expect(stored.market).toEqual(record.market);
         expect(stored.give).toEqual(record.give);
         // And nothing leaked into v1's keyspace, which is ruled disjoint.
-        expect(await h.repository.getAllRfqSwaps()).toEqual([]);
+        expect(await collectRfqSwaps(h.repository)).toEqual([]);
         await h.drive.dispose();
     });
 
@@ -298,7 +299,7 @@ describe("the lifecycle", () => {
 
     it("rejects ready only when the repository itself is unreadable", async () => {
         const repository = memoryRepository();
-        vi.spyOn(repository, "getAllSwapRecords").mockRejectedValue(new Error("store is gone"));
+        vi.spyOn(repository, "getSwapRecordsPage").mockRejectedValue(new Error("store is gone"));
         const { wallet } = fakeWallet();
         const drive = createSwapDrive({
             wallet,
@@ -857,7 +858,7 @@ describe("the offer half", () => {
         const stored = (await repository.getSwapRecord("o1")) as OfferSwapRecord;
         expect(stored.fundingTxid).toBe(funding.txid);
         expect(await repository.getSwapRecord(funding.txid)).toBeUndefined();
-        expect(await repository.getAllSwapRecords()).toHaveLength(1);
+        expect(await collectSwapRecords(repository)).toHaveLength(1);
         expect(drive.swap("o1")?.outcome).toBe("open");
         await drive.dispose();
     });

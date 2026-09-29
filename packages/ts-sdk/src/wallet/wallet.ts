@@ -1,3 +1,6 @@
+import { collectUtxos } from "../repositories/walletRepository";
+import { collectIntents } from "../repositories/intentRepository";
+import { collectContracts } from "../repositories/contractRepository";
 import { base64, hex } from "@scure/base";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { Address, OutScript, SigHash, Transaction } from "@scure/btc-signer";
@@ -345,7 +348,7 @@ export async function resolveBoardingBootTapscript(
     baseline: DefaultVtxo.Script,
 ): Promise<DefaultVtxo.Script> {
     const serverPubKeyHex = hex.encode(serverPubKey);
-    const candidates = await contractRepository.getContracts({
+    const candidates = await collectContracts(contractRepository, {
         type: ["boarding"],
         state: "active",
     });
@@ -1771,7 +1774,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // allocator, which run earlier in the wallet lifecycle.
         const serverPubKeyHex = hex.encode(this.boardingTapscript.options.serverPubKey);
         const allowed = allowedSigners ?? new Set([toXOnlySignerHex(serverPubKeyHex)]);
-        const boardingContracts = await this.contractRepository.getContracts({
+        const boardingContracts = await collectContracts(this.contractRepository, {
             type: ["boarding"],
         });
         for (const c of boardingContracts) {
@@ -3049,7 +3052,7 @@ export class Wallet
                 descriptors.add(provider.materializeDescriptorAt(i));
             }
         }
-        for (const contract of await this.contractRepository.getContracts()) {
+        for (const contract of await collectContracts(this.contractRepository)) {
             const descriptor = contract.metadata?.signingDescriptor;
             if (typeof descriptor === "string" && descriptor.length > 0) {
                 descriptors.add(descriptor);
@@ -4682,7 +4685,7 @@ export class Wallet
         if (!repo) return;
         try {
             const now = Date.now();
-            const existing = (await repo.getIntents({ intentTxIds: [intentTxId] }))[0];
+            const existing = (await collectIntents(repo, { intentTxIds: [intentTxId] }))[0];
             // Terminal stickiness: the event reducer (BatchFinalized/-Failed)
             // drives the intent to a terminal state via `Batch.join`'s callback.
             // A *later* try-block step (updateDbAfterSettle, boarding rotation)
@@ -6287,7 +6290,7 @@ export class Wallet
             }
 
             for (const [address, toRemove] of boardingRemovalsByAddress) {
-                const currentUtxos = await this.walletRepository.getUtxos(address);
+                const currentUtxos = await collectUtxos(this.walletRepository, address);
                 const filtered = currentUtxos.filter((u) => !toRemove.has(`${u.txid}:${u.vout}`));
                 // Clear and re-save the filtered list for this address bucket.
                 await this.walletRepository.deleteUtxos(address);

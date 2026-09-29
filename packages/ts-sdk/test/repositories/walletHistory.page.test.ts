@@ -1,3 +1,4 @@
+import { collectTransactionHistory } from "../../src/repositories/walletRepository";
 import { describe, expect, it } from "vitest";
 import { createMockRealm } from "../../../../config/test-helpers/mockRealm";
 import { createNodeSQLExecutor } from "../../../../config/test-helpers/nodeSqlExecutor";
@@ -64,7 +65,7 @@ describe.each(backends)("wallet history pages (%s)", (_, create) => {
         });
         expect(second.items.map((row) => row.key.arkTxid)).toEqual(["b"]);
         expect(second.nextCursor).toBeUndefined();
-        expect(await repository.getTransactionHistory("mine")).toHaveLength(4);
+        expect(await collectTransactionHistory(repository, "mine")).toHaveLength(4);
         const chronological = await repository.getTransactionHistoryPage(
             { address: "mine" },
             { limit: 2 },

@@ -1,3 +1,4 @@
+import { collectUtxos } from "../../repositories/walletRepository";
 import { ArkadeInfo, ArkProvider, SettlementEvent } from "../../providers/ark";
 import {
     GetVtxosOptions,
@@ -2043,7 +2044,7 @@ export class WalletMessageHandler
         const fresh = await this.readonlyWallet.getBoardingUtxos();
         const freshKeys = new Set(fresh.map((u) => `${u.txid}:${u.vout}`));
         for (const addr of boardingAddresses) {
-            const cached = await this.walletRepository.getUtxos(addr);
+            const cached = await collectUtxos(this.walletRepository, addr);
             const kept = cached.filter((u) => freshKeys.has(`${u.txid}:${u.vout}`));
             if (kept.length === cached.length) continue; // nothing stale
             await this.walletRepository.deleteUtxos(addr);

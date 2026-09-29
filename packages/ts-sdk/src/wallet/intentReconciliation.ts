@@ -1,3 +1,4 @@
+import { collectIntents } from "../repositories/intentRepository";
 import { IndexerProvider } from "../providers/indexer";
 import {
     ALL_INTENT_STATES,
@@ -121,7 +122,7 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
     const now = deps.now ?? Date.now;
     let intents: ArkIntent[];
     try {
-        intents = await deps.intentRepository.getIntents({
+        intents = await collectIntents(deps.intentRepository, {
             states: [...NON_TERMINAL_INTENT_STATES],
         });
     } catch (e) {
@@ -152,7 +153,7 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
             // in-flight settlements. Re-read and only persist if the intent is
             // still in the state we classified, so a live settle() that has
             // since advanced it is never overwritten.
-            const [fresh] = await deps.intentRepository.getIntents({
+            const [fresh] = await collectIntents(deps.intentRepository, {
                 intentTxIds: [intent.intentTxId],
             });
             if (!fresh || fresh.state !== intent.state) continue;

@@ -1,3 +1,4 @@
+import { collectContracts } from "../repositories/contractRepository";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
@@ -732,7 +733,7 @@ async function pickActiveReceive(
     // display address (delegate wallets use the delegate variant). The
     // `metadata.source` tag is the discriminator that says "this is the
     // one I generated for myself."
-    const candidates = await contractRepository.getContracts({
+    const candidates = await collectContracts(contractRepository, {
         type: expectedType ? [expectedType] : ["default", "delegate"],
         state: "active",
     });

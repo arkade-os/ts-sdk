@@ -1,10 +1,11 @@
+import { collectIntents } from "../repositories/intentRepository";
 import { SettlementEvent } from "../providers/ark";
 import { IntentRepository } from "../repositories/intentRepository";
 import { Batch } from "./batch";
 import { applySettlementEventToIntent } from "./intentStateReducer";
 
 export interface IntentPersistenceDeps {
-    intentRepository?: Pick<IntentRepository, "getIntents" | "saveIntent">;
+    intentRepository?: Pick<IntentRepository, "getIntentsPage" | "saveIntent">;
     intentTxId: string;
 }
 
@@ -19,7 +20,7 @@ async function persistTransition(
     const repo = deps.intentRepository;
     if (!repo) return;
     try {
-        const cur = (await repo.getIntents({ intentTxIds: [deps.intentTxId] }))[0];
+        const cur = (await collectIntents(repo, { intentTxIds: [deps.intentTxId] }))[0];
         if (!cur) return;
         const next = applySettlementEventToIntent(cur, event);
         if (next) await repo.saveIntent(next);

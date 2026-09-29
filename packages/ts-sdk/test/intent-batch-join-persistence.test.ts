@@ -1,3 +1,4 @@
+import { collectIntents } from "../src/repositories/intentRepository";
 import { describe, it, expect } from "vitest";
 import { Batch } from "../src/wallet/batch";
 import { wrapHandlerWithIntentPersistence } from "../src/wallet/intentPersistenceHandler";
@@ -66,7 +67,7 @@ const wrappedHandler = (repo: InMemoryIntentRepository) =>
     );
 
 const stateOf = (repo: InMemoryIntentRepository) =>
-    repo.getIntents({ intentTxIds: [intentTxId] }).then((r) => r[0].state);
+    collectIntents(repo, { intentTxIds: [intentTxId] }).then((r) => r[0].state);
 
 describe("Batch.join intent persistence", () => {
     it("persists batch_succeeded when the eventCallback throws", async () => {

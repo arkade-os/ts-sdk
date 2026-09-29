@@ -184,8 +184,8 @@ For bounded reads, all four backends provide `getAssetSwapsPage`,
 limit of 1–500, then use each result's `nextCursor` for the following page.
 Asset swaps and swap records sort by ID. RFQ swaps sort by `(updatedAt, rfqId)`
 and accept `{ state?, since? }`; `since` is inclusive Unix seconds. Keep the
-filter fixed while paging. Existing `getAll*` methods still return complete
-collections for recovery and internal lifecycle work.
+filter fixed while paging. Repository collection reads use pages directly;
+internal recovery and lifecycle paths consume every page before acting.
 
 ### Restore an imported wallet
 

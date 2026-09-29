@@ -3,11 +3,9 @@ import {
     ArkIntent,
     ArkIntentState,
     assertIntentIdUnique,
-    IntentFilter,
     IntentPageFilter,
     IntentRepository,
     intentMatchesFilter,
-    intentPageBounds,
     isTerminalIntentState,
 } from "../intentRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
@@ -78,15 +76,6 @@ export class RealmIntentRepository implements IntentRepository {
                 "modified",
             );
         });
-    }
-
-    async getIntents(filter?: IntentFilter): Promise<ArkIntent[]> {
-        const all = [...this.realm.objects("ArkIntent")]
-            .map(toIntent)
-            .sort((a, b) => a.createdAt - b.createdAt || a.intentTxId.localeCompare(b.intentTxId));
-        const out = filter ? all.filter((i) => intentMatchesFilter(i, filter)) : all;
-        const { skip, end } = intentPageBounds(filter, out.length);
-        return out.slice(skip, end);
     }
 
     async getIntentsPage(

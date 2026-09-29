@@ -30,3 +30,27 @@ export function pageResult<Item, Cursor>(
         ? { items, nextCursor: cursorOf(items[items.length - 1]) }
         : { items };
 }
+
+export async function* iteratePages<Item, Cursor>(
+    read: (page: PageRequest<Cursor>) => Promise<PageResult<Item, Cursor>>,
+): AsyncGenerator<Item> {
+    let after: Cursor | undefined;
+    do {
+        const page = await read({ limit: MAX_PAGE_SIZE, after });
+        for (const item of page.items) yield item;
+        after = page.nextCursor;
+    } while (after !== undefined);
+}
+
+export async function collectPages<Item, Cursor>(
+    read: (page: PageRequest<Cursor>) => Promise<PageResult<Item, Cursor>>,
+): Promise<Item[]> {
+    const items: Item[] = [];
+    let after: Cursor | undefined;
+    do {
+        const page = await read({ limit: MAX_PAGE_SIZE, after });
+        items.push(...page.items);
+        after = page.nextCursor;
+    } while (after !== undefined);
+    return items;
+}

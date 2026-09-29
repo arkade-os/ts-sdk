@@ -1,3 +1,4 @@
+import { collectContracts } from "../../repositories/contractRepository";
 import { base64, hex } from "@scure/base";
 import type { Outpoint, VirtualCoin } from "..";
 import { contractHandlers } from "../../contracts/handlers";
@@ -97,7 +98,7 @@ export async function selectExitVtxos(opts: ExitOptions): Promise<ExitVtxo[]> {
         if (vtxo.isSpent) continue;
         let tapTree = tapTrees.get(vtxo.script);
         if (!tapTree) {
-            const [contract] = await opts.wallet.contractRepository.getContracts({
+            const [contract] = await collectContracts(opts.wallet.contractRepository, {
                 script: vtxo.script,
             });
             if (!contract) {

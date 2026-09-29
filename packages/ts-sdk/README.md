@@ -1113,14 +1113,17 @@ SDK uses IndexedDB repositories with the default database name.
 
 #### Paged repository reads
 
-Collection repositories expose `getTransactionHistoryPage`, `getContractsPage`,
-and `getIntentsPage`. Each accepts `{ limit, after? }` and returns
+Collection repositories expose `getVtxosPage`, `getVtxosForScriptPage`, `getUtxosPage`,
+`getTransactionHistoryPage`, `getContractsPage`, and `getIntentsPage`.
+Each accepts `{ limit, after? }` and returns
 `{ items, nextCursor? }`; pass `nextCursor` as `after` until it is absent.
 Limits must be 1–500. History pages are ordered by `(createdAt, transaction key)`;
 `since` is inclusive Unix milliseconds. Contract and intent pages are ordered
 by their script and intent transaction ID. Filters must stay the same across
-pages. The existing complete reads remain available for callers that need a
-full snapshot. Spend-critical VTXO and UTXO inventory reads remain complete.
+pages. Repository collection reads use pages directly; `collectVtxos`,
+`collectScriptVtxos`, `collectUtxos`, `collectTransactionHistory`, `collectContracts`, and
+`collectIntents` traverse all pages when a complete snapshot is required.
+Wallet spending paths consume every VTXO or UTXO page before coin selection.
 
 ```ts
 let after;

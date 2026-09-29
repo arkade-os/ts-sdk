@@ -1,3 +1,4 @@
+import { collectScriptVtxos, collectVtxos } from "../repositories/walletRepository";
 import type { ExtendedVirtualCoin, NormalizedExtendedVirtualCoin, VirtualCoin } from "../wallet";
 import { normalizeVtxo } from "../wallet/vtxo";
 import type { WalletRepository } from "../repositories/walletRepository";
@@ -84,9 +85,9 @@ export async function getVtxosForContract(
     repo: WalletRepository,
     contract: Pick<Contract, "script" | "address">,
 ): Promise<NormalizedExtendedVirtualCoin[]> {
-    const vtxos = repo.getVtxosForScript
-        ? await repo.getVtxosForScript(contract.script)
-        : filterVtxosForScript(await repo.getVtxos(contract.address), contract.script);
+    const vtxos = repo.getVtxosForScriptPage
+        ? await collectScriptVtxos(repo, contract.script)
+        : filterVtxosForScript(await collectVtxos(repo, contract.address), contract.script);
     return vtxos.map(normalizeVtxo);
 }
 

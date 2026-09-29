@@ -1,3 +1,4 @@
+import { collectContracts } from "../src/repositories/contractRepository";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { hex } from "@scure/base";
 import {
@@ -42,7 +43,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
             // delays coincide, so the boarding script collapses onto the
             // first-wins `default` row — hence the type-agnostic boarding
             // assertion via the script lookup.)
-            const all = await contractRepository.getContracts({});
+            const all = await collectContracts(contractRepository, {});
             const offchainRow = all.find((c) => c.script === wallet.defaultContractScript);
             expect(offchainRow?.params.serverPubKey).toBe(NEW_SERVER);
             const boardingScript = hex.encode(wallet.boardingTapscript.pkScript);
@@ -63,7 +64,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
                 mockArkInfo.checkpointTapscript,
             );
 
-            const all = await contractRepository.getContracts({});
+            const all = await collectContracts(contractRepository, {});
             const oldRows = all.filter((c) => c.params.serverPubKey === oldServerHex);
             expect(oldRows.length).toBeGreaterThan(0);
             expect(oldRows.every((c) => c.state === "active")).toBe(true);
@@ -127,7 +128,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
             const beforeOffchain = hex.encode(wallet.offchainTapscript.options.serverPubKey);
             const beforeBoarding = hex.encode(wallet.boardingTapscript.options.serverPubKey);
             const beforeUnroll = hex.encode(wallet.serverUnrollScript.script);
-            const beforeRows = (await contractRepository.getContracts({})).length;
+            const beforeRows = (await collectContracts(contractRepository, {})).length;
 
             await expect(wallet.rotateServerSigner(hex.decode(NEW_SERVER), "")).rejects.toThrow(
                 "invalid checkpointTapscript from server",
@@ -139,7 +140,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
             expect(hex.encode(wallet.offchainTapscript.options.serverPubKey)).toBe(beforeOffchain);
             expect(hex.encode(wallet.boardingTapscript.options.serverPubKey)).toBe(beforeBoarding);
             expect(hex.encode(wallet.serverUnrollScript.script)).toBe(beforeUnroll);
-            expect((await contractRepository.getContracts({})).length).toBe(beforeRows);
+            expect((await collectContracts(contractRepository, {})).length).toBe(beforeRows);
         } finally {
             await wallet.dispose();
         }
@@ -150,7 +151,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
         try {
             const beforeKey = hex.encode(wallet.arkServerPublicKey);
             const beforeUnroll = hex.encode(wallet.serverUnrollScript.script);
-            const beforeRows = (await contractRepository.getContracts({})).length;
+            const beforeRows = (await collectContracts(contractRepository, {})).length;
 
             // Well-formed and in-policy on the timelock, but the embedded key
             // is the rotating signer rather than the wallet's pinned
@@ -170,7 +171,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
 
             expect(hex.encode(wallet.arkServerPublicKey)).toBe(beforeKey);
             expect(hex.encode(wallet.serverUnrollScript.script)).toBe(beforeUnroll);
-            expect((await contractRepository.getContracts({})).length).toBe(beforeRows);
+            expect((await collectContracts(contractRepository, {})).length).toBe(beforeRows);
         } finally {
             await wallet.dispose();
         }
@@ -181,7 +182,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
         try {
             const beforeKey = hex.encode(wallet.arkServerPublicKey);
             const beforeUnroll = hex.encode(wallet.serverUnrollScript.script);
-            const beforeRows = (await contractRepository.getContracts({})).length;
+            const beforeRows = (await collectContracts(contractRepository, {})).length;
 
             // The [P720-2] attack shape: a 1-block sweep path for the new epoch.
             const sweepableCheckpoint = hex.encode(
@@ -197,7 +198,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
 
             expect(hex.encode(wallet.arkServerPublicKey)).toBe(beforeKey);
             expect(hex.encode(wallet.serverUnrollScript.script)).toBe(beforeUnroll);
-            expect((await contractRepository.getContracts({})).length).toBe(beforeRows);
+            expect((await collectContracts(contractRepository, {})).length).toBe(beforeRows);
         } finally {
             await wallet.dispose();
         }
@@ -381,7 +382,7 @@ describe("Offchain baseline matrix across server-signer rotation", () => {
                 wallet as unknown as { getContractManager(): Promise<unknown> }
             ).getContractManager();
 
-            const contracts = await contractRepository.getContracts({});
+            const contracts = await collectContracts(contractRepository, {});
             const underPrev = (type: string) =>
                 contracts.filter(
                     (c) => c.type === type && c.params.serverPubKey === PREV_SERVER_XONLY,

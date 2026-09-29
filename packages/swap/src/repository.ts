@@ -1,5 +1,11 @@
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
-import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "@arkade-os/sdk";
+import {
+    assertPageRequest,
+    collectPages,
+    pageResult,
+    type PageRequest,
+    type PageResult,
+} from "@arkade-os/sdk";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
 import type { RfqSwapState } from "./rfqSwapState";
@@ -45,8 +51,7 @@ export function assertRfqSwapPageFilter(filter: RfqSwapPageFilter): void {
  * lifetime: all three belong to one wallet on one device, and a consumer
  * that wipes one wants all three gone.
  *
- * ponytail: no query filters — every consumer reads all swaps and filters
- * in memory; add a filter type when a consumer needs subset queries.
+ * Collection reads are paged. RFQ reads may filter by state and date.
  */
 export interface AssetSwapRepository extends AsyncDisposable {
     /** 5 adds the v2 swap-record store — one row per accepted swap, keyed by
@@ -68,9 +73,6 @@ export interface AssetSwapRepository extends AsyncDisposable {
      * none of which happens on IndexedDB's structured clone. `AssetSwap` as
      * declared is JSON-safe; keep added fields that way. */
     saveSwap(swap: AssetSwap): Promise<void>;
-    /** All stored swaps, in no particular order — `getAssetSwaps` is the
-     * canonical newest-first read. */
-    getAllSwaps(): Promise<AssetSwap[]>;
     getAssetSwapsPage(page: PageRequest): Promise<PageResult<AssetSwap>>;
 
     /**
@@ -85,8 +87,6 @@ export interface AssetSwapRepository extends AsyncDisposable {
     /** One record by key. `undefined` on a miss — retention prunes terminal
      * records, so absence is ordinary and not an error. */
     getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined>;
-    /** Every stored RFQ swap record, in no particular order. */
-    getAllRfqSwaps(): Promise<RfqSwapRecord[]>;
     getRfqSwapsPage(
         filter: RfqSwapPageFilter,
         page: PageRequest<RfqSwapPageCursor>,
@@ -116,8 +116,6 @@ export interface AssetSwapRepository extends AsyncDisposable {
     /** One record by quote id. `undefined` on a miss — which is the ordinary
      * answer for a first `accept()`, and what makes it idempotent. */
     getSwapRecord(id: string): Promise<SwapRecord | undefined>;
-    /** Every stored v2 record, in no particular order. */
-    getAllSwapRecords(): Promise<SwapRecord[]>;
     getSwapRecordsPage(page: PageRequest): Promise<PageResult<SwapRecord>>;
     /** Drop one, once it is past retention. */
     removeSwapRecord(id: string): Promise<void>;
@@ -156,10 +154,6 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
         this.swaps.set(swap.id, swap);
     }
 
-    async getAllSwaps(): Promise<AssetSwap[]> {
-        return [...this.swaps.values()];
-    }
-
     async getAssetSwapsPage(page: PageRequest): Promise<PageResult<AssetSwap>> {
         return pageMap(this.swaps, page);
     }
@@ -170,10 +164,6 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
 
     async getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined> {
         return this.rfqSwaps.get(rfqId);
-    }
-
-    async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
-        return [...this.rfqSwaps.values()];
     }
 
     async getRfqSwapsPage(
@@ -214,10 +204,6 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
 
     async getSwapRecord(id: string): Promise<SwapRecord | undefined> {
         return this.records.get(id);
-    }
-
-    async getAllSwapRecords(): Promise<SwapRecord[]> {
-        return [...this.records.values()];
     }
 
     async getSwapRecordsPage(page: PageRequest): Promise<PageResult<SwapRecord>> {
@@ -278,3 +264,12 @@ function pageMap<Item>(records: Map<string, Item>, page: PageRequest): PageResul
         ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
     };
 }
+
+export const collectAssetSwaps = (repository: Pick<AssetSwapRepository, "getAssetSwapsPage">) =>
+    collectPages((page: PageRequest<string>) => repository.getAssetSwapsPage(page));
+
+export const collectRfqSwaps = (repository: Pick<AssetSwapRepository, "getRfqSwapsPage">) =>
+    collectPages((page: PageRequest<RfqSwapPageCursor>) => repository.getRfqSwapsPage({}, page));
+
+export const collectSwapRecords = (repository: Pick<AssetSwapRepository, "getSwapRecordsPage">) =>
+    collectPages((page: PageRequest<string>) => repository.getSwapRecordsPage(page));

@@ -1,12 +1,17 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
+import type { Outpoint } from "../../wallet";
 import {
     WalletRepository,
     WalletState,
     VtxoRepositoryKey,
     assertHistoryPageFilter,
     compareHistoryCursors,
+    compareOutpoints,
+    compareScriptVtxoCursors,
     type TransactionHistoryPageFilter,
     type TransactionHistoryPageCursor,
+    type ScriptVtxoCursor,
+    type StoredVtxo,
 } from "../walletRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
@@ -23,8 +28,11 @@ export class InMemoryWalletRepository implements WalletRepository {
 
     private walletState: WalletState | null = null;
 
-    async getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
-        return this.vtxosByAddress.get(address) ?? [];
+    async getVtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedVirtualCoin, Outpoint>> {
+        return pageOutpoints(this.vtxosByAddress.get(address) ?? [], page);
     }
 
     async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -37,17 +45,33 @@ export class InMemoryWalletRepository implements WalletRepository {
         this.vtxosByAddress.delete(address);
     }
 
-    async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
-        const allMatches: ExtendedVirtualCoin[] = [];
-        for (const bucket of this.vtxosByAddress.values()) {
+    async getVtxosForScriptPage(
+        script: string,
+        page: PageRequest<ScriptVtxoCursor>,
+    ): Promise<PageResult<StoredVtxo, ScriptVtxoCursor>> {
+        assertPageRequest(page);
+        const allMatches: StoredVtxo[] = [];
+        for (const [address, bucket] of this.vtxosByAddress) {
             for (const vtxo of bucket) {
                 if (isVtxoForScript(vtxo, script)) {
-                    allMatches.push(vtxo);
+                    allMatches.push({ address, vtxo });
                 }
             }
         }
-        // Dedup by outpoint (last-write-wins across address buckets)
-        return mergeByKey([], allMatches, (item) => `${item.txid}:${item.vout}`);
+        const cursorOf = (row: StoredVtxo): ScriptVtxoCursor => ({
+            address: row.address,
+            txid: row.vtxo.txid,
+            vout: row.vtxo.vout,
+        });
+        const rows = allMatches
+            .filter(
+                (row) =>
+                    page.after === undefined ||
+                    compareScriptVtxoCursors(cursorOf(row), page.after) > 0,
+            )
+            .sort((a, b) => compareScriptVtxoCursors(cursorOf(a), cursorOf(b)))
+            .slice(0, page.limit + 1);
+        return pageResult(rows, page.limit, cursorOf);
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -75,8 +99,11 @@ export class InMemoryWalletRepository implements WalletRepository {
         }
     }
 
-    async getUtxos(address: string): Promise<ExtendedCoin[]> {
-        return this.utxosByAddress.get(address) ?? [];
+    async getUtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedCoin, Outpoint>> {
+        return pageOutpoints(this.utxosByAddress.get(address) ?? [], page);
     }
 
     async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
@@ -87,10 +114,6 @@ export class InMemoryWalletRepository implements WalletRepository {
 
     async deleteUtxos(address: string): Promise<void> {
         this.utxosByAddress.delete(address);
-    }
-
-    async getTransactionHistory(address: string): Promise<ArkTransaction[]> {
-        return this.txsByAddress.get(address) ?? [];
     }
 
     async getTransactionHistoryPage(
@@ -153,6 +176,18 @@ export class InMemoryWalletRepository implements WalletRepository {
 function serializeTxKey(tx: ArkTransaction): string {
     const key = tx.key;
     return `${key.boardingTxid}:${key.commitmentTxid}:${key.arkTxid}`;
+}
+
+function pageOutpoints<Item extends Outpoint>(
+    rows: Item[],
+    page: PageRequest<Outpoint>,
+): PageResult<Item, Outpoint> {
+    assertPageRequest(page);
+    const selected = rows
+        .filter((row) => page.after === undefined || compareOutpoints(row, page.after) > 0)
+        .sort(compareOutpoints)
+        .slice(0, page.limit + 1);
+    return pageResult(selected, page.limit, ({ txid, vout }) => ({ txid, vout }));
 }
 
 function mergeByKey<T>(existing: T[], incoming: T[], toKey: (item: T) => string): T[] {
