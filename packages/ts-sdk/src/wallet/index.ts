@@ -32,6 +32,10 @@ export {
     type ActivityResolver,
 } from "./activity";
 import { DelegateProvider } from "../providers/delegate";
+import type { EmulatorProvider } from "../providers/emulator";
+import type { WalletArkadeOptions } from "./arkadeClient";
+
+export type { WalletArkadeOptions } from "./arkadeClient";
 
 /**
  * Wallet receive-address strategy.
@@ -192,6 +196,21 @@ export interface BaseWalletConfig {
     onchainProvider?: OnchainProvider;
     /** Optional delegation service instance. */
     delegateProvider?: DelegateProvider;
+    /**
+     * Co-signer URL remembered by {@link IReadonlyWallet.arkade}.
+     * Omit for pure tapscript programs.
+     */
+    emulatorUrl?: string;
+    /**
+     * Co-signer client remembered by {@link IReadonlyWallet.arkade}.
+     * Takes precedence over `emulatorUrl`.
+     */
+    emulator?: EmulatorProvider;
+    /**
+     * Emulator key override (33-byte compressed hex) remembered by
+     * {@link IReadonlyWallet.arkade}.
+     */
+    emulatorPubkey?: string;
     /** @deprecated alias for @see BaseWalletConfig.delegateProvider */
     delegatorProvider?: DelegateProvider;
 }
@@ -1218,6 +1237,23 @@ export interface IReadonlyWallet {
      * @returns Contract manager instance
      */
     getContractManager(): Promise<IContractManager>;
+
+    /**
+     * The Arkade contract client bound to this wallet's operator, indexer,
+     * and contract manager.
+     *
+     * Programs and compiler artifacts both go through `contract`. The manager
+     * is the one the wallet already started — this does not open a second
+     * indexer or a second writer on the repositories.
+     *
+     * @example
+     * ```typescript
+     * const client = await wallet.arkade({ emulatorUrl });
+     * const htlc = client.contract(program, { hash, receiver, amount });
+     * await htlc.register();
+     * ```
+     */
+    arkade(options?: WalletArkadeOptions): Promise<import("../arkade/contract").Arkade>;
 
     /** Readonly asset manager bound to this wallet instance. */
     assetManager: IReadonlyAssetManager;

@@ -28,6 +28,8 @@ import {
     validateBatchRecipientsWithoutTree,
 } from "./validation";
 import { Identity, ReadonlyIdentity, isBatchSignable } from "../identity";
+import type { EmulatorProvider } from "../providers/emulator";
+import { openArkadeClient, type WalletArkadeOptions } from "./arkadeClient";
 import {
     canRecoverOnchain,
     canSpendOffchain,
@@ -728,6 +730,33 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
+     * Operator used by {@link arkade}. The full wallet's public
+     * `arkProvider` is the same object; a readonly wallet keeps it here
+     * because its constructor does not take one.
+     */
+    protected _sessionArkProvider?: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+    /** Co-signer remembered from wallet config for {@link arkade}. */
+    protected _sessionEmulator?: EmulatorProvider;
+    protected _sessionEmulatorUrl?: string;
+    protected _sessionEmulatorPubkey?: string;
+
+    /**
+     * Copy the contract-client session onto a readonly clone.
+     * @internal
+     */
+    adoptArkadeSession(source: {
+        arkProvider: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+        emulator?: EmulatorProvider;
+        emulatorUrl?: string;
+        emulatorPubkey?: string;
+    }): void {
+        this._sessionArkProvider = source.arkProvider;
+        this._sessionEmulator = source.emulator;
+        this._sessionEmulatorUrl = source.emulatorUrl;
+        this._sessionEmulatorPubkey = source.emulatorPubkey;
+    }
+
+    /**
      * Composed provider-connection freshness: the boot server-info source
      * (Arkade) combined with the contract-manager's indexer-sync health, if the
      * manager has been initialized. Reads no live provider state — it never
@@ -1188,6 +1217,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
             wallet._serverInfoLastOnlineAt = setup.serverInfoLastOnlineAt;
         }
         wallet.refreshDeprecatedSigners(setup.info);
+        wallet._sessionArkProvider = setup.arkProvider;
+        wallet._sessionEmulator = config.emulator;
+        wallet._sessionEmulatorUrl = config.emulatorUrl;
+        wallet._sessionEmulatorPubkey = config.emulatorPubkey;
         return wallet;
     }
 
@@ -2031,6 +2064,35 @@ export class ReadonlyWallet implements IReadonlyWallet {
     // ========================================================================
     // Contract Management
     // ========================================================================
+
+    /**
+     * Contract client bound to this wallet's operator, indexer, and the
+     * contract manager {@link getContractManager} starts.
+     *
+     * `contract` takes a program or a compiler artifact. Persistence and
+     * watching stay on the wallet's manager.
+     */
+    arkade(options?: WalletArkadeOptions): ReturnType<typeof openArkadeClient> {
+        const arkProvider = this._sessionArkProvider;
+        if (!arkProvider) {
+            throw new Error(
+                "arkade: this wallet has no Arkade provider. Create it with Wallet.create or ReadonlyWallet.create",
+            );
+        }
+        return openArkadeClient(
+            {
+                identity: this.identity,
+                network: this.network,
+                getContractManager: () => this.getContractManager(),
+                arkProvider,
+                indexerProvider: this.indexerProvider,
+                emulator: this._sessionEmulator,
+                emulatorUrl: this._sessionEmulatorUrl,
+                emulatorPubkey: this._sessionEmulatorPubkey,
+            },
+            options,
+        );
+    }
 
     /**
      * Get the ContractManager for managing contracts including the wallet's default address.
@@ -3694,6 +3756,10 @@ export class Wallet
             wallet._serverInfoLastOnlineAt = setup.serverInfoLastOnlineAt;
         }
         wallet.refreshDeprecatedSigners(setup.info);
+        wallet._sessionArkProvider = setup.arkProvider;
+        wallet._sessionEmulator = config.emulator;
+        wallet._sessionEmulatorUrl = config.emulatorUrl;
+        wallet._sessionEmulatorPubkey = config.emulatorPubkey;
         // Mid-session signer-rotation detection: when the arkProvider detects a
         // stale-info DIGEST_MISMATCH and refetches info, re-derive the wallet's
         // signer-dependent state. Duck-typed: only RestArkProvider implements it.
@@ -3787,6 +3853,12 @@ export class Wallet
         // boarding watch path and spendability split match the source wallet's.
         (readonly as unknown as { _deprecatedSigners: Map<string, bigint> })._deprecatedSigners =
             new Map(this._deprecatedSigners);
+        readonly.adoptArkadeSession({
+            arkProvider: this.arkProvider,
+            emulator: this._sessionEmulator,
+            emulatorUrl: this._sessionEmulatorUrl,
+            emulatorPubkey: this._sessionEmulatorPubkey,
+        });
         return readonly;
     }
 

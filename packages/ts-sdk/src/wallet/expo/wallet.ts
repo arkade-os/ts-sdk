@@ -24,6 +24,7 @@ import type {
     HDWalletCapable,
 } from "../hdWalletCapable";
 import type { IContractManager } from "../../contracts/contractManager";
+import { openArkadeClient, type WalletArkadeOptions } from "../arkadeClient";
 import type { IDelegateManager } from "../delegate";
 import type { TaskQueue, TaskItem } from "../../worker/expo/taskQueue";
 import type { TaskProcessor, TaskDependencies } from "../../worker/expo/taskRunner";
@@ -335,6 +336,10 @@ export class ExpoWallet
 
     getContractManager(): Promise<IContractManager> {
         return this.wallet.getContractManager();
+    }
+
+    arkade(options?: WalletArkadeOptions): ReturnType<typeof openArkadeClient> {
+        return this.wallet.arkade(options);
     }
 
     // Descriptor surface, delegated like everything else here. Without these

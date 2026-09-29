@@ -17,8 +17,9 @@
  * Program → script compilation lives in {@link ArkadeProgramScript}
  * (./program.ts) and is shared with the generic `"arkade"` contract handler,
  * so a contract created here can be persisted, watched and re-derived through
- * the standard `src/contracts` pipeline: pass a `contractManager` to
- * {@link Arkade.connect} and call {@link ArkadeContract.register}.
+ * the standard `src/contracts` pipeline: pass repositories to
+ * {@link Arkade.connect} (or open the client from a wallet with
+ * `wallet.arkade()`) and call {@link ArkadeContract.register}.
  *
  * Contract functions are strongly typed from the program's literal shape: a
  * function declaring `inputs: [{ name: "preimage", type: "bytes" }]` produces a
@@ -58,7 +59,14 @@
  *     },
  * } satisfies Program;
  *
- * const arkade = await Arkade.connect({ arkade: ark, emulator, indexer, identity, network });
+ * const arkade = await Arkade.connect({
+ *     serverUrl: arkadeUrl,
+ *     emulatorUrl,
+ *     identity,
+ *     network: networks.mutinynet,
+ *     contractRepository,
+ *     walletRepository,
+ * });
  * // `server` is declared in `params`, so it defaults to the client's server key.
  * const htlc = arkade.contract(htlcProgram, { hash, receiver, amount: 10_000n });
  * // `preimage` is typed Uint8Array; calling `claim()` with no args is a type error.
@@ -79,6 +87,11 @@ import type { ArkProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
 import type { Identity } from "../identity";
+import type { ContractRepository } from "../repositories/contractRepository";
+import type { IntentRepository } from "../repositories/intentRepository";
+import type { WalletRepository } from "../repositories/walletRepository";
+import type { IContractManager } from "../contracts/contractManager";
+import { isContractArtifact, programFromArtifact, type ContractArtifact } from "./artifact";
 import type { VirtualCoin } from "../wallet";
 import { getNormalizedVtxos, hasTerminalSpend } from "../wallet";
 import { CSVMultisigTapscript } from "../script/tapscript";
@@ -105,7 +118,6 @@ import {
     AssetId,
     Metadata,
 } from "../extension/asset";
-import type { IContractManager } from "../contracts/contractManager";
 import type { Contract } from "../contracts/types";
 import {
     ArkadeProgramScript,
@@ -231,20 +243,44 @@ export type CallableFunctions = Record<
 
 // --- Arkade client ---------------------------------------------------------
 
-/** Options for {@link Arkade.connect}. */
+/**
+ * Options for {@link Arkade.connect}.
+ *
+ * Pass the server URL and, when contracts should be persisted, the
+ * repositories. The client builds the operator, the indexer (same origin
+ * unless `indexerUrl` is set), the emulator, and the contract manager.
+ * A wallet already owns that manager — use `wallet.arkade()` instead of
+ * connecting a second one against the same repositories.
+ */
 export interface ArkadeConnectOptions {
-    /** The Ark/Arkade server provider. */
-    arkade: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
     /**
-     * The co-signing (introspector/emulator) service. Optional: only required for
-     * contracts whose functions have an `arkadeScript` (covenant paths). Pure
-     * tapscript contracts (multisig/timelock/hashlock) don't need it.
+     * Arkade server URL. The indexer is this origin unless `indexerUrl` is set.
+     * Omit when passing an `arkade` provider (tests, Expo, and other transports).
+     */
+    serverUrl?: string;
+    /** Indexer URL when it is not the Arkade server. */
+    indexerUrl?: string;
+    /**
+     * Co-signer URL. Omit for pure tapscript programs. Omit when passing `emulator`.
+     */
+    emulatorUrl?: string;
+    /**
+     * Esplora URL for the chain tip the contract manager uses on height-typed
+     * timelocks. Defaults to the explorer for the resolved network.
+     */
+    esploraUrl?: string;
+    /**
+     * Injected Arkade operator. For a transport that is not {@link RestArkProvider}.
+     * Do not combine with `serverUrl`.
+     */
+    arkade?: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+    /**
+     * Injected co-signer. Do not combine with `emulatorUrl`.
      */
     emulator?: EmulatorProvider;
     /**
-     * Indexer — enables `getUtxos`/`getBalance` and coin auto-selection, and
-     * resolves the previous ark txs a covenant spend must carry (see
-     * {@link attachPrevArkTxs}). Required for covenant spends.
+     * Injected indexer. Do not combine with `indexerUrl`. When omitted, the
+     * client builds one from `indexerUrl`, `serverUrl`, or the operator's URL.
      */
     indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
     /** Signer for paths that require a user signature; optional for watch-only. */
@@ -267,14 +303,139 @@ export interface ArkadeConnectOptions {
      */
     emulatorPubkey?: string;
     /**
-     * The wallet's contract manager. When set, contracts created from this
-     * client can {@link ArkadeContract.register} themselves into the standard
-     * contract pipeline (persistence, watching, events), and
-     * {@link ArkadeContract.getUtxos} reads repository-backed state
-     * (offline-first) for registered contracts instead of querying the
-     * indexer directly. Obtain it via `wallet.getContractManager()`.
+     * Contract repository. Together with `walletRepository`, this makes
+     * {@link Arkade.connect} start the contract manager. Contracts can then
+     * {@link ArkadeContract.register} and {@link ArkadeContract.getUtxos}
+     * reads repository state.
+     */
+    contractRepository?: ContractRepository;
+    /** Wallet repository. Required alongside `contractRepository`. */
+    walletRepository?: WalletRepository;
+    /** Intent repository forwarded to the contract manager, when persistence is on. */
+    intentRepository?: IntentRepository;
+    /**
+     * Manager that already owns these providers. `wallet.arkade()` sets this
+     * so the client does not start a second writer on the wallet's repositories.
+     *
+     * @internal
      */
     contractManager?: IContractManager;
+}
+
+type ArkadeServices = {
+    arkProvider: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+    emulator: EmulatorProvider | undefined;
+    indexer: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs"> | undefined;
+};
+
+function providerServerUrl(
+    provider: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx"> | undefined,
+): string | undefined {
+    const serverUrl = (provider as { serverUrl?: unknown } | undefined)?.serverUrl;
+    return typeof serverUrl === "string" && serverUrl.length > 0 ? serverUrl : undefined;
+}
+
+function isFullIndexer(
+    indexer: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">,
+): indexer is IndexerProvider {
+    const candidate = indexer as IndexerProvider;
+    return (
+        typeof candidate.subscribeForScripts === "function" &&
+        typeof candidate.getSubscription === "function"
+    );
+}
+
+/** Build the operator, indexer, and emulator from URLs or injected providers. */
+async function resolveArkadeServices(opts: ArkadeConnectOptions): Promise<ArkadeServices> {
+    if (opts.arkade && opts.serverUrl) {
+        throw new Error("Arkade.connect: pass `serverUrl` or `arkade`, not both");
+    }
+    if (opts.emulator && opts.emulatorUrl) {
+        throw new Error("Arkade.connect: pass `emulatorUrl` or `emulator`, not both");
+    }
+    if (opts.indexer && opts.indexerUrl) {
+        throw new Error("Arkade.connect: pass `indexerUrl` or `indexer`, not both");
+    }
+    if ((opts.contractRepository || opts.walletRepository) && opts.contractManager) {
+        throw new Error(
+            "Arkade.connect: pass repositories and the client starts the contract manager. `wallet.arkade()` attaches the wallet's manager — do not also pass repositories",
+        );
+    }
+    if (Boolean(opts.contractRepository) !== Boolean(opts.walletRepository)) {
+        throw new Error(
+            "Arkade.connect: `contractRepository` and `walletRepository` are set together",
+        );
+    }
+
+    const arkProvider =
+        opts.arkade ??
+        (opts.serverUrl
+            ? new (await import("../providers/ark")).RestArkProvider(opts.serverUrl)
+            : undefined);
+    if (!arkProvider) {
+        throw new Error("Arkade.connect: `serverUrl` is required");
+    }
+
+    const emulator =
+        opts.emulator ??
+        (opts.emulatorUrl
+            ? new (await import("../providers/emulator")).RestEmulatorProvider(opts.emulatorUrl)
+            : undefined);
+
+    let indexer = opts.indexer;
+    if (!indexer) {
+        const indexerUrl = opts.indexerUrl ?? opts.serverUrl ?? providerServerUrl(arkProvider);
+        if (indexerUrl) {
+            indexer = new (await import("../providers/indexer")).RestIndexerProvider(indexerUrl);
+        }
+    }
+
+    return { arkProvider, emulator, indexer };
+}
+
+/**
+ * Start the contract manager when repositories were passed. An attached
+ * manager (the wallet's) is returned as-is.
+ */
+async function startContractManager(
+    opts: ArkadeConnectOptions,
+    indexer: ArkadeServices["indexer"],
+    network: Network,
+): Promise<IContractManager | undefined> {
+    if (opts.contractManager) return opts.contractManager;
+    if (!opts.contractRepository || !opts.walletRepository) return undefined;
+    if (!indexer) {
+        throw new Error(
+            "Arkade.connect: persisting contracts needs an indexer — pass `serverUrl` or `indexerUrl`",
+        );
+    }
+    if (!isFullIndexer(indexer)) {
+        throw new Error(
+            "Arkade.connect: persisting contracts needs an indexer that can subscribe. Pass `serverUrl` or `indexerUrl` so the client can build one",
+        );
+    }
+
+    const { ESPLORA_URL, EsploraProvider } = await import("../providers/onchain");
+    const esploraUrl =
+        opts.esploraUrl ??
+        (network.name && Object.hasOwn(ESPLORA_URL, network.name)
+            ? ESPLORA_URL[network.name]
+            : undefined);
+    const onchain = esploraUrl ? new EsploraProvider(esploraUrl) : undefined;
+
+    const { ContractManager } = await import("../contracts/contractManager");
+    return ContractManager.create({
+        indexerProvider: indexer,
+        contractRepository: opts.contractRepository,
+        walletRepository: opts.walletRepository,
+        intentRepository: opts.intentRepository,
+        chainTip: onchain
+            ? async () => {
+                  const { height, time } = await onchain.getChainTip();
+                  return { height, time };
+              }
+            : undefined,
+    });
 }
 
 /**
@@ -304,8 +465,14 @@ export class Arkade {
     readonly identity?: Identity;
     /** The signing identity's x-only public key, resolved at connect — identifies which inputs the wallet signs. */
     readonly userKey?: Uint8Array;
-    /** The wallet's contract manager, when contract persistence is wired up. */
+    /** The contract manager, when persistence is wired up. */
     readonly contractManager?: IContractManager;
+    /**
+     * True when this client started the manager. Disposing the client then
+     * stops that manager. A client from `wallet.arkade()` does not own it —
+     * the wallet does.
+     */
+    private readonly ownsContractManager: boolean;
 
     private constructor(fields: {
         arkProvider: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
@@ -318,6 +485,7 @@ export class Arkade {
         identity?: Identity;
         userKey?: Uint8Array;
         contractManager?: IContractManager;
+        ownsContractManager: boolean;
     }) {
         this.arkProvider = fields.arkProvider;
         this.emulator = fields.emulator;
@@ -329,11 +497,22 @@ export class Arkade {
         this.identity = fields.identity;
         this.userKey = fields.userKey;
         this.contractManager = fields.contractManager;
+        this.ownsContractManager = fields.ownsContractManager;
+    }
+
+    /**
+     * Stop the contract manager this client started.
+     *
+     * A no-op when the manager belongs to a wallet (`wallet.arkade()`).
+     */
+    dispose(): void {
+        if (this.ownsContractManager) this.contractManager?.dispose();
     }
 
     /** Connect and resolve the server key, checkpoint closure and (if present) the co-signer key. */
     static async connect(opts: ArkadeConnectOptions): Promise<Arkade> {
-        const info = await opts.arkade.getInfo();
+        const services = await resolveArkadeServices(opts);
+        const info = await services.arkProvider.getInfo();
         const serverKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
         const checkpoint = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
         // The server says which network it is on — use it for address
@@ -357,7 +536,7 @@ export class Arkade {
         // below is public so an operator debugging a refused claim can diff
         // what was pinned against what their emulator reports.
         let emulatorKey: Uint8Array | undefined;
-        if (opts.emulator) {
+        if (services.emulator) {
             emulatorKey = hex.decode(resolveEmulatorPubkey(network, opts.emulatorPubkey));
         }
 
@@ -368,17 +547,21 @@ export class Arkade {
             userKey = toXOnly(await opts.identity.xOnlyPublicKey(), "identity key");
         }
 
+        const contractManager = await startContractManager(opts, services.indexer, network);
+
         return new Arkade({
-            arkProvider: opts.arkade,
-            emulator: opts.emulator,
+            arkProvider: services.arkProvider,
+            emulator: services.emulator,
             network,
             serverKey,
             emulatorKey,
             checkpoint,
-            indexer: opts.indexer,
+            indexer: services.indexer,
             identity: opts.identity,
             userKey,
-            contractManager: opts.contractManager,
+            contractManager,
+            ownsContractManager:
+                contractManager !== undefined && opts.contractManager === undefined,
         });
     }
 
@@ -388,14 +571,24 @@ export class Arkade {
      * contract's `functions` map is strongly typed — `functions.<name>(...)`
      * knows each argument's type from the function's `inputs` descriptors.
      *
+     * `source` is a {@link Program} or an arkadec {@link ContractArtifact}.
+     * An artifact is read into a program first; both then take the same
+     * constructor `args`.
+     *
      * When the program declares a `server` or `user` param and the caller does
      * not bind it, it defaults to the client's server key or the identity's
      * key respectively; explicit args always win.
      */
     contract<const P extends Program>(
         program: P,
+        args?: Record<string, ArkadeParamValue>,
+    ): ArkadeContract<P>;
+    contract(artifact: ContractArtifact, args?: Record<string, ArkadeParamValue>): ArkadeContract;
+    contract(
+        source: Program | ContractArtifact,
         args: Record<string, ArkadeParamValue> = {},
-    ): ArkadeContract<P> {
+    ): ArkadeContract {
+        const program = isContractArtifact(source) ? programFromArtifact(source) : source;
         const declared = (program.params ?? []).map(inputName);
         if (declared.includes("server") && args.server === undefined) {
             args = { ...args, server: this.serverKey };
@@ -527,7 +720,7 @@ export class ArkadeContract<P extends Program = Program> {
         const manager = this.client.contractManager;
         if (!manager) {
             throw new Error(
-                "ArkadeContract.register requires a `contractManager` on the Arkade client — pass one to Arkade.connect",
+                "ArkadeContract.register requires persistence — pass contractRepository and walletRepository to Arkade.connect, or open the client with wallet.arkade()",
             );
         }
         return manager.createContract({

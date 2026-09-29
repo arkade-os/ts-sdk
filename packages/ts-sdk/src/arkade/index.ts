@@ -42,6 +42,7 @@ export {
     type ArkadeExtendedVirtualCoin,
 } from "./batch";
 export { programFromArtifact, isContractArtifact, type ContractArtifact } from "./artifact";
+export { forfeitExitProgram, delegateProgram } from "./programs";
 export {
     ArkadeProgramScript,
     stringifyArtifact,

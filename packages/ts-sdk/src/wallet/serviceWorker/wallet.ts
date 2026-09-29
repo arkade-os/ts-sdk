@@ -37,6 +37,7 @@ import type {
     HDAllocationCapable,
     AddressAllocationCapable,
 } from "../hdWalletCapable";
+import { openArkadeClient, type WalletArkadeOptions } from "../arkadeClient";
 import { resolveDescriptorSigner } from "../hdWalletCapable";
 import { runWalletRestoreHooks } from "../restoreHooks";
 import { WalletRepository } from "../../repositories/walletRepository";
@@ -1203,6 +1204,25 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         } catch (error) {
             throw new Error(`Failed to reload wallet: ${error}`);
         }
+    }
+
+    /**
+     * Contract client on this worker's operator and its proxied contract manager.
+     * The manager stays in the worker; the client does not start another one.
+     */
+    arkade(options?: WalletArkadeOptions): ReturnType<typeof openArkadeClient> {
+        if (!this.arkServerUrl) {
+            throw new Error("arkade: this service-worker wallet has no Arkade server URL");
+        }
+        return openArkadeClient(
+            {
+                identity: this.identity,
+                getContractManager: () => this.getContractManager(),
+                serverUrl: this.arkServerUrl,
+                indexerUrl: this.indexerUrl,
+            },
+            options,
+        );
     }
 
     async getContractManager(): Promise<IContractManager> {

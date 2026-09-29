@@ -90,6 +90,17 @@ const wallet = {
     identity: { xOnlyPublicKey: async () => makerKey },
     getAddress: async () => makerAddress,
     getContractManager: async () => contractManager,
+    arkade: async (options?: { network?: unknown; emulatorPubkey?: string }) => {
+        const sdk = await import("@arkade-os/sdk");
+        return sdk.arkade.Arkade.connect({
+            arkade: new sdk.RestArkProvider("http://ark"),
+            indexer: new sdk.RestIndexerProvider("http://ark"),
+            identity: wallet.identity,
+            contractManager,
+            ...(options?.network ? { network: options.network as never } : {}),
+            ...(options?.emulatorPubkey ? { emulatorPubkey: options.emulatorPubkey } : {}),
+        });
+    },
 } as unknown as IWallet;
 
 // overridden so the golden expectations don't move with the pinned constants

@@ -118,6 +118,26 @@ const wallet = {
     getAddress: async () =>
         new ArkAddress(SERVER_KEY, hex.decode("22".repeat(32)), "tark").encode(),
     getContractManager: async () => state.managed,
+    arkade: async (options?: {
+        emulatorUrl?: string;
+        emulator?: unknown;
+        emulatorPubkey?: string;
+        network?: unknown;
+    }) => {
+        const sdk = await import("@arkade-os/sdk");
+        return sdk.arkade.Arkade.connect({
+            arkade: new sdk.RestArkProvider("http://ark"),
+            indexer: new sdk.RestIndexerProvider("http://ark"),
+            identity: wallet.identity,
+            contractManager: await wallet.getContractManager(),
+            ...(options?.network ? { network: options.network as never } : {}),
+            ...(options?.emulator ? { emulator: options.emulator as never } : {}),
+            ...(options?.emulatorUrl
+                ? { emulator: new sdk.RestEmulatorProvider(options.emulatorUrl) }
+                : {}),
+            ...(options?.emulatorPubkey ? { emulatorPubkey: options.emulatorPubkey } : {}),
+        });
+    },
 } as unknown as IWallet;
 
 const fundingCoin = (value: number) => {

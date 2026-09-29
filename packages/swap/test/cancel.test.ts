@@ -5,9 +5,9 @@ import { cancelOffer, encodeOffer, offerVtxoScript, type Offer } from "../src/of
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
 
-// cancelOffer's guards fire before any signing: mock only the network seam
-// (Arkade.connect for the current server key, ArkadeContract for the vtxo
-// lookup) and keep the real covenant derivation underneath
+// cancelOffer's guards fire before any signing: the wallet's arkade() client
+// supplies the server key, ArkadeContract supplies the vtxo lookup, and the
+// covenant derivation stays real.
 const state = vi.hoisted(() => ({
     // bare Uint8Array, not the inferred Uint8Array<ArrayBuffer>: hex.decode
     // returns the ArrayBufferLike flavor and must be assignable here
@@ -23,12 +23,6 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
         ...mod,
         arkade: {
             ...mod.arkade,
-            Arkade: {
-                connect: async (opts: { contractManager?: unknown }) => {
-                    state.connectOptions = opts;
-                    return { serverKey: state.serverKey };
-                },
-            },
             ArkadeContract: class {
                 getUtxos = async () => state.utxos;
                 functions = {
@@ -75,6 +69,10 @@ const wallet = {
     identity: {},
     getAddress: async () => "unused-before-a-vtxo-is-selected",
     getContractManager: async () => contractManager,
+    arkade: async () => {
+        state.connectOptions = { contractManager };
+        return { serverKey: state.serverKey, contractManager };
+    },
 } as unknown as IWallet;
 
 /** The record a funded, cancellable deposit leaves in the caller's store. */
@@ -157,7 +155,7 @@ describe("cancelOffer guards", () => {
 
     // without this the contract takes the direct-indexer fallback and a
     // registered offer's repository-backed VTXOs are never consulted
-    it("hands the wallet's contract manager to the arkade client", async () => {
+    it("opens the arkade client on the wallet's contract manager", async () => {
         state.serverKey = fundedServerKey;
         state.utxos = [];
         state.connectOptions = undefined;

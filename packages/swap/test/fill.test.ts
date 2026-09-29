@@ -12,8 +12,9 @@ import {
 /**
  * `fillOffer` composes a spend the covenant will accept or reject; the tests
  * that matter are about the SHAPE it builds, not about the network. Same seam
- * as `cancel.test.ts`: mock `Arkade.connect` and `ArkadeContract`, keep the real
- * covenant derivation underneath, and record what the builder was asked for.
+ * as `cancel.test.ts`: the wallet's `arkade()` client and `ArkadeContract`
+ * are stubbed, the covenant derivation stays real, and the test records what
+ * the builder was asked for.
  */
 const state = vi.hoisted(() => ({
     serverKey: new Uint8Array(0) as Uint8Array,
@@ -25,9 +26,9 @@ const state = vi.hoisted(() => ({
     }[],
     // What the fulfill builder received, in call order.
     calls: [] as { fn: string; args: unknown[] }[],
-    // What `Arkade.connect` was configured with — the emulator lives here, and
+    // What `wallet.arkade()` was configured with — the emulator lives here, and
     // the builder refuses a covenant spend without one.
-    connects: [] as { emulator?: unknown }[],
+    connects: [] as { emulator?: unknown; emulatorUrl?: string }[],
     sends: 0,
 }));
 
@@ -37,12 +38,6 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
         ...mod,
         arkade: {
             ...mod.arkade,
-            Arkade: {
-                connect: async (opts: { emulator?: unknown }) => {
-                    state.connects.push(opts);
-                    return { serverKey: state.serverKey };
-                },
-            },
             ArkadeContract: class {
                 getUtxos = async () => state.utxos;
                 functions = {
@@ -119,6 +114,10 @@ const wallet = {
     getAddress: async () =>
         new ArkAddress(fundedServerKey, hex.decode("22".repeat(32)), "tark").encode(),
     getContractManager: async () => ({}),
+    arkade: async (opts: { emulator?: unknown; emulatorUrl?: string }) => {
+        state.connects.push(opts);
+        return { serverKey: state.serverKey };
+    },
 } as unknown as IWallet;
 
 /** A sats-only deposit — what a want-ASSET offer is funded with. */
@@ -348,7 +347,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         expect(callsOf("to")[0].args[1]).toBe(BigInt(1_000));
     });
 
-    it("connects WITH an emulator, without which the spend cannot be submitted", async () => {
+    it("opens the client WITH an emulator, without which the spend cannot be submitted", async () => {
         reset();
         // `fulfill` carries an arkadeScript, so ArkadeTransactionBuilder.send()
         // takes the covenant branch and throws "covenant spends require an
@@ -362,7 +361,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
             payoutScript: TAKER_PAYOUT,
         });
         expect(state.connects).toHaveLength(1);
-        expect(state.connects[0].emulator).toBeDefined();
+        expect(state.connects[0].emulatorUrl).toBe(EMULATOR);
     });
 
     it("takes the deposit as input 0 and the taker's coins as inputs 1..n", async () => {

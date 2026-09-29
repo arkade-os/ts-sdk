@@ -117,6 +117,17 @@ const wallet = {
         }),
         setContractWatchState: async () => {},
     }),
+    arkade: async (options?: { network?: unknown; emulatorPubkey?: string }) => {
+        const sdk = await import("@arkade-os/sdk");
+        return sdk.arkade.Arkade.connect({
+            arkade: new sdk.RestArkProvider("http://ark"),
+            indexer: new sdk.RestIndexerProvider("http://ark"),
+            identity: wallet.identity,
+            contractManager: await wallet.getContractManager(),
+            ...(options?.network ? { network: options.network as never } : {}),
+            ...(options?.emulatorPubkey ? { emulatorPubkey: options.emulatorPubkey } : {}),
+        });
+    },
 } as unknown as IWallet;
 
 /** A `requestQuote` stub playing the solver: reads the sender key the

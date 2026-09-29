@@ -86,6 +86,15 @@ const wallet = {
         state.managerCalls++;
         return contractManager;
     },
+    arkade: async () => {
+        const sdk = await import("@arkade-os/sdk");
+        return sdk.arkade.Arkade.connect({
+            arkade: new sdk.RestArkProvider("http://ark"),
+            indexer: new sdk.RestIndexerProvider("http://ark"),
+            identity: wallet.identity,
+            contractManager: await wallet.getContractManager(),
+        });
+    },
 } as unknown as IWallet;
 
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");

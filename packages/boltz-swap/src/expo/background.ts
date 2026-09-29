@@ -71,6 +71,7 @@ function createBackgroundWalletShim(args: {
         getTransactionHistory: async () => notImplemented("getTransactionHistory"),
         getActivityHistory: async () => notImplemented("getActivityHistory"),
         getContractManager: async () => notImplemented("getContractManager"),
+        arkade: async () => notImplemented("arkade"),
         getDelegateManager: async () => notImplemented("getDelegateManager"),
         getDelegatorManager: async () => notImplemented("getDelegatorManager"),
         sendBitcoin: async () => notImplemented("sendBitcoin"),

@@ -28,8 +28,6 @@ import {
     ASSET_CARRIER_SATS as SDK_ASSET_CARRIER_SATS,
     ArkAddress,
     RestArkProvider,
-    RestEmulatorProvider,
-    RestIndexerProvider,
     arkade,
     asset,
     getNetwork,
@@ -56,6 +54,16 @@ import {
 
 // json imports widen "type": "pubkey" to string; parseArtifact validates at runtime
 type Artifact = Parameters<typeof arkade.parseArtifact>[0];
+
+/**
+ * Callers still pass the operator URL these entrypoints were built around.
+ * The client itself comes from the wallet, which already holds that operator.
+ */
+function requireArkServerUrl(arkServerUrl: string): void {
+    if (arkServerUrl.length === 0) {
+        throw new Error("arkServerUrl is required");
+    }
+}
 
 /**
  * The contracts, one per WANT side — pure data, shared verbatim with any other
@@ -489,21 +497,19 @@ async function registerOfferContract(
     expectedPkScript: Uint8Array,
     opts: { issued?: number; client?: arkade.Arkade; contractManager?: IContractManager } = {},
 ): Promise<void> {
-    // the caller's when it has one: registration goes through `opts.client`'s
-    // manager, so a second fetch here splits one registration across two
-    const contractManager = opts.contractManager ?? (await wallet.getContractManager());
+    requireArkServerUrl(arkServerUrl);
+    // The caller's client when it has one. Otherwise the wallet's: same
+    // operator, same indexer, same manager.
     const client =
         opts.client ??
-        (await arkade.Arkade.connect({
-            arkade: new RestArkProvider(arkServerUrl),
-            indexer: new RestIndexerProvider(arkServerUrl),
-            identity: wallet.identity,
+        (await wallet.arkade({
             // without this the row's `address` would be derived against the SDK's
             // default network while its script is right — a row that disagrees with
             // the address the user is about to fund
             network: getNetwork(network),
-            contractManager,
         }));
+    const contractManager =
+        opts.contractManager ?? client.contractManager ?? (await wallet.getContractManager());
     await contractManager.createContract(
         offerContractParams(client, binding, serverPubkey, expectedPkScript),
     );
@@ -551,20 +557,13 @@ export async function restoreOfferCoverage(
     arkServerUrl: string,
     swaps: AssetSwap[],
 ): Promise<void> {
+    requireArkServerUrl(arkServerUrl);
     const live = swaps.filter((s) => !RETIRABLE.includes(s.status));
     if (live.length === 0) return;
 
-    const arkProvider = new RestArkProvider(arkServerUrl);
-    const info = await arkProvider.getInfo();
-    const serverPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
-    const contractManager = await wallet.getContractManager();
-    const client = await arkade.Arkade.connect({
-        arkade: arkProvider,
-        indexer: new RestIndexerProvider(arkServerUrl),
-        identity: wallet.identity,
-        network: getNetwork(info.network as NetworkName),
-        contractManager,
-    });
+    const client = await wallet.arkade();
+    const serverPubKey = client.serverKey;
+    const contractManager = client.contractManager ?? (await wallet.getContractManager());
     const done = new Set<string>();
     const covenants = [];
     for (const swap of live) {
@@ -812,22 +811,15 @@ export async function cancelOffer(
         swapAddress?: string;
     },
 ): Promise<string> {
+    requireArkServerUrl(arkServerUrl);
     const { repository, fundingTxid, swapAddress } = opts;
     const offer = decodeOffer(hex.decode(offerHex));
 
-    const contractManager = await wallet.getContractManager();
-    const client = await arkade.Arkade.connect({
-        arkade: new RestArkProvider(arkServerUrl),
-        indexer: new RestIndexerProvider(arkServerUrl),
-        identity: wallet.identity,
-        // registered offers resolve their VTXOs from the contract repository
-        // instead of a direct indexer query; the indexer above stays as the
-        // fallback for offers created before registration existed
-        contractManager,
-        // no `network`, unlike registerOfferContract: the row lookup is by
-        // script and the payout script comes from wallet.getAddress(), so the
-        // client's network (which only shapes address derivation) is unused here
-    });
+    // registered offers resolve their VTXOs from the contract repository
+    // instead of a direct indexer query. The wallet's indexer stays as the
+    // fallback for offers created before registration existed.
+    const client = await wallet.arkade();
+    const contractManager = client.contractManager ?? (await wallet.getContractManager());
 
     // Rebuild the contract with the offer's own keys (not the client's) so the
     // derived script matches the funded swap address exactly.
@@ -999,6 +991,7 @@ export async function fillOffer(
         emulatorPubkey?: string;
     },
 ): Promise<string> {
+    requireArkServerUrl(arkServerUrl);
     const {
         fund,
         payoutScript,
@@ -1030,19 +1023,13 @@ export async function fillOffer(
         }
     }
 
-    const contractManager = await wallet.getContractManager();
-    const client = await arkade.Arkade.connect({
-        arkade: new RestArkProvider(arkServerUrl),
-        indexer: new RestIndexerProvider(arkServerUrl),
-        identity: wallet.identity,
-        contractManager,
-        // `fulfill` is a covenant path, so the emulator executes the arkade
-        // script and finalizes with arkd. Without it the spend is built and then
-        // refused at submission — there is no default to fall back on.
-        emulator: typeof emulator === "string" ? new RestEmulatorProvider(emulator) : emulator,
-        // Only reached for the client's own emulatorKey, which this fill never
-        // derives against — the offer's own key is bound below. It still has to
-        // resolve, and on a network with no pinned key it throws without this.
+    // `fulfill` is a covenant path, so the emulator executes the arkade
+    // script and finalizes with arkd. Without it the spend is built and then
+    // refused at submission — there is no default to fall back on.
+    // The offer's own key is bound below. On a network with no pinned key the
+    // override is what lets the client resolve its co-signer.
+    const client = await wallet.arkade({
+        ...(typeof emulator === "string" ? { emulatorUrl: emulator } : { emulator }),
         ...(emulatorPubkey ? { emulatorPubkey } : {}),
     });
 
