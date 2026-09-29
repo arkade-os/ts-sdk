@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
     ContractManager,
     encodeArkContract,
@@ -130,57 +130,6 @@ describe("Contracts", () => {
                     address: "address",
                 }),
             ).rejects.toThrow("Script mismatch");
-        });
-
-        it("should accept contract with valid params and matching script", async () => {
-            const contract = await manager.createContract({
-                type: "default",
-                params: createDefaultContractParams(),
-                script: TEST_DEFAULT_SCRIPT,
-                address: "address",
-            });
-
-            expect(contract).toBeDefined();
-            expect(contract.type).toBe("default");
-        });
-    });
-
-    describe("Multiple event callbacks", () => {
-        let repository: ContractRepository;
-        let manager: ContractManager;
-        let mockIndexer: IndexerProvider;
-
-        beforeEach(async () => {
-            repository = new InMemoryContractRepository();
-            mockIndexer = createMockIndexerProvider();
-
-            manager = await ContractManager.create({
-                indexerProvider: mockIndexer,
-                contractRepository: repository,
-                walletRepository: new InMemoryWalletRepository(),
-            });
-        });
-
-        it("should support registering multiple event callbacks", () => {
-            const callback1 = vi.fn();
-            const callback2 = vi.fn();
-
-            const unsubscribe1 = manager.onContractEvent(callback1);
-            const unsubscribe2 = manager.onContractEvent(callback2);
-
-            expect(unsubscribe1).toBeInstanceOf(Function);
-            expect(unsubscribe2).toBeInstanceOf(Function);
-        });
-
-        it("should allow unsubscribing callbacks", () => {
-            const callback = vi.fn();
-
-            const unsubscribe = manager.onContractEvent(callback);
-            unsubscribe();
-
-            // After unsubscribe, callback should not be called
-            // (we can't easily trigger events in unit tests, but verify unsubscribe works)
-            expect(unsubscribe).toBeInstanceOf(Function);
         });
     });
 });

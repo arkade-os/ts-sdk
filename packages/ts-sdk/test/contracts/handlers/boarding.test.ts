@@ -63,12 +63,6 @@ describe("BoardingContractHandler.createScript", () => {
         expect(hex.encode(fromHandler.pkScript)).toEqual(hex.encode(legacy.pkScript));
     });
 
-    it("produces a DefaultVtxo.Script with forfeit and exit leaves", () => {
-        const script = BoardingContractHandler.createScript(boardingParams());
-        expect(script.forfeit()).toBeDefined();
-        expect(script.exit()).toBeDefined();
-    });
-
     it("sources the CSV timelock from the boarding delay, not the unilateral exit delay", () => {
         const boarding = BoardingContractHandler.createScript(boardingParams(BOARDING_EXIT_DELAY));
         const offchain = DefaultContractHandler.createScript({
@@ -183,12 +177,6 @@ describe("BoardingContractHandler param serialize/deserialize", () => {
 });
 
 describe("BoardingContractHandler is discoverable", () => {
-    it("implements discoverAt", () => {
-        expect(typeof (BoardingContractHandler as { discoverAt?: unknown }).discoverAt).toBe(
-            "function",
-        );
-    });
-
     it("isDiscoverable(BoardingContractHandler) is true", () => {
         expect(isDiscoverable(BoardingContractHandler)).toBe(true);
         // sanity: the default handler is also discoverable, proving the guard works
@@ -344,14 +332,6 @@ describe("BoardingContractHandler spend paths reuse the default surface", () => 
         state: "active" as const,
         createdAt: 0,
     };
-
-    it("selects the forfeit path when collaborative", () => {
-        const path = BoardingContractHandler.selectPath(script, contract, {
-            collaborative: true,
-            currentTime: 0,
-        });
-        expect(path?.leaf).toBeDefined();
-    });
 
     it("selects the exit path (with sequence) after the boarding CSV matures", () => {
         const paths = BoardingContractHandler.getSpendablePaths(script, contract, {

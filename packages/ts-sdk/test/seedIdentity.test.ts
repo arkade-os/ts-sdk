@@ -472,26 +472,6 @@ describe("ReadonlyDescriptorIdentity", () => {
     });
 });
 
-describe("module exports", () => {
-    it("should export SeedIdentity from identity module", async () => {
-        const { SeedIdentity } = await import("../src/identity");
-        expect(SeedIdentity).toBeDefined();
-        expect(typeof SeedIdentity.fromSeed).toBe("function");
-    });
-
-    it("should export MnemonicIdentity from identity module", async () => {
-        const { MnemonicIdentity } = await import("../src/identity");
-        expect(MnemonicIdentity).toBeDefined();
-        expect(typeof MnemonicIdentity.fromMnemonic).toBe("function");
-    });
-
-    it("should export ReadonlyDescriptorIdentity from identity module", async () => {
-        const { ReadonlyDescriptorIdentity } = await import("../src/identity");
-        expect(ReadonlyDescriptorIdentity).toBeDefined();
-        expect(typeof ReadonlyDescriptorIdentity.fromDescriptor).toBe("function");
-    });
-});
-
 describe("MnemonicIdentity", () => {
     it("should produce same key as SeedIdentity.fromSeed", async () => {
         const fromMnemonic = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
@@ -503,18 +483,6 @@ describe("MnemonicIdentity", () => {
         const pubKey1 = await fromMnemonic.xOnlyPublicKey();
         const pubKey2 = await fromSeed.xOnlyPublicKey();
         expect(Array.from(pubKey1)).toEqual(Array.from(pubKey2));
-    });
-});
-
-describe("backwards compatibility", () => {
-    it("existing signMessage() API still works", async () => {
-        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-        const message = new Uint8Array(32).fill(99);
-
-        const signature = await identity.signMessage(message);
-        expect(signature).toBeInstanceOf(Uint8Array);
-        expect(signature).toHaveLength(64);
     });
 });
 

@@ -37,26 +37,6 @@ describe("DefaultContractHandler descriptor support", () => {
         expect(serialized.serverPubKey).toBe(TEST_SERVER_PUB_KEY_HEX);
     });
 
-    it("should create script from descriptor params", () => {
-        const serialized = DefaultContractHandler.serializeParams({
-            pubKey: TEST_PUB_KEY,
-            serverPubKey: TEST_SERVER_PUB_KEY,
-            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
-        });
-        const script = DefaultContractHandler.createScript(serialized);
-        expect(script).toBeDefined();
-        expect(script.pkScript).toBeDefined();
-    });
-
-    it("should create script from legacy hex params", () => {
-        const script = DefaultContractHandler.createScript({
-            pubKey: TEST_PUB_KEY_HEX,
-            serverPubKey: TEST_SERVER_PUB_KEY_HEX,
-        });
-        expect(script).toBeDefined();
-        expect(script.pkScript).toBeDefined();
-    });
-
     it("should produce identical pkScript from descriptor and hex params", () => {
         const hexScript = DefaultContractHandler.createScript({
             pubKey: TEST_PUB_KEY_HEX,

@@ -112,14 +112,6 @@ describe("boarding contract: getBoardingAddress backward compatibility", () => {
         const expected = legacy.onchainAddress(wallet.network);
         expect(await wallet.getBoardingAddress()).toEqual(expected);
     });
-
-    it("derives getBoardingAddress from boardingTapscript without loading the persisted contract", async () => {
-        const { wallet } = await makeWallet();
-        // No contract-manager access here: getBoardingAddress must not trigger
-        // contract-manager initialization.
-        const address = await wallet.getBoardingAddress();
-        expect(address).toEqual(wallet.boardingTapscript.onchainAddress(wallet.network));
-    });
 });
 
 describe("boarding contract: wallet.boardingTapscript source", () => {

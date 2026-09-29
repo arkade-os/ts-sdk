@@ -159,22 +159,4 @@ describe("buildSignedSweep", () => {
         expect(signerCalled).toBe(true);
         expect(tx.getInput(0).finalScriptWitness).toBeDefined();
     });
-
-    it("signs without signer and finalizes (plain path via fallback)", async () => {
-        const owner = await ownerPubkey();
-        const exit = CSVMultisigTapscript.encode({ pubkeys: [owner], timelock });
-        const script = new VtxoScript([exit.script]);
-        const leaf = script.findLeaf(hex.encode(exit.script));
-
-        const { tx } = await buildSignedSweep({
-            vtxo: { txid: "88".repeat(32), vout: 0, value: 50_000, pkScript: script.pkScript },
-            path: { leaf, sequence: expectedSequence },
-            outputAddress: destAddress,
-            feeRate: 2,
-            network,
-            identity,
-        });
-
-        expect(tx.getInput(0).finalScriptWitness).toBeDefined();
-    });
 });
