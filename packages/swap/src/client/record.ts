@@ -87,12 +87,10 @@ export const familyOfSwapId = (swapId: string): SwapFamily | undefined =>
  * idempotency key on. Strips a family prefix when one is present and passes an
  * untagged id through unchanged, so a reader-era id still reaches its record.
  */
-export const quoteIdOfSwapId = (swapId: string): QuoteId =>
-    swapId.startsWith(OFFER_SWAP_ID_PREFIX)
-        ? swapId.slice(OFFER_SWAP_ID_PREFIX.length)
-        : swapId.startsWith(RFQ_SWAP_ID_PREFIX)
-          ? swapId.slice(RFQ_SWAP_ID_PREFIX.length)
-          : swapId;
+export const quoteIdOfSwapId = (swapId: string): QuoteId => {
+    const family = familyOfSwapId(swapId);
+    return family === undefined ? swapId : swapId.slice(`${family}:`.length);
+};
 
 /** One leg's obligation, in the form a record holds it. */
 export interface RecordedLeg {
@@ -510,8 +508,9 @@ export const swapOf = (record: SwapRecord, outcome: Outcome): Swap => ({
     fee: legOf(record.fee),
     market: record.market,
     ...(record.solver === undefined ? {} : { solver: record.solver }),
-    ...(record.family === "rfq" ? { lock: record.lock } : {}),
-    ...(record.family === "rfq" ? { refundLocktime: record.refundLocktime } : {}),
+    ...(record.family === "rfq"
+        ? { lock: record.lock, refundLocktime: record.refundLocktime }
+        : {}),
     ...(record.artifact === undefined ? {} : { artifact: artifactOf(record.artifact) }),
     expiresAt: record.expiresAt,
     ...(record.fundingTxid === undefined ? {} : { fundingTxid: record.fundingTxid }),

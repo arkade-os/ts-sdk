@@ -95,10 +95,7 @@ export async function sealWithEntropy(
     if (nonce.length !== 12) throw new Error("nonce must be 12 bytes");
     const sealed = gcm(key, nonce, ephemeralPub).encrypt(input.preimage);
 
-    const ciphertext = new Uint8Array(33 + 12 + sealed.length);
-    ciphertext.set(ephemeralPub, 0);
-    ciphertext.set(nonce, 33);
-    ciphertext.set(sealed, 45);
+    const ciphertext = concatBytes(ephemeralPub, nonce, sealed);
     return {
         ciphertext: base64.encode(ciphertext),
         packet: base64.encode(
@@ -205,7 +202,7 @@ export const claimPacketShape = (b64: string): ClaimPacketShape => {
             kind: "packet",
             body: raw,
             needsArkadeScript: !hasArkadeScript,
-            ...(pubkey ? { covclaimdPubkey: pubkey } : {}),
+            covclaimdPubkey: pubkey,
         };
     } catch {
         return { kind: "ciphertext" };

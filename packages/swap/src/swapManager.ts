@@ -2332,16 +2332,8 @@ export interface RfqSwapOutcome {
 }
 
 /** The trader's own claim on this swap, whichever leg it belongs to. */
-const traderClaimTxid = (swap: RfqSwap): string | undefined => {
-    switch (swap.kind) {
-        case "onchain_send":
-            return swap.claimTxid;
-        case "lightning_receive":
-            return swap.claimTxid;
-        default:
-            return undefined;
-    }
-};
+const traderClaimTxid = (swap: RfqSwap): string | undefined =>
+    swap.kind === "onchain_send" || swap.kind === "lightning_receive" ? swap.claimTxid : undefined;
 
 // The txid, not the label — same reason `driveOnchain` guards on it. The label
 // moves on: a claimed onchain send whose Arkade half is refused past the window

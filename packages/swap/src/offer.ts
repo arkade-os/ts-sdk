@@ -404,8 +404,7 @@ export function decodeOffer(data: Uint8Array): Offer {
     for (const name of ["wantAsset", "offerAsset"] as const) {
         if (fields[name]?.length === 0) throw new Error(`missing/invalid ${name}`);
     }
-    // width is checked wherever a fixed-width record appears, not only where
-    // `need` reads it back: the optional ones have no other gate
+    // the one width gate, for required and optional records alike
     for (const [name, value] of Object.entries(fields) as [FieldName, Uint8Array][]) {
         const width: number | undefined = FIELDS[name].width;
         if (width !== undefined && value.length !== width) {
@@ -414,9 +413,7 @@ export function decodeOffer(data: Uint8Array): Offer {
     }
     const need = (name: FieldName) => {
         const v = fields[name];
-        const len: number | undefined = FIELDS[name].width;
-        if (!v || (len !== undefined && v.length !== len))
-            throw new Error(`missing/invalid ${name}`);
+        if (!v) throw new Error(`missing/invalid ${name}`);
         return v;
     };
     const amount = need("wantAmount");
@@ -504,25 +501,29 @@ async function registerOfferContract(
     expectedPkScript: Uint8Array,
 ): Promise<void> {
     const contractManager = await wallet.getContractManager();
-    const client = await arkade.Arkade.connect({
-        // Registration derives and persists; it never broadcasts and never
-        // reads UTXOs, so the only thing the client needs off the server is the
-        // info the caller already resolved. Handing that back — rather than a
-        // provider built from a URL — is what lets `createOffer` take just a
-        // wallet, and spares a second `/v1/info` round-trip.
-        arkade: { getInfo: async () => info },
-        identity: wallet.identity,
-        // without this the row's `address` would be derived against the SDK's
-        // default network while its script is right — a row that disagrees with
-        // the address the user is about to fund
-        network: networkFromArkadeInfo(info),
-        contractManager,
-    });
+    const client = await derivingClient(wallet, info, contractManager);
     await contractManager.createContract(
         offerContractParams(client, binding, operatorPubkey, expectedPkScript),
     );
     await promoteOfferContract(contractManager, hex.encode(expectedPkScript));
 }
+
+/**
+ * A client that only derives and persists, over info the caller already
+ * resolved — no second `/v1/info` round-trip. `network` keeps a row's `address`
+ * on the network its script was derived for.
+ */
+const derivingClient = (
+    wallet: IWallet,
+    info: ArkadeInfo,
+    contractManager: Awaited<ReturnType<IWallet["getContractManager"]>>,
+): Promise<arkade.Arkade> =>
+    arkade.Arkade.connect({
+        arkade: { getInfo: async () => info },
+        identity: wallet.identity,
+        network: networkFromArkadeInfo(info),
+        contractManager,
+    });
 
 function offerContractParams(
     client: arkade.Arkade,
@@ -554,12 +555,7 @@ export async function restoreOfferCoverage(wallet: IWallet, swaps: AssetSwap[]):
         wallet.getContractManager(),
     ]);
     const operatorPubkey = hex.decode(toXOnlySignerHex(info.signerPubkey));
-    const client = await arkade.Arkade.connect({
-        arkade: { getInfo: async () => info },
-        identity: wallet.identity,
-        network: networkFromArkadeInfo(info),
-        contractManager,
-    });
+    const client = await derivingClient(wallet, info, contractManager);
     const seen = new Set<string>();
     const covenants = [];
     for (const swap of live) {
@@ -857,8 +853,6 @@ export async function cancelOffer(
     return txid;
 }
 
-const OFFER_COVENANT_MISMATCH = "rebuilt covenant does not match the offer's swapPkScript";
-
 /**
  * No deposit left to cancel at the swap address.
  *
@@ -895,7 +889,7 @@ export class OfferCovenantMismatchError extends Error {
         options?: ErrorOptions,
     ) {
         super(
-            `${OFFER_COVENANT_MISMATCH} — the operator signing key pinned by the ` +
+            "rebuilt covenant does not match the offer's swapPkScript — the operator signing key pinned by the " +
                 "rebuild does not reproduce the funded covenant; the signing key has " +
                 "likely rotated since funding (pass swapAddress, the funded address, to " +
                 "pin the original key), or the record is corrupt",
@@ -1283,10 +1277,8 @@ export async function fillOffer(
 }
 
 /** How much of `assetId` a coin's declared assets add up to. */
-const amountOfAsset = (assets: FillFunding["assets"], assetId: string): bigint => {
-    let total = BigInt(0);
-    for (const a of assets ?? []) {
-        if (a.assetId === assetId) total += BigInt(a.amount);
-    }
-    return total;
-};
+const amountOfAsset = (assets: FillFunding["assets"], assetId: string): bigint =>
+    (assets ?? []).reduce(
+        (total, a) => (a.assetId === assetId ? total + BigInt(a.amount) : total),
+        BigInt(0),
+    );

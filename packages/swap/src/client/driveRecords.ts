@@ -70,14 +70,29 @@ export const rfqRecordOf = (record: CorridorSwapRecord): RfqSwapRecord => ({
     state: record.state,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
-    ...(record.refundTxid === undefined ? {} : { refundTxid: record.refundTxid }),
-    ...(record.lockupSpendTxids?.length ? { lockupSpendTxids: [...record.lockupSpendTxids] } : {}),
-    ...(record.settlementPreimageHex === undefined
+    ...mutableHalfOf(record),
+});
+
+/** The six optional manager-state fields, each only when present. */
+const mutableHalfOf = (
+    from: Pick<
+        CorridorSwapRecord,
+        | "refundTxid"
+        | "lockupSpendTxids"
+        | "settlementPreimageHex"
+        | "failure"
+        | "claimFailure"
+        | "blockedReason"
+    >,
+) => ({
+    ...(from.refundTxid === undefined ? {} : { refundTxid: from.refundTxid }),
+    ...(from.lockupSpendTxids?.length ? { lockupSpendTxids: [...from.lockupSpendTxids] } : {}),
+    ...(from.settlementPreimageHex === undefined
         ? {}
-        : { settlementPreimageHex: record.settlementPreimageHex }),
-    ...(record.failure === undefined ? {} : { failure: record.failure }),
-    ...(record.claimFailure === undefined ? {} : { claimFailure: record.claimFailure }),
-    ...(record.blockedReason === undefined ? {} : { blockedReason: record.blockedReason }),
+        : { settlementPreimageHex: from.settlementPreimageHex }),
+    ...(from.failure === undefined ? {} : { failure: from.failure }),
+    ...(from.claimFailure === undefined ? {} : { claimFailure: from.claimFailure }),
+    ...(from.blockedReason === undefined ? {} : { blockedReason: from.blockedReason }),
 });
 
 /**
@@ -108,16 +123,7 @@ export const withRfqState = (
         state: state.state,
         profile: state.profile,
         updatedAt: state.updatedAt,
-        ...(state.refundTxid === undefined ? {} : { refundTxid: state.refundTxid }),
-        ...(state.lockupSpendTxids?.length
-            ? { lockupSpendTxids: [...state.lockupSpendTxids] }
-            : {}),
-        ...(state.settlementPreimageHex === undefined
-            ? {}
-            : { settlementPreimageHex: state.settlementPreimageHex }),
-        ...(state.failure === undefined ? {} : { failure: state.failure }),
-        ...(state.claimFailure === undefined ? {} : { claimFailure: state.claimFailure }),
-        ...(state.blockedReason === undefined ? {} : { blockedReason: state.blockedReason }),
+        ...mutableHalfOf(state),
     };
 };
 
@@ -350,7 +356,7 @@ export const restoredOfferRecord = (
             },
             give: { asset: give, amount: toAtomicDecimal(BigInt(swap.fromAmount)) },
             take: { asset: take, amount: toAtomicDecimal(BigInt(swap.toAmount)) },
-            fee: { asset: take, amount: toAtomicDecimal(BigInt(0)) },
+            fee: { asset: take, amount: toAtomicDecimal(0n) },
             market: { kind: "restored", backend: "feed" },
             expiresAt: createdAt,
             status: swap.status,

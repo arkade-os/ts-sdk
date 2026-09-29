@@ -104,7 +104,7 @@ export interface OfferSwapSource<S extends OfferSwapFacts = OfferSwapFacts> {
 
 /** v1's store, as an {@link OfferSwapSource}. The default when a caller passes
  * a repository rather than a source. */
-export const assetSwapSource = (repository: AssetSwapRepository): OfferSwapSource<AssetSwap> => ({
+const assetSwapSource = (repository: AssetSwapRepository): OfferSwapSource<AssetSwap> => ({
     list: () => getAssetSwaps(repository),
     apply: async (swap, changes) => updateAssetSwapBestEffort(repository, swap.id, changes),
 });

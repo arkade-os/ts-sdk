@@ -18,7 +18,13 @@
 import type { PaymentRail, RouteQuote } from "@arkade-os/sdk";
 import { assertNoAssets, assetsOf, invoiceTarget } from "@arkade-os/sdk";
 import type { QuoteInput } from "../client/quote";
-import { railAvailable, receiverExact, swapHandle, type SwapRailClient } from "./swapRail";
+import {
+    quoteMeta,
+    railAvailable,
+    receiverExact,
+    swapHandle,
+    type SwapRailClient,
+} from "./swapRail";
 
 export const LIGHTNING_RAIL = "lightning";
 
@@ -78,20 +84,7 @@ export function lightningRail(client: SwapRailClient): PaymentRail {
             return {
                 railId: LIGHTNING_RAIL,
                 ...amounts,
-                meta: {
-                    quoteId: quote.id,
-                    // A `RouteQuote` carries no expiry of its own, so a held one
-                    // can outlive the terms behind it. This is where a caller
-                    // can see that; `send()` refuses with `QuoteExpired` rather
-                    // than silently re-quoting.
-                    expiresAt: quote.expiresAt,
-                    ...(quote.refundLocktime === undefined
-                        ? {}
-                        : { refundLocktime: quote.refundLocktime }),
-                    ...(quote.solver === undefined ? {} : { solver: quote.solver }),
-                    ...(quote.lock === undefined ? {} : { paymentHash: quote.lock.hash }),
-                    ...(quote.market.kind === "restored" ? {} : { market: quote.market.key }),
-                },
+                meta: quoteMeta(quote),
                 send: () => swapHandle(LIGHTNING_RAIL, client, quote),
             };
         },

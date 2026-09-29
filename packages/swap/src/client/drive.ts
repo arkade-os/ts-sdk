@@ -49,7 +49,8 @@ import { RefundNotLocallyPossibleError, senderIdentityForSwapRecord } from "../r
 import { rfqClaimDestinationOf, rfqClaimSecretOf, rfqSignerOf } from "../rfqProfileParts";
 import { rebuildRfqSwap, rfqSwapOriginOf } from "../rfqRecord";
 import { isRfqSwapTerminal } from "../rfqSwapState";
-import { restoreAssetSwaps, type Tx } from "../restore";
+import { restoreAssetSwaps } from "../restore";
+import { toRestoreTx } from "../registerRestore";
 import { preimageForSwapRecord } from "../store";
 import type { AssetSwapRepository } from "../repository";
 import {
@@ -809,15 +810,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             wallet.getAddress(),
             config.network(),
         ]);
-        const txs: Tx[] = history.map((tx) => ({
-            // `TxType` is `"SENT"`/`"RECEIVED"`; the scan filters on `"sent"`.
-            type: String(tx.type).toLowerCase(),
-            redeemTxid: tx.key.arkTxid,
-            ...(tx.key.boardingTxid ? { boardingTxid: tx.key.boardingTxid } : {}),
-            ...(tx.key.commitmentTxid ? { roundTxid: tx.key.commitmentTxid } : {}),
-            // The scan reads unix SECONDS; a wallet transaction carries ms.
-            ...(tx.createdAt ? { createdAt: Math.floor(tx.createdAt / 1000) } : {}),
-        }));
+        const txs = history.map(toRestoreTx);
 
         const { hrp, serverPubKey: operatorPubkey } = ArkAddress.decode(address);
         const cursor =
@@ -948,7 +941,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         // dropped it — the one-shot unsubscribe the facade already pays for.
         await manager.start();
         await markPassed();
-        if (!watcher && repository) {
+        if (!watcher) {
             watcher = await watchOfferSwaps({
                 wallet,
                 source: offers(),

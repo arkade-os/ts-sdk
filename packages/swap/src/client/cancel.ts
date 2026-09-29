@@ -60,11 +60,6 @@ import type { OfferSwapRecord } from "./record";
  * rebuild cannot name how. */
 export type CancelOutcome = "cancelled" | "filled" | "needs_recovery";
 
-/** Offer statuses a spend cannot move — the swap is already resolved, and a
- * cancel answers from the record rather than re-broadcasting. */
-const OFFER_TERMINAL = (record: OfferSwapRecord): boolean =>
-    record.status === "cancelled" || record.status === "fulfilled";
-
 export interface CancelInput {
     readonly wallet: IWallet;
     readonly repository: AssetSwapRepository;
@@ -92,15 +87,12 @@ export const cancelSwap = async (input: CancelInput): Promise<{ outcome: CancelO
 
     // A swap whose outcome is already terminal answers from the record rather
     // than re-broadcasting — whichever call noticed it, the answer is one
-    // condition, not two.
-    if (OFFER_TERMINAL(record)) {
-        return { outcome: record.status === "cancelled" ? "cancelled" : "filled" };
-    }
-    if (offerOutcome(record.status) === "needs_recovery") {
-        // A swept deposit, or one of the onchain-corridor phases: the value
-        // left the covenant by a route no offchain spend can reach, so
-        // `client.recover` is what drives it. Nothing here to cancel.
-        return { outcome: "needs_recovery" };
+    // condition, not two. `needs_recovery` is a swept deposit, or one of the
+    // onchain-corridor phases: the value left the covenant by a route no
+    // offchain spend can reach, so `client.recover` is what drives it.
+    const outcome = offerOutcome(record.status);
+    if (outcome === "cancelled" || outcome === "filled" || outcome === "needs_recovery") {
+        return { outcome };
     }
 
     // `cancelling` with no recorded spend is a cancel that never broadcast —
@@ -144,7 +136,7 @@ export const cancelSwap = async (input: CancelInput): Promise<{ outcome: CancelO
             drive.ingest(rolledBack);
             throw error;
         }
-        if (isMissingVtxo(error)) {
+        if (error instanceof NoSpendableDepositError) {
             // The fill won the race: the deposit is already spent. Reconcile
             // the spend rather than throwing — v1's documented throw here meant
             // the swap completed.
@@ -293,5 +285,3 @@ const retireOfferScripts = async (
         console.warn(`[swap] could not retire offer script for ${record.id}`, error);
     }
 };
-
-const isMissingVtxo = (error: unknown): boolean => error instanceof NoSpendableDepositError;

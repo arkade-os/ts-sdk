@@ -25,26 +25,23 @@
  * `secrets` (`contractSigner`), a trader that is online never
  * depends on it.
  */
-import { hex } from "@scure/base";
-import { ripemd160 } from "@noble/hashes/legacy.js";
-import { sha256 } from "@noble/hashes/sha2.js";
 import {
-    CSVMultisigTapscript,
     type Identity,
     type VHTLC,
     claimWithPreimageIdentity,
     signAndSubmitOffchainTx,
 } from "@arkade-os/sdk";
 
+import { assertPreimageMatches, gateError, pollUntil } from "./onchainHtlc";
 import {
-    LockupNeedsRecoveryError,
+    assertNoneSwept,
     type LockupContractSource,
     findLockupVtxos,
+    lockupInputs,
     type LockupVtxo,
+    operatorUnrollScript,
     type SwapOperator,
 } from "./refund";
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * The lockup is funded for less than the swap agreed.
@@ -86,11 +83,7 @@ export class LockupAmountMismatchError extends Error {
  */
 const assertFiniteAmount = (value: number, reason: string, label: string): void => {
     if (Number.isFinite(value)) return;
-    const error = new Error(`${label} is not a finite number (${String(value)})`) as Error & {
-        reason: string;
-    };
-    error.reason = reason;
-    throw error;
+    throw gateError(reason, `${label} is not a finite number (${String(value)})`);
 };
 
 /**
@@ -147,13 +140,7 @@ export async function pushClaim(
 ): Promise<{ txid: string; amount: number }> {
     if (input.vtxos.length === 0) throw new Error("nothing to claim: no funded outputs");
 
-    const swept = input.vtxos.filter((vtxo) => vtxo.recoverable);
-    if (swept.length > 0) {
-        throw new LockupNeedsRecoveryError(
-            swept.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
-            input.contract.options.refundLocktime,
-        );
-    }
+    assertNoneSwept(input.vtxos, input.contract);
 
     // Summed across every live output: funding in several is legitimate, and a
     // first-output check would miss the dust exactly as a first-output claim
@@ -171,21 +158,11 @@ export async function pushClaim(
         }
     }
 
-    const committed = input.contract.options.preimageHash;
-    if (hex.encode(ripemd160(sha256(input.preimage))) !== hex.encode(committed)) {
-        throw new Error("preimage does not match the covenant's payment hash");
-    }
+    assertPreimageMatches(input.preimage, input.contract.options.preimageHash);
 
-    const info = await operator.getInfo();
-    let operatorUnrollScript: CSVMultisigTapscript.Type;
-    try {
-        operatorUnrollScript = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
-    } catch {
-        throw new Error("invalid checkpointTapscript from the operator");
-    }
+    const serverUnrollScript = await operatorUnrollScript(operator);
 
     const leaf = input.contract.claim();
-    const tapTree = input.contract.encode();
 
     // The core primitive owns build → sign → submit → match → finalize; this
     // module supplies only what is swap-specific: the claim leaf, the preimage
@@ -194,17 +171,11 @@ export async function pushClaim(
     const txid = await signAndSubmitOffchainTx({
         identity: claimWithPreimageIdentity(input.receiver, input.preimage),
         provider: operator,
-        inputs: input.vtxos.map((vtxo) => ({
-            txid: vtxo.txid,
-            vout: vtxo.vout,
-            value: vtxo.value,
-            tapLeafScript: leaf,
-            tapTree,
-        })),
+        inputs: lockupInputs(input.vtxos, input.contract, leaf),
         // One aggregate output: unlike the covenant refund, this leaf inspects
         // nothing about the output set.
         outputs: [{ script: input.destinationPkScript, amount: BigInt(locked) }],
-        serverUnrollScript: operatorUnrollScript,
+        serverUnrollScript,
         verifyServerSignatures: { serverPubkey: input.contract.options.server },
     });
     return { txid, amount: locked };
@@ -222,19 +193,15 @@ export async function awaitLockupFunding(
     swapPkScript: Uint8Array,
     options: { pollMs?: number; deadline?: number } = {},
 ): Promise<readonly LockupVtxo[]> {
-    const pollMs = options.pollMs ?? 5_000;
-    for (;;) {
-        const vtxos = await findLockupVtxos(contracts, swapPkScript);
-        if (vtxos.length > 0) return vtxos;
-        if (options.deadline !== undefined && Date.now() / 1000 >= options.deadline) {
-            const error = new Error("the lockup never appeared at the covenant script") as Error & {
-                reason: string;
-            };
-            error.reason = "lockup_timeout";
-            throw error;
-        }
-        await sleep(pollMs);
-    }
+    return pollUntil(
+        async () => {
+            const vtxos = await findLockupVtxos(contracts, swapPkScript);
+            return vtxos.length > 0 ? vtxos : undefined;
+        },
+        options,
+        "lockup_timeout",
+        "the lockup never appeared at the covenant script",
+    );
 }
 
 /**
@@ -260,17 +227,7 @@ export async function claimReceiveLockup(
         deadline?: number;
     },
 ): Promise<{ txid: string; amount: number }> {
-    const vtxos = await awaitLockupFunding(contracts, input.swapPkScript, {
-        pollMs: input.pollMs,
-        deadline: input.deadline,
-    });
-    return pushClaim(operator, {
-        contract: input.contract,
-        receiver: input.receiver,
-        preimage: input.preimage,
-        vtxos,
-        destinationPkScript: input.destinationPkScript,
-        expectedAmount: input.expectedAmount,
-        partiallyClaimed: input.partiallyClaimed,
-    });
+    const { swapPkScript, pollMs, deadline, ...claim } = input;
+    const vtxos = await awaitLockupFunding(contracts, swapPkScript, { pollMs, deadline });
+    return pushClaim(operator, { ...claim, vtxos });
 }

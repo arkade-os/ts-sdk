@@ -289,15 +289,10 @@ const assertFundable = async (wallet: IWallet, quote: Quote): Promise<void> => {
     // On the asset part, not the whole id: the rail differs per corridor —
     // `arkade:…/slip44:0` and `bitcoin:…/slip44:0` are one coin — and it is the
     // part that says *which asset* rather than *on which rail*.
-    if (assetPartOf(give.asset) === BTC_ASSET_PART) {
-        const available = BigInt(balance.available);
-        if (available < give.amount) {
-            throw new InsufficientFunds(give.asset, give.amount, available);
-        }
-        return;
-    }
-    const held = balance.availableAssets.find((a) => give.asset.endsWith(a.assetId));
-    const available = held?.amount ?? 0n;
+    const available =
+        assetPartOf(give.asset) === BTC_ASSET_PART
+            ? BigInt(balance.available)
+            : (balance.availableAssets.find((a) => give.asset.endsWith(a.assetId))?.amount ?? 0n);
     if (available < give.amount) {
         throw new InsufficientFunds(give.asset, give.amount, available);
     }
@@ -343,7 +338,7 @@ const corridorRecord = (
         ...commonOf(quote, now),
         family: "rfq",
         state: "pending",
-        kind: kindOf(preparation),
+        kind: KIND_OF[preparation.route],
         rfqId: preparation.rfqId,
         lockupAddress: preparation.lockup.address,
         lockupPkScript: hex.encode(preparation.lockup.pkScript),
@@ -354,16 +349,11 @@ const corridorRecord = (
 };
 
 /** The manager's own vocabulary for this route — a route pair, not a corridor. */
-const kindOf = (preparation: RfqPreparation): CorridorSwapRecord["kind"] => {
-    switch (preparation.route) {
-        case "arkade->lightning":
-            return "lightning_send";
-        case "lightning->arkade":
-            return "lightning_receive";
-        case "arkade->onchain":
-            return "onchain_send";
-    }
-};
+const KIND_OF = {
+    "arkade->lightning": "lightning_send",
+    "lightning->arkade": "lightning_receive",
+    "arkade->onchain": "onchain_send",
+} as const satisfies Record<RfqPreparation["route"], CorridorSwapRecord["kind"]>;
 
 /**
  * The corridor's opaque half, written through the corridor-owned builders.

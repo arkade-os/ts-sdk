@@ -24,7 +24,7 @@ import {
     type DiscoveryLeg,
 } from "./aliases";
 import { btcOn, type AssetId } from "./assetId";
-import { railOfCorridor, type Corridor } from "./corridor";
+import { CORRIDORS, railOfCorridor, type Corridor } from "./corridor";
 import type { CorridorSet } from "./corridors/registry";
 import type { DiscoveryIndex, DiscoverySnapshot } from "./discovery";
 import { AmountMismatch, UnsupportedRoute } from "./errors";
@@ -262,7 +262,7 @@ export const resolveRoute = async (
 };
 
 const isCorridor = (value: string): value is Corridor =>
-    value === "arkade" || value === "lightning" || value === "onchain";
+    (CORRIDORS as readonly string[]).includes(value);
 
 /**
  * A caller's asset spelling, or the corridor's own BTC when they left it out.

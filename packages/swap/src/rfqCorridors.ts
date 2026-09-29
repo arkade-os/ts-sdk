@@ -67,7 +67,7 @@ export interface LightningReceiveProfile extends Record<string, unknown> {
     claimTxid?: string;
 }
 
-export const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfile> = {
+const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfile> = {
     kind: "lightning_receive",
 
     // What the manager holds: the amount gate, and its own claim once it lands.
@@ -204,7 +204,7 @@ export function onchainSendProfile(result: {
  * an arkade contract — and `OnchainHtlc` exposes only derived values, never the
  * keys it was built from.
  */
-export const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
+const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
     kind: "onchain_send",
 
     // The L1 keys and the network are only in the request result — nothing on

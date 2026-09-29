@@ -172,6 +172,16 @@ interface CovenantInputs {
     readonly hrp: string;
 }
 
+const lockupOf = (derived: {
+    readonly address: string;
+    readonly script: CommonPreparation["lockup"]["script"];
+    readonly swapPkScript: Uint8Array;
+}): CommonPreparation["lockup"] => ({
+    address: derived.address,
+    script: derived.script,
+    pkScript: derived.swapPkScript,
+});
+
 const covenantInputs = (input: RfqQuoteInput): CovenantInputs => {
     const network = networkFromArkadeInfo(input.info);
     const arkade = input.corridors.get("arkade").deps;
@@ -318,11 +328,7 @@ const quoteLightningSend = async (
             card: input.candidate.card,
             rfqId,
             wire: parsed,
-            lockup: {
-                address: derived.address,
-                script: derived.script,
-                pkScript: derived.swapPkScript,
-            },
+            lockup: lockupOf(derived),
             contractParams: derived.contractParams,
             secrets,
             refundAddress: secrets.address,
@@ -376,10 +382,7 @@ const quoteLightningReceive = async (
             paymentHash,
             payoutPubkey: secrets.pubkey,
             payoutAddress,
-            operatorPubkey: covenant.operatorPubkey,
-            emulatorPubkey: covenant.emulatorPubkey,
-            claimDelay: covenant.claimDelay,
-            hrp: covenant.hrp,
+            ...covenant,
         }),
     );
     // The one field the trader hands to a third party, and the only attack on
@@ -443,11 +446,7 @@ const quoteLightningReceive = async (
             card: input.candidate.card,
             rfqId,
             wire: parsed,
-            lockup: {
-                address: derived.address,
-                script: derived.script,
-                pkScript: derived.swapPkScript,
-            },
+            lockup: lockupOf(derived),
             contractParams: derived.contractParams,
             secrets,
             payoutAddress,
@@ -564,10 +563,7 @@ const quoteOnchainSend = async (
             quote: wire,
             paymentHash,
             payoutPubkey: payoutKey.pubkey,
-            operatorPubkey: covenant.operatorPubkey,
-            emulatorPubkey: covenant.emulatorPubkey,
-            claimDelay: covenant.claimDelay,
-            hrp: covenant.hrp,
+            ...covenant,
             l1Network,
             refundAddress: payoutKey.address,
             senderPubkey: secrets.pubkey,
@@ -595,13 +591,12 @@ const quoteOnchainSend = async (
     // reports is the HTLC minus it — what the recipient actually nets — and
     // `fee` carries both halves of the cost, the solver's spread and the
     // claim the trader pays out of the payout. The invariant `give = take +
-    // fee` holds on both arms of the conditional, which is why the wire's
+    // fee` holds with or without a claim fee, which is why the wire's
     // grossed take leg never reaches the record: `parsed.take - claimFee`
     // plus `spread + claimFee` sums to `parsed.give` exactly. With no fee
     // rate the two collapse to the verbatim legs they always were.
-    const reportedTake = claimFee === undefined ? parsed.take : parsed.take - claimFee;
-    const reportedFee =
-        claimFee === undefined ? parsed.give - parsed.take : parsed.give - parsed.take + claimFee;
+    const reportedTake = parsed.take - (claimFee ?? 0n);
+    const reportedFee = parsed.give - parsed.take + (claimFee ?? 0n);
 
     return {
         quote: {
@@ -628,11 +623,7 @@ const quoteOnchainSend = async (
             card: input.candidate.card,
             rfqId,
             wire: parsed,
-            lockup: {
-                address: derived.address,
-                script: derived.script,
-                pkScript: derived.swapPkScript,
-            },
+            lockup: lockupOf(derived),
             secrets,
             refundAddress: payoutKey.address,
             fundAmount: parsed.give,

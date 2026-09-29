@@ -226,6 +226,16 @@ export function normalizeRfqSwapRecord(record: RfqSwapRecord): RfqSwapRecord {
     };
 }
 
+/** The optional mutable fields, each written only when set — in both directions. */
+const mutableFields = (from: PersistableRfqSwap | RfqSwapRecord) => ({
+    ...(from.refundTxid ? { refundTxid: from.refundTxid } : {}),
+    ...(from.lockupSpendTxids?.length ? { lockupSpendTxids: [...from.lockupSpendTxids] } : {}),
+    ...(from.settlementPreimageHex ? { settlementPreimageHex: from.settlementPreimageHex } : {}),
+    ...(from.failure ? { failure: from.failure } : {}),
+    ...(from.claimFailure ? { claimFailure: from.claimFailure } : {}),
+    ...(from.blockedReason ? { blockedReason: from.blockedReason } : {}),
+});
+
 /**
  * The manager's mutable half, projected off a live record.
  *
@@ -241,12 +251,7 @@ const managerState = (swap: PersistableRfqSwap) => ({
     state: swap.state,
     createdAt: swap.createdAt,
     updatedAt: swap.updatedAt,
-    ...(swap.refundTxid ? { refundTxid: swap.refundTxid } : {}),
-    ...(swap.lockupSpendTxids?.length ? { lockupSpendTxids: [...swap.lockupSpendTxids] } : {}),
-    ...(swap.settlementPreimageHex ? { settlementPreimageHex: swap.settlementPreimageHex } : {}),
-    ...(swap.failure ? { failure: swap.failure } : {}),
-    ...(swap.claimFailure ? { claimFailure: swap.claimFailure } : {}),
-    ...(swap.blockedReason ? { blockedReason: swap.blockedReason } : {}),
+    ...mutableFields(swap),
 });
 
 /**
@@ -420,16 +425,7 @@ export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): Per
         refundLocktime: Number(script.options.refundLocktime),
         createdAt: stored.createdAt,
         updatedAt: stored.updatedAt,
-        ...(stored.refundTxid ? { refundTxid: stored.refundTxid } : {}),
-        ...(stored.lockupSpendTxids?.length
-            ? { lockupSpendTxids: [...stored.lockupSpendTxids] }
-            : {}),
-        ...(stored.settlementPreimageHex
-            ? { settlementPreimageHex: stored.settlementPreimageHex }
-            : {}),
-        ...(stored.failure ? { failure: stored.failure } : {}),
-        ...(stored.claimFailure ? { claimFailure: stored.claimFailure } : {}),
-        ...(stored.blockedReason ? { blockedReason: stored.blockedReason } : {}),
+        ...mutableFields(stored),
     };
 
     // Corridor-agnostic from here: the handler for this record's kind supplies

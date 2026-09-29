@@ -122,7 +122,6 @@ export async function restoreAssetSwapRepository(
         if (signal?.aborted) return cancelledAfterCommit();
         await repository.saveSwap(current);
         changes.push(previous ? { previous, current } : { current });
-        if (signal?.aborted) return cancelledAfterCommit();
     }
 
     if (signal?.aborted) return cancelledAfterCommit();

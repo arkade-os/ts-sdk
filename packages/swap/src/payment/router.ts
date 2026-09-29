@@ -64,10 +64,5 @@ export function createSwapPaymentRouter(
         .use(arkRail())
         .use(onchainRail({ feeInfo: walletFeeSource(wallet) }))
         .use(lightningRail(client))
-        .use(
-            onchainSwapRail(client, {
-                claimFeeRateSatVb: config.claimFeeRateSatVb,
-                ...(config.claimVsize === undefined ? {} : { claimVsize: config.claimVsize }),
-            }),
-        );
+        .use(onchainSwapRail(client, config));
 }

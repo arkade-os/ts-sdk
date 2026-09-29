@@ -44,6 +44,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
     ConditionWitness,
+    type ArkTxInput,
     type IContractManager,
     type Identity,
     type ArkProvider,
@@ -58,9 +59,8 @@ import {
     type IWallet,
 } from "@arkade-os/sdk";
 
+import { pollUntil, sleep } from "./onchainHtlc";
 import { RFQ_TERMINAL_STATES, type RfqStatus, type RfqTransport } from "./rfq";
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** True for the states after which the solver will report nothing further. */
 export const isRfqTerminal = (state: string): boolean =>
@@ -107,19 +107,15 @@ export async function awaitRfqResolution(
     rfqId: string,
     options: { pollMs?: number; deadline?: number } = {},
 ): Promise<RfqStatus> {
-    const pollMs = options.pollMs ?? 5_000;
-    for (;;) {
-        const status = await transport.status(rfqId);
-        if (status && isRfqTerminal(status.state)) return status;
-        if (options.deadline !== undefined && Date.now() / 1000 >= options.deadline) {
-            const error = new Error(
-                `rfq ${rfqId} did not reach a terminal state before the deadline`,
-            ) as Error & { reason: string };
-            error.reason = "status_timeout";
-            throw error;
-        }
-        await sleep(pollMs);
-    }
+    return pollUntil(
+        async () => {
+            const status = await transport.status(rfqId);
+            return status && isRfqTerminal(status.state) ? status : undefined;
+        },
+        options,
+        "status_timeout",
+        `rfq ${rfqId} did not reach a terminal state before the deadline`,
+    );
 }
 
 // ── The refundWithoutReceiver push ───────────────────────────────────────────
@@ -546,6 +542,47 @@ export async function readLockupFate(
         : { fate: "unknown" };
 }
 
+/** Refuse a spend over any swept output — see {@link pushRefundWithoutReceiver}. */
+export const assertNoneSwept = (
+    vtxos: readonly LockupVtxo[],
+    contract: InstanceType<typeof VHTLC.ScriptV2>,
+): void => {
+    const swept = vtxos.filter((vtxo) => vtxo.recoverable);
+    if (swept.length > 0) {
+        throw new LockupNeedsRecoveryError(
+            swept.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
+            contract.options.refundLocktime,
+        );
+    }
+};
+
+export const operatorUnrollScript = async (
+    operator: SwapOperator,
+): Promise<CSVMultisigTapscript.Type> => {
+    const info = await operator.getInfo();
+    try {
+        return CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
+    } catch {
+        throw new Error("invalid checkpointTapscript from the operator");
+    }
+};
+
+/** Every lockup output as an offchain input spending `leaf`. */
+export const lockupInputs = (
+    vtxos: readonly LockupVtxo[],
+    contract: InstanceType<typeof VHTLC.ScriptV2>,
+    leaf: ArkTxInput["tapLeafScript"],
+): ArkTxInput[] => {
+    const tapTree = contract.encode();
+    return vtxos.map((vtxo) => ({
+        txid: vtxo.txid,
+        vout: vtxo.vout,
+        value: vtxo.value,
+        tapLeafScript: leaf,
+        tapTree,
+    }));
+};
+
 /**
  * Build, sign, and push the `refundWithoutReceiver` spend: return every funded
  * output at the lockup to the trader's refund address.
@@ -603,13 +640,7 @@ export async function pushRefundWithoutReceiver(
 ): Promise<{ txid: string; amount: number }> {
     if (input.vtxos.length === 0) throw new Error("nothing to refund: no funded outputs");
 
-    const swept = input.vtxos.filter((vtxo) => vtxo.recoverable);
-    if (swept.length > 0) {
-        throw new LockupNeedsRecoveryError(
-            swept.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
-            input.contract.options.refundLocktime,
-        );
-    }
+    assertNoneSwept(input.vtxos, input.contract);
 
     const refundPkScript =
         input.refundPkScript ?? input.contract.options.nonInteractiveParameters?.senderPkScript;
@@ -619,31 +650,18 @@ export async function pushRefundWithoutReceiver(
         );
     }
 
-    const info = await operator.getInfo();
-    let operatorUnrollScript: CSVMultisigTapscript.Type;
-    try {
-        operatorUnrollScript = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
-    } catch {
-        throw new Error("invalid checkpointTapscript from the operator");
-    }
+    const serverUnrollScript = await operatorUnrollScript(operator);
 
     const leaf = input.contract.refundWithoutReceiver();
-    const tapTree = input.contract.encode();
     const amount = input.vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
 
     // buildOffchainTx reads the CLTV out of this leaf and sets the ark tx's
     // nLockTime and input sequence itself, on the checkpoints too — nothing
     // here has to restate `refundLocktime`.
     const { arkTx: tx, checkpoints } = buildOffchainTx(
-        input.vtxos.map((vtxo) => ({
-            txid: vtxo.txid,
-            vout: vtxo.vout,
-            value: vtxo.value,
-            tapLeafScript: leaf,
-            tapTree,
-        })),
+        lockupInputs(input.vtxos, input.contract, leaf),
         [{ script: refundPkScript, amount: BigInt(amount) }],
-        operatorUnrollScript,
+        serverUnrollScript,
     );
 
     // No index list: every input spends the same leaf, so all are signed.

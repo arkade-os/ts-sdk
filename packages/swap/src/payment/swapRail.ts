@@ -121,6 +121,20 @@ export const receiverExact = (
     };
 };
 
+/**
+ * The `RouteQuote.meta` both swap rails report. `expiresAt` because a
+ * `RouteQuote` carries no expiry of its own, so a held one can outlive its
+ * terms; `send()` then refuses with `QuoteExpired` rather than re-quoting.
+ */
+export const quoteMeta = (quote: Quote) => ({
+    quoteId: quote.id,
+    expiresAt: quote.expiresAt,
+    ...(quote.refundLocktime === undefined ? {} : { refundLocktime: quote.refundLocktime }),
+    ...(quote.solver === undefined ? {} : { solver: quote.solver }),
+    ...(quote.lock === undefined ? {} : { paymentHash: quote.lock.hash }),
+    ...(quote.market.kind === "restored" ? {} : { market: quote.market.key }),
+});
+
 /** What a rail reports back: the tagged swap id, and the wallet's own txid. */
 const resultOf = (railId: string, swap: Swap): RouteResult => ({
     railId,

@@ -110,6 +110,42 @@ export const paymentHashOf = (preimage: Uint8Array): string => hex.encode(sha256
 /** The script-level commitment: `ripemd160(sha256(P))`, from the wire hash. */
 const h160FromPaymentHash = (paymentHash: string): Uint8Array => ripemd160(hex.decode(paymentHash));
 
+/** Refuse a `P` whose `ripemd160(sha256(P))` is not the covenant's `preimageHash`. */
+export const assertPreimageMatches = (preimage: Uint8Array, preimageHash: Uint8Array): void => {
+    if (hex.encode(ripemd160(sha256(preimage))) !== hex.encode(preimageHash)) {
+        throw new Error("preimage does not match the covenant's payment hash");
+    }
+};
+
+/** A gate refusal carrying a stable `reason` for callers to switch on. */
+export const gateError = (reason: string, message: string): Error & { reason: string } => {
+    const error = new Error(message) as Error & { reason: string };
+    error.reason = reason;
+    return error;
+};
+
+export const sleep = (ms: number): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Probe every `pollMs` (default 5s) until it yields a value; past the unix-seconds
+ * `deadline`, throw `gateError(reason, message)`. */
+export async function pollUntil<T>(
+    probe: () => Promise<T | undefined>,
+    options: { pollMs?: number; deadline?: number },
+    reason: string,
+    message: string,
+): Promise<T> {
+    const pollMs = options.pollMs ?? 5_000;
+    for (;;) {
+        const value = await probe();
+        if (value !== undefined) return value;
+        if (options.deadline !== undefined && Date.now() / 1000 >= options.deadline) {
+            throw gateError(reason, message);
+        }
+        await sleep(pollMs);
+    }
+}
+
 // ── The taproot HTLC ─────────────────────────────────────────────────────────
 
 export type OnchainNetwork = "bitcoin" | "testnet" | "regtest";
@@ -443,8 +479,6 @@ export function extractPreimage(txHex: string, paymentHash: string): Uint8Array 
 
 // ── Fill watching, claiming, and crash-recovery classification ──────────────
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
 /** Poll {@link ChainSource} until the HTLC is funded to the required depth.
  * Picks the largest qualifying output when several exist. Throws (reason
  * `fill_timeout`) once `deadline` (unix seconds) passes without one.
@@ -456,22 +490,17 @@ export async function awaitOnchainFill(
     minConfirmations: number,
     options: { pollMs?: number; deadline?: number } = {},
 ): Promise<ChainUtxo> {
-    const pollMs = options.pollMs ?? 5_000;
-    for (;;) {
-        const utxos = await chain.getScriptUtxos(htlc.pkScript);
-        const eligible = utxos
-            .filter((u) => u.confirmations >= minConfirmations)
-            .sort((a, b) => (b.amount > a.amount ? 1 : -1));
-        if (eligible[0]) return eligible[0];
-        if (options.deadline !== undefined && Date.now() / 1000 >= options.deadline) {
-            const error = new Error("HTLC was not filled before the deadline") as Error & {
-                reason: string;
-            };
-            error.reason = "fill_timeout";
-            throw error;
-        }
-        await sleep(pollMs);
-    }
+    return pollUntil(
+        async () => {
+            const utxos = await chain.getScriptUtxos(htlc.pkScript);
+            return utxos
+                .filter((u) => u.confirmations >= minConfirmations)
+                .sort((a, b) => (b.amount > a.amount ? 1 : -1))[0];
+        },
+        options,
+        "fill_timeout",
+        "HTLC was not filled before the deadline",
+    );
 }
 
 /**
@@ -498,11 +527,10 @@ export async function claimOnchainFill(
 ): Promise<{ txid: string; payoutAmount: bigint }> {
     const now = input.now ?? Math.floor(Date.now() / 1000);
     if (input.htlc.refundLocktime - now < ONCHAIN_CLAIM_MARGIN_SECONDS) {
-        const error = new Error(
+        throw gateError(
+            "claim_window_closed",
             "refund leaf opens too soon to claim safely — take the covenant refund instead",
-        ) as Error & { reason: string };
-        error.reason = "claim_window_closed";
-        throw error;
+        );
     }
     const spend = await buildHtlcClaim(input);
     const txid = await chain.broadcast(spend.txHex);

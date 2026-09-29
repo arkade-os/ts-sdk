@@ -163,9 +163,7 @@ export const eligibleMarkets = (
             quoteId: `${quote.corridor}:${quote.assetId}`,
             ...selection,
         });
-        const selected = [...canonical, ...legacy].filter(
-            (card, index, all) => all.indexOf(card) === index,
-        );
+        const selected = [...new Set([...canonical, ...legacy])];
 
         return selected.map((card) => ({
             card,

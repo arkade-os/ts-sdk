@@ -158,7 +158,7 @@ const parsePayoutAddress = (value: unknown, kind: string): string => {
  * (record.paymentHash …)`, so a projection missing it claims with an unverified
  * preimage instead of failing.
  */
-export const parseHashlock = (value: unknown): RfqHashlockProjection => {
+const parseHashlock = (value: unknown): RfqHashlockProjection => {
     const raw = (value ?? {}) as {
         paymentHash?: unknown;
         preimageHex?: unknown;

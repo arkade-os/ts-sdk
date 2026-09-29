@@ -119,7 +119,7 @@ export interface RfqCorridorHandler<P extends Record<string, unknown> = Record<s
 /** What a handler may read beyond its own profile: the rebuilt lockup covenant.
  * The payment hash is not here — it belongs to a corridor's own `hashlock`, and
  * a corridor that has none would have had to be handed a fake. */
-export interface RfqCorridorContext {
+interface RfqCorridorContext {
     lockup: InstanceType<typeof VHTLC.ScriptV2>;
 }
 
@@ -166,10 +166,6 @@ class RfqCorridorRegistry {
             );
         }
         return handler;
-    }
-
-    has(kind: string): boolean {
-        return this.handlers.has(kind);
     }
 
     registeredKinds(): string[] {

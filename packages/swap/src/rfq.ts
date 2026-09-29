@@ -56,6 +56,7 @@ import {
     networkFromArkadeInfo,
     resolveEmulatorPubkey,
     toXOnly,
+    type ArkadeInfo,
     type IWallet,
 } from "@arkade-os/sdk";
 
@@ -64,6 +65,7 @@ import {
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     ONCHAIN_ORDER_MARGIN_SECONDS,
     ONCHAIN_SECONDS_PER_BLOCK,
+    gateError,
     onchainHtlcScript,
     paymentHashOf,
     type OnchainHtlc,
@@ -498,13 +500,6 @@ export const normalizeMakerPublicKey = (value: Uint8Array | string): string => {
  * 90 because the refund CLTV matures against median-time-past (BIP-113),
  * which lags wall clock by ~1h — a smaller wall-clock margin is no margin. */
 export const MIN_HEADROOM_SECONDS = 90 * 60;
-
-/** A gate refusal carrying a stable `reason` for callers to switch on. */
-const gateError = (reason: string, message: string): Error & { reason: string } => {
-    const error = new Error(message) as Error & { reason: string };
-    error.reason = reason;
-    return error;
-};
 
 /**
  * Refuse a number no gate can compare against.
@@ -1079,6 +1074,49 @@ export const unilateralRefundDelay = (claimDelay: number): number => claimDelay;
 export const unilateralRefundWithoutReceiverDelay = (claimDelay: number): number =>
     claimDelay + SOLO_REFUND_HEADROOM_SECONDS;
 
+const seconds = (value: number): { type: "seconds"; value: bigint } => ({
+    type: "seconds",
+    value: BigInt(value),
+});
+
+/** The VHTLC both directions compile; only `roles` differ between them. */
+const suiteVhtlc = (
+    params: {
+        operatorPubkey: Uint8Array;
+        paymentHash: string;
+        refundLocktime: number;
+        claimDelay: number;
+        emulatorPubkey: Uint8Array;
+        legacy?: "preTimelockedRefund";
+    },
+    roles: {
+        sender: Uint8Array;
+        receiver: Uint8Array;
+        senderPkScript: Uint8Array;
+        receiverPkScript: Uint8Array;
+        refundWithoutReceiverDelay?: number;
+    },
+): InstanceType<typeof VHTLC.ScriptV2> =>
+    new VHTLC.ScriptV2({
+        sender: roles.sender,
+        receiver: roles.receiver,
+        server: params.operatorPubkey,
+        preimageHash: ripemd160(hex.decode(params.paymentHash)),
+        refundLocktime: BigInt(params.refundLocktime),
+        unilateralClaimDelay: seconds(params.claimDelay),
+        unilateralRefundDelay: seconds(unilateralRefundDelay(params.claimDelay)),
+        unilateralRefundWithoutReceiverDelay: seconds(
+            roles.refundWithoutReceiverDelay ??
+                unilateralRefundWithoutReceiverDelay(params.claimDelay),
+        ),
+        nonInteractiveParameters: {
+            receiverPkScript: roles.receiverPkScript,
+            senderPkScript: roles.senderPkScript,
+            emulatorPubkey: params.emulatorPubkey,
+            ...(params.legacy !== undefined && { legacy: params.legacy }),
+        },
+    });
+
 /** Compile the lightning-send VHTLC from the quote's binding fields plus the
  * trader's own data. `paymentHash` is the BOLT11 payment hash (`sha256(P)`,
  * hex); the script's HASH160 commitment is derived from it here, which is why
@@ -1132,28 +1170,12 @@ export function lightningSendContract(params: {
      * the quote's own address says the solver quoted that shape. */
     legacy?: "preTimelockedRefund";
 }): InstanceType<typeof VHTLC.ScriptV2> {
-    const seconds = (value: number): { type: "seconds"; value: bigint } => ({
-        type: "seconds",
-        value: BigInt(value),
-    });
-    return new VHTLC.ScriptV2({
+    return suiteVhtlc(params, {
         sender: params.senderPubkey,
         receiver: params.solverPubkey,
-        server: params.operatorPubkey,
-        preimageHash: ripemd160(hex.decode(params.paymentHash)),
-        refundLocktime: BigInt(params.refundLocktime),
-        unilateralClaimDelay: seconds(params.claimDelay),
-        unilateralRefundDelay: seconds(unilateralRefundDelay(params.claimDelay)),
-        unilateralRefundWithoutReceiverDelay: seconds(
-            params.refundWithoutReceiverDelay ??
-                unilateralRefundWithoutReceiverDelay(params.claimDelay),
-        ),
-        nonInteractiveParameters: {
-            receiverPkScript: params.receiverPkScript,
-            senderPkScript: params.refundPkScript,
-            emulatorPubkey: params.emulatorPubkey,
-            ...(params.legacy !== undefined && { legacy: params.legacy }),
-        },
+        senderPkScript: params.refundPkScript,
+        receiverPkScript: params.receiverPkScript,
+        refundWithoutReceiverDelay: params.refundWithoutReceiverDelay,
     });
 }
 
@@ -1661,6 +1683,20 @@ export async function requestArkadeSwap(
 export const l1NetworkFromArk = (network: string): OnchainNetwork =>
     network === "bitcoin" ? "bitcoin" : network === "regtest" ? "regtest" : "testnet";
 
+/** The covenant terms the trader's OWN live server info supplies. */
+const serverTerms = (info: ArkadeInfo, emulatorPubkey: string | undefined) => {
+    const network = networkFromArkadeInfo(info);
+    return {
+        operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+        emulatorPubkey: toXOnly(
+            hex.decode(resolveEmulatorPubkey(network, emulatorPubkey)),
+            "emulator signer key",
+        ),
+        claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
+        hrp: network.hrp,
+    };
+};
+
 /** The rfq_request for `arkade:BTC->onchain:BTC`. Exact-out means "this much
  * lands in the L1 HTLC". `senderPubkey` is the user's own key for the
  * VHTLC's sender-side leaves — same role as in {@link lightningSendRequest}.
@@ -1993,18 +2029,11 @@ export async function requestOnchainSend(
     // quote naming a different amount is funded at the solver's number.
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
-    const network = networkFromArkadeInfo(info);
     const derived = deriveOnchainSend({
         quote,
         paymentHash,
         payoutPubkey: params.payoutPubkey,
-        operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: toXOnly(
-            hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
-            "emulator signer key",
-        ),
-        claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
-        hrp: network.hrp,
+        ...serverTerms(info, params.emulatorPubkey),
         l1Network: l1NetworkFromArk(info.network),
         refundAddress,
         senderPubkey,
@@ -2236,27 +2265,11 @@ export function lightningReceiveContract(params: {
     /** LEGACY REBUILD ONLY — see {@link lightningSendVtxoScript}'s `legacy`. */
     legacy?: "preTimelockedRefund";
 }): InstanceType<typeof VHTLC.ScriptV2> {
-    const seconds = (value: number): { type: "seconds"; value: bigint } => ({
-        type: "seconds",
-        value: BigInt(value),
-    });
-    return new VHTLC.ScriptV2({
+    return suiteVhtlc(params, {
         sender: params.solverPubkey,
         receiver: params.payoutPubkey,
-        server: params.operatorPubkey,
-        preimageHash: ripemd160(hex.decode(params.paymentHash)),
-        refundLocktime: BigInt(params.refundLocktime),
-        unilateralClaimDelay: seconds(params.claimDelay),
-        unilateralRefundDelay: seconds(unilateralRefundDelay(params.claimDelay)),
-        unilateralRefundWithoutReceiverDelay: seconds(
-            unilateralRefundWithoutReceiverDelay(params.claimDelay),
-        ),
-        nonInteractiveParameters: {
-            receiverPkScript: params.payoutPkScript,
-            senderPkScript: params.solverRefundPkScript,
-            emulatorPubkey: params.emulatorPubkey,
-            ...(params.legacy !== undefined && { legacy: params.legacy }),
-        },
+        senderPkScript: params.solverRefundPkScript,
+        receiverPkScript: params.payoutPkScript,
     });
 }
 
@@ -2266,6 +2279,39 @@ export function lightningReceiveContract(params: {
  * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export type LightningReceiveContractParams = Parameters<typeof lightningReceiveContract>[0];
+
+/** Both receive corridors' covenant: the inputs, and the quoted shape they match. */
+const matchReceiveLockup = (
+    input: {
+        quote: RfqQuote;
+        paymentHash: string;
+        payoutPubkey: Uint8Array;
+        payoutAddress: string;
+        operatorPubkey: Uint8Array;
+        emulatorPubkey: Uint8Array;
+        claimDelay: number;
+        hrp: string;
+    },
+    refundLocktime: number,
+    solverRefundPkScriptHex: string,
+) => {
+    const contractParams = {
+        solverPubkey: toXOnly(hex.decode(input.quote.solver_pubkey), "solver key"),
+        refundLocktime,
+        operatorPubkey: input.operatorPubkey,
+        paymentHash: input.paymentHash,
+        claimDelay: input.claimDelay,
+        emulatorPubkey: input.emulatorPubkey,
+        solverRefundPkScript: solverHex(solverRefundPkScriptHex, "profile.solver_refund_pk_script"),
+        payoutPubkey: input.payoutPubkey,
+        payoutPkScript: ArkAddress.decode(input.payoutAddress).pkScript,
+    };
+    // Two candidates, one match — see matchQuotedLockup.
+    const matched = matchQuotedLockup(input.quote, input.hrp, input.operatorPubkey, (legacy) =>
+        lightningReceiveContract({ ...contractParams, ...(legacy !== undefined && { legacy }) }),
+    );
+    return { contractParams, matched };
+};
 
 /**
  * The pure core of {@link requestLightningReceive}: derive the solver-funded
@@ -2308,24 +2354,12 @@ export function deriveLightningReceive(input: {
         throw new Error("lightning-receive quote is missing a binding field");
     }
 
-    // Named rather than inlined so the exact inputs can be handed back — see
-    // `contractParams` on the return type.
-    const contractParams = {
-        solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
+    // `contractParams` echoes the MATCHED build, so a record persisted from it
+    // rebuilds the lockup the solver actually funded.
+    const { contractParams, matched } = matchReceiveLockup(
+        input,
         refundLocktime,
-        operatorPubkey: input.operatorPubkey,
-        paymentHash: input.paymentHash,
-        claimDelay: input.claimDelay,
-        emulatorPubkey: input.emulatorPubkey,
-        solverRefundPkScript: solverHex(solverRefundPkScriptHex, "profile.solver_refund_pk_script"),
-        payoutPubkey: input.payoutPubkey,
-        payoutPkScript: ArkAddress.decode(input.payoutAddress).pkScript,
-    };
-    // Two candidates, one match — see matchQuotedLockup. `treeParams` echoes
-    // the MATCHED build, so a record persisted from it rebuilds the lockup
-    // the solver actually funded.
-    const matched = matchQuotedLockup(quote, input.hrp, input.operatorPubkey, (legacy) =>
-        lightningReceiveContract({ ...contractParams, ...(legacy !== undefined && { legacy }) }),
+        solverRefundPkScriptHex,
     );
     return {
         address: matched.address,
@@ -2339,6 +2373,32 @@ export function deriveLightningReceive(input: {
         },
     };
 }
+
+/** Both receive flows' setup; `persistBefore` names the step the warning is for. */
+const provisionReceive = async (
+    wallet: IWallet,
+    covclaimdPubkey: Uint8Array | undefined,
+    persistBefore: "paying" | "funding",
+) => {
+    // A leg we claim: the key that receives it, and the P that unlocks it.
+    const secrets = await provisionClaimSecret(wallet);
+    if (secrets.mustPersistPreimage) {
+        console.warn(
+            `[swap] this swap's preimage cannot be re-derived from the seed and MUST be persisted with the record before ${persistBefore}`,
+        );
+    }
+    const preimage = secrets.preimage;
+    const paymentHash = hex.encode(secrets.paymentHash);
+    const payoutPubkey = secrets.pubkey;
+    const [info, payoutAddress] = await Promise.all([
+        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getAddress(),
+    ]);
+    const claimPacket = covclaimdPubkey
+        ? await sealClaimPacket({ preimage, covclaimdPubkey })
+        : undefined;
+    return { secrets, paymentHash, payoutPubkey, info, payoutAddress, claimPacket };
+};
 
 /**
  * The `lightning:BTC->arkade:BTC` user flow: quote → derive the covenant
@@ -2427,26 +2487,8 @@ export async function requestLightningReceive(
     contractParams: LightningReceiveContractParams;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    // A leg we claim: the key that receives it, and the P that unlocks it.
-    const secrets = await provisionClaimSecret(wallet);
-    if (secrets.mustPersistPreimage) {
-        console.warn(
-            "[swap] this swap's preimage cannot be re-derived from the seed and MUST be persisted with the record before paying",
-        );
-    }
-    const preimage = secrets.preimage;
-    const paymentHash = hex.encode(secrets.paymentHash);
-    const payoutPubkey = secrets.pubkey;
-    const [info, payoutAddress] = await Promise.all([
-        wallet.getArkadeInfo({ requireLive: true }),
-        wallet.getAddress(),
-    ]);
-    const claimPacket = params.covclaimdPubkey
-        ? await sealClaimPacket({
-              preimage,
-              covclaimdPubkey: params.covclaimdPubkey,
-          })
-        : undefined;
+    const { secrets, paymentHash, payoutPubkey, info, payoutAddress, claimPacket } =
+        await provisionReceive(wallet, params.covclaimdPubkey, "paying");
 
     const quote = await transport.requestQuote(
         lightningReceiveRequest({
@@ -2461,19 +2503,12 @@ export async function requestLightningReceive(
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
-    const network = networkFromArkadeInfo(info);
     const derived = deriveLightningReceive({
         quote,
         paymentHash,
         payoutPubkey,
         payoutAddress,
-        operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: toXOnly(
-            hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
-            "emulator signer key",
-        ),
-        claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
-        hrp: network.hrp,
+        ...serverTerms(info, params.emulatorPubkey),
     });
     const now = Math.floor(Date.now() / 1000);
     const { payDeadline } = verifyReceiveInvoice({
@@ -2555,28 +2590,11 @@ export function deriveOnchainReceive(input: {
         throw new Error("onchain-receive quote is missing a binding field");
     }
 
-    const contractParams = {
-        solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
+    const { script, address } = matchReceiveLockup(
+        input,
         refundLocktime,
-        operatorPubkey: input.operatorPubkey,
-        paymentHash: input.paymentHash,
-        claimDelay: input.claimDelay,
-        emulatorPubkey: input.emulatorPubkey,
-        solverRefundPkScript: solverHex(solverRefundPkScriptHex, "profile.solver_refund_pk_script"),
-        payoutPubkey: input.payoutPubkey,
-        payoutPkScript: ArkAddress.decode(input.payoutAddress).pkScript,
-    };
-    // Two candidates, one match — see matchQuotedLockup.
-    const { script, address } = matchQuotedLockup(
-        quote,
-        input.hrp,
-        input.operatorPubkey,
-        (legacy) =>
-            lightningReceiveContract({
-                ...contractParams,
-                ...(legacy !== undefined && { legacy }),
-            }),
-    );
+        solverRefundPkScriptHex,
+    ).matched;
 
     const htlc = onchainHtlcScript(
         {
@@ -2652,26 +2670,8 @@ export async function requestOnchainReceive(
     secrets: ProvisionedClaimSecret;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    // A leg we claim: the key that receives it, and the P that unlocks it.
-    const secrets = await provisionClaimSecret(wallet);
-    if (secrets.mustPersistPreimage) {
-        console.warn(
-            "[swap] this swap's preimage cannot be re-derived from the seed and MUST be persisted with the record before funding",
-        );
-    }
-    const preimage = secrets.preimage;
-    const paymentHash = hex.encode(secrets.paymentHash);
-    const payoutPubkey = secrets.pubkey;
-    const [info, payoutAddress] = await Promise.all([
-        wallet.getArkadeInfo({ requireLive: true }),
-        wallet.getAddress(),
-    ]);
-    const claimPacket = params.covclaimdPubkey
-        ? await sealClaimPacket({
-              preimage,
-              covclaimdPubkey: params.covclaimdPubkey,
-          })
-        : undefined;
+    const { secrets, paymentHash, payoutPubkey, info, payoutAddress, claimPacket } =
+        await provisionReceive(wallet, params.covclaimdPubkey, "funding");
 
     const quote = await transport.requestQuote(
         onchainReceiveRequest({
@@ -2687,20 +2687,13 @@ export async function requestOnchainReceive(
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
-    const network = networkFromArkadeInfo(info);
     const derived = deriveOnchainReceive({
         quote,
         paymentHash,
         payoutPubkey,
         payoutAddress,
         refundPubkey: params.refundPubkey,
-        operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: toXOnly(
-            hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
-            "emulator signer key",
-        ),
-        claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
-        hrp: network.hrp,
+        ...serverTerms(info, params.emulatorPubkey),
         l1Network: l1NetworkFromArk(info.network),
     });
     assertFundable({

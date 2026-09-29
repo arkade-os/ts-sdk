@@ -30,6 +30,7 @@
  */
 import bolt11 from "light-bolt11-decoder";
 import type { InvoiceFacts } from "../../rfq";
+import { PAYMENT_HASH } from "./lightning";
 
 /** BOLT11's default expiry when an invoice carries no `x` tag. */
 export const DEFAULT_INVOICE_EXPIRY_SECONDS = 3600;
@@ -45,9 +46,6 @@ const valueOf = (decoded: { sections: readonly unknown[] }, name: string): unkno
     (decoded.sections as readonly { name: string; value?: unknown }[]).find(
         (section) => section.name === name,
     )?.value;
-
-/** `sha256(P)` as {@link InvoiceFacts} declares it: 64 lowercase hex chars. */
-const PAYMENT_HASH = /^[0-9a-f]{64}$/;
 
 /**
  * Decode a BOLT11 invoice into the facts the corridor needs.

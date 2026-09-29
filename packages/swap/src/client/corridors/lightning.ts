@@ -45,7 +45,7 @@ export const networksOfInvoiceHrp = (raw: string): readonly NetworkName[] | unde
 };
 
 /** `sha256(P)` as the invoice instrument carries it: 64 lowercase hex chars. */
-const PAYMENT_HASH = /^[0-9a-f]{64}$/;
+export const PAYMENT_HASH = /^[0-9a-f]{64}$/;
 
 /**
  * Both directions, and the ownership inverts between them.

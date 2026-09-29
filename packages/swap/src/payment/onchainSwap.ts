@@ -41,7 +41,13 @@ import {
 } from "@arkade-os/sdk";
 import { ONCHAIN_CLAIM_VSIZE, ONCHAIN_DUST_SATS } from "../onchainHtlc";
 import type { QuoteInput } from "../client/quote";
-import { railAvailable, receiverExact, swapHandle, type SwapRailClient } from "./swapRail";
+import {
+    quoteMeta,
+    railAvailable,
+    receiverExact,
+    swapHandle,
+    type SwapRailClient,
+} from "./swapRail";
 
 export const ONCHAIN_SWAP_RAIL = "onchain-swap";
 
@@ -146,14 +152,7 @@ export function onchainSwapRail(client: SwapRailClient, deps: OnchainSwapRailDep
                 railId: ONCHAIN_SWAP_RAIL,
                 ...amounts,
                 meta: {
-                    quoteId: quote.id,
-                    expiresAt: quote.expiresAt,
-                    ...(quote.refundLocktime === undefined
-                        ? {}
-                        : { refundLocktime: quote.refundLocktime }),
-                    ...(quote.solver === undefined ? {} : { solver: quote.solver }),
-                    ...(quote.lock === undefined ? {} : { paymentHash: quote.lock.hash }),
-                    ...(quote.market.kind === "restored" ? {} : { market: quote.market.key }),
+                    ...quoteMeta(quote),
                     // The estimate folded into `fee`, so a caller can see it.
                     claimFeeSats: Number(claimFee),
                     // What the solver locks on L1, before the claim's fee.

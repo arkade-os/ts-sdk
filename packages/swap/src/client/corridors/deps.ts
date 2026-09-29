@@ -284,6 +284,15 @@ const refusedIfNull = <T>(
     return value;
 };
 
+/** An onchain fee-policy number, handed back: `null` and `undefined` pass, and
+ * only a non-positive or non-finite value refuses. */
+const refusedIfMalformed = (value: number | null | undefined, dep: string) => {
+    if (value !== undefined && value !== null && !(Number.isFinite(value) && value > 0)) {
+        throw new MissingCorridorDep("onchain", dep);
+    }
+    return value;
+};
+
 /**
  * The co-signer key for `base`'s network.
  *
@@ -373,20 +382,16 @@ export function resolveCorridorDeps(
             // override's own doc comment for the contract. Said with `===`
             // rather than `??`, since `null` must NOT fall through to the
             // table that a mere `undefined` falls through to.
-            const feeRateOverride = overrides?.onchain?.claimFeeRateSatVb;
             // A non-positive or non-finite rate prices BOTH fee-paid halves
             // off a lie: the gross-up understates the take and the claim
             // build underpays the broadcast — or NaN poisons every amount
             // downstream. Refused here, at resolution, the way every
             // malformed onchain dep is, rather than at funding or claim time.
             // `null` is not malformed: it is manual mode (no default claim).
-            if (
-                feeRateOverride !== undefined &&
-                feeRateOverride !== null &&
-                !(Number.isFinite(feeRateOverride) && feeRateOverride > 0)
-            ) {
-                throw new MissingCorridorDep("onchain", "L1 claim fee rate");
-            }
+            const feeRateOverride = refusedIfMalformed(
+                overrides?.onchain?.claimFeeRateSatVb,
+                "L1 claim fee rate",
+            );
             const claimFeeRateSatVb =
                 feeRateOverride === null
                     ? undefined
@@ -394,18 +399,9 @@ export function resolveCorridorDeps(
             // Same rule for the vsize the gross-up prices against: `null`
             // means "no override given" and reads the constant, like
             // `undefined` — only a non-positive or non-finite number refuses.
-            const vsizeOverride = overrides?.onchain?.claimVsize;
-            if (
-                vsizeOverride !== undefined &&
-                vsizeOverride !== null &&
-                !(Number.isFinite(vsizeOverride) && vsizeOverride > 0)
-            ) {
-                throw new MissingCorridorDep("onchain", "L1 claim vsize");
-            }
             const claimVsize =
-                vsizeOverride === null
-                    ? ONCHAIN_CLAIM_VSIZE
-                    : (vsizeOverride ?? ONCHAIN_CLAIM_VSIZE);
+                refusedIfMalformed(overrides?.onchain?.claimVsize, "L1 claim vsize") ??
+                ONCHAIN_CLAIM_VSIZE;
             return {
                 networkName: base.networkName,
                 chain: esploraChainSource({

@@ -464,10 +464,8 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
 
     const remember = (id: QuoteId, preparation: QuotePreparation): void => {
         preparations.set(id, preparation);
-        while (preparations.size > PREPARATIONS_HELD) {
-            const oldest = preparations.keys().next();
-            if (oldest.done) break;
-            preparations.delete(oldest.value);
+        if (preparations.size > PREPARATIONS_HELD) {
+            preparations.delete(preparations.keys().next().value!);
         }
     };
 
