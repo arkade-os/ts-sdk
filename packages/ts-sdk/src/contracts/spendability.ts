@@ -2,11 +2,8 @@ import { contractHandlers } from "./handlers";
 import type { Contract } from "./types";
 
 /**
- * Whether generic wallet spending may select this contract's VTXOs.
- *
- * Default closed: a type whose handler declares nothing — a custom type, a
- * plugin type, a row whose handler is not registered in this context — is not
- * spendable. Every shipped handler answers explicitly.
+ * Whether generic wallet spending may select this contract's VTXOs. Default closed: a type whose
+ * handler declares nothing, or has no handler registered here, is not spendable.
  *
  * @see ContractHandler.isGenericallySpendable
  */
@@ -26,11 +23,7 @@ export function gatedContracts(contracts: readonly Contract[]): Map<string, stri
     return gated;
 }
 
-/**
- * {@link gatedContracts} over the contract+VTXO snapshot every read path
- * actually holds, so the four callers that need the gate do not keep
- * `gatedContracts(snapshot.map((_) => _.contract))` in step by hand.
- */
+/** {@link gatedContracts} over the contract+VTXO snapshot every read path holds. */
 export function gatedFrom(snapshot: readonly { contract: Contract }[]): GatedContracts {
     return gatedContracts(snapshot.map((entry) => entry.contract));
 }
@@ -42,21 +35,12 @@ export type ExcludableVtxo = { txid: string; vout: number; script?: string };
 export type GatedContracts = ReadonlyMap<string, string>;
 
 /**
- * The type of the gated contract this VTXO belongs to, or `undefined` when
- * generic spending is open to it.
+ * The type of the gated contract this VTXO belongs to, or `undefined` when generic spending is
+ * open to it. The single spelling of the per-VTXO question. A VTXO with no script is the
+ * wallet's own coin.
  *
- * The single spelling of the per-VTXO question, so the gate cannot be asked two
- * subtly different ways. A VTXO with no script belongs to no contract row, so it
- * is the wallet's own coin.
- *
- * The `undefined` check is deliberately not a truthiness check, so that an
- * empty-string script still asks the map rather than being read as "no
- * contract". The two spellings are indistinguishable on both SDK read paths —
- * `isVtxoForScript` keeps a `""`-scripted coin out of every snapshot bucket, and
- * `saveVtxosForContract` refuses to persist one — so this is not a guarantee to
- * lean on, only the pre-existing semantics preserved verbatim. It is kept
- * because this predicate now decides coin selection and the `available` balance
- * as well as history, which is not the place to take on a gratuitous difference.
+ * `=== undefined`, not truthiness, so an empty-string script still asks the map (pre-existing
+ * semantics, kept because this now decides coin selection and the `available` balance).
  */
 function gatedTypeOf(
     vtxo: Pick<ExcludableVtxo, "script">,
@@ -71,36 +55,22 @@ export function isGatedVtxo(vtxo: Pick<ExcludableVtxo, "script">, gated: GatedCo
 }
 
 /**
- * Why generic spending skips a VTXO, or `undefined` when it does not — phrased
- * to follow the outpoint in a log line.
- *
- * Generic spending applies three exclusions (the contract gate, pending
- * recovery, intent locks) that key on different things — script, script,
- * outpoint. Stating each as a reason-or-undefined lets all three report through
- * one path, so no exclusion can drop a coin silently while another logs.
+ * Why generic spending skips a VTXO, or `undefined` when it does not; phrased to follow the
+ * outpoint in a log line. One shape for all exclusions (contract gate, pending recovery, intent
+ * locks) so none can drop a coin silently while another logs.
  */
 export type VtxoExclusion = (vtxo: ExcludableVtxo) => string | undefined;
 
 /**
- * The contract gate as an exclusion, naming why it closed: a handler ran and
- * declined, or this build has no handler for the type at all.
- *
- * The two want opposite reactions from whoever reads the log. A decline is
- * the gate working as designed — nothing to do. A missing handler means a
- * contract row this build cannot interpret, e.g. a vendoring or version
- * mismatch, which is worth a reader's attention. `contractHandlers` is
- * already available here, so the message can tell them apart instead of
- * collapsing both into one sentence that reads as the same case either way.
+ * The contract gate as an exclusion, distinguishing a handler's decline (working as designed)
+ * from a missing handler (a row this build can't interpret, e.g. a version mismatch, worth a
+ * reader's attention).
  */
 export function gateExclusion(gated: GatedContracts): VtxoExclusion {
     return (vtxo) => {
         const type = gatedTypeOf(vtxo, gated);
         if (type === undefined) return undefined;
-        // A handler present but declaring no `isGenericallySpendable` predicate
-        // reads the same as an explicit decline here: both are this build
-        // recognizing the type and landing on "closed", not failing to
-        // interpret the row. Splitting that case out further would flag a
-        // plugin-authoring gap, not something an operator can act on.
+        // A handler with no `isGenericallySpendable` counts as a decline: not operator-actionable.
         if (!contractHandlers.has(type)) {
             return `at ${vtxo.script} (contract type '${type}') has no handler registered in this build`;
         }
@@ -114,13 +84,8 @@ export function outpointExclusion(outpoints: ReadonlySet<string>, reason: string
 }
 
 /**
- * Outpoints excluded for individually-named reasons — a per-input timelock,
- * where one shared reason would be wrong because the inputs differ.
- *
- * Unlike {@link gateExclusion}, the reasons are the handlers' own sentences and
- * are not rephrased to follow the outpoint: that text is what tells the reader
- * when to retry, and a paraphrase here would be a second spelling to keep in
- * step with it.
+ * Outpoints excluded for per-input reasons (e.g. a per-input timelock). The handlers' own
+ * sentences, unparaphrased: they tell the reader when to retry.
  *
  * @see outpointExclusion for the shared-reason form.
  */
@@ -129,9 +94,8 @@ export function outpointReasons(reasons: ReadonlyMap<string, string>): VtxoExclu
 }
 
 /**
- * Report VTXOs an exclusion dropped — the only field-diagnosable signal for why
- * a coin is missing from a spend, or why an explicitly named one will fail.
- * Debug level, one line per VTXO per reason.
+ * Report VTXOs an exclusion dropped, the only field-diagnosable signal for a coin missing from a
+ * spend. Debug level, one line per VTXO per reason.
  */
 export function logExcludedVtxos(
     source: string,
@@ -149,14 +113,9 @@ export function logExcludedVtxos(
 }
 
 /**
- * Thrown when a spend names VTXOs whose contract can no longer be annotated —
- * its handler is not registered here, its handler rejects the stored params, or
- * it has no contract row at all.
- *
- * Raised before submission on purpose. Spending reads the tapscripts stored on
- * each coin rather than re-deriving them, so such a spend would otherwise build
- * and broadcast normally and only fail in the bookkeeping afterwards, leaving
- * the transaction on the network and the local state behind it.
+ * Thrown before submission when a spend names VTXOs whose contract can no longer be annotated
+ * (handler unregistered, stored params rejected, or no row). Otherwise the spend would broadcast
+ * and fail in the bookkeeping, leaving local state behind the network.
  */
 export class UnannotatableInputError extends Error {
     readonly name = "UnannotatableInputError";

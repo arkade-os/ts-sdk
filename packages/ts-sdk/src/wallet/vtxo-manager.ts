@@ -46,17 +46,12 @@ import { getDustAmount } from "./utils";
 import { logExcludedVtxos, outpointReasons } from "../contracts/spendability";
 
 /**
- * Outpoints (`txid:vout`) of VTXOs that are NOT cooperatively spendable because
- * their contract's signer is past its cutoff (`EXPIRED`) and the VTXO has not
- * yet been swept by the server. Such funds are unspendable until they recover
- * (the server sweeps the batch at expiry, then the swept output re-settles under
- * the active signer), so `getBalance` buckets them under `pendingRecovery` and
- * coin selection skips them — otherwise a send would pick a VTXO the operator
- * will not co-sign and fail at submit.
+ * Outpoints (`txid:vout`) of VTXOs whose contract signer is past its cutoff (`EXPIRED`) and that
+ * the server has not swept yet. The operator will not co-sign them, so `getBalance` buckets them
+ * under `pendingRecovery` and coin selection skips them (a send would fail at submit); they
+ * recover once swept and re-settled under the active signer.
  *
- * Pure + offline: classification uses a cached {@link SignerSet}, never a fresh
- * GetInfo. `MIGRATABLE` / `DUE_NOW` (still cooperatively spendable), already-
- * swept (recoverable), `CURRENT`, and `UNKNOWN_SIGNER` rows are all left alone.
+ * Pure + offline: classifies against a cached {@link SignerSet}, never a fresh GetInfo.
  */
 export function selectPendingRecoveryOutpoints(
     contractsWithVtxos: ReadonlyArray<{
@@ -74,9 +69,7 @@ export function selectPendingRecoveryOutpoints(
             continue;
         }
         for (const v of vtxos) {
-            // Exited coins are excluded: their remedy is `completeUnroll`,
-            // not a signer rotation, and reporting them here would blame the
-            // rotation for a coin the user took onchain themselves.
+            // Exited coins are excluded: their remedy is `completeUnroll`, not a rotation.
             if (!hasTerminalSpend(v) && !v.isSwept && !v.isUnrolled) {
                 out.add(`${v.txid}:${v.vout}`);
             }
@@ -85,30 +78,19 @@ export function selectPendingRecoveryOutpoints(
     return out;
 }
 
-/**
- * Extended wallet interface for boarding input sweep operations.
- * These properties exist on the concrete Wallet class but not on IWallet.
- */
+/** Members boarding sweeps need that exist on the concrete Wallet but not on IWallet. */
 interface SweepCapableWallet extends IReadonlyWallet {
     boardingTapscript: DefaultVtxo.Script;
     onchainProvider: OnchainProvider;
     arkProvider: ArkProvider;
     network: Network;
     /**
-     * Descriptor-aware signer for on-chain boarding exit/sweep txs. Routes
-     * each input to the identity (baseline) or its per-index descriptor
-     * (rotated boarding), so a sweep that batches UTXOs across boarding
-     * addresses signs each with the correct key (plan §6-III.3).
+     * Descriptor-aware signer: routes each input to the identity or its per-index descriptor
+     * (rotated boarding), so a sweep batching several boarding addresses signs each correctly.
      */
     signOnchainBoardingTx(tx: Transaction): Promise<Transaction>;
 }
 
-/**
- * Return whether a wallet exposes the properties required for boarding input sweep operations.
- *
- * @param wallet - Wallet to inspect
- * @returns `true` when the wallet supports boarding input sweep operations.
- */
 function isSweepCapable(wallet: IWallet): wallet is IWallet & SweepCapableWallet {
     return (
         "boardingTapscript" in wallet &&
@@ -119,12 +101,6 @@ function isSweepCapable(wallet: IWallet): wallet is IWallet & SweepCapableWallet
     );
 }
 
-/**
- * Assert that the wallet supports boarding input sweep operations.
- *
- * @param wallet - Wallet to inspect
- * @throws Error if the wallet does not support boarding input sweep operations.
- */
 function assertSweepCapable(wallet: IWallet): asserts wallet is IWallet & SweepCapableWallet {
     if (!isSweepCapable(wallet)) {
         throw new Error(
@@ -134,22 +110,15 @@ function assertSweepCapable(wallet: IWallet): asserts wallet is IWallet & SweepC
 }
 
 /**
- * Web Locks name used to serialize boarding-poll work across same-origin
- * browser contexts (tabs, service worker). Static because the goal is to
- * deduplicate polls for the *same* wallet — two distinct wallets on the
- * same origin will take turns, which is acceptable.
+ * Web Locks name serializing boarding polls across same-origin contexts (tabs, service worker).
+ * Static: two distinct wallets on one origin just take turns, which is acceptable.
  */
 const BOARDING_POLL_LOCK_NAME = "arkade-boarding-poll";
 
 /**
- * Run `fn` under an exclusive Web Lock when the runtime provides one
- * (browser main thread, service worker). In environments without
- * `navigator.locks` (Node, React Native) the callback runs immediately
- * with no coordination.
- *
- * Uses `ifAvailable: true`: if another context already holds the lock,
- * skip this cycle entirely rather than queueing — the other context will
- * do the work and the next poll will re-check.
+ * Run `fn` under an exclusive Web Lock when `navigator.locks` exists, else (Node, React Native)
+ * uncoordinated. `ifAvailable`: if another context holds the lock, skip this cycle rather than
+ * queue — that context does the work and the next poll re-checks.
  */
 async function runWithCrossInstanceLock(name: string, fn: () => Promise<void>): Promise<void> {
     const locks =
@@ -167,21 +136,12 @@ async function runWithCrossInstanceLock(name: string, fn: () => Promise<void>): 
 }
 
 /**
- * Maximum number of VTXOs included in a single settlement intent.
+ * Maximum number of VTXOs in a single settlement intent; the overflow waits for the next cycle.
  *
- * arkd has no fixed per-intent VTXO count limit; it rejects an intent with
- * `TX_TOO_LARGE` once the resulting ark transaction exceeds its weight budget
- * (`maxTxWeight`, ~40k weight units by default). 50 is a conservative count
- * that stays well under that weight, leaving headroom for boarding inputs
- * (added uncapped) plus transaction-size overhead. When more VTXOs are
- * eligible, the overflow is left for the next settlement cycle.
- *
- * This cap is a ts-sdk-specific safeguard: neither go-sdk nor NArk caps the
- * settlement batch — go-sdk submits every spendable VTXO in a single intent.
- * Because the reference SDKs impose no selection order (go-sdk's query has no
- * `ORDER BY`), we are free to order the candidates before capping so the most
- * important VTXOs survive the cut — see {@link byValueDescending} and
- * {@link byExpiryAscending}.
+ * arkd has no count limit but rejects an intent with `TX_TOO_LARGE` past `maxTxWeight` (~40k WU
+ * by default); 50 stays well under it with headroom for (uncapped) boarding inputs. ts-sdk-only:
+ * go-sdk and NArk submit every spendable VTXO in one unordered intent, so we are free to order
+ * candidates before capping — see {@link byValueDescending} and {@link byExpiryAscending}.
  */
 export const MAX_VTXOS_PER_SETTLEMENT = 50;
 
@@ -192,33 +152,23 @@ export const MAX_VTXOS_PER_SETTLEMENT = 50;
 export const MAX_INPUTS_PER_INTENT = 20;
 
 /**
- * Order VTXOs so the highest-value ones come first. New array; input untouched.
- *
- * Used by the value-driven paths (recovery, manual full settle): when the
- * {@link MAX_VTXOS_PER_SETTLEMENT} cap defers the overflow to a later cycle,
- * the batch should carry the most value. For recovery this also gives the
- * capped subset the best chance of clearing the dust threshold.
+ * Order VTXOs highest-value first (new array). For value-driven paths (recovery, manual full
+ * settle), so a {@link MAX_VTXOS_PER_SETTLEMENT}-capped batch carries the most value — for
+ * recovery, the best chance of clearing dust.
  */
 export function byValueDescending<T extends { value: number }>(vtxos: T[]): T[] {
     return [...vtxos].sort((a, b) => b.value - a.value);
 }
 
-/**
- * The {@link TimeHeight} for one expiry-driven pass. Only digs the provider out of whichever wallet
- * we were handed — `onchainProvider` lives on the concrete wallets, not on `IReadonlyWallet`.
- */
+/** {@link TimeHeight} for one expiry-driven pass; `onchainProvider` is on concrete wallets only. */
 async function fetchTimeHeight(wallet: IReadonlyWallet): Promise<TimeHeight> {
     return resolveTimeHeight((wallet as Partial<SweepCapableWallet>).onchainProvider);
 }
 
 /**
- * Whether {@link Wallet.sendSelectedVtxosToSelf} will accept this input at `now`.
- *
- * @remarks
- * Mirrors that method's two rejection conditions exactly, so the migration leg never submits an
- * input the send path throws on — see {@link MigrationLegReport.notSpendableOffchain} for why that
- * matters. The same `TimeHeight` goes down to the send path with the inputs, so the two sides
- * cannot disagree at the expiry boundary.
+ * Whether {@link Wallet.sendSelectedVtxosToSelf} will accept this input at `now`: mirrors its two
+ * rejection conditions exactly (see {@link MigrationLegReport.notSpendableOffchain}). The same
+ * `TimeHeight` goes to the send path, so both sides agree at the expiry boundary.
  */
 function canMigrateBySend(vtxo: NormalizedExtendedVirtualCoin, now: TimeHeight): boolean {
     // The send path spends cooperatively, so swept/expired inputs belong to recovery instead.
@@ -229,15 +179,9 @@ function canMigrateBySend(vtxo: NormalizedExtendedVirtualCoin, now: TimeHeight):
 }
 
 /**
- * Order VTXOs so the soonest-expiring ones come first. New array; input
- * untouched. Already recoverable/expired VTXOs sort first. VTXOs without a
- * batch expiry, or with a block-height-looking expiry value, sort last because
- * they do not have a usable wall-clock expiry.
- *
- * Used by the expiry-driven paths (renewal, periodic settle): when the
- * {@link MAX_VTXOS_PER_SETTLEMENT} cap defers the overflow to a later cycle,
- * the most urgent VTXOs must make the cut so none miss their renewal window
- * and get forced into a unilateral exit.
+ * Order VTXOs soonest-expiring first (new array); swept/expired first, no expiry last. For
+ * expiry-driven paths (renewal, periodic settle), so the {@link MAX_VTXOS_PER_SETTLEMENT} cap
+ * never defers an urgent VTXO past its renewal window into a forced unilateral exit.
  */
 export function byExpiryAscending(
     vtxos: NormalizedExtendedVirtualCoin[],
@@ -255,9 +199,8 @@ export function byExpiryAscending(
         return Infinity;
     };
 
-    // Compared rather than subtracted: two swept VTXOs (both `-Infinity`), or two without a
-    // wall-clock expiry (both `Infinity`), subtract to NaN, and a NaN comparator leaves the order
-    // unspecified — the urgent-first guarantee would hold only by luck.
+    // Compared, not subtracted: equal infinities subtract to NaN, and a NaN comparator leaves the
+    // order unspecified.
     return [...vtxos].sort((a, b) => {
         const ka = expiryKey(a);
         const kb = expiryKey(b);
@@ -267,33 +210,18 @@ export function byExpiryAscending(
 }
 
 /**
- * Select inputs from `sorted` that fit in a single settlement: at most
- * {@link MAX_VTXOS_PER_SETTLEMENT} inputs AND a cumulative `value` no greater
- * than `maxAmount`. `maxAmount < 0` disables the amount bound — it is the
- * server's `-1` "no limit" sentinel for `ArkadeInfo.vtxoMaxAmount`.
+ * Select inputs from `sorted` for one settlement: at most {@link MAX_VTXOS_PER_SETTLEMENT} inputs
+ * with cumulative `value` no greater than `maxAmount` (`< 0` is the server's `-1` "no limit" for
+ * `ArkadeInfo.vtxoMaxAmount`). The single output equals the inputs' sum and the server rejects
+ * outputs above `vtxoMaxAmount` with `AMOUNT_TOO_HIGH`; the overflow waits for the next cycle.
  *
- * Each settlement path builds a single output equal to the (fee-adjusted) sum
- * of its inputs, and the server rejects any virtual output above `vtxoMaxAmount`
- * with `AMOUNT_TOO_HIGH`. Capping the input total therefore keeps that output
- * within bounds; the overflow is settled on the next cycle, mirroring the
- * count-cap behaviour.
+ * Bounds gross `value`, not fee-adjusted net: strictly conservative, since the post-fee output is
+ * smaller. Do not "tighten" by subtracting fees here (periodic/manual settle cap on net instead —
+ * a deliberate, harmless asymmetry).
  *
- * The bound is applied to each input's gross `value`, not its fee-adjusted net
- * contribution. This is intentional and strictly conservative: the real output
- * is smaller once the offchain output fee is removed, so a batch that fits on
- * gross value always fits post-fee. The helper has no fee context, and erring
- * toward fewer inputs per cycle is safe. Do not "tighten" this by subtracting
- * fees here. (The periodic-settle / manual-settle paths, which do have a fee
- * estimator on hand, cap on net instead — a deliberate, harmless asymmetry.)
- *
- * `sorted` must already be ordered by the caller's priority (value-descending
- * for recovery / manual full settle, expiry-ascending for renewal) so the
- * inputs that matter most are tried first. An input that would breach the
- * amount cap is skipped — not a stopping point — so a smaller input behind an
- * oversized or awkwardly-sized one still gets in (a break would strand it and
- * could leave the batch below dust). The count cap is a hard stop. Uses
- * `> maxAmount` to mirror the server's strict check, so a batch whose total
- * equals the limit still fits.
+ * `sorted` must be in caller priority order. An input that would breach the amount cap is
+ * skipped, not a stop, so smaller inputs behind it still fit; the count cap is a hard stop.
+ * `> maxAmount` mirrors the server's strict check.
  */
 export function capSettlementBatch<T extends { value: number }>(
     sorted: T[],
@@ -303,7 +231,6 @@ export function capSettlementBatch<T extends { value: number }>(
     let total = 0n;
     for (const vtxo of sorted) {
         if (batch.length >= MAX_VTXOS_PER_SETTLEMENT) break;
-        // Gross value, intentionally not fee-adjusted — see the note above.
         const next = total + BigInt(vtxo.value);
         if (maxAmount >= 0n && next > maxAmount) continue;
         batch.push(vtxo);
@@ -313,23 +240,13 @@ export function capSettlementBatch<T extends { value: number }>(
 }
 
 /**
- * Price a settlement's VTXO inputs against the operator's intent-fee policy,
- * dropping any input that cannot pay for itself.
+ * Price a settlement's VTXO inputs against the operator's intent-fee policy, dropping any input
+ * whose fee meets or exceeds its value.
  *
- * An intent's fee IS `sum(inputs) - sum(outputs)`, so a single-output settlement
- * asking for the gross input sum offers exactly zero and the server rejects the
- * whole intent with `INTENT_INSUFFICIENT_FEE` wherever the operator prices
- * offchain inputs at all. `subtotal` is what the inputs are worth once each has
- * paid its own way; the caller still owes {@link deductOffchainOutputFee} on top.
- *
- * An input whose fee meets or exceeds its value is skipped rather than settled —
- * it would take more out of the output than it puts in. Callers filter with this
- * BEFORE {@link capSettlementBatch} so an uneconomic input cannot occupy a slot
- * that a viable one behind it could have used.
- *
- * Each survivor's net is returned alongside it so a caller that then narrows the
- * batch can total the survivors through {@link subtotalOf} without pricing
- * anything twice.
+ * An intent's fee IS `sum(inputs) - sum(outputs)`, so an output asking for the gross input sum
+ * offers zero fee and gets `INTENT_INSUFFICIENT_FEE`. Callers still owe
+ * {@link deductOffchainOutputFee}, and must filter BEFORE {@link capSettlementBatch} so an
+ * uneconomic input cannot take a viable one's slot. Nets are returned for {@link subtotalOf}.
  */
 function priceSettlementInputs<T extends NormalizedExtendedVirtualCoin>(
     vtxos: T[],
@@ -349,13 +266,9 @@ function priceSettlementInputs<T extends NormalizedExtendedVirtualCoin>(
 }
 
 /**
- * Total what a settlement's inputs are worth once each has paid its own intent
- * fee, from the nets {@link priceSettlementInputs} already computed.
- *
- * `vtxos` must come from that call's `payable` — a batch cap may have narrowed
- * it, nothing else may. An input with no priced net throws rather than counting
- * as zero: silently dropping one understates the output, which offers the server
- * MORE fee than asked and quietly overpays out of the user's own funds.
+ * Sum the nets {@link priceSettlementInputs} computed; `vtxos` must be (a cap-narrowed) `payable`.
+ * An unpriced input throws rather than counting as zero: understating the output would silently
+ * overpay the fee out of the user's funds.
  */
 function subtotalOf(
     vtxos: readonly { txid: string; vout: number }[],
@@ -375,28 +288,19 @@ function subtotalOf(
 /**
  * Take the operator's offchain output fee off a settlement's single output.
  *
- * The fee is evaluated on `subtotal` — the amount before this deduction — rather
- * than on the amount finally committed, matching what
- * {@link VtxoManager.runPeriodicSettle} and the no-argument `Wallet.settle()`
- * branch already do. Under a percentage rate `r` that implies a fee of
- * `r * subtotal` where the server asks only `r * subtotal * (1 - r)`, i.e. an
- * over-payment of `r^2 * subtotal`. Deliberate: paying over is always accepted,
- * whereas solving the fixed point exactly to recover those satoshis risks
- * landing one under the minimum — which is the rejection this pricing exists to
- * avoid.
+ * Evaluated on the pre-deduction `subtotal`, matching {@link VtxoManager.runPeriodicSettle} and
+ * no-arg `Wallet.settle()`. Under a percentage rate `r` this overpays by `r^2 * subtotal`;
+ * deliberate, since solving the fixed point exactly risks landing one sat under the minimum.
  *
- * Can return a value below dust, or below zero, when a flat output fee outweighs
- * the inputs; every caller checks the result against the dust threshold.
+ * May return below dust or below zero under a flat fee; every caller checks against dust.
  */
 function deductOffchainOutputFee(
     subtotal: bigint,
     estimator: Estimator,
     arkAddress: string,
 ): bigint {
-    // Mirror the estimator's own early return rather than reaching it through
-    // `ArkAddress.decode`: with no output program the script is never read, and
-    // an operator that doesn't price outputs shouldn't make a decodable address
-    // a precondition for renewing or recovering.
+    // Mirror the estimator's early return before `ArkAddress.decode`: an operator that doesn't
+    // price outputs shouldn't make a decodable address a precondition for renewing/recovering.
     if (!estimator.config.offchainOutput) {
         return subtotal;
     }
@@ -410,25 +314,16 @@ function deductOffchainOutputFee(
 /** Default renewal threshold in seconds (3 days). */
 export const DEFAULT_THRESHOLD_SECONDS = 259_200;
 
-/**
- * Default renewal threshold in milliseconds (3 days).
- */
+/** Default renewal threshold in milliseconds (3 days). */
 export const DEFAULT_THRESHOLD_MS = DEFAULT_THRESHOLD_SECONDS * 1000;
 
 /**
- * Configuration for automatic settlement and renewal.
- *
- * Controls two behaviors:
+ * Configuration for automatic settlement and renewal, coordinated by `VtxoManager`'s poll loop:
  * 1. **VTXO renewal**: Automatically renew virtual outputs that are close to expiry
  * 2. **Boarding UTXO sweep**: Sweep expired boarding inputs back to a fresh boarding address
  *    via the unilateral exit path (onchain self-spend to restart the timelock)
  *
- * Enabled by default when no config is provided.
- * Pass `false` to explicitly disable all settlement behavior.
- *
- * @remarks
- * VTXO renewal and boarding UTXO sweep are both coordinated by `VtxoManager`, which periodically
- * inspects wallet virtual outputs and boarding inputs and decides whether action is needed.
+ * Enabled by default when no config is provided; pass `false` to disable all settlement behavior.
  *
  * @see DEFAULT_SETTLEMENT_CONFIG
  *
@@ -466,42 +361,27 @@ export interface SettlementConfig {
     vtxoThreshold?: number;
 
     /**
-     * Sweep expired boarding inputs back to a fresh boarding address
-     * via the unilateral exit path (onchain self-spend to restart the timelock).
-     *
-     * When enabled, expired boarding inputs are batched into a single onchain
-     * transaction with multiple inputs and one output.
-     *
-     * A dust check ensures the sweep is only performed when the output
-     * after fees is above dust.
+     * Sweep expired boarding inputs back to a fresh boarding address, batched into one onchain
+     * tx (many inputs, one output), only when the output after fees is above dust.
      *
      * @defaultValue `true`
      */
     boardingUtxoSweep?: boolean;
 
     /**
-     * Polling interval in milliseconds for checking boarding inputs.
-     * The poll loop auto-settles new boarding inputs into Arkade and
-     * sweeps expired ones (when boardingUtxoSweep is enabled).
+     * Polling interval in milliseconds. Each poll auto-settles new boarding inputs into Arkade
+     * and sweeps expired ones (when `boardingUtxoSweep` is enabled).
      *
      * @defaultValue `60_000` (1 minute)
      */
     pollIntervalMs?: number;
 
     /**
-     * Automatically migrate VTXOs minted under a now-deprecated server signer
-     * back to the wallet's active-signer address before their cutoff window
-     * closes (planned arkd key rotation).
-     *
-     * When enabled, each poll cycle cooperatively migrates stale-signer VTXOs
-     * via the normal `settle()` path, applying a mid-session server-signer
-     * rotation first when the wallet's own snapshot signer has been deprecated.
-     * The explicit {@link IVtxoManager.migrateDeprecatedSignerVtxos} method
-     * remains available for manual migration regardless of this flag.
-     *
-     * Setting `settlementConfig: false` disables all background settlement,
-     * including migration. Set this field to `false` to keep renewal/sweep but
-     * skip automatic deprecated-signer migration specifically.
+     * Automatically migrate VTXOs under a deprecated server signer (planned arkd key rotation) to
+     * the active-signer address before their cutoff, first applying a mid-session signer rotation
+     * if the wallet's own snapshot signer was deprecated.
+     * {@link IVtxoManager.migrateDeprecatedSignerVtxos} works regardless of this flag;
+     * `settlementConfig: false` disables migration along with everything else.
      *
      * @defaultValue `true`
      */
@@ -534,15 +414,8 @@ export const DEFAULT_SETTLEMENT_CONFIG: Required<SettlementConfig> = {
 };
 
 /**
- * Filter virtual outputs that are recoverable (swept and still spendable, or preconfirmed subdust)
- *
- * Recovery strategy:
- * - Always recover swept virtual outputs (they've been taken by the server)
- * - Only recover subdust preconfirmed virtual outputs (to avoid locking liquidity on settled virtual outputs with long expiry)
- *
- * @param vtxos - Array of virtual outputs to check
- * @param dustAmount - Dust threshold to identify subdust
- * @returns Array of recoverable virtual outputs
+ * Recoverable virtual outputs: swept (or past expiry) always; subdust only when preconfirmed —
+ * settled subdust with a long expiry is left alone to avoid locking liquidity.
  */
 function getRecoverableVtxos(
     vtxos: NormalizedExtendedVirtualCoin[],
@@ -555,7 +428,6 @@ function getRecoverableVtxos(
             return true;
         }
 
-        // Recover preconfirmed subdust to consolidate small amounts
         if (canSpendOffchain(vtxo, now) && vtxo.isPreconfirmed && isSubdust(vtxo, dustAmount)) {
             return true;
         }
@@ -565,14 +437,8 @@ function getRecoverableVtxos(
 }
 
 /**
- * Get recoverable virtual outputs including subdust outputs if the total value exceeds dust threshold.
- *
- * Decision is based on the combined total of ALL recoverable virtual outputs (regular + subdust),
- * not just the subdust portion alone.
- *
- * @param vtxos - Array of virtual outputs to check
- * @param dustAmount - Dust threshold amount in satoshis
- * @returns Object containing recoverable virtual outputs and whether subdust should be included
+ * Recoverable virtual outputs, including subdust only when the combined total of ALL recoverable
+ * outputs (regular + subdust, not subdust alone) reaches the dust threshold.
  */
 function getRecoverableWithSubdust(
     vtxos: NormalizedExtendedVirtualCoin[],
@@ -585,7 +451,6 @@ function getRecoverableWithSubdust(
 } {
     const recoverableVtxos = getRecoverableVtxos(vtxos, dustAmount, now);
 
-    // Separate subdust from regular recoverable
     const subdust: NormalizedExtendedVirtualCoin[] = [];
     const regular: NormalizedExtendedVirtualCoin[] = [];
 
@@ -597,12 +462,10 @@ function getRecoverableWithSubdust(
         }
     }
 
-    // Calculate totals
     const regularTotal = regular.reduce((sum, vtxo) => sum + BigInt(vtxo.value), 0n);
     const subdustTotal = subdust.reduce((sum, vtxo) => sum + BigInt(vtxo.value), 0n);
     const combinedTotal = regularTotal + subdustTotal;
 
-    // Include subdust only if the combined total exceeds dust threshold
     const shouldIncludeSubdust = combinedTotal >= dustAmount;
     const vtxosToRecover = shouldIncludeSubdust ? recoverableVtxos : regular;
 
@@ -616,10 +479,8 @@ function getRecoverableWithSubdust(
 }
 
 /**
- * Check if a virtual output is expiring soon based on threshold
- *
- * Always `false` for an unilaterally exited output: "expiring soon" is a renewal
- * signal, and no batch can renew an output that already lives onchain.
+ * Check if a virtual output is expiring soon based on threshold. Always `false` for an unrolled
+ * output: no batch can renew an output that already lives onchain.
  *
  * @param vtxo - The virtual output to check
  * @param thresholdMs - Threshold in milliseconds from now
@@ -634,8 +495,7 @@ export function isVtxoExpiringSoon(
 
     const realThresholdMs = thresholdMs <= 100 ? DEFAULT_THRESHOLD_MS : thresholdMs;
 
-    // Being synchronous, this has no chain tip to compare a height-encoded expiry against, so
-    // `expiresAtHeight` reads as "doesn't expire" — as it always has.
+    // Synchronous, so no chain tip: a height-encoded expiry reads as "doesn't expire".
     const expiresAt = normalizeVtxo(vtxo).expiresAt;
     if (expiresAt === undefined) return false;
 
@@ -648,9 +508,8 @@ export function isVtxoExpiringSoon(
 }
 
 /**
- * Filter virtual outputs that are expiring soon or are recoverable/subdust.
- * Unilaterally exited outputs are never included — none of the three arms
- * describes a coin a batch can take.
+ * Filter virtual outputs that are expiring soon or are recoverable/subdust; never unrolled ones,
+ * which no batch can take.
  *
  * @param vtxos - Array of virtual outputs to check
  * @param thresholdMs - Threshold in milliseconds from now
@@ -679,11 +538,8 @@ export function getExpiringAndRecoverableVtxos(
  */
 export interface RenewVtxosOptions {
     /**
-     * Override the renewal threshold for this call only, in seconds.
-     *
-     * When provided, takes precedence over `SettlementConfig.vtxoThreshold`
-     * and the default (3 days). Useful for renewing only VTXOs that are
-     * more urgently expiring than the globally configured threshold.
+     * Override the renewal threshold for this call only, in seconds. Takes precedence over
+     * `SettlementConfig.vtxoThreshold` and the default (3 days).
      */
     thresholdSeconds?: number;
 }
@@ -710,9 +566,8 @@ export interface MigrationVtxoRef {
 }
 
 /**
- * Machine-readable status for a single deprecated signer the wallet holds
- * funds under (Section 6). Derived at read time from contract params plus a
- * fresh {@link ArkadeInfo} snapshot — never persisted.
+ * Machine-readable status for a single deprecated signer the wallet holds funds under. Derived at
+ * read time from contract params plus a fresh {@link ArkadeInfo} snapshot — never persisted.
  */
 export interface DeprecatedSignerReport {
     /** Deprecated signer key (x-only hex). */
@@ -728,59 +583,50 @@ export interface DeprecatedSignerReport {
     /** Total value of those VTXOs in satoshis. */
     totalValue: number;
     /**
-     * Number of spendable boarding UTXOs the wallet holds under this signer
-     * (Section 7). Counts every confirmed boarding coin, including those whose
-     * own CSV exit window has elapsed (they leave via the unilateral sweep).
+     * Number of confirmed boarding UTXOs the wallet holds under this signer, including those
+     * whose own CSV exit window has elapsed (they leave via the unilateral sweep).
      */
     boardingCount: number;
-    /** Total value of those boarding UTXOs in satoshis (Section 7). */
+    /** Total value of those boarding UTXOs in satoshis. */
     boardingValue: number;
     /**
-     * Expired-signer VTXOs already swept and queued for recovery to the active
-     * signer (the recover-on-sweep default — see {@link SignerStatus} `EXPIRED`).
-     * Non-zero only on `EXPIRED` rows; these drain on the next recovery pass
-     * (Section 6 / post-cutoff).
+     * Expired-signer VTXOs already swept and queued for recovery to the active signer (see
+     * {@link SignerStatus} `EXPIRED`). Non-zero only on `EXPIRED` rows; drain on the next
+     * recovery pass.
      */
     recoverableCount: number;
     recoverableValue: number;
     /**
-     * Expired-signer VTXOs not yet swept; awaiting the server batch sweep before
-     * they become recoverable. Non-zero only on `EXPIRED` rows — nothing for the
-     * user to do but wait (Section 6 / post-cutoff).
+     * Expired-signer VTXOs not yet swept, awaiting the server batch sweep before they become
+     * recoverable. Non-zero only on `EXPIRED` rows — nothing for the user to do but wait.
      */
     awaitingSweepCount: number;
     awaitingSweepValue: number;
     /**
-     * Soonest batch expiry (ms since epoch) among the awaiting-sweep VTXOs, as a
-     * recovery ETA hint. Present only when an `EXPIRED` row has awaiting-sweep
-     * VTXOs that carry a batch expiry (Section 6 / post-cutoff).
+     * Soonest batch expiry (ms since epoch) among the awaiting-sweep VTXOs, as a recovery ETA
+     * hint. Present only when such VTXOs carry a batch expiry.
      */
     nextSweepEta?: number;
 }
 
 /**
- * Why a single migration leg (VTXO send or boarding settle) submitted nothing.
- * `oversized-only` means every migratable input in that leg individually
- * exceeds the server's per-output ceiling (`vtxoMaxAmount`) — see
- * {@link MigrationLegReport.oversized}.
+ * Why a single migration leg submitted nothing. `oversized-only`: every migratable input alone
+ * exceeds `vtxoMaxAmount` — see {@link MigrationLegReport.oversized}.
  */
 export type MigrationLegSkipReason = "below-dust" | "oversized-only" | "not-spendable-only";
 
 /**
- * Why the whole pass submitted nothing, before either leg was built.
- * `no-deprecated-vtxos` means BOTH migratable sets (VTXO and boarding) were
- * empty; `unknown-wallet-signer` means the wallet's own snapshot signer is
- * neither active nor advertised deprecated, so the pass refuses to rotate.
+ * Why the whole pass submitted nothing. `no-deprecated-vtxos`: BOTH migratable sets were empty;
+ * `unknown-wallet-signer`: the wallet's own signer is neither active nor advertised deprecated,
+ * so the pass refuses to rotate.
  */
 export type MigrationGlobalSkipReason = "no-deprecated-vtxos" | "unknown-wallet-signer";
 
 /**
- * Outcome of one migration leg. The VTXO leg migrates through the Ark send path
- * ({@link Wallet.sendSelectedVtxosToSelf}); the boarding leg keeps its
- * settle-backed migration (boarding coins are on-chain inputs with no send
- * path). Each leg owns its full sizing pipeline (oversized filtering, count +
- * amount caps, its own dust floor) and reports independently — a failure or skip
- * in one leg never suppresses the other.
+ * Outcome of one migration leg. VTXOs migrate via the Ark send path
+ * ({@link Wallet.sendSelectedVtxosToSelf}); boarding coins, being on-chain inputs with no send
+ * path, via settle. Each leg sizes and reports independently — one leg's failure or skip never
+ * suppresses the other.
  */
 export interface MigrationLegReport {
     /** VTXO leg: Ark transaction id from send. Boarding leg: settle commitment txid. */
@@ -790,27 +636,22 @@ export interface MigrationLegReport {
     /** Why this leg submitted nothing (every candidate below dust or oversized). */
     skipped?: MigrationLegSkipReason;
     /**
-     * Migratable inputs deferred to a later pass by this leg's own caps (the
-     * input count {@link MAX_VTXOS_PER_SETTLEMENT} or the per-output amount
-     * ceiling `vtxoMaxAmount`). Present and non-zero only when a cap bound and
-     * the leg actually submitted; makes the truncation visible.
+     * Migratable inputs deferred to a later pass by this leg's count
+     * ({@link MAX_VTXOS_PER_SETTLEMENT}) or amount (`vtxoMaxAmount`) cap. Present and non-zero
+     * only when a cap bound and the leg submitted.
      */
     deferred?: number;
     /**
-     * Inputs whose value alone exceeds the per-output ceiling (`vtxoMaxAmount`):
-     * a single ≤-ceiling output can never hold them, so they never migrate
-     * cooperatively and require a unilateral exit. Present only when non-empty;
-     * absent when the server advertises no ceiling (`vtxoMaxAmount < 0`).
+     * Inputs whose value alone exceeds `vtxoMaxAmount`: they can never migrate cooperatively and
+     * require a unilateral exit. Present only when non-empty; absent when the server advertises
+     * no ceiling (`vtxoMaxAmount < 0`).
      */
     oversized?: MigrationVtxoRef[];
     /**
-     * Inputs the leg's submit path would have rejected — for the VTXO leg, no longer
-     * cooperatively spendable at this pass's chain tip (past batch expiry, since swept and spent
-     * inputs are already excluded upstream) or carrying no batch expiry at all.
-     *
-     * Partitioned out rather than submitted, because the send path validates the batch as a
-     * whole: one rejected input would abort the entire leg and strand every other migratable
-     * VTXO until the next pass. Present only when non-empty.
+     * Inputs the leg's submit path would reject — for the VTXO leg, past batch expiry at this
+     * pass's chain tip, or carrying no batch expiry. Partitioned out because the send path
+     * validates the batch as a whole: one rejected input would abort the leg and strand every
+     * other VTXO until the next pass. Present only when non-empty.
      */
     notSpendableOffchain?: MigrationVtxoRef[];
     /** Error message when this leg's submission failed; the other leg still runs. */
@@ -818,16 +659,14 @@ export interface MigrationLegReport {
 }
 
 /**
- * Result of a {@link IVtxoManager.migrateDeprecatedSignerVtxos} pass, split into
- * two symmetric legs: VTXOs migrate through the send path, boarding UTXOs keep a
- * separate settle-backed migration. They are never combined into one intent.
+ * Result of a {@link IVtxoManager.migrateDeprecatedSignerVtxos} pass: two legs (see
+ * {@link MigrationLegReport}), never combined into one intent.
  */
 export interface DeprecatedSignerMigrationReport {
     /**
-     * Whether this pass moved the wallet's receive state onto the active
-     * signer — directly, or through the server-info refresh it opens with.
-     * `false` when the wallet was already there, which includes a rotation an
-     * earlier refresh elsewhere in the session already applied.
+     * Whether this pass (directly or via its opening server-info refresh) moved the wallet's
+     * receive state onto the active signer. `false` when already there, including via a rotation
+     * an earlier refresh elsewhere in the session applied.
      */
     rotated: boolean;
     /** Global skip; when set, neither leg is present. */
@@ -837,25 +676,17 @@ export interface DeprecatedSignerMigrationReport {
     /** Settle leg. Present iff ≥1 cooperatively-migratable boarding UTXO existed this pass. */
     boarding?: MigrationLegReport;
     /**
-     * Cutoff-expired inputs of both kinds (a classification outcome, not a leg
-     * outcome). Skipped because their signer cutoff has passed: cooperative
-     * migration is closed for them. They are NOT pushed to a unilateral exit —
-     * each keeps its own batch expiry, the server sweeps it at expiry, and the
-     * recovery path then re-mints it under the active signer. The per-signer
-     * sweep/recovery lifecycle is surfaced on {@link signers}
-     * ({@link DeprecatedSignerReport.recoverableCount} /
-     * {@link DeprecatedSignerReport.awaitingSweepCount}).
+     * Cutoff-expired inputs of both kinds, for which cooperative migration is closed. They are
+     * NOT pushed to a unilateral exit: the server sweeps each at its batch expiry and recovery
+     * re-mints it under the active signer — a lifecycle surfaced on {@link signers}.
      */
     expired: MigrationVtxoRef[];
-    /** Per-deprecated-signer status snapshot (Section 6). */
+    /** Per-deprecated-signer status snapshot. */
     signers: DeprecatedSignerReport[];
 }
 
 /**
- * Extra surface the migration path needs beyond {@link IWallet}: a fresh
- * server-info source, the wallet's current signer snapshot, the mid-session
- * server-signer rotation write path, and the selected-input self-send primitive
- * that migrates VTXOs through the Ark send path. Implemented by the concrete
+ * Extra surface the migration path needs beyond {@link IWallet}. Implemented by the concrete
  * `Wallet`; absent on watch-only or mock wallets.
  */
 interface MigrationCapableWallet {
@@ -866,29 +697,23 @@ interface MigrationCapableWallet {
     /** Refresh the wallet's cached deprecated-signer set from a fresh {@link ArkadeInfo} snapshot. */
     refreshDeprecatedSigners(info: ArkadeInfo): void;
     /**
-     * Drain a rotation the wallet is applying off an `onServerInfoChanged`
-     * emit, so this pass classifies against a settled signer snapshot instead
-     * of a half-rotated one. Optional: only the concrete `Wallet` subscribes to
-     * server-info events, so proxy / mock implementations omit it.
+     * Drain a rotation the wallet is applying off an `onServerInfoChanged` emit, so this pass
+     * classifies against a settled, not half-rotated, signer snapshot. Optional: only the
+     * concrete `Wallet` subscribes to server-info events.
      */
     settleServerInfoChanges?(): Promise<void>;
     /**
-     * Spend an explicit set of the wallet's own deprecated-signer VTXOs into a
-     * single full-value active-signer output through the Ark send path (not
-     * `settle`), preserving input assets. The pre-cutoff VTXO migration primitive
-     * (plan step 1); never accepts boarding inputs.
+     * Spend the given own deprecated-signer VTXOs into one full-value active-signer output via
+     * the Ark send path (not `settle`), preserving input assets. Never accepts boarding inputs.
      */
     sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[], now?: TimeHeight): Promise<string>;
     /**
-     * Grouped boarding discovery over a given signer set, returning the
-     * address↔signer association {@link ExtendedCoin} cannot carry. Consumed
-     * in-process by the boarding migration (Section 7); proxy/watch-only
-     * wallets don't implement it, so {@link isMigrationCapable} routes them away.
+     * Grouped boarding discovery over a signer set, returning the address↔signer association
+     * {@link ExtendedCoin} cannot carry.
      */
     getBoardingUtxosForSigners(allowedSigners: Set<string>): Promise<BoardingUtxoGroup[]>;
 }
 
-/** Return whether a wallet exposes the deprecated-signer migration surface. */
 function isMigrationCapable(wallet: IWallet): wallet is IWallet & MigrationCapableWallet {
     return (
         "arkProvider" in wallet &&
@@ -908,17 +733,12 @@ interface ClassifiedVtxo {
     classification: SignerClassification;
 }
 
-/**
- * A deprecated-signer boarding UTXO paired with its signer classification
- * (Section 7). Mirrors {@link ClassifiedVtxo}, substituting the on-chain
- * boarding coin for the offchain VTXO.
- */
+/** Boarding-UTXO counterpart of {@link ClassifiedVtxo}. */
 interface ClassifiedBoarding {
     coin: ExtendedCoin;
     classification: SignerClassification;
 }
 
-/** Project a {@link ClassifiedVtxo} into the report's {@link MigrationVtxoRef}. */
 function classifiedToRef(c: ClassifiedVtxo): MigrationVtxoRef {
     return {
         txid: c.vtxo.txid,
@@ -929,7 +749,6 @@ function classifiedToRef(c: ClassifiedVtxo): MigrationVtxoRef {
     };
 }
 
-/** Project a {@link ClassifiedBoarding} into the report's {@link MigrationVtxoRef}. */
 function classifiedBoardingToRef(c: ClassifiedBoarding): MigrationVtxoRef {
     return {
         txid: c.coin.txid,
@@ -940,11 +759,7 @@ function classifiedBoardingToRef(c: ClassifiedBoarding): MigrationVtxoRef {
     };
 }
 
-/**
- * Merge per-signer report rows from several classifiers (VTXO + boarding) into
- * one row per signer, summing the respective counts/values. A signer that
- * appears in only one classifier still produces a row (Section 7).
- */
+/** Merge per-signer rows from several classifiers (VTXO + boarding) into one row per signer. */
 function mergeSignerReports(...reportLists: DeprecatedSignerReport[][]): DeprecatedSignerReport[] {
     const bySigner = new Map<string, DeprecatedSignerReport>();
     for (const list of reportLists) {
@@ -974,18 +789,12 @@ function mergeSignerReports(...reportLists: DeprecatedSignerReport[][]): Depreca
 }
 
 /**
- * VtxoManager is a unified class for managing virtual output lifecycle operations including
- * recovery of swept/expired virtual outputs and renewal to prevent expiration.
+ * Manages virtual output lifecycle: recovery of swept/expired outputs, renewal before expiry
+ * (including subdust when economically viable), and expiry monitoring.
  *
- * Key Features:
- * - **Recovery**: Reclaim swept or expired virtual outputs back to the wallet
- * - **Renewal**: Refresh virtual output expiration time before they expire
- * - **Smart subdust handling**: Automatically includes subdust virtual outputs when economically viable
- * - **Expiry monitoring**: Check for virtual outputs that are expiring soon
- *
- * Virtual outputs become recoverable when:
- * - The Arkade server sweeps them (`isSwept`) and they remain spendable
- * - They are preconfirmed subdust (to consolidate small amounts without locking liquidity on settled virtual outputs)
+ * Virtual outputs become recoverable when the Arkade server sweeps them (`isSwept`) while still
+ * spendable, or when they are preconfirmed subdust (consolidated without locking the liquidity of
+ * settled outputs).
  *
  * @example
  * ```typescript
@@ -1040,22 +849,15 @@ export interface IVtxoManager {
     sweepExpiredBoardingUtxos(): Promise<string>;
 
     /**
-     * Cooperatively migrate VTXOs minted under a now-deprecated server signer
-     * to the wallet's active-signer address (planned arkd key rotation).
+     * Cooperatively migrate VTXOs minted under a now-deprecated server signer to the wallet's
+     * active-signer address (planned arkd key rotation), soonest cutoff first. First applies a
+     * mid-session signer rotation when the wallet's own snapshot signer was deprecated, so the
+     * output commits to the active signer. VTXOs past their cutoff are reported as `expired`.
      *
-     * Applies a mid-session server-signer rotation first when the wallet's own
-     * snapshot signer has been deprecated, so the migration output commits to
-     * the active signer. Selects spendable VTXOs under deprecated-signer
-     * contracts, prioritizing those closest to their cutoff, and settles them
-     * back to the (rotated) Ark address. VTXOs whose cutoff has already passed
-     * are reported as `expired` rather than migrated.
+     * Available regardless of `deprecatedSignerMigration` (which only gates the poll-loop pass).
      *
-     * Available regardless of the `deprecatedSignerMigration` config flag (that
-     * flag only gates the automatic poll-loop pass).
-     *
-     * As a side effect, refreshes the wallet's cached deprecated-signer set from
-     * fresh server info, so a subsequent `settle()` correctly excludes EXPIRED
-     * deprecated-signer inputs. To refresh that filter without migrating, call
+     * Side effect: refreshes the wallet's cached deprecated-signer set, so a later `settle()`
+     * excludes EXPIRED deprecated-signer inputs. To refresh without migrating, call
      * `wallet.refreshDeprecatedSigners(await wallet.arkProvider.getInfo())` instead.
      *
      * @returns A report of what was migrated, skipped, expired, or failed.
@@ -1065,9 +867,8 @@ export interface IVtxoManager {
     ): Promise<DeprecatedSignerMigrationReport>;
 
     /**
-     * Machine-readable status of every deprecated server signer the wallet
-     * currently holds funds under, without performing any migration. Lets
-     * consumers surface cutoff warnings on their own schedule.
+     * Status of every deprecated server signer the wallet holds funds under, without migrating,
+     * so consumers can surface cutoff warnings on their own schedule.
      */
     getDeprecatedSignerStatus(): Promise<DeprecatedSignerReport[]>;
 
@@ -1094,31 +895,22 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private lastRenewalTimestamp = 0;
     private static readonly RENEWAL_COOLDOWN_MS = 30_000; // 30 seconds
 
-    // Guards against a retry treadmill on the periodic-settle path: a failing
-    // settle would otherwise re-submit identical intents on every 60s poll,
-    // producing per-minute DeleteIntent RPCs forever. Mirrors the renewal
-    // cooldown but with exponential backoff on consecutive failures, so a
-    // persistently broken input eventually drops to the backoff cap instead
-    // of hammering the server. Shared across boarding + expiring-VTXO work
-    // because they now ride on the same settle intent.
+    // Periodic-settle cooldown with exponential backoff, so a failing settle doesn't re-submit an
+    // identical intent (plus a DeleteIntent RPC) every poll forever. Shared by boarding and
+    // expiring-VTXO work, which ride the same settle intent.
     private lastPeriodicSettleTimestamp = 0;
     private consecutivePeriodicSettleFailures = 0;
     private static readonly PERIODIC_SETTLE_COOLDOWN_MS = 30_000;
     private static readonly PERIODIC_SETTLE_MAX_BACKOFF_MS = 5 * 60 * 1000;
 
-    // Throttle for the VTXO_ALREADY_SPENT -> refreshVtxos() reconciliation.
-    // The server's authoritative view says our local cache is stale, so we
-    // trigger a full refresh to advance the global sync cursor. Rate-limit
-    // to guard against a buggy indexer cycling us into a refresh storm.
+    // Throttles the VTXO_ALREADY_SPENT -> refreshVtxos() reconciliation (the server says our
+    // cache is stale) so a buggy indexer can't cycle us into a refresh storm.
     private lastVtxoSpentRefreshTimestamp = 0;
     private vtxoSpentRefreshPromise?: Promise<void>;
     private static readonly VTXO_SPENT_REFRESH_COOLDOWN_MS = 30_000;
 
-    // Cooldown/backoff for the automatic deprecated-signer migration pass.
-    // Mirrors the periodic-settle machinery so a server-side migration failure
-    // (e.g. arkd not yet accepting old-key inputs, or a closed cutoff window)
-    // backs off exponentially instead of re-submitting an identical intent on
-    // every poll. The manual migrateDeprecatedSignerVtxos() bypasses this.
+    // Same cooldown/backoff for the automatic deprecated-signer migration pass (e.g. arkd not yet
+    // accepting old-key inputs); the manual migrateDeprecatedSignerVtxos() bypasses it.
     private lastMigrationTimestamp = 0;
     private consecutiveMigrationFailures = 0;
     private static readonly MIGRATION_COOLDOWN_MS = 30_000;
@@ -1137,18 +929,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     // ========== Recovery Methods ==========
 
     /**
-     * Outpoints recovery must not name yet, with the reason each was refused.
-     * Empty when the manager offers no opinion — an embedder's may not implement
-     * the predicate, and every contract type but VHTLC never answers.
-     *
-     * Reaches only a lockup whose `sender` is this wallet's own key: role
-     * resolution matches that key against the contract's params, so a
-     * descriptor-derived sender (every RFQ lockup) is not matched and such a row
-     * still fails its batch at submit.
-     *
-     * The key stays a thunk so an ordinary recovery never touches the identity,
-     * and the full coins are passed rather than bare outpoints because only they
-     * carry the confirmation a relative timelock is measured from.
+     * Outpoints recovery must not name yet, with each refusal reason; empty when the contract
+     * manager offers no opinion (only VHTLC answers). Reaches only lockups whose `sender` is this
+     * wallet's own key — a descriptor-derived sender (every RFQ lockup) isn't matched and still
+     * fails its batch at submit. The key is a thunk so ordinary recovery never touches the
+     * identity; full coins carry the confirmation a relative timelock counts from.
      */
     private async unspendableNow(
         vtxos: readonly NormalizedExtendedVirtualCoin[],
@@ -1164,19 +949,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     /**
      * Recover swept/expired virtual outputs by settling them back to the wallet's Arkade address.
      *
-     * This method:
-     * 1. Fetches all virtual outputs (including recoverable ones)
-     * 2. Filters for swept but still spendable virtual outputs and preconfirmed subdust
-     * 3. Includes subdust virtual outputs if the total value >= dust threshold
-     * 4. Settles everything back to the wallet's Arkade address
-     *
-     * Note: Settled virtual outputs with long expiry are NOT recovered to avoid locking liquidity unnecessarily.
-     * Only preconfirmed subdust is recovered to consolidate small amounts.
-     *
-     * Inputs whose contract refuses a spend right now — an immature VHTLC refund
-     * path — are skipped rather than failing the batch that holds them, and
-     * {@link getRecoverableBalance} skips the same set. See
-     * {@link unspendableNow} for which rows that reaches.
+     * Includes preconfirmed subdust when the total reaches the dust threshold; settled outputs
+     * with a long expiry are NOT recovered, to avoid locking liquidity. Inputs whose contract
+     * refuses a spend right now (an immature VHTLC refund path) are skipped rather than failing
+     * the batch, matching {@link getRecoverableBalance}.
      *
      * @param eventCallback - Optional callback to receive settlement events
      * @returns Settlement transaction ID
@@ -1196,16 +972,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```
      */
     async recoverVtxos(eventCallback?: (event: SettlementEvent) => void): Promise<string> {
-        // Get all virtual outputs including recoverable ones
         const allVtxos = await this.wallet.getVtxos({
             withRecoverable: true,
             withUnrolled: false,
         });
 
-        // Get dust amount from wallet
         const dustAmount = getDustAmount(this.wallet);
 
-        // Filter recoverable virtual outputs and handle subdust logic
         const now = await fetchTimeHeight(this.wallet);
         let { vtxosToRecover } = getRecoverableWithSubdust(allVtxos, dustAmount, now);
 
@@ -1213,9 +986,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             throw new Error("No recoverable VTXOs found");
         }
 
-        // Before pricing: the cap below fills slots highest-value-first, so a
-        // refused input filtered after it would occupy a slot and then vanish,
-        // under-filling the settlement.
+        // Before pricing/capping, else a refused input would take a slot and then vanish.
         const refused = await this.unspendableNow(vtxosToRecover);
         if (refused.size > 0) {
             logExcludedVtxos("recoverVtxos", vtxosToRecover, [outpointReasons(refused)]);
@@ -1226,10 +997,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // Neither message may reuse "No recoverable VTXOs found": the coins
             // were found and declined, and the handler's text says when to retry.
             if (vtxosToRecover.length === 0) {
-                // Every reason, not the first: lockups at different maturities
-                // become recoverable at different times, and naming one of them
-                // dates the whole wallet by the wrong clock. Same shape as
-                // `IContractManager.assertSpendableNow`'s multi-input refusal.
+                // Every reason, not the first: lockups mature at different times. Same shape
+                // as `IContractManager.assertSpendableNow`'s multi-input refusal.
                 const why =
                     refused.size === 1
                         ? [...refused.values()][0]
@@ -1250,47 +1019,27 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             }
         }
 
-        // Cap the recovery batch to stay under both the server's intent-size
-        // limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its per-output ceiling
-        // (vtxoMaxAmount; -1 means no limit). Recover the highest-value VTXOs
-        // first: the subdust inclusion decision above was made on the full set's
-        // combined total, so a naive prefix can drop the capped batch below
-        // dust — which the server rejects, leaving the next cycle to re-pick the
-        // same prefix forever. Ordering by value maximizes the recovered amount
-        // and gives the capped subset the best chance of clearing dust. We
-        // re-run the subdust/dust eligibility on that exact capped subset; the
-        // overflow is recovered next cycle.
+        // Highest-value first: the subdust decision above used the full set's total, so a naive
+        // capped prefix could fall below dust, be rejected, and be re-picked every cycle.
+        // Eligibility is re-run on the capped subset below; the overflow waits a cycle.
         const info = await this.getInfoProvider()?.getInfo();
         const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
 
-        // Price the batch before capping so a VTXO that cannot pay its own intent
-        // fee is dropped here rather than occupying a slot in the capped batch
-        // ahead of one that can. Subdust inputs survive this whenever they are
-        // still worth more than their own fee, which is what keeps consolidating
-        // them possible. `info` is undefined only when no ark provider is wired,
-        // which prices as zero and leaves the gross behaviour untouched.
+        // `info` is undefined only with no ark provider wired, which prices as zero (gross).
         const estimator = new Estimator(info?.fees.intentFee ?? {});
         const { payable, net } = priceSettlementInputs(vtxosToRecover, estimator);
         const capped = capSettlementBatch(byValueDescending(payable), vtxoMaxAmount);
-        // Compared against the pre-pricing count deliberately: this fires when
-        // EITHER filter narrowed the batch, fee pricing or a size cap, since both
-        // mean the subdust decision above was made over a set we are no longer
-        // settling and has to be re-run. Not just the cap, despite the name.
+        // Against the pre-pricing count on purpose: fee pricing OR the cap narrowing the batch
+        // both invalidate the subdust decision above.
         if (capped.length < vtxosToRecover.length) {
             const recoverableCount = vtxosToRecover.length;
-            // Two different things can narrow the batch, and an operator
-            // debugging a stuck wallet needs to know which one did: a size cap
-            // defers the overflow to the next cycle, whereas fee filtering means
-            // the coins cost more to move than they are worth and no later cycle
-            // will change that on its own.
+            // A size cap defers overflow to the next cycle; fee filtering means the coins cost
+            // more to move than they're worth, which no later cycle fixes. Operators need which.
             const cappedAway = capped.length < payable.length;
             ({ vtxosToRecover } = getRecoverableWithSubdust(capped, dustAmount, now));
             if (vtxosToRecover.length === 0) {
-                // Recoverable VTXOs exist, but what survives stays below dust, so
-                // submitting it would be rejected and the next cycle would pick
-                // the same prefix. Distinct from the "none recoverable" case
-                // above so operators can tell a stuck-but-funded wallet from an
-                // empty one.
+                // Funded but stuck below dust: distinct from "none recoverable" so operators
+                // can tell it from an empty wallet.
                 if (!cappedAway) {
                     throw new Error(
                         `All ${recoverableCount} recoverable VTXOs that can pay their own ` +
@@ -1306,13 +1055,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             }
         }
 
-        // Post-cutoff recovery: if any recoverable input was minted under a
-        // now-deprecated signer and the wallet's own snapshot is still that old
-        // signer, rotate to the active signer FIRST so the recovered output
-        // re-mints under the current key instead of re-committing to the
-        // deprecated one (Section 6 / post-cutoff). No-op on current-snapshot
-        // wallets; skipped for non-rotatable (watch-only/proxy) wallets so the
-        // hot recovery path adds no work for them.
+        // Post-cutoff: if an input is under a deprecated signer the wallet snapshot still uses,
+        // rotate FIRST so the recovered output re-mints under the active key. Skipped for
+        // non-rotatable (watch-only/proxy) wallets.
         if (info && isMigrationCapable(this.wallet)) {
             await this.rotateForRecoverableInputs(vtxosToRecover, info);
         }
@@ -1321,21 +1066,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // script the recovered VTXO actually lands on.
         const arkAddress = await this.wallet.getAddress();
 
-        // The fee an intent offers IS `sum(inputs) - sum(outputs)`, so the output
-        // has to come back short by what the operator's programs price. Asking
-        // for the gross recoverable sum offers zero and the server rejects with
-        // INTENT_INSUFFICIENT_FEE — see `priceSettlementInputs`.
         const totalAmount = deductOffchainOutputFee(
             subtotalOf(vtxosToRecover, net),
             estimator,
             arkAddress,
         );
 
-        // getRecoverableWithSubdust judges subdust inclusion on gross value, but
-        // the fees come off after that decision, so a batch that cleared dust
-        // gross can still land under it here. The server would reject such an
-        // output; say so instead, and let the next cycle retry once the
-        // recoverable set is worth more.
+        // Subdust inclusion was judged on gross value; net of fees the batch can still land
+        // under dust, which the server would reject.
         if (totalAmount < dustAmount) {
             throw new Error(
                 `Recoverable amount ${totalAmount} net of intent fees is below ` +
@@ -1343,7 +1081,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             );
         }
 
-        // Settle all recoverable virtual outputs back to the wallet
         return this.wallet.settle(
             {
                 inputs: vtxosToRecover,
@@ -1361,23 +1098,15 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     /**
      * Get information about recoverable balance without executing recovery.
      *
-     * Useful for displaying to users before they decide to recover funds.
+     * `recoverable` is net of the operator's intent fees — what {@link recoverVtxos} would
+     * actually hand back. `subdust` is net of per-input fees only (the output fee is charged per
+     * batch, not per coin), so it is not strictly a slice of `recoverable` and can exceed it when
+     * a flat output fee meets a wholly subdust wallet. Batch size caps are not applied: they
+     * defer overflow rather than reduce what is recoverable.
      *
-     * Both amounts are net of the operator's intent fees, so `recoverable` is
-     * what {@link recoverVtxos} would actually hand back rather than the gross
-     * sum of the inputs. `subdust` is net of the per-input fees only — the
-     * output fee is charged on the batch as a whole and is not attributed per
-     * coin — so it reports what the subdust coins are worth once each has paid
-     * its own way, and is not strictly a slice of `recoverable`. It can exceed
-     * `recoverable` where a flat output fee meets a wholly subdust wallet.
-     *
-     * The batch size caps are not applied here: they defer the overflow to the
-     * next cycle rather than reducing what is recoverable.
-     *
-     * Inputs a contract refuses right now are excluded, so this and
-     * {@link recoverVtxos} answer over the same set. `Balance.recoverable` still
-     * counts them: that field reports what the wallet owns, this one what a
-     * batch would hand back today.
+     * Inputs a contract refuses right now are excluded, matching {@link recoverVtxos};
+     * `Balance.recoverable` still counts them (what the wallet owns vs. what a batch returns
+     * today).
      *
      * @returns Object containing recoverable amounts and subdust information
      *
@@ -1414,11 +1143,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             now,
         );
 
-        // Excluded outright rather than reported in a field of their own: this
-        // answers what a recovery batch would hand back, and `Balance.recoverable`
-        // keeps counting the funds, so nothing disappears. Mirrors `recoverVtxos`
-        // so the preview and the sweep agree by construction — and it is the only
-        // channel through which a caller sees a partial drop.
+        // Mirrors `recoverVtxos` so the preview and the sweep agree by construction.
         const refused = await this.unspendableNow(vtxosToRecover);
         if (refused.size > 0) {
             logExcludedVtxos("getRecoverableBalance", vtxosToRecover, [outpointReasons(refused)]);
@@ -1432,16 +1157,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             ));
         }
 
-        // Priced the same way `recoverVtxos` prices what it settles. This exists
-        // to tell a user what recovery would hand back, so it has to answer net
-        // of the operator's intent fees — reporting the gross sum would promise
-        // more than the sweep delivers under any non-zero fee policy, and the two
-        // are reachable from the same worker call.
-        //
-        // Not applied here: the batch caps. They defer the overflow to the next
-        // cycle rather than reducing what is recoverable, and matching them would
-        // mean re-running the subdust decision over a capped subset. That gap
-        // predates the fee pricing and is left alone.
+        // Priced exactly as `recoverVtxos` prices what it settles; batch caps not applied (see
+        // the JSDoc).
         const info = await this.getInfoProvider()?.getInfo();
         const estimator = new Estimator(info?.fees.intentFee ?? {});
         const { payable, net } = priceSettlementInputs(vtxosToRecover, estimator);
@@ -1454,22 +1171,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // than settling it, so report nothing recoverable instead of a negative.
         const recoverable = priced > 0n ? priced : 0n;
 
-        // Subdust is CLASSIFIED on gross value — that is what makes a coin
-        // subdust, and what `getRecoverableWithSubdust` judged inclusion on — but
-        // REPORTED net of the per-input fees, so it is on the same footing as
-        // `recoverable` rather than a figure on a different basis. Summing it
-        // gross overstated it under every non-zero input-fee policy.
-        //
-        // Net of the INPUT fees only, though: the output fee comes off the whole
-        // batch at once and does not decompose per coin, so it is not attributed
-        // here. `subdust <= recoverable` therefore holds whenever no output fee
-        // is configured or the non-subdust coins cover it, but NOT in general —
-        // a flat output fee against an all-subdust wallet still leaves `subdust`
-        // the larger of the two. Read this as "what the subdust coins are worth
-        // once each has paid its own way", not as a slice of `recoverable`.
-        //
-        // Totalled through `subtotalOf` so an unpriced input throws instead of
-        // silently contributing zero.
+        // Subdust is CLASSIFIED on gross value (what makes a coin subdust) but REPORTED net of
+        // per-input fees, on the same footing as `recoverable`.
         const subdustAmount = subtotalOf(
             payable.filter((v) => BigInt(v.value) < dustAmount),
             net,
@@ -1519,17 +1222,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * {@link getExpiringVtxos}, against a caller-supplied chain tip.
-     *
-     * The settle paths select, re-select after pre-flight, and sort by expiry within one pass;
-     * each of those judges expiry, so they share one tip rather than fetching (and possibly
-     * disagreeing on) one apiece. Fetches its own when `now` is omitted.
+     * {@link getExpiringVtxos} against a caller-supplied chain tip, so a settle pass's select,
+     * re-select and expiry sort share one tip instead of fetching (and disagreeing on) one each.
      */
     private async selectExpiringVtxos(
         thresholdMs?: number,
         now?: TimeHeight,
     ): Promise<NormalizedExtendedVirtualCoin[]> {
-        // If settlementConfig is explicitly false and no override provided, renewal is disabled
         if (this.settlementConfig === false && thresholdMs === undefined) {
             return [];
         }
@@ -1548,11 +1247,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Renew expiring virtual outputs by settling them back to the wallet's address
-     *
-     * This method collects all expiring spendable virtual outputs (including recoverable ones) and settles
-     * them back to the wallet, effectively refreshing their expiration time. This is the
-     * primary way to prevent virtual outputs from expiring.
+     * Renew expiring virtual outputs (including recoverable ones) by settling them back to the
+     * wallet's address, refreshing their expiration time.
      *
      * @param eventCallback - Optional callback for settlement events
      * @param options - Optional per-call overrides; see {@link RenewVtxosOptions}
@@ -1580,12 +1276,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         eventCallback?: (event: SettlementEvent) => void,
         options?: RenewVtxosOptions,
     ): Promise<string> {
-        // Validate the per-call override before touching any state. The payload
-        // can arrive over the worker MessageBus, so `thresholdSeconds` is not
-        // guaranteed to be a number at runtime despite its type. Reject
-        // NaN/Infinity/non-positive values, which would otherwise corrupt the
-        // expiry threshold (and a 0/<=100ms threshold silently reverts to the
-        // 3-day default via the guard in isVtxoExpiringSoon).
+        // The payload can arrive over the worker MessageBus, so validate at runtime: a bad value
+        // corrupts the threshold (and <=100ms silently reverts to the 3-day default).
         if (options?.thresholdSeconds !== undefined) {
             const { thresholdSeconds } = options;
             if (
@@ -1606,9 +1298,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         this.renewalInProgress = true;
 
         try {
-            // Get all virtual outputs (including recoverable ones)
-            // Resolution order: explicit options.thresholdSeconds > settlementConfig.vtxoThreshold > default.
-            // Manual API should always work, so we bypass the settlementConfig === false gate.
+            // Manual API bypasses the settlementConfig === false gate.
             const threshold =
                 options?.thresholdSeconds !== undefined
                     ? options.thresholdSeconds * 1000
@@ -1621,41 +1311,19 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 throw new Error("No VTXOs available to renew");
             }
 
-            // Pre-flight: validate the chosen inputs against the indexer's
-            // authoritative state before submitting. The cursor-derived
-            // delta sync filters by `created_at`, so a VTXO created
-            // before the cursor and spent recently can sit in the local
-            // cache forever; settling against it yields a guaranteed
-            // VTXO_ALREADY_SPENT 400. Refreshing the candidates here
-            // catches that BEFORE the network round-trip.
             vtxos = await this.revalidateBeforeSettle(vtxos, threshold, now);
             if (vtxos.length === 0) {
                 throw new Error("No VTXOs available to renew");
             }
 
-            // Cap the renewal batch to stay under both the server's intent-size
-            // limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its per-output ceiling
-            // (vtxoMaxAmount; -1 means no limit). Renew the soonest-expiring
-            // VTXOs first so the most urgent ones make the cut — otherwise a
-            // viable VTXO past the cap could miss its renewal window and be
-            // forced into a unilateral exit. The output amount is summed from
-            // the capped set below, so it stays consistent; the overflow is
-            // renewed on the next cycle.
             const info = await this.getInfoProvider()?.getInfo();
             const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
 
-            // Price the candidates before capping so a VTXO that cannot pay its
-            // own intent fee is dropped here rather than occupying a slot in the
-            // capped batch ahead of one that can. `info` is undefined only when no
-            // ark provider is wired, which prices as zero and leaves the gross
-            // behaviour untouched.
             const estimator = new Estimator(info?.fees.intentFee ?? {});
             const { payable, net } = priceSettlementInputs(vtxos, estimator);
             vtxos = payable;
             if (vtxos.length === 0) {
-                // Worded to match the benign cases the vtxo_received subscription
-                // already swallows: nothing is wrong, there is just nothing worth
-                // renewing at this fee policy.
+                // Worded to match the benign cases the vtxo_received subscription swallows.
                 throw new Error(
                     "No VTXOs available to renew: every expiring VTXO is worth less than its own intent fee",
                 );
@@ -1663,11 +1331,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
             const capped = capSettlementBatch(byExpiryAscending(vtxos, now), vtxoMaxAmount);
             if (vtxoMaxAmount >= 0n) {
-                // A VTXO whose value alone exceeds the per-output ceiling can
-                // never be renewed by this path (the server would reject it) and
-                // will drift toward a unilateral exit as it nears expiry. The
-                // routine count-cap overflow is benign (deferred next cycle), but
-                // this is not — surface it so operators can act (e.g. split it).
+                // Unlike count-cap overflow, a VTXO alone above the ceiling can never renew here
+                // and drifts toward a unilateral exit — surface it so operators can act.
                 const oversized = vtxos.filter((vtxo) => BigInt(vtxo.value) > vtxoMaxAmount);
                 if (oversized.length > 0) {
                     console.warn(
@@ -1677,31 +1342,20 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 }
             }
             if (capped.length < vtxos.length) {
-                // A cap dropped inputs: settle the soonest-expiring subset now
-                // and renew the overflow next cycle. When neither cap bites we
-                // keep the original selection (and order) untouched.
+                // When neither cap bites, the original selection (and order) is kept untouched.
                 vtxos = capped;
                 if (vtxos.length === 0) {
-                    // The soonest-expiring VTXO alone exceeds vtxoMaxAmount, so
-                    // no batch fits. Only reachable if the server lowered the
-                    // ceiling below an existing VTXO; it would reject it anyway.
+                    // Only reachable if the server lowered the ceiling below every VTXO.
                     throw new Error(
                         `No VTXOs available to renew within the per-output limit ${vtxoMaxAmount}`,
                     );
                 }
             }
 
-            // Get dust amount from wallet
             const dustAmount = getDustAmount(this.wallet);
 
-            // Renewal includes recoverable VTXOs (getExpiringVtxos pulls them
-            // in). If any carries a now-deprecated signer and the wallet's own
-            // snapshot is still that old signer, rotate to the active signer
-            // FIRST so the renewed output re-mints under the current key
-            // (Section 6 / post-cutoff). rotateServerSigner is independently
-            // serialized and does not consult renewalInProgress, so calling it
-            // inside this window cannot deadlock against the receive rotator.
-            // Skipped for non-rotatable wallets (no extra work on the hot path).
+            // Renewal pulls in recoverable VTXOs too, so rotate first as `recoverVtxos` does.
+            // rotateServerSigner is serialized independently of renewalInProgress: no deadlock.
             if (info && isMigrationCapable(this.wallet)) {
                 await this.rotateForRecoverableInputs(vtxos, info);
             }
@@ -1710,19 +1364,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // the script the renewed VTXO actually lands on.
             const arkAddress = await this.wallet.getAddress();
 
-            // The fee an intent offers IS `sum(inputs) - sum(outputs)`, so the
-            // output has to come back short by what the operator's programs
-            // price. Asking for the gross sum offers zero and the server rejects
-            // with INTENT_INSUFFICIENT_FEE — see `priceSettlementInputs`.
             const totalAmount = deductOffchainOutputFee(
                 subtotalOf(vtxos, net),
                 estimator,
                 arkAddress,
             );
 
-            // Dust is judged on the NET output, not the gross input sum: the fees
-            // come off after selection, so a batch that clears dust gross can
-            // land under it here.
+            // Dust is judged on the NET output: a batch clearing dust gross can land under it.
             if (totalAmount < dustAmount) {
                 throw new Error(
                     `Total amount ${totalAmount} is below dust threshold ${dustAmount}`,
@@ -1743,11 +1391,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             );
             return txid;
         } finally {
-            // Update cooldown on EVERY attempt (success or failure) so transient
-            // settle failures (stream close, connector mismatch, duplicated input)
-            // don't allow the next vtxo_received event to re-enter renewal
-            // immediately. Without this, a failed settle leaves lastRenewalTimestamp
-            // at its previous value and the cooldown check becomes a no-op.
+            // Cooldown on EVERY attempt, so a transient settle failure doesn't let the next
+            // vtxo_received re-enter renewal immediately.
             this.lastRenewalTimestamp = Date.now();
             this.renewalInProgress = false;
         }
@@ -1756,10 +1401,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     // ========== Boarding Input Sweep Methods ==========
 
     /**
-     * Get boarding inputs whose timelock has expired.
-     *
-     * These inputs can no longer be onboarded cooperatively via `settle()` and
-     * must be swept back to a fresh boarding address using the unilateral exit path.
+     * Get boarding inputs whose timelock has expired: they can no longer be onboarded via
+     * `settle()` and must be swept back to a fresh boarding address via the unilateral exit path.
      *
      * @returns Array of expired boarding inputs
      *
@@ -1776,7 +1419,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const boardingUtxos = prefetchedUtxos ?? (await this.wallet.getBoardingUtxos());
         const boardingTimelock = this.getBoardingTimelock();
 
-        // For block-based timelocks, fetch the chain tip height
         let chainTipHeight: number | undefined;
         if (boardingTimelock.type === "blocks") {
             const tip = await this.getOnchainProvider().getChainTip();
@@ -1789,16 +1431,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Sweep expired boarding inputs back to a fresh boarding address via
-     * the unilateral exit path (onchain self-spend).
-     *
-     * This builds a raw onchain transaction that:
-     * - Uses all expired boarding inputs as inputs (spent via the CSV exit script path)
-     * - Has a single output to the wallet's boarding address (restarts the timelock)
-     * - Batches multiple expired boarding inputs into one transaction
-     * - Skips the sweep if the output after fees would be below dust
-     *
-     * No Arkade server involvement is needed — this is a pure onchain transaction.
+     * Sweep expired boarding inputs back to a fresh boarding address via the unilateral exit path:
+     * one pure onchain tx (no Arkade server) spending every expired input via the CSV exit script
+     * into a single boarding-address output, which restarts the timelock. Skipped if the output
+     * after fees would be below dust.
      *
      * @returns The broadcast transaction ID
      * @throws Error if no expired boarding inputs are found
@@ -1844,13 +1480,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const boardingAddress = await this.wallet.getBoardingAddress();
 
-        // Get fee rate from onchain provider
         const feeRate = (await this.getOnchainProvider().getFeeRate()) ?? 1;
 
-        // Representative exit leaf for fee estimation only. Every boarding
-        // exit leaf shares the same template (Alice + CSV) and so has an
-        // identical serialized size regardless of HD index — the actual
-        // per-UTXO leaf is resolved in the input loop below.
+        // Representative leaf, for size estimation only: every boarding exit leaf shares one
+        // template (Alice + CSV). The per-UTXO leaf is resolved in the input loop below.
         const exitTapLeafScript = this.getSweepWallet().boardingTapscript.exit();
 
         // TapLeafScript: [{version, internalKey, merklePath}, scriptWithVersion]
@@ -1870,7 +1503,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const totalValue = expiredUtxos.reduce((sum, utxo) => sum + BigInt(utxo.value), 0n);
         const outputAmount = totalValue - BigInt(fee);
 
-        // Dust check: skip if output after fees is below dust
         const dustAmount = getDustAmount(this.wallet);
         if (outputAmount < dustAmount) {
             throw new Error(
@@ -1878,15 +1510,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             );
         }
 
-        // Build the raw transaction
         const tx = new Transaction();
 
         for (const utxo of expiredUtxos) {
-            // Resolve the exit (CSV) leaf and output script of the boarding
-            // address THIS UTXO actually sits on — not necessarily the current
-            // boarding address, since per-derivation rotation can leave unspent
-            // UTXOs at previous boarding addresses (plan §6-III.2). The per-UTXO
-            // boarding tapscript is carried on the ExtendedCoin's tapTree.
+            // Use the tapTree of the boarding address THIS UTXO sits on: per-derivation rotation
+            // can leave unspent UTXOs at previous boarding addresses.
             const utxoScript = VtxoScript.decode(utxo.tapTree);
             const utxoExitLeaf = utxoScript.leaves.find(
                 (leaf) =>
@@ -1911,17 +1539,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         tx.addOutputAddress(boardingAddress, outputAmount, this.getNetwork());
 
-        // Sign and finalize. Route each input to the correct key — the
-        // identity for index-0 / static boarding, the per-index descriptor for
-        // a rotated boarding UTXO (plan §6-III.3) — instead of signing every
-        // input with the index-0 identity key.
         const signedTx = await this.getSweepWallet().signOnchainBoardingTx(tx);
         signedTx.finalize();
 
-        // Broadcast
         const txid = await this.getOnchainProvider().broadcastTransaction(signedTx.hex);
 
-        // Mark boarding inputs as swept to prevent duplicate broadcasts on next poll
+        // Prevents duplicate broadcasts on the next poll while the sweep is unconfirmed.
         for (const u of expiredUtxos) {
             this.sweptBoardingUtxos.add(`${u.txid}:${u.vout}`);
         }
@@ -1946,20 +1569,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Machine-readable status of every deprecated server signer the wallet
-     * currently holds funds under (Section 6), without migrating. Covers both
-     * VTXO and boarding holdings (Section 7), merged per signer.
+     * Status of every deprecated server signer the wallet holds funds under (VTXO and boarding,
+     * merged per signer), without migrating.
      *
-     * @remarks This is no longer a pure repository/info read: surfacing boarding
-     * holdings fans out per boarding address (`getCoins` round trips) and
-     * refreshes the UTXO cache via `saveUtxos`.
+     * @remarks Not a pure repository/info read: boarding holdings fan out per boarding address
+     * (`getCoins` round trips) and refresh the UTXO cache via `saveUtxos`.
      */
     async getDeprecatedSignerStatus(): Promise<DeprecatedSignerReport[]> {
         const wallet = this.requireMigrationCapableWallet();
         const info = await wallet.arkProvider.getInfo();
-        // This refresh can itself surface a rotated operator config, which the
-        // wallet applies off the emit. Let it settle so the counts below are
-        // read from one signer epoch rather than a half-rotated wallet.
+        // The refresh may trigger a rotation off the emit; let it settle so counts come from one
+        // signer epoch.
         await wallet.settleServerInfoChanges?.();
         const { reports: vtxoReports } = await this.classifyDeprecatedSignerContracts(info);
         const { reports: boardingReports } = await this.classifyDeprecatedSignerBoarding(info);
@@ -1967,58 +1587,43 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Core migration routine shared by the manual API and the automatic poll
-     * pass. Fetches a fresh {@link ArkadeInfo}, applies a mid-session signer
-     * rotation when the wallet's own snapshot signer has been deprecated,
-     * selects spendable VTXOs under deprecated-signer contracts (cutoff-first),
-     * and settles them to the active-signer Ark address.
+     * Core migration routine shared by the manual API and the automatic poll pass; see
+     * {@link IVtxoManager.migrateDeprecatedSignerVtxos}.
      */
     private async migrateCore(
         options?: MigrateDeprecatedSignerOptions,
     ): Promise<DeprecatedSignerMigrationReport> {
         const wallet = this.requireMigrationCapableWallet();
-        // Read BEFORE the refresh: the refresh itself can surface a rotated
-        // operator config, which the wallet applies off the emit — so the
-        // rotation this pass reports may be the one that handler performed
-        // rather than the one `ensureReceiveOnActiveSigner` performs below.
+        // Read BEFORE the refresh: the reported rotation may be one the wallet's server-info
+        // handler performs off the refresh, not `ensureReceiveOnActiveSigner` below.
         const signerBeforeRefresh = hex.encode(wallet.arkServerPublicKey);
         const info = await wallet.arkProvider.getInfo();
-        // Drain that handler before reading anything signer-derived: mid-rotation
-        // the active signer's contract rows are already persisted while
-        // `arkServerPublicKey` still holds the deprecated one, and both chains
-        // would otherwise race to rotate.
+        // Drain that handler before reading anything signer-derived: mid-rotation the active
+        // signer's rows are persisted while `arkServerPublicKey` is still the deprecated one, and
+        // both chains would race to rotate.
         await wallet.settleServerInfoChanges?.();
         const rotatedOnRefresh = signerBeforeRefresh !== hex.encode(wallet.arkServerPublicKey);
-        // Refresh the wallet's cached deprecated-signer set from this fresh
-        // snapshot before any classification or early-exit, so the spendability
-        // filter that excludes EXPIRED deprecated-signer inputs from settle() is
-        // consistent for the rest of this pass. Placed ahead of the no-deprecated
-        // exit so a pass that finds nothing deprecated still clears a stale cache.
+        // Before any early exit, so settle()'s EXPIRED-input filter is consistent for this pass
+        // and a pass that finds nothing deprecated still clears a stale cache.
         wallet.refreshDeprecatedSigners(info);
         const signerSet = signerSetFromInfo(info);
         const nowSeconds = Math.floor(Date.now() / 1000);
 
-        // Classify the wallet's own construction-time signer snapshot.
         const walletSignerHex = hex.encode(wallet.arkServerPublicKey);
         const walletClass = classifyAgainstSignerSet(walletSignerHex, signerSet, nowSeconds);
 
-        // Common cheap exit: nothing deprecated advertised and our own snapshot
-        // is current → no contract sweep, no indexer round-trip.
         if (signerSet.deprecated.size === 0 && walletClass.status === "CURRENT") {
             return { rotated: rotatedOnRefresh, expired: [], signers: [] };
         }
 
-        // The wallet's own signer is neither active nor advertised deprecated:
-        // do not rotate or migrate automatically (treat as unknownSigner). Still
-        // surface every holding (VTXO + boarding) under other deprecated signers.
+        // Own signer neither active nor advertised deprecated: never rotate or migrate
+        // automatically, but still surface holdings under other deprecated signers.
         if (walletClass.status === "UNKNOWN_SIGNER") {
             const { reports: vtxoReports } = await this.classifyDeprecatedSignerContracts(info);
             const { reports: boardingReports } = await this.classifyDeprecatedSignerBoarding(info);
             return {
-                // Normally false here — a drained rotation targets the active
-                // signer, which classifies CURRENT, not UNKNOWN. It is true only
-                // when a second rotation landed inside the drain, leaving us on a
-                // signer newer than `info`: still a rotation this pass applied.
+                // True only if a second rotation landed inside the drain, leaving us on a signer
+                // newer than `info` (a drained rotation otherwise classifies CURRENT).
                 rotated: rotatedOnRefresh,
                 expired: [],
                 signers: mergeSignerReports(vtxoReports, boardingReports),
@@ -2026,18 +1631,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             };
         }
 
-        // The wallet's own snapshot signer has been deprecated → re-derive the
-        // receive state under the active signer before building the migration
-        // output, otherwise the server would reject an old-signer destination.
-        // (UNKNOWN_SIGNER already returned above, so the guard rotates here iff
-        // the snapshot is MIGRATABLE/DUE_NOW/EXPIRED — identical to the prior
-        // `!== CURRENT` test.)
+        // Rotate receive state onto the active signer before building the migration output, else
+        // the server rejects an old-signer destination.
         const rotated = (await this.ensureReceiveOnActiveSigner(info)) || rotatedOnRefresh;
 
-        // Collect stale VTXOs AND boarding UTXOs AFTER any rotation, so the
-        // just-deprecated former receive/boarding contracts are included in the
-        // migration set. Both classifiers reuse the same fresh `info` (no second
-        // getInfo round-trip).
+        // Classify AFTER any rotation, so the just-deprecated former receive/boarding contracts
+        // are included.
         const {
             reports: vtxoReports,
             migratable: vtxoMigratable,
@@ -2056,8 +1655,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             ...boardingExpired.map(classifiedBoardingToRef),
         ];
 
-        // Fire the no-deprecated-vtxos skip only when BOTH migratable sets are
-        // empty, so a boarding-only migration still proceeds.
         if (vtxoMigratable.length === 0 && boardingMigratable.length === 0) {
             return {
                 rotated,
@@ -2076,18 +1673,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             signers: reports,
         };
 
-        // Two independent legs, run sequentially (each acquires the wallet tx
-        // lock itself): VTXOs migrate through the Ark send path; boarding UTXOs
-        // keep a SEPARATE settle-backed migration — they are on-chain inputs
-        // with no send path. They are never combined into one intent, each owns
-        // its full sizing pipeline (oversized + caps + its own dust floor), and a
-        // failure/skip in one never suppresses the other. A leg is present iff it
-        // had ≥1 cooperatively-migratable candidate before sizing.
+        // Two independent legs (see MigrationLegReport), run sequentially: each acquires the
+        // wallet tx lock itself.
 
-        // VTXO leg — send to the active-signer self output. No settlement events.
+        // VTXO leg: no settlement events.
         if (vtxoMigratable.length > 0) {
-            // One chain tip for the leg, shared with the send path below — see
-            // {@link canMigrateBySend}.
+            // One chain tip shared with the send path — see {@link canMigrateBySend}.
             const now = await fetchTimeHeight(this.wallet);
             report.vtxos = await this.runMigrationLeg(
                 vtxoMigratable,
@@ -2105,8 +1696,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             );
         }
 
-        // Boarding leg — separate settle. Keeps firing settlement events. Its
-        // single output is the active-signer Ark address (post any rotation).
+        // Boarding leg: settle, so it fires settlement events.
         if (boardingMigratable.length > 0) {
             report.boarding = await this.runMigrationLeg(
                 boardingMigratable,
@@ -2133,18 +1723,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Size and submit one migration leg. Filters inputs whose value alone
-     * exceeds the per-output ceiling (`vtxoMaxAmount`; `< 0` means no limit) —
-     * those can never form a ≤-ceiling output and must exit unilaterally — then
-     * caps the rest (highest-value first; bounded by {@link MAX_VTXOS_PER_SETTLEMENT}
-     * AND a gross total within `vtxoMaxAmount`), applies the protocol dust floor,
-     * and submits the capped batch through `submit`. A throw from `submit` lands
-     * in `error`; the caller's other leg still runs.
+     * Size and submit one migration leg: drop oversized inputs (alone above `vtxoMaxAmount`),
+     * cap the rest highest-value first via {@link capSettlementBatch}, apply the dust floor, and
+     * submit. A throw from `submit` lands in `error`; the caller's other leg still runs.
      *
-     * Migration is mandatory and fee-exempt: every selected input moves at its
-     * full value, so the gross total IS the aggregated output amount (kept under
-     * the server ceiling by the cap). The dust floor guards the degenerate cases
-     * where every input was oversized or the whole holding sums below dust.
+     * Migration is fee-exempt: every input moves at full value, so the gross total IS the
+     * output amount.
      */
     private async runMigrationLeg<C>(
         candidates: C[],
@@ -2155,10 +1739,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         legName: string,
         submit: (capped: C[]) => Promise<string>,
         /**
-         * Inputs this leg's submit path would reject. Filtered out *before* sizing so they
-         * neither consume batch capacity nor count toward the dust floor. Omit when the leg's
-         * submit path has no such gate — the boarding leg settles, and settle validates per-input
-         * server-side.
+         * Inputs this leg's submit path would reject, filtered *before* sizing so they neither
+         * take batch capacity nor count toward dust. Omitted by the boarding leg: settle
+         * validates per-input server-side.
          */
         eligible?: (c: C) => boolean,
     ): Promise<MigrationLegReport> {
@@ -2206,8 +1789,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const totalAmount = capped.reduce((sum, c) => sum + BigInt(valueOf(c)), 0n);
 
         if (totalAmount < dustAmount) {
-            // Attribute the skip to whichever filter emptied the set, so "nothing migrated" is
-            // not silently reported as a dust problem when it was really an eligibility one.
+            // Attribute the skip to whichever filter emptied the set.
             const skipped: MigrationLegSkipReason =
                 sized.length > 0
                     ? "below-dust"
@@ -2244,13 +1826,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Enumerate the wallet's `default`/`delegate` contracts, classify each
-     * against the fresh signer set, and split their spendable VTXOs into
-     * cooperatively-migratable and cutoff-expired sets while building the
-     * per-signer status report. Current-signer contracts are skipped; swept
-     * (recoverable) VTXOs are excluded from the settle sets — those follow the
-     * recovery path — but are still counted on EXPIRED report rows
-     * (`recoverableCount`) so post-cutoff funds in flight stay visible.
+     * Classify the wallet's `default`/`delegate` contracts against the fresh signer set, splitting
+     * spendable VTXOs into cooperatively-migratable and cutoff-expired sets and building the
+     * per-signer report. Current-signer contracts are skipped.
      */
     private async classifyDeprecatedSignerContracts(info: ArkadeInfo): Promise<{
         reports: DeprecatedSignerReport[];
@@ -2276,26 +1854,15 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             const cls = classifyAgainstSignerSet(serverPubKey, signerSet, nowSeconds);
             if (cls.status === "CURRENT") continue;
 
-            // Swept (recoverable) VTXOs are reclaimed by the recovery path, not
-            // cooperative migration (open point 11), so they stay OUT of the
-            // migratable/expired settle sets. For EXPIRED signers, though, they
-            // are exactly the funds already draining into the active signer, so
-            // the report still counts them (recoverableCount) alongside the
-            // not-yet-swept holdings (awaitingSweepCount) (Section 6 / post-cutoff).
-            // Exited coins are on neither leg — `completeUnroll` is their only
-            // remedy — so they belong in no migration bucket. Without this the
-            // report over-counts migratable value and announces the coin as
-            // recovering through the sweep path, which will never happen.
+            // Swept VTXOs follow the recovery path, not migration, so they stay OUT of the settle
+            // sets but are counted on EXPIRED rows (recoverableCount) as funds in flight.
+            // Exited coins belong in no bucket: `completeUnroll` is their only remedy.
             const live = vtxos.filter((v) => !v.isUnrolled);
             const recoverable = live.filter((v) => v.isSwept && !hasTerminalSpend(v));
             const spendable = live.filter((v) => !hasTerminalSpend(v) && !v.isSwept);
 
             const value = spendable.reduce((sum, v) => sum + v.value, 0);
 
-            // Post-cutoff lifecycle split, only meaningful for EXPIRED rows: the
-            // not-yet-swept spendable set is awaiting the server batch sweep, the
-            // swept set is recoverable now. nextSweepEta is the soonest batch
-            // expiry among the awaiting set, used as a recovery ETA hint.
             let recoverableCount = 0;
             let recoverableValue = 0;
             let awaitingSweepCount = 0;
@@ -2348,13 +1915,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
             if (isCooperativelyMigratable(cls.status)) {
                 for (const v of spendable) {
-                    // Send migration requires a batch expiry: sendSelectedVtxosToSelf
-                    // rejects no-expiry inputs (the DB-update path only persists a
-                    // wallet-owned output when one exists), and a single unrolled/
-                    // settled input here would otherwise throw and fail the whole
-                    // VTXO leg. Such holdings stay counted in the per-signer report
-                    // above; they exit via on-chain/recovery paths, not cooperative
-                    // send.
+                    // No batch expiry: the send path rejects it (see canMigrateBySend) and one
+                    // such input would fail the whole leg. Still counted in the report above.
                     if (v.expiresAt === undefined && v.expiresAtHeight === undefined) continue;
                     migratable.push({ vtxo: v, classification: cls });
                 }
@@ -2372,18 +1934,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Boarding sibling of {@link classifyDeprecatedSignerContracts} (Section 7):
-     * fan out over the wallet's boarding addresses (current + historical), group
-     * the on-chain UTXOs per address, classify each address's signer against the
-     * fresh signer set, and split the confirmed boarding coins into cooperatively-
-     * migratable and cutoff-expired sets while building the per-signer report.
-     *
-     * Discovery sees the active signer plus EVERY deprecated key (EXPIRED
-     * included), so expired-signer boarding is still reported; migration
-     * eligibility is gated afterwards by {@link isCooperativelyMigratable} and a
-     * per-row boarding-output CSV check — never by the fetch. Current-signer
-     * coins are classified `CURRENT` and ignored; foreign-ASP rows are excluded
-     * because their keys are not in the signer set.
+     * Boarding sibling of {@link classifyDeprecatedSignerContracts}, over the wallet's current and
+     * historical boarding addresses. Migration eligibility is gated after discovery by
+     * {@link isCooperativelyMigratable} plus a per-row CSV check — never by the fetch. Foreign-ASP
+     * rows are excluded because their keys are not in the signer set.
      */
     private async classifyDeprecatedSignerBoarding(info: ArkadeInfo): Promise<{
         reports: DeprecatedSignerReport[];
@@ -2394,16 +1948,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const signerSet = signerSetFromInfo(info);
         const nowSeconds = Math.floor(Date.now() / 1000);
 
-        // Allowed set = active signer + every deprecated key (EXPIRED included).
-        // Discovery MUST see expired-signer coins or they could never be
-        // reported; including `active` lets a single fetch cover both.
+        // Discovery MUST see EXPIRED-signer coins or they could never be reported; including
+        // `active` lets one fetch cover both.
         const allowed = new Set<string>([signerSet.active, ...signerSet.deprecated.keys()]);
 
         const groups = await wallet.getBoardingUtxosForSigners(allowed);
 
-        // Boarding-output expiry is PER GROUP (each row persists its own CSV
-        // delay; a rotation may change the boarding exit delay). Fetch the chain
-        // tip once iff any group's timelock is block-typed.
+        // Boarding-output expiry is PER GROUP: a rotation may change the boarding exit delay.
         let chainTipHeight: number | undefined;
         if (groups.some((g) => g.csvTimelock.type === "blocks")) {
             const tip = await wallet.onchainProvider.getChainTip();
@@ -2422,9 +1973,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             const confirmed = group.coins.filter((c) => c.status.confirmed);
             if (confirmed.length === 0) continue;
 
-            // Report row: count ALL confirmed coins under this signer, including
-            // CSV-expired ones (still holdings; they leave via the unilateral
-            // sweep, not cooperative migration).
+            // Counts CSV-expired coins too: still holdings, leaving via the unilateral sweep.
             const value = confirmed.reduce((sum, c) => sum + c.value, 0);
             const existing = reportsBySigner.get(cls.signerPubKey);
             if (existing) {
@@ -2440,9 +1989,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     totalValue: 0,
                     boardingCount: confirmed.length,
                     boardingValue: value,
-                    // Boarding UTXOs don't carry an offchain sweep lifecycle; the
-                    // post-cutoff recover-on-sweep fields apply to VTXOs only and
-                    // are merged in from the VTXO classifier (mergeSignerReports).
+                    // Sweep-lifecycle fields are VTXO-only, merged in by mergeSignerReports.
                     recoverableCount: 0,
                     recoverableValue: 0,
                     awaitingSweepCount: 0,
@@ -2451,9 +1998,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             }
 
             for (const coin of confirmed) {
-                // Both gates are independent and both must pass: the signer
-                // cutoff (via classification) AND the boarding-output CSV expiry
-                // judged against THIS row's delay.
+                // Two independent gates: signer cutoff AND this row's own CSV expiry.
                 const boardingExpired = hasBoardingTxExpired(
                     coin,
                     group.csvTimelock,
@@ -2464,9 +2009,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 } else if (cls.status === "EXPIRED") {
                     expired.push({ coin, classification: cls });
                 }
-                // MIGRATABLE/DUE_NOW but boarding-output CSV expired: reported,
-                // not migrated; it leaves via the unilateral sweep instead.
-                // unknownSigner: reported for visibility, never migrated.
+                // Migratable signer but CSV-expired: leaves via the unilateral sweep instead.
             }
         }
 
@@ -2477,12 +2020,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         };
     }
 
-    /**
-     * Automatic migration pass invoked from the poll loop. Self-contained:
-     * respects an exponential cooldown and logs failures rather than throwing,
-     * so a persistently failing migration backs off instead of re-submitting
-     * an identical intent every cycle.
-     */
+    /** Automatic poll-loop migration pass: backs off exponentially and logs rather than throws. */
     private async runMigrationPass(): Promise<void> {
         const cooldownMs = Math.min(
             VtxoManager.MIGRATION_COOLDOWN_MS * Math.pow(2, this.consecutiveMigrationFailures),
@@ -2492,8 +2030,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         try {
             const report = await this.migrateCore();
-            // Either leg reporting an error fails the whole pass (shared cooldown
-            // + backoff); the legs themselves never throw out of migrateCore.
+            // Legs never throw out of migrateCore; either leg's error fails the whole pass.
             const legError = report.vtxos?.error ?? report.boarding?.error;
             if (legError) {
                 this.consecutiveMigrationFailures++;
@@ -2509,7 +2046,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }
     }
 
-    /** Asserts migration capability and returns the typed wallet. */
     private requireMigrationCapableWallet(): IWallet & MigrationCapableWallet {
         if (!isMigrationCapable(this.wallet)) {
             throw new Error(
@@ -2521,19 +2057,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * If the wallet's own construction-time signer snapshot has been deprecated,
-     * re-derive its receive/boarding state under the active signer so any output
-     * built afterwards commits to the active key. No-op when the snapshot is
-     * already current. Returns whether a rotation was applied. Treats an
-     * unknown-signer snapshot as "do not rotate" (caller decides).
-     *
-     * Shared by the migration pass (where the wallet's own snapshot is the thing
-     * being migrated) and the recovery/renewal/periodic-settle paths (via
-     * {@link rotateForRecoverableInputs}), so a swept old-signer VTXO recovered
-     * after cutoff re-mints under the active signer rather than re-committing to
-     * the deprecated key (Section 6 / post-cutoff). `rotateServerSigner` is
-     * idempotent and serializes itself against HD receive rotation, so repeated
-     * calls across passes are safe.
+     * If the wallet's construction-time signer snapshot is deprecated, re-derive receive/boarding
+     * state under the active signer so later outputs commit to the active key. Returns whether it
+     * rotated; current and unknown-signer snapshots are left alone. Safe to repeat:
+     * `rotateServerSigner` is idempotent and serializes against HD receive rotation.
      */
     private async ensureReceiveOnActiveSigner(info: ArkadeInfo): Promise<boolean> {
         const wallet = this.requireMigrationCapableWallet();
@@ -2547,27 +2074,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         if (walletClass.status === "CURRENT" || walletClass.status === "UNKNOWN_SIGNER") {
             return false;
         }
-        // Thread the fresh epoch's checkpoint script through so the rotated
-        // wallet builds send-path checkpoints against the active server signer.
+        // The fresh epoch's checkpoint script, so send-path checkpoints use the active signer.
         await wallet.rotateServerSigner(hex.decode(info.signerPubkey), info.checkpointTapscript);
         return true;
     }
 
     /**
-     * Rotation guard for the recovery-bearing settle paths (recover / renew /
-     * periodic settle). Pins the wallet's receive snapshot to the active signer
-     * before they build their output, but ONLY when this pass actually carries
-     * an input minted under a deprecated signer — so a routine current-signer
-     * settle on a long-lived pre-rotation instance does not eagerly rotate.
-     *
-     * Cheap in the common case: a watch-only/proxy wallet (not migration-capable)
-     * and a current/unknown wallet snapshot both short-circuit before the
-     * contract round-trip, so the only instance that pays for the input scan is
-     * the long-lived deprecated-snapshot one that genuinely needs rotating.
-     *
-     * Runs OUTSIDE any `renewalInProgress` window the caller sets, and
-     * `rotateServerSigner` does not depend on that flag, so it cannot deadlock
-     * against the receive rotator. Returns whether a rotation was applied.
+     * Rotation guard for recover / renew / periodic settle: pins the receive snapshot to the
+     * active signer before they build their output, but ONLY when this pass carries a
+     * deprecated-signer input — so a routine settle on a long-lived pre-rotation instance does
+     * not eagerly rotate, so a recovered old-signer VTXO re-mints under the active key. Returns
+     * whether a rotation was applied.
      */
     private async rotateForRecoverableInputs(
         inputs: { txid: string; vout: number }[],
@@ -2575,9 +2092,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     ): Promise<boolean> {
         if (!isMigrationCapable(this.wallet)) return false;
 
-        // Cheap in-memory gate first: only a deprecated wallet snapshot can ever
-        // need rotation, and ensureReceiveOnActiveSigner would no-op otherwise —
-        // so skip the contract scan entirely for current/unknown snapshots.
+        // Cheap in-memory gate before the contract scan.
         const signerSet = signerSetFromInfo(info);
         const nowSeconds = Math.floor(Date.now() / 1000);
         const walletClass = classifyAgainstSignerSet(
@@ -2597,12 +2112,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Whether any of the given input outpoints belongs to a contract whose
-     * server signer classifies as non-`CURRENT` against the fresh signer set —
-     * i.e. a deprecated-signer (incl. EXPIRED) input. Maps outpoints to their
-     * owning contract via the ContractManager so it works on the typed
-     * {@link ExtendedVirtualCoin}/{@link ExtendedCoin} inputs the recovery paths
-     * carry (which don't expose `contractScript`).
+     * Whether any input belongs to a contract whose signer is non-`CURRENT` (incl. EXPIRED).
+     * Resolved via the ContractManager because the recovery paths' inputs don't expose
+     * `contractScript`.
      */
     private async anyInputUnderDeprecatedSigner(
         inputs: { txid: string; vout: number }[],
@@ -2632,13 +2144,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     // ========== Private Helpers ==========
 
-    /** Asserts sweep capability and returns the typed wallet. */
     private getSweepWallet(): IWallet & SweepCapableWallet {
         assertSweepCapable(this.wallet);
         return this.wallet;
     }
 
-    /** Decodes the boarding tapscript exit path to extract the CSV timelock. */
     private getBoardingTimelock() {
         const wallet = this.getSweepWallet();
         const exitScript = CSVMultisigTapscript.decode(
@@ -2647,31 +2157,23 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return exitScript.params.timelock;
     }
 
-    /** Returns the onchain provider for fee estimation and broadcasting. */
     private getOnchainProvider() {
         return this.getSweepWallet().onchainProvider;
     }
 
-    /** Returns the Ark provider for intent fee and server info lookups. */
     private getArkProvider() {
         return this.getSweepWallet().arkProvider;
     }
 
     /**
-     * Read-only access to the ark provider for fetching server limits. Unlike
-     * {@link getArkProvider}, this does not require full boarding-sweep
-     * capability — recovery and renewal only need it to read `vtxoMaxAmount`.
-     * Returns undefined when no provider is wired, which callers treat as
-     * "no limit".
+     * Unlike {@link getArkProvider}, doesn't require boarding-sweep capability. Undefined when no
+     * provider is wired, which callers treat as "no limit".
      */
     private getInfoProvider(): ArkProvider | undefined {
-        // Narrow cast: reach only for an optional arkProvider rather than the
-        // full sweep-capable shape, so an incompatible future IWallet.arkProvider
-        // surfaces here as a type error instead of being silently absorbed.
+        // Narrow cast, so an incompatible future IWallet.arkProvider is a type error here.
         return (this.wallet as { arkProvider?: ArkProvider }).arkProvider;
     }
 
-    /** Returns the Bitcoin network configuration from the wallet. */
     private getNetwork() {
         return this.getSweepWallet().network;
     }
@@ -2681,8 +2183,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return undefined;
         }
 
-        // Start polling for boarding inputs independently of contract manager
-        // SSE setup. Use a short delay to let the wallet finish construction.
+        // Independent of contract-manager SSE setup; the delay lets the wallet finish constructing.
         this.startupPollTimeoutId = setTimeout(() => {
             if (this.disposed) return;
             this.startBoardingUtxoPoll();
@@ -2710,31 +2211,21 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     this.renewVtxos().catch((e) => {
                         if (e instanceof Error) {
                             if (e.message.includes("No VTXOs available to renew")) {
-                                // Not an error, just no virtual outputs eligible for renewal.
                                 return;
                             }
                             if (e.message.includes("is below dust threshold")) {
-                                // Not an error, just below dust threshold.
-                                // As more virtual outputs are received, the threshold will be raised.
+                                // Resolves itself as more virtual outputs are received.
                                 return;
                             }
                             if (
                                 e.message.includes("VTXO_ALREADY_REGISTERED") ||
                                 e.message.includes("duplicated input")
                             ) {
-                                // Virtual output is already being used in a concurrent
-                                // user-initiated operation. Skip silently — the
-                                // wallet's tx lock serializes these, but the
-                                // renewal will retry on the next cycle.
+                                // In use by a concurrent user operation; retried next cycle.
                                 return;
                             }
                             if (e.message.includes("VTXO_ALREADY_SPENT")) {
-                                // Our local VTXO cache is stale vs. the
-                                // server's authoritative view. Trigger a
-                                // throttled, targeted refresh on the
-                                // offending outpoint (if the server told
-                                // us which one), then skip — the next
-                                // cycle will see fresh data.
+                                // Stale local cache: targeted, throttled refresh, then skip.
                                 void this.maybeRefreshAfterVtxoSpent(this.extractSpentOutpoint(e));
                                 return;
                             }
@@ -2758,20 +2249,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * VTXO_ALREADY_SPENT means the server's authoritative view of VTXO state
-     * is ahead of ours — cross-instance race, pre-lock snapshot drift, or an
-     * SSE gap left stale data in the local cache. Silent-swallowing
-     * guarantees the same error on the next cycle because nothing
-     * reconciles the cache.
+     * VTXO_ALREADY_SPENT means the server is ahead of our cache (cross-instance race, snapshot
+     * drift, SSE gap); swallowing it guarantees the same error next cycle.
      *
-     * The cursor-derived delta sync filters by `created_at`, so a VTXO that
-     * was created before the cursor but spent recently can never be
-     * reconciled by `refreshVtxos()`. Use `refreshOutpoints` for surgical
-     * recovery: query the indexer for the specific stale outpoint and
-     * upsert its authoritative state into the wallet repository.
-     *
-     * Throttled because the same VTXO can fire repeatedly before the
-     * upsert observably propagates through the renewal selector.
+     * The delta sync filters by `created_at`, so a VTXO created before the cursor but spent
+     * recently is never reconciled by `refreshVtxos()` — hence `refreshOutpoints` on the stale
+     * outpoint. Throttled: the same VTXO can fire repeatedly before the upsert propagates.
      */
     private maybeRefreshAfterVtxoSpent(spentOutpoint?: Outpoint): Promise<void> {
         if (this.vtxoSpentRefreshPromise) {
@@ -2789,7 +2272,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 if (spentOutpoint) {
                     await contractManager.refreshOutpoints([spentOutpoint]);
                 } else {
-                    // No outpoint metadata — fall back to the broader refresh.
                     await contractManager.refreshVtxos();
                 }
             } catch (e) {
@@ -2802,12 +2284,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return this.vtxoSpentRefreshPromise;
     }
 
-    /**
-     * Extract the offending VTXO outpoint from a `VTXO_ALREADY_SPENT` error,
-     * if the server attached one in `metadata.vtxo_outpoint`. Returns
-     * `undefined` when the error isn't a parsed ArkError, isn't this code,
-     * or doesn't carry the metadata.
-     */
+    /** The outpoint a `VTXO_ALREADY_SPENT` error carries in `metadata.vtxo_outpoint`, if any. */
     private extractSpentOutpoint(error: unknown): Outpoint | undefined {
         const ark = maybeArkError(error);
         if (!isArkError(ark, ArkErrorName.VTXO_ALREADY_SPENT)) return undefined;
@@ -2821,16 +2298,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Reconcile the chosen VTXOs with the indexer's authoritative state
-     * before submitting a settle intent. Pulls the canonical record for
-     * each candidate outpoint via {@link IContractManager.refreshOutpoints}
-     * (which upserts the result into the wallet repository), then
-     * re-selects through the standard expiring-vtxo filter so anything
-     * the refresh flagged as spent is dropped.
+     * Pre-flight: refresh the candidates from the indexer ({@link IContractManager.refreshOutpoints})
+     * and re-select, dropping any now known spent. The `created_at`-filtered delta sync can keep a
+     * spent VTXO cached forever, and settling it is a guaranteed VTXO_ALREADY_SPENT 400.
      *
-     * Best-effort: a failed refresh just falls back to the original
-     * candidates and lets the post-submit `VTXO_ALREADY_SPENT` recovery
-     * handle whatever slipped through.
+     * Best-effort: on failure, returns the original candidates and leaves the post-submit
+     * `VTXO_ALREADY_SPENT` recovery to handle whatever slipped through.
      */
     private async revalidateBeforeSettle(
         candidates: NormalizedExtendedVirtualCoin[],
@@ -2845,15 +2318,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             console.error("Error pre-validating VTXOs before settle:", e);
             return candidates;
         }
-        // Re-select from the now-fresh local cache. Anything previously
-        // selected but spent gets filtered out by the standard
-        // spendability checks inside getVtxos / getExpiringVtxos.
         try {
             const refreshed = await this.selectExpiringVtxos(thresholdMs, now);
             const candidateKeys = new Set(candidates.map((v) => `${v.txid}:${v.vout}`));
-            // Restrict to vtxos that were also in the original candidate set
-            // — `getExpiringVtxos` may surface NEW vtxos and we don't want
-            // pre-flight to silently expand the input set.
+            // Pre-flight must not silently expand the input set with newly surfaced VTXOs.
             return refreshed.filter((v) => candidateKeys.has(`${v.txid}:${v.vout}`));
         } catch (e) {
             console.error("Error re-selecting VTXOs after pre-validate:", e);
@@ -2861,7 +2329,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }
     }
 
-    /** Computes the next poll delay, applying exponential backoff on failures. */
     private getNextPollDelay(): number {
         if (this.settlementConfig === false) return 0;
         const baseMs =
@@ -2875,17 +2342,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Starts a polling loop that:
-     * 1. Auto-settles new boarding inputs into Arkade
-     * 2. Sweeps expired boarding inputs (when boardingUtxoSweep is enabled)
-     *
-     * Uses setTimeout chaining (not setInterval) so a slow/blocked poll
-     * cannot stack up and the next delay can incorporate backoff.
+     * Starts the poll loop (auto-settle new boarding inputs, sweep expired ones). setTimeout
+     * chaining, not setInterval, so a slow poll cannot stack up and each delay can back off.
      */
     private startBoardingUtxoPoll(): void {
         if (this.settlementConfig === false) return;
 
-        // Run once immediately, then schedule next
         this.pollBoardingUtxos();
     }
 
@@ -2896,14 +2358,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     private async pollBoardingUtxos(): Promise<void> {
-        // Guard: wallet must support boarding input + sweep operations
         if (!isSweepCapable(this.wallet)) return;
-        // Skip if disposed or a previous poll is still running
         if (this.disposed) return;
         if (this.pollInProgress) return;
         this.pollInProgress = true;
 
-        // Create a promise that dispose() can await
+        // Awaited by dispose().
         let resolve: () => void;
         const promise = new Promise<void>((r) => (resolve = r));
         this.pollDone = { promise, resolve: resolve! };
@@ -2911,20 +2371,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         let hadError = false;
 
         try {
-            // Cross-instance guard: in browser / service worker environments,
-            // serialize the poll body across tabs and SW contexts so only one
-            // of them registers intents per interval. Without this, every tab
-            // submits a parallel RegisterIntent for the same boarding input
-            // and N-1 of them collide on the server's duplicated-input check,
-            // each producing a DeleteIntent RPC. No-op outside the browser.
+            // Otherwise every tab submits a parallel RegisterIntent for the same boarding input
+            // and N-1 collide on the server's duplicated-input check.
             await runWithCrossInstanceLock(BOARDING_POLL_LOCK_NAME, async () => {
-                // Fetch boarding inputs once for the entire poll cycle so that
-                // settle and sweep don't each hit the network independently.
                 const boardingUtxos = await this.wallet.getBoardingUtxos();
 
-                // Settle new (unexpired) boarding inputs + any near-expiry
-                // VTXOs in a single intent, then sweep expired boarding
-                // inputs. Sequential to avoid racing for the same inputs.
+                // Settle, then sweep: sequential to avoid racing for the same inputs.
                 try {
                     await this.runPeriodicSettle(boardingUtxos);
                 } catch (e) {
@@ -2950,10 +2402,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     }
                 }
 
-                // Migrate VTXOs under a deprecated server signer (planned arkd
-                // key rotation). Gated by the opt-out flag; runMigrationPass is
-                // self-contained (own cooldown/backoff, swallows + logs errors)
-                // so it neither stacks the poll backoff nor retries continuously.
+                // runMigrationPass has its own backoff and never throws, so it doesn't stack the
+                // poll backoff.
                 const migrationEnabled =
                     this.settlementConfig !== false &&
                     (this.settlementConfig?.deprecatedSignerMigration ??
@@ -2979,22 +2429,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Auto-settle new (unexpired) boarding inputs AND near-expiry VTXOs into
-     * Arkade in a single intent. Skips boarding UTXOs that are already expired
-     * (those are handled by sweep) and those already in-flight (tracked in
-     * knownBoardingUtxos). If the event-driven renewal path is currently
-     * running, VTXOs are omitted from this cycle to avoid double-spending.
-     *
-     * Failure bookkeeping: after every settle *attempt*, lastPeriodicSettleTimestamp
-     * is armed and consecutive failures are counted so the next attempt is
-     * blocked by an exponentially growing cooldown (capped). This stops a
-     * persistently failing input from producing identical RegisterIntent +
-     * DeleteIntent retries on every 60s poll.
+     * Auto-settle new, unexpired boarding inputs AND near-expiry VTXOs in a single intent.
+     * Skips expired boarding (swept instead) and in-flight boarding (knownBoardingUtxos); omits
+     * VTXOs while the event-driven renewal runs, to avoid double-spending.
      */
     private async runPeriodicSettle(boardingUtxos: ExtendedCoin[]): Promise<void> {
-        // Exclude expired boarding inputs — those should be swept, not settled.
-        // If we can't determine expired status, bail out entirely to avoid
-        // accidentally settling expired inputs (which would conflict with sweep).
+        // If expiry can't be determined, bail entirely rather than settle an input sweep also
+        // targets.
         let expiredSet: Set<string>;
         try {
             const boardingTimelock = this.getBoardingTimelock();
@@ -3018,8 +2459,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 !expiredSet.has(`${u.txid}:${u.vout}`),
         );
 
-        // Collect near-expiry VTXOs unless the event-driven path is mid-renewal.
-        // Skipping when renewalInProgress avoids double-submitting the same VTXOs.
         let expiringVtxos: NormalizedExtendedVirtualCoin[] = [];
         // Fetched here rather than at the top of the method so a boarding-only pass stays offline.
         let now: TimeHeight | undefined;
@@ -3027,11 +2466,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             try {
                 now = await fetchTimeHeight(this.wallet);
                 expiringVtxos = await this.selectExpiringVtxos(undefined, now);
-                // Pre-flight validation: see comment in `renewVtxos`. The
-                // local cache may carry vtxos that the indexer already
-                // marks spent because the cursor-derived delta sync only
-                // catches `created_at`-recent updates, not status changes
-                // for older VTXOs.
                 expiringVtxos = await this.revalidateBeforeSettle(expiringVtxos, undefined, now);
             } catch (e) {
                 // Non-fatal: fall back to boarding-only settle.
@@ -3043,9 +2477,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return;
         }
 
-        // Respect the cooldown armed by the previous attempt. Cooldown grows
-        // exponentially with consecutive failures and is capped by
-        // PERIODIC_SETTLE_MAX_BACKOFF_MS.
         const cooldownMs = Math.min(
             VtxoManager.PERIODIC_SETTLE_COOLDOWN_MS *
                 Math.pow(2, this.consecutivePeriodicSettleFailures),
@@ -3057,10 +2488,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const dustAmount = getDustAmount(this.wallet);
 
-        // Fetch server intent-fee config so each input/output can be priced.
-        // Without this, settle sends `outputAmount = sum(inputs)` and the
-        // server rejects with INTENT_INSUFFICIENT_FEE whenever the operator
-        // charges non-zero intent fees.
         const info = await this.getArkProvider().getInfo();
         const { fees, vtxoMaxAmount } = info;
         const estimator = new Estimator(fees.intentFee);
@@ -3073,25 +2500,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 amount: BigInt(u.value),
             });
             if (inputFee.value >= BigInt(u.value)) {
-                // Fee exceeds input value — including it would drain the output.
                 continue;
             }
             filteredBoarding.push(u);
             totalAmount += BigInt(u.value) - BigInt(inputFee.satoshis);
         }
 
-        // Cap the VTXOs per settlement to stay under the server's intent-size
-        // limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its per-output ceiling
-        // (vtxoMaxAmount; -1 means no limit). Settle the soonest-expiring VTXOs
-        // first so the most urgent ones make the cut. Apply the cap to
-        // economically viable VTXOs only: skipping uneconomic inputs and
-        // continuing past the cap avoids an uneconomic prefix permanently
-        // starving valid VTXOs behind it. Boarding inputs are added uncapped
-        // above; the amount cap accounts for them via the running total (so if
-        // boarding alone already exceeds vtxoMaxAmount no VTXO fits and the
-        // server rejects the over-limit output — a multi-output split would be
-        // needed to settle that, which is out of scope here). Any overflow is
-        // settled on the next cycle.
+        // Inline capSettlementBatch on NET value, over viable VTXOs only, soonest-expiring first.
+        // Boarding is uncapped but counted in the running total: if boarding alone exceeds
+        // vtxoMaxAmount no VTXO fits and the server rejects the output (a multi-output split,
+        // out of scope, would be needed).
         const filteredVtxos: NormalizedExtendedVirtualCoin[] = [];
         // `now` is unset only when the selection block above was skipped, which leaves
         // `expiringVtxos` empty — nothing to sort, so the fallback tip is never read.
@@ -3104,8 +2522,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 continue;
             }
             const net = BigInt(v.value) - BigInt(inputFee.satoshis);
-            // Skip (don't stop at) a VTXO that would push the output past the
-            // ceiling; a smaller VTXO behind it can still fit.
             if (vtxoMaxAmount >= 0n && totalAmount + net > vtxoMaxAmount) {
                 continue;
             }
@@ -3117,14 +2533,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return;
         }
 
-        // Pin the destination to the active signer when this cycle carries a
-        // recoverable input minted under a now-deprecated signer (the
-        // post-cutoff recover-on-sweep drain): rotate the wallet's own snapshot
-        // BEFORE reading getAddress(), so the periodic settle re-mints those
-        // funds under the current key rather than the deprecated one. Runs
-        // before the renewalInProgress window below, so it cannot deadlock
-        // against the receive rotator (Section 6 / post-cutoff). Skipped for
-        // non-rotatable wallets so the hot poll path adds no work for them.
+        // BEFORE getAddress(), and outside the renewalInProgress window below.
         if (isMigrationCapable(this.wallet)) {
             await this.rotateForRecoverableInputs([...filteredBoarding, ...filteredVtxos], info);
         }
@@ -3141,9 +2550,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const includesVtxos = filteredVtxos.length > 0;
 
-        // Block the event-driven renewal path while this settle is in flight
-        // when VTXOs are part of the intent. Mirrors renewVtxos()'s guard so
-        // the two paths can't race on the same VTXO inputs.
+        // Block event-driven renewal so the two paths can't race on the same VTXO inputs.
         if (includesVtxos) {
             this.renewalInProgress = true;
         }
@@ -3157,19 +2564,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     outputs: [{ address: arkAddress, amount: totalAmount }],
                 });
 
-                // Mark boarding inputs as known only after successful settle.
                 for (const u of filteredBoarding) {
                     this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);
                 }
                 success = true;
             } catch (e) {
                 if (e instanceof Error && e.message.includes("VTXO_ALREADY_SPENT")) {
-                    // Local VTXO cache is stale vs. the server's
-                    // authoritative view — not a transient failure.
-                    // Trigger a throttled, targeted refresh on the
-                    // offending outpoint and skip this cycle without
-                    // bumping the failure counter, so the next poll
-                    // can retry once the cache reconciles.
+                    // Stale cache, not a transient failure: refresh and skip without backoff.
                     staleCacheSkip = true;
                     void this.maybeRefreshAfterVtxoSpent(this.extractSpentOutpoint(e));
                 } else {
@@ -3179,19 +2580,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         } finally {
             this.lastPeriodicSettleTimestamp = Date.now();
             if (includesVtxos) {
-                // Match event-path semantics: bump the renewal cooldown
-                // whether we succeeded or failed so a failed periodic settle
-                // doesn't let the next vtxo_received event re-enter renewal
-                // immediately.
+                // Bumped on failure too, as in renewVtxos().
                 this.lastRenewalTimestamp = Date.now();
                 this.renewalInProgress = false;
             }
             if (success) {
                 this.consecutivePeriodicSettleFailures = 0;
             } else if (!staleCacheSkip) {
-                // Don't bump on stale-cache skip: it's not a transient
-                // failure, and the next cycle should try immediately
-                // after the refresh lands.
                 this.consecutivePeriodicSettleFailures++;
             }
         }
@@ -3208,7 +2603,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 clearTimeout(this.pollTimeoutId);
                 this.pollTimeoutId = undefined;
             }
-            // Wait for any in-flight poll to finish (with timeout to avoid hanging)
             if (this.pollDone) {
                 let timer: ReturnType<typeof setTimeout>;
                 const timeout = new Promise<void>((r) => (timer = setTimeout(r, 30_000)));

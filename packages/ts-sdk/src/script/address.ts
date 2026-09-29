@@ -4,13 +4,8 @@ import { Script } from "@scure/btc-signer/script.js";
 import { DEFAULT_NETWORK } from "../networks";
 
 /**
- * ArkAddress allows creating and decoding bech32m-encoded Arkade addresses.
- *
- * An Arkade address is composed of:
- * - a human readable prefix (hrp)
- * - a version byte (1 byte)
- * - a server public key (32 bytes)
- * - a vtxo taproot public key (32 bytes)
+ * ArkAddress allows creating and decoding bech32m-encoded Arkade addresses: an hrp plus a
+ * 65-byte payload of version byte ‖ 32-byte server pubkey ‖ 32-byte VTXO taproot key.
  *
  * @remarks
  * This is an Arkade-specific address format.
@@ -77,7 +72,6 @@ export class ArkAddress {
         }
         const data = new Uint8Array(bech32m.fromWords(decoded.words));
 
-        // First the version byte, then 32 bytes server pubkey, then 32 bytes vtxo taproot public key.
         if (data.length !== 1 + 32 + 32) {
             throw new Error("Invalid data length, expected 65 bytes, got " + data.length);
         }
@@ -96,7 +90,6 @@ export class ArkAddress {
      * @see decode
      */
     encode(): string {
-        // Combine version byte, server pubkey, and vtxo taproot public key.
         const data = new Uint8Array(1 + 32 + 32);
         data[0] = this.version;
         data.set(this.serverPubKey, 1);

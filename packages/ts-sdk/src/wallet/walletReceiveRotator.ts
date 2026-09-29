@@ -15,50 +15,29 @@ import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import type { WalletConfig, WalletMode } from ".";
 
 /**
- * Inputs the wallet hands to a {@link ReceiveRotatorFactory} when
- * asking it to construct the rotator at boot. The factory uses these
- * to look up the wallet's current display contract (or allocate a
- * fresh receive descriptor). Note: no `offchainTapscript` here — the
- * factory's job is allocation, not script construction. The wallet's
- * orchestrator (`WalletReceiveRotator.resolveBoot`) handles the
- * tapscript rebuild on top of the factory's result.
+ * Inputs a {@link ReceiveRotatorFactory} gets at boot to find the current display contract or
+ * allocate a fresh descriptor. Allocation only: `resolveBoot` rebuilds the tapscript afterwards.
  */
 export interface ReceiveRotatorBootOpts {
     walletRepository: WalletRepository;
     contractRepository: ContractRepository;
     serverPubKey: Uint8Array;
-    /**
-     * Expected contract family ("default" or "delegate"). When provided,
-     * boot will only consider contracts of this type when looking up the
-     * wallet's current display contract, preventing a default wallet from
-     * accidentally picking up a delegate contract or vice versa.
-     */
+    /** When set, only this contract family is considered for the current display contract. */
     expectedContractType?: "default" | "delegate";
     /**
-     * The wallet's baseline (index-0) receive pubkey — the x-only key the
-     * initial offchain tapscript is built from. Used by {@link
-     * WalletReceiveRotator.defaultBoot} as the no-tagged-row fallback:
-     * because boarding shares the single HD index stream, the raw watermark
-     * may have been advanced by a boarding-only allocation, so the boot must
-     * NOT derive the receive pubkey from it. A wallet with no tagged receive
-     * row has never rotated L2, so its correct current receive *is* the
-     * baseline index-0 key (plan §6-II.5).
+     * The wallet's baseline (index-0) x-only receive pubkey, used by {@link
+     * WalletReceiveRotator.defaultBoot} when no tagged receive row exists. Such a wallet never
+     * rotated L2, and the raw watermark can't be used: boarding shares the HD index stream, so a
+     * boarding-only allocation may have advanced it.
      */
     baselineReceivePubKey?: Uint8Array;
-    /**
-     * Logger to receive rotation-failure + backoff diagnostics. Defaults
-     * to `console` when omitted. Any object implementing
-     * {@link Logger.error} works (winston, pino, Sentry breadcrumbs,
-     * the runtime's own logger).
-     */
+    /** Receives rotation-failure and backoff diagnostics. Defaults to `console`. */
     logger?: Logger;
 }
 
 /**
- * Output of {@link ReceiveRotatorFactory.createReceiveRotator}: the
- * constructed rotator paired with the receive pubkey it resolved at
- * boot (either the existing tagged display contract's pubkey, or a
- * freshly allocated one).
+ * Output of {@link ReceiveRotatorFactory.createReceiveRotator}: the rotator plus the receive
+ * pubkey resolved at boot (existing tagged display contract's, or freshly allocated).
  */
 export interface ReceiveRotatorBoot {
     rotator: WalletReceiveRotator;
@@ -66,14 +45,9 @@ export interface ReceiveRotatorBoot {
 }
 
 /**
- * Result returned by {@link WalletReceiveRotator.resolveBoot} to the
- * wallet: the rotator plus the offchain tapscript the wallet should
- * actually use (rebuilt to the resolved boot pubkey when it differs
- * from the identity's static pubkey), plus the {@link DescriptorProvider}
- * the rotator was built around. The wallet retains the provider so
- * spending paths can route per-input signing through
- * {@link DescriptorProvider.signWithDescriptor} instead of the
- * identity's index-0 key.
+ * What {@link WalletReceiveRotator.resolveBoot} returns: the rotator, the offchain tapscript to
+ * use (rebuilt to the boot pubkey if it differs), and the provider, which the wallet keeps so
+ * spends route per-input signing through {@link DescriptorProvider.signWithDescriptor}.
  */
 export interface ReceiveRotatorBootResult {
     rotator: WalletReceiveRotator;
@@ -82,17 +56,10 @@ export interface ReceiveRotatorBootResult {
 }
 
 /**
- * Opt-in extension to {@link DescriptorProvider} for providers that
- * drive HD receive rotation. Implemented by {@link HDDescriptorProvider}
- * out of the box; custom providers (HSMs, external signers, …) can also
- * implement it when they want to participate.
- *
- * Kept out of the core `DescriptorProvider` interface so providers that
- * only do allocation + signing don't have to know about the wallet's
- * receive lifecycle. The wallet detects support via
- * {@link hasReceiveRotatorFactory} (a duck-typed `instanceof`-style
- * check) and falls back to {@link WalletReceiveRotator.defaultBoot}
- * when the provider doesn't implement the extension.
+ * Opt-in {@link DescriptorProvider} extension for providers driving HD receive rotation
+ * (implemented by {@link HDDescriptorProvider}). Kept out of the core interface so
+ * allocate-and-sign providers needn't know the receive lifecycle; without it the wallet uses
+ * {@link WalletReceiveRotator.defaultBoot}.
  */
 export interface ReceiveRotatorFactory {
     createReceiveRotator(opts: ReceiveRotatorBootOpts): Promise<ReceiveRotatorBoot | undefined>;
@@ -105,12 +72,7 @@ export function hasReceiveRotatorFactory(
     return typeof (provider as Partial<ReceiveRotatorFactory>).createReceiveRotator === "function";
 }
 
-/**
- * Type guard: does this provider expose a `getCurrentSigningDescriptor`
- * peek method? HD-style providers do (`HDDescriptorProvider`); static
- * providers don't because the concept of a "current index" is
- * meaningless for them.
- */
+/** HD-style providers can peek the current index; static providers have none. */
 interface PeekableDescriptorProvider {
     getCurrentSigningDescriptor(): Promise<string | undefined>;
 }
@@ -123,22 +85,17 @@ function hasPeekableDescriptor(
     );
 }
 
-// Re-exported from the contracts layer (src/contracts/metadata.ts) for
-// backward compatibility of any existing import paths that reference this
-// module. The source-of-truth declaration now lives in `contracts/metadata`
-// so contract handlers can import it without creating a contracts→wallet
-// dependency cycle.
+// Re-exported for existing import paths; declared in `contracts/metadata` to avoid a
+// contracts→wallet dependency cycle.
 export { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 
 // captures the trailing child index N from "...xpub.../0/N)"
 const TRAILING_CHILD_INDEX = /\/(\d+)\)\s*$/;
 
 /**
- * Parse the trailing HD child index from a materialized signing
- * descriptor (`tr(...xpub.../0/<index>)`). Returns 0 when the
- * descriptor is absent or carries no parseable child index — restore
- * registers the index-0 baseline untagged, so a missing descriptor
- * legitimately maps to 0.
+ * Parse the trailing HD child index from a materialized signing descriptor
+ * (`tr(...xpub.../0/<index>)`). Returns 0 when absent or unparseable: restore registers the
+ * index-0 baseline untagged, so a missing descriptor legitimately means 0.
  */
 export function signingDescriptorIndex(descriptor: unknown): number {
     if (typeof descriptor !== "string") return 0;
@@ -169,28 +126,22 @@ export function newestWalletReceiveContract(
 }
 
 /**
- * Strict sibling of {@link signingDescriptorIndex}: `undefined` instead of
- * the 0 fallback, for callers that must tell "no parseable index" apart from
- * index 0 — a watermark move mapped to 0 would move nothing while reporting
- * success.
+ * Strict {@link signingDescriptorIndex}: `undefined` instead of the 0 fallback, for callers
+ * (e.g. watermark moves) where mapping "unparseable" to 0 would silently do nothing.
  */
 export function strictSigningDescriptorIndex(descriptor: string): number | undefined {
     const m = descriptor.match(TRAILING_CHILD_INDEX);
     if (!m) return undefined;
     const n = Number(m[1]);
-    // `isSafeInteger`, not `isInteger`: past 2^53 the parse stops being
-    // faithful (".../0/9007199254740993" reads back as ...992), so a caller
-    // would advance a watermark to an index the descriptor never named.
-    // Unparseable is the honest answer — callers already reject it.
+    // `isSafeInteger`: past 2^53 the parse is lossy (…993 reads back as …992), which would
+    // move a watermark to an index the descriptor never named.
     return Number.isSafeInteger(n) && n >= 0 ? n : undefined;
 }
 
 /**
- * Thrown when a descriptor expected to be rangeable (have a wildcard
- * leaf) cannot produce a leaf pubkey. Surfaces from the rotator's
- * `defaultBoot` path so `resolveBoot` can distinguish a legitimate
- * incompatibility (silent fallback under `walletMode: 'auto'`) from
- * any other runtime failure.
+ * Thrown when a descriptor expected to be rangeable cannot produce a leaf pubkey, so
+ * `resolveBoot` can tell this incompatibility (silent fallback under `walletMode: 'auto'`) from
+ * other failures.
  */
 export class NonRangeableDescriptorError extends Error {
     constructor(message: string, options?: { cause?: unknown }) {
@@ -199,34 +150,17 @@ export class NonRangeableDescriptorError extends Error {
     }
 }
 
-/**
- * Minimal logging surface the rotator needs. `console` satisfies it
- * out of the box; SDK consumers can pass a structured logger
- * (winston / pino / Sentry adapter) via {@link ReceiveRotatorBootOpts}
- * to capture rotation failures + backoff diagnostics through their
- * own pipeline.
- */
+/** Minimal logging surface the rotator needs; `console` or any structured logger satisfies it. */
 export interface Logger {
     error(message: string, ...args: unknown[]): void;
 }
 
-/**
- * Cap on the exponential backoff applied to repeated rotation
- * failures. After this delay, every fresh `vtxo_received` event
- * re-attempts a rotation at this rate until one succeeds (which
- * resets the counter) or the wallet is disposed.
- */
+/** Cap on the exponential backoff between repeated rotation failures. */
 export const ROTATION_MAX_BACKOFF_MS = 60_000;
 
 /**
- * Narrow surface the rotator needs from the wallet at runtime: the
- * mutable display tapscript, the display contract's script hex, the
- * contract manager (for subscribing + registering rotated contracts),
- * and the display address (for the contract's `address` field).
- *
- * Kept as an interface so the rotator module avoids a circular
- * dependency on `wallet.ts`. `Wallet` implements this surface
- * structurally — no `implements` clause is required.
+ * The wallet surface the rotator needs at runtime. An interface to avoid a circular dependency on
+ * `wallet.ts`; `Wallet` satisfies it structurally.
  */
 export interface RotatableWallet {
     readonly defaultContractScript: string;
@@ -234,9 +168,8 @@ export interface RotatableWallet {
     readonly arkServerPublicKey: Uint8Array;
     readonly offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script;
     /**
-     * @internal Sole sanctioned write path for `offchainTapscript`
-     * after construction. The rotator calls this once per rotation
-     * after persisting the new display contract.
+     * @internal Sole sanctioned write path for `offchainTapscript` after construction; called
+     * once per rotation after the new display contract is persisted.
      */
     setOffchainTapscriptForRotation(tapscript: DefaultVtxo.Script | DelegateVtxo.Script): void;
     getContractManager(): Promise<IContractManager>;
@@ -244,56 +177,30 @@ export interface RotatableWallet {
 }
 
 /**
- * Owns the wallet's HD receive-rotation lifecycle.
+ * Owns the wallet's HD receive-rotation lifecycle; exists only when `walletMode` resolves to a
+ * {@link DescriptorProvider}.
  *
- * The rotator is constructed only when the wallet's `walletMode`
- * resolves to a {@link DescriptorProvider}; static wallets and
- * non-HD-capable wallets under `'auto'` never see one.
+ * 1. `resolveBoot()` (before Wallet construction): reuse the display contract's pubkey or
+ *    allocate the first descriptor.
+ * 2. `install(wallet)`: subscribe to `vtxo_received` and rotate on matching events.
+ * 3. `dispose()`: unsubscribe and drain any in-flight rotation.
  *
- * Lifecycle:
- * 1. `resolveBoot()` — pre-Wallet-construction. Resolves the provider
- *    from `walletMode`, then either reuses the existing display
- *    contract's pubkey (if any) or allocates the first descriptor.
- *    Returns the rotator paired with the boot pubkey.
- * 2. `install(wallet)` — post-`getVtxoManager()`. Subscribes to
- *    `vtxo_received` on the contract manager and routes matching events
- *    through the rotation chain.
- * 3. `dispose()` — tears down the subscription and drains any in-flight
- *    rotation so the contract manager can be disposed cleanly.
- *
- * This class follows the dotnet-sdk's split of responsibilities: the
- * provider is a pure rotating allocator; "what address am I currently
- * bound to?" is answered by querying the contract repository, not by
- * asking the provider.
+ * NArk parity: the provider is a pure allocator; the current address comes from the contract
+ * repository, not the provider.
  */
 export class WalletReceiveRotator {
     private unsubscribe?: () => void;
     private chain: Promise<void> = Promise.resolve();
 
     /**
-     * Script of the most-recent tagged display contract — populated
-     * either from the boot-time repo lookup or from the previous
-     * `rotate()` call within this session. The next `rotate()` marks
-     * this contract `inactive` once the new tagged contract is in
-     * place. `undefined` means the wallet's current display is the
-     * untagged index-0 baseline (no rotation has happened yet on this
-     * repo), and the baseline must NOT be deactivated.
+     * Script of the latest tagged display contract, retired by the next `rotate()`. `undefined`
+     * means the untagged index-0 baseline is displayed, which must NOT be deactivated.
      */
     private currentTaggedScript: string | undefined;
 
-    /**
-     * Consecutive rotation failures since the last successful rotate.
-     * Drives an exponential backoff (capped at
-     * {@link ROTATION_MAX_BACKOFF_MS}) so a broken provider can't make
-     * the rotator hammer `getNextSigningDescriptor` + `createContract`
-     * on every inbound VTXO. Reset to zero on a successful rotate.
-     */
+    /** Drives exponential backoff so a broken provider isn't hammered on every inbound VTXO. */
     private consecutiveFailures = 0;
-    /**
-     * Unix-ms timestamp before which incoming `vtxo_received` events
-     * skip the rotation attempt entirely. Zero means "no backoff
-     * active" — the next event can rotate immediately.
-     */
+    /** Unix ms before which `vtxo_received` events skip rotation; 0 = no backoff. */
     private nextRotationAllowedAt = 0;
 
     private readonly logger: Logger;
@@ -308,26 +215,13 @@ export class WalletReceiveRotator {
     }
 
     /**
-     * Phase 1 — pre-Wallet-construction. Resolves `walletMode` to a
-     * {@link DescriptorProvider}, then asks that provider to construct
-     * the rotator (delegated through
-     * {@link DescriptorProvider.createReceiveRotator}, which falls back
-     * to {@link defaultBoot} when the provider doesn't override it).
+     * Resolve `walletMode` to a provider and build the rotator (via its
+     * {@link ReceiveRotatorFactory}, else {@link defaultBoot}). Returns `undefined` for the
+     * static path.
      *
-     * Returns the rotator paired with the offchain tapscript the wallet
-     * should actually install (rebuilt to the resolved receive pubkey
-     * when it differs from the identity's static pubkey), or
-     * `undefined` when the wallet should stay on the static path.
-     *
-     * Errors during pubkey resolution propagate when:
-     * - `walletMode === 'hd'` (caller asked for HD; loud failure expected).
-     * - `walletMode` is a {@link DescriptorProvider} (caller supplied an
-     *   explicit allocator; silently degrading would hide misconfig).
-     *
-     * Errors are silently swallowed (returning `undefined`) only under
-     * `walletMode: 'auto'` with the built-in HD provider, to preserve
-     * backwards compatibility with wallets whose identity descriptor
-     * isn't actually rangeable.
+     * Resolution errors propagate for `'hd'` and explicit providers (degrading would hide
+     * misconfig); a {@link NonRangeableDescriptorError} is swallowed only under `'auto'`, for
+     * back-compat with identities whose descriptor isn't rangeable.
      */
     static async resolveBoot(
         config: WalletConfig,
@@ -355,9 +249,6 @@ export class WalletReceiveRotator {
                 ? await provider.createReceiveRotator(factoryOpts)
                 : await WalletReceiveRotator.defaultBoot(provider, factoryOpts);
         } catch (e) {
-            // Only swallow non-rangeable-descriptor errors, and only
-            // under `walletMode: 'auto'`. Explicit HD/`DescriptorProvider`
-            // callers always see the failure.
             if (allowSilentFallback && e instanceof NonRangeableDescriptorError) {
                 return undefined;
             }
@@ -365,11 +256,7 @@ export class WalletReceiveRotator {
         }
         if (!boot) return undefined;
 
-        // Rebuild the offchain tapscript with the resolved receive
-        // pubkey. Skipping the rebuild when pubkeys already match keeps
-        // the tapscript instance stable for static / first-boot paths
-        // (no allocation churn, no observable change for callers
-        // that retain the reference across `Wallet.create`).
+        // Reuse the instance when pubkeys match, so callers holding the reference see no change.
         const offchainTapscript = equalBytes(
             boot.receivePubkey,
             setup.offchainTapscript.options.pubKey,
@@ -381,19 +268,9 @@ export class WalletReceiveRotator {
     }
 
     /**
-     * Default factory-shaped boot any
-     * {@link ReceiveRotatorFactory.createReceiveRotator} implementation
-     * can delegate to. Pulls the wallet's current display contract from
-     * the contract repository (or allocates a fresh receive descriptor
-     * via the provider when no tagged display contract exists), and
-     * returns the rotator paired with the resolved receive pubkey.
-     *
-     * Used internally by `resolveBoot` when the provider doesn't
-     * implement {@link ReceiveRotatorFactory}. Exported so providers
-     * that *do* override can still invoke the default work for the
-     * parts of the boot path they don't want to customise. Tapscript
-     * construction is intentionally NOT in here — that's the
-     * orchestrator's job.
+     * Default boot any {@link ReceiveRotatorFactory.createReceiveRotator} can delegate to: take
+     * the current display contract from the repository, else allocate/derive the receive pubkey.
+     * Tapscript construction is deliberately left to `resolveBoot`.
      */
     static async defaultBoot(
         provider: DescriptorProvider,
@@ -411,23 +288,10 @@ export class WalletReceiveRotator {
             };
         }
 
-        // No tagged display contract on this repo. Two cases:
-        //
-        // 1. Fresh repo (no watermark yet, or a non-peekable provider) —
-        //    allocate the first index to establish the watermark so the
-        //    first rotation advances to the next index instead of landing
-        //    back on the baseline. For HD the allocated index-0 leaf IS the
-        //    baseline receive pubkey.
-        //
-        // 2. Watermark already set but no tagged receive row — the wallet
-        //    has never rotated L2 (a rotation would have left a tagged row),
-        //    so its correct current receive is the BASELINE index-0 key. We
-        //    must NOT derive from the raw watermark: boarding shares the one
-        //    HD index stream, so a boarding-only allocation may have advanced
-        //    it past index 0, and reading it here would drift the receive
-        //    address onto a boarding index (plan §6-II.5). A partial repo
-        //    that lost its tag self-heals on the next restore() scan, which
-        //    re-tags rotated receive rows.
+        // No tagged display contract. Fresh repo: allocate index 0 to establish the watermark, so
+        // the first rotation advances past the baseline. Watermark set but untagged: L2 never
+        // rotated, so use the BASELINE key, not the watermark (boarding shares the index stream
+        // and may have advanced it). A repo that lost its tag self-heals on the next restore().
         const current = hasPeekableDescriptor(provider)
             ? await provider.getCurrentSigningDescriptor()
             : undefined;
@@ -445,29 +309,16 @@ export class WalletReceiveRotator {
     }
 
     /**
-     * Phase 2 — post-`getVtxoManager()`. Subscribe to `vtxo_received`
-     * and trigger a rotation whenever the currently-active display
-     * contract receives funds. Old display contracts remain `active`
-     * in the repo so earlier shared addresses keep crediting this
-     * wallet.
+     * Subscribe to `vtxo_received` and rotate whenever the current display contract receives
+     * funds. Old display contracts stay watched, so earlier shared addresses keep crediting.
      */
     async install(wallet: RotatableWallet): Promise<void> {
         const manager = await wallet.getContractManager();
         this.unsubscribe = manager.onContractEvent((event) => {
             if (event.type !== "vtxo_received") return;
             if (event.contractScript !== wallet.defaultContractScript) return;
-            // Serialise rotations: each `vtxo_received` event is its
-            // own rotation trigger (BIP-44-style: one receive ⇒ one
-            // fresh address), so two rapid events on the same script
-            // are *expected* to burn two consecutive HD indices. The
-            // chain here only prevents the rotate → rebuild →
-            // createContract sequences from interleaving; it does not
-            // — and intentionally does not — dedupe events on the same
-            // script. `runRotateWithBackoff` owns the failure handling
-            // — it logs, increments the consecutive-failure counter,
-            // and gates future attempts behind exponential backoff so
-            // a broken provider can't make the rotator hammer
-            // `createContract` on every event.
+            // Serialized but deliberately NOT deduped: one receive ⇒ one fresh address, so two
+            // rapid events burn two indices.
             this.chain = this.chain
                 .catch(() => undefined)
                 .then(() => this.runRotateWithBackoff(wallet));
@@ -475,16 +326,8 @@ export class WalletReceiveRotator {
     }
 
     /**
-     * Run a single rotation attempt, applying exponential backoff on
-     * failure. Public-shaped behavior:
-     * - During a backoff window: log + skip (no `rotate()` call).
-     * - On success: reset failure count and backoff.
-     * - On failure: increment counter, schedule next attempt at
-     *   `min(2^consecutiveFailures * 1s, ROTATION_MAX_BACKOFF_MS)`.
-     *
-     * Errors are deliberately swallowed (logged, not rethrown) so the
-     * surrounding `chain` Promise never settles to rejected — the next
-     * `vtxo_received` event must still get a chance to run.
+     * One rotation attempt with exponential backoff. Errors are logged, not rethrown, so `chain`
+     * never rejects and the next `vtxo_received` still runs.
      */
     private async runRotateWithBackoff(wallet: RotatableWallet): Promise<void> {
         const now = Date.now();
@@ -501,9 +344,7 @@ export class WalletReceiveRotator {
             this.nextRotationAllowedAt = 0;
         } catch (err) {
             this.consecutiveFailures += 1;
-            // 2^1=2s, 2^2=4s, … capped at ROTATION_MAX_BACKOFF_MS (60s).
-            // `Math.min` on the exponent prevents `2 ** 1024` overflow
-            // for pathologically long failure streaks.
+            // Exponent capped so long failure streaks can't overflow `2 **`.
             const exponent = Math.min(this.consecutiveFailures, 16);
             const backoffMs = Math.min(2 ** exponent * 1_000, ROTATION_MAX_BACKOFF_MS);
             this.nextRotationAllowedAt = Date.now() + backoffMs;
@@ -514,23 +355,15 @@ export class WalletReceiveRotator {
         }
     }
 
-    /**
-     * Wait for any in-flight rotation to complete. Useful in tests
-     * that need to observe the post-rotation state after dispatching
-     * a `vtxo_received` event synchronously; production code rarely
-     * needs to call this directly.
-     */
+    /** Wait for any in-flight rotation to complete (mainly for tests). */
     async drain(): Promise<void> {
         await this.chain.catch(() => undefined);
     }
 
     /**
-     * Run `fn` on the rotator's serialization chain, so it cannot interleave
-     * with a receive `rotate()`. Used by {@link Wallet.rotateServerSigner} to
-     * serialize server-signer rotation against HD receive rotation: both
-     * rebuild and swap `offchainTapscript`, so running them concurrently could
-     * tear the wallet's visible receive state. The chain keeps advancing even
-     * if `fn` rejects (its own caller still sees the rejection).
+     * Run `fn` on the rotation chain. {@link Wallet.rotateServerSigner} uses it because both it
+     * and `rotate()` swap `offchainTapscript`; interleaving could tear the visible receive state.
+     * The chain advances even if `fn` rejects (the caller still sees the rejection).
      */
     runExclusive<T>(fn: () => Promise<T>): Promise<T> {
         const run = this.chain.catch(() => undefined).then(fn);
@@ -542,10 +375,8 @@ export class WalletReceiveRotator {
     }
 
     /**
-     * Tear down the subscription first so no late `vtxo_received` event
-     * can queue work on a disposing wallet, then drain any in-flight
-     * rotation so its `createContract` finishes before the contract
-     * manager itself disposes.
+     * Unsubscribe first so no late event queues work, then drain so an in-flight
+     * `createContract` finishes before the contract manager disposes.
      */
     async dispose(): Promise<void> {
         if (this.unsubscribe) {
@@ -561,31 +392,13 @@ export class WalletReceiveRotator {
     }
 
     /**
-     * Allocate the next descriptor, swap it into the wallet's active
-     * offchain tapscript, register the new tagged contract, and retire
-     * the previous tagged contract (if any) by setting its state to
-     * `inactive`. The contract watcher keeps watching inactive
-     * contracts until their VTXOs are spent, so funds in flight at the
-     * old display address are not lost — only the address stops being
-     * advertised.
-     *
-     * Contract type matches the wallet's tapscript shape: a default
-     * wallet rotates to a new `default` contract, a delegate wallet to
-     * a new `delegate` contract.
-     *
-     * The first rotation on a fresh wallet does NOT deactivate
-     * anything: `currentTaggedScript` is `undefined` because the wallet
-     * was displaying the untagged index-0 baseline, which must stay
-     * active forever.
+     * Allocate the next descriptor, register it as the new tagged display contract (same
+     * default/delegate shape), swap it in, and mark the previous tagged one `inactive` (still
+     * watched; it just stops being advertised). The untagged index-0 baseline is never retired.
      */
     private async rotate(wallet: RotatableWallet): Promise<void> {
-        // Build the new tapscript + derived strings entirely locally,
-        // so the wallet's visible state (`offchainTapscript`,
-        // `defaultContractScript`, `getAddress()`) doesn't change
-        // until the contract registration has succeeded. If
-        // `createContract` throws partway, the wallet is still
-        // displaying the OLD (registered) address — no
-        // unwatched-display-window.
+        // Built locally so visible state only changes after registration succeeds: no window
+        // where the displayed address is unwatched.
         const descriptor = await this.provider.getNextSigningDescriptor();
         const { tapscript: newTapscript, params } = buildReceiveContract(
             wallet.offchainTapscript,
@@ -598,28 +411,18 @@ export class WalletReceiveRotator {
         const manager = await wallet.getContractManager();
         await manager.createContract(params);
 
-        // Persistence succeeded — commit the new tapscript to the
-        // wallet's visible state. From this point onward
-        // `wallet.defaultContractScript` and `getAddress()` reflect
-        // the rotated identity. `setOffchainTapscriptForRotation` is
-        // the only write path; the field is read-only otherwise.
         wallet.setOffchainTapscriptForRotation(newTapscript);
 
-        // Retire the previous tagged contract (if any). The order
-        // matters: deactivate FIRST, then update `currentTaggedScript`,
-        // so that if `setContractState` throws the next rotation will
-        // retry deactivating the same orphaned contract instead of
-        // racing forward and orphaning the new one.
+        // Deactivate BEFORE updating `currentTaggedScript`, so a throw here makes the next
+        // rotation retry the same contract instead of orphaning it.
         const previousTagged = this.currentTaggedScript;
         if (previousTagged !== undefined && previousTagged !== newScript) {
             await manager.setContractState(previousTagged, "inactive");
         }
         this.currentTaggedScript = newScript;
 
-        // The watermark moved — slide the look-ahead band with it. Last, so a
-        // refill failure cannot leave a persisted-but-uncommitted rotation, and
-        // best-effort: the rotation has committed, so a failed band slide must
-        // not make `runRotateWithBackoff` retry (and burn another index).
+        // Slide the look-ahead band. Last and best-effort: the rotation has committed, so a
+        // failure must not make `runRotateWithBackoff` retry and burn another index.
         try {
             await manager.refillLookAhead();
         } catch (err) {
@@ -628,12 +431,7 @@ export class WalletReceiveRotator {
     }
 }
 
-/**
- * Wrapper around {@link deriveDescriptorLeafPubKey} that re-throws as a
- * typed {@link NonRangeableDescriptorError} so callers (most importantly
- * `resolveBoot`'s silent-fallback path) can branch on the typed error
- * class instead of grepping `err.message`.
- */
+/** {@link deriveDescriptorLeafPubKey}, re-throwing as {@link NonRangeableDescriptorError}. */
 function deriveLeafPubkey(descriptor: string): Uint8Array {
     try {
         return deriveDescriptorLeafPubKey(descriptor);
@@ -646,18 +444,13 @@ function deriveLeafPubkey(descriptor: string): Uint8Array {
 }
 
 /**
- * Build the offchain receive contract owned by `descriptor`'s leaf pubkey,
- * keeping every other option of `current` (including its `default` vs
- * `delegate` shape). Returns the rebuilt tapscript alongside the contract
- * params so the caller can commit it once persistence succeeds.
+ * Build the receive contract owned by `descriptor`'s leaf pubkey, keeping every other option of
+ * `current`. Returns the tapscript separately so the caller commits it only after persistence.
+ * Shared by `rotate` and the look-ahead `materialize` so they cannot drift.
  *
- * Shared by {@link WalletReceiveRotator.rotate} and the wallet's look-ahead
- * `materialize` so the two cannot drift.
- *
- * @param tagSource - Tag the row {@link WALLET_RECEIVE_SOURCE}. Only for
- * addresses the wallet generated for itself: the tag makes the next boot adopt
- * the contract as the advertised display address, which must never happen for a
- * speculative index an external party may have issued.
+ * @param tagSource - Tag the row {@link WALLET_RECEIVE_SOURCE}. Only for addresses the wallet
+ * generated for itself: the next boot adopts a tagged row as the display address, which must
+ * never happen for a speculative index an external party may have issued.
  */
 export function buildReceiveContract(
     current: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -674,11 +467,8 @@ export function buildReceiveContract(
         script: hex.encode(tapscript.pkScript),
         address: tapscript.address(hrp, serverPubKey).encode(),
         state: "active" as const,
-        // The materialized signing descriptor is read at sign time to route
-        // inputs locked by a rotated pubkey through
-        // `DescriptorProvider.signWithDescriptor` instead of the identity's
-        // index-0 key. Without it, spends produce unsigned PSBTs that the
-        // server rejects with `INVALID_PSBT_INPUT (5): missing tapscript spend sig`.
+        // Read at sign time to route rotated-pubkey inputs through `signWithDescriptor`; without
+        // it spends are rejected with `INVALID_PSBT_INPUT (5): missing tapscript spend sig`.
         metadata: {
             ...(tagSource && { source: WALLET_RECEIVE_SOURCE }),
             signingDescriptor: descriptor,
@@ -710,15 +500,7 @@ export function buildReceiveContract(
     return { tapscript, params };
 }
 
-/**
- * Rebuild the given offchain tapscript with a different owner pubkey,
- * preserving its {@link DelegateVtxo.Script} vs {@link DefaultVtxo.Script}
- * shape and all other options.
- *
- * Exported because the wallet's boot path also needs to rebuild the
- * initial tapscript when the resolved boot pubkey differs from the
- * identity's default pubkey.
- */
+/** Rebuild the offchain tapscript with a different owner pubkey, preserving shape and options. */
 export function rebuildTapscript(
     current: DefaultVtxo.Script | DelegateVtxo.Script,
     pubKey: Uint8Array,
@@ -730,32 +512,15 @@ export function rebuildTapscript(
 }
 
 /**
- * Look up the most-recently-created active tagged display contract that
- * this wallet itself generated. Returns the contract's pubkey + script,
- * or `undefined` when no such contract exists — the caller should treat
- * that as "fresh wallet (or static-only history) on this repo" and
- * allocate a new descriptor.
- *
- * Filters by `serverPubKey` so a contract repo seeded against a different
- * server doesn't accidentally resurrect an unrelated pubkey, and by the
- * `metadata.source` sentinel so untagged baseline contracts (and
- * contracts created by other code paths — legacy timelock registrations,
- * external integrations) are not mistaken for the wallet's display
- * address.
- *
- * When `expectedType` is provided, only contracts of that type are considered,
- * preventing a "default" wallet from accidentally picking up a "delegate" contract
- * or vice versa.
+ * The newest active display contract this wallet generated for itself, or `undefined` (fresh or
+ * static-only repo). Filtered by `serverPubKey` so another server's rows aren't resurrected, and
+ * by the `metadata.source` tag so untagged baseline and third-party rows aren't mistaken for it.
  */
 async function pickActiveReceive(
     contractRepository: ContractRepository,
     serverPubKey: Uint8Array,
     expectedType?: "default" | "delegate",
 ): Promise<{ pubKey: Uint8Array; script: string } | undefined> {
-    // Both `default` and `delegate` contract types can be the wallet's
-    // display address (delegate wallets use the delegate variant). The
-    // `metadata.source` tag is the discriminator that says "this is the
-    // one I generated for myself."
     const candidates = await contractRepository.getContracts({
         type: expectedType ? [expectedType] : ["default", "delegate"],
         state: "active",
@@ -773,17 +538,9 @@ async function pickActiveReceive(
 }
 
 /**
- * Resolve the polymorphic `walletMode` config field into a concrete
- * {@link DescriptorProvider} (or `undefined` for the static path).
- *
- * - `'auto'` *(default)*: **short-term**, behaves like `'static'` — no
- *   HD rotation. See the `TODO` below for the criteria to flip this
- *   back to the identity-probing behaviour.
- * - `'static'`: returns `undefined`.
- * - A {@link DescriptorProvider} instance: returns it as-is.
- * - `'hd'`: builds the built-in HD provider from the identity. Throws
- *   if the identity isn't HD-capable or the descriptor isn't rangeable —
- *   no silent fallback.
+ * Resolve `walletMode` to a {@link DescriptorProvider}, or `undefined` for the static path.
+ * `'auto'` currently behaves like `'static'` (see TODO); `'hd'` throws rather than falling back
+ * if the identity isn't HD-capable or its descriptor isn't rangeable.
  */
 async function resolveDescriptorProvider(
     config: WalletConfig,
@@ -791,19 +548,12 @@ async function resolveDescriptorProvider(
 ): Promise<DescriptorProvider | undefined> {
     const mode: WalletMode = config.walletMode ?? "auto";
 
-    // TODO(hd-maturation): TEMPORARY — collapse `'auto'` into `'static'`
-    // until the HD receive-rotation pipeline has soaked in the field.
-    // Flip `'auto'` back to its identity-probing behaviour once:
-    //   1. At least one consumer (btcpay-arkade, arkade-os/wallet,
-    //      Fulmine) has been running with `walletMode: 'hd'` against
-    //      mainnet for ≥ 1 month with no rotation-induced fund-loss
-    //      or address-drift reports.
-    //   2. The test `default ('auto') currently behaves like 'static'`
-    //      in `test/walletHdRotation.test.ts` is flipped in the same
-    //      commit (it's the explicit gate — flipping the default
-    //      MUST flip the test).
-    //   3. The `WalletMode` docstring in `src/wallet/index.ts` is
-    //      updated to drop the "behaves like 'static' for now" notice.
+    // TODO(hd-maturation): TEMPORARY — `'auto'` collapses into `'static'` until HD rotation has
+    // soaked. Flip back to identity-probing once: (1) a consumer (btcpay-arkade, arkade-os/wallet,
+    // Fulmine) has run `walletMode: 'hd'` on mainnet for ≥ 1 month with no fund-loss or
+    // address-drift reports; (2) the `default ('auto') currently behaves like 'static'` test in
+    // `test/walletHdRotation.test.ts` is flipped in the same commit; (3) the `WalletMode` doc in
+    // `src/wallet/index.ts` drops its "behaves like 'static' for now" notice.
     if (mode === "static" || mode === "auto") return undefined;
 
     if (typeof mode !== "string") {

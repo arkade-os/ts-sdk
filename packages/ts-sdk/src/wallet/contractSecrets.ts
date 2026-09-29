@@ -1,30 +1,22 @@
 /**
- * Secrets a contract needs in order to be spendable by us, provisioned by the
- * wallet.
+ * Secrets a contract needs in order to be spendable by us, provisioned by the wallet.
  *
- * A consumer names the leg it is building — a refund key for a leg it funds, a
- * claim key and preimage for one it claims — and the wallet answers with a
- * public key to bind into the covenant plus the descriptor that recovers the
- * signer later. Consumers never generate key material, never persist a private
- * key, and never branch on wallet type: the wallet decides whether the
- * descriptor is a fresh HD child or its one static key, and that decision is
- * invisible here.
+ * A consumer names the leg it is building (a refund key for a leg it funds, a claim key and
+ * preimage for one it claims); the wallet answers with a pubkey to bind into the covenant plus the
+ * descriptor that recovers the signer later. Consumers never generate key material, never persist
+ * a private key, and never branch on wallet type.
  *
- * The preimage rule keys off the **descriptor's shape**, not the wallet's
- * type. An HD child descriptor belongs to exactly one artifact, so its
- * preimage can be a deterministic signature over the key — recoverable from
- * the seed with nothing at rest. A bare `tr(pubkey)` repeats across artifacts,
- * so the same derivation would hand every artifact the identical preimage.
- * Those derive from a **salted** message instead: 32 public bytes minted per
- * artifact and stored in the clear, which restore uniqueness without the key
- * having to be unique. Only a signer that cannot sign deterministically at all
- * still gets a random preimage, and `mustPersistPreimage` tells the caller it
- * is then the artifact's only claim secret.
+ * The preimage rule keys off the **descriptor's shape**, not the wallet's type. An HD child
+ * descriptor belongs to exactly one artifact, so its preimage is a deterministic signature over
+ * the key — recoverable from the seed with nothing at rest. A bare `tr(pubkey)` repeats across
+ * artifacts (the same derivation would give each the identical preimage), so it derives from a
+ * **salted** message: 32 public bytes minted per artifact and stored in the clear. Only a signer
+ * that cannot sign deterministically gets a random preimage, and `mustPersistPreimage` then says
+ * it is the artifact's only claim secret.
  *
- * Uniqueness therefore never rests on a claim about the descriptor. The shape
- * test picks the arm; it is not load-bearing for collision safety, so a custom
- * `DescriptorProvider` handing back one constant descriptor forever still gets
- * a distinct preimage per artifact.
+ * The shape test only picks the arm; collision safety never rests on it, so a custom
+ * `DescriptorProvider` returning one constant descriptor still gets a distinct preimage per
+ * artifact.
  */
 import { sha256 } from "@noble/hashes/sha2.js";
 import { randomBytes } from "@noble/hashes/utils.js";
@@ -44,36 +36,25 @@ import type { IWallet } from ".";
 import { ArkAddress } from "../script/address";
 
 /**
- * Domain separator for the preimage derivation.
- *
- * Protocol-scoped and versioned, mirroring NArk's `Arkade-Boltz-Preimage-v1`
- * (`SwapsManagementService.cs:128`), so any Arkade SDK implementing this
- * scheme reproduces the same preimage and can recover an artifact another
- * SDK created. Deliberately distinct from the Boltz tag: a shared tag would
- * make one wallet key derive one preimage for both corridors.
+ * Domain separator for the preimage derivation. Protocol-scoped and versioned, mirroring NArk's
+ * `Arkade-Boltz-Preimage-v1` (`SwapsManagementService.cs:128`), so any Arkade SDK reproduces the
+ * same preimage and can recover another SDK's artifact. Deliberately distinct from the Boltz tag:
+ * a shared tag would make one wallet key derive one preimage for both corridors.
  */
 export const ARKADE_SWAP_PREIMAGE_TAG = "Arkade-RFQ-Preimage-v1";
 
 /**
- * Domain separator for the **salted** preimage derivation, used when the
- * descriptor repeats across artifacts.
- *
- * Corridor-generic where {@link ARKADE_SWAP_PREIMAGE_TAG} is not, and that
- * asymmetry is deliberate. The v1 tags must be per-corridor
- * (`Arkade-RFQ-Preimage-v1` here, NArk's `Arkade-Boltz-Preimage-v1` there)
- * because v1 pins its message index, so the tag is the only thing separating
- * two corridors that reach the same key. v2 mints a salt per artifact, so no
- * two artifacts share a message within a corridor, let alone across two — the
- * salt carries the separation, and the tag names the layer it belongs to.
+ * Domain separator for the **salted** derivation, used when the descriptor repeats across
+ * artifacts. Corridor-generic, unlike {@link ARKADE_SWAP_PREIMAGE_TAG}, deliberately: v1 pins its
+ * message index, so its tag is all that separates two corridors reaching the same key; here the
+ * per-artifact salt carries that separation.
  */
 export const ARKADE_SALTED_PREIMAGE_TAG = "Arkade-Contract-Preimage-Salted-v1";
 
 /**
- * `TAG ‖ xonly(32) ‖ u32le(index)` — the message that gets BIP-340 signed.
- *
- * Anchored on the canonical x-only key rather than the descriptor string: a
- * restore reconstructs a bare descriptor that serialises differently from the
- * signing descriptor used at creation, and only the key agrees across both.
+ * `TAG ‖ xonly(32) ‖ u32le(index)` — the message that gets BIP-340 signed. Anchored on the x-only
+ * key, not the descriptor string: a restore rebuilds a descriptor that serialises differently from
+ * the one used at creation, and only the key agrees across both.
  */
 export function buildPreimageMessage(xonly: Uint8Array, index: number): Uint8Array {
     if (xonly.length !== 32) {
@@ -91,12 +72,8 @@ export function buildPreimageMessage(xonly: Uint8Array, index: number): Uint8Arr
 }
 
 /**
- * `TAG ‖ xonly(32) ‖ salt(32)` — the salted message that gets BIP-340 signed.
- *
- * The salt replaces v1's pinned index as the source of per-artifact
- * uniqueness, which is what lets a key that repeats across artifacts still
- * derive a distinct preimage for each. It is public: knowing it yields nothing
- * without the seed.
+ * `TAG ‖ xonly(32) ‖ salt(32)` — the salted message that gets BIP-340 signed. The salt replaces
+ * v1's pinned index as the per-artifact uniqueness source; it is public, useless without the seed.
  */
 export function buildSaltedPreimageMessage(xonly: Uint8Array, salt: Uint8Array): Uint8Array {
     if (xonly.length !== 32) {
@@ -114,9 +91,8 @@ export function buildSaltedPreimageMessage(xonly: Uint8Array, salt: Uint8Array):
 }
 
 /**
- * Deriving unsalted is only safe when the key belongs to one artifact, so the
- * message index stays pinned. Kept a parameter of
- * {@link buildPreimageMessage} for cross-SDK vectors.
+ * Pinned: unsalted derivation is only safe when the key belongs to one artifact. Still a
+ * parameter of {@link buildPreimageMessage} for cross-SDK vectors.
  */
 const PREIMAGE_INDEX = 0;
 
@@ -139,18 +115,14 @@ export interface ProvisionedKey {
      */
     descriptor: string;
     /**
-     * The Ark scriptPubKey that corresponds to this key — the pkScript of the
-     * wallet's current receive address. Returned alongside {@link pubkey} so
-     * callers building the lockup script do not need a separate
-     * {@link IWallet.getAddress} round-trip or an `ArkAddress.decode` call.
+     * The pkScript of the wallet's current receive address, so callers building the lockup need
+     * no separate {@link IWallet.getAddress} or `ArkAddress.decode`.
      */
     pkScript: Uint8Array;
     /**
-     * The receive address {@link pkScript} was decoded from, captured in the
-     * same single {@link IWallet.getAddress} read. The quote-time refund
-     * address and the covenant's `refundPkScript` must always name the same
-     * script, and two independent reads of a wallet that rotates its receive
-     * address would not guarantee that — reuse this, never a second
+     * The receive address {@link pkScript} was decoded from, in the same {@link IWallet.getAddress}
+     * read. The quote-time refund address and the covenant's `refundPkScript` must name the same
+     * script, and two reads of a rotating wallet need not agree — reuse this, never a second
      * `getAddress()` call.
      */
     address: string;
@@ -166,21 +138,15 @@ export interface ProvisionedClaimSecret extends Omit<ProvisionedKey, "pkScript" 
     /** `sha256(preimage)` — what the contract commits to. */
     paymentHash: Uint8Array;
     /**
-     * The salt {@link preimage} was derived from, when it came from the salted
-     * arm. **Public** — the opposite of {@link preimage} above: persist it with
-     * the artifact in the clear, because without it a wallet holding the seed
-     * still cannot re-derive P.
-     *
-     * Absent on the other two arms: an HD child descriptor already names one
-     * artifact, and a stored preimage needs no derivation input.
+     * The salt {@link preimage} was derived from, on the salted arm. **Public**, unlike
+     * {@link preimage}: persist it in the clear with the artifact — without it even the seed
+     * cannot re-derive P. Absent on the other arms.
      */
     preimageSalt?: Uint8Array;
     /**
-     * Persist `preimage` with the artifact: this wallet cannot re-derive it.
-     * True when the caller supplied P, or when the signer cannot sign
-     * deterministically. When false the preimage re-derives from the seed —
-     * given {@link preimageSalt}, where there is one — and nothing secret
-     * needs to be stored.
+     * Persist `preimage` with the artifact: this wallet cannot re-derive it (caller-supplied P,
+     * or a signer that cannot sign deterministically). When false, P re-derives from the seed
+     * (given {@link preimageSalt}, if any) and nothing secret needs storing.
      */
     mustPersistPreimage: boolean;
 }
@@ -193,35 +159,25 @@ async function provisionDescriptor(wallet: IWallet): Promise<string> {
     const allocated = isHDAllocationCapable(wallet)
         ? await wallet.getNextSigningDescriptor()
         : undefined;
-    // A wallet that cannot allocate still provides a key it holds.
     return allocated ?? (await identityDescriptor(wallet.identity));
 }
 
 /**
- * The key that spends a leg we fund — the refund key of an HTLC, the user key
- * of a covenant's cancel path.
+ * The key that spends a leg we fund — an HTLC's refund key, a covenant's cancel-path user key.
  *
- * The returned `pubkey` is taken from a signer the wallet produced, never
- * from the descriptor string alone. That is the difference between an
- * invariant and a comment: deriving the leaf key is pure parsing and would
- * succeed just as well for a key this wallet cannot sign for — a descriptor
- * allocated by a worker rebound to another identity, a record restored onto
- * the wrong seed — and the covenant would bind it, the leg would fund, and
- * the failure would surface at refund time with the money already committed.
- * Throws {@link ForeignDescriptorError} instead, before there is a quote.
+ * `pubkey` comes from a signer the wallet produced, never the descriptor string alone: parsing
+ * succeeds just as well for a key this wallet cannot sign for (a worker rebound to another
+ * identity, a record restored onto the wrong seed), and the failure would surface at refund time
+ * with the money committed. Throws {@link ForeignDescriptorError} instead, before any quote.
  *
- * The wallet's identity key is reused rather than a fresh HD child, so no
- * index is consumed when the artifact is never built — and the covenant's
- * refund path is on the same key as the refund address the caller sends to
- * at quote time.
+ * Reuses the identity key rather than a fresh HD child, so no index is consumed for an artifact
+ * never built, and the refund path is on the same key as the quote-time refund address.
  */
 export async function provisionRefundKey(wallet: IWallet): Promise<ProvisionedKey> {
     const descriptor = await identityDescriptor(wallet.identity);
     const signer = await contractSigner(wallet, descriptor);
     const pubkey = await signer.xOnlyPublicKey();
-    // Sanity: the descriptor and the wallet's current identity must name the same key.
-    // A divergence here would mean the lockup's refund path and the refund destination
-    // are controlled by different keys — the user could not recover the funds.
+    // The refund path and refund destination must be one key, or the user cannot recover funds.
     const identityPubkey = await wallet.identity.xOnlyPublicKey();
     if (!equalBytes(pubkey, identityPubkey)) {
         throw new Error(
@@ -229,33 +185,23 @@ export async function provisionRefundKey(wallet: IWallet): Promise<ProvisionedKe
                 "the refund key and the refund address would be on different keys",
         );
     }
-    // One read, one pair: the caller sends `address` as the refund destination
-    // and binds `pkScript` into the covenant, so both must come from the same
-    // getAddress() answer.
+    // One getAddress() answer for both `address` (refund destination) and `pkScript` (covenant).
     const address = await wallet.getAddress();
     const { pkScript } = ArkAddress.decode(address);
     return { descriptor, pubkey, pkScript, address };
 }
 
 /**
- * The key that spends a leg we claim, plus the preimage that unlocks it.
+ * The key that spends a leg we claim, plus the preimage that unlocks it. Three arms:
  *
- * Pass `opts.preimage` to bring your own 32-byte P; it comes back verbatim
- * with `mustPersistPreimage` set, since the wallet cannot re-derive what it
- * did not choose.
- *
- * Three arms, and which one a wallet lands in is the whole of this function:
- *
- * 1. **Caller-supplied P.** Returned unchanged, `mustPersistPreimage: true`.
- * 2. **Per-artifact descriptor** (an HD child). Derives from the key alone at
- *    the pinned index. Nothing at rest. Raises rather than falling through if
- *    the signer cannot sign deterministically — an HD descriptor whose wallet
- *    refuses is a broken wallet, not a fallback case.
- * 3. **Anything else** — a static wallet's `tr(pubkey)`, or a constant
- *    descriptor from a custom provider. Mints a public per-artifact salt and
- *    derives from it, so a key that repeats still yields a distinct P. Only
- *    this arm falls back to a stored random preimage, and only when the signer
- *    refuses — which is discovered by deriving, never by probing.
+ * 1. **Caller-supplied `opts.preimage`** (32 bytes). Returned verbatim with
+ *    `mustPersistPreimage: true`, since the wallet cannot re-derive what it did not choose.
+ * 2. **Per-artifact descriptor** (an HD child). Derives from the key alone at the pinned index;
+ *    nothing at rest. Raises if the signer cannot sign deterministically — that is a broken HD
+ *    wallet, not a fallback case.
+ * 3. **Anything else** (a static `tr(pubkey)`, a custom provider's constant descriptor). Mints a
+ *    public per-artifact salt and derives from it. Only this arm falls back to a stored random
+ *    preimage, and only when the signer refuses — discovered by deriving, never by probing.
  */
 export async function provisionClaimSecret(
     wallet: IWallet,
@@ -266,10 +212,7 @@ export async function provisionClaimSecret(
         // Refused before an HD index is consumed.
         throw new Error(`preimage must be 32 bytes, got ${opts.preimage.length}`);
     }
-    // provisionClaimSecret allocates a fresh HD index so each artifact's preimage
-    // is uniquely derivable from the seed. provisionRefundKey now reuses the
-    // identity key (no index bump); the two have diverged in allocation strategy,
-    // so provisionClaimSecret calls provisionDescriptor directly.
+    // A fresh HD index, so each artifact's preimage is uniquely derivable (unlike the refund key).
     const descriptor = await provisionDescriptor(wallet);
     const signer = await contractSigner(wallet, descriptor);
     const pubkey = await signer.xOnlyPublicKey();
@@ -291,19 +234,14 @@ export async function provisionClaimSecret(
                 mustPersistPreimage: false,
             };
         } catch (cause) {
-            // "Cannot sign deterministically" is the only refusal this arm may
-            // absorb. A wallet that does not hold the key, or holds it and
-            // cannot sign at all, must propagate: degrading those to a stored
-            // preimage would fund a leg nothing can spend and report success.
-            // The provisioning signer resolved a signer moments ago, so reaching
-            // here means the signer changed under us.
+            // Only "cannot sign deterministically" may be absorbed: degrading a foreign key or a
+            // non-signing wallet to a stored preimage would fund a leg nothing can spend and
+            // report success. (Reaching those here means the signer changed under us.)
             if (cause instanceof ForeignDescriptorError || cause instanceof WalletCannotSignError) {
                 throw cause;
             }
-            // The probe IS the use: DescriptorIdentity exposes the method and
-            // only refuses at call time, so asking first would answer for a
-            // different question than the one that matters. Discard the salt —
-            // a record carrying one it cannot derive from is worse than none.
+            // The probe IS the use: DescriptorIdentity only refuses at call time. Discard the
+            // salt — a record carrying one it cannot derive from is worse than none.
             return { preimage: randomBytes(32), mustPersistPreimage: true };
         }
     };
@@ -319,57 +257,40 @@ export async function provisionClaimSecret(
 }
 
 /**
- * The signer for a provisioned descriptor, verified to actually be that
- * descriptor's key.
+ * The signer for a provisioned descriptor, verified by public-key equality (never a wallet-type
+ * probe) to be that descriptor's key: a wallet answering with another seed's key would sign
+ * happily and fail only as a counterparty rejection or a dead script.
  *
- * The verification is a public-key equality, never a wallet-type probe: a
- * wallet that answers with the wrong key — another seed's, after a restore
- * mix-up — would sign happily, and the failure would surface only as a
- * counterparty rejection or a dead script.
- *
- * Know its limit. It catches a wallet that substitutes its *baseline*
- * identity, which is the failure this exists for. It cannot catch one that
- * returns a descriptor-scoped identity built over the same descriptor, since
- * such an identity reads its pubkey back out of the descriptor string and the
- * comparison becomes a tautology. What rules that case out is
- * {@link resolveDescriptorSigner}'s `isOurs` test, which both shipped wallets
- * resolve through — so this is the backstop for a hand-rolled `IWallet`, not
- * the primary guarantee.
+ * Limit: this catches a wallet substituting its *baseline* identity. A descriptor-scoped identity
+ * over the same descriptor reads its pubkey back from the string, making the check a tautology;
+ * {@link resolveDescriptorSigner}'s `isOurs` test (used by both shipped wallets) rules that out,
+ * so this is the backstop for a hand-rolled `IWallet`, not the primary guarantee.
  */
 export async function contractSigner(wallet: IWallet, descriptor: string): Promise<Identity> {
     const signer = isHDWalletCapable(wallet)
         ? await wallet.signerForDescriptor(descriptor)
         : wallet.identity;
-    // A descriptor whose key cannot be read is one no wallet can prove it
-    // holds — the same verdict as a mismatch, and typed the same way.
+    // An unreadable key is one no wallet can prove it holds — typed the same as a mismatch.
     let expected: Uint8Array;
     try {
         expected = deriveDescriptorLeafPubKey(descriptor);
     } catch (cause) {
         throw new ForeignDescriptorError(descriptor, { cause });
     }
-    // Deliberately outside any wrapping: a signer that fails to answer is an
-    // operational failure to retry, not evidence the key belongs to someone
-    // else. Typing it as foreign would make a transient outage terminal.
+    // Outside the try: a signer failing to answer is a retryable outage, not evidence of a
+    // foreign key — typing it foreign would make a transient failure terminal.
     const actual = await signer.xOnlyPublicKey();
-    // NOTE: this catches a wallet substituting its BASELINE identity, nothing
-    // more. A signer built over `descriptor` itself reads its pubkey back out
-    // of that string, so the comparison is a tautology. `resolveDescriptorSigner`'s
-    // `isOurs` test is the real guarantee — a hand-rolled `IWallet` that skips
-    // it gets only this weaker check. See the docstring above.
+    // Baseline-substitution check only; see the docstring for its limit.
     if (!equalBytes(actual, expected)) throw new ForeignDescriptorError(descriptor);
     if (!isSigningIdentity(signer)) throw new WalletCannotSignError(descriptor);
     return signer;
 }
 
 /**
- * A wallet that holds a contract's key but cannot sign with it: a watch-only
- * identity, or a remote signer whose transport is absent.
- *
- * Distinct from {@link ForeignDescriptorError} because the remedy differs —
- * that one says "wrong wallet", this one says "this wallet, without its
- * signer". Raised at provisioning as well as at signing, so a wallet that
- * could never spend the leg finds out before it funds one.
+ * A wallet that holds a contract's key but cannot sign with it (watch-only, or a remote signer
+ * without its transport). Distinct from {@link ForeignDescriptorError} ("wrong wallet") because
+ * the remedy differs. Raised at provisioning too, so a wallet that could never spend a leg finds
+ * out before funding it.
  */
 export class WalletCannotSignError extends Error {
     override readonly name = "WalletCannotSignError";
@@ -379,18 +300,12 @@ export class WalletCannotSignError extends Error {
 }
 
 /**
- * The preimage for a provisioned descriptor: `opts.stored` when the artifact
- * kept one, otherwise re-derived from the seed.
+ * The preimage for a provisioned descriptor, in the precedence {@link provisionClaimSecret} chose:
  *
- * Resolves in one precedence order, mirroring the arms
- * {@link provisionClaimSecret} chose between:
- *
- * 1. `opts.stored` — a caller-supplied P, or one from a wallet that could not
- *    derive. Whatever the wallet can do now, a stored P is the artifact's.
+ * 1. `opts.stored` — a caller-supplied P, or one a wallet could not derive; always the artifact's.
  * 2. a per-artifact descriptor — derive at the pinned index.
  * 3. `opts.salt` — derive from the salted message.
- * 4. otherwise throw: a repeating descriptor with neither a stored preimage
- *    nor a salt has nothing to derive from that would not collide.
+ * 4. otherwise throw: a repeating descriptor with neither has nothing collision-free to derive.
  */
 export async function contractPreimage(
     wallet: IWallet,
@@ -398,11 +313,8 @@ export async function contractPreimage(
     opts: { stored?: Uint8Array; salt?: Uint8Array } = {},
 ): Promise<Uint8Array> {
     if (opts.stored) {
-        // The check the deleted record decoder used to make, and the same
-        // OP_SIZE 32 rule provisioning enforces. An empty array is truthy, so
-        // a truncated column or a partial write would otherwise restore
-        // silently and be diagnosed only at claim time, with the timeout
-        // margin already spent.
+        // OP_SIZE 32, as provisioning enforces: a truncated column would otherwise restore
+        // silently and fail only at claim time, with the timeout margin spent.
         if (opts.stored.length !== 32) {
             throw new Error(`stored preimage must be 32 bytes, got ${opts.stored.length}`);
         }
@@ -420,12 +332,9 @@ export async function contractPreimage(
  * rather than degrading to a random-aux signer. */
 export interface DeterministicSigner extends ReadonlyIdentity {
     /**
-     * Implementors wrapping a remote: throw only for a refusal that will
-     * repeat. {@link provisionClaimSecret} reads a transient throw — a network
-     * hiccup, an extension timeout — as "this signer cannot derive", and falls
-     * back to a stored random preimage for the artifact's whole life. That is
-     * claimable, but it persists a secret the seed would otherwise have
-     * replaced, and nothing surfaces the downgrade to the caller.
+     * Implementors wrapping a remote: throw only for a refusal that will repeat.
+     * {@link provisionClaimSecret} reads any throw (even a network hiccup) as "cannot derive" and
+     * silently falls back to a stored random preimage for the artifact's whole life.
      */
     signSchnorrDeterministic(messageHash: Uint8Array): Promise<Uint8Array>;
 }
@@ -464,9 +373,8 @@ async function derivePreimage(
     try {
         return sha256(await signer.signSchnorrDeterministic(sha256(message)));
     } catch (cause) {
-        // The structural guard cannot see call-time refusals: DescriptorIdentity
-        // always exposes the method and only throws when its base cannot
-        // actually sign deterministically.
+        // The structural guard can't see call-time refusals: DescriptorIdentity always exposes
+        // the method.
         throw new Error(
             `wallet cannot sign deterministically for ${descriptor}; its preimage is not derivable`,
             { cause },
@@ -475,19 +383,13 @@ async function derivePreimage(
 }
 
 /**
- * Claim a restored artifact's index so a later allocation cannot reissue it —
- * which would derive that artifact's preimage a second time, for a different
- * one.
+ * Claim a restored artifact's index so a later allocation cannot reissue it (which would derive
+ * that artifact's preimage again, for a different one).
  *
- * Monotonic, and a no-op wherever there is no index to reserve — a shared-key
- * descriptor, or another seed's artifact. Restores iterate whole histories, so
- * an artifact this wallet has nothing to adopt for must not abort the loop.
- *
- * Telling "another seed's" apart from a failure needs
- * {@link HDWalletCapable.signerForDescriptor}, so an allocation-capable wallet
- * that does not also implement it gets only the watermark call's own untyped
- * refusal, and a foreign artifact reaches the caller as an error rather than a
- * skip. Every wallet shipped here implements both.
+ * Monotonic, and a no-op wherever there is no index to reserve (a shared-key descriptor, another
+ * seed's artifact), since restores iterate whole histories. Recognising "another seed's" needs
+ * {@link HDWalletCapable.signerForDescriptor}; without it a foreign artifact surfaces as the
+ * watermark call's untyped error. Every shipped wallet implements both.
  */
 export async function adoptContractDescriptor(wallet: IWallet, descriptor: string): Promise<void> {
     if (!isHDAllocationCapable(wallet)) return;
@@ -496,11 +398,9 @@ export async function adoptContractDescriptor(wallet: IWallet, descriptor: strin
         try {
             await wallet.signerForDescriptor(descriptor);
         } catch (error) {
-            // Ownership is checked here rather than left to the watermark
-            // call, whose refusal is untyped on some transports (the
-            // service-worker bus flattens it). Only the typed "not my key"
-            // refusal is a no-op: a signer that fails to answer propagates,
-            // so a transient failure is retried, not skipped.
+            // Checked here: the watermark call's refusal is untyped on some transports (the SW
+            // bus flattens it). Only the typed "not my key" is a no-op; other failures propagate
+            // so they are retried, not skipped.
             if (error instanceof ForeignDescriptorError) return;
             throw error;
         }

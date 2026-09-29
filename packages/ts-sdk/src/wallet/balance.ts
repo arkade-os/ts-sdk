@@ -10,60 +10,39 @@ import { canRecoverOnchain, canSpendOffchain, hasTerminalSpend } from "./vtxo";
 export interface OffchainBalance {
     settled: number;
     preconfirmed: number;
-    /**
-     * Sats generic spending can move as plain sats.
-     * If any assets are available, one dust carrier is deducted.
-     */
+    /** Plain sats generic spending can move (less one dust carrier if assets are available). */
     available: number;
     /**
-     * Spendable-but-for-the-gate funds: VTXOs under a contract
-     * {@link BalanceCapabilities.isGenericallySpendable} refuses — a VHTLC
-     * lockup, an unmarked `arkade` program, or a type whose handler this runtime
-     * never registered. Counted in `settled`/`preconfirmed` and `total`, never
-     * in `available`.
-     *
-     * Tested before {@link intentLocked}: the gate is a durable property of the
-     * contract while an intent lock clears on its own, so a VTXO that is both is
-     * reported here — it does not become available when the batch settles.
+     * VTXOs under a contract {@link BalanceCapabilities.isGenericallySpendable} refuses (VHTLC
+     * lockup, unmarked `arkade` program, unregistered handler type). In `settled`/`preconfirmed`
+     * and `total`, never in `available`. Takes precedence over {@link intentLocked}: the gate is
+     * durable while an intent lock clears on its own.
      */
     gated: number;
     /**
-     * Funds committed to an in-flight (non-terminal) intent, and not already
-     * counted in {@link gated}. Unlike `gated`, these return to `available` when
-     * the intent reaches a terminal state.
-     *
-     * Reported as zero where the caller cannot answer the question — a wallet
-     * with no intent repository, or a repository read that fails — so this
-     * under-reports into `available` rather than misattributing. The two callers
-     * answer from deliberately different reads (see {@link BalanceCapabilities}),
-     * so a worker figure and a main-thread figure need not agree unless taken
-     * over the same state.
+     * Funds committed to an in-flight (non-terminal) intent and not {@link gated}; they return to
+     * `available` when the intent terminates. Zero when the caller can't tell (no intent
+     * repository, or its read fails), so it under-reports into `available` rather than
+     * misattributing. Worker and main-thread figures come from different reads and may differ.
      */
     intentLocked: number;
     recoverable: number;
     pendingRecovery: number;
     /**
-     * Funds whose unilateral exit already happened: the output sits onchain
-     * behind its CSV, so only `completeUnroll` can move it. Never `available`
-     * and never `recoverable` — a batch cannot lift an onchain output — but
-     * still the user's money, so counted in `total`.
+     * Already unilaterally exited: onchain behind its CSV, movable only by `completeUnroll`.
+     * Never `available` or `recoverable` (a batch cannot lift an onchain output), but in `total`.
      */
     unrolled: number;
-    /**
-     * `settled + preconfirmed + recoverable + pendingRecovery + unrolled` — the
-     * buckets are disjoint.
-     */
+    /** `settled + preconfirmed + recoverable + pendingRecovery + unrolled` (disjoint buckets). */
     total: number;
     assets: Asset[];
     availableAssets: Asset[];
 }
 
 /**
- * Facts the bucketing rules need but cannot derive offline from the VTXOs
- * alone. Each caller supplies them from its own read strategy — the
- * main-thread balance from a synced contract snapshot, the service worker from
- * a pure repository read — so the *rules* stay shared while the *freshness*
- * stays deliberately different.
+ * Facts the bucketing rules can't derive offline from the VTXOs alone. Main thread supplies them
+ * from a synced contract snapshot, the service worker from a pure repository read: shared rules,
+ * deliberately different freshness.
  */
 export interface BalanceCapabilities {
     now: TimeHeight;
@@ -74,9 +53,8 @@ export interface BalanceCapabilities {
     /** Not committed to an in-flight (non-terminal) intent. */
     isUnlocked: (vtxo: NormalizedExtendedVirtualCoin) => boolean;
     /**
-     * The sats an asset output rides on — the operator-advertised dust amount.
-     * Callers answer from {@link getDustAmount}: the wallet's `dustAmount`,
-     * or the fallback threshold. `0n` disables the carrier deduction from `available`.
+     * Sats an asset output rides on (operator dust amount, via {@link getDustAmount}). `0n`
+     * disables the carrier deduction from `available`.
      */
     dustCarrier: bigint;
 }
@@ -84,16 +62,10 @@ export interface BalanceCapabilities {
 /**
  * Bucket a VTXO snapshot into the offchain balance.
  *
- * Owned vs spendable is the whole shape here. `settled`/`preconfirmed`/`total`
- * and `assets` count everything the wallet owns — escrowed funds are still the
- * user's funds. `available` and `availableAssets` count only what generic
- * spending would actually pick, so nothing reported as available can be refused
- * by `send`.
- *
- * Terminally spent VTXOs are skipped outright: no capability predicate claims
- * them, and they must not reach the asset rollup. An unrolled one is not spent,
- * so it does: the sats stay in `total` and the asset units stay in `assets`,
- * both out of the `available` half.
+ * `settled`/`preconfirmed`/`total`/`assets` count everything owned (escrow included);
+ * `available`/`availableAssets` only what generic spending would pick, so `send` never refuses
+ * anything reported available. Terminally spent VTXOs are skipped; unrolled ones are not spent
+ * and stay in `total`/`assets`.
  */
 export function computeOffchainBalance(
     vtxos: readonly NormalizedExtendedVirtualCoin[],
@@ -119,31 +91,22 @@ export function computeOffchainBalance(
     };
 
     for (const vtxo of vtxos) {
-        // Load-bearing, not belt-and-braces: `Wallet.getBalance` passes
-        // `withUnrolled: true`, so the filter hands over unrolled coins WITHOUT
-        // testing terminal spend, and this guard is what drops the ones that
-        // are also spent.
+        // Load-bearing: `Wallet.getBalance` passes `withUnrolled: true`, so unrolled coins arrive
+        // without a terminal-spend check and this is what drops the spent ones.
         if (hasTerminalSpend(vtxo)) continue;
         addAssets(owned, vtxo);
 
-        // Exited onchain: still the user's money, but only `completeUnroll` can
-        // move it. Never `available`, never `recoverable` — a batch cannot lift
-        // an onchain output. Tested BEFORE `isPendingRecovery`, and that order
-        // is depended upon: `selectPendingRecoveryOutpoints` also excludes
-        // unrolled coins, so this is the second of two independent guards
-        // keeping an exited coin out of the pending-recovery bucket.
+        // Must precede `isPendingRecovery`: with `selectPendingRecoveryOutpoints`' own exclusion,
+        // one of two independent guards keeping an exited coin out of pending recovery.
         if (vtxo.isUnrolled) {
             unrolled += vtxo.value;
             continue;
         }
 
-        // Pending recovery is tested first, and before expiry: such funds cannot
-        // be renewed until they recover, so once their batch expiry passes
-        // `canRecoverOnchain` would otherwise report them as renewable-right-now.
-        // The branches are exclusive, so `total` counts each VTXO once — which is
-        // also why the gate is applied to `available` alone and not here: a gated
-        // coin dropping out of `recoverable` would meet `canSpendOffchain`, be
-        // false there too, and land in no bucket at all.
+        // Pending recovery before expiry: such funds can't renew until recovered, but past batch
+        // expiry `canRecoverOnchain` would call them renewable. Branches are exclusive so `total`
+        // counts each VTXO once; the gate applies to `available` only, since a gated coin dropped
+        // from `recoverable` would also fail `canSpendOffchain` and land in no bucket.
         if (isPendingRecovery(vtxo)) {
             pendingRecovery += vtxo.value;
             continue;
@@ -159,8 +122,7 @@ export function computeOffchainBalance(
         } else {
             settled += vtxo.value;
         }
-        // Disjoint by construction, so `settled + preconfirmed` splits exactly
-        // three ways. Gate before lock: see `gated`.
+        // `settled + preconfirmed` splits exactly three ways. Gate before lock: see `gated`.
         if (!isGenericallySpendable(vtxo)) {
             gated += vtxo.value;
         } else if (!isUnlocked(vtxo)) {
@@ -171,9 +133,8 @@ export function computeOffchainBalance(
         }
     }
 
-    // An available asset rides on a dust carrier whose sats move only with the
-    // asset, so while any assets are available, one carrier's worth of the
-    // available sats are reserved and cannot be sent as plain sats.
+    // An available asset's dust carrier moves only with the asset, so one carrier's worth of
+    // `available` is reserved while any assets are available.
     if (available > 0 && spendable.size > 0) {
         available = Math.max(0, available - Number(dustCarrier));
     }

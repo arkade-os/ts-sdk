@@ -2,16 +2,12 @@ import { version } from "../../package.json";
 
 export const buildVersion = "0.9.9";
 
-/**
- * The SDK's own version string, sourced from package.json
- */
+/** The SDK's own version string, sourced from package.json */
 export const sdkVersion = `ts-sdk/${version}`;
 
 /**
- * The version headers arkd's compatibility guard reads, for callers that need
- * them as data rather than as a wrapper — {@link fetch} sets exactly these.
- * They go to the Arkade server and
- * nowhere else: another origin rejects them in the CORS preflight.
+ * The version headers arkd's compatibility guard reads, as data ({@link fetch} sets exactly
+ * these). Arkade server only: other origins reject them in the CORS preflight.
  */
 export const ARKADE_VERSION_HEADERS: Readonly<Record<string, string>> = {
     "X-Build-Version": buildVersion,
@@ -38,28 +34,18 @@ export class FetchError extends Error {
 }
 
 /**
- * Deadline applied to a read that carries no `AbortSignal` of its own.
- *
- * `fetch` has no default timeout, so a connection the network dropped silently
- * stays pending until the runtime gives up — and every bound built on top of it
- * waits with it. A retry ladder, a bounded queue or a mutex only work if the
- * call underneath them terminates.
+ * Deadline for a read that carries no `AbortSignal` of its own. `fetch` has no default timeout,
+ * so a silently dropped connection stays pending, and every retry ladder, queue or mutex built on
+ * top of it waits with it.
  */
 export const READ_TIMEOUT_MS = 30_000;
 
 let warnedNoTimeoutSupport = false;
 
 /**
- * The signal bounding this request, or `undefined` to leave it unbounded.
- *
- * Only GET and HEAD get one. A write that is aborted has not necessarily failed
- * — its outcome is unknown — so bounding one converts a stall into a state
- * question its caller may have no way to answer.
- *
- * A `Request` input is always left alone. Every `Request` carries a `signal`
- * whether or not its author supplied one, so "did the caller bring a signal?"
- * cannot be read back off it, and guessing wrong would cancel someone's
- * lifetime for them.
+ * The signal bounding this request, or `undefined` to leave it unbounded. Only GET/HEAD: an
+ * aborted write's outcome is unknown, not failed. A `Request` input is left alone — it always
+ * carries a `signal`, so whether its author supplied one can't be read back off it.
  */
 function readDeadline(input: RequestInfo | URL, init?: RequestInit): AbortSignal | undefined {
     if (init?.signal || input instanceof Request) return undefined;
@@ -70,14 +56,11 @@ function readDeadline(input: RequestInfo | URL, init?: RequestInit): AbortSignal
         return AbortSignal.timeout(READ_TIMEOUT_MS);
     }
 
-    // `AbortSignal.timeout` is absent on some React Native runtimes while
-    // `AbortController` is not, so fall back rather than silently leaving the
-    // read unbounded — which is the exact state this exists to prevent.
+    // Some React Native runtimes lack `AbortSignal.timeout` but have `AbortController`.
     if (typeof AbortController === "function") {
         const controller = new AbortController();
-        // Deliberately never cleared, so the bound covers the body read and not
-        // just the headers, matching the native path. Aborting an already
-        // settled request is a no-op; `unref` keeps it from holding Node open.
+        // Never cleared, so the bound covers the body read too (as natively); aborting a
+        // settled request is a no-op, and `unref` keeps it from holding Node open.
         const timer: unknown = setTimeout(() => controller.abort(), READ_TIMEOUT_MS);
         (timer as { unref?: () => void })?.unref?.();
         return controller.signal;
@@ -94,22 +77,15 @@ function readDeadline(input: RequestInfo | URL, init?: RequestInit): AbortSignal
 }
 
 /**
- * Guarded passthrough to the platform `fetch` with no Arkade-specific headers.
- * Use for any service that is NOT the Ark server (delegate, Esplora, …): those
- * origins reject unknown request headers such as `X-Build-Version` in the CORS
- * preflight.
+ * Guarded passthrough to the platform `fetch` with no Arkade-specific headers. Use for any
+ * service that is NOT the Ark server (delegate, Esplora, …): those origins reject unknown request
+ * headers such as `X-Build-Version` in the CORS preflight. Transport-level rejections are
+ * re-thrown as a {@link FetchError}; reads without a caller signal are bounded by
+ * {@link READ_TIMEOUT_MS}.
  *
- * Reads without a caller-supplied signal are bounded by {@link READ_TIMEOUT_MS}.
- *
- * **A long-lived request opts out by supplying its own signal — that is the only
- * thing keeping this deadline off a stream.** On web, SSE happens to use
- * `EventSource` and never arrives here at all; on Expo it does arrive here
- * whenever `expo/fetch` fails to import and `getExpoFetch` falls back to this
- * module, and `sseStreamIterator` passing `signal: fetchController.signal` is
- * what prevents a 30-second truncation. That signal is load-bearing, not
- * incidental: a streaming caller that omits one gets cut off here.
- *
- * Transport-level rejections are re-thrown as a {@link FetchError}.
+ * **A long-lived request opts out only by supplying its own signal.** On Expo, SSE lands here
+ * whenever `expo/fetch` fails to import, and `sseStreamIterator` passing
+ * `signal: fetchController.signal` is what prevents a 30-second truncation.
  */
 export function baseFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     if (typeof globalThis.fetch !== "function") {
@@ -123,10 +99,8 @@ export function baseFetch(input: RequestInfo | URL, init?: RequestInit): Promise
 }
 
 /**
- * `fetch` for the Ark server only: adds the `X-Build-Version` compatibility
- * header that arkd's version guard reads, plus the `X-SDK-VERSION` header
- * carrying this package's own version. Do NOT use it for other origins — they
- * reject these custom headers in CORS preflight.
+ * `fetch` for the Ark server only: adds {@link ARKADE_VERSION_HEADERS}. Do NOT use it for other
+ * origins — they reject these custom headers in CORS preflight.
  */
 export function fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const headers = new Headers(init?.headers);
@@ -134,11 +108,7 @@ export function fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Res
     return baseFetch(input, { ...init, headers });
 }
 
-/**
- * Derive a human-readable `{ url, method }` for a failed request from the
- * `fetch` arguments, handling the `string | URL | Request` input shapes. The
- * `init.method` wins, then a `Request`'s own method, defaulting to `"GET"`.
- */
+/** `{ url, method }` of a request, across the `string | URL | Request` input shapes. */
 function describeRequest(
     input: RequestInfo | URL,
     init?: RequestInit,
