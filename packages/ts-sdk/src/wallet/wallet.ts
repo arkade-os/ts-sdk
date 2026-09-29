@@ -3180,7 +3180,7 @@ export class Wallet
                 const inputFee = estimator.evalOnchainInput({
                     amount: BigInt(utxo.value),
                 });
-                if (inputFee.value >= utxo.value) {
+                if (inputFee.satoshis >= utxo.value) {
                     // skip if fees are greater than the boarding input value
                     continue;
                 }
