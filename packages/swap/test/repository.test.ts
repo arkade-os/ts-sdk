@@ -469,6 +469,19 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
     });
 });
 
+it("Realm RFQ pages use the same Unicode ordering for sorting and resuming", async () => {
+    await using repository = new RealmAssetSwapRepository(
+        createMockRealm({ ArkadeRfqSwap: "rfqId" }),
+    );
+    for (const rfqId of ["z", "\u{1f600}", "\ue000"]) {
+        await repository.saveRfqSwap({ ...rfqRecord(rfqId), updatedAt: 100 });
+    }
+    const first = await repository.getRfqSwapsPage({}, { limit: 2 });
+    expect(first.items.map((row) => row.rfqId)).toEqual(["z", "\ue000"]);
+    const second = await repository.getRfqSwapsPage({}, { limit: 2, after: first.nextCursor });
+    expect(second.items.map((row) => row.rfqId)).toEqual(["\u{1f600}"]);
+});
+
 /**
  * The v2 accept record store, on every backend.
  *

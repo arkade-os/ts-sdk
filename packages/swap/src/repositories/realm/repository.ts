@@ -108,17 +108,18 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
         if (filter.state !== undefined) results = results.filtered("state == $0", filter.state);
         const since = Math.max(filter.since ?? 0, page.after?.updatedAt ?? 0);
         results = results.filtered("updatedAt >= $0", since);
+        if (page.after && page.after.updatedAt >= (filter.since ?? 0)) {
+            results = results.filtered(
+                "updatedAt > $0 OR (updatedAt == $0 AND rfqId > $1)",
+                page.after.updatedAt,
+                page.after.rfqId,
+            );
+        }
         const rows: RfqSwapRecord[] = [];
         for (const row of results.sorted([
             ["updatedAt", false],
             ["rfqId", false],
         ])) {
-            if (
-                page.after &&
-                row.updatedAt === page.after.updatedAt &&
-                row.rfqId <= page.after.rfqId
-            )
-                continue;
             rows.push(JSON.parse(row.data) as RfqSwapRecord);
             if (rows.length > page.limit) break;
         }
