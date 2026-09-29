@@ -159,13 +159,19 @@ export class SQLiteIntentRepository implements IntentRepository {
     ): Promise<PageResult<ArkIntent>> {
         assertPageRequest(page);
         await this.ensureInit();
+        if (filter?.states?.length === 0) return { items: [] };
+        const stateSql = filter?.states
+            ? ` AND state IN (${filter.states.map(() => "?").join(", ")})`
+            : "";
+        const stateParams = filter?.states ?? [];
+        const batchSize = Math.max(64, page.limit + 1);
         const rows: ArkIntent[] = [];
         let after = page.after;
-        // Match the shared filter in TypeScript; the key cursor advances past rejected rows.
+        // SQL narrows by indexed state; the shared filter handles the remaining predicates.
         while (rows.length <= page.limit) {
             const batch = await this.db.all<IntentRow>(
-                `SELECT * FROM ${this.t} WHERE intent_tx_id > ? ORDER BY intent_tx_id LIMIT ?`,
-                [after ?? "", Math.max(64, page.limit + 1)],
+                `SELECT * FROM ${this.t} WHERE intent_tx_id > ?${stateSql} ORDER BY intent_tx_id LIMIT ?`,
+                [after ?? "", ...stateParams, batchSize],
             );
             if (batch.length === 0) break;
             for (const row of batch) {
@@ -174,7 +180,7 @@ export class SQLiteIntentRepository implements IntentRepository {
                 if (!filter || intentMatchesFilter(intent, filter)) rows.push(intent);
                 if (rows.length > page.limit) break;
             }
-            if (batch.length < Math.max(64, page.limit + 1)) break;
+            if (batch.length < batchSize) break;
         }
         return pageResult(rows, page.limit, (intent) => intent.intentTxId);
     }

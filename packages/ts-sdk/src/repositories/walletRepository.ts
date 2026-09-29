@@ -167,7 +167,11 @@ export async function collectScriptVtxos(
     repository: WalletRepository,
     script: string,
 ): Promise<ExtendedVirtualCoin[]> {
-    if (!repository.getVtxosForScriptPage) throw new Error("script VTXO paging is unavailable");
+    if (!repository.getVtxosForScriptPage) {
+        throw new Error(
+            "script VTXO paging is unavailable; use collectVtxos with a known address and filter by script",
+        );
+    }
     const byOutpoint = new Map<string, StoredVtxo>();
     let after: ScriptVtxoCursor | undefined;
     do {
