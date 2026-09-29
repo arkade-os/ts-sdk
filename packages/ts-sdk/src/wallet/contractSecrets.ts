@@ -18,9 +18,8 @@
  * `DescriptorProvider` returning one constant descriptor still gets a distinct preimage per
  * artifact.
  */
-import { sha256 } from "@noble/hashes/sha2.js";
-import { randomBytes } from "@noble/hashes/utils.js";
-import { equalBytes } from "@scure/btc-signer/utils.js";
+import { randomBytes } from "@noble/curves/utils.js";
+import { equalBytes, sha256 } from "@scure/btc-signer/utils.js";
 import { Identity, ReadonlyIdentity, isSigningIdentity } from "../identity";
 import {
     deriveDescriptorLeafPubKey,
