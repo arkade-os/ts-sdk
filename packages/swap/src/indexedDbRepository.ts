@@ -2,9 +2,20 @@ import {
     awaitTransaction,
     createManagedConnection,
     promisifyRequest,
+    assertPageRequest,
+    pageResult,
+    type PageRequest,
+    type PageResult,
     type ManagedConnection,
 } from "@arkade-os/sdk";
-import { marketsCacheKey, type AssetSwapRepository, type MarketsCacheEntry } from "./repository";
+import {
+    marketsCacheKey,
+    assertRfqSwapPageFilter,
+    type AssetSwapRepository,
+    type MarketsCacheEntry,
+    type RfqSwapPageFilter,
+    type RfqSwapPageCursor,
+} from "./repository";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
 import type { SwapRecord } from "./client/record";
@@ -14,7 +25,7 @@ const DEFAULT_DB_NAME = "arkade-intents";
  * `onupgradeneeded`, which fires on a version *increase* — its contains-guard
  * cannot backfill a store into a database already open at this version, so a
  * new store added without a bump is simply missing for existing users. */
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const STORE_SWAPS = "swaps";
 const STORE_RFQ_SWAPS = "rfqSwaps";
 const STORE_SWAP_RECORDS = "swapRecords";
@@ -39,24 +50,17 @@ const STORES: readonly [name: string, options?: IDBObjectStoreParameters][] = [
     [STORE_MARKETS],
 ];
 
-/**
- * @param oldVersion the version being upgraded FROM, 0 on a fresh install.
- * @param transaction the upgrade transaction — the only way to read or rewrite
- * existing rows during a migration.
- *
- * Both unused today: every version so far has only added an object store, and
- * `createObjectStore` needs neither — version 3's v2-record store included,
- * which is why the v1 and v2 histories being disjoint matters. It is what keeps
- * this migration from being the one that rewrites rows. Named rather than
- * dropped because the next migration may not be additive, and a signature that
- * takes them is what makes "cursor over the rows and rewrite them" a local
- * change here.
- */
-function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTransaction | null) {
-    void oldVersion;
-    void transaction;
+function initDatabase(db: IDBDatabase, _oldVersion: number, transaction: IDBTransaction | null) {
     for (const [name, options] of STORES) {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, options);
+    }
+    if (!transaction) throw new Error("IndexedDB upgrade transaction is missing");
+    const rfqStore = transaction.objectStore(STORE_RFQ_SWAPS);
+    if (!rfqStore.indexNames.contains("byUpdatedId")) {
+        rfqStore.createIndex("byUpdatedId", ["updatedAt", "rfqId"]);
+    }
+    if (!rfqStore.indexNames.contains("byStateUpdatedId")) {
+        rfqStore.createIndex("byStateUpdatedId", ["state", "updatedAt", "rfqId"]);
     }
 }
 
@@ -97,6 +101,10 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         return promisifyRequest((await this.readStore(STORE_SWAPS)).getAll());
     }
 
+    async getAssetSwapsPage(page: PageRequest): Promise<PageResult<AssetSwap>> {
+        return this.pageStore(STORE_SWAPS, page);
+    }
+
     async saveRfqSwap(record: RfqSwapRecord): Promise<void> {
         await this.write(STORE_RFQ_SWAPS, (store) => {
             store.put(record);
@@ -109,6 +117,51 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
 
     async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
         return promisifyRequest((await this.readStore(STORE_RFQ_SWAPS)).getAll());
+    }
+
+    async getRfqSwapsPage(
+        filter: RfqSwapPageFilter,
+        page: PageRequest<RfqSwapPageCursor>,
+    ): Promise<PageResult<RfqSwapRecord, RfqSwapPageCursor>> {
+        assertPageRequest(page);
+        assertRfqSwapPageFilter(filter);
+        const store = await this.readStore(STORE_RFQ_SWAPS);
+        const state = filter.state;
+        const index = store.index(state === undefined ? "byUpdatedId" : "byStateUpdatedId");
+        const after = page.after;
+        const useAfter = after !== undefined && after.updatedAt >= (filter.since ?? 0);
+        const start = state === undefined ? [] : [state];
+        const range = useAfter
+            ? IDBKeyRange.lowerBound([...start, after.updatedAt, after.rfqId], true)
+            : IDBKeyRange.lowerBound([...start, filter.since ?? 0]);
+        const request = index.openCursor(range);
+        return new Promise((resolve, reject) => {
+            const rows: RfqSwapRecord[] = [];
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor || (state !== undefined && (cursor.key as unknown[])[0] !== state)) {
+                    resolve(
+                        pageResult(rows, page.limit, (row) => ({
+                            updatedAt: row.updatedAt,
+                            rfqId: row.rfqId,
+                        })),
+                    );
+                    return;
+                }
+                rows.push(cursor.value as RfqSwapRecord);
+                if (rows.length > page.limit) {
+                    resolve(
+                        pageResult(rows, page.limit, (row) => ({
+                            updatedAt: row.updatedAt,
+                            rfqId: row.rfqId,
+                        })),
+                    );
+                    return;
+                }
+                cursor.continue();
+            };
+        });
     }
 
     async removeRfqSwap(rfqId: string): Promise<void> {
@@ -129,6 +182,46 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
 
     async getAllSwapRecords(): Promise<SwapRecord[]> {
         return promisifyRequest((await this.readStore(STORE_SWAP_RECORDS)).getAll());
+    }
+
+    async getSwapRecordsPage(page: PageRequest): Promise<PageResult<SwapRecord>> {
+        return this.pageStore(STORE_SWAP_RECORDS, page);
+    }
+
+    private async pageStore<Item>(name: string, page: PageRequest): Promise<PageResult<Item>> {
+        assertPageRequest(page);
+        const store = await this.readStore(name);
+        const range =
+            page.after === undefined ? undefined : IDBKeyRange.lowerBound(page.after, true);
+        const request = store.openCursor(range);
+        return new Promise((resolve, reject) => {
+            const rows: { key: string; value: Item }[] = [];
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) {
+                    resolve(this.resultOfPage(rows, page.limit));
+                    return;
+                }
+                rows.push({ key: cursor.key as string, value: cursor.value as Item });
+                if (rows.length > page.limit) {
+                    resolve(this.resultOfPage(rows, page.limit));
+                    return;
+                }
+                cursor.continue();
+            };
+        });
+    }
+
+    private resultOfPage<Item>(
+        rows: { key: string; value: Item }[],
+        limit: number,
+    ): PageResult<Item> {
+        const result = pageResult(rows, limit, (row) => row.key);
+        return {
+            items: result.items.map((row) => row.value),
+            ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+        };
     }
 
     async removeSwapRecord(id: string): Promise<void> {

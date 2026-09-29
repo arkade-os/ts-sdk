@@ -1,4 +1,5 @@
 import { Outpoint } from "../wallet";
+import type { PageRequest, PageResult } from "./page";
 
 export type ArkIntentState =
     | "waiting_to_submit"
@@ -73,12 +74,19 @@ export interface IntentFilter {
     take?: number;
 }
 
+export type IntentPageFilter = Omit<IntentFilter, "skip" | "take">;
+
 export interface IntentRepository extends AsyncDisposable {
     readonly version: 1;
     clear(): Promise<void>;
     /** Upsert by `intentTxId`; implementation sets `updatedAt = Date.now()`. */
     saveIntent(intent: ArkIntent): Promise<void>;
     getIntents(filter?: IntentFilter): Promise<ArkIntent[]>;
+    /** Bounded intents in `intentTxId` order; `after` is exclusive. */
+    getIntentsPage(
+        filter: IntentPageFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<ArkIntent>>;
     /**
      * Outpoints held by NON-terminal intents — `waiting_to_submit`,
      * `waiting_for_batch`, and `batch_in_progress` — to exclude from spendable

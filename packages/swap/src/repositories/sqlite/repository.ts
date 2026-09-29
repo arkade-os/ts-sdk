@@ -3,10 +3,14 @@ import {
     sanitizeTablePrefix,
     type SQLExecutor,
 } from "@arkade-os/sdk/repositories/sqlite";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "@arkade-os/sdk";
 import {
     marketsCacheKey,
+    assertRfqSwapPageFilter,
     type AssetSwapRepository,
     type MarketsCacheEntry,
+    type RfqSwapPageFilter,
+    type RfqSwapPageCursor,
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
@@ -101,6 +105,12 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
                 data TEXT NOT NULL
             )`);
             await this.db.run(
+                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_updated ON ${this.rfqSwaps} (updated_at, rfq_id)`,
+            );
+            await this.db.run(
+                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_state_updated ON ${this.rfqSwaps} (state, updated_at, rfq_id)`,
+            );
+            await this.db.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_state ON ${this.rfqSwaps} (state)`,
             );
             // The v2 client's accept records. Its own table for the reason
@@ -152,6 +162,10 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         return rows.map((r) => JSON.parse(r.data) as AssetSwap);
     }
 
+    async getAssetSwapsPage(page: PageRequest): Promise<PageResult<AssetSwap>> {
+        return this.pageTable<AssetSwap>(this.swaps, "id", page);
+    }
+
     async saveRfqSwap(record: RfqSwapRecord): Promise<void> {
         await this.ensureInit();
         await this.withTx(async () => {
@@ -176,6 +190,43 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         await this.ensureInit();
         const rows = await this.db.all<{ data: string }>(`SELECT data FROM ${this.rfqSwaps}`);
         return rows.map((r) => JSON.parse(r.data) as RfqSwapRecord);
+    }
+
+    async getRfqSwapsPage(
+        filter: RfqSwapPageFilter,
+        page: PageRequest<RfqSwapPageCursor>,
+    ): Promise<PageResult<RfqSwapRecord, RfqSwapPageCursor>> {
+        assertPageRequest(page);
+        assertRfqSwapPageFilter(filter);
+        await this.ensureInit();
+        const conditions: string[] = [];
+        const params: unknown[] = [];
+        if (filter.state !== undefined) {
+            conditions.push("state = ?");
+            params.push(filter.state);
+        }
+        if (filter.since !== undefined) {
+            conditions.push("updated_at >= ?");
+            params.push(filter.since);
+        }
+        if (page.after !== undefined) {
+            conditions.push("(updated_at, rfq_id) > (?, ?)");
+            params.push(page.after.updatedAt, page.after.rfqId);
+        }
+        const where = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
+        const rows = await this.db.all<{ data: string; updated_at: number; rfq_id: string }>(
+            `SELECT data, updated_at, rfq_id FROM ${this.rfqSwaps}${where}
+             ORDER BY updated_at, rfq_id LIMIT ?`,
+            [...params, page.limit + 1],
+        );
+        const result = pageResult(rows, page.limit, (row) => ({
+            updatedAt: row.updated_at,
+            rfqId: row.rfq_id,
+        }));
+        return {
+            items: result.items.map((row) => JSON.parse(row.data) as RfqSwapRecord),
+            ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+        };
     }
 
     async removeRfqSwap(rfqId: string): Promise<void> {
@@ -209,6 +260,28 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         await this.ensureInit();
         const rows = await this.db.all<{ data: string }>(`SELECT data FROM ${this.swapRecords}`);
         return rows.map((r) => JSON.parse(r.data) as SwapRecord);
+    }
+
+    async getSwapRecordsPage(page: PageRequest): Promise<PageResult<SwapRecord>> {
+        return this.pageTable<SwapRecord>(this.swapRecords, "id", page);
+    }
+
+    private async pageTable<Item extends { id?: string; rfqId?: string }>(
+        table: string,
+        key: "id" | "rfq_id",
+        page: PageRequest,
+    ): Promise<PageResult<Item>> {
+        assertPageRequest(page);
+        await this.ensureInit();
+        const rows = await this.db.all<{ key: string; data: string }>(
+            `SELECT ${key} AS key, data FROM ${table} WHERE ${key} > ? ORDER BY ${key} LIMIT ?`,
+            [page.after ?? "", page.limit + 1],
+        );
+        const result = pageResult(rows, page.limit, (row) => row.key);
+        return {
+            items: result.items.map((row) => JSON.parse(row.data) as Item),
+            ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+        };
     }
 
     async removeSwapRecord(id: string): Promise<void> {

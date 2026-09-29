@@ -127,6 +127,28 @@ const backends: [string, () => AssetSwapRepository][] = [
 ];
 
 describe.each(backends)("AssetSwapRepository (%s)", (_, create) => {
+    it("pages legacy and v2 records while retaining complete history", async () => {
+        await using repository = create();
+        for (const id of ["b", "B", "a"]) {
+            await repository.saveSwap(swap(id));
+            await repository.saveSwapRecord(swapRecord(id));
+        }
+        const pages = [
+            [repository.getAssetSwapsPage.bind(repository), (row: AssetSwap) => row.id],
+            [repository.getSwapRecordsPage.bind(repository), (row: CorridorSwapRecord) => row.id],
+        ] as const;
+        for (const [read, idOf] of pages) {
+            const first = await read({ limit: 2 });
+            expect(first.items.map(idOf as (row: never) => string)).toEqual(["B", "a"]);
+            expect(first.nextCursor).toBe("a");
+            const second = await read({ limit: 2, after: first.nextCursor });
+            expect(second.items.map(idOf as (row: never) => string)).toEqual(["b"]);
+            expect(second.nextCursor).toBeUndefined();
+            await expect(read({ limit: 0 })).rejects.toThrow(RangeError);
+        }
+        expect(await repository.getAllSwapRecords()).toHaveLength(3);
+    });
+
     it("upserts by id and returns all swaps", async () => {
         await using repository = create();
         await repository.saveSwap(swap("a"));
@@ -337,6 +359,33 @@ describe("SQLiteAssetSwapRepository", () => {
  * four implement the same three methods, and a backend that stores a record
  * short a field fails here rather than at a claim. */
 describe.each(backends)("RFQ swap records (%s)", (_, create) => {
+    it("pages dated state history without dropping equal-timestamp records", async () => {
+        await using repository = create();
+        for (const [rfqId, updatedAt] of [
+            ["old", 1],
+            ["b", 100],
+            ["B", 100],
+            ["a", 100],
+        ] as const) {
+            await repository.saveRfqSwap({ ...rfqRecord(rfqId), state: "settled", updatedAt });
+        }
+        await repository.saveRfqSwap({ ...rfqRecord("active"), updatedAt: 100 });
+        const filter = { state: "settled" as const, since: 100 };
+        const first = await repository.getRfqSwapsPage(filter, { limit: 2 });
+        expect(first.items.map((row) => row.rfqId)).toEqual(["B", "a"]);
+        expect(first.nextCursor).toEqual({ updatedAt: 100, rfqId: "a" });
+        const second = await repository.getRfqSwapsPage(filter, {
+            after: first.nextCursor,
+            limit: 2,
+        });
+        expect(second.items.map((row) => row.rfqId)).toEqual(["b"]);
+        expect(second.nextCursor).toBeUndefined();
+        expect((await repository.getAllRfqSwaps()).map((row) => row.rfqId)).toContain("old");
+        await expect(repository.getRfqSwapsPage({ since: -1 }, { limit: 2 })).rejects.toThrow(
+            RangeError,
+        );
+    });
+
     it("upserts rfq swaps by rfqId and returns them all", async () => {
         await using repository = create();
         await repository.saveRfqSwap(rfqRecord("r1"));
@@ -548,6 +597,45 @@ describe.each(backends)("v2 swap records (%s)", (_, create) => {
  * an existing user, and the existing stores must come through untouched.
  */
 describe("IndexedDB migrations", () => {
+    it("adds RFQ paging indexes to a v3 database without rewriting records", async () => {
+        const dbName = `migrate-v3-${Math.random()}`;
+        const rfq = { ...rfqRecord("legacy-rfq"), updatedAt: 42 };
+        await new Promise<void>((resolve, reject) => {
+            const open = indexedDB.open(dbName, 3);
+            open.onupgradeneeded = () => {
+                const db = open.result;
+                db.createObjectStore("swaps", { keyPath: "id" });
+                db.createObjectStore("rfqSwaps", { keyPath: "rfqId" });
+                db.createObjectStore("swapRecords", { keyPath: "id" });
+                db.createObjectStore("scannedTxids");
+                db.createObjectStore("markets");
+            };
+            open.onsuccess = () => {
+                const db = open.result;
+                const tx = db.transaction(["swaps", "rfqSwaps", "swapRecords"], "readwrite");
+                tx.objectStore("swaps").put(swap("legacy"));
+                tx.objectStore("rfqSwaps").put(rfq);
+                tx.objectStore("swapRecords").put(swapRecord("legacy-record"));
+                tx.oncomplete = () => {
+                    db.close();
+                    resolve();
+                };
+                tx.onerror = () => reject(tx.error);
+            };
+            open.onerror = () => reject(open.error);
+        });
+
+        await using repository = new IndexedDbAssetSwapRepository(dbName);
+        expect(await repository.getAllSwaps()).toEqual([swap("legacy")]);
+        expect(await repository.getAllRfqSwaps()).toEqual([rfq]);
+        expect(await repository.getAllSwapRecords()).toEqual([swapRecord("legacy-record")]);
+        expect(
+            await repository.getRfqSwapsPage({ state: "pending", since: 42 }, { limit: 1 }),
+        ).toEqual({
+            items: [rfq],
+        });
+    });
+
     it("adds every later store to a v1 database, keeping swaps, scan state and markets", async () => {
         const dbName = `migrate-${Math.random()}`;
         const markets = { markets: [], fetchedAt: 42 };

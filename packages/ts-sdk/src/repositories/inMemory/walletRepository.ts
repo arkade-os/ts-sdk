@@ -1,5 +1,14 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
-import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
+import {
+    WalletRepository,
+    WalletState,
+    VtxoRepositoryKey,
+    assertHistoryPageFilter,
+    compareHistoryCursors,
+    type TransactionHistoryPageFilter,
+    type TransactionHistoryPageCursor,
+} from "../walletRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
 
 /**
@@ -82,6 +91,32 @@ export class InMemoryWalletRepository implements WalletRepository {
 
     async getTransactionHistory(address: string): Promise<ArkTransaction[]> {
         return this.txsByAddress.get(address) ?? [];
+    }
+
+    async getTransactionHistoryPage(
+        filter: TransactionHistoryPageFilter,
+        page: PageRequest<TransactionHistoryPageCursor>,
+    ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>> {
+        assertPageRequest(page);
+        assertHistoryPageFilter(filter);
+        const rows = (this.txsByAddress.get(filter.address) ?? [])
+            .filter(
+                (tx) =>
+                    (filter.since === undefined || tx.createdAt >= filter.since) &&
+                    (page.after === undefined ||
+                        compareHistoryCursors(
+                            { createdAt: tx.createdAt, key: tx.key },
+                            page.after,
+                        ) > 0),
+            )
+            .sort((a, b) =>
+                compareHistoryCursors(
+                    { createdAt: a.createdAt, key: a.key },
+                    { createdAt: b.createdAt, key: b.key },
+                ),
+            )
+            .slice(0, page.limit + 1);
+        return pageResult(rows, page.limit, (tx) => ({ createdAt: tx.createdAt, key: tx.key }));
     }
 
     async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {

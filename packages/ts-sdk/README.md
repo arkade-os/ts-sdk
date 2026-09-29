@@ -1111,6 +1111,29 @@ examples.
 Use repository implementations via `StorageConfig`. If you omit `storage`, the
 SDK uses IndexedDB repositories with the default database name.
 
+#### Paged repository reads
+
+Collection repositories expose `getTransactionHistoryPage`, `getContractsPage`,
+and `getIntentsPage`. Each accepts `{ limit, after? }` and returns
+`{ items, nextCursor? }`; pass `nextCursor` as `after` until it is absent.
+Limits must be 1–500. History pages are ordered by `(createdAt, transaction key)`;
+`since` is inclusive Unix milliseconds. Contract and intent pages are ordered
+by their script and intent transaction ID. Filters must stay the same across
+pages. The existing complete reads remain available for callers that need a
+full snapshot. Spend-critical VTXO and UTXO inventory reads remain complete.
+
+```ts
+let after;
+do {
+  const page = await walletRepo.getTransactionHistoryPage(
+    { address, since: Date.now() - 86_400_000 },
+    { limit: 100, after },
+  );
+  for (const transaction of page.items) handle(transaction);
+  after = page.nextCursor;
+} while (after);
+```
+
 #### Repository Versioning
 
 `WalletRepository`, `ContractRepository`, `IntentRepository`,

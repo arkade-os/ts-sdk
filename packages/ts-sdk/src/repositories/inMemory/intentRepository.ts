@@ -3,11 +3,13 @@ import {
     ArkIntent,
     assertIntentIdUnique,
     IntentFilter,
+    IntentPageFilter,
     IntentRepository,
     intentMatchesFilter,
     intentPageBounds,
     isTerminalIntentState,
 } from "../intentRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 
 export class InMemoryIntentRepository implements IntentRepository {
     readonly version = 1 as const;
@@ -34,6 +36,25 @@ export class InMemoryIntentRepository implements IntentRepository {
         out.sort((a, b) => a.createdAt - b.createdAt || a.intentTxId.localeCompare(b.intentTxId));
         const { skip, end } = intentPageBounds(filter, out.length);
         return out.slice(skip, end).map(clone);
+    }
+
+    async getIntentsPage(
+        filter: IntentPageFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<ArkIntent>> {
+        assertPageRequest(page);
+        const rows = [...this.byId.values()]
+            .filter(
+                (intent) =>
+                    (page.after === undefined || intent.intentTxId > page.after) &&
+                    (!filter || intentMatchesFilter(intent, filter)),
+            )
+            .sort((a, b) =>
+                a.intentTxId < b.intentTxId ? -1 : a.intentTxId > b.intentTxId ? 1 : 0,
+            )
+            .slice(0, page.limit + 1)
+            .map(clone);
+        return pageResult(rows, page.limit, (intent) => intent.intentTxId);
     }
 
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {

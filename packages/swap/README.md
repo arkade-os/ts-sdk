@@ -179,6 +179,14 @@ though: a `Date` in a field you added comes back an ISO string, a `Set` or `Map`
 and a `bigint` throws on save. The package's own records are JSON-safe by design; keep yours that
 way too.
 
+For bounded reads, all four backends provide `getAssetSwapsPage`,
+`getRfqSwapsPage`, and `getSwapRecordsPage`. Pass `{ limit, after? }` with a
+limit of 1–500, then use each result's `nextCursor` for the following page.
+Asset swaps and swap records sort by ID. RFQ swaps sort by `(updatedAt, rfqId)`
+and accept `{ state?, since? }`; `since` is inclusive Unix seconds. Keep the
+filter fixed while paging. Existing `getAll*` methods still return complete
+collections for recovery and internal lifecycle work.
+
 ### Restore an imported wallet
 
 Register swap recovery before calling the core wallet's explicit `restore()`:

@@ -1,6 +1,7 @@
 import { DB_VERSION, STORE_CONTRACTS } from "./db";
 import { Contract, watchStateOf } from "../../contracts";
 import { ContractFilter, ContractRepository } from "../contractRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { awaitTransaction, getAllByIndexValues, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
 import { initDatabase } from "./schema";
@@ -82,6 +83,38 @@ export class IndexedDBContractRepository implements ContractRepository {
             console.error("Failed to get contracts:", error);
             return [];
         }
+    }
+
+    async getContractsPage(
+        filter: ContractFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<Contract>> {
+        assertPageRequest(page);
+        const db = await this.getDB();
+        const store = db.transaction([STORE_CONTRACTS], "readonly").objectStore(STORE_CONTRACTS);
+        const range =
+            page.after === undefined ? undefined : IDBKeyRange.lowerBound(page.after, true);
+        const cursorRequest = store.openCursor(range);
+        const normalized = normalizeFilter(filter ?? {});
+        return new Promise((resolve, reject) => {
+            const rows: Contract[] = [];
+            cursorRequest.onerror = () => reject(cursorRequest.error);
+            cursorRequest.onsuccess = () => {
+                const cursor = cursorRequest.result;
+                if (!cursor) {
+                    resolve(pageResult(rows, page.limit, (contract) => contract.script));
+                    return;
+                }
+                if (this.applyContractFilter([cursor.value as Contract], normalized).length) {
+                    rows.push(cursor.value as Contract);
+                }
+                if (rows.length > page.limit) {
+                    resolve(pageResult(rows, page.limit, (contract) => contract.script));
+                    return;
+                }
+                cursor.continue();
+            };
+        });
     }
 
     async saveContract(contract: Contract): Promise<void> {

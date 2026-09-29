@@ -1,4 +1,38 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../wallet";
+import type { TxKey } from "../wallet";
+import type { PageRequest, PageResult } from "./page";
+
+export interface TransactionHistoryPageFilter {
+    address: string;
+    /** Inclusive milliseconds since epoch. */
+    since?: number;
+}
+
+export interface TransactionHistoryPageCursor {
+    createdAt: number;
+    key: TxKey;
+}
+
+export function compareTxKeys(a: TxKey, b: TxKey): number {
+    for (const field of ["boardingTxid", "commitmentTxid", "arkTxid"] as const) {
+        if (a[field] < b[field]) return -1;
+        if (a[field] > b[field]) return 1;
+    }
+    return 0;
+}
+
+export function compareHistoryCursors(
+    a: TransactionHistoryPageCursor,
+    b: TransactionHistoryPageCursor,
+): number {
+    return a.createdAt - b.createdAt || compareTxKeys(a.key, b.key);
+}
+
+export function assertHistoryPageFilter(filter: TransactionHistoryPageFilter): void {
+    if (filter.since !== undefined && (!Number.isSafeInteger(filter.since) || filter.since < 0)) {
+        throw new RangeError("history since must be non-negative Unix milliseconds");
+    }
+}
 
 export interface WalletState {
     /** Arbitrary stored wallet settings. */
@@ -74,6 +108,11 @@ export interface WalletRepository extends AsyncDisposable {
 
     /** Fetch stored transaction history for an address. */
     getTransactionHistory(address: string): Promise<ArkTransaction[]>;
+    /** History in ascending creation time and transaction-key order; `after` is exclusive. */
+    getTransactionHistoryPage(
+        filter: TransactionHistoryPageFilter,
+        page: PageRequest<TransactionHistoryPageCursor>,
+    ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>>;
     /** Save transaction history for an address. */
     saveTransactions(address: string, txs: ArkTransaction[]): Promise<void>;
     /** Delete stored transaction history for an address. */

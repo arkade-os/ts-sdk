@@ -1,5 +1,6 @@
 import { Contract, ContractState, ContractWatchState } from "../../contracts/types";
 import { ContractFilter, ContractRepository } from "../contractRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { RealmLike } from "./types";
 
 /**
@@ -77,6 +78,34 @@ export class RealmContractRepository implements ContractRepository {
         }
 
         return [...results].map(contractObjectToDomain);
+    }
+
+    async getContractsPage(
+        filter: ContractFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<Contract>> {
+        assertPageRequest(page);
+        let results = this.realm.objects("ArkContract");
+        const parts: string[] = [];
+        const args: unknown[] = [];
+        let argIndex = 0;
+        if (filter) {
+            argIndex = this.addFilterCondition(parts, args, "script", filter.script, argIndex);
+            argIndex = this.addFilterCondition(parts, args, "state", filter.state, argIndex);
+            argIndex = this.addFilterCondition(parts, args, "type", filter.type, argIndex);
+            argIndex = this.addWatchCondition(parts, args, filter.watch, argIndex);
+        }
+        if (page.after !== undefined) {
+            parts.push(`script > $${argIndex}`);
+            args.push(page.after);
+        }
+        if (parts.length) results = results.filtered(parts.join(" AND "), ...args);
+        const rows: Contract[] = [];
+        for (const row of results.sorted("script")) {
+            rows.push(contractObjectToDomain(row));
+            if (rows.length > page.limit) break;
+        }
+        return pageResult(rows, page.limit, (contract) => contract.script);
     }
 
     async saveContract(contract: Contract): Promise<void> {

@@ -1,5 +1,6 @@
 import { ContractFilter, ContractRepository } from "../contractRepository";
 import { Contract, watchStateOf } from "../../contracts";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 
 /**
  * In-memory implementation of ContractRepository.
@@ -45,6 +46,18 @@ export class InMemoryContractRepository implements ContractRepository {
             }
         }
         return results;
+    }
+
+    async getContractsPage(
+        filter: ContractFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<Contract>> {
+        assertPageRequest(page);
+        const rows = (await this.getContracts(filter))
+            .filter((contract) => page.after === undefined || contract.script > page.after)
+            .sort((a, b) => (a.script < b.script ? -1 : a.script > b.script ? 1 : 0))
+            .slice(0, page.limit + 1);
+        return pageResult(rows, page.limit, (contract) => contract.script);
     }
 
     async saveContract(contract: Contract): Promise<void> {

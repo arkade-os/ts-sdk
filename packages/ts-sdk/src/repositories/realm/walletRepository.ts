@@ -1,5 +1,14 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
-import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
+import {
+    WalletRepository,
+    WalletState,
+    VtxoRepositoryKey,
+    assertHistoryPageFilter,
+    compareHistoryCursors,
+    type TransactionHistoryPageFilter,
+    type TransactionHistoryPageCursor,
+} from "../walletRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import {
     serializeVtxo,
     serializeUtxo,
@@ -196,6 +205,38 @@ export class RealmWalletRepository implements WalletRepository {
         const txs = [...results].map(txObjectToDomain);
         txs.sort((a, b) => a.createdAt - b.createdAt);
         return txs;
+    }
+
+    async getTransactionHistoryPage(
+        filter: TransactionHistoryPageFilter,
+        page: PageRequest<TransactionHistoryPageCursor>,
+    ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>> {
+        assertPageRequest(page);
+        assertHistoryPageFilter(filter);
+        let results = this.realm
+            .objects("ArkTransaction")
+            .filtered("address == $0", filter.address);
+        results = results.filtered(
+            "createdAt >= $0",
+            Math.max(filter.since ?? 0, page.after?.createdAt ?? 0),
+        );
+        const rows: ArkTransaction[] = [];
+        for (const row of results.sorted([
+            ["createdAt", false],
+            ["boardingTxid", false],
+            ["commitmentTxid", false],
+            ["arkTxid", false],
+        ])) {
+            const tx = txObjectToDomain(row);
+            if (
+                page.after !== undefined &&
+                compareHistoryCursors({ createdAt: tx.createdAt, key: tx.key }, page.after) <= 0
+            )
+                continue;
+            rows.push(tx);
+            if (rows.length > page.limit) break;
+        }
+        return pageResult(rows, page.limit, (tx) => ({ createdAt: tx.createdAt, key: tx.key }));
     }
 
     async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {

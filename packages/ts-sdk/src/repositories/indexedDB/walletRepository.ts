@@ -1,5 +1,14 @@
 import { ExtendedCoin, ExtendedVirtualCoin, ArkTransaction } from "../../wallet";
-import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
+import {
+    WalletRepository,
+    WalletState,
+    VtxoRepositoryKey,
+    assertHistoryPageFilter,
+    compareHistoryCursors,
+    type TransactionHistoryPageFilter,
+    type TransactionHistoryPageCursor,
+} from "../walletRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import {
     STORE_VTXOS,
     STORE_UTXOS,
@@ -203,6 +212,56 @@ export class IndexedDBWalletRepository implements WalletRepository {
             console.error(`Failed to get transaction history for address ${address}:`, error);
             return [];
         }
+    }
+
+    async getTransactionHistoryPage(
+        filter: TransactionHistoryPageFilter,
+        page: PageRequest<TransactionHistoryPageCursor>,
+    ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>> {
+        assertPageRequest(page);
+        assertHistoryPageFilter(filter);
+        const db = await this.getDB();
+        const store = db
+            .transaction([STORE_TRANSACTIONS], "readonly")
+            .objectStore(STORE_TRANSACTIONS);
+        const since = Math.max(filter.since ?? 0, page.after?.createdAt ?? 0);
+        const request = store.index("createdAt").openCursor(IDBKeyRange.lowerBound(since));
+        return new Promise((resolve, reject) => {
+            const rows: ArkTransaction[] = [];
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) {
+                    resolve(
+                        pageResult(rows, page.limit, (tx) => ({
+                            createdAt: tx.createdAt,
+                            key: tx.key,
+                        })),
+                    );
+                    return;
+                }
+                const tx = cursor.value as ArkTransaction;
+                if (
+                    (cursor.primaryKey as string[])[0] === filter.address &&
+                    (page.after === undefined ||
+                        compareHistoryCursors(
+                            { createdAt: tx.createdAt, key: tx.key },
+                            page.after,
+                        ) > 0)
+                )
+                    rows.push(tx);
+                if (rows.length > page.limit) {
+                    resolve(
+                        pageResult(rows, page.limit, (tx) => ({
+                            createdAt: tx.createdAt,
+                            key: tx.key,
+                        })),
+                    );
+                    return;
+                }
+                cursor.continue();
+            };
+        });
     }
 
     async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {

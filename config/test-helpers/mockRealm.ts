@@ -28,7 +28,28 @@ function makeRow(data: Row): Row {
 function withFiltered(rows: Row[]): Row[] {
     const arr = rows as Row[] & {
         filtered: (q: string, ...a: unknown[]) => Row[];
+        sorted: (key: string | readonly (readonly [string, boolean])[], reverse?: boolean) => Row[];
     };
+    arr.sorted = (key, reverse = false) =>
+        withFiltered(
+            [...arr].sort((a, b) => {
+                const fields = typeof key === "string" ? [[key, reverse] as const] : key;
+                for (const [field, descending] of fields) {
+                    const left = a[field];
+                    const right = b[field];
+                    const order =
+                        typeof left === "number" && typeof right === "number"
+                            ? left - right
+                            : String(left) < String(right)
+                              ? -1
+                              : String(left) > String(right)
+                                ? 1
+                                : 0;
+                    if (order !== 0) return descending ? -order : order;
+                }
+                return 0;
+            }),
+        );
     arr.filtered = (q: string, ...a: unknown[]) => {
         const matched = arr.filter((row) =>
             q.split(/\s+AND\s+/i).every((clause) =>
@@ -36,7 +57,7 @@ function withFiltered(rows: Row[]): Row[] {
                     .replace(/[()]/g, "")
                     .split(/\s+OR\s+/i)
                     .some((c) => {
-                        const m = c.trim().match(/^(\w+)\s*==\s*(?:\$(\d+)|(null))$/);
+                        const m = c.trim().match(/^(\w+)\s*(==|>=|>)\s*(?:\$(\d+)|(null))$/);
                         // Fail loudly on an unsupported shape: silently matching
                         // it would hide real query mismatches from the tests.
                         if (!m) {
@@ -48,8 +69,19 @@ function withFiltered(rows: Row[]): Row[] {
                         // what the query means for rows written before the
                         // property existed, which is the only reason a
                         // repository emits the clause.
-                        if (m[3]) return row[m[1]] === null || row[m[1]] === undefined;
-                        return row[m[1]] === a[Number(m[2])];
+                        if (m[4]) return row[m[1]] === null || row[m[1]] === undefined;
+                        const value = a[Number(m[3])];
+                        if (m[2] === "==") return row[m[1]] === value;
+                        const left = row[m[1]];
+                        const order =
+                            typeof left === "number" && typeof value === "number"
+                                ? left - value
+                                : String(left) < String(value)
+                                  ? -1
+                                  : String(left) > String(value)
+                                    ? 1
+                                    : 0;
+                        return m[2] === ">" ? order > 0 : order >= 0;
                     }),
             ),
         );

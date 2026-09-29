@@ -1,5 +1,13 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
-import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
+import {
+    WalletRepository,
+    WalletState,
+    VtxoRepositoryKey,
+    assertHistoryPageFilter,
+    type TransactionHistoryPageFilter,
+    type TransactionHistoryPageCursor,
+} from "../walletRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import {
     serializeVtxo,
     serializeUtxo,
@@ -116,6 +124,9 @@ export class SQLiteWalletRepository implements WalletRepository {
         );
         await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}transactions_address ON ${this.tables.transactions} (address)`,
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}transactions_history ON ${this.tables.transactions} (address, created_at, boarding_txid, commitment_txid, ark_txid)`,
         );
     }
 
@@ -471,6 +482,41 @@ export class SQLiteWalletRepository implements WalletRepository {
             [address],
         );
         return rows.map(txRowToDomain);
+    }
+
+    async getTransactionHistoryPage(
+        filter: TransactionHistoryPageFilter,
+        page: PageRequest<TransactionHistoryPageCursor>,
+    ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>> {
+        assertPageRequest(page);
+        assertHistoryPageFilter(filter);
+        await this.ensureInit();
+        const conditions = ["address = ?"];
+        const params: unknown[] = [filter.address];
+        if (filter.since !== undefined) {
+            conditions.push("created_at >= ?");
+            params.push(filter.since);
+        }
+        if (page.after !== undefined) {
+            conditions.push(
+                "(created_at, boarding_txid, commitment_txid, ark_txid) > (?, ?, ?, ?)",
+            );
+            params.push(
+                page.after.createdAt,
+                page.after.key.boardingTxid,
+                page.after.key.commitmentTxid,
+                page.after.key.arkTxid,
+            );
+        }
+        const rows = await this.db.all<TransactionRow>(
+            `SELECT * FROM ${this.tables.transactions} WHERE ${conditions.join(" AND ")}
+             ORDER BY created_at, boarding_txid, commitment_txid, ark_txid LIMIT ?`,
+            [...params, page.limit + 1],
+        );
+        return pageResult(rows.map(txRowToDomain), page.limit, (tx) => ({
+            createdAt: tx.createdAt,
+            key: tx.key,
+        }));
     }
 
     async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {

@@ -4,11 +4,13 @@ import {
     ArkIntentState,
     assertIntentIdUnique,
     IntentFilter,
+    IntentPageFilter,
     IntentRepository,
     intentMatchesFilter,
     intentPageBounds,
     isTerminalIntentState,
 } from "../intentRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { RealmLike } from "./types";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -85,6 +87,23 @@ export class RealmIntentRepository implements IntentRepository {
         const out = filter ? all.filter((i) => intentMatchesFilter(i, filter)) : all;
         const { skip, end } = intentPageBounds(filter, out.length);
         return out.slice(skip, end);
+    }
+
+    async getIntentsPage(
+        filter: IntentPageFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<ArkIntent>> {
+        assertPageRequest(page);
+        let results = this.realm.objects("ArkIntent");
+        if (page.after !== undefined) results = results.filtered("intentTxId > $0", page.after);
+        const rows: ArkIntent[] = [];
+        for (const row of results.sorted("intentTxId")) {
+            const intent = toIntent(row);
+            if (filter && !intentMatchesFilter(intent, filter)) continue;
+            rows.push(intent);
+            if (rows.length > page.limit) break;
+        }
+        return pageResult(rows, page.limit, (intent) => intent.intentTxId);
     }
 
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {

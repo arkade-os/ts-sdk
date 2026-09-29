@@ -1,4 +1,5 @@
 import { Contract, ContractState, ContractWatchState } from "../contracts/types";
+import type { PageRequest, PageResult } from "./page";
 
 /**
  * Filter options for querying contracts.
@@ -35,6 +36,12 @@ export interface ContractRepository extends AsyncDisposable {
      * Returns all contracts if no filter provided.
      */
     getContracts(filter?: ContractFilter): Promise<Contract[]>;
+
+    /** Bounded contracts in script order; `after` is exclusive. */
+    getContractsPage(
+        filter: ContractFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<Contract>>;
 
     /**
      * Save or update a contract.
