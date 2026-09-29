@@ -4,7 +4,6 @@ import type { RfqSwapRecord } from "./rfqRecord";
 import {
     advanceFundingSwap,
     canInsertPreparedSwap,
-    fundingSnapshot,
     mergeFundingProtectedSwap,
     type FundingStateAdvance,
 } from "./fundingPersistence";
@@ -103,18 +102,18 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
         const merged = mergeFundingProtectedSwap(this.swaps.get(swap.id), swap);
         this.swaps.set(
             swap.id,
-            merged.fundingIntent !== undefined ? fundingSnapshot(merged) : merged,
+            merged.fundingIntent !== undefined ? structuredClone(merged) : merged,
         );
     }
 
     async getSwap(id: string): Promise<AssetSwap | undefined> {
         const swap = this.swaps.get(id);
-        return swap ? fundingSnapshot(swap) : undefined;
+        return swap ? structuredClone(swap) : undefined;
     }
 
     async insertPreparedSwap(swap: AssetSwap): Promise<boolean> {
         if (!canInsertPreparedSwap([...this.swaps.values()], swap)) return false;
-        this.swaps.set(swap.id, fundingSnapshot(swap));
+        this.swaps.set(swap.id, structuredClone(swap));
         return true;
     }
 
@@ -124,13 +123,13 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
         next: FundingStateAdvance,
     ): Promise<boolean> {
         const result = advanceFundingSwap(this.swaps.get(id), expected, next);
-        if (result.swap) this.swaps.set(id, fundingSnapshot(result.swap));
+        if (result.swap) this.swaps.set(id, structuredClone(result.swap));
         return result.ok;
     }
 
     async getAllSwaps(): Promise<AssetSwap[]> {
         return [...this.swaps.values()].map((swap) =>
-            swap.fundingIntent !== undefined ? fundingSnapshot(swap) : swap,
+            swap.fundingIntent !== undefined ? structuredClone(swap) : swap,
         );
     }
 

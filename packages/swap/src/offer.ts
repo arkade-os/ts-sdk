@@ -1270,7 +1270,7 @@ export function assembleOfferFill(
     if (solverFund.length === 0) {
         throw new Error("fillOffer needs coins to pay wantAmount with — `fund` is empty");
     }
-    solverFund.forEach((coin, i) => assertFillCoin(coin, `fund[${i}]`, BigInt(1)));
+    solverFund.forEach((coin, i) => assertFillCoin(coin, `fund[${i}]`));
     assertScript(solverPayout, "payoutScript");
     toSatsAmount(vtxo.value, "deposit.value", { min: BigInt(1) });
     assertAssetEntries(vtxo.assets, "deposit");
@@ -1287,7 +1287,7 @@ export function assembleOfferFill(
             throw new Error("sponsor needs coins to contribute with — `sponsor.fund` is empty");
         }
         sponsor.fund.forEach((coin, i) => {
-            assertFillCoin(coin, `sponsor.fund[${i}]`, BigInt(1));
+            assertFillCoin(coin, `sponsor.fund[${i}]`);
             if ((coin.assets?.length ?? 0) > 0) {
                 throw new Error(`sponsor.fund[${i}] carries assets — sponsor funding is sats-only`);
             }
@@ -1627,9 +1627,9 @@ function assertAssetEntries(assets: FillFunding["assets"], what: string): void {
     }
 }
 
-function assertFillCoin(coin: FillFunding, what: string, minValue: bigint): void {
+function assertFillCoin(coin: FillFunding, what: string): void {
     assertTxid(coin.txid, `${what}.txid`);
     assertVout(coin.vout, `${what}.vout`);
-    toSatsAmount(coin.value, `${what}.value`, { min: minValue });
+    toSatsAmount(coin.value, `${what}.value`, { min: BigInt(1) });
     assertAssetEntries(coin.assets, what);
 }

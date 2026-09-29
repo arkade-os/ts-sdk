@@ -1,8 +1,8 @@
 import { hex } from "@scure/base";
 import { asset } from "@arkade-os/sdk";
 
-export const CARRIER_QUOTE_ID_MAX = 128;
-export const CARRIER_TAXI_URL_MAX = 512;
+const CARRIER_QUOTE_ID_MAX = 128;
+const CARRIER_TAXI_URL_MAX = 512;
 
 export interface RecycleCarrierQuote {
     quoteId: string;
@@ -49,8 +49,6 @@ export interface VerifiedCarrierTerms {
     quoteId?: string;
 }
 
-export interface ParsedCarrierEcho extends VerifiedCarrierTerms {}
-
 const DECIMAL = /^(0|[1-9][0-9]*)$/;
 const XONLY_HEX = /^[0-9a-f]{64}$/;
 const MAX_BITCOIN_SATS = 2_100_000_000_000_000n;
@@ -59,11 +57,8 @@ const MAX_BITCOIN_SATS_DECIMAL = MAX_BITCOIN_SATS.toString();
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
     v !== null && typeof v === "object" && !Array.isArray(v);
 
-export const isCanonicalDecimalString = (v: unknown): v is string =>
-    typeof v === "string" && DECIMAL.test(v);
-
 const parseSatsField = (value: unknown, field: string): bigint => {
-    if (!isCanonicalDecimalString(value)) {
+    if (typeof value !== "string" || !DECIMAL.test(value)) {
         throw new Error("carrier echo " + field + " must be a canonical decimal string");
     }
     if (
@@ -262,7 +257,7 @@ export function parseCarrierEcho(
         taxiUrl?: string;
         taxiKey?: string;
     },
-): ParsedCarrierEcho {
+): VerifiedCarrierTerms {
     if (!isPlainObject(raw)) throw new Error("carrier echo must be an object");
     if (raw.mode !== expected.mode) throw new Error("carrier echo mode differs from the request");
     const keys = new Set(Object.keys(raw));
@@ -373,7 +368,7 @@ export function parseCarrierEcho(
 }
 
 export function assertRecycleEchoMatchesExpected(
-    echo: ParsedCarrierEcho,
+    echo: VerifiedCarrierTerms,
     expected: RecycleCarrierQuote,
 ): void {
     if (echo.mode !== "recycle" || echo.quoteId !== expected.quoteId) {
@@ -394,7 +389,7 @@ export function assertRecycleEchoMatchesExpected(
 }
 
 export function assertReceiverPaidEchoMatchesExpected(
-    echo: ParsedCarrierEcho,
+    echo: VerifiedCarrierTerms,
     expected: ReceiverPaidCarrierQuote,
 ): void {
     if (echo.mode !== "recycle_receiver" || echo.quoteId !== expected.quoteId) {

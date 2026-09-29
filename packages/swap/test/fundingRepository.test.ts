@@ -48,8 +48,6 @@ const legacy = (id: string): AssetSwap => ({
     fundingIntent: undefined,
 });
 
-const clone = <T>(value: T): T => structuredClone(value);
-
 type CorruptHarness = {
     repository: AssetSwapRepository;
     seed(swap: AssetSwap): Promise<void>;
@@ -99,7 +97,7 @@ const corruptBackends: { name: string; open(): Promise<CorruptHarness> }[] = [
                 async seed(swap) {
                     const alias = legacy(swap.id);
                     await repository.saveSwap(alias);
-                    Object.assign(alias, clone(swap));
+                    Object.assign(alias, structuredClone(swap));
                 },
             };
         },
@@ -340,7 +338,7 @@ describe.each(backends)("prepared funding repository (%s)", (_, create) => {
     it("does not let an intentless stale update erase funding authority", async () => {
         await using repository = create();
         await repository.insertPreparedSwap(prepared("operation-a"));
-        const stale = clone((await repository.getSwap("operation-a"))!);
+        const stale = structuredClone((await repository.getSwap("operation-a"))!);
         delete stale.fundingIntent;
         await repository.advanceFundingState("operation-a", "prepared", { state: "submitted" });
         await repository.saveSwap({ ...stale, status: "cancelling" });

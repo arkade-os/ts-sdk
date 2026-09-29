@@ -221,19 +221,15 @@ export function assertPreparedFundingSwap(swap: AssetSwap): void {
         throw new Error("initial fundingIntent.state must be prepared");
 }
 
-export function assertFundingSwap(swap: AssetSwap): void {
-    validatePinnedSwap(swap);
-}
-
 export function hasBoundFunding(swap: AssetSwap): boolean {
     if (swap.fundingIntent === undefined) return swap.fundingTxid.length > 0;
-    assertFundingSwap(swap);
+    validatePinnedSwap(swap);
     return swap.fundingIntent.state === "bound" && swap.fundingTxid.length > 0;
 }
 
 export function mayHaveSubmittedFunding(swap: AssetSwap): boolean {
     if (swap.fundingIntent === undefined) return swap.fundingTxid.length > 0;
-    assertFundingSwap(swap);
+    validatePinnedSwap(swap);
     return swap.fundingIntent.state === "submitted" || swap.fundingIntent.state === "bound";
 }
 
@@ -303,8 +299,8 @@ export function mergeFundingProtectedSwap(
         }
         return incoming;
     }
-    assertFundingSwap(existing);
-    if (incoming.fundingIntent !== undefined) assertFundingSwap(incoming);
+    validatePinnedSwap(existing);
+    if (incoming.fundingIntent !== undefined) validatePinnedSwap(incoming);
     assertImmutableFacts(existing, incoming);
     if (incoming.fundingTxid && incoming.fundingTxid !== existing.fundingTxid) {
         throw new Error("fundingTxid is write-once");
@@ -318,7 +314,7 @@ export function mergeFundingProtectedSwap(
 
 const reservationKeys = (swap: AssetSwap): string[] => {
     if (swap.fundingIntent === undefined) return [];
-    assertFundingSwap(swap);
+    validatePinnedSwap(swap);
     if (swap.fundingIntent.state !== "prepared" && swap.fundingIntent.state !== "submitted") {
         return [];
     }
@@ -354,7 +350,7 @@ export function advanceFundingSwap(
         "funding state advance",
     );
     if (!existing || existing.fundingIntent === undefined) return { ok: false };
-    assertFundingSwap(existing);
+    validatePinnedSwap(existing);
     if (next.state === "bound") {
         if (typeof next.fundingTxid !== "string" || !TXID.test(next.fundingTxid))
             throw new Error("bound fundingTxid must be lowercase hex");
@@ -375,8 +371,6 @@ export function advanceFundingSwap(
         fundingTxid: next.state === "bound" ? next.fundingTxid : "",
         fundingIntent: { ...existing.fundingIntent, state: next.state },
     };
-    assertFundingSwap(swap);
+    validatePinnedSwap(swap);
     return { ok: true, swap };
 }
-
-export const fundingSnapshot = (swap: AssetSwap): AssetSwap => structuredClone(swap);
