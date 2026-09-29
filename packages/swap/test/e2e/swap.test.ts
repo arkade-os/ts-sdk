@@ -57,14 +57,31 @@ const execCommand = (command: string): string => {
 };
 
 // expect.poll would do, but it refuses to run outside a test (the beforeAll
-// faucet wait needs this too); vi.waitFor polls anywhere
-const waitFor = (fn: () => Promise<boolean>, timeout = 30_000): Promise<void> =>
-    vi.waitFor(
-        async () => {
-            if (!(await fn())) throw new Error("timeout in waitFor");
-        },
-        { timeout },
-    );
+// faucet wait needs this too); vi.waitFor polls anywhere. vi.waitFor retries
+// ANY throw until the deadline, so a real error from `fn` (stack down, HTTP
+// 500) would burn the whole timeout: capture it, stop polling, rethrow at
+// once — only a `false` (not ready yet) may spin.
+const waitFor = (fn: () => Promise<boolean>, timeout = 30_000): Promise<void> => {
+    let fatal: { err: unknown } | undefined;
+    return vi
+        .waitFor(
+            async () => {
+                if (fatal) return;
+                let ready: boolean;
+                try {
+                    ready = await fn();
+                } catch (err) {
+                    fatal = { err };
+                    return;
+                }
+                if (!ready) throw new Error("timeout in waitFor");
+            },
+            { timeout, interval: 500 },
+        )
+        .then(() => {
+            if (fatal) throw fatal.err;
+        });
+};
 
 const indexer = new RestIndexerProvider(OPERATOR_URL);
 const repository = new InMemoryAssetSwapRepository();

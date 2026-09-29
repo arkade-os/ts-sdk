@@ -46,17 +46,35 @@ const execCommand = (command: string): string =>
 const lncli = (node: string, args: string): string =>
     execCommand(`docker exec -t ${node} lncli --network=regtest ${args}`);
 
-// vi.waitFor over expect.poll: the timeout error gets to name what never happened
+// vi.waitFor over expect.poll: the timeout error gets to name what never
+// happened. vi.waitFor retries ANY throw until the deadline, so a real error
+// from `fn` (LND down, covclaimd unreachable) would burn the whole timeout:
+// capture it, stop polling, rethrow at once — only a `false` (not ready yet)
+// may spin. The 2s cadence keeps Docker/LND round-trip pressure as before.
 const waitFor = (
     fn: () => Promise<boolean>,
-    { timeout = 180_000, what = "condition" } = {},
-): Promise<void> =>
-    vi.waitFor(
-        async () => {
-            if (!(await fn())) throw new Error(`timeout waiting for ${what}`);
-        },
-        { timeout },
-    );
+    { timeout = 180_000, interval = 2_000, what = "condition" } = {},
+): Promise<void> => {
+    let fatal: { err: unknown } | undefined;
+    return vi
+        .waitFor(
+            async () => {
+                if (fatal) return;
+                let ready: boolean;
+                try {
+                    ready = await fn();
+                } catch (err) {
+                    fatal = { err };
+                    return;
+                }
+                if (!ready) throw new Error(`timeout waiting for ${what}`);
+            },
+            { timeout, interval },
+        )
+        .then(() => {
+            if (fatal) throw fatal.err;
+        });
+};
 
 const decodeInvoice = (raw: string): InvoiceFacts => {
     const d = JSON.parse(lncli("lnd-peer", `decodepayreq ${raw}`));
