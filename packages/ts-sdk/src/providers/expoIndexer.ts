@@ -29,7 +29,7 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
         const isReactNative =
             typeof navigator !== "undefined" && navigator.product === "ReactNative";
 
-        const expoFetch = await getExpoFetch().catch((error) => {
+        const expoFetch = await getExpoFetch({ requireExpo: isReactNative }).catch((error) => {
             // In React Native/Expo, expo/fetch is required for proper streaming support
             if (isReactNative) {
                 throw new Error(

@@ -2499,7 +2499,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             const inputFee = estimator.evalOnchainInput({
                 amount: BigInt(u.value),
             });
-            if (inputFee.value >= BigInt(u.value)) {
+            if (inputFee.satoshis >= u.value) {
                 continue;
             }
             filteredBoarding.push(u);

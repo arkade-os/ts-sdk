@@ -208,4 +208,51 @@ describe("getExpoFetch", () => {
             /expo\/fetch is unavailable/,
         );
     });
+
+    // React Native has no usable streaming fetch of its own, so falling back there yields a
+    // subscription that connects and never yields. Everywhere else the fallback is correct.
+    describe("ExpoIndexerProvider without expo/fetch", () => {
+        let quiet: { mockRestore(): void }[];
+        let realFetch: typeof globalThis.fetch;
+
+        beforeEach(() => {
+            quiet = (["warn", "debug", "error"] as const).map((level) =>
+                vi.spyOn(console, level).mockImplementation(() => undefined),
+            );
+            vi.resetModules();
+            // Forced, not assumed: see `fallbackTransport`.
+            vi.doMock("expo/fetch", () => {
+                throw new Error("expo/fetch unavailable");
+            });
+            realFetch = globalThis.fetch;
+            globalThis.fetch = (async () =>
+                new Response(null, { status: 500 })) as typeof globalThis.fetch;
+        });
+
+        afterEach(() => {
+            globalThis.fetch = realFetch;
+            vi.unstubAllGlobals();
+            for (const spy of quiet) spy.mockRestore();
+        });
+
+        async function subscribe() {
+            const { ExpoIndexerProvider } = await import("../src/providers/expoIndexer");
+            const provider = new ExpoIndexerProvider("https://indexer.test");
+            return provider.getSubscription("sub-1", new AbortController().signal).next();
+        }
+
+        it("fails hard in React Native", async () => {
+            vi.stubGlobal("navigator", { product: "ReactNative" });
+
+            await expect(subscribe()).rejects.toThrow(
+                /expo\/fetch is unavailable in React Native environment/,
+            );
+        });
+
+        it("still falls back outside React Native", async () => {
+            vi.stubGlobal("navigator", { product: "Gecko" });
+
+            await expect(subscribe()).rejects.toThrow(/Unexpected status 500/);
+        });
+    });
 });

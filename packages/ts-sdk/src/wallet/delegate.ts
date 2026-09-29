@@ -259,10 +259,10 @@ async function delegate(
             ...toOffchainInputFeeParams(coin),
             type: "vtxo",
         });
-        if (inputFee.value >= coin.value) {
+        if (inputFee.satoshis >= coin.value) {
             continue;
         }
-        amount += BigInt(coin.value) - BigInt(inputFee.value);
+        amount += BigInt(coin.value) - BigInt(inputFee.satoshis);
     }
     const { pubkey, fee } = delegateInfo;
     // getDelegateInfo() normalizes delegateAddress, so it is always populated here.

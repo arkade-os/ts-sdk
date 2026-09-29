@@ -173,7 +173,7 @@ async function main() {
         contractScript: contract.script,
         vtxo,
         collaborative: true,
-        walletPubKey: hex.encode(alicePubKey),
+        walletDescriptor: hex.encode(alicePubKey),
     });
     console.log("Spendable paths:", paths.length);
     if (paths.length === 0) {
@@ -205,7 +205,7 @@ async function main() {
         contractScript: contract.script,
         vtxo,
         collaborative: true,
-        walletPubKey: hex.encode(bobPubKey),
+        walletDescriptor: hex.encode(bobPubKey),
     });
     console.log("Spendable paths:", paths.length);
     for (const path of paths) {
