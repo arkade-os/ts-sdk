@@ -567,6 +567,17 @@ describe("Wallet", () => {
             expect(thisArg.getSpendableVtxos).not.toHaveBeenCalled();
             expect(submit).not.toHaveBeenCalled();
         });
+
+        it("rejects caller-selected asset change that clears dust but not the operator minimum", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([1000, 400], 800n, [0]);
+            thisArg.logUngatedInputs = vi.fn();
+
+            await expect(send(thisArg, 505, [coins[0]])).rejects.toThrow(
+                "495 sats of change is below the operator minimum of 800 sats",
+            );
+            expect(thisArg.getSpendableVtxos).not.toHaveBeenCalled();
+            expect(submit).not.toHaveBeenCalled();
+        });
     });
 
     describe("getInfos", () => {
