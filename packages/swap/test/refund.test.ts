@@ -10,7 +10,13 @@ import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { CSVMultisigTapscript, SingleKey, Transaction, type ArkProvider } from "@arkade-os/sdk";
+import {
+    CSVMultisigTapscript,
+    SingleKey,
+    Transaction,
+    getNetwork,
+    type ArkProvider,
+} from "@arkade-os/sdk";
 
 import { lightningSendContract, type RfqStatus, type RfqTransport } from "../src/rfq";
 import {
@@ -54,12 +60,12 @@ const swapScript = () =>
         receiverPkScript: p2tr(key(1)),
     });
 
-const CHECKPOINT_TAPSCRIPT = hex.encode(
-    CSVMultisigTapscript.encode({
-        timelock: { type: "blocks", value: BigInt(144) },
-        pubkeys: [key(3)],
-    }).script,
-);
+const checkpointTapscriptOf = (
+    timelock: { type: "blocks" | "seconds"; value: bigint },
+    pubkey: Uint8Array = key(3),
+): string => hex.encode(CSVMultisigTapscript.encode({ timelock, pubkeys: [pubkey] }).script);
+
+const CHECKPOINT_TAPSCRIPT = checkpointTapscriptOf({ type: "blocks", value: BigInt(144) });
 
 const VTXOS: LockupVtxo[] = [
     { txid: "11".repeat(32), vout: 0, value: 60_000, recoverable: false },
@@ -78,6 +84,8 @@ type FakeOperator = ArkProvider & {
 const fakeOperator = (
     over: {
         checkpointTapscript?: string;
+        network?: string;
+        forfeitPubkey?: string;
         checkpointsFor?: (submitted: string[]) => string[];
         failSubmit?: () => Error | undefined;
     } = {},
@@ -89,6 +97,8 @@ const fakeOperator = (
         finalized,
         getInfo: async () => ({
             checkpointTapscript: over.checkpointTapscript ?? CHECKPOINT_TAPSCRIPT,
+            network: over.network ?? "regtest",
+            forfeitPubkey: over.forfeitPubkey ?? hex.encode(key(3)),
         }),
         submitTx: async (tx: string, checkpoints: string[]) => {
             const failure = over.failSubmit?.();
@@ -393,6 +403,54 @@ describe("pushRefundWithoutReceiver", () => {
                 vtxos: VTXOS,
             }),
         ).rejects.toThrow(/checkpointTapscript/);
+    });
+
+    describe("the checkpoint script the operator hands out is gated", () => {
+        // Sweepable checkpoints, so every refusal must land before anything is signed or sent.
+        it("refuses a checkpoint exit delay below the network's floor", async () => {
+            const operator = fakeOperator({
+                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(1) }),
+            });
+            await expect(
+                pushRefundWithoutReceiver(operator, {
+                    contract: swapScript(),
+                    sender: SENDER,
+                    vtxos: VTXOS,
+                }),
+            ).rejects.toThrow(/checkpoint exit delay rejected/);
+            expect(operator.submitted).toEqual([]);
+        });
+
+        it("refuses a checkpoint pinned to a key other than the advertised forfeit key", async () => {
+            const operator = fakeOperator({
+                checkpointTapscript: checkpointTapscriptOf(
+                    { type: "blocks", value: BigInt(144) },
+                    key(4),
+                ),
+            });
+            await expect(
+                pushRefundWithoutReceiver(operator, {
+                    contract: swapScript(),
+                    sender: SENDER,
+                    vtxos: VTXOS,
+                }),
+            ).rejects.toThrow(/does not match the advertised forfeitPubkey/);
+            expect(operator.submitted).toEqual([]);
+        });
+
+        it("floors against the caller's pinned network, not the one the operator names", async () => {
+            // The same block-typed script the regtest default accepts: only the pin rejects it.
+            const operator = fakeOperator({ network: "regtest" });
+            await expect(
+                pushRefundWithoutReceiver(operator, {
+                    contract: swapScript(),
+                    sender: SENDER,
+                    vtxos: VTXOS,
+                    network: getNetwork("bitcoin"),
+                }),
+            ).rejects.toThrow(/checkpoint exit delay rejected/);
+            expect(operator.submitted).toEqual([]);
+        });
     });
 });
 

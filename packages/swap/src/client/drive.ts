@@ -18,8 +18,10 @@
 import {
     ArkAddress,
     contractSigner,
+    getNetwork,
     identityDescriptor,
     type IWallet,
+    type Network,
     type SettlementEvent,
 } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
@@ -535,6 +537,10 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
     // ── the money-moving half ────────────────────────────────────────────────
 
+    /** The client's own resolved network, so the checkpoint gate's floor is not read off the
+     * response it is checking. @see operatorUnrollScript */
+    const pinnedNetwork = async (): Promise<Network> => getNetwork(await config.network());
+
     const claimLockup: RfqSwapManagerCallbacks["claimLockup"] = async (
         swap,
         vtxos,
@@ -560,6 +566,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 // Passed through: `pushClaim`'s own value check decides whether `P` is published.
                 expectedAmount: swap.expectedAmount,
                 partiallyClaimed,
+                network: await pinnedNetwork(),
             }),
         );
     };
@@ -598,6 +605,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             contracts: lockupSource,
             wallet,
             repository: corridorStore(),
+            network: pinnedNetwork,
         });
         manager.setCallbacks({
             refundArkade: async (swap) => {

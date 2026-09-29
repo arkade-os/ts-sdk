@@ -7,7 +7,7 @@
  * {@link LockupNeedsRecoveryError} propagate untouched, since catching either would turn a state
  * the trader must act on into a retry that grinds the window away.
  */
-import type { IWallet } from "@arkade-os/sdk";
+import type { IWallet, Network } from "@arkade-os/sdk";
 import {
     type LockupContractSource,
     findLockupVtxos,
@@ -33,6 +33,9 @@ export interface ArkadeRefunderDeps {
      * record's `profile.signer`), so the refund key is resolved through `getRfqSwap`.
      */
     repository: Pick<AssetSwapRepository, "getRfqSwap">;
+    /** The caller's already-resolved network, pinning the checkpoint exit-delay floor. Lazy,
+     * like `SwapDriveConfig.network`. @see operatorUnrollScript */
+    network?: () => Promise<Network>;
 }
 
 /**
@@ -74,6 +77,11 @@ export function arkadeRefunder(
         // `?? {}` is a refusal, not a default: no descriptor becomes the same typed "no-secrets",
         // keeping `senderIdentityForSwapRecord` the one place that decides it.
         const sender = await senderIdentityForSwapRecord(deps.wallet, rfqSignerOf(record) ?? {});
-        return pushRefundWithoutReceiver(deps.operator, { contract, sender, vtxos });
+        return pushRefundWithoutReceiver(deps.operator, {
+            contract,
+            sender,
+            vtxos,
+            network: await deps.network?.(),
+        });
     };
 }
