@@ -253,42 +253,51 @@ export class IndexedDBWalletRepository implements WalletRepository {
             .transaction([STORE_TRANSACTIONS], "readonly")
             .objectStore(STORE_TRANSACTIONS);
         const since = Math.max(filter.since ?? 0, page.after?.createdAt ?? 0);
-        // TODO: add an (address, createdAt) index in wallet DB v4 to avoid scanning other addresses.
-        const request = store.index("createdAt").openCursor(IDBKeyRange.lowerBound(since));
+        const request = store
+            .index("addressCreatedAt")
+            .openCursor(
+                IDBKeyRange.bound(
+                    [filter.address, since],
+                    [filter.address, Number.MAX_SAFE_INTEGER],
+                ),
+            );
         return new Promise((resolve, reject) => {
             const rows: ArkTransaction[] = [];
             request.onerror = () => reject(request.error);
             request.onsuccess = () => {
-                const cursor = request.result;
-                if (!cursor) {
-                    resolve(
-                        pageResult(rows, page.limit, (tx) => ({
-                            createdAt: tx.createdAt,
-                            key: tx.key,
-                        })),
-                    );
-                    return;
-                }
-                const tx = cursor.value as ArkTransaction;
-                if (
-                    (cursor.primaryKey as string[])[0] === filter.address &&
-                    (page.after === undefined ||
+                try {
+                    const cursor = request.result;
+                    if (!cursor) {
+                        resolve(
+                            pageResult(rows, page.limit, (tx) => ({
+                                createdAt: tx.createdAt,
+                                key: tx.key,
+                            })),
+                        );
+                        return;
+                    }
+                    const tx = cursor.value as ArkTransaction;
+                    if (
+                        page.after === undefined ||
                         compareHistoryCursors(
                             { createdAt: tx.createdAt, key: tx.key },
                             page.after,
-                        ) > 0)
-                )
-                    rows.push(tx);
-                if (rows.length > page.limit) {
-                    resolve(
-                        pageResult(rows, page.limit, (tx) => ({
-                            createdAt: tx.createdAt,
-                            key: tx.key,
-                        })),
-                    );
-                    return;
+                        ) > 0
+                    )
+                        rows.push(tx);
+                    if (rows.length > page.limit) {
+                        resolve(
+                            pageResult(rows, page.limit, (tx) => ({
+                                createdAt: tx.createdAt,
+                                key: tx.key,
+                            })),
+                        );
+                        return;
+                    }
+                    cursor.continue();
+                } catch (error) {
+                    reject(error);
                 }
-                cursor.continue();
             };
         });
     }

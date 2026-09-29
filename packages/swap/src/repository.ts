@@ -268,8 +268,13 @@ function pageMap<Item>(records: Map<string, Item>, page: PageRequest): PageResul
 export const collectAssetSwaps = (repository: Pick<AssetSwapRepository, "getAssetSwapsPage">) =>
     collectPages((page: PageRequest<string>) => repository.getAssetSwapsPage(page));
 
-export const collectRfqSwaps = (repository: Pick<AssetSwapRepository, "getRfqSwapsPage">) =>
-    collectPages((page: PageRequest<RfqSwapPageCursor>) => repository.getRfqSwapsPage({}, page));
+export const collectRfqSwaps = (
+    repository: Pick<AssetSwapRepository, "getRfqSwapsPage">,
+    filter: RfqSwapPageFilter = {},
+) =>
+    collectPages((page: PageRequest<RfqSwapPageCursor>) =>
+        repository.getRfqSwapsPage(filter, page),
+    );
 
 export const collectSwapRecords = (repository: Pick<AssetSwapRepository, "getSwapRecordsPage">) =>
     collectPages((page: PageRequest<string>) => repository.getSwapRecordsPage(page));

@@ -396,6 +396,11 @@ describe.each(backends)("RFQ swap records (%s)", (_, create) => {
         expect(second.items.map((row) => row.rfqId)).toEqual(["b"]);
         expect(second.nextCursor).toBeUndefined();
         expect((await collectRfqSwaps(repository)).map((row) => row.rfqId)).toContain("old");
+        expect((await collectRfqSwaps(repository, filter)).map((row) => row.rfqId)).toEqual([
+            "B",
+            "a",
+            "b",
+        ]);
         await expect(repository.getRfqSwapsPage({ since: -1 }, { limit: 2 })).rejects.toThrow(
             RangeError,
         );

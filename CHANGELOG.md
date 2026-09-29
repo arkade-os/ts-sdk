@@ -18,6 +18,10 @@ style and have not been backfilled.
   should sort the collected result explicitly. `IntentFilter.skip` and `take`
   are replaced by `PageRequest` cursors.
 
+- **The shared IndexedDB wallet schema upgrades from v3 to v4.** The upgrade
+  adds an `(address, createdAt)` transaction-history index without rewriting
+  history rows or activating the separate experimental intent stores.
+
 - **`@arkade-os/boltz-swap` is removed from the repo and will not be
   published on the 0.5 line.** The package's Boltz-routed rails are
   superseded by the `@arkade-os/swap` v2 client (`createSwapClient` on the

@@ -1124,6 +1124,7 @@ pages. Repository collection reads use pages directly; `collectVtxos`,
 `collectScriptVtxos`, `collectUtxos`, `collectTransactionHistory`, `collectContracts`, and
 `collectIntents` traverse all pages when a complete snapshot is required.
 Wallet spending paths consume every VTXO or UTXO page before coin selection.
+In `@arkade-os/swap`, RFQ page `since` values use Unix seconds instead.
 
 ```ts
 let after;

@@ -1,5 +1,6 @@
 import { collectTransactionHistory } from "../../src/repositories/walletRepository";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { IDBCursor as FakeIDBCursor } from "fake-indexeddb";
 import { createMockRealm } from "../../../../config/test-helpers/mockRealm";
 import { createNodeSQLExecutor } from "../../../../config/test-helpers/nodeSqlExecutor";
 import { TxType, type ArkTransaction } from "../../src/wallet";
@@ -22,6 +23,24 @@ const tx = (arkTxid: string, createdAt: number): ArkTransaction => ({
     amount: 100,
     settled: true,
     createdAt,
+});
+
+it("uses the address/time index instead of scanning other addresses", async () => {
+    await using repository = new IndexedDBWalletRepository(`history-index-${crypto.randomUUID()}`);
+    await repository.saveTransactions(
+        "other",
+        Array.from({ length: 200 }, (_, i) => tx(`other-${i}`, i + 1)),
+    );
+    await repository.saveTransactions("mine", [tx("mine-1", 201), tx("mine-2", 202)]);
+    const next = vi.spyOn(FakeIDBCursor.prototype, "continue");
+    try {
+        const page = await repository.getTransactionHistoryPage({ address: "mine" }, { limit: 1 });
+        expect(page.items.map((row) => row.key.arkTxid)).toEqual(["mine-1"]);
+        expect(page.nextCursor?.key.arkTxid).toBe("mine-1");
+        expect(next).toHaveBeenCalledTimes(1);
+    } finally {
+        next.mockRestore();
+    }
 });
 
 describe.each(backends)("wallet history pages (%s)", (_, create) => {

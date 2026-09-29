@@ -438,7 +438,7 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
     });
 
     it("creates the `script` index and populates it via backfill", async () => {
-        // Covers two things: (1) opening at DB_VERSION=3 creates a `script`
+        // Covers two things: (1) opening at v3 creates a `script`
         // index on the vtxos store, (2) rows inserted without `script` are
         // added to the index automatically when the backfill's
         // `cursor.update()` sets the field.

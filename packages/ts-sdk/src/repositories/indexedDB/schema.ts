@@ -17,16 +17,18 @@ export const STORE_VTXO_BRANCHES = "vtxoBranches";
 //        `vtxo.script` from `vtxo.address` so the field is always present
 //        at read time. Matches the `script` indexing already in place for
 //        Realm (`realm/schemas.ts`) and SQLite (`sqlite/walletRepository.ts`).
+//   v4 — add `(address, createdAt)` index to transaction history; existing
+//        rows are indexed without changing their stored values.
 //
-// The shared wallet/contract DB is pinned at v3 so upgrading the SDK never
-// migrates an existing user's database. The intent/virtualtx persistence
-// stores (v4/v5 below) are experimental and inert: they are created only by
+// The shared wallet/contract DB upgrades to v4 for the history index only.
+// The intent/virtualtx persistence stores (dedicated-DB v4/v5 below) are
+// experimental and inert: they are created only by
 // the opt-in `IndexedDBIntentRepository`/`IndexedDBVirtualTxRepository`, which
 // open at `INTENT_DB_VERSION` with `initDatabaseWithIntents` on a *dedicated*
 // DB name — never through the default wallet path.
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 
-//   v4 — add intent + virtualtx persistence: `intents`, `virtualTxs`,
+//   dedicated-DB v4 — add intent + virtualtx persistence: `intents`, `virtualTxs`,
 //        `vtxoBranches` object stores (new, empty — no backfill).
 //   v5 — make `intents.intentId` unique (was non-unique in v4), matching the
 //        "unique when present" contract enforced by the other backends.
@@ -152,6 +154,9 @@ export function initDatabase(
                 unique: false,
             });
         }
+        transactionsStore.createIndex("addressCreatedAt", ["address", "createdAt"], {
+            unique: false,
+        });
         if (!transactionsStore.indexNames.contains("arkTxid")) {
             transactionsStore.createIndex("arkTxid", "key.arkTxid", {
                 unique: false,
@@ -195,6 +200,15 @@ export function initDatabase(
             vtxosStore.createIndex("script", "script", { unique: false });
         }
         backfillVtxoScripts(transaction);
+    }
+
+    if (oldVersion > 0 && transaction) {
+        const transactionsStore = transaction.objectStore(STORE_TRANSACTIONS);
+        if (!transactionsStore.indexNames.contains("addressCreatedAt")) {
+            transactionsStore.createIndex("addressCreatedAt", ["address", "createdAt"], {
+                unique: false,
+            });
+        }
     }
 }
 

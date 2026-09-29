@@ -186,6 +186,7 @@ Asset swaps and swap records sort by ID. RFQ swaps sort by `(updatedAt, rfqId)`
 and accept `{ state?, since? }`; `since` is inclusive Unix seconds. Keep the
 filter fixed while paging. Repository collection reads use pages directly;
 internal recovery and lifecycle paths consume every page before acting.
+SDK transaction-history page `since` values use Unix milliseconds instead.
 
 ### Restore an imported wallet
 

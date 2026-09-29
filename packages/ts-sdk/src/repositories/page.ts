@@ -9,9 +9,12 @@ export interface PageResult<Item, Cursor = string> {
 }
 
 export const MAX_PAGE_SIZE = 500;
-const MAX_COLLECT_PAGES = 10_000;
+export const MAX_COLLECT_PAGES = 10_000;
 
-function assertCursorAdvanced<Cursor>(after: Cursor | undefined, next: Cursor | undefined): void {
+export function assertCursorAdvanced<Cursor>(
+    after: Cursor | undefined,
+    next: Cursor | undefined,
+): void {
     if (
         after !== undefined &&
         next !== undefined &&

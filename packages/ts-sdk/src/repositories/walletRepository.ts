@@ -1,6 +1,13 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin, type Outpoint } from "../wallet";
 import type { TxKey } from "../wallet";
-import { collectPages, MAX_PAGE_SIZE, type PageRequest, type PageResult } from "./page";
+import {
+    assertCursorAdvanced,
+    collectPages,
+    MAX_COLLECT_PAGES,
+    MAX_PAGE_SIZE,
+    type PageRequest,
+    type PageResult,
+} from "./page";
 import { scriptFromArkAddress } from "./scriptFromAddress";
 
 export interface TransactionHistoryPageFilter {
@@ -174,11 +181,16 @@ export async function collectScriptVtxos(
     }
     const byOutpoint = new Map<string, StoredVtxo>();
     let after: ScriptVtxoCursor | undefined;
+    let pages = 0;
     do {
+        if (++pages > MAX_COLLECT_PAGES) {
+            throw new Error("collectScriptVtxos: page limit exceeded");
+        }
         const page = await repository.getVtxosForScriptPage(script, {
             limit: MAX_PAGE_SIZE,
             after,
         });
+        assertCursorAdvanced(after, page.nextCursor);
         for (const row of page.items) {
             const key = `${row.vtxo.txid}:${row.vtxo.vout}`;
             const previous = byOutpoint.get(key);

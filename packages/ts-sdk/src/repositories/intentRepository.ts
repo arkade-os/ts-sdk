@@ -79,7 +79,7 @@ export interface IntentRepository extends AsyncDisposable {
     clear(): Promise<void>;
     /** Upsert by `intentTxId`; implementation sets `updatedAt = Date.now()`. */
     saveIntent(intent: ArkIntent): Promise<void>;
-    /** Bounded intents in `intentTxId` order; `after` is exclusive. */
+    /** Bounded intents in `intentTxId` order, not chronological order; `after` is exclusive. */
     getIntentsPage(
         filter: IntentPageFilter | undefined,
         page: PageRequest,
@@ -99,6 +99,7 @@ export interface IntentRepository extends AsyncDisposable {
     getLockedVtxoOutpoints(): Promise<Outpoint[]>;
 }
 
+/** Collects in `intentTxId` order; sort by `createdAt` for chronological display. */
 export const collectIntents = (
     repository: Pick<IntentRepository, "getIntentsPage">,
     filter?: IntentPageFilter,

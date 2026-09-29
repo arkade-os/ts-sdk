@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createMockRealm } from "../../../../config/test-helpers/mockRealm";
 import { createNodeSQLExecutor } from "../../../../config/test-helpers/nodeSqlExecutor";
 import {
@@ -19,6 +19,18 @@ const backends: [string, () => WalletRepository][] = [
     ["realm", () => new RealmWalletRepository(createMockRealm({ ArkVtxo: "pk", ArkUtxo: "pk" }))],
     ["sqlite", () => new SQLiteWalletRepository(createNodeSQLExecutor())],
 ];
+
+it("rejects a non-advancing script VTXO page cursor", async () => {
+    const read = vi.fn(async () => ({
+        items: [],
+        nextCursor: { address: "address", txid: "tx", vout: 0 },
+    }));
+    const repository = { getVtxosForScriptPage: read } as unknown as WalletRepository;
+    await expect(collectScriptVtxos(repository, "script")).rejects.toThrow(
+        "cursor did not advance",
+    );
+    expect(read).toHaveBeenCalledTimes(2);
+});
 
 describe.each(backends)("wallet inventory pages (%s)", (_, create) => {
     it("pages VTXOs and UTXOs by outpoint without crossing addresses", async () => {
