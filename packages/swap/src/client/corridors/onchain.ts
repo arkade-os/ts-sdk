@@ -1,18 +1,10 @@
 /**
  * The onchain corridor: a Bitcoin L1 address, on this wallet's network.
  *
- * Core's `isBtcAddress` classifies bech32 and base58 for "any network", by its
- * own doc comment, so the network match is this module's. It is made by
- * decoding against the wallet's parameters rather than by comparing prefixes:
- * a prefix table would have to restate what `L1_NETWORKS` already holds, and a
- * base58 address carries its network in a version byte and not in a prefix
- * anyone can read off the front.
- *
- * The mapping is promoted rather than re-authored — `l1NetworkFromArk` and
- * `L1_NETWORKS` were module-private, and the alternative was writing them a
- * third time. Their shape is also why no caller can claim a signet-versus-
- * testnet rejection: `OnchainNetwork` has three members and signet, mutinynet
- * and testnet all fold into `testnet`.
+ * Core's `isBtcAddress` accepts any network, so the network match is made here by
+ * decoding against the wallet's parameters, not by prefix: a base58 address carries its
+ * network in a version byte. Signet, mutinynet and testnet all fold into `testnet`, so
+ * a signet-versus-testnet mismatch is not detectable.
  */
 import { BIP21, btcTarget } from "@arkade-os/sdk";
 import * as btc from "@scure/btc-signer";
@@ -22,20 +14,13 @@ import type { CorridorDrive, CorridorFactory, CorridorModule } from "./contract"
 import type { OnchainCorridorDeps } from "./deps";
 
 /**
- * One direction only, and the absence is the decision.
+ * One direction only. `onchain -> arkade` is deliberately absent: it adds an L1 half the
+ * trader funds and must refund itself, and declaring only the lockup half would yield a
+ * manager that silently lets the trader's L1 refund window pass.
  *
- * `onchain -> arkade` gets no entry because it is outside the `Route` union:
- * its Arkade half is the same solver-funded lockup a lightning receive has, but
- * it adds an L1 half the trader funds and must take back itself — a second
- * deadline, a second observation seam AND a second action callback. Declaring
- * the lockup half alone is what would produce a manager that silently lets the
- * trader's L1 refund window pass.
- *
- * On `arkade -> onchain` the pass reads two covenants and they have different
- * owners. The Arkade lockup is the trader's, and `refundLocktime` is the moment
- * the money comes back. The L1 HTLC is the solver's on its refund leaf — the
- * trader holds only the claim key — so reaching `htlc.refundLocktime` does not
- * mean "refund the HTLC", it means the claim was missed.
+ * On `arkade -> onchain` the two covenants have different owners: the Arkade lockup is
+ * the trader's (`refundLocktime` = money comes back), but the L1 HTLC's refund leaf is
+ * the solver's, so reaching `htlc.refundLocktime` means the claim was missed.
  */
 export const ONCHAIN_DRIVE = {
     take: {
@@ -63,10 +48,7 @@ export const onchainCorridor: CorridorFactory<OnchainCorridorDeps> = Object.assi
                 } catch {
                     return { refused: `this is not a ${l1} address` };
                 }
-                // A bare address pins no amount; a BIP21 `amount=` does, and it
-                // is the destination's own statement of what the recipient
-                // expects. `amountSats` returns a `number` of sats — integral by
-                // BIP21's grammar, and widened to the corridor's bigint here.
+                // A BIP21 `amount=` pins the recipient's expected amount; a bare address pins none.
                 const amount = BIP21.amountSats(raw);
                 return {
                     claimed: {

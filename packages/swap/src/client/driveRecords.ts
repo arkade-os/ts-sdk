@@ -1,33 +1,19 @@
 /**
- * The three seams between the v2 record store and v1's drive machinery.
+ * The seams between the v2 record store and v1's drive machinery.
  *
- * **The record bridge is the load-bearing one.** `RfqSwapManager` restores from
- * `getAllRfqSwaps()`, while `accept()` writes `saveSwapRecord` into a keyspace
- * `repository.ts` rules disjoint from it by design. So without this file the
- * manager's restore-read returns nothing for every v2-accepted swap, and the
- * whole drive — `ready`, arm-on-live-work, the outcome projections, recovery —
- * rests on an empty set.
+ * **The record bridge is the load-bearing one.** `RfqSwapManager` restores from `getAllRfqSwaps()`,
+ * while `accept()` writes `saveSwapRecord` into a disjoint keyspace, so without this file the
+ * manager's restore returns nothing for every v2-accepted swap. {@link CorridorSwapRecord} carries
+ * every {@link RfqSwapRecord} field but the ignored display `amount`, which keeps the bridge cheap.
  *
- * The bridge is cheap because M4 designed the record to admit it:
- * {@link CorridorSwapRecord} carries every {@link RfqSwapRecord} field but the
- * optional display `amount` the rebuild ignores, and `RfqSwapRecordStore` is a
- * four-method structural seam. Three rulings come with it.
- *
- * - **The store is wired as the manager's `repository` dep**, not left unwired.
- *   `restoreFromRepository` opens with `requireRepository`, so the unwired
- *   branch costs a hand-rolled restore rather than a storage-shape choice.
- * - **It carries an `rfqId -> QuoteId` index**, because the manager keys every
- *   callback on `rfqId` while the v2 store keys on `QuoteId`. Without it
- *   `arkadeRefunder` misses its record and throws
- *   `RefundNotLocallyPossibleError` — the one refusal the manager reads as
- *   PERMANENT — leaving every v2 send leg blocked for its whole refund window
- *   with the lockup funded.
- * - **`removeRfqSwap` is inert.** `restoreFromRepository` runs `dropRetired`
- *   before the rebuild, which would hard-delete v2 records under v1's
- *   thirty-day retention before `client.ready` resolves. v2 retention is M6's
- *   open question, and settling it here by side effect is not M5's to do. The
- *   manager still drops its in-memory copies, so an aged terminal record is not
- *   rebuilt; the record itself survives.
+ * - **The store is wired as the manager's `repository` dep**: `restoreFromRepository` opens with
+ *   `requireRepository`, so leaving it unwired would mean a hand-rolled restore.
+ * - **It carries an `rfqId -> QuoteId` index**: manager callbacks key on `rfqId`. Without it
+ *   `arkadeRefunder` misses its record and throws `RefundNotLocallyPossibleError` — which the
+ *   manager reads as PERMANENT — blocking every v2 send leg for its refund window with funds locked.
+ * - **`removeRfqSwap` is inert**: `restoreFromRepository` runs `dropRetired` first, which would
+ *   hard-delete v2 records under v1's thirty-day retention before `client.ready` resolves. v2
+ *   retention is still undecided. The manager still drops its in-memory copy; the record survives.
  */
 import type { AssetSwapRepository } from "../repository";
 import type { RfqSwapRecord } from "../rfqRecord";
@@ -54,13 +40,8 @@ export const splitRecords = (
     return { corridor, offer };
 };
 
-/**
- * A v2 corridor record as the manager's own record type.
- *
- * Field for field, minus the display `amount` — `rebuildRfqSwap` reads none of
- * it, and inventing one would put a number on the record that no request result
- * produced.
- */
+/** A v2 corridor record as the manager's own record type, minus the display `amount`
+ * (`rebuildRfqSwap` reads none, and inventing one would record a number no request produced). */
 export const rfqRecordOf = (record: CorridorSwapRecord): RfqSwapRecord => ({
     kind: record.kind,
     lockupAddress: record.lockupAddress,
@@ -96,14 +77,10 @@ const mutableHalfOf = (
 });
 
 /**
- * The manager's mutable half, written back onto the v2 record.
- *
- * REPLACED, not merged, exactly as `updateRfqSwapRecord` replaces it: the
- * manager clears `blockedReason` when a swap leaves `needs_counterparty` and
- * `claimFailure` when it becomes terminal, and a spread would only ever set
- * these fields, never clear them — leaving a stale refusal reading as a live
- * one. The origin half is carried through untouched, `fundingTxid` included:
- * the manager never learns it, so it can only be the accept path's.
+ * The manager's mutable half, written back onto the v2 record. REPLACED, not merged (as
+ * `updateRfqSwapRecord` does): the manager clears `blockedReason`/`claimFailure`, and a spread could
+ * never clear them, leaving a stale refusal reading as live. The origin half, `fundingTxid`
+ * included, is carried through untouched — the manager never learns it.
  */
 export const withRfqState = (
     record: CorridorSwapRecord,
@@ -139,33 +116,19 @@ export interface CorridorRecordStore extends RfqSwapRecordStore {
 }
 
 /**
- * The v2 record store, as the manager's `repository` dep.
- *
- * Every read goes to the repository rather than to a cache: the store is the
- * system of record, and the manager's own read-then-write per pass exists so a
- * consumer's edit is not overwritten by a copy taken at boot. The index is the
- * only thing held in memory, and it is a pure lookup — a miss costs one full
- * scan and never a wrong answer.
+ * The v2 record store, as the manager's `repository` dep. Every read goes to the repository (the
+ * system of record), so a consumer's edit is never overwritten by a boot-time copy. Only the index
+ * is in memory; a miss costs one scan, never a wrong answer.
  */
 export const corridorRecordStore = (
     repository: AssetSwapRepository,
     onRecord: RecordSink = () => {},
     /**
-     * Which stored records the restore may hand to the manager.
-     *
-     * The filter exists for two cases. An `arkade -> onchain` record on a client
-     * whose chain source was refused: `restoreFromRepository` restores
-     * everything it reads, and the manager fails an onchain-send swap
-     * TERMINALLY on its first pass without a `ChainSource` — a deliberate
-     * refusal to watch that corridor blind. Excluding the record here leaves it
-     * durable, undriven and reporting off itself, which is the honest answer to
-     * "this client cannot drive this swap".
-     *
-     * And a record in a terminal state, which the drive excludes: the manager
-     * would rebuild it only to file it in `finished`, so handing it over pays
-     * a covenant derivation and a contract row lookup per record for nothing.
-     * The record itself stays readable — it is still in the drive's registry
-     * and still answers off its own stored state.
+     * Which stored records the restore may hand to the manager. Two cases:
+     * - an `arkade -> onchain` record on a client whose chain source was refused — the manager would
+     *   fail it TERMINALLY on its first pass; excluded, it stays durable, undriven and self-reporting;
+     * - a terminal record, which the manager would rebuild only to file as finished (a covenant
+     *   derivation and row lookup for nothing). It stays readable in the drive's registry.
      */
     admits: (record: CorridorSwapRecord) => boolean = () => true,
 ): CorridorRecordStore => {
@@ -182,11 +145,9 @@ export const corridorRecordStore = (
             const record = await repository.getSwapRecord(known);
             if (record?.family === "rfq") return record;
         }
-        // The index is process-local and the manager can be handed a swap this
-        // process never restored or admitted — a consumer calling `addSwap`
-        // directly, or a record written by another client on the same store.
-        // One scan is the honest answer; a miss here is what would make
-        // `arkadeRefunder` report a permanent refusal on a refundable swap.
+        // The index is process-local: a swap handed to the manager directly, or written by another
+        // client on the same store, needs the scan — a miss would make `arkadeRefunder` report a
+        // permanent refusal on a refundable swap.
         const { corridor } = splitRecords(await repository.getAllSwapRecords());
         for (const record of corridor) index(record);
         const found = byRfqId.get(rfqId);
@@ -199,9 +160,7 @@ export const corridorRecordStore = (
 
         async getAllRfqSwaps() {
             const { corridor } = splitRecords(await repository.getAllSwapRecords());
-            // Indexed before the filter: an excluded record still has to be
-            // findable by `rfqId`, because a consumer may hand its swap to the
-            // manager directly.
+            // indexed before the filter: an excluded record must stay findable by `rfqId`
             for (const record of corridor) index(record);
             return corridor.filter(admits).map(rfqRecordOf);
         },
@@ -214,10 +173,8 @@ export const corridorRecordStore = (
         async saveRfqSwap(state) {
             const record = await recordFor(state.rfqId);
             if (record === undefined) {
-                // Refused rather than invented. The v2 record carries the route,
-                // the market and the obligations, none of which the manager's
-                // record has — so there is nothing to create one from, and a
-                // synthesised record would be a swap with no terms.
+                // refused rather than invented: the manager's record has no route, market or
+                // obligations, so a synthesised record would be a swap with no terms
                 throw new Error(
                     `no v2 swap record for rfq ${state.rfqId}; the drive cannot write its state`,
                 );
@@ -228,10 +185,7 @@ export const corridorRecordStore = (
         },
 
         async removeRfqSwap() {
-            // Inert by ruling — see the module doc. The manager's own in-memory
-            // drop still happens, so an aged terminal record stops being
-            // rebuilt; what does not happen is a v1 retention window deleting a
-            // v2 record before `client.ready` resolves.
+            // Inert by design — see the module doc.
         },
     };
 };
@@ -244,9 +198,8 @@ export const offerFactsOf = (record: OfferSwapRecord): OfferSwapFacts & { id: Qu
     swapPkScript: record.swapPkScript,
     ...(record.fundingTxid === undefined ? {} : { fundingTxid: record.fundingTxid }),
     ...(record.spentTxid === undefined ? {} : { spentTxid: record.spentTxid }),
-    // Milliseconds: `coverage.ts` marks issuance with `Date.now()`, and a
-    // seconds value compared against it leaves every issued script outstanding
-    // for the life of the process.
+    // milliseconds: `coverage.ts` compares against `Date.now()`, and seconds would leave every
+    // issued script outstanding for the life of the process
     createdAt: record.createdAt * 1000,
 });
 
@@ -271,9 +224,8 @@ export const offerRecordSource = (
             try {
                 await repository.saveSwapRecord(updated);
                 onRecord(updated);
-                // The post-update view, without a third read: the liveness
-                // check that decides retirement has to see this record's NEW
-                // status, and re-reading would race the write it just made.
+                // patched rather than re-read: the retirement liveness check must see the NEW
+                // status, and a re-read would race the write
                 const swaps = (await list()).map((s) =>
                     s.id === updated.id ? offerFactsOf(updated) : s,
                 );
@@ -295,8 +247,7 @@ export const applyOfferSpend = (
     ...record,
     status: changes.status,
     spentTxid: changes.spentTxid,
-    // The watcher's `completedAt` comes off a contract event's timestamp, in
-    // milliseconds; this record's timestamps are unix seconds.
+    // event timestamps are milliseconds; this record's are unix seconds
     ...(changes.completedAt === undefined
         ? {}
         : { completedAt: Math.floor(changes.completedAt / 1000) }),
@@ -332,11 +283,9 @@ export const fateMoved = (record: OfferSwapRecord, fate: DepositFate): boolean =
     (fate.completedAt !== undefined && record.completedAt !== Math.floor(fate.completedAt / 1000));
 
 /**
- * An offer record for a deposit the restore scan found and no record claims.
- * Keyed on the funding txid so a re-scan updates it rather than duplicating
- * it. The chain carries the covenant and the deposit; the market, solver,
- * spread and deadline it does not, hence `market.kind: "restored"` and a
- * zero fee.
+ * An offer record for a deposit the restore scan found and no record claims. Keyed on the funding
+ * txid so a re-scan updates rather than duplicates. The chain lacks the market, solver, spread and
+ * deadline, hence `market.kind: "restored"` and a zero fee.
  */
 export const restoredOfferRecord = (
     swap: AssetSwap,
@@ -379,15 +328,10 @@ const restoredAssetId = (network: NetworkRef, id: string): AssetId<"arkade"> =>
         : arkadeAsset(network, asset.AssetId.fromString(id));
 
 /**
- * The wallet's own reader, as the manager's one required observation seam.
- *
- * Lifted from the v1 facade unchanged, guard included: the reader reads for
- * NAMED foreign scripts and has no "the wallet's own" default, so a call with
- * neither scripts nor outpoints is a caller bug rather than a query. Built from
- * the wallet rather than injected on `SwapClientConfig`, because the wallet is
- * where every other connection in this client comes from — a client takes no
- * server URL and no provider. The drive layer still takes it as an input, which
- * is what lets a unit test double one without a wallet behind it.
+ * The wallet's own reader, as the manager's required observation seam. The reader reads NAMED
+ * foreign scripts and has no "own wallet" default, so a call with neither scripts nor outpoints is a
+ * caller bug. Built from the wallet (the client takes no server URL or provider); the drive still
+ * takes it as an input so unit tests can double it.
  */
 export const walletLockupIndexer = (wallet: IWallet): LockupSpendIndexer => {
     let reader: Promise<Awaited<ReturnType<IWallet["getArkadeReader"]>>> | undefined;

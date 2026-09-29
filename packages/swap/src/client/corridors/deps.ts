@@ -1,27 +1,11 @@
 /**
- * What a corridor is given, what a caller may replace, and where "overridden to
- * nothing" is refused.
+ * What a corridor is given, what a caller may replace, and where "overridden to nothing" is refused.
  *
- * §6's rules stand as written; what is added here is a shape, because
- * `chain?: ChainSource` cannot tell "absent, use the default" from "disabled,
- * deliberately". Almost every override field is `T | null`: `undefined` takes
- * the default, `null` is the refusal, and {@link resolveCorridorDeps} throws
- * {@link MissingCorridorDep} naming the dep. It cannot reuse the facade's
- * `need()` guard, which tests `value === undefined` and passes a deliberate
- * `null` straight through. The one exception is documented where it lives:
- * the onchain claim fee-rate, whose "disabled" is a working manual mode
- * rather than a missing dep.
- *
- * Resolution runs when a route first touches a corridor and never at
- * construction — a missing dep for a corridor nobody uses is not an error, which
- * is `MissingCorridorDep`'s own boundary note and what §6 means by "at quote
- * time". The registry beside this file is what memoizes that.
- *
- * Four keys, not three: §6 gives lightning two overridable deps and the
- * covclaimd deployment key is the second. The operator seam and the co-signer
- * key are deliberately NOT among them — an override there is a trust anchor §6
- * never granted — so the co-signer arrives on {@link CorridorBase} instead, the
- * way the facade already threads it.
+ * Override fields are `T | null` so "absent, use the default" (`undefined`) differs from "disabled,
+ * deliberately" (`null`, which {@link resolveCorridorDeps} refuses with {@link MissingCorridorDep}).
+ * Exception: the onchain claim fee rate, whose `null` is manual mode. Resolution runs when a route
+ * first touches a corridor, never at construction. The operator seam and co-signer key are trust
+ * anchors and deliberately NOT overridable.
  */
 import {
     ESPLORA_URL,
@@ -48,13 +32,9 @@ import { decodeBolt11 } from "./bolt11";
 import { esploraChainSource } from "./chainSource";
 
 /**
- * The facts every module reads and no caller replaces.
- *
- * Both wallet and operator seam, and the split is what each is for: the wallet
- * answers *who and where* — it is the only thing that can make the live,
- * fail-closed info read, since `SwapOperator.getInfo()` takes no options — and
- * the operator seam answers *submit and finalize*. Collapsing either into the
- * other would delete a seam the unit tests already double.
+ * The facts every module reads and no caller replaces. The wallet answers *who and where* (only it
+ * can make the live, fail-closed info read — `SwapOperator.getInfo()` takes no options); the
+ * operator seam answers *submit and finalize*.
  */
 export interface CorridorBase {
     readonly wallet: IWallet;
@@ -65,38 +45,18 @@ export interface CorridorBase {
     readonly network: Network;
     /** The operator's signer set, for the rotation-aware recipient check. */
     readonly signerSet: SignerSet;
-    /**
-     * Covenant co-signer override, 33-byte compressed hex.
-     *
-     * A dep of the arkade module and not a `CorridorOverrides` key, by the same
-     * rule that keeps the operator seam out of them. Required on `testnet` and
-     * `signet`, which `EMULATOR_PUBKEYS` does not pin.
-     */
+    /** Covenant co-signer override, 33-byte compressed hex. Required on `testnet` and `signet`, which
+     * `EMULATOR_PUBKEYS` does not pin. */
     readonly emulatorPubkey?: string;
     /** For hosts without a global `fetch`, and for tests. */
     readonly fetchImpl?: typeof fetch;
-    /**
-     * The client's storage, if it was given one.
-     *
-     * Here rather than only in the override matrix so the two seams cannot be
-     * two different objects: a client that takes a repository and an arkade
-     * override that names one would otherwise write records to one and read the
-     * markets cache from the other. The override still wins where it is set,
-     * and a deliberate `null` there still refuses.
-     */
+    /** The client's storage, here so the arkade override defaults to the same object (records and
+     * the markets cache in one store). The override still wins; its `null` still refuses. */
     readonly repository?: AssetSwapRepository;
 }
 
-/**
- * §6's override matrix, with each field widened to admit the refusal.
- *
- * An override replaces a dependency inside an implemented corridor. It never
- * enables a route, never selects a solver or transport, and never alters
- * settlement behaviour — and each one is a named trust anchor: the chain source
- * is whose L1 view evidence is reconciled against, the decoder is who validates
- * an invoice before display, the covclaimd key is who may open the sealed claim
- * packet, the repository is where persist-first lands.
- */
+/** The override matrix. An override replaces a dependency inside an implemented corridor; it never
+ * enables a route, selects a solver or transport, or alters settlement. */
 export interface CorridorOverrides {
     arkade?: {
         /** Where persist-first lands. Defaults to the client's own
@@ -114,64 +74,30 @@ export interface CorridorOverrides {
         /** Default: `ESPLORA_URL[network]`. The override is the URL, not a
          * `ChainSource`: there is no wallet-held provider to substitute. */
         chain?: { esploraUrl: string } | null;
-        /**
-         * How the trader's L1 claim is built and broadcast. Default: see
-         * {@link OnchainCorridorDeps.claim} — synthesized from
-         * {@link claimFeeRateSatVb} when one is resolvable, so an explicit
-         * `null` here preserves manual mode.
-         */
+        /** How the trader's L1 claim is built and broadcast. Default: synthesized from
+         * {@link claimFeeRateSatVb} when resolvable (see {@link OnchainCorridorDeps.claim}). */
         claim?: OnchainClaim | null;
         /**
-         * Sat/vB the trader's L1 claim will be built at — and, on the quote
-         * path, the rate the take leg is grossed up by so the recipient nets
-         * the requested amount after the claim's fee. Default:
-         * {@link ONCHAIN_CLAIM_FEE_RATE_SATVB}, per network. Environment-
-         * sensitive (mempool congestion moves it) and so overridable.
+         * Sat/vB the trader's L1 claim is built at, and the rate the take leg is grossed up by so the
+         * recipient nets the requested amount. Default: {@link ONCHAIN_CLAIM_FEE_RATE_SATVB}.
          *
-         * `null` here is NOT the refusal the other override fields carry: it
-         * is "no default claim", and manual mode is a meaningful state for
-         * this dep rather than a broken one — the corridor still quotes
-         * (forwarding the take leg verbatim) and still drives the lockup,
-         * and the L1 claim is the caller's to make by hand.
+         * `null` is NOT a refusal here: it is "no default claim" — manual mode. The corridor still
+         * quotes (take leg verbatim) and drives the lockup; the L1 claim is the caller's to make.
          */
         claimFeeRateSatVb?: number | null;
-        /**
-         * The vsize the claim is priced at for the recipient-exact gross-up,
-         * when a caller knows better than the constant. Default:
-         * {@link ONCHAIN_CLAIM_VSIZE}; `null` is "no override given", like
-         * `undefined` — the estimate is the constant either way. The claim
-         * build itself measures its own transaction and never reads this.
-         */
+        /** The vsize the recipient-exact gross-up prices the claim at. Default
+         * {@link ONCHAIN_CLAIM_VSIZE}; `null` reads as `undefined`. The claim build measures its own. */
         claimVsize?: number | null;
     };
 }
 
-/**
- * Build and broadcast the L1 claim of an `arkade -> onchain` fill.
- *
- * The manager's own callback type, so a caller wires `claimOnchainFill` to it
- * without a second shape to translate through.
- */
+/** Build and broadcast the L1 claim of an `arkade -> onchain` fill (the manager's own type). */
 export type OnchainClaim = RfqSwapManagerCallbacks["claimOnchain"];
 
 /**
- * The per-network default for the trader's L1 claim fee rate, sat/vB.
- *
- * One number for every network, and deliberately the RELAY FLOOR rather than a
- * market estimate: the rate both builds the claim and prices the
- * recipient-exact gross-up, so a value invented to look precise would be a lie
- * in two places at once — and an over-quoted test-network rate would short the
- * recipient. 1 sat/vB is what every esplora deployment here will relay and,
- * in practice on the test networks, what confirms in the next block. On
- * mainnet it is a floor a routing UI should override UPWARD in congestion —
- * the claim has a consensus deadline (`htlc.refundLocktime`), and a claim that
- * confirms slowly is a claim that can miss it, so a caller with fee-rate
- * information should spend it here.
- *
- * `Partial` on purpose: a network absent from this table means "no default",
- * and the corridor resolves to manual mode there rather than to a number
- * nobody justified. Every network the vocabulary knows is named; the Partial
- * is for the ones it learns later.
+ * Per-network default L1 claim fee rate, sat/vB — deliberately the RELAY FLOOR, since it both builds
+ * the claim and prices the gross-up. On mainnet override UPWARD in congestion: the claim has a
+ * consensus deadline (`htlc.refundLocktime`). `Partial`: an absent network means manual mode.
  */
 export const ONCHAIN_CLAIM_FEE_RATE_SATVB: Partial<Record<NetworkName, number>> = {
     bitcoin: 1,
@@ -188,14 +114,9 @@ export interface ArkadeCorridorDeps {
     readonly networkName: NetworkName;
     readonly network: Network;
     readonly signerSet: SignerSet;
-    /**
-     * The pinned per-network co-signer, or the caller's override.
-     *
-     * Resolved from the network NAME the wallet reports, never from a key the
-     * operator reports about itself — `defaultEmulatorPubkey` refuses that
-     * self-report by name, because the value ends up in a covenant leaf that
-     * decides who can move the funds.
-     */
+    /** The pinned per-network co-signer, or the caller's override. Resolved from the network NAME,
+     * never from the operator's self-report — the key lands in a covenant leaf deciding who moves
+     * the funds. */
     readonly emulatorPubkey: string;
     readonly repository: AssetSwapRepository | undefined;
 }
@@ -213,41 +134,13 @@ export interface LightningCorridorDeps {
 export interface OnchainCorridorDeps {
     readonly networkName: NetworkName;
     readonly chain: ChainSource;
-    /**
-     * How the trader's L1 claim is built and broadcast, when a caller supplies
-     * one.
-     *
-     * The caller's callback, verbatim — never a synthesized one. The wallet-
-     * backed DEFAULT claim is built one layer out, in the drive, which is the
-     * seam that has the record store and the wallet in hand; what it needs
-     * from here is {@link claimFeeRateSatVb}, and its absence — an override
-     * `null` on it, or a network with no entry in
-     * {@link ONCHAIN_CLAIM_FEE_RATE_SATVB} — is exactly what keeps manual
-     * mode on. Without any claim the drive reports an `arkade -> onchain`
-     * swap's L1 half blocked, with the reason naming the missing callback
-     * rather than a counterparty who has done nothing wrong; the Arkade
-     * lockup keeps being driven and refunded either way.
-     *
-     * A dep of the onchain corridor rather than a `SwapClientConfig` field,
-     * because that is what it is: a route that never touches this corridor
-     * never resolves it, and a deliberate `null` refuses at the same boundary
-     * as the chain source.
-     */
+    /** The caller's L1 claim callback, verbatim. The default claim is built in the drive from
+     * {@link claimFeeRateSatVb}; with neither, the L1 half reports blocked while the Arkade lockup is
+     * still driven and refunded. */
     readonly claim?: OnchainClaim;
     /**
-     * The fee rate the onchain arm's two fee-paid places share, sat/vB.
-     *
-     * Feeds BOTH halves of the recipient-exact deal, and they must stay on one
-     * number: the quote path grosses the take leg UP by the claim this rate
-     * prices (`claimFeeSats`), and the default claim build prices the actual
-     * claim with it. Quoting against one number and building against another
-     * is how the recipient ends up short anyway.
-     *
-     * Resolved from the network's floor in {@link ONCHAIN_CLAIM_FEE_RATE_SATVB}
-     * with the override winning; `undefined` when the network has no entry —
-     * which is what keeps a deliberate "no default claim" (the override
-     * `null`) and an unknown network on the same honest answer, rather than on
-     * an invented rate.
+     * The one fee rate both recipient-exact halves share: the quote's gross-up (`claimFeeSats`) and
+     * the default claim build. Two numbers would short the recipient. `undefined` = manual mode.
      */
     readonly claimFeeRateSatVb?: number;
     /**
@@ -267,14 +160,8 @@ export interface CorridorDepsByCorridor {
 /** Any corridor's deps. */
 export type CorridorDeps = CorridorDepsByCorridor[Corridor];
 
-/**
- * The `T | null` rule, in one place: `null` is the refusal, `undefined` is
- * "take the default" and is handed back for the caller to default.
- *
- * A caller saying "not this one" should fail loudly at the corridor rather than
- * quietly at the first thing that needed the dep, and it is the only shape that
- * can say so — `chain?: ChainSource` cannot tell absence from refusal.
- */
+/** The `T | null` rule in one place: `null` refuses loudly at the corridor, `undefined` is handed
+ * back for the caller to default. */
 const refusedIfNull = <T>(
     value: T | null | undefined,
     corridor: Corridor,
@@ -294,15 +181,9 @@ const refusedIfMalformed = (value: number | null | undefined, dep: string) => {
 };
 
 /**
- * The co-signer key for `base`'s network.
- *
- * A malformed override is core's refusal and stays one — it would otherwise be
- * passed into a covenant leaf and surface as an unspendable contract long after
- * the fact. An *absent* key on an unpinned network is this corridor's, though:
- * `EMULATOR_PUBKEYS` pins `bitcoin`, `mutinynet` and `regtest` only, so on
- * `testnet` and `signet` — both of which the v2 id vocabulary admits — the
- * override is required, and its absence is a missing dep rather than a bare
- * `Error` escaping the module.
+ * The co-signer key for `base`'s network. A malformed override stays core's refusal (it would
+ * otherwise surface as an unspendable contract). An absent key on an unpinned network (`testnet`,
+ * `signet`) is a missing dep rather than a bare `Error`.
  */
 const emulatorPubkeyFor = (base: CorridorBase): string => {
     if (base.emulatorPubkey !== undefined) {
@@ -320,11 +201,8 @@ const emulatorPubkeyFor = (base: CorridorBase): string => {
 };
 
 /**
- * A corridor's deps, with `undefined` taking the default and `null` refused.
- *
- * Per corridor, and never for all three at once: resolving a corridor a route
- * does not touch is what would turn a deliberate `null` on an unused corridor
- * into an error.
+ * A corridor's deps, with `undefined` taking the default and `null` refused. Per corridor, never all
+ * three at once: resolving an untouched corridor would turn its deliberate `null` into an error.
  */
 export function resolveCorridorDeps<C extends Corridor>(
     corridor: C,
@@ -338,13 +216,8 @@ export function resolveCorridorDeps(
 ): CorridorDeps {
     switch (corridor) {
         case "arkade": {
-            // The accept path owns the default now, and it is the client's own
-            // repository — so the override and `SwapClientConfig.repository`
-            // resolve to one object rather than two. Still `undefined` when
-            // neither is set: the arkade module is a leg of every route, so
-            // demanding one here would mean a client with no storage could not
-            // `quote()`, and quoting persists nothing. `accept()` is what
-            // refuses, with this same `MissingCorridorDep`.
+            // Still `undefined` when neither is set: arkade is a leg of every route, and quoting
+            // persists nothing. `accept()` is what refuses, with this same `MissingCorridorDep`.
             const repository =
                 refusedIfNull(overrides?.arkade?.repository, "arkade", "repository") ??
                 base.repository;
@@ -374,20 +247,9 @@ export function resolveCorridorDeps(
         case "onchain": {
             const chain = refusedIfNull(overrides?.onchain?.chain, "onchain", "chain source");
             const claim = refusedIfNull(overrides?.onchain?.claim, "onchain", "L1 claim callback");
-            // The fee policy fields break the module's usual `null` rule ON
-            // PURPOSE, because "no default claim" is a working state, not a
-            // disabled dep: `null` spends nothing, it merely opts out of the
-            // floor table, and quoting verbatim plus a caller-handled claim is
-            // exactly what a host who prices its own fees asks for. See the
-            // override's own doc comment for the contract. Said with `===`
-            // rather than `??`, since `null` must NOT fall through to the
-            // table that a mere `undefined` falls through to.
-            // A non-positive or non-finite rate prices BOTH fee-paid halves
-            // off a lie: the gross-up understates the take and the claim
-            // build underpays the broadcast — or NaN poisons every amount
-            // downstream. Refused here, at resolution, the way every
-            // malformed onchain dep is, rather than at funding or claim time.
-            // `null` is not malformed: it is manual mode (no default claim).
+            // `null` is manual mode (see the override's doc), so `===` rather than `??`: it must not
+            // fall through to the table. A non-positive/non-finite rate would misprice both fee-paid
+            // halves (or NaN-poison them), so it refuses here at resolution.
             const feeRateOverride = refusedIfMalformed(
                 overrides?.onchain?.claimFeeRateSatVb,
                 "L1 claim fee rate",
@@ -396,9 +258,6 @@ export function resolveCorridorDeps(
                 feeRateOverride === null
                     ? undefined
                     : (feeRateOverride ?? ONCHAIN_CLAIM_FEE_RATE_SATVB[base.networkName]);
-            // Same rule for the vsize the gross-up prices against: `null`
-            // means "no override given" and reads the constant, like
-            // `undefined` — only a non-positive or non-finite number refuses.
             const claimVsize =
                 refusedIfMalformed(overrides?.onchain?.claimVsize, "L1 claim vsize") ??
                 ONCHAIN_CLAIM_VSIZE;
@@ -410,8 +269,6 @@ export function resolveCorridorDeps(
                     fetchImpl: base.fetchImpl,
                 }),
                 ...(claim === undefined ? {} : { claim }),
-                // Absent-on-an-unknown-network and explicitly-off read the
-                // same: no default claim path, manual mode.
                 ...(claimFeeRateSatVb === undefined ? {} : { claimFeeRateSatVb }),
                 claimVsize,
             };
@@ -420,23 +277,10 @@ export function resolveCorridorDeps(
 }
 
 /**
- * The operator info read, wrapped so every way it can fail arrives as one
- * typed error.
- *
- * The whole read is wrapped rather than a matched subset of its failures:
- * `requireLive` re-throws the provider's raw error unwrapped, which is a
- * `FetchError`, a `ProviderUnavailableError`, an `ArkError`, a bare `Error` or a
- * `TimeoutError` depending on how the read failed — and across a service-worker
- * boundary it is a fresh `Error` whose only branchable identity is `cause.name`.
- * A `catch` on a matched set would let exactly those through untyped.
- *
- * `requireLive` is the caller's, and the two callers want opposite things.
- * Every covenant derivation reads live (§6), because a snapshot binds a covenant
- * to a signer key the operator may no longer co-sign for. A destination *parse*
- * does not derive anything, and the client's `resolve()` promises to answer
- * without new disclosure and offline — so it takes the wallet's own fallback
- * read, which is live when the operator is reachable and the persisted snapshot
- * when it is not.
+ * The operator info read, every failure as one typed {@link OperatorUnreachable}. The whole read is
+ * wrapped because `requireLive` re-throws the provider's raw error, whose type varies (and across a
+ * service-worker boundary is a bare `Error`). Covenant derivations read live, since a snapshot can
+ * bind a signer key the operator no longer co-signs for; `resolve()` takes the offline fallback.
  */
 export const liveArkadeInfo = async (
     wallet: IWallet,
@@ -456,12 +300,8 @@ export const liveArkadeInfo = async (
 };
 
 /**
- * The one operator read, made once for all three corridors.
- *
- * The network narrowing after it is core's own fail-closed one and stays that
- * way: an operator that answers with a network name this SDK does not know is
- * not unreachable, and resolving it to mainnet parameters is the failure mode
- * `getNetwork` exists to prevent.
+ * The one operator read, made once for all three corridors. `getNetwork` stays fail-closed: an
+ * unknown network name is not "unreachable", and resolving it to mainnet params is what it prevents.
  */
 export const resolveCorridorBase = async (input: {
     wallet: IWallet;

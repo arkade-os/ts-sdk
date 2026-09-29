@@ -1,50 +1,27 @@
 /**
  * RFQ v1 — the user side of quoted swaps.
  *
- * RFQ is the negotiation layer only. After the quote, **filling is
- * non-interactive** for every corridor this module serves: the user funds,
- * and the solver fills by observing that funding rather than by being told.
- * (Roles are *user* and *solver* throughout — see the README's Roles section
- * for why this package does not name the participants maker and taker.)
+ * RFQ is the negotiation layer only. After the quote, **filling is non-interactive**: the user
+ * funds, and the solver fills by observing that funding. There is deliberately NO accept message:
+ * acceptance is funding, and every corridor ends in a fill or the value back.
  *
- * - `arkade:BTC -> lightning:BTC` / `arkade:BTC -> onchain:BTC` (send) — the
- *   user funds its own locally derived VHTLC contract ({@link
- *   lightningSendContract}) and the onchain leg claims its L1 HTLC with `P`;
- *   the solver fills by observing the funding on-chain. A failed swap refunds
- *   to the user's address — by the user's own `sender` key on every
- *   interactive path, or, if the user's own key is ever lost, by the server
- *   and solver together via the `nonInteractiveRefund` leaf (no user
- *   signature, no timelock), which the emulator co-signs under a covenant
- *   provably paying only the user's pre-committed address.
- * - `lightning:BTC -> arkade:BTC` / `onchain:BTC -> arkade:BTC` (receive) —
- *   the user generates `P`, pays the solver's hold invoice or funds the L1
- *   HTLC, and may go offline; the solver funds the Arkade lockup pinned to
- *   the user's payout ({@link lightningReceiveContract}, roles inverted), and the
- *   claim — the user's own collaborative spend, or covclaimd's — reveals
- *   `P` publicly, which is what settles the user's side.
- * - `arkade:BTC|asset -> arkade:BTC|asset` — the user accepts the quote by
- *   creating and funding an Intents **offer** (`createOffer`) bound to the
- *   quoted terms; the offer covenant lets any filler deliver, so the solver
- *   fills without further interaction, or the user cancels cooperatively.
+ * - send (`arkade:BTC -> lightning|onchain:BTC`): the user funds its own locally derived VHTLC
+ *   ({@link lightningSendContract}). A failed swap refunds by the user's `sender` key, or, if that
+ *   key is lost, via the `nonInteractiveRefund` leaf the emulator co-signs under a covenant paying
+ *   only the user's pre-committed address.
+ * - receive (`lightning|onchain:BTC -> arkade:BTC`): the user generates `P`, pays the hold invoice
+ *   or funds the L1 HTLC, and may go offline; the solver funds a lockup pinned to the user's payout
+ *   ({@link lightningReceiveContract}), and the claim reveals `P`, settling the user's side.
+ * - `arkade -> arkade`: the user funds an Intents **offer** (`createOffer`) bound to the quote; any
+ *   filler may deliver, or the user cancels cooperatively.
  *
- * There is deliberately NO accept message anywhere: acceptance is funding.
- * Every corridor then ends the same way — a fill, or the value back: a
+ * Trust model: from a quote the user uses only the binding fields (`solver_pubkey`,
+ * `refund_locktime`, `valid_until`, the amounts, and `profile.refund_without_receiver_delay` on
+ * Lightning sends). Everything else is the user's own data or a trusted constant (the emulator key
+ * defaults to the SDK's per-network pin). Anything address-shaped from the solver is compare-only:
+ * a mismatch means refuse-to-fund, never "use theirs".
+ *
  * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
- * Arkade-only one.
- *
- * Trust model, identical to the offer side: from a quote the user uses only
- * the binding fields — `solver_pubkey`, `refund_locktime`, `valid_until`, the
- * amounts, and `profile.refund_without_receiver_delay` on Lightning sends.
- * Every other contract parameter is the user's own data (its
- * invoice, its Arkade operator connection, its refund address) or a trusted
- * constant — the emulator key defaults to the SDK's per-network pin (see
- * `resolveEmulatorPubkey`). Anything address-shaped the solver sends is
- * compare-only: a mismatch means refuse-to-fund, never "use theirs".
- *
- * Transport is symmetric-outbound: the reference framing below speaks the dev
- * broker (`{op:"sub"|"event"}` over WebSocket) or plain HTTP; the production
- * target is Nostr (directed kind + NIP-44), which changes only the transport
- * functions here, nothing above them.
  */
 import { hex } from "@scure/base";
 import { isAmount } from "@arkade-os/solver-discovery";
@@ -89,9 +66,7 @@ import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
 import { ASSET_CARRIER_SATS, createOffer } from "./offer";
 
-/** Decode a solver-supplied hex field, turning a malformed value (odd length,
- * non-hex chars) into a solver-blaming diagnostic instead of a bare
- * `@scure/base` internal error. */
+/** Decode a solver-supplied hex field, blaming the solver on malformed input. */
 const solverHex = (value: string, field: string): Uint8Array => {
     try {
         return hex.decode(value);
@@ -100,9 +75,7 @@ const solverHex = (value: string, field: string): Uint8Array => {
     }
 };
 
-/** Sats amount off an HTLC-class quote. Asset-class quotes carry strings and
- * must never reach an HTLC derivation — a string here is a misrouted quote,
- * not a coercible one. */
+/** Sats amount off an HTLC-class quote. A string here is a misrouted asset quote, not coercible. */
 const quoteSats = (value: number | string, field: string): number => {
     if (typeof value !== "number" || !Number.isSafeInteger(value)) {
         throw new Error(`HTLC quote carries a non-sats ${field}: ${String(value)}`);
@@ -110,10 +83,9 @@ const quoteSats = (value: number | string, field: string): number => {
     return value;
 };
 
-/** A quoted amount in sats, reading the wire's canonical decimal string as well
- * as the JSON number {@link quoteSats} is limited to. Solvers already emit
- * strings on every corridor, so on the value-gate fields a string is an
- * encoding, not the misrouted asset quote `quoteSats` infers from one. */
+/** A quoted amount in sats, reading the wire's canonical decimal string as well as a JSON number.
+ * Solvers emit strings on every corridor, so on value-gate fields a string is an encoding, not a
+ * misrouted asset quote. */
 const quoteAmountSats = (value: number | string, field: string): bigint => {
     if (typeof value === "string" && isAmount(value)) return BigInt(value);
     if (typeof value === "number" && Number.isSafeInteger(value)) return BigInt(value);
@@ -136,37 +108,25 @@ export const ARKADE_BTC = "arkade:BTC";
 export const LIGHTNING_BTC = "lightning:BTC";
 export const ONCHAIN_BTC = "onchain:BTC";
 
-/** The arkade leg for an asset: the asset id itself, 68 lowercase hex. The id
- * lives in the pair rather than the profile because the pair is the field both
- * sides route and subscribe on, and a coarse leg cannot say which asset a
- * market key is for.
+/** The arkade leg for an asset: the asset id itself, 68 lowercase hex, in the pair because the
+ * pair is what both sides route and subscribe on.
  *
- * Taking an `AssetId` rather than a string is what enforces the case rule:
- * `hex.decode` accepts uppercase while `hex.encode` only emits lowercase, so a
- * value that reached us as `A1B2…` leaves here as `a1b2…`. Solvers compare pair
- * strings byte for byte — a sender that normalised only in its key derivation
- * would reach the right subscription and then be skipped as an unserved pair.
- *
- */
+ * Takes an `AssetId`, not a string, to enforce lowercase (`hex.decode` accepts uppercase,
+ * `toString()` emits lowercase): solvers compare pair strings byte for byte, so `A1B2…` would be
+ * skipped as an unserved pair. */
 export const arkadeAssetLeg = (id: asset.AssetId): string => `arkade:${id.toString()}`;
 export const rfqPair = (from: string, to: string): string => `${from}->${to}`;
 
 /** The implemented pair: pay a BOLT11 invoice out of an Arkade balance. */
 export const LIGHTNING_SEND_PAIR = rfqPair(ARKADE_BTC, LIGHTNING_BTC);
-/** On-board via Lightning: pay the solver's hold invoice, land on Arkade.
- *
- */
+/** On-board via Lightning: pay the solver's hold invoice, land on Arkade. */
 export const LIGHTNING_RECEIVE_PAIR = rfqPair(LIGHTNING_BTC, ARKADE_BTC);
 export const ONCHAIN_SEND_PAIR = rfqPair(ARKADE_BTC, ONCHAIN_BTC);
-/** On-board: a Bitcoin-L1 HTLC in, Arkade sats out.
- *
- */
+/** On-board: a Bitcoin-L1 HTLC in, Arkade sats out. */
 export const ONCHAIN_RECEIVE_PAIR = rfqPair(ONCHAIN_BTC, ARKADE_BTC);
 // ── Errors and closed sets ───────────────────────────────────────────────────
 
-/** The closed refusal set. Treat any unknown reason as a generic decline.
- *
- */
+/** The closed refusal set. Treat any unknown reason as a generic decline. */
 export type RfqRefusalReason =
     | "unsupported_pair"
     | "unsupported_payload"
@@ -265,8 +225,7 @@ const refusalMessage = (reason: string, detail: RfqRefusalDetail): string => {
 /** A refusal from the solver, carrying its closed-set reason. */
 export class SwapRefusal extends Error {
     /** Literal-typed so the v2 error taxonomy's union discriminates on `name`
-     * — a `string` here collapses the discriminant for every member. Same value
-     * the constructor has always set, moved to a field initializer. */
+     * — a `string` here collapses the discriminant for every member. */
     override readonly name = "SwapRefusal";
     readonly reason: string;
     readonly rfqId: string | undefined;
@@ -294,7 +253,6 @@ export class SwapRefusal extends Error {
  * The solver's address does not match the local derivation. NEVER fund past
  * this. `derived` is every candidate address tried — more than one when the
  * derivation itself is ambiguous, see {@link verifyLockupAddress}.
- *
  */
 export class AddressMismatch extends Error {
     readonly derived: string | string[];
@@ -349,15 +307,11 @@ export interface RfqStatus {
     [key: string]: unknown;
 }
 
-/** The rfq_request for the lightning send profile. A BOLT11 profile is always
- * exact-out: the invoice fixes the amount, so none is restated here.
- * `senderPubkey` is the trader's own key for the VHTLC's sender-side leaves
- * (see {@link lightningSendContract}) — required, never sent anywhere else,
- * never trusted by the solver as anything but a pubkey to bind into the
- * script. On the wire it's `client_refund_pubkey` (the payload schemas are
- * public at https://docs.arkadeos.com/intents/reference/rfq — the solver's schema
- * is `.strict()`, so both the wrong name AND the missing required field would
- * refuse every request).
+/** The rfq_request for the lightning send profile. BOLT11 is exact-out: the invoice fixes the
+ * amount. `senderPubkey` is the trader's key for the VHTLC's sender-side leaves (see
+ * {@link lightningSendContract}), sent as `client_refund_pubkey`; the solver's schema
+ * (https://docs.arkadeos.com/intents/reference/rfq) is `.strict()`, so a wrong or missing name
+ * refuses every request.
  */
 export const lightningSendRequest = (input: {
     rfqId: string;
@@ -381,13 +335,10 @@ export const lightningSendRequest = (input: {
  * id (BTC has none), and the id is the leg itself — see
  * {@link arkadeAssetLeg}.
  *
- * Wire-compatible with the reference solver (`AssetRfqRequest`, strict):
- * `amount` is a canonical decimal string of atomic units (never a JSON
- * number — an Arkade asset's precision is not knowable client-side, so the
- * losslessness carve-out cannot be checked), `amount_side` is `"from"` or
- * `"to"`, and `profile` carries the trader's own covenant position
- * (`maker_pk_script`, `maker_public_key`) — the fill pays that script, and
- * `cancel` is signed by that key. */
+ * Matches the reference solver's strict `AssetRfqRequest`: `amount` is a canonical decimal string
+ * of atomic units (never a JSON number: an asset's precision is unknowable client-side), and
+ * `profile` carries the trader's covenant position — the fill pays `maker_pk_script`, and `cancel`
+ * is signed by `maker_public_key`. */
 export const arkadeSwapRequest = (input: {
     rfqId: string;
     /** Asset the trader deposits; omit when depositing BTC. */
@@ -423,9 +374,7 @@ export const arkadeSwapRequest = (input: {
         pair,
         amount_side: input.amountSide ?? "from",
         amount: canonicalAssetAmount(input.amount),
-        // The pair names the assets; the profile names the trader. Both are
-        // covenant parameters, and the solver's `.strict()` schema refuses
-        // anything else — an undeclared key is `unsupported_payload`.
+        // The solver's `.strict()` schema refuses any undeclared key as `unsupported_payload`.
         profile: {
             maker_pk_script: normalizeMakerPkScript(input.makerPkScript),
             maker_public_key: normalizeMakerPublicKey(input.makerPublicKey),
@@ -504,22 +453,10 @@ export const MIN_HEADROOM_SECONDS = 90 * 60;
 /**
  * Refuse a number no gate can compare against.
  *
- * Every threshold on these corridors is a `<`, `>=`, or `-` over a number
- * that arrived from the solver, from a caller-injected decoder, or from a
- * caller's own configuration. `NaN` is the dangerous one: it fails EVERY
- * comparison, so an unchecked `NaN` does not fail its gate — it deletes it,
- * silently, and the flow proceeds as if the check had passed. The wire is
- * JSON, where a field typed `number` here can arrive as a string and turn the
- * first arithmetic on it into `NaN`, so the static type is not the guarantee
- * it looks like.
- *
- * The infinities happen to fail closed at each site today, and are refused
- * anyway: no clock or sats amount produces one, so it means the number's
- * source is broken, and saying that beats depending on which side of a
- * comparison it landed on.
- *
- * `undefined` passes: optional means optional, and every caller of this
- * checks for absence separately where absence is itself a refusal.
+ * `NaN` fails EVERY comparison, so an unchecked `NaN` silently deletes its gate rather than failing
+ * it. The wire is JSON, so a field typed `number` can arrive as a string and become `NaN` on first
+ * arithmetic. Infinities are refused too: they mean the source is broken. `undefined` passes;
+ * callers check absence separately where it is itself a refusal.
  */
 const assertFinite = (value: number | undefined, reason: string, label: string): void => {
     if (value !== undefined && !Number.isFinite(value)) {
@@ -530,19 +467,9 @@ const assertFinite = (value: number | undefined, reason: string, label: string):
 /** The wire's cap on a pair string, mirrored so an over-long pair fails here
  * with a reason instead of arriving as a bare `unsupported_payload`.
  *
- * 158 = ("lightning".length + 1 + 68) * 2 + "->".length — the longest corridor
- * name, a full 68-hex asset id on each leg, and the arrow. The longest pair
- * anyone can build is `arkade:<68>->arkade:<68>`, at 152 — and until the
- * exactly-one-asset guard in {@link arkadeSwapRequest} relaxes, this package
- * tops out at 87, so the guard is dormant on purpose.
- *
- * Restated rather than re-derived from this package's own corridor names: a
- * local cap BELOW the solver's would refuse a pair the solver would have
- * served, which is worse than the remote refusal this exists to pre-empt. The
- * test pins the number so a drift is a failure, not a surprise.
- *
- * Module-level, not in `index.ts`: it mirrors a number this repo does not own,
- * and publishing it would turn a remote edit into a semver event here. */
+ * 158 = ("lightning".length + 1 + 68) * 2 + "->".length. Restated from the solver, not derived
+ * from local corridor names: a local cap BELOW the solver's would refuse pairs it would serve.
+ * Not in `index.ts`: it mirrors a number this repo does not own. */
 export const MAX_PAIR_LENGTH = 158;
 
 /** Exported for the tests — a dormant guard still needs one, and no public
@@ -559,19 +486,12 @@ export const assertPairLength = (pair: string): void => {
  * Compare-only check of the solver's address against YOUR OWN derivation(s)
  * — never extends trust, only narrows it.
  *
- * `derivedAddress` may be a single address or an array of candidates. Pass an
- * array when your own derivation is ambiguous — as it is for the covenant
- * lockups while solvers roll out the timelocked non-interactive refund leaf:
- * nothing on the wire says whether a given quote's covenant carries it (the
- * shape is fixed by the solver's own build, not negotiated per quote), so the
- * only safe move is to derive BOTH shapes and accept whichever one the quote's
- * own `lockup_address` matches. This loses no security: every candidate shape
- * pins the refund to the trader's own refund destination, so a solver gains
- * nothing by choosing which one to quote.
+ * Pass an array when your derivation is ambiguous, as for covenant lockups while solvers roll out
+ * the timelocked non-interactive refund leaf (nothing on the wire says which shape a quote uses).
+ * No security is lost: every candidate pins the refund to the trader's own destination.
  *
- * Throws {@link AddressMismatch} only when NONE of the candidates match.
- * Returns the address that matched, so calls chain exactly as before.
- *
+ * @returns the address that matched.
+ * @throws {AddressMismatch} only when NONE of the candidates match.
  */
 export const verifyLockupAddress = (quote: RfqQuote, derivedAddress: string | string[]): string => {
     const quoted = quote.profile?.lockup_address;
@@ -581,22 +501,14 @@ export const verifyLockupAddress = (quote: RfqQuote, derivedAddress: string | st
     return matched;
 };
 
-/**
- * The two shapes a covenant lockup can carry while the timelocked
- * non-interactive refund leaf rolls out: the full emulator-covenant suite
- * (`undefined` — no legacy marker) and the pre-leaf shape
- * (`"preTimelockedRefund"`). See {@link verifyLockupAddress} for why callers
- * derive both. Newest first, so a matched full-suite build is the one kept.
- */
+/** The full suite (`undefined`) and the pre-timelocked-refund shape; see
+ * {@link verifyLockupAddress}. Newest first, so a full-suite match wins. */
 const LOCKUP_SHAPE_VARIANTS = [undefined, "preTimelockedRefund"] as const;
 
 /**
- * Build a lockup covenant in both {@link LOCKUP_SHAPE_VARIANTS} shapes and
- * keep the one the quote's own `lockup_address` matches — throwing, via
- * {@link verifyLockupAddress}, when NEITHER does. What the matched candidate
- * carries that a bare address does not: the SCRIPT, for contract registration
- * — registering the wrong candidate would watch a tree the funded lockup is
- * not in.
+ * Build a lockup covenant in both {@link LOCKUP_SHAPE_VARIANTS} shapes and keep the one the quote's
+ * `lockup_address` matches (else throw). Returns the SCRIPT too: registering the wrong candidate
+ * would watch a tree the funded lockup is not in.
  */
 const matchQuotedLockup = (
     quote: RfqQuote,
@@ -621,18 +533,12 @@ const matchQuotedLockup = (
     return candidates.find((candidate) => candidate.address === matchedAddress)!;
 };
 
-/** The user's gates, checked immediately before funding — never at quote
- * time. Throws with a stable `reason` property. `invoiceExpiresAt` applies to
- * BOLT11 profiles only; `onchain` adds the L1-HTLC gates (§ guardrails of the
- * onchain spec) and is required for the onchain pairs.
+/** The user's gates, checked immediately before funding, never at quote time. Throws with a
+ * stable `reason`. `onchain` adds the L1-HTLC gates and is required for the onchain pairs.
  *
- * The lightning-receive leg does NOT use this: see {@link assertReceivable}.
- * `refund_locktime` is the SOLVER's on both receive corridors, so
- * `MIN_HEADROOM_SECONDS` gates the wrong side on either — but only the
- * lightning leg has a second clock that can actually run out (the hold
- * invoice's), which is what the split buys. The onchain-receive leg stays here
- * until its own deadline gets the same treatment; the headroom check is merely
- * over-strict there, never unsafe. */
+ * The lightning-receive leg uses {@link assertReceivable} instead: `refund_locktime` is the
+ * SOLVER's there and the hold invoice is the clock that runs out. Onchain-receive stays here,
+ * where the headroom check is over-strict but never unsafe. */
 export const assertFundable = (input: {
     quote: RfqQuote;
     invoiceExpiresAt?: number;
@@ -644,31 +550,24 @@ export const assertFundable = (input: {
         direction: "send" | "receive";
     };
     /**
-     * The most this client will pay: the GREATER of the two bounds, because a
-     * flat fee is a large proportion of a small swap (420 sats is 8.4% of
-     * 5_000, 0.084% of 500_000). Absent means no ceiling. OMIT a bound rather
-     * than zeroing it: `{ bps: 0 }` alone is a ceiling of zero, indistinguishable
-     * from "free or nothing". `{}` IS refused.
+     * The most this client will pay: the GREATER of the two bounds (a flat fee is a large share of
+     * a small swap). Absent means no ceiling. OMIT a bound rather than zeroing it: `{ bps: 0 }`
+     * alone is a ceiling of zero. `{}` IS refused.
      */
     maxFee?: {
         /** Integer, 0..10_000 (10_000 = 100%). Out of range throws `max_fee_out_of_range`. */
         bps?: number;
         /** Non-negative integer. Out of range throws `max_fee_out_of_range`. */
         sats?: number;
-        /**
-         * To-units per from-unit, required for a CROSS-ASSET pair. Must come
-         * from a source of YOUR OWN — the solver's own feed would check it
-         * against its own number. Needs a looser tolerance than same-asset.
-         */
+        /** To-units per from-unit, required for a CROSS-ASSET pair. From a source of YOUR OWN:
+         * the solver's feed would check the solver against itself. */
         referenceRate?: number;
     };
 }): void => {
     const fail = (reason: string, message: string): never => {
         throw gateError(reason, message);
     };
-    // Ahead of the comparisons, as in assertReceivable: `valid_until` is the
-    // operand of the expiry gate below AND of the TTL floor the v2 client runs
-    // after it, so absent or non-numeric it fails neither — it deletes both.
+    // `valid_until` feeds the expiry gate AND the v2 TTL floor; absent or NaN it deletes both.
     if (input.quote.valid_until === undefined) {
         fail("quote_malformed", "quote carries no valid_until");
     }
@@ -678,8 +577,7 @@ export const assertFundable = (input: {
     }
     if (input.now >= input.quote.valid_until)
         fail("quote_expired", "quote expired — request a fresh one");
-    // A value gate compares the fill against the quoted amount, so a
-    // non-positive quote is a gate that cannot fail.
+    // A non-positive quoted amount is a value gate that cannot fail.
     if (
         quoteAmountSats(input.quote.from_amount, "from_amount") <= 0n ||
         quoteAmountSats(input.quote.to_amount, "to_amount") <= 0n
@@ -778,24 +676,14 @@ export interface RfqTransport {
 }
 
 /**
- * Discriminate a solver reply: a refusal carries a closed-set reason and is
- * thrown as {@link SwapRefusal}; anything that is not a quote for THIS
- * negotiation is an error rather than a value. The `rfq_id` check is what stops
- * a reply to one negotiation being accepted as the answer to another — on a
- * shared relay the solver's events all arrive on the same subscription.
+ * Discriminate a solver reply: a refusal is thrown as {@link SwapRefusal}; anything not a quote for
+ * THIS negotiation is an error. The `rfq_id` check matters because on a shared relay all the
+ * solver's events arrive on one subscription.
  *
- * `pair` is compared for the same reason the solver compares it byte for byte:
- * a solver that normalises case, or quotes a market other than the one asked
- * for, is otherwise undetectable client-side. Note the quote's pair is a
- * constant the solver restates rather than the request's echoed back, so this
- * binds every solver to the exact spellings this module builds.
- *
- * `requestedPair` is optional by value, not by parameter: callers pass a
- * payload they built, and a payload with no `pair` is not one whose pair can be
- * wrong. Comparing `String(undefined)` would refuse every quote.
- *
- * Shared with the nostr transport (`nostr.ts`), which used to carry a
- * byte-identical copy — module-level only, never re-exported from `index.ts`.
+ * `pair` is compared byte for byte, binding every solver to the exact spellings this module builds.
+ * `requestedPair` is optional because a payload with no `pair` has no pair to be wrong; comparing
+ * `String(undefined)` would refuse every quote. Shared with `nostr.ts`; not re-exported from
+ * `index.ts`.
  */
 export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: string): RfqQuote => {
     const p = payload as {
@@ -836,22 +724,15 @@ export const pairOf = (payload: Record<string, unknown>): string | undefined =>
     typeof payload.pair === "string" ? payload.pair : undefined;
 
 /** HTTP: POST /v1/swap for quotes, GET /v1/rfq/<rfq_id> for status.
- * `fetchImpl` is injectable for tests and non-global-fetch runtimes.
- *
- */
+ * `fetchImpl` is injectable for tests and non-global-fetch runtimes. */
 export const httpTransport = (
     baseUrl: string,
     options: { fetchImpl?: typeof fetch } = {},
 ): RfqTransport => {
     const fetchImpl = options.fetchImpl ?? fetch;
     /**
-     * A refusal is a 4xx carrying an `rfq_refusal` body, so the status code
-     * alone cannot decide whether to read it — rejecting every non-2xx would
-     * throw away the closed-set reason the solver sent. What must not happen
-     * is a non-JSON body (an nginx 502 page, a proxy timeout) surfacing as a
-     * bare `SyntaxError` from the parser, which says nothing about what went
-     * wrong. So: parse defensively, and name the status when the body is not
-     * ours to interpret.
+     * A refusal is a 4xx with an `rfq_refusal` body, so non-2xx is still read. A non-JSON body (a
+     * proxy 502 page) is reported with its status rather than as a bare `SyntaxError`.
      */
     const readJson = async (response: Response, what: string): Promise<unknown> => {
         const body = await response.text();
@@ -889,9 +770,7 @@ export const httpTransport = (
 };
 
 /** Minimal WebSocket surface the relay transport needs — satisfied by the DOM
- * WebSocket and by `ws` alike, so neither becomes a dependency.
- *
- */
+ * WebSocket and by `ws` alike, so neither becomes a dependency. */
 export interface RelaySocket {
     send(data: string): void;
     close(): void;
@@ -900,9 +779,7 @@ export interface RelaySocket {
 
 /** Relay: both parties outbound, addressed by x-only pubkey, speaking the dev
  * broker framing. Nostr (directed kind + NIP-44) replaces only this function.
- * One socket; replies correlated by rfq_id.
- *
- */
+ * One socket; replies correlated by rfq_id. */
 export const relayTransport = (
     relayUrl: string,
     options: {
@@ -1009,28 +886,18 @@ const SEQUENCE_GRANULARITY_SECONDS = 512;
 /**
  * How long the sender's SOLO refund opens after the receiver's claim, seconds.
  *
- * This is the window in which a claimant holding the preimage must be able to
- * finish taking their money before the funder could take it back. On a live
- * Arkade server that is one collaborative spend; with the server gone it is a
- * full unilateral exit — an unroll broadcast per chain step, each waiting on a
- * confirmation, then the CSV spend.
- *
- * 4096s (eight 512s units, ~68 minutes) is sized for that worst case. It is
- * REASONED, not measured, and it mirrors `SOLO_REFUND_HEADROOM_SECONDS` in the
- * reference solver's `src/core/timelocks.ts` — the two must move together or a
- * trader derives an address the solver never quoted.
- *
- * A multiple of the granularity on purpose: BIP68 would round anything else,
- * making the encoded timelock differ from the number written here.
+ * The window a preimage-holding claimant has to finish before the funder can take the money back;
+ * sized (reasoned, not measured) for the worst case, a full unilateral exit with the server gone.
+ * Mirrors `SOLO_REFUND_HEADROOM_SECONDS` in the reference solver's `src/core/timelocks.ts`: the
+ * two must move together or a trader derives an address the solver never quoted. A multiple of
+ * the BIP68 granularity so the encoded timelock equals this number.
  */
 export const SOLO_REFUND_HEADROOM_SECONDS = 8 * SEQUENCE_GRANULARITY_SECONDS;
 
 /** The solver's unilateral-claim delay, derived from the Arkade operator's reported
  * exit delay exactly as the reference solver derives it — both sides read the
  * SAME server, so the derivation (not a quote field) is what keeps the two
- * scripts identical.
- *
- */
+ * scripts identical. */
 export const unilateralClaimDelay = (operatorExitDelaySeconds: number): number => {
     if (
         !Number.isFinite(operatorExitDelaySeconds) ||
@@ -1059,18 +926,13 @@ export const unilateralClaimDelay = (operatorExitDelaySeconds: number): number =
 
 /** VHTLC's `unilateralRefund` tier: sender + receiver, no server — LEVEL with
  * `claimDelay`, not above it. Neither party can spend a two-signature leaf
- * alone, so separating it buys no safety, and every second spent separating it
- * is a second taken off the headroom that does matter.
- *
- */
+ * alone, so separating it buys no safety and would only eat into the headroom that matters. */
 export const unilateralRefundDelay = (claimDelay: number): number => claimDelay;
 
 /** VHTLC's `unilateralRefundWithoutReceiver` tier: sender alone, needing
  * nobody. The only leaf whose timing can steal — a funder able to refund
  * before the claimant can claim takes money from someone holding the preimage
- * — so it opens last, by {@link SOLO_REFUND_HEADROOM_SECONDS}.
- *
- */
+ * — so it opens last, by {@link SOLO_REFUND_HEADROOM_SECONDS}. */
 export const unilateralRefundWithoutReceiverDelay = (claimDelay: number): number =>
     claimDelay + SOLO_REFUND_HEADROOM_SECONDS;
 
@@ -1122,18 +984,11 @@ const suiteVhtlc = (
  * hex); the script's HASH160 commitment is derived from it here, which is why
  * the trader never needs to see `P`.
  *
- * Every quote gets the full emulator-covenant suite on top of VHTLC's own six
- * (`claim`/`refund`/`refundWithoutReceiver`/`unilateralClaim`/
- * `unilateralRefund`/`unilateralRefundWithoutReceiver`): `nonInteractiveClaim`
- * (server + emulator, pays the solver's own `receiverPkScript`, no solver
- * signature needed), `nonInteractiveRefund` (server + solver + emulator, pays
- * the trader's own `refundPkScript`, no timelock and no trader signature
- * needed — see {@link VHTLC.Options.nonInteractiveParameters}'s doc comment for why
- * that matters), and its timelocked twin `nonInteractiveRefundWithoutReceiver`
- * (server + emulator alone, after `refundLocktime` — the only refund tier
- * needing no participant at all). Nine leaves in all, unless `legacy` says
- * otherwise.
- *
+ * Nine leaves unless `legacy`: VHTLC's six plus the emulator-covenant suite —
+ * `nonInteractiveClaim` (server + emulator, pays the solver's `receiverPkScript`),
+ * `nonInteractiveRefund` (server + solver + emulator, pays the trader's `refundPkScript`, no
+ * timelock or trader signature; see {@link VHTLC.Options.nonInteractiveParameters}), and
+ * `nonInteractiveRefundWithoutReceiver` (server + emulator after `refundLocktime`).
  */
 export function lightningSendContract(params: {
     /** Binding field #1: the solver's x-only key, from the quote. */
@@ -1144,9 +999,8 @@ export function lightningSendContract(params: {
     operatorPubkey: Uint8Array;
     /** BOLT11 payment hash, hex — from the trader's OWN invoice decode. */
     paymentHash: string;
-    /** From {@link unilateralClaimDelay} over the trader's OWN server info.
-     * {@link unilateralRefundDelay} and {@link unilateralRefundWithoutReceiverDelay}
-     * derive from this same value — one rounding, shared across all three tiers. */
+    /** From {@link unilateralClaimDelay} over the trader's OWN server info; all three unilateral
+     * tiers derive from it. */
     claimDelay: number;
     /** Binding quote field. Optional only for rebuilding pre-upgrade scripts. */
     refundWithoutReceiverDelay?: number;
@@ -1155,19 +1009,13 @@ export function lightningSendContract(params: {
     /** Where a refund must pay: the trader's P2TR pkScript (34 bytes). Also
      * the refund covenants' destination. */
     refundPkScript: Uint8Array;
-    /** The trader's own key — VHTLC's `sender` role. Required on every
-     * interactive refund-side leaf; the trader generates and persists it
-     * (see {@link requestLightningSend}'s own obligations). */
+    /** The trader's own key — VHTLC's `sender` role, on every interactive refund-side leaf. */
     senderPubkey: Uint8Array;
-    /** The solver's own claim destination, from the quote
-     * (`profile.receiver_pk_script`) — needed only so `nonInteractiveClaim`'s
-     * covenant key can be derived; the trader does not otherwise use or trust
-     * this value. P2TR pkScript, 34 bytes. */
+    /** The solver's claim destination (`profile.receiver_pk_script`, P2TR), used only to derive
+     * `nonInteractiveClaim`'s covenant key; not otherwise trusted. */
     receiverPkScript: Uint8Array;
-    /** LEGACY REBUILD ONLY — see {@link VHTLC.Options.nonInteractiveParameters}'s
-     * `legacy` field. Set only to re-derive a lockup funded before the
-     * timelocked refund leaf shipped; {@link matchQuotedLockup} passes it when
-     * the quote's own address says the solver quoted that shape. */
+    /** LEGACY REBUILD ONLY: re-derive a lockup funded before the timelocked refund leaf shipped
+     * (see {@link VHTLC.Options.nonInteractiveParameters}); set by {@link matchQuotedLockup}. */
     legacy?: "preTimelockedRefund";
 }): InstanceType<typeof VHTLC.ScriptV2> {
     return suiteVhtlc(params, {
@@ -1179,18 +1027,12 @@ export function lightningSendContract(params: {
     });
 }
 
-/** Every input {@link lightningSendContract} builds from. Derived from the
- * builder rather than restated, so the two cannot drift.
- *
- */
+/** Every input {@link lightningSendContract} builds from. */
 export type LightningSendContractParams = Parameters<typeof lightningSendContract>[0];
 
 /** The BOLT11 facts the trader read from its OWN decode — this module takes
- * the facts, not the decoder, so any wallet's existing decoder serves.
- *
- * A root export because `CorridorOverrides.lightning.decode` returns it: a
- * caller wiring that override names this type.
- */
+ * the facts, not the decoder, so any wallet's existing decoder serves
+ * (`CorridorOverrides.lightning.decode` returns it). */
 export interface InvoiceFacts {
     /** The raw BOLT11 — what travels in the request profile. */
     raw: string;
@@ -1208,14 +1050,8 @@ export interface InvoiceFacts {
  * mismatch. Binding: `solver_pubkey`, `refund_locktime`,
  * `profile.receiver_pk_script`; `profile.lockup_address` is compare-only.
  *
- * Extracted so the send leg has the same shape its three siblings already have
- * — {@link deriveOnchainSend}, {@link deriveLightningReceive} and
- * {@link deriveOnchainReceive} are all pure cores their entrypoints call. A
- * quote path that derives without registering a contract row (the v2 client's
- * does: it quotes, and only `accept()` persists) would otherwise have to write
- * this derivation a second time, and a covenant derived twice from two copies
- * of the same code is the failure this package spends most of its comments
- * guarding against.
+ * Pure, like its siblings, so the v2 quote path (which registers nothing until `accept()`) shares
+ * this one derivation instead of copying it.
  */
 export function deriveLightningSend(input: {
     quote: RfqQuote;
@@ -1237,8 +1073,7 @@ export function deriveLightningSend(input: {
     swapPkScript: Uint8Array;
     script: InstanceType<typeof VHTLC.ScriptV2>;
     contractParams: LightningSendContractParams;
-    /** The deadline the covenant was built with, non-optional here where the
-     * wire field is optional. */
+    /** The deadline the covenant was built with. */
     refundLocktime: number;
 } {
     const { quote } = input;
@@ -1264,8 +1099,6 @@ export function deriveLightningSend(input: {
     if (receiverPkScriptHex === undefined) {
         throw new Error("lightning-send quote is missing profile.receiver_pk_script");
     }
-    // Named rather than inlined so the exact inputs the covenant was built from
-    // can be handed back — see `contractParams` on the return type.
     const contractParams = {
         solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime: quote.refund_locktime,
@@ -1278,9 +1111,7 @@ export function deriveLightningSend(input: {
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
         refundPkScript: input.refundPkScript,
     };
-    // Two candidates, one match — see matchQuotedLockup. `contractParams`
-    // echoes the MATCHED build: anything downstream re-derives from it, so it
-    // must describe the lockup actually funded, not a shape we guessed.
+    // `contractParams` echoes the MATCHED build: downstream re-derives from it.
     const matched = matchQuotedLockup(quote, input.hrp, input.operatorPubkey, (legacy) =>
         lightningSendContract({ ...contractParams, ...(legacy !== undefined && { legacy }) }),
     );
@@ -1297,34 +1128,19 @@ export function deriveLightningSend(input: {
 }
 
 /**
- * The lightning-send user flow, mirroring `createOffer`'s shape: quote →
- * derive locally → verify → gate. Pure of funding on purpose — it returns the
- * address and amount, and the caller funds with its own wallet
- * (`wallet.send({ address, amount })`) before `quote.valid_until`, after
- * which the user may go OFFLINE: filling is non-interactive. Success reveals
- * the preimage in the solver's claim witness (also served via status as
- * `settled`); failure refunds to `refundAddress`.
+ * The lightning-send user flow: quote → derive locally → verify → gate. Funds nothing: the caller
+ * funds `address` with `fundAmount` before `quote.valid_until`, then may go OFFLINE. Success
+ * reveals the preimage in the solver's claim witness; failure refunds to `refundAddress`.
  *
- * Throws {@link SwapRefusal} (closed reason), {@link AddressMismatch} (never
- * fund), a gate error with a stable `reason`, or
- * {@link LockupRegistrationFailed} — the last one alone means the quote is
- * still good and the same call can be retried once local storage is.
+ * @throws {SwapRefusal} (closed reason), {@link AddressMismatch} (never fund), a gate error with a
+ * stable `reason`, or {@link LockupRegistrationFailed} — only the last leaves the quote good for a
+ * retry once local storage is.
  *
- * Broadcasts nothing, but does write locally: the lockup is registered with the
- * wallet's contract manager before the address is returned, exactly as
- * `createOffer` registers its covenant — so the lockup is watched from the
- * moment it lands and out of generic coin selection, and a persistence failure
- * throws while nothing is funded. `RfqSwapManager` re-registers as a backstop
- * for older records; a repeat write is a no-op.
- *
- * The `sender` key is the wallet's identity key, as {@link provisionRefundKey}
- * pins it — returned as `senderPubkey` plus `secrets`. `secrets` holds only a
- * public descriptor; the signer re-derives from the wallet, so nothing secret
- * is at rest. Persist `secrets` with the record anyway: it is how the refund
- * signer is found again. `nonInteractiveRefund` recovers the funds even
- * without it — but it needs the SOLVER's active cooperation, not just
- * infrastructure uptime.
- *
+ * @remarks Registers the lockup with the contract manager before returning the address, so it is
+ * watched (and out of coin selection) from the moment it lands, and a persistence failure throws
+ * while nothing is funded. Persist `secrets` (a public descriptor) with the record: it is how the
+ * refund signer is found again; without it `nonInteractiveRefund` still works but needs the
+ * SOLVER's active cooperation.
  */
 export async function requestLightningSend(
     wallet: IWallet,
@@ -1346,12 +1162,10 @@ export async function requestLightningSend(
     fundAmount: number;
     /** The covenant's scriptPubKey, for watching the lockup and its spend. */
     swapPkScript: Uint8Array;
-    /** The covenant itself. Hand it to `RfqSwapManager` as the record's
-     * `lockup` (with `address`): without it the manager can only poll, and
-     * cannot retire the row this call just wrote. */
+    /** The covenant itself. Hand it to `RfqSwapManager` as the record's `lockup` (with
+     * `address`); without it the manager can only poll and cannot retire the row. */
     script: InstanceType<typeof VHTLC.ScriptV2>;
-    /** Where a failed swap refunds — the same address `secrets.pkScript` was
-     * decoded from, so the quote and the covenant always name one script. */
+    /** Where a failed swap refunds; the address `secrets.pkScript` was decoded from. */
     refundAddress: string;
     /** The VHTLC `sender` x-only key, bound into the covenant. Public. */
     senderPubkey: Uint8Array;
@@ -1359,33 +1173,19 @@ export async function requestLightningSend(
      * it holds nothing secret. */
     secrets: ProvisionedKey;
     /**
-     * Every input the covenant was built from, as it was AT REQUEST TIME.
-     *
-     * Returned so a consumer can persist the swap without re-deriving any of
-     * it. Half of these are not on the quote: `serverPubkey` and `claimDelay`
-     * come from this wallet's own `getArkadeInfo()`, `emulatorPubkey` from a
-     * per-network pin, `refundPkScript` from `secrets` — decoded from the
-     * refund address at provisioning time, the same address this call returns
-     * as `refundAddress`.
-     *
-     * All public. Persisting them is optional: this call also registers the
-     * lockup as a contract, and that row is where `rebuildRfqSwap` takes its
-     * covenant from — see `rfqRecord.ts`. Keep a copy only to hold a record
-     * that rebuilds without the wallet's contract store, and keep it as
-     * `VHTLCV2ContractHandler.serializeParams(script.options)`, the shape the
-     * rebuild accepts.
+     * Every input the covenant was built from, as it was AT REQUEST TIME (half are not on the
+     * quote). All public, and optional to persist: `rebuildRfqSwap` reads the registered contract
+     * row. To rebuild without that store, keep
+     * `VHTLCV2ContractHandler.serializeParams(script.options)` instead.
      */
     contractParams: LightningSendContractParams;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    // This leg is one we fund, so all it needs is the key that refunds it.
     // No preimage: a lightning send's P belongs to the payee.
     const secrets = await provisionRefundKey(wallet);
     const senderPubkey = secrets.pubkey;
-    // One address read, inside provisionRefundKey: the quote's refund address
-    // and the covenant's refundPkScript come from it together, so a wallet
-    // that rotates its receive address between two reads cannot pair the
-    // solver's refund_address with a different script.
+    // One address read for both refund_address and refundPkScript, so a rotating receive address
+    // cannot pair them with different scripts.
     const refundAddress = secrets.address;
     const info = await wallet.getArkadeInfo({ requireLive: true });
 
@@ -1394,10 +1194,7 @@ export async function requestLightningSend(
     );
     const now = Math.floor(Date.now() / 1000);
     const claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
-    // The BOLT11 profile is exact-out: `to_amount` is the invoice, verbatim,
-    // and `from_amount` adds the corridor's fee on top. Funding anything but
-    // `from_amount` underfunds by exactly the fee and is refused — and a quote
-    // repricing the invoice itself is not a quote for this invoice at all.
+    // Exact-out: `to_amount` must be the invoice verbatim; `from_amount` adds the fee.
     if (quoteSats(quote.to_amount, "to_amount") !== params.invoice.amountSats) {
         throw new Error(
             `quote to_amount ${quote.to_amount} does not match the invoice's ${params.invoice.amountSats}`,
@@ -1432,17 +1229,13 @@ export async function requestLightningSend(
         now,
     });
 
-    // Last, so a refused quote leaves no row behind, but still before the
-    // caller holds an address to fund: registration throws here, where nothing
-    // is at stake, rather than stranding a funded lockup unwatched.
+    // Last, so a refused quote leaves no row, but before the caller holds an address to fund.
     await registerLockupContract(await wallet.getContractManager(), script, address);
 
     return {
         rfqId,
         quote,
         address,
-        // What the lockup must carry: the quote's `from_amount` — the invoice
-        // PLUS the corridor's fee, never the bare invoice amount.
         fundAmount: quoteSats(quote.from_amount, "from_amount"),
         swapPkScript: derived.swapPkScript,
         script,
@@ -1456,16 +1249,12 @@ export async function requestLightningSend(
 // ── Arkade ↔ arkade: quote, then take by funding an offer ───────────────────
 
 /**
- * Map an arkade↔arkade quote onto `createOffer` terms. The trader takes the
- * quote by creating and funding the offer covenant before `valid_until` —
- * the non-interactive fill: the covenant only releases the deposit to a
- * transaction that delivers the quoted want-amount to the trader, so the
- * solver fills or nothing moves. There is no rfq_fill message and no refund
- * timelock; an unfilled offer is cancelled cooperatively (`cancelOffer`).
+ * Map an arkade↔arkade quote onto `createOffer` terms. The covenant only releases the deposit to a
+ * tx delivering the quoted want-amount, so the solver fills or nothing moves; an unfilled offer is
+ * cancelled cooperatively (`cancelOffer`).
  *
- * For asset-to-asset, the offer contract commits to the wanted asset only.
- * The offered/deposit asset is carried by the funding VTXO and its asset
- * packet; it is not part of the covenant derivation.
+ * For asset-to-asset, the covenant commits to the wanted asset only; the offered asset rides the
+ * funding VTXO's asset packet.
  */
 export const offerTermsFromQuote = (
     quote: RfqQuote,
@@ -1479,10 +1268,8 @@ export const offerTermsFromQuote = (
     return { wantAmount, offerAsset: assets.offerAsset };
 };
 
-/** Compare-only check of the solver's offer address against YOUR OWN
- * derivation — never extends trust, only narrows it. Funds only on an exact
- * match of both the address (what the wallet sends to) and the script (what
- * `offerVtxoScript` compiles to). Throws {@link AddressMismatch} otherwise.
+/** Compare-only check of the solver's offer address AND script against YOUR OWN derivation.
+ * Throws {@link AddressMismatch} unless both match exactly.
  *
  * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const verifyOfferAddress = (
@@ -1498,10 +1285,8 @@ export const verifyOfferAddress = (
     return derived;
 };
 
-/** Gate an arkade↔arkade quote immediately before funding. No timelock exists
- * on this class (neither `fulfill` nor `cancel` carries one), so the only
- * clock is `valid_until`: funding after it is a deposit the solver will
- * refuse to fill, reclaimable only via cooperative `cancelOffer`.
+/** Gate an arkade↔arkade quote immediately before funding. The only clock is `valid_until`:
+ * funding after it leaves a deposit the solver won't fill, reclaimable only via `cancelOffer`.
  *
  * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const assertArkadeFundable = (input: { quote: RfqQuote; now?: number }): void => {
@@ -1524,22 +1309,13 @@ const quoteCarrierSats = (quote: RfqQuote): bigint => {
 };
 
 /**
- * The arkade↔arkade user flow, mirroring `requestLightningSend`'s shape:
- * quote → derive locally → verify → gate. Pure of funding on purpose — it
- * returns the offer and the deposit it must carry, and the caller funds with
- * its own wallet before `quote.valid_until`, after which the user may go
- * offline: filling is non-interactive. An unfilled offer is cancelled
- * cooperatively (`cancelOffer`); there is no timelock refund.
+ * The arkade↔arkade user flow: quote → derive locally → verify → gate. Funds nothing; the caller
+ * funds before `quote.valid_until`, then may go offline. No timelock refund: an unfilled offer is
+ * cancelled cooperatively (`cancelOffer`).
  *
- * Maker keys are the wallet's own (address script + identity x-only key), read
- * here so the request profile and the local `createOffer` derivation cannot
- * diverge. The quote's `offer_address`/`offer_pk_script` are compare-only:
- * a mismatch throws {@link AddressMismatch} and must never be funded.
- *
- * Works over any {@link RfqTransport} — HTTP, dev relay, or Nostr — since the
- * negotiation is one `rfq_request` round trip. Throws {@link SwapRefusal}
- * (closed reason), {@link AddressMismatch} (never fund), or a gate error with
- * a stable `reason`.
+ * Maker keys are read once here so the request profile and the local `createOffer` derivation
+ * cannot diverge. Throws {@link SwapRefusal}, {@link AddressMismatch} (never fund), or a gate error
+ * with a stable `reason`.
  *
  * Funding (caller's job, immediately after, before `valid_until`):
  * - BTC->asset (`wantAsset`): `wallet.send({ address, amount: Number(fundAmount), extensions: [extension] })`
@@ -1666,19 +1442,14 @@ export async function requestArkadeSwap(
 
 // ── Onchain corridor: off-board (arkade->onchain) and on-board wire ─────────
 
-/** The Arkade lockup for an onchain send uses the SAME {@link
- * lightningSendContract} the Lightning leg does — only the SOURCE of the
- * payment hash differs (user-generated P instead of a BOLT11). One function,
- * one golden test. */
+/** The onchain send's Arkade lockup is the SAME {@link lightningSendContract}; only the payment
+ * hash's source differs (user-generated P, not a BOLT11). */
 
 /**
  * The L1 network an Arkade network settles on.
  *
- * Three-valued where {@link NetworkName} is five: `signet` and `mutinynet` both
- * carry testnet address parameters, so they fold into `testnet` and nothing
- * downstream can tell them apart from an address alone. Exported for the
- * onchain corridor module, which would otherwise write this mapping a third
- * time.
+ * Three-valued where {@link NetworkName} is five: `signet` and `mutinynet` carry testnet address
+ * parameters, so they fold into `testnet`.
  */
 export const l1NetworkFromArk = (network: string): OnchainNetwork =>
     network === "bitcoin" ? "bitcoin" : network === "regtest" ? "regtest" : "testnet";
@@ -1700,9 +1471,7 @@ const serverTerms = (info: ArkadeInfo, emulatorPubkey: string | undefined) => {
 /** The rfq_request for `arkade:BTC->onchain:BTC`. Exact-out means "this much
  * lands in the L1 HTLC". `senderPubkey` is the user's own key for the
  * VHTLC's sender-side leaves — same role as in {@link lightningSendRequest}.
- * On the wire it's `client_refund_pubkey`, same as there.
- *
- */
+ * On the wire it's `client_refund_pubkey`, same as there. */
 export const onchainSendRequest = (input: {
     rfqId: string;
     /** `sha256(P)`, hex — user-chosen; see {@link paymentHashOf}. */
@@ -1729,14 +1498,9 @@ export const onchainSendRequest = (input: {
     },
 });
 
-/** The rfq_request for `lightning:BTC->arkade:BTC`: pay the solver's hold
- * invoice, land on Arkade. The trader generates `P`, keeps it, and sends only
- * `H` plus `P` sealed to covclaimd — the solver never sees `P` until it
- * appears in a claim witness. `payoutPubkey` is the trader's own x-only
- * Arkade key — the covenant's `receiver` role on this leg, so the trader can
- * claim the lockup itself without covclaimd.
- *
- */
+/** The rfq_request for `lightning:BTC->arkade:BTC`. The trader sends only `H` plus `P` sealed to
+ * covclaimd, so the solver never sees `P` before a claim witness. `payoutPubkey` is the covenant's
+ * `receiver`, so the trader can claim without covclaimd. */
 export const lightningReceiveRequest = (input: {
     rfqId: string;
     /** `H = sha256(P)`, hex — trader-chosen; see {@link paymentHashOf}. */
@@ -1745,9 +1509,8 @@ export const lightningReceiveRequest = (input: {
     payoutAddress: string;
     /** Trader's x-only arkade key — the covenant's `receiver` role. */
     payoutPubkey: Uint8Array;
-    /** `P` sealed to covclaimd, base64 — `sealClaimPacket(...).ciphertext`.
-     * Omitted when there is no covclaimd to seal to; the field is then left off
-     * the wire entirely, since the solver refuses an empty packet. */
+    /** `P` sealed to covclaimd, base64 — `sealClaimPacket(...).ciphertext`. Omitted from the wire
+     * when there is no covclaimd: the solver refuses an empty packet. */
     claimPacket?: string;
     amount: number;
     amountSide: "from" | "to";
@@ -1766,13 +1529,8 @@ export const lightningReceiveRequest = (input: {
     },
 });
 
-/** The rfq_request for `onchain:BTC->arkade:BTC`. The user funds the L1 HTLC
- * (holding its refund role) and receives Arkade; P travels sealed to
- * covclaimd (see `sealClaimPacket`) so the user can go offline after
- * funding. `payoutPubkey` is the trader's own x-only Arkade key — the
- * covenant's `receiver` role, same as the Lightning receive leg's.
- *
- */
+/** The rfq_request for `onchain:BTC->arkade:BTC`. The user funds the L1 HTLC (holding its refund
+ * role); P travels sealed to covclaimd so the user can go offline after funding. */
 export const onchainReceiveRequest = (input: {
     rfqId: string;
     paymentHash: string;
@@ -1830,14 +1588,11 @@ export function deriveOnchainSend(input: {
      * so the row can never key on a script other than the derived one. */
     script: InstanceType<typeof VHTLC.ScriptV2>;
     htlc: OnchainHtlc;
-    /** The inputs {@link htlc} was built from. Returned because nothing else
-     * can give them back: `OnchainHtlc` exposes only derived values, and this
-     * contract is Bitcoin L1 — there is no Arkade contract row for it, so a
-     * consumer persisting the swap has no other route to rebuilding it. */
+    /** The inputs {@link htlc} was built from; nothing else gives them back (L1 has no contract
+     * row, and `OnchainHtlc` exposes only derived values). */
     htlcParams: OnchainHtlcParams;
-    /** Echoed from the input, so a result is a complete description of the L1
-     * half rather than one a caller has to re-assemble from what it passed in.
-     * {@link onchainSendProfile} reads it from here. */
+    /** Echoed from the input so the result fully describes the L1 half
+     * ({@link onchainSendProfile} reads it). */
     l1Network: OnchainNetwork;
     refundLocktime: number;
     htlcLocktime: number;
@@ -1873,7 +1628,6 @@ export function deriveOnchainSend(input: {
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
         refundPkScript: ArkAddress.decode(input.refundAddress).pkScript,
     };
-    // Two candidates, one match — see matchQuotedLockup.
     const { script, address } = matchQuotedLockup(
         quote,
         input.hrp,
@@ -1882,9 +1636,6 @@ export function deriveOnchainSend(input: {
             lightningSendContract({ ...contractParams, ...(legacy !== undefined && { legacy }) }),
     );
 
-    // Named so the inputs can be handed back: `OnchainHtlc` carries only
-    // derived values, and unlike the Arkade lockup this HTLC has no contract
-    // row, so these are the only route to rebuilding it after a restart.
     const htlcParams = {
         paymentHash: input.paymentHash,
         claimKey: input.payoutPubkey,
@@ -1913,22 +1664,15 @@ export function deriveOnchainSend(input: {
  * quote → derive BOTH contracts locally → verify → gate. Pure of funding —
  * the caller funds `address` with its own wallet before `quote.valid_until`.
  *
- * Registers the arkade lockup before returning the address, on the same terms
- * as {@link requestLightningSend} — including {@link LockupRegistrationFailed},
- * the one throw here that does not mean "walk away from this quote". The L1
- * HTLC is not a contract row: it lives on bitcoin, not on Ark, and the wallet's
- * contract manager knows nothing of it.
+ * Registers the arkade lockup before returning, as {@link requestLightningSend} does (the L1 HTLC
+ * has no contract row).
  *
  * Two obligations, both LOUD:
- * - **Persist `secrets` (with the record) BEFORE funding.** On an HD wallet it
- *   is a public descriptor and both the preimage and the `sender` key
- *   re-derive from the seed; otherwise it carries the raw secrets, and losing
- *   them forfeits the L1 claim and every interactive refund path — leaving
- *   recovery dependent on the solver via `nonInteractiveRefund`.
- * - **Stay claim-capable.** Unlike lightning-send the user cannot go fully
- *   offline: it must claim the L1 HTLC (`awaitOnchainFill` →
- *   `claimOnchainFill`) before `htlc.refundLocktime`. Missing that window
- *   forfeits the fill and falls back to the Arkade covenant refund.
+ * - **Persist `secrets` (with the record) BEFORE funding.** On a non-HD wallet it carries raw
+ *   secrets; losing them forfeits the L1 claim and every interactive refund path.
+ * - **Stay claim-capable.** The user must claim the L1 HTLC (`awaitOnchainFill` →
+ *   `claimOnchainFill`) before `htlc.refundLocktime`, or the fill is forfeit and the swap falls
+ *   back to the Arkade covenant refund.
  */
 export async function requestOnchainSend(
     wallet: IWallet,
@@ -1960,34 +1704,18 @@ export async function requestOnchainSend(
     refundAddress: string;
     /** The EXPECTED L1 fill, derived locally — watch and claim against this. */
     htlc: OnchainHtlc;
-    /** The inputs {@link htlc} was built from — persist these to rebuild it
-     * after a restart. Nothing else gives them back: `OnchainHtlc` exposes only
-     * derived values, and this contract is Bitcoin L1, so unlike the arkade
-     * lockup there is no contract row holding its parameters. Persist
-     * `htlc.address` alongside them (`OnchainSendProfile.htlcAddress`): the
-     * rebuild checks the two against each other, which is the only check
-     * available on a leg with no second copy of its covenant.
-     *
-     * `onchainSendProfile(result)` does all of that mapping for you; prefer it
-     * to reading these fields across by hand. */
+    /** The inputs {@link htlc} was built from — persist these (with `htlc.address`) to rebuild it
+     * after a restart; nothing else gives them back. Prefer `onchainSendProfile(result)` to
+     * mapping them by hand. */
     htlcParams: OnchainHtlcParams;
-    /**
-     * Which bitcoin network the L1 HTLC was derived for.
-     *
-     * Returned because it is NOT the ark network name and cannot be recovered
-     * from one by inspection: this call maps `info.network` through a private
-     * narrowing where signet, mutinynet and testnet4 all become `"testnet"`.
-     * A caller reconstructing it from context would be re-deriving a mapping
-     * it cannot see, and a value the profile needs verbatim.
-     */
+    /** Which bitcoin network the L1 HTLC was derived for. NOT the ark network name: signet,
+     * mutinynet and testnet4 all become `"testnet"`. */
     l1Network: OnchainNetwork;
     /** `profile.min_confirmations`; gates when the L1 fill becomes claimable,
      * and part of what a restored swap needs to drive its own claim. */
     minConfirmations: number;
-    /** The arkade lockup's refund deadline, as the covenant was built with it.
-     * Read this rather than `quote.refund_locktime`: that field is optional on
-     * the wire, a solver may carry the value in `profile` instead, and
-     * `deriveOnchainSend` is what settles which one this contract used. */
+    /** The arkade lockup's refund deadline, as the covenant was built with it. Read this, not
+     * `quote.refund_locktime`: a solver may carry the value in `profile` instead. */
     refundLocktime: number;
     /** The VHTLC `sender` x-only key, bound into the covenant. Public. */
     senderPubkey: Uint8Array;
@@ -1997,10 +1725,8 @@ export async function requestOnchainSend(
     secrets: ProvisionedClaimSecret;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    // We fund the arkade leg and claim the L1 one, so this needs both halves:
-    // the key that refunds the lockup and the P that claims the HTLC. A
-    // supplied P is length-checked before an index is consumed — the L1 claim
-    // leaf pins OP_SIZE 32, and any other length funds an unclaimable HTLC.
+    // Both halves: the lockup's refund key and the HTLC's P. A supplied P is length-checked first:
+    // the L1 claim leaf pins OP_SIZE 32, so any other length funds an unclaimable HTLC.
     const secrets = await provisionClaimSecret(wallet, { preimage: params.preimage });
     if (secrets.mustPersistPreimage) {
         console.warn(
@@ -2048,8 +1774,6 @@ export async function requestOnchainSend(
         },
     });
 
-    // Before the caller can fund, and loud on failure — see the same call in
-    // `requestLightningSend`.
     await registerLockupContract(
         await wallet.getContractManager(),
         derived.script,
@@ -2075,11 +1799,8 @@ export async function requestOnchainSend(
     };
 }
 
-/** The fixed side of the quote must equal the amount the request named;
- * anything else is a quote for a different trade. Above both corridors because
- * it belongs to neither. `requestLightningSend` is the one caller that does
- * not reach for it: a BOLT11 profile carries no `amountSide`, so it makes the
- * same two comparisons against the invoice instead. */
+/** The fixed side of the quote must equal the amount the request named; anything else is a quote
+ * for a different trade. (`requestLightningSend` compares against the invoice instead.) */
 const assertQuotedAmount = (quote: RfqQuote, amountSide: "from" | "to", amount: number): void => {
     const quoted =
         amountSide === "from"
@@ -2105,18 +1826,13 @@ export const MIN_CLAIM_WINDOW_SECONDS = 30 * 60;
 /**
  * Bind the SOLVER's hold invoice to the quote and to the trader's own `H`.
  *
- * This is the only field the trader hands to a third party, and the only
- * attack on this corridor with no on-chain trace: an invoice on some other
- * payment hash is paid to the solver in full and no lockup on `H` is ever
- * funded. NEVER publish an invoice that has not passed this.
+ * The only attack on this corridor with no on-chain trace: an invoice on another payment hash is
+ * paid to the solver in full and no lockup on `H` is ever funded. NEVER publish an invoice that
+ * has not passed this.
  *
- * The decoder is injected — `@arkade-os/swap` takes no BOLT11 dependency — but
- * unlike {@link requestLightningSend}, which takes the caller's facts about
- * the caller's OWN invoice, the comparison lives here: a caller-supplied
- * summary of an adversary's invoice checks nothing.
- *
- * There is no check for "is this actually a hold invoice": on the wire it is
- * indistinguishable from an ordinary one.
+ * The decoder is injected (no BOLT11 dependency), but the comparison lives here: a caller-supplied
+ * summary of an adversary's invoice checks nothing. A hold invoice is indistinguishable on the
+ * wire, so that is not checked.
  *
  * Reasons: `invoice_undecodable` | `invoice_hash_mismatch` |
  * `invoice_amount_mismatch` | `quote_malformed`.
@@ -2139,10 +1855,7 @@ export const verifyReceiveInvoice = (input: {
             `solver sent an undecodable invoice: ${error instanceof Error ? error.message : String(error)}`,
         );
     }
-    // Both operands of the `payDeadline` min, before either reaches it: a
-    // decoder that reports the expiry of an invoice with no expiry tag as NaN,
-    // or a solver that sends a `valid_until` JSON never typechecked, would
-    // otherwise disarm every gate downstream — see {@link assertFinite}.
+    // Both `payDeadline` operands: NaN here would disarm every gate downstream (see assertFinite).
     assertFinite(decoded.expiresAt, "invoice_undecodable", "the decoded invoice expiry");
     assertFinite(input.quote.valid_until, "quote_malformed", "quote valid_until");
     if (decoded.paymentHash !== input.paymentHash) {
@@ -2162,25 +1875,17 @@ export const verifyReceiveInvoice = (input: {
             `solver's invoice asks for ${decoded.amountSats}, not the quoted from_amount ${input.quote.from_amount}`,
         );
     }
-    // No `amountSats` in the return: the check above pins it to
-    // `quote.from_amount`, which the caller already has.
     return { payDeadline: Math.min(decoded.expiresAt, input.quote.valid_until) };
 };
 
 /**
- * The receive leg's gate, checked before the invoice is published. Separate
- * from {@link assertFundable} because the semantics invert: `refund_locktime`
- * belongs to the SOLVER here, so BIP-113's median-time-past lag extends the
- * trader's claim window instead of shrinking it. What can actually run out is
- * the hold invoice's own window — minutes, not the quote's hour — which is why
- * the claim window is measured from `payDeadline`, the last moment a payer can
- * arm the swap, and not from `now`.
+ * The receive leg's gate, checked before the invoice is published. Separate from
+ * {@link assertFundable} because `refund_locktime` is the SOLVER's here (BIP-113 lag extends the
+ * trader's window); what runs out is the hold invoice, so the claim window is measured from
+ * `payDeadline`, not `now`.
  *
- * `maxPayAmount` is an opt-in absolute ceiling on what the payer is asked for:
- * `assertQuotedAmount` pins the side the request named, so with
- * `amountSide: "to"` the price is the free variable. Optional because a bad
- * price is visible to the caller before anything is published — unlike an
- * opaque invoice or an underfunded lockup.
+ * `maxPayAmount` is an opt-in ceiling: with `amountSide: "to"` the price is the free variable.
+ * Optional because a bad price is visible to the caller before anything is published.
  *
  * Reasons: `quote_expired` | `missing_refund_locktime` | `claim_window_too_short` |
  * `price_too_high` | `quote_malformed` | `invalid_gate_input`.
@@ -2194,11 +1899,7 @@ export const assertReceivable = (input: {
     /** Absolute sats ceiling on `from_amount`. */
     maxPayAmount?: number;
 }): void => {
-    // Ahead of the comparisons, never inside them: this function is exported,
-    // so it cannot assume verifyReceiveInvoice vetted `payDeadline`, and the
-    // clock and the two knobs are the caller's own — a `NaN` ceiling would
-    // leave `from_amount > NaN` false and delete the price gate it was asked
-    // for, and a `NaN` clock would do the same to the expiry gate below.
+    // Exported, so nothing here is pre-vetted: a NaN ceiling or clock would delete its gate.
     assertFinite(input.payDeadline, "quote_malformed", "payDeadline");
     assertFinite(input.now, "invalid_gate_input", "now");
     assertFinite(input.minClaimWindowSeconds, "invalid_gate_input", "minClaimWindowSeconds");
@@ -2231,9 +1932,8 @@ export const assertReceivable = (input: {
 /** Compile the RECEIVE-direction VHTLC: the same suite-carrying tree as {@link
  * lightningSendContract} with the roles inverted — the trader is the
  * `receiver` (it generated `P` and claims the lockup with it), the solver is
- * the `sender` (it funds the lockup and holds the refund recourse). One
- * function shared by both receive corridors, mirroring the send legs' sharing
- * of `lightningSendContract`.
+ * the `sender` (it funds the lockup and holds the refund recourse). Shared by both receive
+ * corridors.
  *
  * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
@@ -2306,7 +2006,6 @@ const matchReceiveLockup = (
         payoutPubkey: input.payoutPubkey,
         payoutPkScript: ArkAddress.decode(input.payoutAddress).pkScript,
     };
-    // Two candidates, one match — see matchQuotedLockup.
     const matched = matchQuotedLockup(input.quote, input.hrp, input.operatorPubkey, (legacy) =>
         lightningReceiveContract({ ...contractParams, ...(legacy !== undefined && { legacy }) }),
     );
@@ -2316,10 +2015,8 @@ const matchReceiveLockup = (
 /**
  * The pure core of {@link requestLightningReceive}: derive the solver-funded
  * covenant locally from the quote's binding fields plus the trader's own data
- * and refuse on any address mismatch. The trader funds nothing on Arkade on
- * this leg — verification is still what makes paying the hold invoice safe:
- * the lockup the solver will fund must be the tree whose claim paths pay the
- * trader.
+ * and refuse on any address mismatch. The trader funds nothing on Arkade here, but this is what
+ * makes paying the hold invoice safe: the lockup must be a tree whose claim paths pay the trader.
  */
 export function deriveLightningReceive(input: {
     quote: RfqQuote;
@@ -2337,8 +2034,7 @@ export function deriveLightningReceive(input: {
     /** The solver's hold invoice on `H` — what the trader pays to arm the swap. */
     invoice: string;
     refundLocktime: number;
-    /** Every input the covenant was built from — see the same field on
-     * `requestLightningSend`'s result for why a consumer needs them. */
+    /** Every input the covenant was built from; see `requestLightningSend`'s result. */
     contractParams: LightningReceiveContractParams;
 } {
     const { quote } = input;
@@ -2354,8 +2050,7 @@ export function deriveLightningReceive(input: {
         throw new Error("lightning-receive quote is missing a binding field");
     }
 
-    // `contractParams` echoes the MATCHED build, so a record persisted from it
-    // rebuilds the lockup the solver actually funded.
+    // `contractParams` echoes the MATCHED build, so a persisted record rebuilds the funded lockup.
     const { contractParams, matched } = matchReceiveLockup(
         input,
         refundLocktime,
@@ -2380,7 +2075,6 @@ const provisionReceive = async (
     covclaimdPubkey: Uint8Array | undefined,
     persistBefore: "paying" | "funding",
 ) => {
-    // A leg we claim: the key that receives it, and the P that unlocks it.
     const secrets = await provisionClaimSecret(wallet);
     if (secrets.mustPersistPreimage) {
         console.warn(
@@ -2401,35 +2095,19 @@ const provisionReceive = async (
 };
 
 /**
- * The `lightning:BTC->arkade:BTC` user flow: quote → derive the covenant
- * locally → verify → gate. Returns the solver's hold invoice to PAY — the
- * payment itself is the trader's own Lightning wallet's job, exactly as
- * funding is the caller's job on the send corridors. Once the paid HTLC is
- * held, the solver funds the lockup; the trader claims it with `P` (its own,
- * generated here) — itself via the collaborative claim leaf
- * ({@link claimReceiveLockup} in `claim.ts`), or via covclaimd if it is
- * offline.
+ * The `lightning:BTC->arkade:BTC` user flow: quote → derive the covenant locally → verify → gate.
+ * Returns the solver's hold invoice (already checked by {@link verifyReceiveInvoice}) for the
+ * trader's own Lightning wallet to PAY before `invoiceExpiresAt`. Once the HTLC is held the solver
+ * funds the lockup and the trader claims it with its own `P` ({@link claimReceiveLockup}).
  *
- * Three obligations, all of them before the invoice is handed to a payer:
+ * Three obligations, all before the invoice is handed to a payer:
  *
- * 1. Persist `secrets` and `expectedAmount`. The preimage and the payout key
- *    re-derive from `secrets` (or, on a non-HD wallet, are carried by it), and
- *    without `expectedAmount` the claim has nothing to compare the funded
- *    value against.
- * 2. Stay online. covclaimd cannot claim this covenant today, so the offline
- *    path the claim packet exists for does not run yet: an unclaimed lockup is
- *    reclaimed by the solver at `refund_locktime` and the payer refunded.
- * 3. On {@link LockupRegistrationFailed}, call this function again once the
- *    store is working. The failed attempt is inert — it returned no invoice,
- *    so nothing can be paid into the lockup nobody is watching — and the new
- *    call derives its own preimage and `rfq_id`. Re-registering `error.script`
- *    does NOT resume it: the invoice and `secrets` were never handed back.
- *
- * The invoice is the solver's, so it is verified here against the trader's own
- * `H` and the quote ({@link verifyReceiveInvoice}) before it is returned —
- * nothing publishable comes back from a failed check, registration included.
- * Pay before `invoiceExpiresAt`: the hold-invoice window is minutes, not the
- * quote's `valid_until`.
+ * 1. Persist `secrets` and `expectedAmount`; without the latter the claim cannot check the funded
+ *    value.
+ * 2. Stay online. covclaimd cannot claim this covenant today, so an unclaimed lockup is reclaimed
+ *    by the solver at `refund_locktime` and the payer refunded.
+ * 3. On {@link LockupRegistrationFailed}, call this again once the store works. The failed attempt
+ *    is inert (no invoice was returned); re-registering `error.script` does NOT resume it.
  */
 export async function requestLightningReceive(
     wallet: IWallet,
@@ -2440,16 +2118,12 @@ export async function requestLightningReceive(
         /** Co-signer key override (33-byte compressed hex); see
          * {@link resolveEmulatorPubkey}. */
         emulatorPubkey?: string;
-        /** covclaimd's 33-byte compressed pubkey (from its own info endpoint)
-         * — the claim packet seals to it and only it can ever read `P` early.
-         * Unset where no covclaimd is deployed: nothing is sealed, no packet is
-         * sent, and claiming the lockup before the quote's `refund_locktime` is
-         * then the caller's own job — miss that window and the fill is lost.
-         * Never substitute a throwaway key — nobody could open it. */
+        /** covclaimd's 33-byte compressed pubkey; the claim packet seals `P` to it. Unset where
+         * none is deployed: nothing is sent, and claiming before `refund_locktime` is the caller's
+         * job. Never substitute a throwaway key — nobody could open it. */
         covclaimdPubkey?: Uint8Array;
-        /** The caller's own BOLT11 decoder, applied to the SOLVER's invoice.
-         * Required: an optional verifier is one integrators skip, and this is
-         * the check whose absence loses the whole payment. */
+        /** The caller's own BOLT11 decoder, applied to the SOLVER's invoice. Required: skipping
+         * this check can lose the whole payment. */
         decodeInvoice: (bolt11: string) => InvoiceFacts;
         /** Opt-in ceiling, in sats, on what the payer will be asked for. */
         maxPayAmount?: number;
@@ -2463,13 +2137,11 @@ export async function requestLightningReceive(
     invoice: string;
     /** What the trader pays: the quote's `from_amount`. */
     payAmount: number;
-    /** What the solver's lockup must carry: the quote's `to_amount`. Persist
-     * it with the record — `pushClaim` refuses to publish `P` for less, and
-     * captured at claim time instead it would be whatever the solver funded. */
+    /** What the solver's lockup must carry: the quote's `to_amount`. Persist it with the record:
+     * `pushClaim` refuses to publish `P` for less. */
     expectedAmount: number;
     /** Last moment the invoice can be paid, unix seconds: `min(invoice
-     * expiry, valid_until)`. Absolute on purpose — a countdown returned from
-     * here is stale before the caller reads it; derive one at display time. */
+     * expiry, valid_until)`. */
     invoiceExpiresAt: number;
     /** The trader's OWN derivation of the lockup the solver must fund. */
     address: string;
@@ -2620,16 +2292,12 @@ export function deriveOnchainReceive(input: {
 
 /**
  * The `onchain:BTC->arkade:BTC` user flow: quote → derive BOTH contracts
- * locally → verify → gate. Returns the L1 HTLC to fund (`htlc.address`, for
- * `fundAmount`) — the funding transaction itself is the trader's own L1
- * wallet's job, exactly as on the send corridors. After `min_confirmations`
- * the solver funds the Arkade lockup; the trader claims it with `P` (its
- * own), itself or via covclaimd.
+ * locally → verify → gate. Returns the L1 HTLC for the trader's own L1 wallet to fund with
+ * `fundAmount`. After `min_confirmations` the solver funds the Arkade lockup; the trader claims it
+ * with `P`.
  *
- * Persist `secrets` BEFORE funding, and note the direction's own deadline:
- * if the swap never settles, the L1 HTLC's refund leaf (the trader's
- * `refundPubkey`) opens at `htlc.refundLocktime` — `buildHtlcRefund` takes it
- * back from there.
+ * Persist `secrets` BEFORE funding. If the swap never settles, the L1 refund leaf opens at
+ * `htlc.refundLocktime` (see `buildHtlcRefund`).
  */
 export async function requestOnchainReceive(
     wallet: IWallet,
@@ -2642,9 +2310,7 @@ export async function requestOnchainReceive(
         emulatorPubkey?: string;
         /** Trader's x-only L1 key for the HTLC's refund leaf. */
         refundPubkey: Uint8Array;
-        /** covclaimd's 33-byte compressed pubkey, unset where none is deployed
-         * — nothing is sealed and the claim before `refund_locktime` is the
-         * caller's own; see {@link requestLightningReceive}. */
+        /** covclaimd's 33-byte compressed pubkey; see {@link requestLightningReceive}. */
         covclaimdPubkey?: Uint8Array;
         rfqId?: string;
     },

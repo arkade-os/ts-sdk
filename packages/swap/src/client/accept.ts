@@ -12,37 +12,20 @@
  *   -> write the funding txid                [funding routes, best effort]
  * ```
  *
- * **Persist-first is a mechanism here, not an instruction.** v1 wrote the rule
- * down in a README and could not keep it: `AssetSwap.id` *is* the funding txid,
- * so on the spot route the record could not exist before the money did, and the
- * e2e ran the opposite order because it had to. Keying on the client-minted
- * quote id is what makes the record precede the funding on every route, with
- * `fundingTxid` a later best-effort write.
+ * **Persist-first is structural**: records are keyed on the client-minted quote id (not the
+ * funding txid), so the record precedes funding on every route; `fundingTxid` is a later
+ * best-effort write.
  *
- * **Registration is part of the ordering, before the persist.** The quote path
- * deliberately registers nothing — it derives a covenant and discloses nothing
- * durable — but a lockup's contract row is the only place its tree parameters
- * live, and a rebuild reads them from there. So a record persisted without one
- * is unrebuildable. Registering first buys the invariant that *a persisted
- * record always has its covenant row*; the row is local, idempotent
- * (first-writer-wins) and inert until funded, so a crash between the two leaves
- * nothing at stake — which is the same argument `createOffer` already makes for
- * registering before funding rather than after.
+ * **Registration precedes the persist**: the contract row is the only place a lockup's tree
+ * parameters live, so a record without one is unrebuildable. The row is local, idempotent and
+ * inert until funded, so a crash between the two leaves nothing at stake.
  *
- * **A funding route is one whose give instrument is the wallet's.** On
- * `lightning -> arkade` the give leg is the hold invoice a third party pays, so
- * the pipeline ends at the persist: nothing is pre-flighted and nothing is sent.
- * The discriminant is the instrument and never the asset — a receive gives BTC
- * too, and branching on the asset would refuse the canonical empty-wallet
- * receive for want of a balance it never spends.
+ * **A funding route is one whose give instrument is the wallet's** — the instrument, never the
+ * asset: a `lightning -> arkade` receive gives BTC via a third party's invoice, and branching on
+ * the asset would refuse an empty-wallet receive.
  *
- * **Arming is the one thing that happens after the record is durable.** The
- * accepted swap is handed to {@link AcceptInput.drive}, which registers it with
- * the manager and starts the loop if it is not already running — but the
- * registration runs BEHIND the return, so this call still waits on no pass and
- * no network read. A receive route hands back a durable invoice that IS now
- * being watched, which is the `accepted -> open` arrow the record alone could
- * never cross.
+ * **Arming** via {@link AcceptInput.drive} happens after the record is durable and runs BEHIND
+ * the return, so this call waits on no pass and no network read.
  */
 import { hex } from "@scure/base";
 import { asset, getAllNormalizedVtxos, type IWallet } from "@arkade-os/sdk";
@@ -80,38 +63,20 @@ import {
 export type QuotePreparation = RfqPreparation | OfferPreparation;
 
 /**
- * The per-quote safety lock.
+ * The per-quote safety lock. `accept` is idempotent only *sequentially*: two concurrent calls
+ * would both read "unfunded" and both send. So the whole read/reconcile/register/fund sequence
+ * is serialized by quote id, like NArk's `LockKeyAsync($"swap::{swapId}")`.
  *
- * `accept` is idempotent by quote id, but only *sequentially*: the resume path
- * reads the record, finds no funding, and funds — so two calls started together
- * both read "unfunded" before either persists, and both send. A double-click,
- * a retried request behind a load balancer with one process, or two handlers
- * racing the same quote therefore fund twice unless the whole
- * read/reconcile/register/fund sequence is serialized by quote id. This is
- * that serialization, modeled on the reference implementation's per-swap
- * safety lock (`NArk.Swaps`' `LockKeyAsync($"swap::{swapId}")`, taken before
- * stored state is read and acted on).
- *
- * A keyed promise chain, not a boolean flag: each `accept` chains onto the
- * previous one's tail, so at most one body runs per quote id at a time and the
- * next waits rather than refusing. The entry deletes itself when the chain
- * drains, so the map holds one promise per *in-flight* quote id, never one per
- * quote ever accepted.
- *
- * Process-local, as the reference's is. Coordination for two *clients sharing a
- * repository* is the persisted record itself: the second body to run re-reads
- * under the lock, sees the first's `fundingTxid` (or its record), and returns
- * it rather than funding again — so the never-fund-twice guarantee rests on
- * "read after acquiring, not before", which is exactly what callers were
- * previously free to violate.
+ * A keyed promise chain: later calls wait rather than refuse, and the entry deletes itself when
+ * the chain drains. Process-local; across clients sharing a repository, never-fund-twice rests
+ * on reading the record *after* acquiring the lock.
  */
 const acceptLocks = new Map<QuoteId, Promise<void>>();
 
 const runSerialized = <T>(id: QuoteId, body: () => Promise<T>): Promise<T> => {
     const tail = acceptLocks.get(id) ?? Promise.resolve();
     const run = tail.then(body);
-    // The map holds a settle-swallowed copy of the chain's tail, so a rejection
-    // in one accept never poisons the tail the next quote chains onto.
+    // Settle-swallowed, so one accept's rejection never poisons the next one's tail.
     const marker: Promise<void> = run.then(
         () => undefined,
         () => undefined,
@@ -132,18 +97,9 @@ export interface AcceptInput {
     readonly repository: AssetSwapRepository | undefined;
     readonly corridors: CorridorSet;
     /**
-     * The drive, when the caller has one.
-     *
-     * Two jobs, and the second is M5's edit to this file's shipped behaviour.
-     * It turns a record into the public {@link Swap} — which now carries an
-     * `outcome`, and only the drive knows whether it holds live state for this
-     * swap — and it ARMS: the accepted swap is registered with the manager
-     * rather than persisted and left, which is what M4 deliberately did not do.
-     * The registration runs behind the return, so this call still does not wait
-     * on a first pass.
-     *
-     * Optional so the accept pipeline stays testable on its own; without one
-     * the answer is the record's projection and nothing is driven.
+     * The drive, when the caller has one. It turns a record into the public {@link Swap} (only
+     * the drive knows the live `outcome`) and ARMS the swap with the manager, behind the return.
+     * Without one the answer is the record's projection and nothing is driven.
      */
     readonly drive?: SwapDrive;
     /** Unix seconds. */
@@ -151,14 +107,8 @@ export interface AcceptInput {
 }
 
 /**
- * The repository, or the refusal that names it.
- *
- * `MissingCorridorDep("arkade", "repository")` rather than a bare `Error`: the
- * arkade corridor declares the repository as its one overridable dep, described
- * in the override matrix as "where persist-first lands", and this is the call
- * that lands it. Refused here rather than at dep resolution because the arkade
- * module is a leg of every route, so a required dep would mean a client with no
- * storage could not even `quote()` — and quoting persists nothing.
+ * The repository, or `MissingCorridorDep("arkade", "repository")`. Refused here rather than at
+ * dep resolution: arkade is a leg of every route, and `quote()` needs no storage.
  */
 const storageOf = (repository: AssetSwapRepository | undefined): AssetSwapRepository => {
     if (repository === undefined) {
@@ -168,22 +118,10 @@ const storageOf = (repository: AssetSwapRepository | undefined): AssetSwapReposi
 };
 
 /**
- * The fields on which a stored record and an incoming quote disagree.
- *
- * §3.2's list, spelled as dotted paths so the message names a field rather than
- * a concept: route pair, both assets and amounts, both instruments, the lock
- * hash, `refundLocktime`, the solver and the registry.
- *
- * Two rules from the spec, both load-bearing. Only **material** differences
- * count, so a field absent on both sides never conflicts — which is what keeps
- * a feed-priced quote, whose `solver` and `lock` are absent by construction,
- * from conflicting with its own record. And `fundingTxid` is not compared at
- * all: it appearing where there was none is the benign resume, named as such.
- *
- * The comparison runs over the record's *stored* form rather than over a
- * rehydrated `Swap`, so an amount is compared as the canonical decimal string
- * both sides encode to. That is one comparison of one representation, instead
- * of a `bigint` round trip that could differ only by how it was parsed.
+ * The fields on which a stored record and an incoming quote disagree (§3.2's list, as dotted
+ * paths). Only **material** differences count: absent on both sides is agreement (a feed-priced
+ * quote has no `solver`/`lock`). `fundingTxid` is never compared; its appearance is a benign
+ * resume. Compared in the stored encoding, so amounts are one canonical decimal string.
  */
 type RecordedFacts = {
     readonly "route.pair": string;
@@ -238,8 +176,6 @@ export const conflictingFields = (record: SwapRecord, quote: Quote): string[] =>
 
         const a = stored[field];
         const b = incoming[field];
-        // Absent on both sides is agreement, not a difference: it is how a
-        // feed-priced quote's missing solver and lock hash read.
         if (a === undefined && b === undefined) return false;
         return a !== b;
     });
@@ -261,34 +197,22 @@ const recordedFacts = (quote: Quote): RecordedFacts => ({
 });
 
 /**
- * The registry a market came from.
- *
- * `CardMarketRef.source` and not `snapshot.registry`: `source` is the field the
- * policy allowlist already matches on and the one a locally pinned card carries
- * a label in, while `snapshot.registry` is absent on an injected snapshot. The
- * auction and restored arms have no source at all, which reads as "absent on
- * both sides" and therefore never conflicts.
+ * The registry a market came from: `CardMarketRef.source` (what the allowlist matches), not
+ * `snapshot.registry`, which is absent on an injected snapshot.
  */
 const marketSourceOf = (market: Quote["market"]): string | undefined =>
     market.kind === "card" ? market.source : undefined;
 
 /**
- * The wallet can fund the give leg, or it cannot and nothing is written.
- *
- * Runs only on a funding route, and deliberately coarse: `balance.available` is
- * documented as what generic selection would pick, "so nothing counted here can
- * be refused by `send`", which makes a shortfall it reports real. What it does
- * NOT model is the other direction — `send`'s dust carrier, and the sats it
- * credits back off selected asset coins — because a false refusal is the one
- * failure that matters here. A shortfall this misses surfaces as `send`'s own
- * throw, after the persist, and the record survives that.
+ * The wallet can fund the give leg, or it cannot and nothing is written. Deliberately coarse:
+ * a shortfall reported off `balance.available` is real, while `send`'s dust carrier and asset
+ * sat credits are not modelled, since a false refusal is the failure that matters. A missed
+ * shortfall surfaces as `send`'s throw after the persist, which the record survives.
  */
 const assertFundable = async (wallet: IWallet, quote: Quote): Promise<void> => {
     const give = quote.give;
     const balance = await wallet.getBalance();
-    // On the asset part, not the whole id: the rail differs per corridor —
-    // `arkade:…/slip44:0` and `bitcoin:…/slip44:0` are one coin — and it is the
-    // part that says *which asset* rather than *on which rail*.
+    // On the asset part: `arkade:…/slip44:0` and `bitcoin:…/slip44:0` are one coin.
     const available =
         assetPartOf(give.asset) === BTC_ASSET_PART
             ? BigInt(balance.available)
@@ -299,11 +223,8 @@ const assertFundable = async (wallet: IWallet, quote: Quote): Promise<void> => {
 };
 
 /**
- * The v2 record for an accepted quote, before anything is funded.
- *
- * One builder for both families so the common half cannot drift between them —
- * every field §3.2 compares is written in one place, which is what makes "the
- * compared field is durable" a property of the type rather than a review note.
+ * The v2 record for an accepted quote, before anything is funded. One builder for both families,
+ * so every field §3.2 compares is written in one place.
  */
 const commonOf = (quote: Quote, now: number) => ({
     id: quote.id,
@@ -329,9 +250,7 @@ const corridorRecord = (
     now: number,
 ): CorridorSwapRecord => {
     if (quote.lock === undefined || quote.refundLocktime === undefined) {
-        // Unreachable from `quote()`: every corridor route refuses a reply
-        // without both, in verification. Stated so the record's non-optional
-        // fields are not an unchecked cast.
+        // Unreachable from `quote()` (verification refuses it); keeps the fields below uncast.
         throw new Error(`corridor quote ${quote.id} carries no lock hash or refund locktime`);
     }
     return {
@@ -356,13 +275,8 @@ const KIND_OF = {
 } as const satisfies Record<RfqPreparation["route"], CorridorSwapRecord["kind"]>;
 
 /**
- * The corridor's opaque half, written through the corridor-owned builders.
- *
- * `rfqSecretsProfile` rather than hand-listed fields: it splits the provisioned
- * secret so `preimageSaltHex` rides into `hashlock` with the rest of the
- * preimage material, and hand-listing is exactly how that field was lost
- * before. The at-most-one-of `preimageHex`/`preimageSaltHex` rule comes with
- * it, since the provisioning result is what decides which arm exists.
+ * The corridor's opaque half, written through the corridor-owned builders. `rfqSecretsProfile`,
+ * not hand-listed fields, so `preimageSaltHex` cannot be dropped from `hashlock`.
  */
 const profileOf = (preparation: RfqPreparation, paymentHash: string): Record<string, unknown> => {
     const secrets = rfqSecretsProfile(preparation.secrets, paymentHash);
@@ -415,39 +329,29 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
         if (fields.length > 0) {
             throw new AcceptConflict(quote.id, stored.id, fields);
         }
-        // The record is this quote's, and its funding already happened: the
-        // whole call is a no-op and the answer comes off the record, artifact
-        // included. A duplicate receive accept therefore returns the invoice
-        // that was stored rather than the one on whatever quote object the
-        // caller still holds.
+        // Already funded (or nothing to fund): answer off the record, so a duplicate receive
+        // returns the stored invoice, not the caller's quote object's.
         if (stored.fundingTxid !== undefined) return answer(stored);
         if (!fundsFromWallet(stored.route)) return answer(stored);
-        // Persisted but unfunded. Before a second `wallet.send`, look for the
-        // deposit a crashed first attempt may already have made. This path uses
-        // the stored record only, so it survives a restart or preparation-cache
-        // eviction.
+        // Persisted but unfunded: look for a crashed first attempt's deposit before sending
+        // again. Uses the stored record only, so it survives a restart.
         const found = await reconcileFunding({ wallet }, stored);
         if (found !== undefined) {
             return answer(await stampFunding(repository, stored, found, now));
         }
-        // No funding evidence exists yet, so retrying would move new value and
-        // still has to respect the quote's deadline.
+        // No funding evidence: retrying moves new value, so the deadline still applies.
         if (expired) throw new QuoteExpired(quote.id, quote.expiresAt, now);
         return answer(await fundAndStamp({ wallet, now }, stored, repository));
     }
 
-    // Strictly past its own deadline, and not against `policy.quoteTtlFloor`:
-    // the floor is the quote path's question — "is there enough life left in
-    // these terms to be worth showing" — and inheriting it here would refuse a
-    // quote §3.2 still considers acceptable.
+    // Its own deadline only, not `policy.quoteTtlFloorSeconds`: that floor is the quote path's
+    // question, and would refuse a quote §3.2 still accepts.
     if (expired) throw new QuoteExpired(quote.id, quote.expiresAt, now);
 
     const preparation = input.preparation;
     if (preparation === undefined) {
-        // The derivation this quote was verified against is gone, and no record
-        // exists yet to resume from. Re-deriving would be a second derivation of
-        // the same tree — two sources for one covenant, which is the failure the
-        // preparation hand-off exists to prevent.
+        // The verified derivation is gone and no record exists; re-deriving would give one
+        // covenant two sources.
         throw new Error(
             `quote ${quote.id} was not derived by this client instance; re-quote before accepting`,
         );
@@ -456,28 +360,19 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
     const funds = fundsFromWallet(quote.route);
     if (funds) await assertFundable(wallet, quote);
 
-    // Derive-and-register, then persist. Both families register before the
-    // record exists, which is what makes a stored record always rebuildable.
     const record =
         preparation.backend === "feed"
             ? await registeredOfferRecord(input, preparation)
             : await registeredCorridorRecord(input, preparation);
 
-    // Throwing, deliberately: nothing past this line may happen if the record
-    // is not durable, and that is the whole invariant.
+    // Throwing, deliberately: nothing past this line may happen unless the record is durable.
     await repository.saveSwapRecord(record);
 
     if (!funds) return answer(record);
     return answer(await fundAndStamp({ wallet, now }, record, repository));
 };
 
-/**
- * The offer covenant, registered, and the record that describes it.
- *
- * `createOffer` derives and registers in one call — the contract row and the
- * process-local issuance mark are both written inside it — so on this route
- * "derive and register" is one step and the offer TLV is what the record keeps.
- */
+/** The offer covenant, derived and registered by `createOffer`, and the record keeping its TLV. */
 const registeredOfferRecord = async (
     input: AcceptInput,
     preparation: OfferPreparation,
@@ -515,12 +410,8 @@ const registeredCorridorRecord = async (
 };
 
 /**
- * Fund the give leg, then stamp the txid.
- *
- * The stamp is best effort by design: the money has moved, and failing the
- * caller here would report as failed a swap whose funding is already broadcast.
- * What recovers a lost stamp is the reconcile above, which finds the deposit
- * from chain evidence on the next accept.
+ * Fund the give leg, then stamp the txid. The stamp is best effort: the money has moved, so
+ * failing would misreport a broadcast swap. `reconcileFunding` recovers a lost stamp.
  */
 type FundingInput = Pick<AcceptInput, "wallet" | "now">;
 
@@ -549,14 +440,9 @@ const stampFunding = async (
 };
 
 /**
- * The `wallet.send` each funding route makes.
- *
- * The recipient object is passed **straight** to `send`, never rebuilt or
- * normalised on the way: `send` re-reads `extensions` off its own raw arguments
- * rather than off the validated recipients, so a helper that reassembled the
- * list would drop the offer packet — silently, since omitting it throws
- * nowhere and merely lands the deposit at a covenant no solver can see. That
- * silent loss is the failure this route's packet handling exists to delete.
+ * The `wallet.send` each funding route makes. The recipient object goes **straight** to `send`:
+ * `send` reads `extensions` off its raw arguments, so reassembling it would silently drop the
+ * offer packet and land the deposit at a covenant no solver can see.
  */
 const fund = async (input: FundingInput, record: SwapRecord): Promise<string> => {
     const { wallet } = input;
@@ -565,8 +451,7 @@ const fund = async (input: FundingInput, record: SwapRecord): Promise<string> =>
         const depositIsBtc = assetPartOf(record.route.give.asset) === BTC_ASSET_PART;
         return wallet.send({
             address: record.swapAddress,
-            // An asset deposit rides the SDK's dust-sat carrier, so the sats
-            // amount is left to the default rather than set here.
+            // An asset deposit rides the SDK's dust-sat carrier; its sats amount is the default.
             ...(depositIsBtc
                 ? { amount: toSafeNumber(amount, "give.amount") }
                 : {
@@ -578,13 +463,10 @@ const fund = async (input: FundingInput, record: SwapRecord): Promise<string> =>
         });
     }
     if (record.kind === "lightning_receive") {
-        // Unreachable: the caller gates on `fundsFromWallet`, and a receive's
-        // give instrument is the invoice. Stated so the union is exhaustive
-        // rather than narrowed by an assumption.
+        // Unreachable (callers gate on `fundsFromWallet`); keeps the union exhaustive.
         throw new Error(`receive swap ${record.id} funds nothing from this wallet`);
     }
-    // The record's own give amount is the only source on resume: quote-time
-    // verification already proved it equal to the negotiated funding amount.
+    // The record's give amount: quote-time verification proved it equals the negotiated funding.
     return wallet.send({
         address: record.lockupAddress,
         amount: toSafeNumber(fromAtomicDecimal(record.give.amount), "give.amount"),
@@ -592,12 +474,8 @@ const fund = async (input: FundingInput, record: SwapRecord): Promise<string> =>
 };
 
 /**
- * The offer packet, rebuilt from the record's own TLV.
- *
- * Rebuilt from the record rather than carried through from `createOffer`'s
- * return, so the packet a resumed funding attaches is the one the *stored*
- * covenant commits to rather than a second value that could drift from it. The
- * TLV is the covenant, so re-encoding it is not a second derivation.
+ * The offer packet, rebuilt from the record's own TLV, so a resumed funding attaches exactly
+ * what the *stored* covenant commits to.
  */
 const offerExtensionOf = (record: OfferSwapRecord): { type: number; payload: Uint8Array } => ({
     type: OFFER_PACKET_TYPE,
@@ -605,21 +483,12 @@ const offerExtensionOf = (record: OfferSwapRecord): { type: number; payload: Uin
 });
 
 /**
- * The deposit a crashed accept may already have made, found from evidence.
+ * The deposit a crashed accept may already have made (sent, then died before stamping the txid);
+ * a blind retry would fund the covenant twice.
  *
- * The window this closes: the record is durable, `wallet.send` was called, and
- * the process died before the txid was written. A blind retry would fund the
- * same covenant twice.
- *
- * Matching is by script, then by amount, because the script alone is not unique
- * — identical offers derive one address, and `createContract` is
- * first-writer-wins precisely so nothing per-swap is written against it. What
- * disambiguates is the deposited amount, which only the record carries: the
- * covenant binds what the fill must *deliver*, never what was deposited.
- *
- * A VTXO at the script that matches no record's amount is left alone rather
- * than adopted into a guess: adopting it would attach a deposit to the wrong
- * swap, and the swap it really belongs to would then be funded twice.
+ * Matched by script, then amount: identical offers share one address, and only the record
+ * carries the deposited amount. A VTXO matching no amount is left alone — adopting it would
+ * attach a deposit to the wrong swap and double-fund the right one.
  */
 const reconcileFunding = async (
     input: Pick<AcceptInput, "wallet">,
@@ -628,21 +497,15 @@ const reconcileFunding = async (
     const script = record.family === "offer" ? record.swapPkScript : record.lockupPkScript;
     const expected = BigInt(record.give.amount);
     const reader = await input.wallet.getArkadeReader();
-    // `getAllNormalizedVtxos` rather than the reader's own `getVtxos`: that one
-    // is a single logical query whose paging is the caller's to follow, and a
-    // missed page here would read as "no deposit" and fund the covenant twice.
+    // Not the reader's paged `getVtxos`: a missed page would read as "no deposit" and double-fund.
     const vtxos = await getAllNormalizedVtxos(reader, [script]);
     const deposit = vtxos.find((vtxo) => depositMatches(vtxo, record, expected));
     return deposit?.txid;
 };
 
 /**
- * Whether this VTXO is the deposit the record describes.
- *
- * The give leg decides which figure to compare: a BTC give leg is the VTXO's
- * own value, while an asset give leg rides the dust-sat carrier and the amount
- * lives on the asset entry, so comparing `value` there would test the carrier
- * rather than the deposit.
+ * Whether this VTXO is the deposit the record describes: BTC compares `value`; an asset compares
+ * its asset entry, since `value` there is only the dust carrier.
  */
 const depositMatches = (
     vtxo: { value: number; assets?: readonly { assetId: string; amount: bigint }[] },

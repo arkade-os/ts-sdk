@@ -1,28 +1,13 @@
 /**
  * What survives a crash, and the public shape `accept()` hands back.
  *
- * Two types, one key. {@link SwapRecord} is the storage form — JSON-safe by
- * declaration, every amount a canonical decimal string — and {@link Swap} is the
- * answer a caller reads, with `bigint` amounts and the resolved `Route`. The
- * conversion between them is §D's record-boundary codec, and it is not a third
- * law: `toAtomicDecimal`/`fromAtomicDecimal` already ship in `./amount`, minted
- * by M1 and used by M3's wire adapter, so both sites emit the same canonical
- * form — atomic units, unsigned, no leading zeros, never a scaled display
- * decimal.
+ * {@link SwapRecord} is the storage form (amounts as canonical atomic decimal strings); {@link Swap}
+ * is the caller's answer with `bigint` amounts and the resolved `Route`.
  *
- * **The key is the quote id, on every route.** That is what makes persist-first
- * representable at all: v1's `AssetSwap.id` *is* the funding txid
- * (`store.ts:70-71`), so a record could not exist before the money did, and
- * `coverage.ts` carries a process-local issuance mark precisely to paper over
- * the gap. Here the record precedes the funding and `fundingTxid` is a later,
- * best-effort write.
- *
- * **JSON-safe means no `bigint` anywhere, at any depth.** The SQLite and Realm
- * backends `JSON.stringify` the record whole, so a `bigint` throws on two
- * backends and round-trips on the third — the asymmetry
- * `test/repository.test.ts` refuses to paper over. Every amount here is an
- * {@link AtomicDecimal}; `test/client/record.types.ts` proves the absence
- * structurally rather than by review.
+ * **The key is the quote id, on every route**, which is what makes persist-first possible (v1 keyed
+ * on the funding txid, so no record could precede the money). `fundingTxid` is a later write.
+ * **No `bigint` anywhere, at any depth**: SQLite and Realm `JSON.stringify` the record whole
+ * (`test/client/record.types.ts` proves it structurally).
  */
 import type { AssetSwapStatus } from "../store";
 import type { RfqSwapState } from "../rfqSwapState";
@@ -35,31 +20,13 @@ import type { Outcome } from "./outcome";
 import type { Artifact, Instrument, Route } from "./route";
 import type { MarketRef, QuoteId, QuoteLeg } from "./quote";
 
-/**
- * Which family a record belongs to, and the discriminant M5's `RawState` keys
- * on.
- *
- * Not a cosmetic tag. v1's two families occupied one `string` id space by
- * accident — an offer record's id a funding txid, a corridor record's an
- * `rfqId` — and keying both on `QuoteId` closes that collision (§B). The tag is
- * what M6's public id carries, and what lets M5 branch its outcome table
- * without a repository read.
- */
+/** Which family a record belongs to — what the drive's outcome table branches on without a read. */
 export type SwapFamily = "offer" | "rfq";
 
 /**
- * The public swap id: the family tag over the client-minted quote id,
- * `offer:<QuoteId>` / `rfq:<QuoteId>`, as {@link Swap.id} carries it.
- *
- * The tag is presentation, not a second identity — storage, the drive and
- * `accept()`'s idempotency stay keyed on the bare quote id. But a branded
- * string erases at runtime, so the tag is not cosmetic either: it makes
- * `NotCancellable` a parse of the prefix — a corridor id refused with no
- * repository read, an offer id distinguished from a corridor id the way the v1
- * read could not be — and it retypes the id a caller hands around, so
- * `cancel(swap.id)` and `recover(swap.id)` stop being two spellings of one
- * thing. An id arriving untagged from `/protocol`'s re-exported readers takes
- * the same one read the tagged form takes.
+ * The public swap id, `offer:<QuoteId>` / `rfq:<QuoteId>`. Presentation, not a second identity:
+ * storage, the drive and `accept()`'s idempotency key on the bare quote id. The prefix makes
+ * `NotCancellable` a parse, with no repository read for a corridor id.
  */
 export type AssetSwapId = `${SwapFamily}:${QuoteId}`;
 
@@ -70,11 +37,7 @@ export const assetSwapIdOf = (family: SwapFamily, quoteId: QuoteId): AssetSwapId
 export const OFFER_SWAP_ID_PREFIX = "offer:" as const;
 export const RFQ_SWAP_ID_PREFIX = "rfq:" as const;
 
-/**
- * The family an id names, or `undefined` for an id no prefix tags — the form
- * `/protocol`'s re-exported readers still hand back, which takes the
- * repository read rather than the parse.
- */
+/** The family an id names, or `undefined` for an untagged (`/protocol`-reader-era) id. */
 export const familyOfSwapId = (swapId: string): SwapFamily | undefined =>
     swapId.startsWith(OFFER_SWAP_ID_PREFIX)
         ? "offer"
@@ -82,11 +45,7 @@ export const familyOfSwapId = (swapId: string): SwapFamily | undefined =>
           ? "rfq"
           : undefined;
 
-/**
- * The bare quote id under the tag — what storage, the drive and `accept()`'s
- * idempotency key on. Strips a family prefix when one is present and passes an
- * untagged id through unchanged, so a reader-era id still reaches its record.
- */
+/** The bare quote id under the tag; an untagged id passes through unchanged. */
 export const quoteIdOfSwapId = (swapId: string): QuoteId => {
     const family = familyOfSwapId(swapId);
     return family === undefined ? swapId : swapId.slice(`${family}:`.length);
@@ -99,14 +58,8 @@ export interface RecordedLeg {
     readonly amount: AtomicDecimal;
 }
 
-/**
- * An endpoint as the record holds it: the corridor, the asset, the instrument.
- *
- * `Instrument`'s invoice arm carries a `bigint` amount, so it cannot be stored
- * as declared — {@link RecordedInstrument} is the same union with that one field
- * in decimal form. The rest is field for field identical, which is what keeps the
- * comparison in `acceptConflict` honest.
- */
+/** An endpoint as the record holds it; field for field `Instrument`'s shape, so `acceptConflict`
+ * compares like with like. */
 export interface RecordedEndpoint {
     readonly corridor: CorridorId;
     readonly asset: AssetId;
@@ -137,79 +90,35 @@ export type RecordedArtifact =
           readonly expiresAt?: number;
       };
 
-/**
- * The half both families carry.
- *
- * Every field is either something `AcceptConflict` compares (§3.2's list), or
- * something M5 named as a cross-milestone ask, or the two timestamps. Nothing
- * is here for display: a record carries what no covenant and no chain read can
- * give back, which is the same rule `RfqSwapRecord` is arranged by.
- */
+/** The half both families carry: what `AcceptConflict` compares and no chain read can give back. */
 export interface SwapRecordCommon {
-    /** The client-minted quote id — the primary key, per C1 and §B. */
+    /** The client-minted quote id — the primary key. */
     readonly id: QuoteId;
     readonly family: SwapFamily;
-    /**
-     * Both endpoints, instruments included — `AcceptConflict` items 1 and 3.
-     *
-     * Nested under `route` so the record's field names are `Quote`'s field
-     * names: the conflict check walks the two shapes together, and a record
-     * that spelled the same fact differently would make every comparison a
-     * translation.
-     */
+    /** Both endpoints, instruments included. Nested under `route` so field names match `Quote`'s and
+     * the conflict check walks both shapes without translation. */
     readonly route: { readonly give: RecordedEndpoint; readonly take: RecordedEndpoint };
     /** The two obligations — `AcceptConflict` item 2. */
     readonly give: RecordedLeg;
     readonly take: RecordedLeg;
     /** The spread, as the quote precomputed it. */
     readonly fee: RecordedLeg;
-    /**
-     * Which card priced this, from which registry, how fresh — stored WHOLE.
-     *
-     * A trimmed projection could not rebuild the type {@link Swap.market}
-     * promises: `CardMarketRef` requires `kind`, `pair` and `snapshot` beside
-     * the fields a summary would keep. Every member is a string, number or
-     * boolean, so the union round-trips through JSON untouched, and `snapshot`
-     * is restated as read at accept rather than restamped — a past `fetchedAt`
-     * beside the recorded `live` is the honest answer about how fresh the card
-     * was when this swap was accepted.
-     */
+    /** Which card priced this, from which registry, how fresh — stored WHOLE (a projection could not
+     * rebuild `CardMarketRef`); `snapshot` is as read at accept, not restamped. */
     readonly market: MarketRef;
-    /**
-     * The committed counterparty, from the quote's covenant role.
-     *
-     * NOT `CardMarketRef.solver`, which is the card's display name. Two
-     * different facts that v1 spelled with one word: this one is a key that
-     * ends up in a covenant leaf, the other is a label. `AcceptConflict`
-     * compares this one.
-     */
+    /** The committed counterparty key from the quote's covenant role — NOT `CardMarketRef.solver`,
+     * which is a display name. `AcceptConflict` compares this one. */
     readonly solver?: Pubkey;
     /** The quote's own deadline, unix seconds — what makes a stalled accept a
      * benign abandon rather than a live obligation. */
     readonly expiresAt: number;
-    /**
-     * The one thing a counterparty must see, when this route has one.
-     *
-     * Durable because a duplicate accept must return the SAME invoice, and the
-     * invoice lives on the quote object — nowhere in the corridor profile. A
-     * caller that re-accepts after a restart has no quote object left, so
-     * without this field the only honest answer would be a second invoice,
-     * which §3.2 forbids by name.
-     */
+    /** The one thing a counterparty must see, when the route has one. Durable because a duplicate
+     * accept after a restart must return the SAME invoice, and the quote object is gone by then. */
     readonly artifact?: RecordedArtifact;
-    /**
-     * The transaction that funded this swap, once known.
-     *
-     * A later, best-effort write, and the field that separates M5's `accepted`
-     * from `funding`. Set-where-absent is a benign resume and never an
-     * `AcceptConflict` — §3.2 says so by name.
-     */
+    /** The funding transaction, once known. A later best-effort write; set-where-absent is a benign
+     * resume, never an `AcceptConflict`. */
     readonly fundingTxid?: string;
-    /**
-     * Last local receive-claim error while the swap is still retryable. If the
-     * claim window later closes without a submitted claim, this becomes the
-     * terminal failure reason after restore.
-     */
+    /** Last retryable receive-claim error; becomes the terminal failure if the claim window closes. */
     readonly claimFailure?: string;
     /** Terminal failure reason. */
     readonly failure?: string;
@@ -221,21 +130,15 @@ export interface SwapRecordCommon {
     readonly updatedAt: number;
 }
 
-/**
- * `arkade <-> arkade`: the offer covenant, and what cancels it.
- *
- * `offerHex` is the whole covenant — `cancelOffer` needs nothing else to
- * rebuild it — so this arm stores no tree parameters of its own.
- */
+/** `arkade <-> arkade`: the offer covenant. `offerHex` is the whole covenant, so no tree params. */
 export interface OfferSwapRecord extends SwapRecordCommon {
     readonly family: "offer";
-    /** v1's raw status vocabulary, which M5's `RawState` reads verbatim. */
+    /** v1's raw status vocabulary, read verbatim by the drive's `RawState`. */
     readonly status: AssetSwapStatus;
     /** The TLV offer, hex. The only input `cancelOffer` needs. */
     readonly offerHex: string;
     readonly swapAddress: string;
-    /** The covenant's scriptPubKey, hex — the indexer's monitoring key, and
-     * what §F's reconcile matches a discovered deposit against. */
+    /** The covenant's scriptPubKey, hex — the indexer's monitoring key and the reconcile's match key. */
     readonly swapPkScript: string;
     readonly spentTxid?: string;
     readonly completedAt?: number;
@@ -244,70 +147,42 @@ export interface OfferSwapRecord extends SwapRecordCommon {
 /**
  * The three corridor routes: a VHTLC lockup, its clocks and its secrets.
  *
- * **No covenant tree here.** Every lockup registers a contract row before its
- * address can be funded, and that row already holds the parameters, keyed by
- * the script they derive — a key `createContract` refuses to write unless the
- * params reproduce it. Storing the tree a second time would be two sources for
- * one covenant. `accept()` is what writes that row (see `./accept.ts`), which
- * is why a persisted record always has one.
+ * **No covenant tree here.** `accept()` registers a contract row before the lockup can be funded,
+ * keyed by the script its params derive (`createContract` refuses params that don't reproduce it);
+ * storing the tree again would be two sources for one covenant.
  */
 export interface CorridorSwapRecord extends SwapRecordCommon {
     readonly family: "rfq";
-    /** v1's raw state vocabulary, read verbatim by M5's `RawState`. */
+    /** v1's raw state vocabulary, read verbatim by the drive's `RawState`. */
     readonly state: RfqSwapState;
-    /**
-     * Which corridor, in the manager's own vocabulary.
-     *
-     * `PersistableRfqSwap["kind"]` rather than a `Corridor`: it is a route pair
-     * — `lightning_send` and `lightning_receive` are one corridor from opposite
-     * ends — and it is what resolves the handler that owns {@link profile}.
-     */
+    /** The route pair in the manager's vocabulary (`lightning_send`/`lightning_receive` are one
+     * corridor from opposite ends); resolves the handler that owns {@link profile}. */
     readonly kind: PersistableRfqSwap["kind"];
     /** The solver's own id for the negotiation, echoed back on the wire. */
     readonly rfqId: string;
     /** The Arkade address that was funded, and the swap's handle on its
      * covenant row. */
     readonly lockupAddress: string;
-    /** Its pkScript, hex — the row's key, and §F's matching key. */
+    /** Its pkScript, hex — the row's key and the reconcile's match key. */
     readonly lockupPkScript: string;
     /** The hash both covenants commit to. `sha256(P)`, hex. */
     readonly lock: { readonly hash: Hex };
     /** When the trader's value comes back if the swap does not complete. */
     readonly refundLocktime: number;
     /**
-     * The corridor's own half, as plain JSON.
+     * The corridor's own half, as plain JSON (written by `rfqSecretsProfile`, read by
+     * `rfqCorridorHandlers.hydrate`), so a new corridor ships without touching this file. Its
+     * `expectedAmount` is a `number`; the decimal-string rule covers only this record's own fields.
      *
-     * v1's opaque bag (`rfqRecord.ts:108-123`), written with `rfqSecretsProfile`
-     * and read by `rfqCorridorHandlers.hydrate` — reused rather than
-     * reinvented, so M5 rebuilds through machinery that already exists and a new
-     * corridor still ships without touching this file. It is also what carries
-     * `expectedAmount`, the claim value gate's request-time input.
-     *
-     * Amounts inside it follow v1's shapes (`expectedAmount` is a `number`),
-     * which is JSON-safe and therefore fine: the decimal-string law governs
-     * this record's OWN amount fields, not the bag it carries forward.
-     *
-     * **This is also where the swap's secrets live** — `profile.signer` and,
-     * on a leg locked to a preimage, `profile.hashlock`. Deliberately not a
-     * second copy at the record's top level: `rfqClaimSecretOf` and
-     * `preimageForSwapRecord` already read them from here, and two homes for
-     * one claim secret is two things to keep in step with one of them always
-     * empty. At most one of `preimageHex`/`preimageSaltHex` is ever written,
-     * and which arm exists is decided by the wallet's provisioning result, not
-     * here.
+     * **The swap's secrets live here** (`profile.signer`, and `profile.hashlock` on a preimage-locked
+     * leg), deliberately not duplicated at top level.
      */
     readonly profile: Record<string, unknown>;
     readonly refundTxid?: string;
     readonly lockupSpendTxids?: readonly string[];
     /**
-     * `P`, hex — the preimage the solver revealed to settle a Lightning send.
-     *
-     * The exception the doctrine above allows for, and only on that leg: the
-     * payee mints `P`, so {@link profile}'s hashlock carries the payment hash
-     * and no claim-secret material. This is the counterparty's revealed
-     * settlement proof, not a second copy of the wallet's own claim secret —
-     * and public by the time it is written, being read out of the witness that
-     * spent the lockup.
+     * `P`, hex — the preimage the solver revealed to settle a Lightning send. Not a copy of our claim
+     * secret (the payee mints `P` on that leg), and already public: read from the spending witness.
      */
     readonly settlementPreimageHex?: string;
 }
@@ -316,23 +191,9 @@ export interface CorridorSwapRecord extends SwapRecordCommon {
 export type SwapRecord = OfferSwapRecord | CorridorSwapRecord;
 
 /**
- * A swap, as a caller reads it.
- *
- * The quote's terms plus what has happened to them. `bigint` amounts and the
- * resolved `Route`, because this is the public answer and the record is the
- * storage form — §D's codec is the boundary between the two.
- *
- * `artifact` stays optional: M7's `ReceiveRequest` is `Swap & { artifact:
- * Artifact }`, and an intersection cannot narrow a field that is already
- * required. `id` is the tagged public form {@link AssetSwapId} — minted from
- * `record.family` by {@link swapOf} — while storage, the drive and `accept()`'s
- * idempotency stay keyed on the bare quote id.
- *
- * {@link outcome} and the two reason strings are M5's, and they are here rather
- * than on `SwapUpdate.detail` because `detail` is typed `RawState` — the raw
- * machine word and nothing else. The reasons live on `SwapRecordCommon`, the
- * internal record, so without this a consumer told a swap `needs_recovery` had
- * nowhere to read WHY.
+ * A swap, as a caller reads it: the quote's terms plus what has happened to them. `artifact` stays
+ * optional because `ReceiveRequest` is `Swap & { artifact: Artifact }`; the reason strings live here
+ * because `SwapUpdate.detail` is only the `RawState` word.
  */
 export interface Swap {
     readonly id: AssetSwapId;
@@ -357,21 +218,10 @@ export interface Swap {
     readonly expiresAt: number;
     /** Absent until the funding is broadcast and its txid written. */
     readonly fundingTxid?: string;
-    /**
-     * Why the swap `failed`, when it did.
-     *
-     * Carried across from the record rather than derived: the outcome says
-     * WHICH terminal state, and only the record says why.
-     */
+    /** Why the swap `failed`, when it did — only the record knows why. */
     readonly failure?: string;
-    /**
-     * Why this wallet will not act, while the outcome is `needs_recovery`.
-     *
-     * Also what makes a suppressed configuration block legible: under
-     * `drive: "manual"` or `"readonly"` the three configuration refusals are
-     * not translated to `needs_recovery`, and this is where the reason is
-     * still read.
-     */
+    /** Why this wallet will not act, while `needs_recovery`. Under `drive: "manual"`/`"readonly"` the
+     * configuration refusals are not translated to `needs_recovery`, and this still carries them. */
     readonly blockedReason?: string;
     readonly createdAt: number;
     readonly updatedAt: number;
@@ -469,23 +319,10 @@ export const legOf = (leg: RecordedLeg): QuoteLeg => ({
 });
 
 /**
- * The public {@link Swap} a stored record answers with.
- *
- * The one read path, so a duplicate `accept()` answers from the record rather
- * than from the in-memory preparation cache — which is bounded, evicted in
- * insertion order, and therefore not a durable answer to anything.
- *
- * The outcome is a parameter rather than a field read off the record: it is
- * derived from the record, the clock AND whether the drive holds live state for
- * this swap, and only the drive knows the third. Passing it keeps `Swap.outcome`
- * non-optional, which is what stops a caller from having to test for it.
- *
- * The `Route` is reassembled from the two stored endpoints. The cast is the
- * seam: `Route` is a closed union of four corridor pairs and a record read off
- * disk carries two independently-typed endpoints, so nothing in the type system
- * can re-correlate them. What guarantees the pairing is that `accept()` only
- * ever writes a record from a `Quote` whose route was already resolved through
- * that union.
+ * The public {@link Swap} a stored record answers with — the one read path, so a duplicate
+ * `accept()` answers from the record, not the evictable preparation cache. `outcome` is a parameter
+ * because only the drive knows whether it holds live state. The `Route` cast is safe because
+ * `accept()` only writes records from a `Quote` whose route was already resolved.
  */
 export const swapOf = (record: SwapRecord, outcome: Outcome): Swap => ({
     id: assetSwapIdOf(record.family, record.id),
@@ -521,14 +358,9 @@ export const swapOf = (record: SwapRecord, outcome: Outcome): Swap => ({
 });
 
 /**
- * Whether this swap's give leg is funded from the wallet.
- *
- * The discriminant for every funding-route decision in `accept()` — the balance
- * pre-flight, the `wallet.send`, the funding-txid write. It is the
- * **instrument** and not the asset: a `lightning -> arkade` receive gives BTC
- * too, but the give instrument is the hold invoice a third party pays, so an
- * asset-branched test would send every receive down the wallet-balance path and
- * refuse the canonical empty-wallet receive.
+ * Whether the give leg is funded from the wallet (gates `accept()`'s balance check and send). The
+ * **instrument**, not the asset: a `lightning -> arkade` receive gives BTC via a hold invoice a third
+ * party pays, and an asset test would refuse the canonical empty-wallet receive.
  */
 export const fundsFromWallet = (route: {
     give: { instrument: Instrument | RecordedInstrument };

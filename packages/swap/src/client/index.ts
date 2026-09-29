@@ -1,14 +1,7 @@
 /**
- * The v2 client's whole module vocabulary: asset identity, the corridor axis,
- * the closed route union, the amount law, the alias layer, the error taxonomy,
- * the corridor modules, the drive, and the durable record `accept()` writes.
- *
- * This barrel is NOT the package surface. The root (`src/index.ts`) exports a
- * curated subset — the client, the verbs, the route/amount/asset vocabulary,
- * the taxonomy, the durable record — and everything else here reaches
- * consumers through `src/advanced.ts` (`@arkade-os/swap/advanced`), the
- * deliberate deep subpath for manual driving, custom quote flows and record
- * reading. The v1 building blocks are on neither: `/protocol` is their floor.
+ * The v2 client's whole module vocabulary. NOT the package surface: the root
+ * (`src/index.ts`) exports a curated subset, and the rest reaches consumers only via
+ * `@arkade-os/swap/advanced`.
  */
 export * from "./accept";
 export * from "./aliases";

@@ -1,28 +1,16 @@
 /**
- * The amount law: `bigint` atomic units in memory, decimal strings at the
- * edges, and exactly two conversion sites — this module and the RFQ adapter
- * beside it.
+ * The amount law: `bigint` atomic units in memory, decimal strings at the edges, and exactly two
+ * conversion sites — this module and the RFQ adapter beside it.
  *
- * Two different decimal strings live at those edges and conflating them is how
- * the v1 units footgun comes back. The *scaled* decimal is human-facing and only
- * {@link Amount.parse} and {@link Amount.format} produce or consume it: `"0.01"`
- * BTC, read against the asset's `decimals`. The *atomic-unit* decimal is what
- * records and the wire hold — the same integer the `bigint` carries, written
- * out, never scaled. Records and the RFQ wire take the second form and never the
- * first, which is why there is no display-amount code path to deprecate later.
+ * Two decimal strings must never be conflated. The *scaled* decimal (`"0.01"` BTC) is human-facing,
+ * produced and consumed only by {@link Amount.parse}/{@link Amount.format}. The *atomic-unit* decimal
+ * is what records and the wire hold — the `bigint` written out, never scaled. {@link AtomicDecimal}
+ * is branded so `Amount.parse(record.fromAmount, btc)` (reading `"10000"` sats as 10,000 BTC) is a
+ * compile error; the display side is unbranded since it arrives from text inputs.
  *
- * {@link AtomicDecimal} is branded, so the confusion that actually loses money —
- * `Amount.parse(record.fromAmount, btc)`, reading `"10000"` sats as 10,000 BTC —
- * is a compile error rather than a comment. The display side is not branded: it
- * arrives from a text input as a plain `string`, and requiring a constructor
- * there would tax every UI caller for nothing.
- *
- * The exact arithmetic is discovery's `toAtomic` / `fromAtomic`, not a second
- * implementation. What this module adds is the narrower door: discovery's codec
- * accepts a JS `number`, scientific notation, a leading `+` and surrounding
- * whitespace, and a display amount arriving as `100000` meaning sats is exactly
- * the v1 defect where it quoted 100,000 BTC. Validate here, delegate there —
- * after this module's checks the delegated call cannot throw.
+ * Arithmetic delegates to discovery's `toAtomic`/`fromAtomic`; this module is the narrower door:
+ * that codec accepts a JS `number`, exponents, `+` and whitespace, and a `100000` meaning sats is the
+ * v1 defect that quoted 100,000 BTC. After these checks the delegated call cannot throw.
  */
 import {
     AMOUNT_PATTERN,
@@ -32,13 +20,7 @@ import {
     toAtomic,
 } from "@arkade-os/solver-discovery";
 
-/**
- * What the codec needs from an asset, and nothing else. Structural, so
- * discovery's `AssetInfo` satisfies it directly and this module reaches for no
- * network layer. There is no id-to-decimals lookup at M1: that needs the
- * registry M3 builds, and M3 adds an id-taking convenience on top of this rather
- * than replacing it.
- */
+/** What the codec needs from an asset. Structural, so discovery's `AssetInfo` satisfies it. */
 export interface AssetScale {
     decimals: number;
 }
@@ -61,12 +43,9 @@ export type AmountRefusal =
     | "not_canonical";
 
 /**
- * An amount that cannot be represented in the form asked for.
- *
- * Not a member of the §7 `SwapError` taxonomy: that taxonomy is the client
- * surface's, thrown by a verb before value moves, and this is a codec refusing
- * its input before a swap exists. The wire's compatibility failure is different
- * and does have a member — `AmountEncodingUnsupported`, in `rfqAmount.ts`.
+ * An amount that cannot be represented in the form asked for. Not a `SwapError` (that taxonomy is
+ * the client's, thrown before value moves); the wire's compatibility failure is
+ * `AmountEncodingUnsupported`, in `rfqAmount.ts`.
  */
 export class AmountFormatError extends Error {
     override readonly name = "AmountFormatError";
@@ -109,17 +88,10 @@ export const Amount = {
     /**
      * A human decimal into atomic units.
      *
-     * `string` only, and no exponent. Accepting a `number` is the whole v1
-     * footgun: it makes `100000` ambiguous between sats and whole BTC, and by
-     * the time the ambiguity resolves the offer is funded. Exponent form goes
-     * for the same reason — a UI never produces `1e-4`, so accepting it only
-     * widens what a mistake can look like.
-     *
-     * Refuses rather than rounds when the input is finer than the asset: a
-     * silently truncated amount is a swap for the wrong size, and nothing
-     * downstream can tell it was ever a different number. Refuses too when the
-     * result would not survive the record boundary, so one law holds in both
-     * directions.
+     * `string` only, no exponent: a `number` makes `100000` ambiguous between sats and BTC, and the
+     * ambiguity resolves only after funding. Refuses rather than rounds input finer than the asset
+     * (a truncated amount is a swap for the wrong size), and refuses results that would not survive
+     * the record boundary.
      */
     parse(display: DisplayDecimal, asset: AssetScale): bigint {
         assertDecimals(asset.decimals);
@@ -146,12 +118,8 @@ export const Amount = {
         return value;
     },
 
-    /**
-     * Atomic units into a human decimal, trailing zeros trimmed.
-     *
-     * Refuses a negative: every amount on this surface is an obligation, and a
-     * negative one is a defect upstream rather than a number to render.
-     */
+    /** Atomic units into a human decimal, trailing zeros trimmed. Refuses a negative: every amount
+     * here is an obligation, so a negative one is an upstream defect. */
     format(value: bigint, asset: AssetScale): string {
         assertDecimals(asset.decimals);
         if (value < 0n) {
@@ -174,12 +142,8 @@ export const toAtomicDecimal = (value: bigint): AtomicDecimal => {
     return value.toString() as AtomicDecimal;
 };
 
-/**
- * The canonical decimal string back into atomic units.
- *
- * Takes a plain `string` on purpose: it is what a record read and a `JSON.parse`
- * hand back, and demanding a cast would put one on the safe direction.
- */
+/** The canonical decimal string back into atomic units. Takes a plain `string`, as record reads and
+ * `JSON.parse` hand back, so the safe direction needs no cast. */
 export const fromAtomicDecimal = (text: string): bigint => {
     if (!isAmount(text)) {
         throw new AmountFormatError(
