@@ -1161,6 +1161,8 @@ class MyWalletRepository implements WalletRepository {
 For Node.js or React Native environments, use the SQLite repository with any
 SQLite driver. The SDK accepts a `SQLExecutor` interface — you provide the
 driver, the SDK handles the schema.
+Paged wallet reads require SQLite 3.15.0 or newer because they use
+[row-value comparisons](https://sqlite.org/rowvalue.html#backwards_compatibility).
 
 See [examples/node/multiple-wallets.ts](examples/node/multiple-wallets.ts) for
 a full working example using `better-sqlite3`.
