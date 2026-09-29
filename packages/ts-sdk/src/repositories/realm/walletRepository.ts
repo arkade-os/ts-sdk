@@ -86,11 +86,7 @@ export class RealmWalletRepository implements WalletRepository {
                             ? JSON.stringify(s.commitmentTxIds)
                             : null,
                         expiresAt:
-                            s.expiresAt === undefined
-                                ? null
-                                : s.expiresAt instanceof Date
-                                  ? s.expiresAt.toISOString()
-                                  : new Date(s.expiresAt).toISOString(),
+                            s.expiresAt === undefined ? null : new Date(s.expiresAt).toISOString(),
                         expiresAtHeight: s.expiresAtHeight ?? null,
                         spentBy: s.spentBy ?? null,
                         settledBy: s.settledBy ?? null,

@@ -195,7 +195,7 @@ import {
     outpointExclusion,
     type VtxoExclusion,
 } from "../contracts/spendability";
-import { computeOffchainBalance, type BalanceCapabilities } from "./balance";
+import { computeOffchainBalance, toWalletBalance, type BalanceCapabilities } from "./balance";
 import { InputSignerRouter, InputSigningJob } from "./inputSignerRouter";
 import {
     DescriptorSigningProviderMissingError,
@@ -1240,45 +1240,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
             this._pendingSpendOutpoints,
         );
 
-        // boarding
-        let confirmed = 0;
-        let unconfirmed = 0;
-        for (const utxo of boardingUtxos) {
-            if (utxo.status.confirmed) {
-                confirmed += utxo.value;
-            } else {
-                unconfirmed += utxo.value;
-            }
-        }
-
         // `settled`/`preconfirmed`/`total` and the `assets` rollup count every VTXO
         // the wallet owns, including escrowed and intent-locked ones; `available`
         // and `availableAssets` count only what generic spending would pick, so
         // nothing reported as available can be refused by `send`.
-        const totalBoarding = confirmed + unconfirmed;
         const offchain = computeOffchainBalance(
             vtxos,
             await this.balanceCapabilities(snapshot, vtxos),
         );
 
-        return {
-            boarding: {
-                confirmed,
-                unconfirmed,
-                total: totalBoarding,
-            },
-            settled: offchain.settled,
-            preconfirmed: offchain.preconfirmed,
-            available: offchain.available,
-            gated: offchain.gated,
-            intentLocked: offchain.intentLocked,
-            recoverable: offchain.recoverable,
-            pendingRecovery: offchain.pendingRecovery,
-            unrolled: offchain.unrolled,
-            total: totalBoarding + offchain.total,
-            assets: offchain.assets,
-            availableAssets: offchain.availableAssets,
-        };
+        return toWalletBalance(boardingUtxos, offchain);
     }
 
     /**

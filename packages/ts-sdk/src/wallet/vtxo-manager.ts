@@ -1511,6 +1511,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return this.selectExpiringVtxos(thresholdMs);
     }
 
+    /** `settlementConfig.vtxoThreshold` in ms, else {@link DEFAULT_THRESHOLD_MS}. */
+    private configuredThresholdMs(): number {
+        return this.settlementConfig !== false && this.settlementConfig?.vtxoThreshold !== undefined
+            ? this.settlementConfig.vtxoThreshold * 1000
+            : DEFAULT_THRESHOLD_MS;
+    }
+
     /**
      * {@link getExpiringVtxos}, against a caller-supplied chain tip.
      *
@@ -1529,19 +1536,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const vtxos = await this.wallet.getSpendableVtxos({ withRecoverable: true });
 
-        // Resolve threshold: method param > settlementConfig (seconds→ms) > default
-        let threshold: number;
-        if (thresholdMs !== undefined) {
-            threshold = thresholdMs;
-        } else if (
-            this.settlementConfig !== false &&
-            this.settlementConfig &&
-            this.settlementConfig.vtxoThreshold !== undefined
-        ) {
-            threshold = this.settlementConfig.vtxoThreshold * 1000;
-        } else {
-            threshold = DEFAULT_THRESHOLD_MS;
-        }
+        // Not `??`: a runtime `null` must still reach isVtxoExpiringSoon's default guard.
+        const threshold = thresholdMs !== undefined ? thresholdMs : this.configuredThresholdMs();
 
         return getExpiringAndRecoverableVtxos(
             vtxos,
@@ -1613,17 +1609,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // Get all virtual outputs (including recoverable ones)
             // Resolution order: explicit options.thresholdSeconds > settlementConfig.vtxoThreshold > default.
             // Manual API should always work, so we bypass the settlementConfig === false gate.
-            let threshold: number;
-            if (options?.thresholdSeconds !== undefined) {
-                threshold = options.thresholdSeconds * 1000;
-            } else if (
-                this.settlementConfig !== false &&
-                this.settlementConfig?.vtxoThreshold !== undefined
-            ) {
-                threshold = this.settlementConfig.vtxoThreshold * 1000;
-            } else {
-                threshold = DEFAULT_THRESHOLD_MS;
-            }
+            const threshold =
+                options?.thresholdSeconds !== undefined
+                    ? options.thresholdSeconds * 1000
+                    : this.configuredThresholdMs();
             // One chain tip for the whole pass — see `selectExpiringVtxos`.
             const now = await fetchTimeHeight(this.wallet);
             let vtxos = await this.selectExpiringVtxos(threshold, now);

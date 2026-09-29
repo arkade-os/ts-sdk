@@ -1,4 +1,4 @@
-import type { Asset } from ".";
+import type { Asset, ExtendedCoin, WalletBalance } from ".";
 import type { NormalizedExtendedVirtualCoin, TimeHeight } from "./vtxo";
 import { canRecoverOnchain, canSpendOffchain, hasTerminalSpend } from "./vtxo";
 
@@ -193,5 +193,41 @@ export function computeOffchainBalance(
         total: settled + preconfirmed + recoverable + pendingRecovery + unrolled,
         assets: toAssets(owned),
         availableAssets: toAssets(spendable),
+    };
+}
+
+/** Combine the boarding coins with an {@link OffchainBalance} into a {@link WalletBalance}. */
+export function toWalletBalance(
+    boardingUtxos: readonly ExtendedCoin[],
+    offchain: OffchainBalance,
+): WalletBalance {
+    let confirmed = 0;
+    let unconfirmed = 0;
+    for (const utxo of boardingUtxos) {
+        if (utxo.status.confirmed) {
+            confirmed += utxo.value;
+        } else {
+            unconfirmed += utxo.value;
+        }
+    }
+    const totalBoarding = confirmed + unconfirmed;
+
+    return {
+        boarding: {
+            confirmed,
+            unconfirmed,
+            total: totalBoarding,
+        },
+        settled: offchain.settled,
+        preconfirmed: offchain.preconfirmed,
+        available: offchain.available,
+        gated: offchain.gated,
+        intentLocked: offchain.intentLocked,
+        recoverable: offchain.recoverable,
+        pendingRecovery: offchain.pendingRecovery,
+        unrolled: offchain.unrolled,
+        total: totalBoarding + offchain.total,
+        assets: offchain.assets,
+        availableAssets: offchain.availableAssets,
     };
 }

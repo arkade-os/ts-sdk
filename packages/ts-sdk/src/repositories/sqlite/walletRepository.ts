@@ -365,11 +365,7 @@ export class SQLiteWalletRepository implements WalletRepository {
                     s.isSwept === undefined ? null : s.isSwept ? 1 : 0,
                     s.isPreconfirmed === undefined ? null : s.isPreconfirmed ? 1 : 0,
                     s.commitmentTxIds ? JSON.stringify(s.commitmentTxIds) : null,
-                    s.expiresAt === undefined
-                        ? null
-                        : s.expiresAt instanceof Date
-                          ? s.expiresAt.toISOString()
-                          : new Date(s.expiresAt).toISOString(),
+                    s.expiresAt === undefined ? null : new Date(s.expiresAt).toISOString(),
                     s.expiresAtHeight ?? null,
                     s.spentBy ?? null,
                     s.settledBy ?? null,

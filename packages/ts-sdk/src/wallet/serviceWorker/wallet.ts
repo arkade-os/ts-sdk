@@ -181,6 +181,7 @@ import type {
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
 import { getRandomId } from "../utils";
+import { DEFAULT_ARKADE_SERVER_URL } from "../../networks";
 import type { ArkadeBroadcaster, ArkadeReader, GetArkadeInfoOptions, VirtualCoin } from "..";
 import {
     isMessageBusInitializingError,
@@ -575,13 +576,6 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         RequestType,
         number
     >;
-    // Denormalized from options so buildInitConfig() can rebuild the init
-    // envelope on demand for SDK-factory-created wallets. `create()` sets
-    // these immediately after construction.
-    protected arkServer?: { url: string; publicKey?: string };
-    protected delegateUrl?: string;
-    protected watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
-    protected settlementConfig?: SettlementConfig | false;
     private reinitPromise: Promise<void> | null = null;
     private pingPromise: Promise<void> | null = null;
     private inflightRequests = new Map<string, Promise<WalletUpdaterResponse>>();
@@ -639,7 +633,20 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         const serializedWallet = await serializeReadonlyIdentity(options.identity);
 
-        const arkServer = options.arkServer ?? { url: "https://arkade.computer" };
+        return ServiceWorkerReadonlyWallet.bootstrap(wallet, options, serializedWallet, {
+            delegateUrl: options.delegateUrl,
+            watcherConfig: options.watcherConfig,
+        });
+    }
+
+    /** Shared tail of both `create()` factories: boot the bus, INIT_WALLET, cache for reinit. */
+    protected static async bootstrap<W extends ServiceWorkerReadonlyWallet>(
+        wallet: W,
+        options: ServiceWorkerWalletCreateOptions,
+        serializedWallet: SerializedIdentity,
+        busConfig: Omit<MessageBusInitConfig, "wallet" | "arkServer" | "messageTimeouts">,
+    ): Promise<W> {
+        const arkServer = options.arkServer ?? { url: DEFAULT_ARKADE_SERVER_URL };
         const initWalletPayload = {
             arkServerUrl: arkServer.url,
             arkServerPublicKey: arkServer.publicKey,
@@ -657,21 +664,18 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         const busInitConfig: MessageBusInitConfig = {
             wallet: serializedWallet,
             arkServer,
-            delegateUrl: options.delegateUrl,
-            watcherConfig: options.watcherConfig,
+            ...busConfig,
             messageTimeouts,
         };
 
-        // Bootstrap the MessageBus in the service worker
         await initializeMessageBus(
             options.serviceWorker,
             { ...busInitConfig, timeoutMs: options.messageBusTimeoutMs },
             options.messageBusTimeoutMs,
         );
 
-        // Initialize the wallet handler
         const initMessage: RequestInitWallet = {
-            tag: messageTag,
+            tag: wallet.messageTag,
             type: "INIT_WALLET",
             id: getRandomId(),
             payload: initWalletPayload,
@@ -899,47 +903,18 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
-    /**
-     * Produce a serialized envelope for the wallet's identity. The base
-     * class always emits a readonly envelope; `ServiceWorkerWallet`
-     * overrides to emit a signing envelope.
-     */
-    protected async serializeIdentity(): Promise<SerializedIdentity> {
-        return serializeReadonlyIdentity(this.identity);
-    }
-
-    /**
-     * Return the cached init config, or rebuild one from live instance
-     * state when the cache was never populated. Recovery path for
-     * SDK-factory-created wallets; manual constructor bypasses do not
-     * retain enough state here and will hit the "never initialized" throw.
-     */
+    /** The init config cached by `create()`; manually constructed wallets have none. */
     protected async buildInitConfig(): Promise<MessageBusInitConfig> {
-        if (this.initConfig) return this.initConfig;
-        if (!this.arkServer) {
+        if (!this.initConfig) {
             throw new Error("Cannot re-initialize: wallet was not initialized via the SDK factory");
         }
-        const wallet = await this.serializeIdentity();
-        this.initConfig = {
-            wallet,
-            arkServer: this.arkServer,
-            delegateUrl: this.delegateUrl,
-            watcherConfig: this.watcherConfig,
-            settlementConfig: this.settlementConfig,
-        };
         return this.initConfig;
     }
 
-    /** Minimal INIT_WALLET payload used on reinitialize when the cache is gone. */
     protected buildInitWalletPayload(): RequestInitWallet["payload"] {
-        if (this.initWalletPayload) return this.initWalletPayload;
-        if (!this.arkServer) {
+        if (!this.initWalletPayload) {
             throw new Error("Cannot re-initialize: wallet was not initialized via the SDK factory");
         }
-        this.initWalletPayload = {
-            arkServerUrl: this.arkServer.url,
-            arkServerPublicKey: this.arkServer.publicKey,
-        };
         return this.initWalletPayload;
     }
 
@@ -1722,10 +1697,6 @@ export class ServiceWorkerWallet
         return this._assetManager;
     }
 
-    protected async serializeIdentity(): Promise<SerializedIdentity> {
-        return serializeSigningIdentity(this.identity);
-    }
-
     static async create(options: ServiceWorkerWalletCreateOptions): Promise<ServiceWorkerWallet> {
         // Same guard the inner `Wallet.create` applies, run here so a bad value
         // fails at the call site instead of inside the worker.
@@ -1764,24 +1735,7 @@ export class ServiceWorkerWallet
             !!options.delegateUrl,
         );
 
-        const arkServer = options.arkServer ?? { url: "https://arkade.computer" };
-        const initWalletPayload = {
-            arkServerUrl: arkServer.url,
-            arkServerPublicKey: arkServer.publicKey,
-        };
-
-        // Precompute the merged timeout map so page-side waiting and
-        // worker-side enforcement are derived from the same source.
-        const messageTimeouts = options.messageTimeouts
-            ? ({
-                  ...DEFAULT_MESSAGE_TIMEOUTS,
-                  ...options.messageTimeouts,
-              } as Record<RequestType, number>)
-            : (DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>);
-
-        const busInitConfig: MessageBusInitConfig = {
-            wallet: serializedWallet,
-            arkServer,
+        return ServiceWorkerWallet.bootstrap(wallet, options, serializedWallet, {
             delegateUrl: options.delegateUrl,
             settlementConfig: options.settlementConfig,
             walletMode: options.walletMode,
@@ -1789,37 +1743,7 @@ export class ServiceWorkerWallet
             lookAheadWindow: options.lookAheadWindow,
             minBatchExpirySeconds: options.minBatchExpirySeconds,
             minCheckpointExitDelaySeconds: options.minCheckpointExitDelaySeconds,
-            messageTimeouts,
-        };
-
-        await initializeMessageBus(
-            options.serviceWorker,
-            { ...busInitConfig, timeoutMs: options.messageBusTimeoutMs },
-            options.messageBusTimeoutMs,
-        );
-        // Initialize the service worker with the config
-        const initMessage: RequestInitWallet = {
-            tag: messageTag,
-            type: "INIT_WALLET",
-            id: getRandomId(),
-            payload: initWalletPayload,
-        };
-
-        // Initialize the service worker
-        await wallet.sendMessage(initMessage);
-
-        // Persist the full init config (including messageTimeouts) so
-        // reinitialize() re-sends the same map to a restarted worker.
-        wallet.initConfig = busInitConfig;
-        wallet.initWalletPayload = initWalletPayload;
-        wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
-        wallet.messageTimeouts = messageTimeouts;
-
-        // Refuse to return a wallet bound to a different identity than the
-        // worker ended up with (e.g. a stale/queued init rebinding it).
-        await wallet.assertWorkerIdentityMatches();
-
-        return wallet;
+        });
     }
 
     /**
