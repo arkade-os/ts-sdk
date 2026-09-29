@@ -1523,14 +1523,16 @@ versions keep the coverage they have today.
 Most users don't need to touch repositories directly — `Wallet` reads through them and `ContractManager` owns VTXO/contract synchronization into them. They are documented here for advanced integrations (custom storage backends, offline-first apps, repository inspection).
 
 ```typescript
+import { collectContracts, collectTransactionHistory, collectUtxos, collectVtxos } from '@arkade-os/sdk'
+
 // Wallet repository — VTXOs, UTXOs, transaction history, settings
 const addr = await wallet.getAddress()
-const vtxos = await wallet.walletRepository.getVtxos(addr)
-const utxos = await wallet.walletRepository.getUtxos(addr)
-const history = await wallet.walletRepository.getTransactionHistory(addr)
+const vtxos = await collectVtxos(wallet.walletRepository, addr)
+const utxos = await collectUtxos(wallet.walletRepository, addr)
+const history = await collectTransactionHistory(wallet.walletRepository, addr)
 
 // Contract repository — script-keyed contracts (default address, VHTLCs, etc.)
-const contracts = await wallet.contractRepository.getContracts({ type: 'vhtlc' })
+const contracts = await collectContracts(wallet.contractRepository, { type: 'vhtlc' })
 await wallet.contractRepository.saveContract(myContract)
 await wallet.contractRepository.deleteContract(myContract.script)
 ```
