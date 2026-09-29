@@ -4,7 +4,9 @@ import {
     RestArkProvider,
     RestIndexerProvider,
     SendDeadlineExceededError,
+    assertSendDeadline,
     asset,
+    captureSendDeadline,
     getNetwork,
     selectCoinsWithAsset,
     selectVirtualCoins,
@@ -131,20 +133,6 @@ const canonicalUrl = (value: string): string => {
         throw new Error("arkServerUrl must be an HTTP(S) URL without credentials or a fragment");
     }
     return parsed.toString();
-};
-
-const captureDeadline = (value: unknown): number | undefined => {
-    if (value === undefined) return undefined;
-    if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
-        throw new TypeError("validUntil must be a positive safe integer UNIX timestamp in seconds");
-    }
-    return value;
-};
-
-const assertDeadline = (validUntil?: number): void => {
-    if (validUntil !== undefined && Date.now() / 1000 >= validUntil) {
-        throw new SendDeadlineExceededError(validUntil);
-    }
 };
 
 const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => hex.encode(a) === hex.encode(b);
@@ -352,7 +340,7 @@ export async function fundOffer(
         throw new Error("deposit.carrierSats is only valid for an asset deposit");
     }
     const url = canonicalUrl(arkServerUrl);
-    const validUntil = captureDeadline(params.validUntil);
+    const validUntil = captureSendDeadline(params.validUntil);
     const floor = params.inputExpiryFloor
         ? { kind: params.inputExpiryFloor.kind, value: params.inputExpiryFloor.value }
         : undefined;
@@ -381,7 +369,7 @@ export async function fundOffer(
         }
     }
 
-    assertDeadline(validUntil);
+    assertSendDeadline(validUntil);
     const provider = new RestArkProvider(url);
     const [info, makerPublicKey, walletAddress] = await Promise.all([
         provider.getInfo(),
@@ -472,7 +460,7 @@ export async function fundOffer(
     };
 
     const prepared = await decorate(base, prepareNew);
-    assertDeadline(validUntil);
+    assertSendDeadline(validUntil);
     await registerOfferContract(
         wallet,
         url,
@@ -483,7 +471,7 @@ export async function fundOffer(
         // a mark postdating `createdAt` is one no record can ever clear
         { issued: prepared.createdAt },
     );
-    assertDeadline(validUntil);
+    assertSendDeadline(validUntil);
     if (!(await repository.insertPreparedSwap(prepared))) {
         const existing = await repository.getSwap(id);
         if (existing) {
@@ -494,7 +482,7 @@ export async function fundOffer(
     }
 
     try {
-        assertDeadline(validUntil);
+        assertSendDeadline(validUntil);
     } catch (expired) {
         // Provably unsent, so the inputs are released here. A submitted row never
         // takes this path: its send may have gone out, and that liability stands.

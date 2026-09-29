@@ -399,7 +399,11 @@ import { isRetryableProviderError } from "./providers/availability";
 import type { ServerInfoSource } from "./wallet/arkInfoSnapshot";
 import type { ProviderConnectionState } from "./wallet/wallet";
 import type { ContractSyncState } from "./contracts/contractManager";
-import { SendDeadlineExceededError } from "./wallet/sendDeadline";
+import {
+    SendDeadlineExceededError,
+    assertSendDeadline,
+    captureSendDeadline,
+} from "./wallet/sendDeadline";
 import { validateVtxoTxGraph, validateConnectorsTxGraph } from "./tree/validation";
 import {
     validateBatchRecipients,
@@ -800,6 +804,8 @@ export {
     ProviderUnavailableError,
     ServerResponseMismatchError,
     SendDeadlineExceededError,
+    assertSendDeadline,
+    captureSendDeadline,
     isRetryableProviderError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
