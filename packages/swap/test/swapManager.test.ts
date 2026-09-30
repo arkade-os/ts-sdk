@@ -3468,6 +3468,22 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(outer.restored).toEqual([]);
         });
 
+        it("keeps a swap removed while its restore is pending removed", async () => {
+            const m = manager({
+                repository: fakeStore([storedSend()]),
+                now: SAFE_NOW,
+                spies: spies(),
+            });
+            const result = await m.restoreFromRepository({
+                params: async (record) => {
+                    await m.removeSwap(record.rfqId);
+                    return VHTLCV2ContractHandler.serializeParams(LOCKUP.options);
+                },
+            });
+            expect(result.restored).toEqual([]);
+            expect(await m.hasSwap(RFQ_ID)).toBe(false);
+        });
+
         it("keeps the legacy terminal restore available explicitly", async () => {
             const store = fakeStore([storedSend({ state: "settled", updatedAt: SAFE_NOW - 1 })]);
             const m = manager({

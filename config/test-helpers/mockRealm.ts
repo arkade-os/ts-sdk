@@ -45,6 +45,7 @@ function withFiltered(rows: Row[]): Row[] {
             }),
         );
     arr.filtered = (q: string, ...a: unknown[]) => {
+        // Matches swap's realm/repository.ts cursor query verbatim; edit both together.
         if (
             q ===
             "state == $0 AND updatedAt >= $1 AND (updatedAt > $2 OR (updatedAt == $2 AND rfqId > $3))"
