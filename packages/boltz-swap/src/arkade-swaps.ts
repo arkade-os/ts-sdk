@@ -24,7 +24,7 @@ import {
     VHTLC,
     ArkInfo,
     isRecoverable,
-    hasTerminalSpend,
+    isVtxoSpent,
     ArkTxInput,
     Identity,
     VirtualCoin,
@@ -673,7 +673,7 @@ export class ArkadeSwaps {
                 scripts: [hex.encode(vhtlcScript.pkScript)],
             });
             rawVtxos = result.vtxos;
-            unspentVtxos = result.vtxos.filter((vtxo) => !hasTerminalSpend(vtxo));
+            unspentVtxos = result.vtxos.filter((vtxo) => !isVtxoSpent(vtxo));
             const total = unspentVtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
             // Attribution costs an indexer round-trip, so only pay for it when
             // the amount alone does not settle the question.
@@ -684,7 +684,7 @@ export class ArkadeSwaps {
                   // the claim below pays `wallet.getAddress()`, which
                   // `spentIntoOurWallet` queries anyway.
                   await this.lockupClaimedByUs(
-                      rawVtxos.filter(hasTerminalSpend),
+                      rawVtxos.filter(isVtxoSpent),
                       undefined,
                       vhtlcTimeouts.refund,
                   );
@@ -2489,7 +2489,7 @@ export class ArkadeSwaps {
 
         // The indexer may lag the lockup tx — and may briefly surface only part
         // of a split lockup — so retry until the spendable set covers the agreed
-        // amount or the attempts run out. `hasTerminalSpend` rather than
+        // amount or the attempts run out. `isVtxoSpent` rather than
         // `isSpent`: a VTXO consumed by a batch round carries `settledBy` and
         // need not carry `isSpent`.
         let spendable: VirtualCoin[] = [];
@@ -2498,7 +2498,7 @@ export class ArkadeSwaps {
             const { vtxos } = await this.indexerProvider.getVtxos({
                 scripts: [hex.encode(vhtlcScript.pkScript)],
             });
-            spendable = vtxos.filter((vtxo) => !hasTerminalSpend(vtxo));
+            spendable = vtxos.filter((vtxo) => !isVtxoSpent(vtxo));
             const total = spendable.reduce((sum, vtxo) => sum + vtxo.value, 0);
             // Attribution costs an indexer round-trip, so only pay for it when
             // the amount alone does not settle the question.
@@ -2506,7 +2506,7 @@ export class ArkadeSwaps {
             partiallyClaimed = covered
                 ? false
                 : await this.lockupClaimedByUs(
-                      vtxos.filter(hasTerminalSpend),
+                      vtxos.filter(isVtxoSpent),
                       pendingSwap.toAddress,
                       pendingSwap.response.claimDetails.timeouts?.refund,
                   );

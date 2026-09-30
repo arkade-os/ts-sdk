@@ -1,6 +1,6 @@
 import type { Asset } from ".";
 import type { NormalizedExtendedVirtualCoin, TimeHeight } from "./vtxo";
-import { canRecoverOnchain, canSpendOffchain, hasTerminalSpend } from "./vtxo";
+import { canRecoverOnchain, canSpendOffchain, isVtxoSpent } from "./vtxo";
 
 /**
  * The offchain half of {@link WalletBalance}, bucketed from one VTXO snapshot.
@@ -123,7 +123,7 @@ export function computeOffchainBalance(
         // `withUnrolled: true`, so the filter hands over unrolled coins WITHOUT
         // testing terminal spend, and this guard is what drops the ones that
         // are also spent.
-        if (hasTerminalSpend(vtxo)) continue;
+        if (isVtxoSpent(vtxo)) continue;
         addAssets(owned, vtxo);
 
         // Exited onchain: still the user's money, but only `completeUnroll` can

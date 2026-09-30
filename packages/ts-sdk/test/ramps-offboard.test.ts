@@ -52,6 +52,7 @@ describe("Ramps.offboard with a named input set", () => {
         expect(w.getSpendableVtxos).toHaveBeenCalledWith({
             withRecoverable: true,
             withUnrolled: false,
+            genericallySpendableOnly: true,
         });
         expect(w.settle.mock.calls[0][0].inputs).toHaveLength(2);
     });
