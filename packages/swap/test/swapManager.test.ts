@@ -3394,6 +3394,188 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(store.records.get(RFQ_ID)?.state).toBe("settled");
         });
 
+        it("pages only active swaps and resolves terminal history on demand", async () => {
+            const terminalId = "b2".repeat(32);
+            const store = fakeStore([
+                storedSend(),
+                storedSend({ rfqId: terminalId, state: "settled", updatedAt: SAFE_NOW - 1 }),
+            ]);
+            store.getRfqSwapsPage = vi.fn(async (state, afterId, limit) =>
+                [...store.records.values()]
+                    .filter(
+                        (record) => record.state === state && (!afterId || record.rfqId > afterId),
+                    )
+                    .sort((a, b) => (a.rfqId < b.rfqId ? -1 : 1))
+                    .slice(0, limit),
+            );
+            const readAll = vi.spyOn(store, "getAllRfqSwaps");
+            const m = manager({
+                contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
+                repository: store,
+                now: SAFE_NOW,
+                spies: spies(),
+            });
+
+            const result = await m.restoreFromRepository();
+
+            expect(result.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
+            expect(result.failed).toEqual([]);
+            expect(readAll).not.toHaveBeenCalled();
+            expect((await m.getStats()).finishedSwaps).toBe(0);
+            await expect(m.waitForSwapCompletion(terminalId)).resolves.toEqual({
+                state: "settled",
+                txid: undefined,
+            });
+            await m.removeSwap(terminalId);
+            await expect(m.waitForSwapCompletion(terminalId)).rejects.toThrow(/not monitored/);
+        });
+
+        it("never replaces a live swap when paging returns it again", async () => {
+            const store = fakeStore([storedSend()]);
+            store.getRfqSwapsPage = vi.fn(async (state, afterId, limit) =>
+                [...store.records.values()]
+                    .filter(
+                        (record) => record.state === state && (!afterId || record.rfqId > afterId),
+                    )
+                    .sort((a, b) => (a.rfqId < b.rfqId ? -1 : 1))
+                    .slice(0, limit),
+            );
+            const m = manager({ repository: store, now: SAFE_NOW, spies: spies() });
+            const params = async () => VHTLCV2ContractHandler.serializeParams(LOCKUP.options);
+
+            const result = await m.restoreFromRepository({
+                params: async (record) => {
+                    // As if a poll persisted a transition mid-restore.
+                    store.records.set(record.rfqId, { ...record, state: "claimable" });
+                    return params();
+                },
+            });
+            expect(result.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
+
+            let inner: Awaited<ReturnType<typeof m.restoreFromRepository>> | undefined;
+            const m2 = manager({
+                repository: fakeStore([storedSend()]),
+                now: SAFE_NOW,
+                spies: spies(),
+            });
+            const outer = await m2.restoreFromRepository({
+                params: async () => {
+                    inner ??= await m2.restoreFromRepository({ params });
+                    return params();
+                },
+            });
+            expect(inner?.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
+            expect(outer.restored).toEqual([]);
+        });
+
+        it("keeps a swap removed while its restore is pending removed", async () => {
+            const params = async () => VHTLCV2ContractHandler.serializeParams(LOCKUP.options);
+            for (const removedEarlier of [false, true]) {
+                const m = manager({
+                    repository: fakeStore([storedSend()]),
+                    now: SAFE_NOW,
+                    spies: spies(),
+                });
+                if (removedEarlier) await m.removeSwap(RFQ_ID);
+                const result = await m.restoreFromRepository({
+                    params: async (record) => {
+                        await m.removeSwap(record.rfqId);
+                        return params();
+                    },
+                });
+                expect(result.restored).toEqual([]);
+                expect(await m.hasSwap(RFQ_ID)).toBe(false);
+            }
+
+            // Without a removal mid-rebuild, restore still overrides an earlier one.
+            const m = manager({
+                repository: fakeStore([storedSend()]),
+                now: SAFE_NOW,
+                spies: spies(),
+            });
+            await m.removeSwap(RFQ_ID);
+            const result = await m.restoreFromRepository({ params });
+            expect(result.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
+        });
+
+        it("keeps the legacy terminal restore available explicitly", async () => {
+            const store = fakeStore([storedSend({ state: "settled", updatedAt: SAFE_NOW - 1 })]);
+            const m = manager({
+                contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
+                repository: store,
+                now: SAFE_NOW,
+                spies: spies(),
+            });
+
+            const result = await m.restoreFromRepository({ includeTerminal: true });
+
+            expect(result.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
+            await expect(m.waitForSwapCompletion(RFQ_ID)).resolves.toMatchObject({
+                state: "settled",
+            });
+        });
+
+        it("answers persisted terminal outcomes without a covenant lookup", async () => {
+            const receiveId = "b2".repeat(32);
+            const onchainId = "c3".repeat(32);
+            const failedId = "d4".repeat(32);
+            const settledReceiveId = "e5".repeat(32);
+            const store = fakeStore([
+                storedSend({
+                    state: "refunded",
+                    updatedAt: SAFE_NOW,
+                    refundArkTxid: "aa".repeat(32),
+                }),
+                storedSend({
+                    rfqId: receiveId,
+                    kind: "lightning_receive",
+                    state: "refunded",
+                    updatedAt: SAFE_NOW,
+                    profile: { claimArkTxid: "bb".repeat(32) },
+                }),
+                storedSend({
+                    rfqId: settledReceiveId,
+                    kind: "lightning_receive",
+                    state: "settled",
+                    updatedAt: SAFE_NOW,
+                    profile: { claimArkTxid: "ee".repeat(32) },
+                }),
+                storedSend({
+                    rfqId: onchainId,
+                    kind: "onchain_send",
+                    state: "settled",
+                    updatedAt: SAFE_NOW,
+                    profile: { claimTxid: "cc".repeat(32) },
+                }),
+                storedSend({
+                    rfqId: failedId,
+                    state: "failed",
+                    updatedAt: SAFE_NOW,
+                    failure: "claim window closed",
+                }),
+            ]);
+            const m = manager({ repository: store, now: SAFE_NOW, spies: spies() });
+
+            await expect(m.waitForSwapCompletion(RFQ_ID)).resolves.toEqual({
+                state: "refunded",
+                txid: "aa".repeat(32),
+            });
+            await expect(m.waitForSwapCompletion(receiveId)).resolves.toEqual({
+                state: "refunded",
+                txid: undefined,
+            });
+            await expect(m.waitForSwapCompletion(settledReceiveId)).resolves.toEqual({
+                state: "settled",
+                txid: "ee".repeat(32),
+            });
+            await expect(m.waitForSwapCompletion(onchainId)).resolves.toEqual({
+                state: "settled",
+                txid: "cc".repeat(32),
+            });
+            await expect(m.waitForSwapCompletion(failedId)).rejects.toThrow("claim window closed");
+        });
+
         it("carries a restored swap's origin, so its record can be rewritten", async () => {
             // The store losing a record mid-life is the case the in-memory
             // origin map exists for: without it the next write would have
@@ -3514,7 +3696,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(store.records.has(RFQ_ID)).toBe(true);
         });
 
-        it("prunes before the rebuild, so a retired record costs no lookup", async () => {
+        it("restores old terminal history without deleting its record", async () => {
             const contracts = fakeContracts({ preexisting: [rowFor(LOCKUP, LOCKUP_ADDRESS)] });
             const store = fakeStore([storedSend({ state: "settled", updatedAt: LONG_AGO })]);
             const s = spies();
@@ -3527,9 +3709,13 @@ describe("RfqSwapManager — manager-owned persistence", () => {
 
             const result = await m.restoreFromRepository();
 
-            expect(result.pruned).toEqual([RFQ_ID]);
-            expect(result.restored).toHaveLength(0);
+            expect(result.pruned).toEqual([]);
+            expect(result.restored).toEqual([]);
             expect(result.failed).toHaveLength(0);
+            expect(store.records.has(RFQ_ID)).toBe(true);
+            await expect(m.waitForSwapCompletion(RFQ_ID)).resolves.toMatchObject({
+                state: "settled",
+            });
         });
 
         it("keeps a still-monitored swap's origin, so the next pass can rewrite its record", async () => {
@@ -3643,7 +3829,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
                 spies: s,
             });
 
-            const result = await m.restoreFromRepository();
+            const result = await m.restoreFromRepository({ includeTerminal: true });
 
             expect(result.restored[0].lockupSpendArkTxids).toEqual([ARK_TXID]);
         });
