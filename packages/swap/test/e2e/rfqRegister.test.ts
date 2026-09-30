@@ -16,7 +16,7 @@
  * side does: arkd's parameters, the covenant, the contract row, the funding
  * transaction, the indexer sync and the spendability gate.
  */
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
@@ -71,16 +71,31 @@ const execCommand = (command: string): string => {
     return result;
 };
 
-const waitFor = async (
-    fn: () => Promise<boolean>,
-    { timeout = 30_000, interval = 500 } = {},
-): Promise<void> => {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        if (await fn()) return;
-        await new Promise((r) => setTimeout(r, interval));
-    }
-    throw new Error("timeout in waitFor");
+// expect.poll would do, but it refuses to run outside a test (the beforeAll
+// faucet wait needs this too); vi.waitFor polls anywhere. vi.waitFor retries
+// ANY throw until the deadline, so a real error from `fn` (stack down, HTTP
+// 500) would burn the whole timeout: capture it, stop polling, rethrow at
+// once — only a `false` (not ready yet) may spin.
+const waitFor = (fn: () => Promise<boolean>, timeout = 30_000): Promise<void> => {
+    let fatal: { err: unknown } | undefined;
+    return vi
+        .waitFor(
+            async () => {
+                if (fatal) return;
+                let ready: boolean;
+                try {
+                    ready = await fn();
+                } catch (err) {
+                    fatal = { err };
+                    return;
+                }
+                if (!ready) throw new Error("timeout in waitFor");
+            },
+            { timeout, interval: 500 },
+        )
+        .then(() => {
+            if (fatal) throw fatal.err;
+        });
 };
 
 const indexer = new RestIndexerProvider(OPERATOR_URL);

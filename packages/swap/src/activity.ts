@@ -145,7 +145,16 @@ export async function rfqSwapActivityInputs(
     deps: RfqSwapActivityDeps,
 ): Promise<SwapActivityInput[]> {
     const records = await collectRfqSwaps(deps.repository);
-    return Promise.all(records.map((record) => activityInputOf(record, deps.indexer)));
+    const inputs: SwapActivityInput[] = [];
+    // Bounded, so a long history does not fan out one indexer read per record at once.
+    for (let i = 0; i < records.length; i += 16) {
+        inputs.push(
+            ...(await Promise.all(
+                records.slice(i, i + 16).map((record) => activityInputOf(record, deps.indexer)),
+            )),
+        );
+    }
+    return inputs;
 }
 
 async function activityInputOf(

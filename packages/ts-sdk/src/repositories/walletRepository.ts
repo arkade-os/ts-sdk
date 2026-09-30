@@ -9,6 +9,7 @@ import {
     type PageResult,
 } from "./page";
 import { scriptFromArkAddress } from "./scriptFromAddress";
+import { isVtxoSpent } from "../wallet/vtxo";
 
 export interface TransactionHistoryPageFilter {
     address: string;
@@ -91,6 +92,12 @@ export function compareScriptVtxoCursors(a: ScriptVtxoCursor, b: ScriptVtxoCurso
     return a.address < b.address ? -1 : a.address > b.address ? 1 : compareOutpoints(a, b);
 }
 
+/** `unspentOnly` omits spent outputs. A page may then hold fewer than `limit`
+ * items and still carry `nextCursor`. */
+export interface ScriptVtxoPageOptions {
+    unspentOnly?: boolean;
+}
+
 export interface WalletRepository extends AsyncDisposable {
     readonly version: 1;
 
@@ -117,6 +124,7 @@ export interface WalletRepository extends AsyncDisposable {
     getVtxosForScriptPage?(
         script: string,
         page: PageRequest<ScriptVtxoCursor>,
+        options?: ScriptVtxoPageOptions,
     ): Promise<PageResult<StoredVtxo, ScriptVtxoCursor>>;
 
     /**
@@ -173,6 +181,7 @@ export const collectTransactionHistory = (
 export async function collectScriptVtxos(
     repository: WalletRepository,
     script: string,
+    options?: ScriptVtxoPageOptions,
 ): Promise<ExtendedVirtualCoin[]> {
     if (!repository.getVtxosForScriptPage) {
         throw new Error(
@@ -186,10 +195,11 @@ export async function collectScriptVtxos(
         if (++pages > MAX_COLLECT_PAGES) {
             throw new Error("collectScriptVtxos: page limit exceeded");
         }
-        const page = await repository.getVtxosForScriptPage(script, {
-            limit: MAX_PAGE_SIZE,
-            after,
-        });
+        const page = await repository.getVtxosForScriptPage(
+            script,
+            { limit: MAX_PAGE_SIZE, after },
+            options,
+        );
         assertCursorAdvanced(after, page.nextCursor);
         for (const row of page.items) {
             const key = `${row.vtxo.txid}:${row.vtxo.vout}`;
@@ -199,6 +209,23 @@ export async function collectScriptVtxos(
         after = page.nextCursor;
     } while (after !== undefined);
     return [...byOutpoint.values()].map((row) => row.vtxo);
+}
+
+/** Unspent `rows` that no spent copy of the same outpoint in `copies` outranks, so
+ * collecting them matches collecting everything and dropping spent winners. */
+export function unspentScriptVtxos(rows: StoredVtxo[], copies: StoredVtxo[]): StoredVtxo[] {
+    const spent = copies.filter((copy) => isVtxoSpent(copy.vtxo));
+    return rows.filter(
+        (row) =>
+            !isVtxoSpent(row.vtxo) &&
+            !spent.some(
+                (copy) =>
+                    copy.address !== row.address &&
+                    copy.vtxo.txid === row.vtxo.txid &&
+                    copy.vtxo.vout === row.vtxo.vout &&
+                    shouldReplaceScriptVtxo(row, copy),
+            ),
+    );
 }
 
 function shouldReplaceScriptVtxo(existing: StoredVtxo, incoming: StoredVtxo): boolean {

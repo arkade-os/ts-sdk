@@ -1,4 +1,7 @@
-import { collectScriptVtxos } from "../../src/repositories/walletRepository";
+import {
+    collectScriptVtxos,
+    type ScriptVtxoPageOptions,
+} from "../../src/repositories/walletRepository";
 import { collectTransactionHistory } from "../../src/repositories/walletRepository";
 import { collectVtxos } from "../../src/repositories/walletRepository";
 import { collectUtxos } from "../../src/repositories/walletRepository";
@@ -21,6 +24,8 @@ import {
     RepositoryTestItem,
 } from "./helpers";
 import { WalletRepository, WalletState } from "../../src/repositories";
+import { RealmWalletRepository } from "../../src/repositories/realm/walletRepository";
+import { createMockRealm } from "../../../../config/test-helpers/mockRealm";
 
 const walletRepositoryImplementations: Array<RepositoryTestItem<WalletRepository>> = [
     {
@@ -30,6 +35,18 @@ const walletRepositoryImplementations: Array<RepositoryTestItem<WalletRepository
     {
         name: "IndexedDBWalletRepository",
         factory: async () => new IndexedDBWalletRepository(),
+    },
+    {
+        name: "RealmWalletRepository",
+        factory: async () =>
+            new RealmWalletRepository(
+                createMockRealm({
+                    ArkVtxo: "pk",
+                    ArkUtxo: "pk",
+                    ArkTransaction: "pk",
+                    ArkWalletState: "key",
+                }),
+            ),
     },
 ];
 
@@ -111,6 +128,46 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
     });
 
     describe("Script-scoped VTXO management", () => {
+        it("omits spent outputs from unspent-only script reads", async () => {
+            const liveA = { ...createMockVtxo("live-a", 0, 1000), script: "script-a" };
+            const liveB = { ...createMockVtxo("live-b", 0, 2000), script: "script-b" };
+            const spent = {
+                ...createMockVtxo("spent", 0, 3000),
+                script: "script-a",
+                isSpent: true,
+            };
+            const foreign = { ...createMockVtxo("foreign", 0, 4000), script: "foreign" };
+            await repository.saveVtxos("address-a", [liveA, spent]);
+            await repository.saveVtxos("address-b", [liveB, foreign]);
+
+            const read = async (options?: ScriptVtxoPageOptions) =>
+                (
+                    await Promise.all(
+                        ["script-a", "script-b"].map((script) =>
+                            collectScriptVtxos(repository, script, options),
+                        ),
+                    )
+                )
+                    .flat()
+                    .map((row) => row.txid)
+                    .sort();
+            expect(await read()).toEqual(["live-a", "live-b", "spent"]);
+            expect(await read({ unspentOnly: true })).toEqual(["live-a", "live-b"]);
+        });
+
+        it("does not resurrect a live duplicate after its canonical row is spent", async () => {
+            const live = { ...createMockVtxo("duplicate", 0, 1000), script: "script-a" };
+            const spent = { ...live, isSpent: true, spentBy: "spent-tx" };
+            await repository.saveVtxos("old-address", [live]);
+            await repository.saveVtxos("new-address", [spent]);
+            expect(
+                (await collectScriptVtxos(repository, "script-a")).map((row) => row.spentBy),
+            ).toEqual(["spent-tx"]);
+            expect(await collectScriptVtxos(repository, "script-a", { unspentOnly: true })).toEqual(
+                [],
+            );
+        });
+
         it("should return empty array when no VTXOs exist for script", async () => {
             const vtxos = await collectScriptVtxos(repository, "script1");
             expect(vtxos).toEqual([]);
@@ -194,6 +251,11 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
 
                 const retrieved = await collectScriptVtxos(repository, script1);
                 expect(retrieved).toHaveLength(1);
+                expect(
+                    await collectScriptVtxos(repository, script1, {
+                        unspentOnly: true,
+                    }),
+                ).toHaveLength(1);
             });
         }
     });

@@ -367,8 +367,14 @@ export interface IContractManager extends Disposable {
      * List contracts and their current virtual outputs.
      *
      * If no filter is provided, returns all contracts with their virtual outputs.
+     * `unspentOnly` omits spent VTXOs from the repository result; it
+     * does not narrow the provider sync or change the full-history default.
      */
-    getContractsWithVtxos(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
+    getContractsWithVtxos(
+        filter?: GetContractsFilter,
+        pageSize?: number,
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
+    ): Promise<ContractWithVtxos[]>;
 
     /**
      * Latest provider-sync health (online vs. degraded to repository data).
@@ -1755,13 +1761,26 @@ export class ContractManager implements IContractManager {
     async getContractsWithVtxos(
         filter?: GetContractsFilter,
         pageSize?: number,
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
     ): Promise<ContractWithVtxos[]> {
+        if (
+            options?.maxSyncAgeMs !== undefined &&
+            (!Number.isSafeInteger(options.maxSyncAgeMs) || options.maxSyncAgeMs < 0)
+        ) {
+            throw new Error("maxSyncAgeMs must be a non-negative safe integer");
+        }
         const contracts = await this.getContracts(filter);
         // Best-effort opportunistic sync: on a retryable indexer/operator
         // failure, serve repository state rather than failing the read. The
         // failed sync writes no partial state and does not advance the cursor
         // (targeted subset queries never do). Terminal failures still propagate.
-        if (this.syncedWithin(contracts, this.config.vtxoSyncMaxAgeMs ?? 0)) {
+        if (
+            this.syncedWithin(
+                contracts,
+                options?.maxSyncAgeMs ??
+                    (options?.requireSynced ? 0 : (this.config.vtxoSyncMaxAgeMs ?? 0)),
+            )
+        ) {
             // Skipping the fetch must not skip the demotion it carries: that
             // half is repository-only, and an `awaiting-funds` contract left
             // undemoted keeps a watch it no longer needs.
@@ -1773,12 +1792,23 @@ export class ContractManager implements IContractManager {
             } catch (err) {
                 if (!isRetryableProviderError(err)) throw err;
                 this.markSyncDegraded(err);
+                if (options?.requireSynced) {
+                    throw new Error("Spendable VTXO read requires an online contract sync", {
+                        cause: err,
+                    });
+                }
             }
         }
-        const vtxos = await this.getVtxosForContracts(contracts);
+        const vtxos = await this.getVtxosForContracts(contracts, options);
+        const vtxosByScript = new Map<string, ExtendedContractVtxo[]>();
+        for (const vtxo of vtxos) {
+            const group = vtxosByScript.get(vtxo.contractScript) ?? [];
+            group.push(vtxo);
+            vtxosByScript.set(vtxo.contractScript, group);
+        }
         return contracts.map((contract) => ({
             contract,
-            vtxos: vtxos.filter((vtxo) => vtxo.contractScript === contract.script),
+            vtxos: vtxosByScript.get(contract.script)?.slice() ?? [],
         }));
     }
 
@@ -2353,10 +2383,13 @@ export class ContractManager implements IContractManager {
         this.emitEvent(event);
     }
 
-    private async getVtxosForContracts(contracts: Contract[]): Promise<ExtendedContractVtxo[]> {
+    private async getVtxosForContracts(
+        contracts: Contract[],
+        options?: { unspentOnly?: boolean },
+    ): Promise<ExtendedContractVtxo[]> {
         const res = await Promise.all(
             contracts.map((contract) =>
-                getVtxosForContract(this.config.walletRepository, contract).then((vtxos) =>
+                getVtxosForContract(this.config.walletRepository, contract, options).then((vtxos) =>
                     vtxos.map(
                         (vtxo): ExtendedContractVtxo => ({
                             ...vtxo,

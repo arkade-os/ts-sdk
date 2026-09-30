@@ -73,7 +73,7 @@ export type LockupParams = Record<string, string>;
  *
  * Terminal records are history, not garbage: the covenant's spender is a
  * transaction the wallet never signed, so its own history cannot reconstruct
- * them. Kept for a month, then dropped so a hot wallet's store stays bounded.
+ * them. The legacy explicit prune API uses this window; restore preserves them.
  *
  * Seconds, not milliseconds, because that is the unit `RfqSwap.updatedAt`
  * carries; the manager stamps it from `RfqSwapManagerConfig.now`, which is

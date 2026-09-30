@@ -9,8 +9,10 @@ import {
     type TransactionHistoryPageFilter,
     type TransactionHistoryPageCursor,
     type ScriptVtxoCursor,
+    type ScriptVtxoPageOptions,
     type StoredVtxo,
     compareScriptVtxoCursors,
+    unspentScriptVtxos,
 } from "../walletRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import {
@@ -25,11 +27,11 @@ import {
     SerializedVtxo,
     DB_VERSION,
 } from "./db";
-import { awaitTransaction, deleteByIndex, promisifyRequest } from "./idbUtils";
+import { awaitTransaction, deleteByIndex, getAllByIndexValues, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
-import { initDatabase } from "./schema";
+import { initDatabase, unspentFlag } from "./schema";
 import { scriptFromArkAddress } from "../scriptFromAddress";
-import { legacyVtxoFacts } from "../legacyVtxoFacts";
+import { legacyFactsOfRow } from "../legacyVtxoFacts";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
 
@@ -75,7 +77,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
             const store = transaction.objectStore(STORE_VTXOS);
             for (const vtxo of vtxos) {
                 const serialized: SerializedVtxo = serializeVtxo(vtxo);
-                store.put({ address, ...serialized });
+                store.put({ address, ...serialized, ...unspentFlag(vtxo) });
             }
             await awaitTransaction(transaction);
         } catch (error) {
@@ -99,40 +101,63 @@ export class IndexedDBWalletRepository implements WalletRepository {
     async getVtxosForScriptPage(
         script: string,
         page: PageRequest<ScriptVtxoCursor>,
+        options?: ScriptVtxoPageOptions,
     ): Promise<PageResult<StoredVtxo, ScriptVtxoCursor>> {
         assertPageRequest(page);
         const db = await this.getDB();
         const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
-        const request = store.index("script").openCursor(IDBKeyRange.only(script));
+        // Unspent rows carry `unspent: 1`, so this index never touches spent history.
+        const indexKey: IDBValidKey = options?.unspentOnly ? [script, 1] : script;
+        const index = store.index(options?.unspentOnly ? "scriptUnspent" : "script");
         return new Promise((resolve, reject) => {
-            const rows: StoredVtxo[] = [];
+            // Called from a request callback, so the duplicate recheck reuses this transaction.
+            const finish = (rows: RawVtxoRow[]) => {
+                const result = pageResult(rows.map(storedVtxoOf), page.limit, scriptVtxoCursorOf);
+                if (!options?.unspentOnly || result.items.length === 0) return resolve(result);
+                // A newer spent copy in another address bucket is absent from `scriptUnspent`.
+                const txids = [...new Set(result.items.map((row) => row.vtxo.txid))];
+                getAllByIndexValues<RawVtxoRow>(store, "txid", txids).then((raws) => {
+                    const copies = raws
+                        .map(storedVtxoOf)
+                        .filter((copy) => copy.vtxo.script === script);
+                    resolve({ ...result, items: unspentScriptVtxos(result.items, copies) });
+                }, reject);
+            };
+            const after = page.after;
+            if (!after) {
+                const request = index.getAll(IDBKeyRange.only(indexKey), page.limit + 1);
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    try {
+                        finish(request.result as RawVtxoRow[]);
+                    } catch (error) {
+                        reject(error);
+                    }
+                };
+                return;
+            }
+            const rows: RawVtxoRow[] = [];
+            const request = index.openCursor(IDBKeyRange.only(indexKey));
             request.onerror = () => reject(request.error);
             request.onsuccess = () => {
                 try {
                     const cursor = request.result;
-                    if (!cursor) {
-                        resolve(pageResult(rows, page.limit, scriptVtxoCursorOf));
+                    if (!cursor) return finish(rows);
+                    const row = cursor.value as RawVtxoRow;
+                    const order = compareScriptVtxoCursors(
+                        { address: row.address, txid: row.txid, vout: row.vout },
+                        after,
+                    );
+                    if (order < 0) {
+                        cursor.continuePrimaryKey(indexKey, [
+                            after.address,
+                            after.txid,
+                            after.vout,
+                        ]);
                         return;
                     }
-                    const row = cursor.value as SerializedVtxo & { address: string };
-                    const key = { address: row.address, txid: row.txid, vout: row.vout };
-                    if (page.after && compareScriptVtxoCursors(key, page.after) <= 0) {
-                        if (compareScriptVtxoCursors(key, page.after) < 0) {
-                            cursor.continuePrimaryKey(script, [
-                                page.after.address,
-                                page.after.txid,
-                                page.after.vout,
-                            ]);
-                        } else {
-                            cursor.continue();
-                        }
-                        return;
-                    }
-                    rows.push({ address: row.address, vtxo: deserializeVtxoWithBackfill(row) });
-                    if (rows.length > page.limit) {
-                        resolve(pageResult(rows, page.limit, scriptVtxoCursorOf));
-                        return;
-                    }
+                    if (order > 0) rows.push(row);
+                    if (rows.length > page.limit) return finish(rows);
                     cursor.continue();
                 } catch (error) {
                     reject(error);
@@ -376,30 +401,35 @@ export class IndexedDBWalletRepository implements WalletRepository {
 // row written before those facts existed still carries the legacy `virtualStatus` blob and no
 // column migration can reach it — `normalizeVtxo` no longer reads that blob, so without this a
 // swept row comes back `isSwept: false`, spendable, until the first indexer sync.
-function deserializeVtxoWithBackfill(o: SerializedVtxo & { address: string }): ExtendedVirtualCoin {
+function deserializeVtxoWithBackfill({ unspent: _unspent, ...o }: RawVtxoRow): ExtendedVirtualCoin {
     if (!o.script) {
         o = { ...o, script: scriptFromArkAddress(o.address) };
     }
-    if (o.isSwept === undefined && o.isPreconfirmed === undefined) {
-        const facts = legacyVtxoFacts((o as { virtualStatus?: unknown }).virtualStatus);
-        // Blanks only: a row that carries its own values keeps them, the projection being lossier.
-        if (facts) {
-            o = {
-                ...o,
-                isSpent: o.isSpent ?? facts.isSpent,
-                isSwept: facts.isSwept,
-                isPreconfirmed: facts.isPreconfirmed,
-                commitmentTxIds: o.commitmentTxIds ?? facts.commitmentTxIds,
-                expiresAt: o.expiresAt ?? facts.expiresAt,
-                expiresAtHeight: o.expiresAtHeight ?? facts.expiresAtHeight,
-            };
-        }
+    const facts = legacyFactsOfRow(o);
+    // Blanks only: a row that carries its own values keeps them, the projection being lossier.
+    if (facts) {
+        o = {
+            ...o,
+            isSpent: o.isSpent ?? facts.isSpent,
+            isSwept: facts.isSwept,
+            isPreconfirmed: facts.isPreconfirmed,
+            commitmentTxIds: o.commitmentTxIds ?? facts.commitmentTxIds,
+            expiresAt: o.expiresAt ?? facts.expiresAt,
+            expiresAtHeight: o.expiresAtHeight ?? facts.expiresAtHeight,
+        };
     }
     return deserializeVtxo(o);
 }
+
+const storedVtxoOf = (raw: RawVtxoRow): StoredVtxo => ({
+    address: raw.address,
+    vtxo: deserializeVtxoWithBackfill(raw),
+});
 
 const scriptVtxoCursorOf = (row: StoredVtxo): ScriptVtxoCursor => ({
     address: row.address,
     txid: row.vtxo.txid,
     vout: row.vtxo.vout,
 });
+
+type RawVtxoRow = SerializedVtxo & { address: string; unspent?: 1 };

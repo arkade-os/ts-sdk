@@ -87,6 +87,18 @@ describe("ContractManager vtxoSyncMaxAgeMs", () => {
         expect(result).toHaveLength(1);
     });
 
+    it("a per-read budget reuses a recent sync without changing the default", async () => {
+        const { manager, indexer } = await setup();
+        await manager.getContractsWithVtxos();
+        (indexer.getVtxos as any).mockClear();
+
+        await manager.getContractsWithVtxos(undefined, undefined, { maxSyncAgeMs: 60_000 });
+        expect(reads(indexer)).toBe(0);
+
+        await manager.getContractsWithVtxos();
+        expect(reads(indexer)).toBeGreaterThan(0);
+    });
+
     it("past the budget, the read syncs again", async () => {
         const { manager, indexer } = await setup(1);
         await manager.getContractsWithVtxos();

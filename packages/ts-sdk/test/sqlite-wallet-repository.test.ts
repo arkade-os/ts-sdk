@@ -11,7 +11,8 @@ import type { ExtendedVirtualCoin, ExtendedCoin, ArkTransaction, TxType } from "
 import type { TapLeafScript } from "../src/script/base";
 import type { WalletState } from "../src/repositories/walletRepository";
 import { createMockSQLExecutor } from "./helpers/mockSqlExecutor";
-import { hasTerminalSpend } from "../src/wallet/vtxo";
+import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
+import { isVtxoSpent } from "../src/wallet/vtxo";
 
 // ── Test fixtures ───────────────────────────────────────────────────────
 
@@ -298,7 +299,7 @@ describe("SQLiteWalletRepository", () => {
 
             // The fixture is preconfirmed, so the derivation says "not spent".
             expect(retrieved.isSpent).toBe(false);
-            expect(hasTerminalSpend(retrieved)).toBe(false);
+            expect(isVtxoSpent(retrieved)).toBe(false);
         });
 
         it("preserves terminal spend for a VTXO stored with a null is_spent column", async () => {
@@ -311,7 +312,7 @@ describe("SQLiteWalletRepository", () => {
 
             expect(retrieved.isSpent).toBe(false);
             expect(retrieved.spentBy).toBe("spent-by-tx");
-            expect(hasTerminalSpend(retrieved)).toBe(true);
+            expect(isVtxoSpent(retrieved)).toBe(true);
         });
 
         describe("Script-scoped VTXO management", () => {
@@ -387,6 +388,24 @@ describe("SQLiteWalletRepository", () => {
                 expect(resultA[0].txid).toBe("tx1");
                 expect(resultB).toHaveLength(1);
                 expect(resultB[0].txid).toBe("tx2");
+            });
+
+            it("unspent-only script reads drop every terminal shape", async () => {
+                // The regex SQL mock cannot evaluate the unspent predicate, so this needs a real SQLite handle.
+                const sqlite = new SQLiteWalletRepository(createNodeSQLExecutor());
+                const script = "5120" + "00".repeat(32);
+                const live = { ...createMockVtxo("00".repeat(32), 0, 1000), script };
+                await sqlite.saveVtxos("address", [
+                    live,
+                    { ...live, txid: "03".padStart(64, "0"), isSpent: true },
+                    { ...live, txid: "04".padStart(64, "0"), spentBy: "spent" },
+                    { ...live, txid: "05".padStart(64, "0"), settledBy: "settled" },
+                    { ...live, txid: "06".padStart(64, "0"), script: "5120" + "ff".repeat(32) },
+                ]);
+
+                expect(await collectScriptVtxos(sqlite, script)).toHaveLength(4);
+                const unspent = await collectScriptVtxos(sqlite, script, { unspentOnly: true });
+                expect(unspent.map((row) => row.txid)).toEqual([live.txid]);
             });
         });
     });

@@ -181,7 +181,7 @@ export function createMockSQLExecutor(): SQLExecutor {
                 return;
             }
 
-            if (/^CREATE\s+(UNIQUE\s+)?INDEX/i.test(trimmed)) return;
+            if (/^(CREATE\s+(UNIQUE\s+)?|DROP\s+)INDEX/i.test(trimmed)) return;
 
             const alterMatch = trimmed.match(/^ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)/i);
             if (alterMatch) {

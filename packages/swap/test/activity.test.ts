@@ -220,6 +220,30 @@ describe("rfqSwapActivityInputs", () => {
         ]);
     });
 
+    it("bounds indexer fallbacks", async () => {
+        const repository = await storeOf(
+            ...Array.from({ length: 40 }, (_, i) =>
+                record({ rfqId: `r${i.toString().padStart(2, "0")}`, fundingTxid: "fund" }),
+            ),
+        );
+        let active = 0;
+        let peak = 0;
+        const indexer = {
+            async getVtxos() {
+                active++;
+                peak = Math.max(peak, active);
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                active--;
+                return { vtxos: [] };
+            },
+        } as unknown as LockupSpendIndexer;
+
+        const inputs = await rfqSwapActivityInputs({ repository, indexer });
+
+        expect(inputs).toHaveLength(40);
+        expect(peak).toBeLessThanOrEqual(16);
+    });
+
     it("takes each corridor's own claim txid from its handler", async () => {
         const repository = await storeOf(
             record({

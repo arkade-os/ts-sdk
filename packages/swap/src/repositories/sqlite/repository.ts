@@ -97,7 +97,7 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
             // A separate table rather than a `kind` column on the one above: the
             // two record types have different keys and no consumer wants them
             // interleaved. `state` and `updated_at` are mapped out for querying
-            // and for the retention sweep; the record itself still goes in whole.
+            // and for bounded history reads; the record itself still goes in whole.
             await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.rfqSwaps} (
                 rfq_id TEXT PRIMARY KEY,
                 state TEXT NOT NULL,
@@ -108,8 +108,10 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_updated ON ${this.rfqSwaps} (updated_at, rfq_id)`,
             );
             await this.db.run(
-                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_state_updated ON ${this.rfqSwaps} (state, updated_at, rfq_id)`,
+                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_history ON ${this.rfqSwaps} (state, updated_at, rfq_id)`,
             );
+            // Restore now pages by state and update time.
+            await this.db.run(`DROP INDEX IF EXISTS idx_${this.prefix}rfq_swaps_page`);
             await this.db.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_state ON ${this.rfqSwaps} (state)`,
             );

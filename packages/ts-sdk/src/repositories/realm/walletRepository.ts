@@ -10,6 +10,7 @@ import {
     type TransactionHistoryPageCursor,
     type ScriptVtxoCursor,
     type StoredVtxo,
+    type ScriptVtxoPageOptions,
 } from "../walletRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import {
@@ -23,6 +24,7 @@ import {
 } from "../serialization";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
+import { isVtxoSpent } from "../../wallet/vtxo";
 import { RealmLike } from "./types";
 
 /**
@@ -133,12 +135,20 @@ export class RealmWalletRepository implements WalletRepository {
     async getVtxosForScriptPage(
         script: string,
         page: PageRequest<ScriptVtxoCursor>,
+        options?: ScriptVtxoPageOptions,
     ): Promise<PageResult<StoredVtxo, ScriptVtxoCursor>> {
         assertPageRequest(page);
         await this.ensureInit();
         let results = this.realm
             .objects<{ address: string; txid: string; vout: number }>("ArkVtxo")
             .filtered("script == $0", script);
+        if (options?.unspentOnly) {
+            results = results.filtered(
+                "(isSpent == null OR isSpent == $0) AND (spentBy == null OR spentBy == $1) AND (settledBy == null OR settledBy == $1)",
+                false,
+                "",
+            );
+        }
         if (page.after) {
             results = results.filtered(
                 "address > $0 OR (address == $0 AND (txid > $1 OR (txid == $1 AND vout > $2)))",
@@ -156,11 +166,14 @@ export class RealmWalletRepository implements WalletRepository {
             rows.push({ address: row.address, vtxo: vtxoObjectToDomain(row) });
             if (rows.length > page.limit) break;
         }
-        return pageResult(rows, page.limit, (row) => ({
+        const result = pageResult(rows, page.limit, (row) => ({
             address: row.address,
             txid: row.vtxo.txid,
             vout: row.vtxo.vout,
         }));
+        return options?.unspentOnly
+            ? { ...result, items: result.items.filter((row) => !isVtxoSpent(row.vtxo)) }
+            : result;
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {

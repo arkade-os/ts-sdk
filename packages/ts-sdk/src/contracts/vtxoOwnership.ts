@@ -1,7 +1,7 @@
 import { collectScriptVtxos, collectVtxos } from "../repositories/walletRepository";
 import type { ExtendedVirtualCoin, NormalizedExtendedVirtualCoin, VirtualCoin } from "../wallet";
-import { normalizeVtxo } from "../wallet/vtxo";
-import type { WalletRepository } from "../repositories/walletRepository";
+import { isVtxoSpent, normalizeVtxo } from "../wallet/vtxo";
+import type { ScriptVtxoPageOptions, WalletRepository } from "../repositories/walletRepository";
 import type { Contract } from "./types";
 
 /**
@@ -84,11 +84,14 @@ export function validateVtxosForScript(
 export async function getVtxosForContract(
     repo: WalletRepository,
     contract: Pick<Contract, "script" | "address">,
+    options?: ScriptVtxoPageOptions,
 ): Promise<NormalizedExtendedVirtualCoin[]> {
     const vtxos = repo.getVtxosForScriptPage
-        ? await collectScriptVtxos(repo, contract.script)
+        ? await collectScriptVtxos(repo, contract.script, options)
         : filterVtxosForScript(await collectVtxos(repo, contract.address), contract.script);
-    return vtxos.map(normalizeVtxo);
+    const normalized = vtxos.map(normalizeVtxo);
+    // The address fallback cannot filter at read time, and a custom page may not either.
+    return options?.unspentOnly ? normalized.filter((vtxo) => !isVtxoSpent(vtxo)) : normalized;
 }
 
 /** Provenance is required, so a bare `isSpent: true` records nothing and stays

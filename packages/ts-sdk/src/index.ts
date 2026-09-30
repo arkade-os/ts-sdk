@@ -106,6 +106,7 @@ import {
     VirtualCoin,
     TxKey,
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     TapLeaves,
     StorageConfig,
     isSubdust,
@@ -113,7 +114,7 @@ import {
     canRecoverOnchain,
     canSpendOffchain,
     canSweepOnchain,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     isVirtualCoin,
     TimeHeight,
@@ -456,6 +457,7 @@ import type {
     TransactionHistoryPageFilter,
     TransactionHistoryPageCursor,
     ScriptVtxoCursor,
+    ScriptVtxoPageOptions,
     StoredVtxo,
 } from "./repositories/walletRepository";
 import type { ContractRepository, ContractFilter } from "./repositories/contractRepository";
@@ -838,7 +840,7 @@ export {
     canRecoverOnchain,
     canSpendOffchain,
     canSweepOnchain,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     isVirtualCoin,
     // Contracts
@@ -989,6 +991,7 @@ export type {
     TreePartialSigs,
     // Wallet types
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     BoardingUtxoGroup,
     ArkadeCashClaimResult,
     ArkadeCashUnclaimedReason,
@@ -1106,6 +1109,7 @@ export type {
     TransactionHistoryPageFilter,
     TransactionHistoryPageCursor,
     ScriptVtxoCursor,
+    ScriptVtxoPageOptions,
     StoredVtxo,
     ContractRepository,
     ContractFilter,

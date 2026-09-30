@@ -25,12 +25,15 @@ const DEFAULT_DB_NAME = "arkade-intents";
  * `onupgradeneeded`, which fires on a version *increase* — its contains-guard
  * cannot backfill a store into a database already open at this version, so a
  * new store added without a bump is simply missing for existing users. */
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORE_SWAPS = "swaps";
 const STORE_RFQ_SWAPS = "rfqSwaps";
 const STORE_SWAP_RECORDS = "swapRecords";
 const STORE_SCANNED = "scannedTxids";
 const STORE_MARKETS = "markets";
+const STATE_HISTORY_INDEX = "byStateUpdatedAtAndRfqId";
+const HISTORY_INDEX = "byUpdatedAtAndRfqId";
+const LEGACY_STATE_ID_INDEX = "byStateAndRfqId";
 
 /** Every store, declared once. `clear()` wipes exactly this list, so a store
  * added here cannot be forgotten there — which would leave a partial wipe the
@@ -55,13 +58,16 @@ function initDatabase(db: IDBDatabase, _oldVersion: number, transaction: IDBTran
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, options);
     }
     if (!transaction) throw new Error("IndexedDB upgrade transaction is missing");
-    const rfqStore = transaction.objectStore(STORE_RFQ_SWAPS);
-    if (!rfqStore.indexNames.contains("byUpdatedId")) {
-        rfqStore.createIndex("byUpdatedId", ["updatedAt", "rfqId"]);
+    const rfq = transaction.objectStore(STORE_RFQ_SWAPS);
+    // v4 added the state index; v5 adds the unfiltered one.
+    if (!rfq.indexNames.contains(STATE_HISTORY_INDEX)) {
+        rfq.createIndex(STATE_HISTORY_INDEX, ["state", "updatedAt", "rfqId"]);
     }
-    if (!rfqStore.indexNames.contains("byStateUpdatedId")) {
-        rfqStore.createIndex("byStateUpdatedId", ["state", "updatedAt", "rfqId"]);
+    if (!rfq.indexNames.contains(HISTORY_INDEX)) {
+        rfq.createIndex(HISTORY_INDEX, ["updatedAt", "rfqId"]);
     }
+    // Restore now pages by state and update time, so the v4 rfqId-ordered index goes.
+    if (rfq.indexNames.contains(LEGACY_STATE_ID_INDEX)) rfq.deleteIndex(LEGACY_STATE_ID_INDEX);
 }
 
 /** Browser backend over the SDK's shared IndexedDB manager. */
@@ -119,7 +125,7 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         assertRfqSwapPageFilter(filter);
         const store = await this.readStore(STORE_RFQ_SWAPS);
         const state = filter.state;
-        const index = store.index(state === undefined ? "byUpdatedId" : "byStateUpdatedId");
+        const index = store.index(state === undefined ? HISTORY_INDEX : STATE_HISTORY_INDEX);
         const after = page.after;
         const useAfter = after !== undefined && after.updatedAt >= (filter.since ?? 0);
         const start = state === undefined ? [] : [state];

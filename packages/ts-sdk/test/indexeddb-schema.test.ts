@@ -37,10 +37,10 @@ function countRows(db: IDBDatabase, store: string): Promise<number> {
 }
 
 describe("IndexedDB schema", () => {
-    // The shared wallet/contract schema adds a history index at v4 but does
+    // The shared wallet/contract schema adds a history index at v5 but does
     // not activate the opt-in intent-persistence stores.
-    it("keeps intent/virtualtx stores out of the shared v4 schema", async () => {
-        expect(DB_VERSION).toBe(4);
+    it("keeps intent/virtualtx stores out of the shared v5 schema", async () => {
+        expect(DB_VERSION).toBe(5);
         const db = await openDatabase("schema-shared-inert-test", DB_VERSION, initDatabase);
         const names = Array.from(db.objectStoreNames);
         expect(

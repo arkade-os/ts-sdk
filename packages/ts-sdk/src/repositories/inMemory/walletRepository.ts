@@ -12,6 +12,8 @@ import {
     type TransactionHistoryPageCursor,
     type ScriptVtxoCursor,
     type StoredVtxo,
+    type ScriptVtxoPageOptions,
+    unspentScriptVtxos,
 } from "../walletRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
@@ -48,6 +50,7 @@ export class InMemoryWalletRepository implements WalletRepository {
     async getVtxosForScriptPage(
         script: string,
         page: PageRequest<ScriptVtxoCursor>,
+        options?: ScriptVtxoPageOptions,
     ): Promise<PageResult<StoredVtxo, ScriptVtxoCursor>> {
         assertPageRequest(page);
         const allMatches: StoredVtxo[] = [];
@@ -63,7 +66,10 @@ export class InMemoryWalletRepository implements WalletRepository {
             txid: row.vtxo.txid,
             vout: row.vtxo.vout,
         });
-        const rows = allMatches
+        const candidates = options?.unspentOnly
+            ? unspentScriptVtxos(allMatches, allMatches)
+            : allMatches;
+        const rows = candidates
             .filter(
                 (row) =>
                     page.after === undefined ||

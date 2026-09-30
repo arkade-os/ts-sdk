@@ -84,14 +84,13 @@ export interface AssetSwapRepository extends AsyncDisposable {
      * as a refund that cannot be signed, long after the write.
      */
     saveRfqSwap(record: RfqSwapRecord): Promise<void>;
-    /** One record by key. `undefined` on a miss — retention prunes terminal
-     * records, so absence is ordinary and not an error. */
+    /** One record by key. */
     getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined>;
     getRfqSwapsPage(
         filter: RfqSwapPageFilter,
         page: PageRequest<RfqSwapPageCursor>,
     ): Promise<PageResult<RfqSwapRecord, RfqSwapPageCursor>>;
-    /** Drop one, once it is past retention — see `shouldRetainRfqSwap`. */
+    /** Drop one record. Only explicit pruning calls this; restore keeps history. */
     removeRfqSwap(rfqId: string): Promise<void>;
 
     /**

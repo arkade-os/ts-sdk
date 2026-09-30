@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import {
     ContractManager,
+    type ContractWithVtxos,
     DefaultContractHandler,
     DefaultVtxo,
     IndexerProvider,
@@ -307,6 +308,88 @@ describe("ContractManager", () => {
         // getContractsWithVtxos forces a sync to retrieve all VTXOs in the time window
         const lastCall = (mockIndexer.getVtxos as any).mock.calls.at(-1);
         expect(lastCall[0].spendableOnly).toBeUndefined();
+    });
+
+    it("groups each contract's VTXOs in repository order and keeps empty contracts", async () => {
+        const walletRepo = new InMemoryWalletRepository();
+        const localManager = await ContractManager.create({
+            indexerProvider: createMockIndexerProvider(),
+            contractRepository: new InMemoryContractRepository(),
+            walletRepository: walletRepo,
+        });
+        const first = await localManager.createContract({
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "first-address",
+        });
+        const second = await localManager.createContract({
+            type: "default",
+            params: SECOND_DEFAULT_PARAMS,
+            script: SECOND_DEFAULT_SCRIPT,
+            address: "second-address",
+        });
+        const emptyParams = DefaultContractHandler.serializeParams({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: { type: "blocks", value: DefaultVtxo.Script.DEFAULT_TIMELOCK.value + 1n },
+        });
+        const empty = await localManager.createContract({
+            type: "default",
+            params: emptyParams,
+            script: hex.encode(DefaultContractHandler.createScript(emptyParams).pkScript),
+            address: "empty-address",
+        });
+        const row = (script: string, byte: string) =>
+            createMockExtendedVtxo({
+                txid: byte.repeat(32),
+                vout: 0,
+                script,
+                isSpent: false,
+                virtualStatus: { state: "settled" },
+            });
+        await walletRepo.saveVtxos(first.address, [
+            row(first.script, "aa"),
+            row(first.script, "bb"),
+        ]);
+        await walletRepo.saveVtxos(second.address, [
+            row(second.script, "cc"),
+            row(second.script, "dd"),
+        ]);
+
+        const txidsByScript = (rows: ContractWithVtxos[]) =>
+            Object.fromEntries(
+                rows.map(({ contract, vtxos }) => [contract.script, vtxos.map(({ txid }) => txid)]),
+            );
+        const expected = {
+            [first.script]: ["aa".repeat(32), "bb".repeat(32)],
+            [second.script]: ["cc".repeat(32), "dd".repeat(32)],
+            [empty.script]: [],
+        };
+
+        const result = await localManager.getContractsWithVtxos();
+
+        expect(result.map(({ contract }) => contract.script)).toEqual(
+            (await localManager.getContracts()).map(({ script }) => script),
+        );
+        expect(txidsByScript(result)).toEqual(expected);
+
+        await walletRepo.saveVtxos(first.address, [{ ...row(first.script, "ee"), isSpent: true }]);
+        const pages = vi.spyOn(walletRepo, "getVtxosForScriptPage");
+        const all = await localManager.getContractsWithVtxos();
+        expect(txidsByScript(all)[first.script]).toHaveLength(3);
+        const unspent = await localManager.getContractsWithVtxos(undefined, undefined, {
+            unspentOnly: true,
+        });
+        expect(txidsByScript(unspent)).toEqual(expected);
+        expect(pages).toHaveBeenCalledWith(first.script, expect.anything(), { unspentOnly: true });
+
+        vi.spyOn(localManager, "getContracts").mockResolvedValue([first, first]);
+        const duplicate = await localManager.getContractsWithVtxos();
+        const secondLength = duplicate[1].vtxos.length;
+        duplicate[0].vtxos.pop();
+        expect(duplicate[1].vtxos).toHaveLength(secondLength);
+        localManager.dispose();
     });
 
     it("should force VTXOs refresh from indexer when received a `connection_reset` event", async () => {

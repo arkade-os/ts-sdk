@@ -9,6 +9,7 @@ import {
     type TransactionHistoryPageCursor,
     type ScriptVtxoCursor,
     type StoredVtxo,
+    type ScriptVtxoPageOptions,
 } from "../walletRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import {
@@ -25,6 +26,7 @@ import { legacyVtxoFacts } from "../legacyVtxoFacts";
 import { SQLExecutor } from "./types";
 import { runInTransaction } from "./transaction";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
+import { isVtxoSpent } from "../../wallet/vtxo";
 
 interface SQLiteWalletRepositoryOptions {
     /** Table name prefix (default: "ark_") */
@@ -127,6 +129,12 @@ export class SQLiteWalletRepository implements WalletRepository {
         );
         await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_address_page ON ${this.tables.vtxos} (address, txid, vout)`,
+        );
+        // Replaced by the paged partial index below, which serves the same reads in page order.
+        await this.db.run(`DROP INDEX IF EXISTS idx_${this.prefix}vtxos_live_script`);
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_live_script_page ON ${this.tables.vtxos} (script, address, txid, vout)
+             WHERE ${UNSPENT_VTXO_PREDICATE}`,
         );
         await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}utxos_address ON ${this.tables.utxos} (address)`,
@@ -413,12 +421,14 @@ export class SQLiteWalletRepository implements WalletRepository {
     async getVtxosForScriptPage(
         script: string,
         page: PageRequest<ScriptVtxoCursor>,
+        options?: ScriptVtxoPageOptions,
     ): Promise<PageResult<StoredVtxo, ScriptVtxoCursor>> {
         assertPageRequest(page);
         await this.ensureInit();
         const after = page.after;
         const rows = await this.db.all<VtxoRow>(
             `SELECT * FROM ${this.tables.vtxos} WHERE script = ?
+             ${options?.unspentOnly ? `AND ${UNSPENT_VTXO_PREDICATE}` : ""}
              ${after ? "AND (address > ? OR (address = ? AND (txid > ? OR (txid = ? AND vout > ?))))" : ""}
              ORDER BY address, txid, vout LIMIT ?`,
             after
@@ -433,12 +443,15 @@ export class SQLiteWalletRepository implements WalletRepository {
                   ]
                 : [script, page.limit + 1],
         );
-        const items = rows.map((row) => ({ address: row.address, vtxo: vtxoRowToDomain(row) }));
-        return pageResult(items, page.limit, (row) => ({
-            address: row.address,
-            txid: row.vtxo.txid,
-            vout: row.vtxo.vout,
-        }));
+        const result = pageResult(
+            rows.map((row) => ({ address: row.address, vtxo: vtxoRowToDomain(row) })),
+            page.limit,
+            (row) => ({ address: row.address, txid: row.vtxo.txid, vout: row.vtxo.vout }),
+        );
+        // Legacy facts decoded from the row can still mark it spent.
+        return options?.unspentOnly
+            ? { ...result, items: result.items.filter((row) => !isVtxoSpent(row.vtxo)) }
+            : result;
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -681,6 +694,10 @@ interface WalletStateRow {
 }
 
 const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
+
+// The page query repeats the index predicate verbatim so SQLite can use the partial index.
+const UNSPENT_VTXO_PREDICATE =
+    "(is_spent IS NULL OR is_spent = 0) AND (spent_by IS NULL OR spent_by = '') AND (settled_by IS NULL OR settled_by = '')";
 
 function sanitizePrefix(prefix: string): string {
     if (!SAFE_PREFIX.test(prefix)) {
