@@ -1,10 +1,13 @@
-import { defineConfig, mergeConfig } from "vitest/config";
+import { configDefaults, defineConfig, mergeConfig } from "vitest/config";
 import base from "../../config/vitest.base";
 
 export default mergeConfig(
     base,
     defineConfig({
         test: {
+            // the regtest dir is a symlinked submodule with its own node:test
+            // suite, which vitest cannot run — it is not this package's to run
+            exclude: [...configDefaults.exclude, "regtest/**"],
             // `ContractWatcher` subscribes over SSE, and Node exposes
             // `EventSource` only behind this flag (24.x). Without it every
             // subscription fails with "EventSource is not defined", the manager

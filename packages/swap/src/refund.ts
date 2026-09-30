@@ -55,7 +55,7 @@ import {
     asset,
     buildOffchainTx,
     getArkPsbtFields,
-    hasTerminalSpend,
+    isVtxoSpent,
     matchServerCheckpoints,
 } from "@arkade-os/sdk";
 
@@ -256,7 +256,7 @@ export class LockupNeedsRecoveryError extends Error {
  *
  * ONE read from the registered contract row (getContractsWithVtxos), not from the indexer by script.
  * The row's isSwept flag is the authority on which outputs are swept-but-recoverable versus live-spendable,
- * and hasTerminalSpend prunes already-consumed outputs before they reach the caller.
+ * and isVtxoSpent prunes already-consumed outputs before they reach the caller.
  *
  * **Visible is not the same as refundable.** A `recoverable` output cannot be
  * spent offchain at all — see {@link LockupVtxo.recoverable} — so this set is
@@ -269,7 +269,7 @@ export class LockupNeedsRecoveryError extends Error {
  * reach it, and `LockupVtxo` carries no field to say so, so a caller could not
  * tell it apart from a live one. The manager's rows carry the canonical facts
  * (`isUnrolled`, `isSpent`, `spentBy`, `settledBy`), so both exclusions are
- * exact rather than defensive — the same predicate (`hasTerminalSpend`) the
+ * exact rather than defensive — the same predicate (`isVtxoSpent`) the
  * wallet's own spend gate uses. It costs the two waiting callers nothing
  * they wanted: `awaitLockupFunding` keeps waiting for a claimable lockup
  * instead of publishing `P` into a spend that cannot land, and
@@ -314,9 +314,9 @@ export async function findLockupVtxos(
     const out: LockupVtxo[] = [];
     for (const vtxo of row?.vtxos ?? []) {
         if (vtxo.isUnrolled) continue;
-        // A spent output cannot back any refund push, and `hasTerminalSpend`
+        // A spent output cannot back any refund push, and `isVtxoSpent`
         // unions the three spend facts rather than trusting any one of them.
-        if (hasTerminalSpend(vtxo)) continue;
+        if (isVtxoSpent(vtxo)) continue;
         const key = `${vtxo.txid}:${vtxo.vout}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -471,7 +471,7 @@ export async function readLockupFate(
     const all = vtxos ?? [];
     if (all.length === 0) return { fate: "unknown" };
 
-    const exited = all.filter((vtxo) => vtxo.isUnrolled && !hasTerminalSpend(vtxo));
+    const exited = all.filter((vtxo) => vtxo.isUnrolled && !isVtxoSpent(vtxo));
     if (exited.length > 0) {
         return {
             fate: "exited",
@@ -487,7 +487,7 @@ export async function readLockupFate(
         // contract permits `isSpent: true` with an EMPTY `spentBy` and a
         // `spentBy`-only test would read an output that is gone as one still
         // sitting there.
-        if (!hasTerminalSpend(vtxo)) return { fate: "open" };
+        if (!isVtxoSpent(vtxo)) return { fate: "open" };
         // `spentBy` is the EMPTY STRING, not absent, when there is nothing to
         // name, so this is a truthiness test and never a presence one. When it
         // IS set it names the CHECKPOINT transaction, which is exactly the one

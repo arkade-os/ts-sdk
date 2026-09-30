@@ -47,7 +47,7 @@ export const ArkadeAssetSwapMarketsCacheSchema = {
 };
 
 /** Monitored RFQ swaps, keyed by `rfqId`. `state` and `updatedAt` are mapped out
- * for querying and for the retention sweep (`shouldRetainRfqSwap`); the record
+ * for state and date-filtered history queries; the record
  * itself goes in whole, `profile` included. */
 export const ArkadeRfqSwapSchema = {
     name: "ArkadeRfqSwap",

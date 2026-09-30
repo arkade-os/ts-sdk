@@ -5,8 +5,11 @@ import {
 } from "@arkade-os/sdk/repositories/sqlite";
 import {
     marketsCacheKey,
+    assertRfqSwapPageLimit,
+    assertRfqSwapSince,
     type AssetSwapRepository,
     type MarketsCacheEntry,
+    type RfqHistoryCursor,
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
@@ -16,6 +19,7 @@ import {
     mergeFundingProtectedSwap,
     type FundingStateAdvance,
 } from "../../fundingPersistence";
+import type { RfqSwapState } from "../../rfqSwapState";
 
 const DEFAULT_PREFIX = "arkade_";
 // SQLite's default parameter ceiling is 999; stay well under it per statement.
@@ -96,7 +100,7 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
             // A separate table rather than a `kind` column on the one above: the
             // two record types have different keys and no consumer wants them
             // interleaved. `state` and `updated_at` are mapped out for querying
-            // and for the retention sweep; the record itself still goes in whole.
+            // and for bounded history reads; the record itself still goes in whole.
             await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.rfqSwaps} (
                 rfq_id TEXT PRIMARY KEY,
                 state TEXT NOT NULL,
@@ -105,6 +109,12 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
             )`);
             await this.db.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_state ON ${this.rfqSwaps} (state)`,
+            );
+            await this.db.run(
+                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_history ON ${this.rfqSwaps} (state, updated_at, rfq_id)`,
+            );
+            await this.db.run(
+                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_page ON ${this.rfqSwaps} (state, rfq_id)`,
             );
             await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.scanned} (txid TEXT PRIMARY KEY)`);
             await this.db.run(
@@ -209,6 +219,39 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         await this.ensureInit();
         const rows = await this.db.all<{ data: string }>(`SELECT data FROM ${this.rfqSwaps}`);
         return rows.map((r) => JSON.parse(r.data) as RfqSwapRecord);
+    }
+
+    async getRfqSwapsPage(
+        state: RfqSwapState,
+        afterId: string | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        await this.ensureInit();
+        const rows = await this.db.all<{ data: string }>(
+            `SELECT data FROM ${this.rfqSwaps} WHERE state = ? AND rfq_id > ? ORDER BY rfq_id LIMIT ?`,
+            [state, afterId ?? "", limit],
+        );
+        return rows.map((row) => JSON.parse(row.data) as RfqSwapRecord);
+    }
+
+    async getRfqSwapsUpdatedPage(
+        state: RfqSwapState,
+        since: number,
+        after: RfqHistoryCursor | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        assertRfqSwapSince(since);
+        await this.ensureInit();
+        const cursor = after ? "AND (updated_at > ? OR (updated_at = ? AND rfq_id > ?))" : "";
+        const rows = await this.db.all<{ data: string }>(
+            `SELECT data FROM ${this.rfqSwaps} WHERE state = ? AND updated_at >= ? ${cursor} ORDER BY updated_at, rfq_id LIMIT ?`,
+            after
+                ? [state, since, after.updatedAt, after.updatedAt, after.rfqId, limit]
+                : [state, since, limit],
+        );
+        return rows.map((row) => JSON.parse(row.data) as RfqSwapRecord);
     }
 
     async removeRfqSwap(rfqId: string): Promise<void> {

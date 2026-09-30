@@ -22,6 +22,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetNewAddressesOptions,
+    GetSpendableVtxosFilter,
     GetVtxosFilter,
     IssuanceParams,
     IssuanceResult,
@@ -38,11 +39,7 @@ import {
     WalletBalance,
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
-import {
-    fetchVtxoCreatedAtByTxid,
-    hasTerminalSpend,
-    type NormalizedExtendedVirtualCoin,
-} from "../vtxo";
+import { fetchVtxoCreatedAtByTxid, isVtxoSpent, type NormalizedExtendedVirtualCoin } from "../vtxo";
 import {
     ReadonlyWallet,
     spendableVtxosExcludingLocked,
@@ -213,11 +210,11 @@ export type ResponseGetVtxos = ResponseEnvelope & {
 
 export type RequestGetSpendableVtxos = RequestEnvelope & {
     type: "GET_SPENDABLE_VTXOS";
-    payload: { filter?: GetVtxosFilter };
+    payload: { filter?: GetSpendableVtxosFilter };
 };
 export type ResponseGetSpendableVtxos = ResponseEnvelope & {
     type: "SPENDABLE_VTXOS";
-    payload: { vtxos: Awaited<ReturnType<IWallet["getSpendableVtxos"]>> };
+    payload: { vtxos: Awaited<ReturnType<IWallet["getSpendableVtxos"]>>; filterApplied?: boolean };
 };
 
 export type RequestGetBoardingUtxos = RequestEnvelope & {
@@ -299,11 +296,14 @@ export type ResponseGetContracts = ResponseEnvelope & {
 
 export type RequestGetContractsWithVtxos = RequestEnvelope & {
     type: "GET_CONTRACTS_WITH_VTXOS";
-    payload: { filter?: GetContractsFilter };
+    payload: {
+        filter?: GetContractsFilter;
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean };
+    };
 };
 export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     type: "CONTRACTS_WITH_VTXOS";
-    payload: { contracts: ContractWithVtxos[] };
+    payload: { contracts: ContractWithVtxos[]; filterApplied?: boolean };
 };
 
 function unsupportedByManager(method: string): Error {
@@ -1203,7 +1203,7 @@ export class WalletMessageHandler
                     return this.tagged({
                         id,
                         type: "SPENDABLE_VTXOS",
-                        payload: { vtxos },
+                        payload: { vtxos, filterApplied: true },
                     });
                 }
                 case "GET_BOARDING_UTXOS": {
@@ -1287,11 +1287,15 @@ export class WalletMessageHandler
                 }
                 case "GET_CONTRACTS_WITH_VTXOS": {
                     const manager = await this.readonlyWallet.getContractManager();
-                    const contracts = await manager.getContractsWithVtxos(message.payload.filter);
+                    const contracts = await manager.getContractsWithVtxos(
+                        message.payload.filter,
+                        undefined,
+                        message.payload.options,
+                    );
                     return this.tagged({
                         id,
                         type: "CONTRACTS_WITH_VTXOS",
-                        payload: { contracts },
+                        payload: { contracts, filterApplied: true },
                     });
                 }
                 case "WATCH_SCRIPT": {
@@ -2111,7 +2115,7 @@ export class WalletMessageHandler
             if (v.isUnrolled) {
                 return withUnrolled;
             }
-            if (hasTerminalSpend(v)) {
+            if (isVtxoSpent(v)) {
                 return false;
             }
             if (includeRecoverable) {
