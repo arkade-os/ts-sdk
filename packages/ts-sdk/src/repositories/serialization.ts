@@ -9,22 +9,6 @@ export type SerializedVtxo = ReturnType<typeof serializeVtxo>;
 export type SerializedUtxo = ReturnType<typeof serializeUtxo>;
 export type SerializedTransaction = ReturnType<typeof serializeTransaction>;
 
-/** Repository-only index flag. Terminal rows retain their history but have no
- * entry in the compound (script, unspent) index. */
-export function unspentIndexFlagForVtxo(vtxo: {
-    script?: string | null;
-    isSpent?: boolean | null;
-    spentBy?: string | null;
-    settledBy?: string | null;
-    virtualStatus?: { state?: string } | null;
-}): 1 | undefined {
-    if (!vtxo.script) return undefined;
-    if (vtxo.isSpent === true) return undefined;
-    if (vtxo.isSpent == null && vtxo.virtualStatus?.state === "spent") return undefined;
-    if (vtxo.spentBy || vtxo.settledBy) return undefined;
-    return 1;
-}
-
 // `Asset.amount` is a `bigint`, which `JSON.stringify` cannot serialize
 // (`TypeError: Do not know how to serialize a BigInt`). Persist it as a
 // decimal string so SQLite/Realm/legacy localStorage paths round-trip

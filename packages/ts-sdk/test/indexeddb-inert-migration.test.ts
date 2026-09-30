@@ -6,8 +6,10 @@ import { IndexedDBContractRepository } from "../src/repositories/indexedDB/contr
 
 // IndexedDB is provided globally by test/polyfill.js (indexeddbshim).
 
-// Opt-in persistence guarantee: the default wallet + contract repositories
-// share one DB at DB_VERSION and never create intent-persistence stores.
+// Inertness guarantee: a consumer upgrading to this SDK on their existing
+// database must NOT be migrated. The default wallet + contract repositories
+// share one DB and open it at DB_VERSION (v3); constructing and using them must
+// neither bump the version past v3 nor create the intent-persistence stores.
 describe("IndexedDB default path is inert", () => {
     async function storeNames(dbName: string): Promise<{ version: number; names: string[] }> {
         // Opening at DB_VERSION returns the repos' cached connection (refcount++),
@@ -18,12 +20,12 @@ describe("IndexedDB default path is inert", () => {
         return result;
     }
 
-    it("does not add intent stores on the default wallet path", async () => {
-        const dbName = `inert-existing-v6-${Date.now()}`;
+    it("never upgrades an existing v3 database or adds intent stores", async () => {
+        const dbName = `inert-existing-v3-${Date.now()}`;
 
-        // Seed a database at the current shared schema and close it.
+        // Seed a pre-existing database at the shared v3 schema and close it.
         const seeded = await openDatabase(dbName, DB_VERSION, initDatabase);
-        expect(seeded.version).toBe(6);
+        expect(seeded.version).toBe(3);
         await closeDatabase(dbName);
 
         // Open the same DB through the default repos, exercising both.
@@ -34,7 +36,7 @@ describe("IndexedDB default path is inert", () => {
             await contract.getContracts();
 
             const { version, names } = await storeNames(dbName);
-            expect(version).toBe(6);
+            expect(version).toBe(3);
             expect(names).not.toContain("intents");
             expect(names).not.toContain("virtualTxs");
             expect(names).not.toContain("vtxoBranches");

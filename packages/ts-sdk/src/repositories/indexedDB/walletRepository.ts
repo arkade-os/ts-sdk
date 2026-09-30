@@ -19,7 +19,6 @@ import { scriptFromArkAddress } from "../scriptFromAddress";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
 import { isVtxoSpent } from "../../wallet/vtxo";
-import { unspentIndexFlagForVtxo } from "../serialization";
 
 /**
  * IndexedDB-based implementation of WalletRepository.
@@ -74,12 +73,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
             const store = transaction.objectStore(STORE_VTXOS);
             for (const vtxo of vtxos) {
                 const serialized: SerializedVtxo = serializeVtxo(vtxo);
-                const unspent = unspentIndexFlagForVtxo(vtxo);
-                store.put({
-                    address,
-                    ...serialized,
-                    ...(unspent ? { unspent } : {}),
-                });
+                store.put({ address, ...serialized });
             }
             await awaitTransaction(transaction);
         } catch (error) {
@@ -101,85 +95,33 @@ export class IndexedDBWalletRepository implements WalletRepository {
     }
 
     async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
-        try {
-            const db = await this.getDB();
-            const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
-            const results = await promisifyRequest<(SerializedVtxo & { address: string })[]>(
-                store.index("script").getAll(script),
-            );
-
-            // Defensive filter: only rows whose script matches.
-            const matching = (results || []).filter((r) => r.script === script);
-
-            // Dedup same outpoint rows across address buckets. Work on raw rows
-            // so the address field is available for the canonicality tiebreaker.
-            const byOutpoint = new Map<string, SerializedVtxo & { address: string }>();
-            for (const row of matching) {
-                const outpoint = `${row.txid}:${row.vout}`;
-                const existing = byOutpoint.get(outpoint);
-                if (!existing) {
-                    byOutpoint.set(outpoint, row);
-                    continue;
-                }
-                if (shouldReplaceVtxo(existing, row)) {
-                    byOutpoint.set(outpoint, row);
-                }
-            }
-            return Array.from(byOutpoint.values()).map(deserializeVtxoWithBackfill);
-        } catch (error) {
-            console.error(`Failed to get VTXOs for script ${script}:`, error);
-            throw error;
-        }
+        return this.getVtxosForScripts([script]);
     }
 
     async getVtxosForScripts(
         scripts: string[],
         options?: { unspentOnly?: boolean },
     ): Promise<ExtendedVirtualCoin[]> {
-        const unique = [...new Set(scripts)].filter(Boolean);
+        const unique = [...new Set(scripts)];
         if (unique.length === 0) return [];
         try {
             const db = await this.getDB();
-            const byOutpoint = new Map<string, SerializedVtxo & { address: string }>();
-            for (let i = 0; i < unique.length; i += 64) {
-                const chunk = unique.slice(i, i + 64);
-                const selected = new Set(chunk);
-                const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
-                const rows = await getAllByIndexValues<SerializedVtxo & { address: string }>(
-                    store,
-                    options?.unspentOnly ? "scriptUnspent" : "script",
-                    options?.unspentOnly ? chunk.map((script) => [script, 1]) : chunk,
-                );
-                for (const row of rows) {
-                    if (!selected.has(row.script!)) continue;
-                    const key = `${row.script}:${row.txid}:${row.vout}`;
-                    const existing = byOutpoint.get(key);
-                    if (!existing || shouldReplaceVtxo(existing, row)) byOutpoint.set(key, row);
-                }
+            const rows = options?.unspentOnly
+                ? await this.readUnspentCandidates(db, unique)
+                : await getAllByIndexValues<RawVtxoRow>(this.vtxoStore(db), "script", unique);
+
+            const selected = new Set(unique);
+            const byOutpoint = new Map<string, RawVtxoRow>();
+            for (const row of rows) {
+                if (!selected.has(row.script!)) continue;
+                const key = `${row.script}:${row.txid}:${row.vout}`;
+                const existing = byOutpoint.get(key);
+                if (!existing || shouldReplaceVtxo(existing, row)) byOutpoint.set(key, row);
             }
-            if (options?.unspentOnly && byOutpoint.size > 0) {
-                // An old address bucket may duplicate a live outpoint with a
-                // newer terminal canonical row. Resolve only the active
-                // candidates against that txid's rows, not full wallet history.
-                const txids = [...new Set([...byOutpoint.values()].map((row) => row.txid))];
-                for (let i = 0; i < txids.length; i += 64) {
-                    const store = db
-                        .transaction([STORE_VTXOS], "readonly")
-                        .objectStore(STORE_VTXOS);
-                    const matches = await getAllByIndexValues<SerializedVtxo & { address: string }>(
-                        store,
-                        "txid",
-                        txids.slice(i, i + 64),
-                    );
-                    for (const row of matches) {
-                        const key = `${row.script}:${row.txid}:${row.vout}`;
-                        const existing = byOutpoint.get(key);
-                        if (existing && shouldReplaceVtxo(existing, row)) byOutpoint.set(key, row);
-                    }
-                }
-            }
+
             const result: ExtendedVirtualCoin[] = [];
             for (const row of byOutpoint.values()) {
+                // After the dedup, not before: another bucket's terminal row can win.
                 if (options?.unspentOnly && (row.isSpent || row.spentBy || row.settledBy)) {
                     continue;
                 }
@@ -191,6 +133,58 @@ export class IndexedDBWalletRepository implements WalletRepository {
             console.error("Failed to get VTXOs for scripts:", error);
             throw error;
         }
+    }
+
+    // Candidates for an `unspentOnly` read: keyed, not cloned, so spent history
+    // is never read. Strictly negative — a non-empty `spentBy`/`settledBy` proves
+    // a terminal row, an unset one costs a read and never hides a coin.
+    // (`isSpent` indexes nothing: booleans are invalid IndexedDB keys.)
+    private async readUnspentCandidates(db: IDBDatabase, scripts: string[]): Promise<RawVtxoRow[]> {
+        const keyStore = this.vtxoStore(db);
+        const nonEmpty = IDBKeyRange.lowerBound("", true);
+        const [spentBy, settledBy, ...perScript] = await Promise.all([
+            promisifyRequest<IDBValidKey[]>(keyStore.index("spentBy").getAllKeys(nonEmpty)),
+            promisifyRequest<IDBValidKey[]>(keyStore.index("settledBy").getAllKeys(nonEmpty)),
+            ...scripts.map((script) =>
+                promisifyRequest<IDBValidKey[]>(keyStore.index("script").getAllKeys(script)),
+            ),
+        ]);
+        const terminal = new Set<string>();
+        for (const key of spentBy) terminal.add(primaryKeyId(key));
+        for (const key of settledBy) terminal.add(primaryKeyId(key));
+
+        const wanted: IDBValidKey[] = [];
+        let total = 0;
+        for (const keys of perScript) {
+            total += keys.length;
+            const byOutpoint = new Map<string, IDBValidKey[]>();
+            for (const key of keys) {
+                const [, txid, vout] = key as [string, string, number];
+                const group = byOutpoint.get(`${txid}:${vout}`);
+                if (group) group.push(key);
+                else byOutpoint.set(`${txid}:${vout}`, [key]);
+            }
+            for (const group of byOutpoint.values()) {
+                // Whole group: a duplicate's terminal copy must be able to win.
+                if (group.length > 1 || !terminal.has(primaryKeyId(group[0]))) {
+                    wanted.push(...group);
+                }
+            }
+        }
+
+        const skipped = total - wanted.length;
+        if (skipped < wanted.length) {
+            return getAllByIndexValues<RawVtxoRow>(this.vtxoStore(db), "script", scripts);
+        }
+        const rowStore = this.vtxoStore(db);
+        const rows = await Promise.all(
+            wanted.map((key) => promisifyRequest<RawVtxoRow | undefined>(rowStore.get(key))),
+        );
+        return rows.filter((row): row is RawVtxoRow => row !== undefined);
+    }
+
+    private vtxoStore(db: IDBDatabase): IDBObjectStore {
+        return db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -342,9 +336,6 @@ export class IndexedDBWalletRepository implements WalletRepository {
 // legacy row is ever read before the upgrade-path completes, derive `script`
 // from `address` the same way the indexer would have populated it.
 function deserializeVtxoWithBackfill(o: SerializedVtxo & { address: string }): ExtendedVirtualCoin {
-    // The unspent index is repository metadata, not part of the public VTXO.
-    const { unspent: _unspent, ...row } = o as typeof o & { unspent?: 1 };
-    o = row;
     if (!o.script) {
         o = { ...o, script: scriptFromArkAddress(o.address) };
     }
@@ -352,6 +343,10 @@ function deserializeVtxoWithBackfill(o: SerializedVtxo & { address: string }): E
 }
 
 type RawVtxoRow = SerializedVtxo & { address: string };
+
+function primaryKeyId(key: IDBValidKey): string {
+    return (key as IDBValidKey[]).join("\u0000");
+}
 
 function isCanonicalRow(row: RawVtxoRow): boolean {
     try {
