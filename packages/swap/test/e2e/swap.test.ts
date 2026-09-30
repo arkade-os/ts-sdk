@@ -7,7 +7,8 @@
  *
  * Fill suite, against the stack's solverd: swaps in both directions, all-in
  * and partial, resolved live off the wallet's own vtxo_spent event (never a
- * restore scan).
+ * restore scan); plus oversized and underbid offers the solver doesn't fill,
+ * which the wallet cancels.
  * afterAll sells leftover asset back to the solver, so its inventory
  * survives every run and the default solver-init float needs no sizing.
  * The minted asset id changes on every regtest boot, so nothing here may
@@ -55,6 +56,8 @@ const arkdExec = "docker exec -t arkd";
 const FAUCET_SATS = 30_000;
 const DEPOSIT_SATS = 10_000;
 const WANT_AMOUNT = 1_000n;
+// fills in this stack land in ~1s, so a deposit untouched after 8s was refused
+const FILL_WAIT_MS = 8_000;
 
 const indexer = new RestIndexerProvider(OPERATOR_URL);
 const repository = new InMemoryAssetSwapRepository();
@@ -400,6 +403,81 @@ describe("asset swaps against solverd (regtest)", () => {
 
         expect(await heldAssetAmount()).toBe(assetAmount - quarter);
     }, 180_000);
+
+    it("cancels an oversized BTC to asset offer that the solver doesn't fill", async () => {
+        // one unit over max_quote_amount: the bounds gate drops it at market
+        // matching, before any price check — the solver never acknowledges it.
+        // (No case under the minimum: the minimum is 1 unit, and a zero want
+        // would let anyone take the deposit without paying anything.)
+        const offer = await createOffer(wallet, OPERATOR_URL, {
+            wantAmount: BigInt(market.max_quote_amount) + 1n,
+            wantAsset: asset.AssetId.fromString(assetLeg.id),
+        });
+        const fundingTxid = await fundAndExpectNoFill(offer, { amount: DEPOSIT_SATS });
+
+        const cancelTxid = await cancelOffer(wallet, OPERATOR_URL, offer.offerHex, {
+            repository,
+            fundingTxid,
+            swapAddress: offer.address,
+        });
+        expect(cancelTxid).toBeTruthy();
+        await waitFor(async () => (await wallet.getVtxos()).some((v) => v.txid === cancelTxid));
+    }, 60_000);
+
+    it("cancels an underbid BTC to asset offer that the solver doesn't fill", async () => {
+        // ten times the quoted amount — inside the amount bounds, so the offer
+        // matches the market, but a maker this greedy is outside the feed's
+        // tolerance and the solver refuses to fill
+        const plan = await quoteOffer(market, {
+            give: btcSide,
+            giveAmount: BigInt(DEPOSIT_SATS),
+            safetyBps: QUOTE_OPTIONS.safetyBps,
+        });
+        const offer = await createOffer(wallet, OPERATOR_URL, {
+            wantAmount: plan.receive.atomic * 10n,
+            wantAsset: asset.AssetId.fromString(assetLeg.id),
+        });
+        const fundingTxid = await fundAndExpectNoFill(offer, { amount: DEPOSIT_SATS });
+
+        const cancelTxid = await cancelOffer(wallet, OPERATOR_URL, offer.offerHex, {
+            repository,
+            fundingTxid,
+            swapAddress: offer.address,
+        });
+        expect(cancelTxid).toBeTruthy();
+        await waitFor(async () => (await wallet.getVtxos()).some((v) => v.txid === cancelTxid));
+    }, 60_000);
+
+    it("cancels an underbid asset to BTC offer that the solver doesn't fill", async () => {
+        // a standalone run has nothing to deposit: buy half the BTC first
+        if ((await heldAssetAmount()) === 0n) {
+            await buyAssetWithBtc(Math.floor((await availableSats()) / 2));
+        }
+        // ten times the quoted BTC for a small asset deposit — inside the
+        // amount bounds, but offering this little per sat is outside the
+        // feed's tolerance and the solver refuses to fill
+        const plan = await quoteOffer(market, {
+            give: btcSide === "base" ? "quote" : "base",
+            giveAmount: 1_000n,
+            safetyBps: QUOTE_OPTIONS.safetyBps,
+        });
+        const offer = await createOffer(wallet, OPERATOR_URL, {
+            wantAmount: plan.receive.atomic * 10n,
+            offerAsset: asset.AssetId.fromString(assetLeg.id),
+        });
+        const fundingTxid = await fundAndExpectNoFill(offer, {
+            amount: Number(ASSET_CARRIER_SATS),
+            assets: [{ assetId: assetLeg.id, amount: 1_000n }],
+        });
+
+        const cancelTxid = await cancelOffer(wallet, OPERATOR_URL, offer.offerHex, {
+            repository,
+            fundingTxid,
+            swapAddress: offer.address,
+        });
+        expect(cancelTxid).toBeTruthy();
+        await waitFor(async () => (await wallet.getVtxos()).some((v) => v.txid === cancelTxid));
+    }, 60_000);
 });
 
 const execCommand = (command: string): string => {
@@ -618,4 +696,24 @@ const sellAssetForBtc = async (amount: bigint) => {
 const sellAllAssetForBtc = async (): Promise<void> => {
     const held = await heldAssetAmount();
     if (held > 0n) await sellAssetForBtc(held);
+};
+
+/** Fund an offer the solver must never fill, wait long enough for a fill to
+ * land, and assert the deposit was not touched. */
+const fundAndExpectNoFill = async (
+    offer: Awaited<ReturnType<typeof createOffer>>,
+    deposit: { amount: number; assets?: Asset[] },
+): Promise<string> => {
+    const fundingTxid = await wallet.send({
+        address: offer.address,
+        extensions: [offer.extension],
+        ...deposit,
+    });
+    await new Promise((r) => setTimeout(r, FILL_WAIT_MS));
+    const { vtxos } = await indexer.getVtxos({ scripts: [hex.encode(offer.swapPkScript)] });
+    const vtxo = vtxos.find((v) => v.txid === fundingTxid);
+    // a missing deposit must fail, not pass vacuously: undefined is never spent
+    expect(vtxo).toBeDefined();
+    expect(vtxo?.isSpent).toBe(false);
+    return fundingTxid;
 };
