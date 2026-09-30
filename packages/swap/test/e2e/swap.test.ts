@@ -83,7 +83,7 @@ describe("maker-side swap loop (regtest)", () => {
     // progresses — entries are the package's own Tx shape, built from real txids
     const history: Tx[] = [];
 
-    it("derives, funds, and restores a pending offer from chain data alone", async () => {
+    it("derives, funds, and restores a pending offer from its funding transaction alone", async () => {
         // no override — asserts the default pin matches the regtest stack
         offer = await createOffer(wallet, OPERATOR_URL, {
             wantAmount: WANT_AMOUNT,
@@ -134,10 +134,9 @@ describe("maker-side swap loop (regtest)", () => {
         expect(() => decodeOffer(hex.decode(restoredOfferHex))).not.toThrow();
     }, 120_000);
 
-    // The Phase 2 merge gate: everything below runs through the real
-    // createOffer -> register -> ContractManager path above, never a hand-built
-    // contract row, because a hand-marked fixture cannot catch a writer that
-    // omits or misspells the marker.
+    // everything below runs through the real createOffer -> register ->
+    // ContractManager path above, never a hand-built contract row: a hand-marked
+    // fixture cannot catch a writer that omits or misspells the marker
     it("escrows the deposit: owned and watched, but not generically spendable", async () => {
         const script = hex.encode(offer.swapPkScript);
         const manager = await wallet.getContractManager();
@@ -165,13 +164,12 @@ describe("maker-side swap loop (regtest)", () => {
     }, 120_000);
 
     it("refuses to fund an unrelated payment out of the escrowed deposit", async () => {
-        // the §3 hazard as a behaviour test: without the marker, coin selection
-        // picks the offer deposit like any other UTXO, the server co-signs the
-        // covenant's untimelocked cancel leaf, and the offer silently ceases to
-        // exist. This send only succeeds if that happens.
-        // an amount the wallet can only reach by dipping into the deposit:
-        // under the totals (which count it, per D1c) but above what is left
-        // once it is excluded
+        // without the marker, coin selection picks the offer deposit like any
+        // other output, the operator cosigns the covenant's untimelocked cancel
+        // leaf, and the offer silently ceases to exist. This send only succeeds
+        // if that happens: an amount the wallet can only reach by dipping into
+        // the deposit — under the totals (which count it) but above what is
+        // left once it is excluded
         const balance = await wallet.getBalance();
         const needsTheDeposit =
             balance.settled + balance.preconfirmed - Math.floor(DEPOSIT_SATS / 2);
@@ -187,8 +185,8 @@ describe("maker-side swap loop (regtest)", () => {
         expect(depositVtxo?.isSpent).toBe(false);
     }, 120_000);
 
-    it("cancels the deposit cooperatively and restores it as cancelled", async () => {
-        // cancel from the chain-recovered bytes, not the createOffer result:
+    it("cancels the offer cooperatively and restores it as cancelled", async () => {
+        // cancel from the restored bytes, not the createOffer result:
         // this is the restored-wallet path, plus the swapAddress pin.
         // It doubles as the escape-hatch assertion: cancel names its input
         // outpoint, so the escrow marker must not close the one spend route the
@@ -232,11 +230,10 @@ describe("maker-side swap loop (regtest)", () => {
         });
     }, 120_000);
 
-    it("resolves the swap as cancelled from the wallet's own spend event, with no restore call", async () => {
-        // Phase 3 end to end, and the half no unit test can reach: registration
-        // makes the covenant watched, the watcher's SSE delivers `vtxo_spent`,
-        // and the record resolves without anyone scanning history. A second
-        // offer, because the one above is already spent.
+    it("resolves the swap as cancelled from the wallet's own spend event, without a restore scan", async () => {
+        // registration makes the covenant watched, the watcher's SSE delivers
+        // `vtxo_spent`, and the record resolves without anyone scanning history.
+        // A second offer, because the one above is already spent.
         //
         // The cancel is submitted against a DIFFERENT repository on purpose.
         // `cancelOffer` records its own outcome, so cancelling into the watched
@@ -324,11 +321,10 @@ const execCommand = (command: string): string => {
     return result;
 };
 
-// expect.poll would do, but it refuses to run outside a test (the beforeAll
-// faucet wait needs this too); vi.waitFor polls anywhere. vi.waitFor retries
-// ANY throw until the deadline, so a real error from `fn` (stack down, HTTP
-// 500) would burn the whole timeout: capture it, stop polling, rethrow at
-// once — only a `false` (not ready yet) may spin.
+// expect.poll refuses to run outside a test (the beforeAll faucet wait needs
+// this); vi.waitFor polls anywhere but retries ANY throw until the deadline —
+// a real error (stack down, HTTP 500) would burn the whole timeout, so capture
+// it, stop polling, and rethrow at once. Only a `false` (not ready yet) may spin.
 const waitFor = (fn: () => Promise<boolean>, timeout = 30_000): Promise<void> => {
     let fatal: { err: unknown } | undefined;
     return vi
