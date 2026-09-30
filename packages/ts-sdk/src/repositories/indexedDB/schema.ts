@@ -98,7 +98,9 @@ export function initDatabase(
                 unique: false,
             });
         }
-        vtxosStore.createIndex("scriptUnspent", ["script", "unspent"], { unique: false });
+        if (!vtxosStore.indexNames.contains("scriptUnspent")) {
+            vtxosStore.createIndex("scriptUnspent", ["script", "unspent"], { unique: false });
+        }
     }
 
     if (!db.objectStoreNames.contains(STORE_UTXOS)) {
@@ -154,9 +156,11 @@ export function initDatabase(
                 unique: false,
             });
         }
-        transactionsStore.createIndex("addressCreatedAt", ["address", "createdAt"], {
-            unique: false,
-        });
+        if (!transactionsStore.indexNames.contains("addressCreatedAt")) {
+            transactionsStore.createIndex("addressCreatedAt", ["address", "createdAt"], {
+                unique: false,
+            });
+        }
         if (!transactionsStore.indexNames.contains("arkTxid")) {
             transactionsStore.createIndex("arkTxid", "key.arkTxid", {
                 unique: false,
