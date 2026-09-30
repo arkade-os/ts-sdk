@@ -1,13 +1,15 @@
 /**
- * The maker-side swap loop against the real regtest stack: derive an offer
- * (arkd + emulator infos), fund its covenant address with the offer packet
- * embedded, rebuild the record from chain data alone, cancel cooperatively
- * (the 2-of-2 maker+server spend), and restore the cancel classification.
+ * The swap loop end to end against the real regtest stack, in two suites.
  *
- * This is the package's persistence contract exercised end to end: offerHex +
- * fundingTxid is all a maker must keep — everything else comes back from the
- * indexer. The fill path is NOT covered here: it needs a taker holding the
- * want-asset (no solver runs in this stack) and is scoped separately.
+ * Offer suite: derive, fund, restore, and cooperatively cancel an offer —
+ * the package's persistence contract: offerHex + fundingTxid is all a maker
+ * must keep, everything else comes back from the indexer.
+ *
+ * Fill suite, against the stack's solverd: swaps in both directions, all-in
+ * and partial, resolved live off the wallet's own vtxo_spent event (never a
+ * restore scan).
+ * The minted asset id changes on every regtest boot, so nothing here may
+ * hardcode it: the solver's card (`GET /v1/card`) is the one source of truth.
  */
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { execSync } from "child_process";
@@ -15,6 +17,7 @@ import { hex } from "@scure/base";
 import {
     ArkAddress,
     asset,
+    type Asset,
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
@@ -23,13 +26,16 @@ import {
     SingleKey,
     Wallet,
 } from "@arkade-os/sdk";
+import { discover, quoteOffer, type Market } from "@arkade-os/solver-discovery";
 import {
     addAssetSwap,
+    ASSET_CARRIER_SATS,
     cancelOffer,
     createOffer,
     decodeOffer,
     getAssetSwaps,
     InMemoryAssetSwapRepository,
+    QUOTE_OPTIONS,
     restoreAssetSwaps,
     watchOfferSwaps,
     type AssetSwap,
@@ -39,6 +45,9 @@ import {
 const OPERATOR_URL = "http://localhost:7070";
 // mempool serves the Esplora REST API under `/api`; the root path is the HTML UI
 const ESPLORA_API_URL = "http://localhost:3000/api";
+// solverd's HTTP API and the mock price feed, on their host-published ports
+const SOLVER_HTTP_URL = "http://localhost:7091";
+const PRICEFEED_URL = "http://localhost:8088";
 const arkdExec = "docker exec -t arkd";
 
 const FAUCET_SATS = 30_000;
@@ -51,6 +60,11 @@ let wallet: Wallet;
 // the key the covenants are funded against — restore classifies each spend by
 // the covenant leaf it took, so it has to rebuild the same script
 let operatorPubkey: Uint8Array;
+// the solverd suite's market, discovered by its beforeAll: which side is BTC,
+// and the asset leg (the market's non-BTC side)
+let market: Market;
+let btcSide: "base" | "quote";
+let assetLeg: Market["base_asset"];
 
 beforeAll(async () => {
     wallet = await Wallet.create({
@@ -310,6 +324,71 @@ describe("maker-side swap loop (regtest)", () => {
     }, 180_000);
 });
 
+describe("asset swaps against solverd (regtest)", () => {
+    // Discovery lives in beforeAll (a failure there fails every test with the
+    // real error, and -t subset runs still discover). Each test arranges the
+    // wallet state it needs through the buy/sell helpers — no-ops in the full
+    // sequence, real buys and sells in a subset run — so any subset passes and
+    // no test reads another test's leftovers.
+    beforeAll(async () => {
+        market = await solverMarket();
+        btcSide = market.base_asset.id === "btc" ? "base" : "quote";
+        assetLeg = btcSide === "base" ? market.quote_asset : market.base_asset;
+    }, 60_000);
+
+    it("swaps all BTC for the asset", async () => {
+        // ALL the BTC: the deposit is the wallet's whole available balance. The
+        // landing wait inside buyAssetWithBtc is the assertion
+        await buyAssetWithBtc(await availableSats());
+    }, 180_000);
+
+    it("swaps all of the asset back to BTC", async () => {
+        // own both legs: normalize to BTC first (the sale's proceeds are the
+        // BTC this test needs), so the baseline is this test's own and nothing
+        // is read from the previous test's state
+        await sellAllAssetForBtc();
+        const startAvailable = await availableSats();
+        await buyAssetWithBtc(startAvailable);
+
+        await sellAllAssetForBtc();
+
+        // buying and selling back ends where it started, minus the solver's
+        // fee on both legs: the carrier nets out (the inbound fill pays it,
+        // the reversal's deposit spends it) and no asset is left
+        expect(await availableSats()).toBeLessThan(startAvailable);
+        expect(await heldAssetAmount()).toBe(0n);
+    }, 180_000);
+
+    it("swaps a quarter of the BTC for the asset, leaving change", async () => {
+        // normalize to no-asset: while any asset is held, `available` reserves
+        // one dust carrier (wallet/balance.ts), so a pre-held asset output would
+        // skew the exact change pin below by exactly one carrier
+        await sellAllAssetForBtc();
+        const startAvailable = await availableSats();
+        const quarter = Math.floor(startAvailable / 4);
+        await buyAssetWithBtc(quarter);
+
+        // the BTC left behind is exactly the other three quarters: the asset's
+        // carrier sats ride with the asset, so they never count toward available
+        expect(await availableSats()).toBe(startAvailable - quarter);
+    }, 180_000);
+
+    it("swaps a quarter of the asset back to BTC, leaving change", async () => {
+        // a standalone run has nothing to sell: buy half the BTC first
+        if ((await heldAssetAmount()) === 0n) {
+            await buyAssetWithBtc(Math.floor((await availableSats()) / 2));
+        }
+        const assetAmount = await heldAssetAmount();
+        // BigInt division truncates: `assetAmount - quarter` below is the exact
+        // residual, up to 3 units more than three literal quarters
+        const quarter = assetAmount / 4n;
+
+        await sellAssetForBtc(quarter);
+
+        expect(await heldAssetAmount()).toBe(assetAmount - quarter);
+    }, 180_000);
+});
+
 const execCommand = (command: string): string => {
     const result = execSync(command, { encoding: "utf8" })
         .replace(/\r/g, "")
@@ -347,6 +426,82 @@ const waitFor = (fn: () => Promise<boolean>, timeout = 30_000): Promise<void> =>
         });
 };
 
+/** The solver's BTC market, discovered from its own published card. */
+const solverMarket = async (): Promise<Market> => {
+    const response = await fetch(`${SOLVER_HTTP_URL}/v1/card`);
+    if (!response.ok) throw new Error(`solver card: HTTP ${response.status}`);
+    const card = await response.json();
+    // the card names the feed by its in-docker hostname; the same feed is
+    // published to the host, and nothing else about the market changes
+    for (const m of card.markets ?? []) {
+        if (typeof m.price_feed === "string" && m.price_feed.startsWith("http://pricefeed")) {
+            m.price_feed = m.price_feed.replace("http://pricefeed", PRICEFEED_URL);
+        }
+    }
+    // registries: [] — hermetic: the local card is the only source, never the
+    // network's published default index (discoverMarkets cannot express this)
+    const { markets, warnings } = await discover({
+        registries: [],
+        localCards: [{ card }],
+        network: "regtest",
+    });
+    const market = markets.find((m) => m.base_asset.id === "btc" || m.quote_asset.id === "btc");
+    if (!market) {
+        throw new Error(`solverd card advertises no BTC market (${warnings.join("; ")})`);
+    }
+    return market;
+};
+
+/** Fund an offer and wait for solverd to fill it, resolving live off the
+ * wallet's own spend event. The watcher subscribes BEFORE the send, so the
+ * fill can only ever arrive as a live event — fund-first ordering let
+ * solverd outrun the subscription, and the start-up pass took the fill,
+ * which fails the completedAt pin below. The record is written synchronously
+ * behind the send, long before solverd can possibly react, so the live
+ * handler always has it. completedAt proves the live path took it: only the
+ * vtxo_spent handler writes it. */
+const fundAndAwaitFill = async (
+    offer: Awaited<ReturnType<typeof createOffer>>,
+    deposit: { amount: number; assets?: Asset[] },
+    legs: { fromAsset: string; toAsset: string; fromAmount: string; toAmount: string },
+): Promise<void> => {
+    const repository = new InMemoryAssetSwapRepository();
+    const watcher = await watchOfferSwaps({ wallet, arkServerUrl: OPERATOR_URL, repository });
+    const fundingTxid = await wallet.send({
+        address: offer.address,
+        extensions: [offer.extension],
+        ...deposit,
+    });
+    await addAssetSwap(repository, {
+        id: fundingTxid,
+        ...legs,
+        swapAddress: offer.address,
+        swapPkScript: hex.encode(offer.swapPkScript),
+        offerHex: offer.offerHex,
+        fundingTxid,
+        status: "pending",
+        createdAt: Date.now(),
+    });
+
+    let resolved: AssetSwap | undefined;
+    try {
+        await waitFor(async () => {
+            await watcher.idle();
+            [resolved] = await getAssetSwaps(repository);
+            return resolved?.status === "fulfilled";
+        }, 120_000);
+        expect(resolved?.spentTxid).toBeTruthy();
+        // set only from the live event's timestamp — the start-up pass passes
+        // no `at`, so this is what makes the wait above a live-fill assertion
+        expect(
+            resolved?.completedAt,
+            "completedAt unset: the start-up pass caught the fill, not the live event",
+        ).toBeTruthy();
+    } finally {
+        watcher.stop();
+    }
+};
+
 /** Mint an arkd note for `sats`, redeem it into the arkd CLI wallet, and send
  * it on to the test wallet — the same faucet path the ts-sdk e2e suites use.
  * The env is zero-fee, so the note needs no headroom. */
@@ -361,3 +516,85 @@ const faucet = async (sats: number): Promise<void> => {
 
 /** The wallet's spendable BTC balance. */
 const availableSats = async (): Promise<number> => (await wallet.getBalance()).available;
+
+/** The wallet's current holding of the suite's asset leg. */
+const heldAssetAmount = async (): Promise<bigint> => {
+    const held = (await wallet.getBalance()).assets.find((a) => a.assetId === assetLeg.id);
+    return BigInt(held?.amount ?? 0);
+};
+
+/** Buy the asset with `sats` of BTC, waiting until the bought amount is
+ * spendable in the wallet — the inbound output is a separate event from the
+ * fill resolving, and a later sell can only spend what has landed. */
+const buyAssetWithBtc = async (sats: number) => {
+    const plan = await quoteOffer(market, {
+        give: btcSide,
+        giveAmount: BigInt(sats),
+        safetyBps: QUOTE_OPTIONS.safetyBps,
+    });
+    expect(plan.receive.asset.id).toBe(assetLeg.id);
+    expect(plan.receive.atomic).toBeGreaterThan(0n);
+
+    const offer = await createOffer(wallet, OPERATOR_URL, {
+        wantAmount: plan.receive.atomic,
+        wantAsset: asset.AssetId.fromString(assetLeg.id),
+    });
+    const before = await heldAssetAmount();
+    await fundAndAwaitFill(
+        offer,
+        { amount: sats },
+        {
+            fromAsset: "btc",
+            toAsset: assetLeg.id,
+            fromAmount: String(sats),
+            toAmount: plan.receive.atomic.toString(),
+        },
+    );
+    await waitFor(async () => (await heldAssetAmount()) >= before + plan.receive.atomic, 120_000);
+};
+
+/** Sell `amount` of the asset back to BTC, waiting until the proceeds are
+ * spendable — they land with the fill, separately from the record resolving.
+ * The wait absorbs one carrier: a partial sell pays the deposit's carrier out
+ * of available BTC, an all-in sell nets it against the asset output's own. */
+const sellAssetForBtc = async (amount: bigint) => {
+    if (amount <= 0n) throw new Error("sellAssetForBtc: nothing to sell");
+    const plan = await quoteOffer(market, {
+        give: btcSide === "base" ? "quote" : "base",
+        giveAmount: amount,
+        safetyBps: QUOTE_OPTIONS.safetyBps,
+    });
+    expect(plan.receive.asset.id).toBe("btc");
+    expect(plan.receive.atomic).toBeGreaterThan(0n);
+
+    const offer = await createOffer(wallet, OPERATOR_URL, {
+        wantAmount: plan.receive.atomic,
+        offerAsset: asset.AssetId.fromString(assetLeg.id),
+    });
+    const before = await availableSats();
+    await fundAndAwaitFill(
+        offer,
+        {
+            amount: Number(ASSET_CARRIER_SATS),
+            assets: [{ assetId: assetLeg.id, amount }],
+        },
+        {
+            fromAsset: assetLeg.id,
+            toAsset: "btc",
+            fromAmount: amount.toString(),
+            toAmount: plan.receive.atomic.toString(),
+        },
+    );
+    await waitFor(
+        async () =>
+            (await availableSats()) >=
+            before + Number(plan.receive.atomic) - Number(ASSET_CARRIER_SATS),
+        120_000,
+    );
+};
+
+/** Sell every held unit of the asset back to BTC; a no-op when none is held. */
+const sellAllAssetForBtc = async (): Promise<void> => {
+    const held = await heldAssetAmount();
+    if (held > 0n) await sellAssetForBtc(held);
+};
