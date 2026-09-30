@@ -822,8 +822,10 @@ export class RfqSwapManager {
     private unsubscribeContracts: (() => void) | null = null;
     /** Recent terminal swaps; older durable outcomes are read from the record store on demand. */
     private readonly finished = new Map<string, RfqSwap>();
-    /** Explicit removals stay suppressed for this manager lifetime; normal completions never enter this set. */
-    private readonly removed = new Set<string>();
+    /** Explicit removals stay suppressed for this manager lifetime; normal completions never enter this set.
+     * Each maps to its removal sequence, so restore can tell a removal made during its rebuild. */
+    private readonly removed = new Map<string, number>();
+    private removalSeq = 0;
     private readonly waiters = new Map<
         string,
         Set<{ resolve: (v: RfqSwapOutcome) => void; reject: (e: Error) => void }>
@@ -932,7 +934,7 @@ export class RfqSwapManager {
             // The live object is at least as fresh as storage: a poll can move it
             // into a later page, or an overlapping restore track it mid-rebuild.
             if (this.monitored.has(record.rfqId)) return;
-            const removedBefore = this.removed.has(record.rfqId);
+            const removedAt = this.removed.get(record.rfqId);
             let swap: RfqSwap;
             try {
                 swap = rebuildRfqSwap(record, await params(record));
@@ -944,7 +946,7 @@ export class RfqSwapManager {
                 return;
             }
             if (this.monitored.has(record.rfqId)) return;
-            if (!removedBefore && this.removed.has(record.rfqId)) return;
+            if (this.removed.get(record.rfqId) !== removedAt) return;
             this.removed.delete(record.rfqId);
             if (isRfqSwapTerminal(swap.state)) this.rememberFinished(swap, true);
             else {
@@ -1182,7 +1184,7 @@ export class RfqSwapManager {
      * manager stops driving the swap. Retiring the row is reserved for a swap
      * that reached a terminal state, where the lockup is provably done. */
     async removeSwap(rfqId: string): Promise<void> {
-        this.removed.add(rfqId);
+        this.removed.set(rfqId, ++this.removalSeq);
         this.untrack(rfqId);
         this.finished.delete(rfqId);
         this.registered.delete(rfqId);

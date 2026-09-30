@@ -3469,19 +3469,34 @@ describe("RfqSwapManager — manager-owned persistence", () => {
         });
 
         it("keeps a swap removed while its restore is pending removed", async () => {
+            const params = async () => VHTLCV2ContractHandler.serializeParams(LOCKUP.options);
+            for (const removedEarlier of [false, true]) {
+                const m = manager({
+                    repository: fakeStore([storedSend()]),
+                    now: SAFE_NOW,
+                    spies: spies(),
+                });
+                if (removedEarlier) await m.removeSwap(RFQ_ID);
+                const result = await m.restoreFromRepository({
+                    params: async (record) => {
+                        await m.removeSwap(record.rfqId);
+                        return params();
+                    },
+                });
+                expect(result.restored).toEqual([]);
+                expect(await m.hasSwap(RFQ_ID)).toBe(false);
+            }
+
+            // Without a removal mid-rebuild, restore still overrides an earlier one.
             const m = manager({
                 repository: fakeStore([storedSend()]),
                 now: SAFE_NOW,
                 spies: spies(),
             });
-            const result = await m.restoreFromRepository({
-                params: async (record) => {
-                    await m.removeSwap(record.rfqId);
-                    return VHTLCV2ContractHandler.serializeParams(LOCKUP.options);
-                },
-            });
-            expect(result.restored).toEqual([]);
-            expect(await m.hasSwap(RFQ_ID)).toBe(false);
+            await m.removeSwap(RFQ_ID);
+            const result = await m.restoreFromRepository({ params });
+            expect(result.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
         });
 
         it("keeps the legacy terminal restore available explicitly", async () => {
