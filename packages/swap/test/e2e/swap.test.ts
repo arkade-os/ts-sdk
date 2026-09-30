@@ -9,7 +9,7 @@
  * indexer. The fill path is NOT covered here: it needs a taker holding the
  * want-asset (no solver runs in this stack) and is scoped separately.
  */
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import {
@@ -43,45 +43,7 @@ const arkdExec = "docker exec -t arkd";
 
 const FAUCET_SATS = 30_000;
 const DEPOSIT_SATS = 10_000;
-const WANT_AMOUNT = BigInt(1_000);
-
-const execCommand = (command: string): string => {
-    const result = execSync(command, { encoding: "utf8" })
-        .replace(/\r/g, "")
-        .split("\n")
-        .filter((line) => !line.includes("WARN"))
-        .join("\n")
-        .trim();
-    if (result.startsWith("error:")) throw new Error(result);
-    return result;
-};
-
-// expect.poll would do, but it refuses to run outside a test (the beforeAll
-// faucet wait needs this too); vi.waitFor polls anywhere. vi.waitFor retries
-// ANY throw until the deadline, so a real error from `fn` (stack down, HTTP
-// 500) would burn the whole timeout: capture it, stop polling, rethrow at
-// once — only a `false` (not ready yet) may spin.
-const waitFor = (fn: () => Promise<boolean>, timeout = 30_000): Promise<void> => {
-    let fatal: { err: unknown } | undefined;
-    return vi
-        .waitFor(
-            async () => {
-                if (fatal) return;
-                let ready: boolean;
-                try {
-                    ready = await fn();
-                } catch (err) {
-                    fatal = { err };
-                    return;
-                }
-                if (!ready) throw new Error("timeout in waitFor");
-            },
-            { timeout, interval: 500 },
-        )
-        .then(() => {
-            if (fatal) throw fatal.err;
-        });
-};
+const WANT_AMOUNT = 1_000n;
 
 const indexer = new RestIndexerProvider(OPERATOR_URL);
 const repository = new InMemoryAssetSwapRepository();
@@ -105,13 +67,7 @@ beforeAll(async () => {
         settlementConfig: false,
     });
 
-    // fund the maker offchain: mint a note to the arkd CLI wallet, redeem it,
-    // and send from there (the same faucet path the ts-sdk e2e suites use)
-    const note = execCommand(`${arkdExec} arkd note --amount 200000`);
-    execCommand(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
-    const address = await wallet.getAddress();
-    execCommand(`${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`);
-    await waitFor(async () => (await wallet.getVtxos()).length > 0);
+    await faucet(FAUCET_SATS);
 
     operatorPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;
 }, 120_000);
@@ -298,7 +254,7 @@ describe("maker-side swap loop (regtest)", () => {
 
         try {
             const second = await createOffer(wallet, OPERATOR_URL, {
-                wantAmount: WANT_AMOUNT + BigInt(1),
+                wantAmount: WANT_AMOUNT + 1n,
                 wantAsset,
             });
             const secondFundingTxid = await wallet.send({
@@ -319,7 +275,7 @@ describe("maker-side swap loop (regtest)", () => {
                 fromAsset: "btc",
                 toAsset: wantAsset.toString(),
                 fromAmount: String(DEPOSIT_SATS),
-                toAmount: (WANT_AMOUNT + BigInt(1)).toString(),
+                toAmount: (WANT_AMOUNT + 1n).toString(),
                 swapAddress: second.address,
                 swapPkScript: secondScript,
                 offerHex: second.offerHex,
@@ -354,3 +310,56 @@ describe("maker-side swap loop (regtest)", () => {
         }
     }, 180_000);
 });
+
+const execCommand = (command: string): string => {
+    const result = execSync(command, { encoding: "utf8" })
+        .replace(/\r/g, "")
+        .split("\n")
+        .filter((line) => !line.includes("WARN"))
+        .join("\n")
+        .trim();
+    if (result.startsWith("error:")) throw new Error(result);
+    return result;
+};
+
+// expect.poll would do, but it refuses to run outside a test (the beforeAll
+// faucet wait needs this too); vi.waitFor polls anywhere. vi.waitFor retries
+// ANY throw until the deadline, so a real error from `fn` (stack down, HTTP
+// 500) would burn the whole timeout: capture it, stop polling, rethrow at
+// once — only a `false` (not ready yet) may spin.
+const waitFor = (fn: () => Promise<boolean>, timeout = 30_000): Promise<void> => {
+    let fatal: { err: unknown } | undefined;
+    return vi
+        .waitFor(
+            async () => {
+                if (fatal) return;
+                let ready: boolean;
+                try {
+                    ready = await fn();
+                } catch (err) {
+                    fatal = { err };
+                    return;
+                }
+                if (!ready) throw new Error("timeout in waitFor");
+            },
+            { timeout, interval: 500 },
+        )
+        .then(() => {
+            if (fatal) throw fatal.err;
+        });
+};
+
+/** Mint an arkd note for `sats`, redeem it into the arkd CLI wallet, and send
+ * it on to the test wallet — the same faucet path the ts-sdk e2e suites use.
+ * The env is zero-fee, so the note needs no headroom. */
+const faucet = async (sats: number): Promise<void> => {
+    const note = execCommand(`${arkdExec} arkd note --amount ${sats}`);
+    execCommand(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
+    const address = await wallet.getAddress();
+    const before = await availableSats();
+    execCommand(`${arkdExec} ark send --to ${address} --amount ${sats} --password secret`);
+    await waitFor(async () => (await availableSats()) >= before + sats);
+};
+
+/** The wallet's spendable BTC balance. */
+const availableSats = async (): Promise<number> => (await wallet.getBalance()).available;
