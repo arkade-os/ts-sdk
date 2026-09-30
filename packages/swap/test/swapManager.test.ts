@@ -3430,6 +3430,44 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             await expect(m.waitForSwapCompletion(terminalId)).rejects.toThrow(/not monitored/);
         });
 
+        it("never replaces a live swap when paging returns it again", async () => {
+            const store = fakeStore([storedSend()]);
+            store.getRfqSwapsPage = vi.fn(async (state, afterId, limit) =>
+                [...store.records.values()]
+                    .filter(
+                        (record) => record.state === state && (!afterId || record.rfqId > afterId),
+                    )
+                    .sort((a, b) => (a.rfqId < b.rfqId ? -1 : 1))
+                    .slice(0, limit),
+            );
+            const m = manager({ repository: store, now: SAFE_NOW, spies: spies() });
+            const params = async () => VHTLCV2ContractHandler.serializeParams(LOCKUP.options);
+
+            const result = await m.restoreFromRepository({
+                params: async (record) => {
+                    // As if a poll persisted a transition mid-restore.
+                    store.records.set(record.rfqId, { ...record, state: "claimable" });
+                    return params();
+                },
+            });
+            expect(result.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
+
+            let inner: Awaited<ReturnType<typeof m.restoreFromRepository>> | undefined;
+            const m2 = manager({
+                repository: fakeStore([storedSend()]),
+                now: SAFE_NOW,
+                spies: spies(),
+            });
+            const outer = await m2.restoreFromRepository({
+                params: async () => {
+                    inner ??= await m2.restoreFromRepository({ params });
+                    return params();
+                },
+            });
+            expect(inner?.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
+            expect(outer.restored).toEqual([]);
+        });
+
         it("keeps the legacy terminal restore available explicitly", async () => {
             const store = fakeStore([storedSend({ state: "settled", updatedAt: SAFE_NOW - 1 })]);
             const m = manager({

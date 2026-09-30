@@ -929,6 +929,9 @@ export class RfqSwapManager {
         const failed: RfqRestoreFailure[] = [];
         const restore = async (record: RfqSwapRecord) => {
             if (!options.includeTerminal && isRfqSwapTerminal(record.state)) return;
+            // The live object is at least as fresh as storage: a poll can move it
+            // into a later page, or an overlapping restore track it mid-rebuild.
+            if (this.monitored.has(record.rfqId)) return;
             let swap: RfqSwap;
             try {
                 swap = rebuildRfqSwap(record, await params(record));
@@ -939,6 +942,7 @@ export class RfqSwapManager {
                 });
                 return;
             }
+            if (this.monitored.has(record.rfqId)) return;
             this.removed.delete(record.rfqId);
             if (isRfqSwapTerminal(swap.state)) this.rememberFinished(swap, true);
             else {
