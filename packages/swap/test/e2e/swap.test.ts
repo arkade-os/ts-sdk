@@ -8,10 +8,12 @@
  * Fill suite, against the stack's solverd: swaps in both directions, all-in
  * and partial, resolved live off the wallet's own vtxo_spent event (never a
  * restore scan).
+ * afterAll sells leftover asset back to the solver, so its inventory
+ * survives every run and the default solver-init float needs no sizing.
  * The minted asset id changes on every regtest boot, so nothing here may
  * hardcode it: the solver's card (`GET /v1/card`) is the one source of truth.
  */
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import {
@@ -65,6 +67,8 @@ let operatorPubkey: Uint8Array;
 let market: Market;
 let btcSide: "base" | "quote";
 let assetLeg: Market["base_asset"];
+// the solver's asset inventory at discovery time — afterAll must hand it all back
+let solverAssetBaseline: bigint;
 
 beforeAll(async () => {
     wallet = await Wallet.create({
@@ -334,7 +338,16 @@ describe("asset swaps against solverd (regtest)", () => {
         market = await solverMarket();
         btcSide = market.base_asset.id === "btc" ? "base" : "quote";
         assetLeg = btcSide === "base" ? market.quote_asset : market.base_asset;
+        solverAssetBaseline = await solverAssetBalance();
     }, 60_000);
+
+    // sell leftover asset back to the solver; the baseline pin makes
+    // inventory restoration a check, not a hope
+    afterAll(async () => {
+        if (!assetLeg) return; // discovery failed, so nothing was ever funded
+        await sellAllAssetForBtc();
+        expect(await solverAssetBalance()).toBe(solverAssetBaseline);
+    }, 180_000);
 
     it("swaps all BTC for the asset", async () => {
         // ALL the BTC: the deposit is the wallet's whole available balance. The
@@ -521,6 +534,14 @@ const availableSats = async (): Promise<number> => (await wallet.getBalance()).a
 const heldAssetAmount = async (): Promise<bigint> => {
     const held = (await wallet.getBalance()).assets.find((a) => a.assetId === assetLeg.id);
     return BigInt(held?.amount ?? 0);
+};
+
+/** The solver's current balance of the suite's asset leg, off its own API. */
+const solverAssetBalance = async (): Promise<bigint> => {
+    const response = await fetch(`${SOLVER_HTTP_URL}/v1/balance`);
+    if (!response.ok) throw new Error(`solver balance: HTTP ${response.status}`);
+    const body = await response.json();
+    return BigInt(body.asset_balances?.[assetLeg.id] ?? 0);
 };
 
 /** Buy the asset with `sats` of BTC, waiting until the bought amount is
