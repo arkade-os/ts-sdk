@@ -1,6 +1,7 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
 import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
+import { isVtxoSpent } from "../../wallet/vtxo";
 
 /**
  * In-memory implementation of WalletRepository.
@@ -29,16 +30,25 @@ export class InMemoryWalletRepository implements WalletRepository {
     }
 
     async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
-        const allMatches: ExtendedVirtualCoin[] = [];
+        return this.getVtxosForScripts([script]);
+    }
+
+    async getVtxosForScripts(
+        scripts: string[],
+        options?: { unspentOnly?: boolean },
+    ): Promise<ExtendedVirtualCoin[]> {
+        if (scripts.length === 0) return [];
+        const selected = new Set(scripts);
+        const byOutpoint = new Map<string, ExtendedVirtualCoin>();
         for (const bucket of this.vtxosByAddress.values()) {
             for (const vtxo of bucket) {
-                if (isVtxoForScript(vtxo, script)) {
-                    allMatches.push(vtxo);
+                if (vtxo.script && selected.has(vtxo.script)) {
+                    byOutpoint.set(`${vtxo.script}:${vtxo.txid}:${vtxo.vout}`, vtxo);
                 }
             }
         }
-        // Dedup by outpoint (last-write-wins across address buckets)
-        return mergeByKey([], allMatches, (item) => `${item.txid}:${item.vout}`);
+        const rows = [...byOutpoint.values()];
+        return options?.unspentOnly ? rows.filter((vtxo) => !isVtxoSpent(vtxo)) : rows;
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {

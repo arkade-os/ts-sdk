@@ -227,7 +227,7 @@ const exited = (count = 1): FakeVtxo[] =>
         isSpent: false,
         isUnrolled: true,
     }));
-/** Spent, but by nothing the indexer names — the shape `hasTerminalSpend`
+/** Spent, but by nothing the indexer names — the shape `isVtxoSpent`
  * exists to catch. There is no witness to go and verify. */
 const spentUnnamed = (over: Partial<FakeVtxo> = {}): FakeVtxo => ({
     ...LOCKUP_OUTPOINT,
@@ -729,7 +729,7 @@ describe("RfqSwapManager — resolution is read off chain, and only proof counts
     it("does not read an output spent by nothing it can name as still funded", async () => {
         // The wire contract permits `isSpent: true` with an EMPTY `spentBy`, so
         // testing `spentBy` alone would call a lockup that is gone "still
-        // there" — the exact misclassification the SDK's own `hasTerminalSpend`
+        // there" — the exact misclassification the SDK's own `isVtxoSpent`
         // unions three facts to avoid. There is no witness to verify here, so
         // the honest answer is `unknown`, never `returned`.
         const indexer = fakeIndexer({ vtxos: [spentUnnamed()] });
