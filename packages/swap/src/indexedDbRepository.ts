@@ -21,7 +21,7 @@ const DEFAULT_DB_NAME = "arkade-intents";
  * `onupgradeneeded`, which fires on a version *increase* — its contains-guard
  * cannot backfill a store into a database already open at this version, so a
  * new store added without a bump is simply missing for existing users. */
-const DB_VERSION = 4;
+const DB_VERSION = 3;
 const STORE_SWAPS = "swaps";
 const STORE_RFQ_SWAPS = "rfqSwaps";
 const STORE_SCANNED = "scannedTxids";

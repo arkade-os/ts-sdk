@@ -478,39 +478,12 @@ describe("IndexedDB migrations", () => {
 
         await using repository = new IndexedDbAssetSwapRepository(dbName);
         expect((await repository.getRfqSwapsPage("settled", undefined, 1))[0]?.rfqId).toBe("old");
-        expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId)).toEqual(["old"]);
-    });
-
-    it("adds the page index to an existing v3 RFQ store", async () => {
-        const dbName = `page-upgrade-${Math.random()}`;
-        await new Promise<void>((resolve, reject) => {
-            const open = indexedDB.open(dbName, 3);
-            open.onupgradeneeded = () => {
-                const db = open.result;
-                db.createObjectStore("swaps", { keyPath: "id" });
-                const rfq = db.createObjectStore("rfqSwaps", { keyPath: "rfqId" });
-                rfq.createIndex("byStateAndUpdatedAt", ["state", "updatedAt"]);
-                db.createObjectStore("scannedTxids");
-                db.createObjectStore("markets");
-            };
-            open.onsuccess = () => {
-                const db = open.result;
-                const tx = db.transaction(["rfqSwaps"], "readwrite");
-                tx.objectStore("rfqSwaps").put(rfqRecord("existing"));
-                tx.oncomplete = () => {
-                    db.close();
-                    resolve();
-                };
-                tx.onerror = () => reject(tx.error);
-            };
-            open.onerror = () => reject(open.error);
-        });
-
-        await using repository = new IndexedDbAssetSwapRepository(dbName);
         expect(
-            (await repository.getRfqSwapsPage("pending", undefined, 1)).map((r) => r.rfqId),
-        ).toEqual(["existing"]);
-        expect(await repository.getRfqSwap("existing")).toEqual(rfqRecord("existing"));
+            (await repository.getRfqSwapsUpdatedPage("settled", 0, undefined, 1)).map(
+                (r) => r.rfqId,
+            ),
+        ).toEqual(["old"]);
+        expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId)).toEqual(["old"]);
     });
 
     it("pages a large IndexedDB history without deleting it", async () => {
@@ -518,7 +491,7 @@ describe("IndexedDB migrations", () => {
         await using repository = new IndexedDbAssetSwapRepository(dbName);
         await repository.getAllRfqSwaps();
         await new Promise<void>((resolve, reject) => {
-            const open = indexedDB.open(dbName, 4);
+            const open = indexedDB.open(dbName, 3);
             open.onsuccess = () => {
                 const db = open.result;
                 const tx = db.transaction(["rfqSwaps"], "readwrite");
