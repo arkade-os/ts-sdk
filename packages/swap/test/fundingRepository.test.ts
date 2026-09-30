@@ -55,7 +55,7 @@ type CorruptHarness = {
 
 const putIndexedDbSwap = (dbName: string, swap: AssetSwap): Promise<void> =>
     new Promise((resolve, reject) => {
-        const open = indexedDB.open(dbName, 2);
+        const open = indexedDB.open(dbName, 3);
         open.onerror = () => reject(open.error);
         open.onsuccess = () => {
             const db = open.result;
