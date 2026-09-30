@@ -11,6 +11,7 @@ import type {
     WalletConfig,
     SettleParams,
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     GetNewAddressesOptions,
     NewAddress,
     ArkTransaction,
@@ -327,7 +328,7 @@ export class ExpoWallet
         return this.wallet.getVtxos(filter);
     }
 
-    getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+    getSpendableVtxos(filter?: GetSpendableVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
         return this.wallet.getSpendableVtxos(filter);
     }
 

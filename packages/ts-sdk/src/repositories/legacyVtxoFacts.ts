@@ -77,3 +77,12 @@ export function legacyVtxoFacts(status: unknown): LegacyVtxoFacts | undefined {
         ...parseLegacyExpiry(batchExpiry),
     };
 }
+
+/** {@link legacyVtxoFacts} for a stored row that carries neither canonical flag, else `undefined`. */
+export function legacyFactsOfRow(row: {
+    isSwept?: unknown;
+    isPreconfirmed?: unknown;
+}): LegacyVtxoFacts | undefined {
+    if (row.isSwept !== undefined || row.isPreconfirmed !== undefined) return undefined;
+    return legacyVtxoFacts((row as { virtualStatus?: unknown }).virtualStatus);
+}

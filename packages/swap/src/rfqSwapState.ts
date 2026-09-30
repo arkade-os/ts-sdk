@@ -88,6 +88,13 @@ export type RfqSwapState =
  * whose claim is still the thing that ends the swap. */
 export const RFQ_SWAP_TERMINAL_STATES = ["settled", "refunded", "failed"] as const;
 
+export const RFQ_SWAP_ACTIVE_STATES = [
+    "pending",
+    "claimable",
+    "claimed",
+    "needs_counterparty",
+] as const;
+
 /** Whether `CorridorSwapRecord.state` ends the swap — the record reader's
  * terminal check, beside the `Outcome` projection `client.onUpdate()`
  * delivers. */
