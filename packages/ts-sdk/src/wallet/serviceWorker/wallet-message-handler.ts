@@ -213,14 +213,7 @@ export type RequestGetSpendableVtxos = RequestEnvelope & {
 };
 export type ResponseGetSpendableVtxos = ResponseEnvelope & {
     type: "SPENDABLE_VTXOS";
-    payload: {
-        vtxos: Awaited<ReturnType<IWallet["getSpendableVtxos"]>>;
-        appliedContractScope?: Pick<
-            GetSpendableVtxosFilter,
-            "watchedOnly" | "genericallySpendableOnly"
-        >;
-        appliedRequireSynced?: boolean;
-    };
+    payload: { vtxos: Awaited<ReturnType<IWallet["getSpendableVtxos"]>>; filterApplied?: boolean };
 };
 
 export type RequestGetBoardingUtxos = RequestEnvelope & {
@@ -304,14 +297,12 @@ export type RequestGetContractsWithVtxos = RequestEnvelope & {
     type: "GET_CONTRACTS_WITH_VTXOS";
     payload: {
         filter?: GetContractsFilter;
-        maxSyncAgeMs?: number;
-        unspentOnly?: boolean;
-        requireSynced?: boolean;
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean };
     };
 };
 export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     type: "CONTRACTS_WITH_VTXOS";
-    payload: { contracts: ContractWithVtxos[]; appliedRequireSynced?: boolean };
+    payload: { contracts: ContractWithVtxos[]; filterApplied?: boolean };
 };
 
 function unsupportedByManager(method: string): Error {
@@ -1202,15 +1193,7 @@ export class WalletMessageHandler
                     return this.tagged({
                         id,
                         type: "SPENDABLE_VTXOS",
-                        payload: {
-                            vtxos,
-                            appliedContractScope: {
-                                watchedOnly: message.payload.filter?.watchedOnly === true,
-                                genericallySpendableOnly:
-                                    message.payload.filter?.genericallySpendableOnly === true,
-                            },
-                            appliedRequireSynced: message.payload.filter?.requireSynced === true,
-                        },
+                        payload: { vtxos, filterApplied: true },
                     });
                 }
                 case "GET_BOARDING_UTXOS": {
@@ -1297,19 +1280,12 @@ export class WalletMessageHandler
                     const contracts = await manager.getContractsWithVtxos(
                         message.payload.filter,
                         undefined,
-                        {
-                            maxSyncAgeMs: message.payload.maxSyncAgeMs,
-                            unspentOnly: message.payload.unspentOnly,
-                            requireSynced: message.payload.requireSynced,
-                        },
+                        message.payload.options,
                     );
                     return this.tagged({
                         id,
                         type: "CONTRACTS_WITH_VTXOS",
-                        payload: {
-                            contracts,
-                            appliedRequireSynced: message.payload.requireSynced === true,
-                        },
+                        payload: { contracts, filterApplied: true },
                     });
                 }
                 case "WATCH_SCRIPT": {

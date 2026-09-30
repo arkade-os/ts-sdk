@@ -78,8 +78,6 @@ function createMockRealm() {
     }
 
     function evaluateCondition(obj: any, condition: string, args: any[]): boolean {
-        const nullMatch = condition.match(/^(\w+)\s*==\s*null$/);
-        if (nullMatch) return obj[nullMatch[1]] == null;
         const match = condition.match(/(\w+)\s*==\s*\$(\d+)/);
         if (!match) return true; // skip unknown conditions
         const field = match[1];
@@ -295,39 +293,6 @@ describe("RealmWalletRepository", () => {
     // ── VTXO management ────────────────────────────────────────────────
 
     describe("VTXO management", () => {
-        it("reads multiple indexed scripts and excludes terminal rows when requested", async () => {
-            const liveA = createMockVtxo("live-a", 0, 1000);
-            const liveB = {
-                ...createMockVtxo("live-b", 0, 2000),
-                script: "5120" + "11".repeat(32),
-            };
-            const spent = { ...createMockVtxo("spent", 0, 3000), isSpent: true };
-            const legacySpent = {
-                ...createMockVtxo("legacy-spent", 0, 3000),
-                isSpent: undefined,
-                virtualStatus: { state: "spent" as const },
-            };
-            await repository.saveVtxos("address-a", [liveA, spent, legacySpent]);
-            await repository.saveVtxos("address-b", [liveB]);
-
-            const scripts = [
-                liveA.script!,
-                ...Array.from({ length: 64 }, (_, i) => `missing-${i}`),
-                liveB.script!,
-                liveA.script!,
-            ];
-            expect(await repository.getVtxosForScripts([])).toEqual([]);
-            const all = await repository.getVtxosForScripts(scripts);
-            expect(all.map((row) => row.txid).sort()).toEqual([
-                "legacy-spent",
-                "live-a",
-                "live-b",
-                "spent",
-            ]);
-            const live = await repository.getVtxosForScripts(scripts, { unspentOnly: true });
-            expect(live.map((row) => row.txid).sort()).toEqual(["live-a", "live-b"]);
-        });
-
         it("should return empty array when no VTXOs exist", async () => {
             const vtxos = await repository.getVtxos(testAddress);
             expect(vtxos).toEqual([]);

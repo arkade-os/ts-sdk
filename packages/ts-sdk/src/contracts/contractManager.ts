@@ -2398,33 +2398,28 @@ export class ContractManager implements IContractManager {
         options?: { unspentOnly?: boolean },
     ): Promise<ExtendedContractVtxo[]> {
         if (contracts.length === 0) return [];
+        let rows: ExtendedContractVtxo[];
         if (this.config.walletRepository.getVtxosForScripts) {
             const byScript = new Set(contracts.map((contract) => contract.script));
-            const rows = await this.config.walletRepository.getVtxosForScripts(
-                [...byScript],
-                options,
-            );
-            return (
-                rows
-                    .filter((vtxo) => vtxo.script !== undefined && byScript.has(vtxo.script))
-                    // Custom repositories may ignore the optional query hint.
-                    .filter((vtxo) => !options?.unspentOnly || !isVtxoSpent(vtxo))
-                    .map((vtxo) => ({ ...normalizeVtxo(vtxo), contractScript: vtxo.script! }))
-            );
-        }
-        const res = await Promise.all(
-            contracts.map((contract) =>
-                getVtxosForContract(this.config.walletRepository, contract).then((vtxos) =>
-                    vtxos.map(
-                        (vtxo): ExtendedContractVtxo => ({
-                            ...vtxo,
-                            contractScript: contract.script,
-                        }),
+            rows = (await this.config.walletRepository.getVtxosForScripts([...byScript], options))
+                .filter((vtxo) => vtxo.script !== undefined && byScript.has(vtxo.script))
+                .map((vtxo) => ({ ...normalizeVtxo(vtxo), contractScript: vtxo.script! }));
+        } else {
+            const res = await Promise.all(
+                contracts.map((contract) =>
+                    getVtxosForContract(this.config.walletRepository, contract).then((vtxos) =>
+                        vtxos.map(
+                            (vtxo): ExtendedContractVtxo => ({
+                                ...vtxo,
+                                contractScript: contract.script,
+                            }),
+                        ),
                     ),
                 ),
-            ),
-        );
-        const rows = res.flat();
+            );
+            rows = res.flat();
+        }
+        // Custom repositories may ignore the optional query hint.
         return options?.unspentOnly ? rows.filter((vtxo) => !isVtxoSpent(vtxo)) : rows;
     }
 

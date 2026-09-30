@@ -1445,12 +1445,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
             query = { ...scope, script: scripts };
         }
-        const snapshot = await contractManager.getContractsWithVtxos(query, undefined, {
+        return contractManager.getContractsWithVtxos(query, undefined, {
             maxSyncAgeMs: filter?.maxSyncAgeMs,
             unspentOnly: options?.unspentOnly,
             requireSynced: filter?.requireSynced,
         });
-        return snapshot;
     }
 
     /**
@@ -5631,23 +5630,12 @@ export class Wallet
             // Index asset candidates once. A wallet with many VTXOs and several
             // asset recipients must not scan the full inventory for each asset
             // or linearly search every already-selected input on each pass.
-            const requestedAssetIds = new Set(
-                recipients.flatMap((recipient) =>
-                    (recipient.assets ?? []).map((asset) => asset.assetId),
-                ),
-            );
             const coinsByAsset = new Map<string, NormalizedExtendedVirtualCoin[]>();
-            if (requestedAssetIds.size > 0) {
-                for (const coin of virtualCoins) {
-                    if (!coin.assets?.length) continue;
-                    const seenAssetIds = new Set<string>();
-                    for (const { assetId } of coin.assets) {
-                        if (!requestedAssetIds.has(assetId) || seenAssetIds.has(assetId)) continue;
-                        seenAssetIds.add(assetId);
-                        const coins = coinsByAsset.get(assetId) ?? [];
-                        coins.push(coin);
-                        coinsByAsset.set(assetId, coins);
-                    }
+            for (const coin of virtualCoins) {
+                for (const assetId of new Set(coin.assets?.map((asset) => asset.assetId))) {
+                    const coins = coinsByAsset.get(assetId) ?? [];
+                    coins.push(coin);
+                    coinsByAsset.set(assetId, coins);
                 }
             }
             const selectedOutpoints = new Set<string>();

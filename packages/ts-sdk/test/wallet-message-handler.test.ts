@@ -2213,10 +2213,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         });
         expect(response).toMatchObject({
             type: "SPENDABLE_VTXOS",
-            payload: {
-                vtxos,
-                appliedContractScope: { watchedOnly: true, genericallySpendableOnly: true },
-            },
+            payload: { vtxos, filterApplied: true },
         });
     });
 

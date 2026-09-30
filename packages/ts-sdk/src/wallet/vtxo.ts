@@ -361,16 +361,8 @@ export function isVtxoSpent(vtxo: VirtualCoin): boolean {
     return !!n.isSpent || !!n.spentBy || !!n.settledBy;
 }
 
-/**
- * Return whether a virtual output has had a terminal spend recorded on it.
- *
- * @deprecated Old name for {@link isVtxoSpent}; kept for source compatibility. Same predicate,
- * including how it treats legacy-only callers (read through the stored status until the next
- * normalize). Use the canonical name in new code.
- */
-export function hasTerminalSpend(vtxo: VirtualCoin): boolean {
-    return isVtxoSpent(vtxo);
-}
+/** @deprecated Use {@link isVtxoSpent}. */
+export const hasTerminalSpend = isVtxoSpent;
 
 /**
  * Whether a virtual output's batch expiry has passed. Pure expiry — swept is a separate fact, ORed

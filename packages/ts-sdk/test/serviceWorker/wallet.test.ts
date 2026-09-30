@@ -221,11 +221,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
                 id: message.id,
                 tag: messageTag,
                 type: "SPENDABLE_VTXOS",
-                payload: {
-                    vtxos,
-                    appliedContractScope: { watchedOnly: true, genericallySpendableOnly: true },
-                    appliedRequireSynced: true,
-                },
+                payload: { vtxos, filterApplied: true },
             };
         });
 
@@ -271,7 +267,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
             "does not support the requested contract scope",
         );
         await expect(wallet.getSpendableVtxos({ requireSynced: true })).rejects.toThrow(
-            "does not support the requested freshness check",
+            "does not support the requested contract scope or freshness check",
         );
     });
 
@@ -398,18 +394,13 @@ describe("ServiceWorkerReadonlyWallet", () => {
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: "GET_CONTRACTS_WITH_VTXOS",
-                payload: {
-                    filter: {},
-                    maxSyncAgeMs: 60_000,
-                    unspentOnly: true,
-                    requireSynced: undefined,
-                },
+                payload: { filter: {}, options: { maxSyncAgeMs: 60_000, unspentOnly: true } },
             }),
         );
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: "GET_CONTRACTS_WITH_VTXOS",
-                payload: expect.objectContaining({ requireSynced: true }),
+                payload: expect.objectContaining({ options: { requireSynced: true } }),
             }),
         );
         await expect(manager.updateContract("c1", { label: "new" })).resolves.toEqual(contract);

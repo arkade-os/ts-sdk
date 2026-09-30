@@ -20,6 +20,8 @@ import {
     RepositoryTestItem,
 } from "../storage.test";
 import { WalletRepository, WalletState } from "../../src/repositories";
+import { RealmWalletRepository } from "../../src/repositories/realm/walletRepository";
+import { createMockRealm } from "../../../../config/test-helpers/mockRealm";
 
 const walletRepositoryImplementations: Array<RepositoryTestItem<WalletRepository>> = [
     {
@@ -29,6 +31,18 @@ const walletRepositoryImplementations: Array<RepositoryTestItem<WalletRepository
     {
         name: "IndexedDBWalletRepository",
         factory: async () => new IndexedDBWalletRepository(),
+    },
+    {
+        name: "RealmWalletRepository",
+        factory: async () =>
+            new RealmWalletRepository(
+                createMockRealm({
+                    ArkVtxo: "pk",
+                    ArkUtxo: "pk",
+                    ArkTransaction: "pk",
+                    ArkWalletState: "key",
+                }),
+            ),
     },
 ];
 

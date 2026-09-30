@@ -1185,14 +1185,14 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             const response = await this.sendMessage(message);
             const payload = (response as ResponseGetSpendableVtxos).payload;
             if (
-                (filter?.watchedOnly && payload.appliedContractScope?.watchedOnly !== true) ||
-                (filter?.genericallySpendableOnly &&
-                    payload.appliedContractScope?.genericallySpendableOnly !== true)
+                (filter?.watchedOnly ||
+                    filter?.genericallySpendableOnly ||
+                    filter?.requireSynced) &&
+                payload.filterApplied !== true
             ) {
-                throw new Error("Service worker does not support the requested contract scope");
-            }
-            if (filter?.requireSynced && payload.appliedRequireSynced !== true) {
-                throw new Error("Service worker does not support the requested freshness check");
+                throw new Error(
+                    "Service worker does not support the requested contract scope or freshness check",
+                );
             }
             return payload.vtxos.map(normalizeVtxo);
         } catch (error) {
@@ -1315,19 +1315,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     type: "GET_CONTRACTS_WITH_VTXOS",
                     id: getRandomId(),
                     tag: messageTag,
-                    payload: {
-                        filter,
-                        maxSyncAgeMs: options?.maxSyncAgeMs,
-                        unspentOnly: options?.unspentOnly,
-                        requireSynced: options?.requireSynced,
-                    },
+                    payload: { filter, options },
                 };
                 try {
                     const response = await sendContractMessage(message);
                     if (
                         options?.requireSynced &&
-                        (response as ResponseGetContractsWithVtxos).payload.appliedRequireSynced !==
-                            true
+                        (response as ResponseGetContractsWithVtxos).payload.filterApplied !== true
                     ) {
                         throw new Error(
                             "Service worker does not support the requested freshness check",
