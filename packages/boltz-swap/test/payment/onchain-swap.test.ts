@@ -35,6 +35,14 @@ describe("onchainSwapRail", () => {
         expect(await onchainSwapRail().available?.({ raw: btcAddr }, ctx({}))).toBe(true);
     });
 
+    it("drops itself when the request names its own inputs, and refuses if reached", async () => {
+        const req = { raw: btcAddr, amount: 100_000, selectedVtxos: [] as any };
+        expect(await onchainSwapRail().available?.(req, ctx(withFees({})))).toBe(false);
+        await expect(onchainSwapRail().quote(req, ctx(withFees({})))).rejects.toThrow(
+            /selectedVtxos/i,
+        );
+    });
+
     it("available() gates on the reconstructed source (user-lock) amount", async () => {
         const r = onchainSwapRail();
         // fees: 2% + server 1000 + user.claim 500; recipient amount 100_000

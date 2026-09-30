@@ -26,8 +26,49 @@ export function gatedContracts(contracts: readonly Contract[]): Map<string, stri
     return gated;
 }
 
+/**
+ * {@link gatedContracts} over the contract+VTXO snapshot every read path
+ * actually holds, so the four callers that need the gate do not keep
+ * `gatedContracts(snapshot.map((_) => _.contract))` in step by hand.
+ */
+export function gatedFrom(snapshot: readonly { contract: Contract }[]): GatedContracts {
+    return gatedContracts(snapshot.map((entry) => entry.contract));
+}
+
 /** The minimum a VTXO must carry to be matched against an exclusion set. */
 export type ExcludableVtxo = { txid: string; vout: number; script?: string };
+
+/** {@link gatedContracts}' answer, as callers that only read it should take it. */
+export type GatedContracts = ReadonlyMap<string, string>;
+
+/**
+ * The type of the gated contract this VTXO belongs to, or `undefined` when
+ * generic spending is open to it.
+ *
+ * The single spelling of the per-VTXO question, so the gate cannot be asked two
+ * subtly different ways. A VTXO with no script belongs to no contract row, so it
+ * is the wallet's own coin.
+ *
+ * The `undefined` check is deliberately not a truthiness check, so that an
+ * empty-string script still asks the map rather than being read as "no
+ * contract". The two spellings are indistinguishable on both SDK read paths —
+ * `isVtxoForScript` keeps a `""`-scripted coin out of every snapshot bucket, and
+ * `saveVtxosForContract` refuses to persist one — so this is not a guarantee to
+ * lean on, only the pre-existing semantics preserved verbatim. It is kept
+ * because this predicate now decides coin selection and the `available` balance
+ * as well as history, which is not the place to take on a gratuitous difference.
+ */
+function gatedTypeOf(
+    vtxo: Pick<ExcludableVtxo, "script">,
+    gated: GatedContracts,
+): string | undefined {
+    return vtxo.script === undefined ? undefined : gated.get(vtxo.script);
+}
+
+/** {@link gatedTypeOf} as a predicate, for callers with no use for the type. */
+export function isGatedVtxo(vtxo: Pick<ExcludableVtxo, "script">, gated: GatedContracts): boolean {
+    return gatedTypeOf(vtxo, gated) !== undefined;
+}
 
 /**
  * Why generic spending skips a VTXO, or `undefined` when it does not — phrased
@@ -51,9 +92,9 @@ export type VtxoExclusion = (vtxo: ExcludableVtxo) => string | undefined;
  * already available here, so the message can tell them apart instead of
  * collapsing both into one sentence that reads as the same case either way.
  */
-export function gateExclusion(gated: ReadonlyMap<string, string>): VtxoExclusion {
+export function gateExclusion(gated: GatedContracts): VtxoExclusion {
     return (vtxo) => {
-        const type = vtxo.script === undefined ? undefined : gated.get(vtxo.script);
+        const type = gatedTypeOf(vtxo, gated);
         if (type === undefined) return undefined;
         // A handler present but declaring no `isGenericallySpendable` predicate
         // reads the same as an explicit decline here: both are this build

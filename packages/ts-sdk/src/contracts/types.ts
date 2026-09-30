@@ -508,6 +508,7 @@ export interface DerivedContractTapscripts {
  * doesn't expose the legacy `forfeit()` method (e.g. program-compiled arkade
  * contracts, where the right leaf depends on the program) implement this so
  * the annotation pipeline stays type-agnostic.
+ * Must be pure in `(contract.type, contract.script, contract.params)`: `ContractManager` memoizes the result for its lifetime.
  */
 export interface TapscriptDeriving<S extends VtxoScript = VtxoScript> {
     deriveTapscripts(script: S, contract: Contract): DerivedContractTapscripts;
@@ -522,8 +523,21 @@ export function isTapscriptDeriving(
     );
 }
 
+/** A script the watcher reports on without the wallet owning it. */
+export interface WatchedScript {
+    script: string;
+
+    /** Free-form tag echoed back by `getWatchedScripts`; never sent anywhere. */
+    label?: string;
+}
+
 /**
  * Event emitted when contract-related changes occur.
+ *
+ * A watch-only script reports the same `vtxo_received` / `vtxo_spent` types
+ * but carries no `contract`, and cannot: annotation needs one. That absence is
+ * the ownership boundary, and the compiler enforces it — reading
+ * `event.contract` unnarrowed by {@link isContractVtxoEvent} fails.
  */
 export type ContractEvent =
     | {
@@ -540,7 +554,30 @@ export type ContractEvent =
           contract: Contract;
           timestamp: number;
       }
+    | {
+          type: "vtxo_received";
+          contractScript: string;
+          vtxos: VirtualCoin[];
+          timestamp: number;
+      }
+    | {
+          type: "vtxo_spent";
+          contractScript: string;
+          vtxos: VirtualCoin[];
+          timestamp: number;
+      }
     | { type: "connection_reset"; timestamp: number };
+
+export type ContractVtxoEvent = Extract<ContractEvent, { contract: Contract }>;
+
+/**
+ * Gate every wallet-side effect on this: a watch-only event has no contract.
+ * @example `if (!isContractVtxoEvent(event)) return;` inside `onContractEvent`,
+ * before reading `event.contract` — which does not compile without it.
+ */
+export function isContractVtxoEvent(event: ContractEvent): event is ContractVtxoEvent {
+    return "contract" in event && event.contract !== undefined;
+}
 
 /**
  * Callback for contract events.

@@ -120,6 +120,9 @@ export function solverLightningRail(deps: SolverLightningRailDeps): PaymentRail 
                 amount: facts.amountSats,
                 fee: swap.fundAmount - facts.amountSats,
                 total: swap.fundAmount,
+                // The invoice can lapse before the quote does; the earlier bound
+                // is the one a holder must observe.
+                validUntil: Math.min(swap.quote.valid_until, facts.expiresAt),
                 meta: {
                     rfqId: swap.rfqId,
                     validUntil: swap.quote.valid_until,

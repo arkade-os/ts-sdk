@@ -7,7 +7,7 @@ import { getNetwork } from "../src/networks";
 import { VtxoScript } from "../src/script/base";
 import { ConditionCSVMultisigTapscript, CSVMultisigTapscript } from "../src/script/tapscript";
 import { timelockToSequence } from "../src/utils/timelock";
-import { buildSignedSweep } from "../src/wallet/exit/sweep";
+import { buildSignedSweep, SweepSigner } from "../src/wallet/exit/sweep";
 
 const network = getNetwork("regtest");
 const identity = SingleKey.fromHex("aa".repeat(32));
@@ -22,7 +22,7 @@ async function ownerPubkey(): Promise<Uint8Array> {
 }
 
 describe("buildSignedSweep", () => {
-    it("signs and finalizes a plain CSV exit path", async () => {
+    it("signs and finalizes a plain CSV exit path (plain path via signer)", async () => {
         const owner = await ownerPubkey();
         const exit = CSVMultisigTapscript.encode({ pubkeys: [owner], timelock });
         const script = new VtxoScript([exit.script]);
@@ -132,5 +132,49 @@ describe("buildSignedSweep", () => {
                 identity,
             }),
         ).rejects.toThrow(/dust|uneconomic/i);
+    });
+
+    it("supports a wallet-provided signer (descriptor-aware route)", async () => {
+        const owner = await ownerPubkey();
+        const exit = CSVMultisigTapscript.encode({ pubkeys: [owner], timelock });
+        const script = new VtxoScript([exit.script]);
+        const leaf = script.findLeaf(hex.encode(exit.script));
+
+        let signerCalled = false;
+        const signer: SweepSigner = async (tx) => {
+            signerCalled = true;
+            return identity.sign(tx);
+        };
+
+        const { tx } = await buildSignedSweep({
+            vtxo: { txid: "77".repeat(32), vout: 0, value: 50_000, pkScript: script.pkScript },
+            path: { leaf, sequence: expectedSequence },
+            outputAddress: destAddress,
+            feeRate: 2,
+            network,
+            identity,
+            signer,
+        });
+
+        expect(signerCalled).toBe(true);
+        expect(tx.getInput(0).finalScriptWitness).toBeDefined();
+    });
+
+    it("signs without signer and finalizes (plain path via fallback)", async () => {
+        const owner = await ownerPubkey();
+        const exit = CSVMultisigTapscript.encode({ pubkeys: [owner], timelock });
+        const script = new VtxoScript([exit.script]);
+        const leaf = script.findLeaf(hex.encode(exit.script));
+
+        const { tx } = await buildSignedSweep({
+            vtxo: { txid: "88".repeat(32), vout: 0, value: 50_000, pkScript: script.pkScript },
+            path: { leaf, sequence: expectedSequence },
+            outputAddress: destAddress,
+            feeRate: 2,
+            network,
+            identity,
+        });
+
+        expect(tx.getInput(0).finalScriptWitness).toBeDefined();
     });
 });

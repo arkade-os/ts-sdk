@@ -61,6 +61,7 @@ export async function prepare(opts: ExitOptions): Promise<ExitPackage> {
                 feeRate,
                 network: wallet.network,
                 identity: wallet.identity,
+                signer: (tx) => wallet.signInputsByWitnessScript(tx),
             });
             activeOutpoints.add(outpoint);
             sweepSteps.push({

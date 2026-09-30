@@ -93,6 +93,7 @@ import {
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    NormalizedExtendedVirtualCoin,
     WalletBalance,
     SendBitcoinParams,
     SettleParams,
@@ -102,17 +103,19 @@ import {
     VirtualCoin,
     TxKey,
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     TapLeaves,
     StorageConfig,
     isSpendable,
     isSubdust,
     isRecoverable,
     isExpired,
+    hasTerminalSpend,
     // VTXO capability predicates
     canRecoverOnchain,
     canSpendOffchain,
     canSweepOnchain,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     isVirtualCoin,
     TimeHeight,
@@ -142,6 +145,10 @@ export {
     type ActivityResolver,
     type TxTag,
 } from "./wallet";
+export {
+    registerWalletRestoreHook,
+    type WalletRestoreHook,
+} from "./wallet/restoreHooks";
 import { Batch } from "./wallet/batch";
 import {
     signingDescriptorIndex,
@@ -167,7 +174,7 @@ import {
 import { createAssetPacket, selectCoinsWithAsset } from "./wallet/asset";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSession";
-import { DustChangeError, Ramps } from "./wallet/ramps";
+import { DustChangeError, OversizedChangeError, Ramps } from "./wallet/ramps";
 import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import type {
@@ -505,7 +512,7 @@ import {
     isArkContract,
 } from "./contracts/arkcontract";
 import type { ParsedArkContract } from "./contracts/arkcontract";
-import { hasCandidates, isDiscoverable } from "./contracts/types";
+import { hasCandidates, isContractVtxoEvent, isDiscoverable } from "./contracts/types";
 import {
     isContractGenericallySpendable,
     gatedContracts,
@@ -522,9 +529,11 @@ import type {
     ContractState,
     ContractEvent,
     ContractEventCallback,
+    ContractVtxoEvent,
     ContractBalance,
     ContractWithVtxos,
     ContractHandler,
+    WatchedScript,
     PathSelection,
     PathContext,
     ExtendedContractVtxo,
@@ -536,7 +545,7 @@ import type {
 import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
 import { toXOnly } from "./utils/keys";
-import { buildVersion, sdkVersion, FetchError } from "./utils/fetch";
+import { buildVersion, sdkVersion, FetchError, READ_TIMEOUT_MS } from "./utils/fetch";
 import {
     closeDatabase,
     openDatabase,
@@ -614,6 +623,7 @@ export {
     OnchainWallet,
     Ramps,
     DustChangeError,
+    OversizedChangeError,
     VtxoManager,
     classifyContractSigner,
     classifyAgainstSignerSet,
@@ -636,6 +646,7 @@ export {
     CachingArkProvider,
     DigestMismatchError,
     FetchError,
+    READ_TIMEOUT_MS,
     RestIndexerProvider,
     RestEmulatorProvider,
     DEFAULT_VTXO_PAGE_SIZE,
@@ -817,12 +828,13 @@ export {
     isSpendable,
     isSubdust,
     isExpired,
+    hasTerminalSpend,
     getSequence,
     // VTXO capability predicates
     canRecoverOnchain,
     canSpendOffchain,
     canSweepOnchain,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     isVirtualCoin,
     // Contracts
@@ -849,6 +861,7 @@ export {
     isArkContract,
     isDiscoverable,
     hasCandidates,
+    isContractVtxoEvent,
     // Contract handler authoring helpers (spending-path selection)
     isCsvSpendable,
     isCltvSatisfied,
@@ -877,6 +890,7 @@ export type {
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    NormalizedExtendedVirtualCoin,
     WalletBalance,
     SendBitcoinParams,
     SettleParams,
@@ -966,6 +980,7 @@ export type {
     TreePartialSigs,
     // Wallet types
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     BoardingUtxoGroup,
     ArkadeCashClaimResult,
     ArkadeCashUnclaimedReason,
@@ -1034,10 +1049,12 @@ export type {
     ContractState,
     ContractEvent,
     ContractEventCallback,
+    ContractVtxoEvent,
     ContractBalance,
     ContractWithVtxos,
     ContractHandler,
     IContractManager,
+    WatchedScript,
     PathSelection,
     ExtendedContractVtxo,
     PathContext,

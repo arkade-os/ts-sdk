@@ -11,7 +11,7 @@
  *
  * The solver's schemas are restated below as data rather than imported: they
  * live in another repo, behind a `zod` this package does not depend on. Source
- * of truth, `arkade-os/intent-solver` at `9751a1c`:
+ * of truth, `arkade-os/intent-solver` at `6e6eac6`:
  *
  *   packages/solver-corridors-evm/src/wire/evmPayloads.ts
  *   packages/solver-core/src/core/corridorPolicy.ts
@@ -59,6 +59,14 @@ const SOLVER_CLAIM_ADDRESS = "0x3333333333333333333333333333333333333333";
 const SOLVER_EVM_ADDRESS = "0x4444444444444444444444444444444444444444";
 
 const NOW = 1_800_000_000;
+const EXPECTED_QUOTE = {
+    tokenAddress: USDC,
+    rfqId: RFQ_ID,
+    paymentHash: PAYMENT_HASH,
+    chainId: 1,
+    amountSats: 250_000,
+    evmAmount: 249_750_000_000_000_000_000n,
+};
 
 // ── The solver's schemas, restated ──────────────────────────────────────────
 
@@ -358,7 +366,7 @@ describe("solver parity", () => {
             expect(() =>
                 readEvmSendQuote(
                     withoutKey(sendQuote() as unknown as Record<string, unknown>, key),
-                    { tokenAddress: USDC, rfqId: RFQ_ID },
+                    EXPECTED_QUOTE,
                 ),
             ).toThrow(new RegExp(`profile\\.${key}`));
         }
@@ -366,7 +374,7 @@ describe("solver parity", () => {
             expect(() =>
                 readEvmReceiveQuote(
                     withoutKey(receiveQuote() as unknown as Record<string, unknown>, key),
-                    { tokenAddress: USDC, rfqId: RFQ_ID },
+                    EXPECTED_QUOTE,
                 ),
             ).toThrow(new RegExp(`profile\\.${key}`));
         }
@@ -453,6 +461,16 @@ describe("amounts", () => {
 
     it("refuses a negative amount rather than emitting a sign the schema anchors out", () => {
         expect(() => evmAmountToWire(-1n)).toThrow(/may not be negative/);
+    });
+
+    it("bounds values to uint256 and refuses non-bigint runtime inputs", () => {
+        const max = 2n ** 256n - 1n;
+        expect(evmAmountToWire(max)).toBe(max.toString());
+        expect(evmAmountFromWire(max.toString(), "x")).toBe(max);
+        expect(() => evmAmountToWire(max + 1n)).toThrow(/fit uint256/);
+        expect(() => evmAmountToWire(1 as unknown as bigint)).toThrow(/must be a bigint/);
+        expect(() => evmAmountFromWire((max + 1n).toString(), "x")).toThrow(/exceeds uint256/);
+        expect(() => evmAmountFromWire("9".repeat(1_000), "x")).toThrow(/exceeds uint256/);
     });
 
     it("round-trips past 2^53 without losing a unit", () => {
@@ -579,6 +597,7 @@ describe("request builders", () => {
         expect(() => evmSendRequest({ ...send, evmClaimAddress: "0x00" })).toThrow(
             /evmClaimAddress/,
         );
+        expect(() => evmSendRequest({ ...send, paymentHash: "not-a-hash" })).toThrow(/paymentHash/);
         const receive = {
             rfqId: RFQ_ID,
             tokenAddress: USDC,
@@ -591,6 +610,9 @@ describe("request builders", () => {
         };
         expect(() => evmReceiveRequest({ ...receive, evmTimeoutBlock: 0 })).toThrow(
             /evmTimeoutBlock/,
+        );
+        expect(() => evmReceiveRequest({ ...receive, paymentHash: "not-a-hash" })).toThrow(
+            /paymentHash/,
         );
         // Both non-positive amounts are refused by the BUILDER, with one
         // message, because "not a positive amount" is one rule. The codec's own
@@ -606,6 +628,9 @@ describe("request builders", () => {
         expect(() => evmReceiveRequest({ ...receive, evmRefundAddress: "nope" })).toThrow(
             /evmRefundAddress/,
         );
+        expect(() => evmReceiveRequest({ ...receive, evmAmount: 2n ** 256n })).toThrow(
+            /fit uint256/,
+        );
     });
 });
 
@@ -613,14 +638,14 @@ describe("request builders", () => {
 
 describe("quote readers", () => {
     it("narrows a well-formed send quote", () => {
-        const quote = readEvmSendQuote(sendQuote(), { tokenAddress: USDC, rfqId: RFQ_ID });
+        const quote = readEvmSendQuote(sendQuote(), EXPECTED_QUOTE);
         expect(quote.profile.evm_timeout_block).toBe(21_000_000);
         expect(evmQuoteTokenAmount(quote)).toBe(249_750_000_000_000_000_000n);
         expect(evmQuoteSats(quote)).toBe(250_000);
     });
 
     it("narrows a well-formed receive quote", () => {
-        const quote = readEvmReceiveQuote(receiveQuote(), { tokenAddress: USDC, rfqId: RFQ_ID });
+        const quote = readEvmReceiveQuote(receiveQuote(), EXPECTED_QUOTE);
         expect(quote.profile.evm_claim_address).toBe(SOLVER_CLAIM_ADDRESS);
         expect(evmQuoteTokenAmount(quote)).toBe(249_750_000_000_000_000_000n);
         expect(evmQuoteSats(quote)).toBe(250_000);
@@ -629,8 +654,8 @@ describe("quote readers", () => {
     it("takes the token and sats legs off OPPOSITE sides per direction", () => {
         // The one thing that silently swaps: both quotes carry the same two
         // numbers, and reading the wrong side yields a plausible value.
-        const send = readEvmSendQuote(sendQuote(), { tokenAddress: USDC, rfqId: RFQ_ID });
-        const receive = readEvmReceiveQuote(receiveQuote(), { tokenAddress: USDC, rfqId: RFQ_ID });
+        const send = readEvmSendQuote(sendQuote(), EXPECTED_QUOTE);
+        const receive = readEvmReceiveQuote(receiveQuote(), EXPECTED_QUOTE);
         expect(BigInt(send.to_amount)).toBe(evmQuoteTokenAmount(send));
         expect(send.from_amount).toBe(evmQuoteSats(send));
         expect(BigInt(receive.from_amount)).toBe(evmQuoteTokenAmount(receive));
@@ -643,53 +668,118 @@ describe("quote readers", () => {
         // pair is byte-identical. Only `rfq_id` tells them apart, and taking
         // the wrong one funds the other swap's terms.
         const other = "c3".repeat(32);
-        expect(() =>
-            readEvmSendQuote(sendQuote({ rfq_id: other }), {
-                tokenAddress: USDC,
-                rfqId: RFQ_ID,
-            }),
-        ).toThrow(/quote is for rfq_id "c3c3.*not this negotiation's a1a1/);
-        expect(() =>
-            readEvmReceiveQuote(receiveQuote({ rfq_id: other }), {
-                tokenAddress: USDC,
-                rfqId: RFQ_ID,
-            }),
-        ).toThrow(/not this negotiation's/);
+        expect(() => readEvmSendQuote(sendQuote({ rfq_id: other }), EXPECTED_QUOTE)).toThrow(
+            /quote is for rfq_id "c3c3.*not this negotiation's a1a1/,
+        );
+        expect(() => readEvmReceiveQuote(receiveQuote({ rfq_id: other }), EXPECTED_QUOTE)).toThrow(
+            /not this negotiation's/,
+        );
         // …and a quote carrying no id at all, which would otherwise compare
         // `undefined !== undefined` as false if the caller's were missing too.
         const anonymous = sendQuote() as unknown as Record<string, unknown>;
         delete anonymous.rfq_id;
-        expect(() => readEvmSendQuote(anonymous, { tokenAddress: USDC, rfqId: RFQ_ID })).toThrow(
-            /quote is for rfq_id/,
-        );
+        expect(() => readEvmSendQuote(anonymous, EXPECTED_QUOTE)).toThrow(/quote is for rfq_id/);
     });
 
     it("refuses a quote for another token, or another pair entirely", () => {
         expect(() =>
-            readEvmSendQuote(sendQuote(), { tokenAddress: ERC20_SWAP, rfqId: RFQ_ID }),
+            readEvmSendQuote(sendQuote(), { ...EXPECTED_QUOTE, tokenAddress: ERC20_SWAP }),
         ).toThrow(/solver quoted .* not arkade:BTC->ethereum/);
         // The receive quote's own pair, handed to the send reader.
-        expect(() =>
-            readEvmSendQuote(receiveQuote(), { tokenAddress: USDC, rfqId: RFQ_ID }),
-        ).toThrow(/solver quoted/);
-        expect(() =>
-            readEvmReceiveQuote(sendQuote(), { tokenAddress: USDC, rfqId: RFQ_ID }),
-        ).toThrow(/solver quoted/);
+        expect(() => readEvmSendQuote(receiveQuote(), EXPECTED_QUOTE)).toThrow(/solver quoted/);
+        expect(() => readEvmReceiveQuote(sendQuote(), EXPECTED_QUOTE)).toThrow(/solver quoted/);
     });
 
     it("refuses a token amount that arrived as a JSON number", () => {
+        expect(() => readEvmSendQuote(sendQuote({ to_amount: 249.75e18 }), EXPECTED_QUOTE)).toThrow(
+            /to_amount must be a decimal string/,
+        );
         expect(() =>
-            readEvmSendQuote(sendQuote({ to_amount: 249.75e18 }), {
-                tokenAddress: USDC,
-                rfqId: RFQ_ID,
-            }),
-        ).toThrow(/to_amount must be a decimal string/);
-        expect(() =>
-            readEvmReceiveQuote(receiveQuote({ from_amount: 249.75e18 }), {
-                tokenAddress: USDC,
-                rfqId: RFQ_ID,
-            }),
+            readEvmReceiveQuote(receiveQuote({ from_amount: 249.75e18 }), EXPECTED_QUOTE),
         ).toThrow(/from_amount must be a decimal string/);
+    });
+
+    it("binds both exact-in quote amounts, payment hashes, and chains to the request", () => {
+        const otherHash = "d4".repeat(32);
+        expect(() =>
+            readEvmSendQuote(
+                { ...sendQuote(), profile: { ...sendQuote().profile, payment_hash: otherHash } },
+                EXPECTED_QUOTE,
+            ),
+        ).toThrow(/payment_hash does not match/);
+        expect(() =>
+            readEvmReceiveQuote(
+                {
+                    ...receiveQuote(),
+                    profile: { ...receiveQuote().profile, payment_hash: otherHash },
+                },
+                EXPECTED_QUOTE,
+            ),
+        ).toThrow(/payment_hash does not match/);
+        expect(() => readEvmSendQuote(sendQuote({ from_amount: 250_001 }), EXPECTED_QUOTE)).toThrow(
+            /from_amount does not match the requested sats/,
+        );
+        expect(() =>
+            readEvmReceiveQuote(
+                receiveQuote({ from_amount: "249750000000000000001" }),
+                EXPECTED_QUOTE,
+            ),
+        ).toThrow(/from_amount does not match the requested token/);
+        expect(() =>
+            readEvmSendQuote(
+                { ...sendQuote(), profile: { ...sendQuote().profile, evm_chain_id: 10 } },
+                EXPECTED_QUOTE,
+            ),
+        ).toThrow(/evm_chain_id does not match/);
+        expect(() =>
+            readEvmReceiveQuote(
+                { ...receiveQuote(), profile: { ...receiveQuote().profile, evm_chain_id: 10 } },
+                EXPECTED_QUOTE,
+            ),
+        ).toThrow(/evm_chain_id does not match/);
+    });
+
+    it("requires version 1 and positive uint256 token quote amounts", () => {
+        expect(() => readEvmSendQuote(sendQuote({ v: 2 }), EXPECTED_QUOTE)).toThrow(
+            /expected EVM quote version 1/,
+        );
+        expect(() => readEvmReceiveQuote(receiveQuote({ v: 2 }), EXPECTED_QUOTE)).toThrow(
+            /expected EVM quote version 1/,
+        );
+        expect(() => readEvmSendQuote(sendQuote({ to_amount: "0" }), EXPECTED_QUOTE)).toThrow(
+            /to_amount must be positive/,
+        );
+        expect(() =>
+            readEvmReceiveQuote(receiveQuote({ from_amount: "0" }), EXPECTED_QUOTE),
+        ).toThrow(/from_amount must be positive/);
+        expect(() =>
+            readEvmSendQuote(sendQuote({ to_amount: (2n ** 256n).toString() }), EXPECTED_QUOTE),
+        ).toThrow(/exceeds uint256/);
+        expect(() =>
+            readEvmReceiveQuote(
+                receiveQuote({ from_amount: (2n ** 256n).toString() }),
+                EXPECTED_QUOTE,
+            ),
+        ).toThrow(/exceeds uint256/);
+    });
+
+    it("rejects unsafe integer fields and expected values", () => {
+        const unsafe = Number.MAX_SAFE_INTEGER + 1;
+        expect(() => readEvmSendQuote(sendQuote({ valid_until: unsafe }), EXPECTED_QUOTE)).toThrow(
+            /valid_until must be a positive integer/,
+        );
+        expect(() =>
+            readEvmReceiveQuote(
+                {
+                    ...receiveQuote(),
+                    profile: { ...receiveQuote().profile, min_age_seconds: unsafe },
+                },
+                EXPECTED_QUOTE,
+            ),
+        ).toThrow(/min_age_seconds must be a non-negative integer/);
+        expect(() => readEvmSendQuote(sendQuote(), { ...EXPECTED_QUOTE, chainId: unsafe })).toThrow(
+            /expected.chainId must be a positive integer/,
+        );
     });
 
     it("refuses an address field that is PRESENT but not an address", () => {
@@ -710,7 +800,7 @@ describe("quote readers", () => {
                     withProfile(sendQuote() as unknown as Record<string, unknown>, {
                         evm_contract_address: bad,
                     }),
-                    { tokenAddress: USDC, rfqId: RFQ_ID },
+                    EXPECTED_QUOTE,
                 ),
             ).toThrow(/profile\.evm_contract_address must be 0x then 40 hex/);
             expect(() =>
@@ -718,7 +808,7 @@ describe("quote readers", () => {
                     withProfile(receiveQuote() as unknown as Record<string, unknown>, {
                         evm_claim_address: bad,
                     }),
-                    { tokenAddress: USDC, rfqId: RFQ_ID },
+                    EXPECTED_QUOTE,
                 ),
             ).toThrow(/profile\.evm_claim_address must be 0x then 40 hex/);
             // The send leg's third address, and the one a wrong value breaks
@@ -729,7 +819,7 @@ describe("quote readers", () => {
                     withProfile(sendQuote() as unknown as Record<string, unknown>, {
                         evm_refund_address: bad,
                     }),
-                    { tokenAddress: USDC, rfqId: RFQ_ID },
+                    EXPECTED_QUOTE,
                 ),
             ).toThrow(/profile\.evm_refund_address must be 0x then 40 hex/);
         }
@@ -743,7 +833,7 @@ describe("quote readers", () => {
         // one of them cannot address the lock at all: it cannot read
         // `swaps(key)` to prove the solver locked, and cannot build the claim
         // call, which takes refundAddress explicitly.
-        const quote = readEvmSendQuote(sendQuote(), { tokenAddress: USDC, rfqId: RFQ_ID });
+        const quote = readEvmSendQuote(sendQuote(), EXPECTED_QUOTE);
         const key = {
             preimageHash: quote.profile.payment_hash,
             amount: evmQuoteTokenAmount(quote),
@@ -779,7 +869,7 @@ describe("quote readers", () => {
                     withProfile(sendQuote() as unknown as Record<string, unknown>, {
                         payment_hash: bad,
                     }),
-                    { tokenAddress: USDC, rfqId: RFQ_ID },
+                    EXPECTED_QUOTE,
                 ),
             ).toThrow(/profile\.payment_hash must be 64 lowercase hex/);
             expect(() =>
@@ -787,7 +877,7 @@ describe("quote readers", () => {
                     withProfile(receiveQuote() as unknown as Record<string, unknown>, {
                         payment_hash: bad,
                     }),
-                    { tokenAddress: USDC, rfqId: RFQ_ID },
+                    EXPECTED_QUOTE,
                 ),
             ).toThrow(/profile\.payment_hash must be 64 lowercase hex/);
         }
@@ -811,7 +901,7 @@ describe("quote readers", () => {
                     withProfile(sendQuote() as unknown as Record<string, unknown>, {
                         receiver_pk_script: bad,
                     }),
-                    { tokenAddress: USDC, rfqId: RFQ_ID },
+                    EXPECTED_QUOTE,
                 ),
             ).toThrow(/profile\.receiver_pk_script must be lowercase hex of whole bytes/);
             expect(() =>
@@ -819,7 +909,7 @@ describe("quote readers", () => {
                     withProfile(receiveQuote() as unknown as Record<string, unknown>, {
                         solver_refund_pk_script: bad,
                     }),
-                    { tokenAddress: USDC, rfqId: RFQ_ID },
+                    EXPECTED_QUOTE,
                 ),
             ).toThrow(/profile\.solver_refund_pk_script must be lowercase hex of whole bytes/);
         }
@@ -842,9 +932,9 @@ describe("quote readers", () => {
             "min_confirmations",
             "min_age_seconds",
         ]) {
-            expect(() =>
-                readEvmSendQuote(drop(key), { tokenAddress: USDC, rfqId: RFQ_ID }),
-            ).toThrow(new RegExp(`profile\\.${key}`));
+            expect(() => readEvmSendQuote(drop(key), EXPECTED_QUOTE)).toThrow(
+                new RegExp(`profile\\.${key}`),
+            );
         }
     });
 
@@ -867,13 +957,13 @@ describe("quote readers", () => {
             expect(() =>
                 readEvmSendQuote(
                     dropEnvelope(sendQuote() as unknown as Record<string, unknown>, key),
-                    { tokenAddress: USDC, rfqId: RFQ_ID },
+                    EXPECTED_QUOTE,
                 ),
             ).toThrow(new RegExp(key));
             expect(() =>
                 readEvmReceiveQuote(
                     dropEnvelope(receiveQuote() as unknown as Record<string, unknown>, key),
-                    { tokenAddress: USDC, rfqId: RFQ_ID },
+                    EXPECTED_QUOTE,
                 ),
             ).toThrow(new RegExp(key));
         }
@@ -885,13 +975,13 @@ describe("quote readers", () => {
         expect(() =>
             readEvmSendQuote(
                 dropEnvelope(sendQuote() as unknown as Record<string, unknown>, "profile"),
-                { tokenAddress: USDC, rfqId: RFQ_ID },
+                EXPECTED_QUOTE,
             ),
         ).toThrow(/carries no profile/);
         expect(() =>
             readEvmReceiveQuote(
                 dropEnvelope(receiveQuote() as unknown as Record<string, unknown>, "profile"),
-                { tokenAddress: USDC, rfqId: RFQ_ID },
+                EXPECTED_QUOTE,
             ),
         ).toThrow(/carries no profile/);
     });
@@ -899,19 +989,14 @@ describe("quote readers", () => {
     it("accepts min_age_seconds of zero — depth-only is a solver's choice", () => {
         const quote = sendQuote() as unknown as Record<string, unknown>;
         const profile = { ...(quote.profile as Record<string, unknown>), min_age_seconds: 0 };
-        expect(() =>
-            readEvmSendQuote({ ...quote, profile }, { tokenAddress: USDC, rfqId: RFQ_ID }),
-        ).not.toThrow();
+        expect(() => readEvmSendQuote({ ...quote, profile }, EXPECTED_QUOTE)).not.toThrow();
     });
 
     it("ignores unknown fields — responses are tolerant, requests are not", () => {
         const quote = sendQuote() as unknown as Record<string, unknown>;
         const profile = { ...(quote.profile as Record<string, unknown>), future_field: "x" };
         expect(() =>
-            readEvmSendQuote(
-                { ...quote, profile, another: 1 },
-                { tokenAddress: USDC, rfqId: RFQ_ID },
-            ),
+            readEvmSendQuote({ ...quote, profile, another: 1 }, EXPECTED_QUOTE),
         ).not.toThrow();
     });
 
@@ -919,40 +1004,21 @@ describe("quote readers", () => {
         expect(() =>
             readEvmSendQuote(
                 { v: 1, type: "rfq_refusal", reason: "unsupported_pair" },
-                { tokenAddress: USDC, rfqId: RFQ_ID },
+                EXPECTED_QUOTE,
             ),
         ).toThrow(/expected an rfq_quote, got rfq_refusal/);
-        expect(() => readEvmSendQuote(null, { tokenAddress: USDC, rfqId: RFQ_ID })).toThrow(
-            /not an object/,
-        );
-        expect(() => readEvmSendQuote("{}", { tokenAddress: USDC, rfqId: RFQ_ID })).toThrow(
-            /not an object/,
-        );
+        expect(() => readEvmSendQuote(null, EXPECTED_QUOTE)).toThrow(/not an object/);
+        expect(() => readEvmSendQuote("{}", EXPECTED_QUOTE)).toThrow(/not an object/);
     });
 });
 
 // ── The funding gate ────────────────────────────────────────────────────────
 
-describe("assertFundable accepts an EVM quote", () => {
-    it("passes a live quote with headroom", () => {
-        assertFundable({ quote: sendQuote(), now: NOW });
-        assertFundable({ quote: receiveQuote(), now: NOW });
-    });
-
-    it("still gates the quote window and the refund headroom", () => {
-        expect(() => assertFundable({ quote: sendQuote(), now: NOW + 60 })).toThrow(
-            /quote expired/,
-        );
-        const tight = sendQuote({ refund_locktime: NOW + MIN_HEADROOM_SECONDS - 1 });
-        expect(() => assertFundable({ quote: tight, now: NOW })).toThrow(/headroom/);
-        const receiveTight = receiveQuote({ refund_locktime: NOW + MIN_HEADROOM_SECONDS - 1 });
-        expect(() => assertFundable({ quote: receiveTight, now: NOW })).toThrow(/headroom/);
-    });
-
+describe("assertFundable refuses EVM quotes until local funding is implemented", () => {
     it.each([
         ["send", () => sendQuote()],
         ["receive", () => receiveQuote()],
-    ])("refuses maxFee on an EVM %s quote rather than coercing it", (_direction, quote) => {
+    ])("refuses every EVM %s quote before applying unrelated gates", (_direction, quote) => {
         for (const maxFee of [
             { sats: 0 },
             { bps: 100 },
@@ -961,14 +1027,36 @@ describe("assertFundable accepts an EVM quote", () => {
         ]) {
             let thrown: unknown;
             try {
-                assertFundable({ quote: quote(), now: NOW, maxFee });
+                assertFundable({
+                    quote: quote(),
+                    now: NOW + 60,
+                    maxFee,
+                    onchain: { htlcLocktime: 1, minConfirmations: 1, direction: "send" },
+                });
             } catch (error) {
                 thrown = error;
             }
             expect((thrown as { reason?: string } | undefined)?.reason).toBe(
-                "fee_gate_unavailable",
+                "evm_funding_unavailable",
             );
-            expect(String(thrown)).toMatch(/EVM token leg/);
+            expect(String(thrown)).toMatch(/EVM funding is unavailable/);
+        }
+    });
+
+    it("refuses numeric-token EVM quotes before maxFee or onchain policy", () => {
+        const send = sendQuote({ to_amount: 249_750_000_000_000_000_000 as unknown as string });
+        const receive = receiveQuote({
+            from_amount: 249_750_000_000_000_000_000 as unknown as string,
+        });
+        for (const quote of [send, receive]) {
+            expect(() =>
+                assertFundable({
+                    quote,
+                    now: NOW,
+                    maxFee: { bps: 1 },
+                    onchain: { htlcLocktime: 1, minConfirmations: 1, direction: "send" },
+                }),
+            ).toThrow(expect.objectContaining({ reason: "evm_funding_unavailable" }));
         }
     });
 

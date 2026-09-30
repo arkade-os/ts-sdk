@@ -309,7 +309,6 @@ describe("WalletMessageHandler handleMessage", () => {
         const transactions = [{ txid: "tx" }];
         (updater as any).readonlyWallet = {};
         (updater as any).buildTransactionHistoryFromCache = vi.fn().mockResolvedValue(transactions);
-        (updater as any).getVtxosFromRepo = vi.fn().mockResolvedValue([]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -513,6 +512,73 @@ describe("WalletMessageHandler handleMessage", () => {
             tag: updater.messageTag,
             type: "REFRESH_VTXOS_SUCCESS",
         });
+    });
+
+    it("round-trips watch-only script messages", async () => {
+        const watched = [{ script: "aa", label: "lockup" }];
+        const manager = {
+            watchScript: vi.fn().mockResolvedValue(undefined),
+            unwatchScript: vi.fn().mockResolvedValue(undefined),
+            getWatchedScripts: vi.fn().mockResolvedValue(watched),
+        };
+        (updater as any).readonlyWallet = {
+            getContractManager: vi.fn().mockResolvedValue(manager),
+        };
+
+        const watchResponse = await updater.handleMessage({
+            ...baseMessage("ws"),
+            type: "WATCH_SCRIPT",
+            payload: { script: "aa", label: "lockup" },
+        } as any);
+        expect(manager.watchScript).toHaveBeenCalledWith("aa", { label: "lockup" });
+        expect(watchResponse).toMatchObject({
+            tag: updater.messageTag,
+            type: "SCRIPT_WATCHED",
+            payload: { script: "aa" },
+        });
+
+        const listResponse = await updater.handleMessage({
+            ...baseMessage("gws"),
+            type: "GET_WATCHED_SCRIPTS",
+            payload: {},
+        } as any);
+        expect(listResponse).toMatchObject({
+            tag: updater.messageTag,
+            type: "WATCHED_SCRIPTS",
+            payload: { scripts: watched },
+        });
+
+        const unwatchResponse = await updater.handleMessage({
+            ...baseMessage("uws"),
+            type: "UNWATCH_SCRIPT",
+            payload: { script: "aa" },
+        } as any);
+        expect(manager.unwatchScript).toHaveBeenCalledWith("aa");
+        expect(unwatchResponse).toMatchObject({
+            tag: updater.messageTag,
+            type: "SCRIPT_UNWATCHED",
+            payload: { script: "aa" },
+        });
+    });
+
+    it("refuses watch-only messages when the manager cannot serve them", async () => {
+        (updater as any).readonlyWallet = {
+            getContractManager: vi.fn().mockResolvedValue({}),
+        };
+
+        for (const [type, payload] of [
+            ["WATCH_SCRIPT", { script: "aa" }],
+            ["UNWATCH_SCRIPT", { script: "aa" }],
+            ["GET_WATCHED_SCRIPTS", {}],
+        ] as const) {
+            const response = await updater.handleMessage({
+                ...baseMessage(`x-${type}`),
+                type,
+                payload,
+            } as any);
+            expect((response as any).error).toBeDefined();
+            expect((response as any).error.message).toMatch(/does not support/);
+        }
     });
 
     it("pushes contract events straight to the channel", async () => {
@@ -2076,7 +2142,9 @@ describe("WalletMessageHandler repo-backed reads", () => {
             payload: {
                 settled: 30000,
                 total: 30000,
-                available: 10000,
+                // The ungated 10000, minus the one dust carrier (546) the
+                // available asset rides on.
+                available: 9454,
                 gated: 20000,
                 intentLocked: 0,
                 assets: [{ assetId: "cc".repeat(32), amount: 7n }],
@@ -2129,13 +2197,24 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const response = await updater.handleMessage({
             ...baseMessage(),
             type: "GET_SPENDABLE_VTXOS",
-            payload: { filter: { withRecoverable: false } },
+            payload: {
+                filter: {
+                    withRecoverable: false,
+                    watchedOnly: true,
+                    genericallySpendableOnly: true,
+                },
+            },
         } as any);
 
         expect((updater as any).readonlyWallet.getSpendableVtxos).toHaveBeenCalledWith({
             withRecoverable: false,
+            watchedOnly: true,
+            genericallySpendableOnly: true,
         });
-        expect(response).toMatchObject({ type: "SPENDABLE_VTXOS", payload: { vtxos } });
+        expect(response).toMatchObject({
+            type: "SPENDABLE_VTXOS",
+            payload: { vtxos, filterApplied: true },
+        });
     });
 
     it("GET_VTXOS deduplicates across wallet and contract addresses", async () => {

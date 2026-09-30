@@ -34,7 +34,8 @@
  *
  * Trust model, identical to the offer side: from a quote the user uses only
  * the binding fields — `solver_pubkey`, `refund_locktime`, `valid_until`, the
- * amounts. Every other contract parameter is the user's own data (its
+ * amounts, and `profile.refund_without_receiver_delay` on Lightning sends.
+ * Every other contract parameter is the user's own data (its
  * invoice, its Ark server connection, its refund address) or a trusted
  * constant — the emulator key defaults to the SDK's per-network pin (see
  * `resolveEmulatorPubkey`). Anything address-shaped the solver sends is
@@ -88,6 +89,7 @@ import { registerLockupContract } from "./lockupContract";
 // Type-only, and it has to stay that way: `evmRfq.ts` imports the pair
 // helpers from here, so a value import would close the cycle at run time.
 import type { EvmRfqQuote } from "./evmRfq";
+import { ASSET_CARRIER_SATS, createOffer } from "./offer";
 
 /** Decode a solver-supplied hex field, turning a malformed value (odd length,
  * non-hex chars) into a solver-blaming diagnostic instead of a bare
@@ -98,6 +100,16 @@ const solverHex = (value: string, field: string): Uint8Array => {
     } catch {
         throw new Error(`solver sent malformed hex for ${field}`);
     }
+};
+
+/** Sats amount off an HTLC-class quote. Asset-class quotes carry strings and
+ * must never reach an HTLC derivation — a string here is a misrouted quote,
+ * not a coercible one. */
+const quoteSats = (value: number | string, field: string): number => {
+    if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+        throw new Error(`HTLC quote carries a non-sats ${field}: ${String(value)}`);
+    }
+    return value;
 };
 
 // ── Pairs ────────────────────────────────────────────────────────────────────
@@ -152,15 +164,110 @@ export type RfqRefusalReason =
 /** Lifecycle vocabulary; states after which nothing more will happen. */
 export const RFQ_TERMINAL_STATES = ["settled", "refused", "expired", "refunded", "stuck"] as const;
 
+export const RFQ_REFUSAL_ERROR_CODES = [
+    "amount_side_unsupported",
+    "exact_out_unsupported",
+    "invalid_amount",
+    "invalid_payout_address",
+    "invalid_refund_address",
+    "invoice_amount_mismatch",
+    "invoice_cltv_too_large",
+    "invoice_malformed",
+    "invoice_missing_amount",
+    "invoice_missing_network",
+    "invoice_missing_payment_hash",
+    "invoice_missing_timestamp",
+    "invoice_mixed_case",
+    "invoice_sub_satoshi_amount",
+    "invoice_too_long",
+    "invoice_wrong_network",
+] as const;
+
+export type RfqRefusalErrorCode = (typeof RFQ_REFUSAL_ERROR_CODES)[number];
+export type RfqRefusalUnit = "blocks" | "characters" | "sats";
+
+export interface RfqRefusalDetail {
+    errorCode?: RfqRefusalErrorCode;
+    field?: string;
+    actual?: number;
+    expected?: number;
+    limit?: number;
+    unit?: RfqRefusalUnit;
+}
+
+export const isRfqRefusalErrorCode = (value: unknown): value is RfqRefusalErrorCode =>
+    typeof value === "string" && (RFQ_REFUSAL_ERROR_CODES as readonly string[]).includes(value);
+
+const REFUSAL_FIELDS = new Set([
+    "amount",
+    "amount_side",
+    "profile.invoice",
+    "profile.payout_address",
+    "profile.refund_address",
+]);
+const REFUSAL_UNITS = new Set<RfqRefusalUnit>(["blocks", "characters", "sats"]);
+const safeInteger = (value: unknown): number | undefined =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+const safeRefusalDetail = (detail: {
+    errorCode?: unknown;
+    field?: unknown;
+    actual?: unknown;
+    expected?: unknown;
+    limit?: unknown;
+    unit?: unknown;
+}): RfqRefusalDetail => {
+    if (!isRfqRefusalErrorCode(detail.errorCode)) return {};
+    return {
+        errorCode: detail.errorCode,
+        field:
+            typeof detail.field === "string" && REFUSAL_FIELDS.has(detail.field)
+                ? detail.field
+                : undefined,
+        actual: safeInteger(detail.actual),
+        expected: safeInteger(detail.expected),
+        limit: safeInteger(detail.limit),
+        unit:
+            typeof detail.unit === "string" && REFUSAL_UNITS.has(detail.unit as RfqRefusalUnit)
+                ? (detail.unit as RfqRefusalUnit)
+                : undefined,
+    };
+};
+
+const refusalMessage = (reason: string, detail: RfqRefusalDetail): string => {
+    if (!detail.errorCode) return `solver refused: ${reason}`;
+    const where = detail.field ? ` at ${detail.field}` : "";
+    const unit = detail.unit ? ` ${detail.unit}` : "";
+    if (detail.actual !== undefined && detail.limit !== undefined) {
+        return `solver refused: ${reason} (${detail.errorCode}${where}: ${detail.actual}${unit}, limit ${detail.limit})`;
+    }
+    if (detail.actual !== undefined && detail.expected !== undefined) {
+        return `solver refused: ${reason} (${detail.errorCode}${where}: ${detail.actual}${unit}, expected ${detail.expected})`;
+    }
+    return `solver refused: ${reason} (${detail.errorCode}${where})`;
+};
+
 /** A refusal from the solver, carrying its closed-set reason. */
 export class SwapRefusal extends Error {
     readonly reason: string;
     readonly rfqId: string | undefined;
-    constructor(reason: string, rfqId?: string) {
-        super(`solver refused: ${reason}`);
+    readonly errorCode: RfqRefusalErrorCode | undefined;
+    readonly field: string | undefined;
+    readonly actual: number | undefined;
+    readonly expected: number | undefined;
+    readonly limit: number | undefined;
+    readonly unit: RfqRefusalUnit | undefined;
+    constructor(reason: string, rfqId?: string, detail: RfqRefusalDetail = {}) {
+        const safeDetail = safeRefusalDetail(detail);
+        super(refusalMessage(reason, safeDetail));
         this.name = "SwapRefusal";
         this.reason = reason;
         this.rfqId = rfqId;
+        this.errorCode = safeDetail.errorCode;
+        this.field = safeDetail.field;
+        this.actual = safeDetail.actual;
+        this.expected = safeDetail.expected;
+        this.limit = safeDetail.limit;
+        this.unit = safeDetail.unit;
     }
 }
 
@@ -190,13 +297,25 @@ export interface RfqQuote {
     type: "rfq_quote";
     rfq_id: string;
     pair: string;
-    from_amount: number;
-    to_amount: number;
+    /** Sats on HTLC-class corridors (number); canonical decimal string on
+     * arkade↔arkade asset legs (bigint range, see WIRE_ASSET_AMOUNT on the
+     * solver). */
+    from_amount: number | string;
+    to_amount: number | string;
+    /** Dust an asset rides on. NOT a fee — already netted into the amounts above. */
+    carrier_sats?: number | string;
     solver_pubkey: string;
     valid_until: number;
     /** HTLC-class quotes only; absent for arkade↔arkade. */
     refund_locktime?: number;
-    profile: { [key: string]: unknown; payment_hash?: string; lockup_address?: string };
+    profile: {
+        [key: string]: unknown;
+        payment_hash?: string;
+        lockup_address?: string;
+        refund_without_receiver_delay?: number;
+        offer_address?: string;
+        offer_pk_script?: string;
+    };
     [key: string]: unknown;
 }
 
@@ -237,33 +356,38 @@ export const lightningSendRequest = (input: {
     },
 });
 
-/** The rfq_request for an arkade↔arkade swap. Exactly one side may name an
- * asset id per direction (BTC has none), and the id is the leg itself — see
- * {@link arkadeAssetLeg}. Forward-looking: the wire shape is specified, the
- * reference solver does not serve it yet. */
+/** The rfq_request for an arkade↔arkade swap. At least one side names an asset
+ * id (BTC has none), and the id is the leg itself — see
+ * {@link arkadeAssetLeg}.
+ *
+ * Wire-compatible with the reference solver (`AssetRfqRequest`, strict):
+ * `amount` is a canonical decimal string of atomic units (never a JSON
+ * number — an Arkade asset's precision is not knowable client-side, so the
+ * losslessness carve-out cannot be checked), `amount_side` is `"from"` or
+ * `"to"`, and `profile` carries the trader's own covenant position
+ * (`maker_pk_script`, `maker_public_key`) — the fill pays that script, and
+ * `cancel` is signed by that key. */
 export const arkadeSwapRequest = (input: {
     rfqId: string;
     /** Asset the trader deposits; omit when depositing BTC. */
     offerAsset?: asset.AssetId;
     /** Asset the trader wants; omit when wanting BTC. */
     wantAsset?: asset.AssetId;
-    amountSide: "from" | "to";
-    /** Integer base units of the side named by `amountSide`. */
-    amount: number;
+    amountSide?: "from" | "to";
+    /** Atomic units of the deposit (`from`) leg. bigint-safe: encoded as a
+     * canonical decimal string on the wire. */
+    amount: bigint | number | string;
+    /** Trader's own taproot scriptPubKey (34 bytes, `OP_1 <32-byte program>`),
+     * as bytes or lowercase hex. The covenant's `makerWP` minus its prefix. */
+    makerPkScript: Uint8Array | string;
+    /** Trader's own x-only key (32 bytes), as bytes or lowercase hex. The
+     * `cancel` path's `user` signer. */
+    makerPublicKey: Uint8Array | string;
 }): Record<string, unknown> => {
-    // Both refusals say "exactly one", but the causes differ and so do the
-    // remedies: neither side named is a degenerate request, both sides named is
-    // a real corridor still waiting on a counterparty.
     if (!input.wantAsset && !input.offerAsset) {
         throw new Error(
-            "set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC) — " +
+            "set at least one of wantAsset or offerAsset — " +
                 "with neither set both legs are BTC, which is not a swap",
-        );
-    }
-    if (input.wantAsset && input.offerAsset) {
-        throw new Error(
-            "set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC) — " +
-                "asset->asset is nameable on the wire but no solver quotes it yet",
         );
     }
     const pair = rfqPair(
@@ -276,15 +400,71 @@ export const arkadeSwapRequest = (input: {
         type: "rfq_request",
         rfq_id: input.rfqId,
         pair,
-        amount_side: input.amountSide,
-        amount: input.amount,
-        // The pair is the only place the asset ids appear. Repeating them here
-        // would be a key the solver's `.strict()` profile schema does not
-        // declare, and an undeclared key is `unsupported_payload` — a refusal,
-        // not an ignored extra. Empty, not absent: `profile` is required on
-        // every other request shape this wire carries.
-        profile: {},
+        amount_side: input.amountSide ?? "from",
+        amount: canonicalAssetAmount(input.amount),
+        // The pair names the assets; the profile names the trader. Both are
+        // covenant parameters, and the solver's `.strict()` schema refuses
+        // anything else — an undeclared key is `unsupported_payload`.
+        profile: {
+            maker_pk_script: normalizeMakerPkScript(input.makerPkScript),
+            maker_public_key: normalizeMakerPublicKey(input.makerPublicKey),
+        },
     };
+};
+
+/** Canonical decimal string of atomic units: ASCII digits, no sign, point,
+ * exponent, or leading zero (unless the value is exactly "0"). bigint passes
+ * through; number must be a safe integer; string must already be canonical. */
+export const canonicalAssetAmount = (amount: bigint | number | string): string => {
+    if (typeof amount === "bigint") {
+        if (amount <= 0n) throw new Error(`amount must be positive, got ${amount}`);
+        return amount.toString();
+    }
+    if (typeof amount === "number") {
+        if (!Number.isSafeInteger(amount) || amount <= 0) {
+            throw new Error(`amount must be a positive safe integer, got ${amount}`);
+        }
+        return String(amount);
+    }
+    if (!/^(0|[1-9][0-9]*)$/.test(amount) || BigInt(amount) <= 0n) {
+        throw new Error(`amount must be a canonical decimal string of atomic units, got ${amount}`);
+    }
+    return amount;
+};
+
+const normalizeHexBytes = (
+    value: Uint8Array | string,
+    expectedBytes: number,
+    label: string,
+): string => {
+    if (value === undefined || value === null) {
+        throw new Error(`${label} is required`);
+    }
+    const bytes = typeof value === "string" ? solverHex(value, label) : value;
+    if (!(bytes instanceof Uint8Array) || bytes.length !== expectedBytes) {
+        const got = bytes instanceof Uint8Array ? bytes.length : typeof bytes;
+        throw new Error(`${label} must be ${expectedBytes} bytes, got ${got}`);
+    }
+    return hex.encode(bytes);
+};
+
+/** 34-byte taproot scriptPubKey (`OP_1 <32-byte program>`), lowercase hex. */
+export const normalizeMakerPkScript = (value: Uint8Array | string): string => {
+    const encoded = normalizeHexBytes(value, 34, "maker_pk_script");
+    if (!encoded.startsWith("5100") && !encoded.startsWith("5120")) {
+        throw new Error("maker_pk_script must be a taproot scriptPubKey (OP_1 <32-byte program>)");
+    }
+    return encoded;
+};
+
+/** 32-byte x-only key, lowercase hex. Never a 33-byte compressed key. */
+export const normalizeMakerPublicKey = (value: Uint8Array | string): string => {
+    const raw = typeof value === "string" ? value : hex.encode(value);
+    const bytes = solverHex(raw, "maker_public_key");
+    if (bytes.length === 33) {
+        throw new Error("maker_public_key must be x-only (32 bytes), not compressed (33 bytes)");
+    }
+    return normalizeHexBytes(bytes, 32, "maker_public_key");
 };
 
 // ── Guardrails ───────────────────────────────────────────────────────────────
@@ -433,19 +613,8 @@ const matchQuotedLockup = (
  * until its own deadline gets the same treatment; the headroom check is merely
  * over-strict there, never unsafe.
  *
- * An {@link EvmRfqQuote} is accepted too. The gates it reaches — `valid_until`
- * and the refund headroom — are the right ones for both EVM corridors, and
- * both read a plain `number`. What it does NOT yet get is the EVM deadline
- * ordering: that compares `evm_timeout_block` against `refund_locktime`, which
- * are a block height and unix seconds, and bridging them needs a per-chain
- * cadence (see `evmRfq.ts`). It lands with the covenant derivation.
- *
- * The widened parameter is also what stops the amounts being read as sats. An
- * EVM quote's token leg is a canonical decimal string, so `from_amount` and
- * `to_amount` are `number | string` across the union and no arithmetic
- * compiles against them unsplit — read them through `evmQuoteSats` and
- * `evmQuoteTokenAmount`, which pick the side off the pair. `maxFee` is
- * therefore REFUSED on an EVM quote with `fee_gate_unavailable`. */
+ * EVM quote pairs are negotiation-only and fail closed here until local
+ * contract, finality, and cross-chain deadline verification is implemented. */
 export const assertFundable = (input: {
     quote: RfqQuote | EvmRfqQuote;
     invoiceExpiresAt?: number;
@@ -479,11 +648,25 @@ export const assertFundable = (input: {
     const fail = (reason: string, message: string): never => {
         throw gateError(reason, message);
     };
+    if (input.quote.pair.split("->").some((leg) => leg.startsWith("ethereum:"))) {
+        fail(
+            "evm_funding_unavailable",
+            "EVM funding is unavailable until local contract, finality, and deadline verification is implemented",
+        );
+    }
     if (input.invoiceExpiresAt !== undefined && input.now >= input.invoiceExpiresAt) {
         fail("invoice_expired", "invoice expired");
     }
     if (input.now >= input.quote.valid_until)
         fail("quote_expired", "quote expired — request a fresh one");
+    // A value gate compares the fill against the quoted amount, so a
+    // non-positive quote is a gate that cannot fail.
+    if (
+        quoteSats(input.quote.from_amount, "from_amount") <= 0 ||
+        quoteSats(input.quote.to_amount, "to_amount") <= 0
+    ) {
+        fail("non_positive_amount", "quote carries a non-positive amount");
+    }
     if (
         input.quote.refund_locktime !== undefined &&
         input.quote.refund_locktime - input.now < MIN_HEADROOM_SECONDS
@@ -501,18 +684,6 @@ export const assertFundable = (input: {
         }
         if (sats !== undefined && (!Number.isInteger(sats) || sats < 0)) {
             fail("max_fee_out_of_range", `maxFee.sats must be a non-negative integer, got ${sats}`);
-        }
-        // NOT NaN: `*` and `-` coerce the token leg's decimal string, so the
-        // gate would compare base units against sats and answer confidently.
-        // Measured without this: a send quote passes even `{ sats: 0 }`.
-        const { from_amount: fromAmount, to_amount: toAmount } = input.quote;
-        if (typeof fromAmount !== "number" || typeof toAmount !== "number") {
-            throw gateError(
-                "fee_gate_unavailable",
-                `maxFee cannot gate ${input.quote.pair}: an EVM token leg is a decimal ` +
-                    `string, not sats, and this gate does its arithmetic in numbers. ` +
-                    `Omit maxFee for an EVM corridor until the token-aware gate lands`,
-            );
         }
         const legs = input.quote.pair.split("->");
         const assetOf = (leg: string): string => leg.slice(leg.indexOf(":") + 1);
@@ -533,12 +704,14 @@ export const assertFundable = (input: {
             );
         }
         // Rounds UP: refuse a borderline quote, do not fund a rounding artefact.
+        const fromSats = quoteSats(input.quote.from_amount, "from_amount");
+        const toSats = quoteSats(input.quote.to_amount, "to_amount");
         const fee = sameAsset
-            ? fromAmount - toAmount
+            ? fromSats - toSats
             : Math.ceil(
-                  (fromAmount * (referenceRate as number) - toAmount) / (referenceRate as number),
+                  (fromSats * (referenceRate as number) - toSats) / (referenceRate as number),
               );
-        const allowed = Math.max(sats ?? 0, Math.floor((fromAmount * (bps ?? 0)) / 10_000));
+        const allowed = Math.max(sats ?? 0, Math.floor((fromSats * (bps ?? 0)) / 10_000));
         if (fee > allowed) {
             fail("fee_too_high", `fee ${fee} exceeds the ${allowed} this client allows`);
         }
@@ -606,8 +779,32 @@ export interface RfqTransport {
  * byte-identical copy — module-level only, never re-exported from `index.ts`.
  */
 export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: string): RfqQuote => {
-    const p = payload as { type?: string; reason?: string; rfq_id?: string; pair?: unknown } | null;
-    if (p?.type === "rfq_refusal") throw new SwapRefusal(p.reason ?? "unknown", p.rfq_id ?? rfqId);
+    const p = payload as {
+        type?: string;
+        reason?: string;
+        rfq_id?: string;
+        pair?: unknown;
+        error_code?: unknown;
+        field?: unknown;
+        actual?: unknown;
+        expected?: unknown;
+        limit?: unknown;
+        unit?: unknown;
+    } | null;
+    if (p?.type === "rfq_refusal") {
+        throw new SwapRefusal(
+            p.reason ?? "unknown",
+            p.rfq_id ?? rfqId,
+            safeRefusalDetail({
+                errorCode: p.error_code,
+                field: p.field,
+                actual: p.actual,
+                expected: p.expected,
+                limit: p.limit,
+                unit: p.unit,
+            }),
+        );
+    }
     if (p?.type !== "rfq_quote" || p.rfq_id !== rfqId) {
         throw new Error(`unexpected reply: ${p?.type ?? "no payload"}`);
     }
@@ -880,6 +1077,8 @@ export function lightningSendVtxoScript(params: {
      * {@link unilateralRefundDelay} and {@link unilateralRefundWithoutReceiverDelay}
      * derive from this same value — one rounding, shared across all three tiers. */
     claimDelay: number;
+    /** Binding quote field. Optional only for rebuilding pre-upgrade scripts. */
+    refundWithoutReceiverDelay?: number;
     /** Emulator x-only key (32 bytes). */
     emulatorPubkey: Uint8Array;
     /** Where a refund must pay: the trader's P2TR pkScript (34 bytes). Also
@@ -913,7 +1112,8 @@ export function lightningSendVtxoScript(params: {
         unilateralClaimDelay: seconds(params.claimDelay),
         unilateralRefundDelay: seconds(unilateralRefundDelay(params.claimDelay)),
         unilateralRefundWithoutReceiverDelay: seconds(
-            unilateralRefundWithoutReceiverDelay(params.claimDelay),
+            params.refundWithoutReceiverDelay ??
+                unilateralRefundWithoutReceiverDelay(params.claimDelay),
         ),
         nonInteractiveParameters: {
             receiverPkScript: params.receiverPkScript,
@@ -1039,6 +1239,23 @@ export async function requestLightningSend(
     if (quote.refund_locktime === undefined) {
         throw new Error("lightning-send quote is missing refund_locktime");
     }
+    const now = Math.floor(Date.now() / 1000);
+    const claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
+    const refundWithoutReceiverDelay = quote.profile?.refund_without_receiver_delay;
+    if (refundWithoutReceiverDelay === undefined) {
+        throw new Error("lightning-send quote is missing profile.refund_without_receiver_delay");
+    }
+    if (
+        !Number.isSafeInteger(refundWithoutReceiverDelay) ||
+        refundWithoutReceiverDelay < claimDelay ||
+        refundWithoutReceiverDelay % SEQUENCE_GRANULARITY_SECONDS !== 0 ||
+        refundWithoutReceiverDelay > 0xffff * SEQUENCE_GRANULARITY_SECONDS
+    ) {
+        throw new Error("lightning-send quote carries an invalid refund_without_receiver_delay");
+    }
+    if (refundWithoutReceiverDelay < quote.refund_locktime - now) {
+        throw new Error("lightning-send quote lets the solo refund open before refund_locktime");
+    }
     const receiverPkScriptHex = quote.profile?.receiver_pk_script as string | undefined;
     if (receiverPkScriptHex === undefined) {
         throw new Error("lightning-send quote is missing profile.receiver_pk_script");
@@ -1047,12 +1264,12 @@ export async function requestLightningSend(
     // and `from_amount` adds the corridor's fee on top. Funding anything but
     // `from_amount` underfunds by exactly the fee and is refused — and a quote
     // repricing the invoice itself is not a quote for this invoice at all.
-    if (quote.to_amount !== params.invoice.amountSats) {
+    if (quoteSats(quote.to_amount, "to_amount") !== params.invoice.amountSats) {
         throw new Error(
             `quote to_amount ${quote.to_amount} does not match the invoice's ${params.invoice.amountSats}`,
         );
     }
-    if (quote.from_amount < quote.to_amount) {
+    if (quoteSats(quote.from_amount, "from_amount") < quoteSats(quote.to_amount, "to_amount")) {
         throw new Error(
             `quote from_amount ${quote.from_amount} is below the invoice amount — a negative spread is not a quote`,
         );
@@ -1067,7 +1284,8 @@ export async function requestLightningSend(
         refundLocktime: quote.refund_locktime,
         serverPubkey,
         paymentHash: params.invoice.paymentHash,
-        claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
+        claimDelay,
+        refundWithoutReceiverDelay,
         emulatorPubkey: toXOnly(
             hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
             "emulator signer key",
@@ -1092,7 +1310,7 @@ export async function requestLightningSend(
     assertFundable({
         quote,
         invoiceExpiresAt: params.invoice.expiresAt,
-        now: Math.floor(Date.now() / 1000),
+        now,
     });
 
     // Last, so a refused quote leaves no row behind, but still before the
@@ -1106,7 +1324,7 @@ export async function requestLightningSend(
         address,
         // What the lockup must carry: the quote's `from_amount` — the invoice
         // PLUS the corridor's fee, never the bare invoice amount.
-        fundAmount: quote.from_amount,
+        fundAmount: quoteSats(quote.from_amount, "from_amount"),
         swapPkScript: script.pkScript,
         script,
         refundAddress,
@@ -1125,16 +1343,202 @@ export async function requestLightningSend(
  * transaction that delivers the quoted want-amount to the trader, so the
  * solver fills or nothing moves. There is no rfq_fill message and no refund
  * timelock; an unfilled offer is cancelled cooperatively (`cancelOffer`).
+ *
+ * For asset-to-asset, the offer contract commits to the wanted asset only.
+ * The offered/deposit asset is carried by the funding VTXO and its asset
+ * packet; it is not part of the covenant derivation.
  */
 export const offerTermsFromQuote = (
     quote: RfqQuote,
     assets: { wantAsset?: asset.AssetId; offerAsset?: asset.AssetId },
 ): { wantAmount: bigint; wantAsset?: asset.AssetId; offerAsset?: asset.AssetId } => {
-    if (Boolean(assets.wantAsset) === Boolean(assets.offerAsset)) {
-        throw new Error("set exactly one of wantAsset or offerAsset");
+    if (!assets.wantAsset && !assets.offerAsset) {
+        throw new Error("set at least one of wantAsset or offerAsset");
     }
-    return { wantAmount: BigInt(quote.to_amount), ...assets };
+    const wantAmount = BigInt(quote.to_amount);
+    if (assets.wantAsset) return { wantAmount, wantAsset: assets.wantAsset };
+    return { wantAmount, offerAsset: assets.offerAsset };
 };
+
+/** Compare-only check of the solver's offer address against YOUR OWN
+ * derivation — never extends trust, only narrows it. Funds only on an exact
+ * match of both the address (what the wallet sends to) and the script (what
+ * `offerVtxoScript` compiles to). Throws {@link AddressMismatch} otherwise. */
+export const verifyOfferAddress = (
+    quote: RfqQuote,
+    derived: { address: string; swapPkScript: Uint8Array },
+): { address: string; swapPkScript: Uint8Array } => {
+    const quotedAddress = quote.profile?.offer_address as string | undefined;
+    const quotedScript = quote.profile?.offer_pk_script as string | undefined;
+    const derivedScript = hex.encode(derived.swapPkScript);
+    if (quotedAddress !== derived.address || quotedScript !== derivedScript) {
+        throw new AddressMismatch([derived.address], quotedAddress);
+    }
+    return derived;
+};
+
+/** Gate an arkade↔arkade quote immediately before funding. No timelock exists
+ * on this class (neither `fulfill` nor `cancel` carries one), so the only
+ * clock is `valid_until`: funding after it is a deposit the solver will
+ * refuse to fill, reclaimable only via cooperative `cancelOffer`. */
+export const assertArkadeFundable = (input: { quote: RfqQuote; now?: number }): void => {
+    const now = input.now ?? Math.floor(Date.now() / 1000);
+    if (!Number.isSafeInteger(input.quote.valid_until)) {
+        throw gateError("quote_expired", "quote carries no valid_until");
+    }
+    if (now >= input.quote.valid_until) {
+        throw gateError("quote_expired", `quote lapsed at ${input.quote.valid_until} (now ${now})`);
+    }
+    if (BigInt(input.quote.from_amount) <= 0n || BigInt(input.quote.to_amount) <= 0n) {
+        throw gateError("quote_expired", "quote carries a non-positive amount");
+    }
+};
+
+/** Falls back on absent AND non-positive: zero would fund an asset with no carrier. */
+const quoteCarrierSats = (quote: RfqQuote): bigint => {
+    const published = quote.carrier_sats === undefined ? 0n : BigInt(quote.carrier_sats);
+    return published > 0n ? published : ASSET_CARRIER_SATS;
+};
+
+/**
+ * The arkade↔arkade user flow, mirroring `requestLightningSend`'s shape:
+ * quote → derive locally → verify → gate. Pure of funding on purpose — it
+ * returns the offer and the deposit it must carry, and the caller funds with
+ * its own wallet before `quote.valid_until`, after which the user may go
+ * offline: filling is non-interactive. An unfilled offer is cancelled
+ * cooperatively (`cancelOffer`); there is no timelock refund.
+ *
+ * Maker keys are the wallet's own (address script + identity x-only key), read
+ * here so the request profile and the local `createOffer` derivation cannot
+ * diverge. The quote's `offer_address`/`offer_pk_script` are compare-only:
+ * a mismatch throws {@link AddressMismatch} and must never be funded.
+ *
+ * Works over any {@link RfqTransport} — HTTP, dev relay, or Nostr — since the
+ * negotiation is one `rfq_request` round trip. Throws {@link SwapRefusal}
+ * (closed reason), {@link AddressMismatch} (never fund), or a gate error with
+ * a stable `reason`.
+ *
+ * Funding (caller's job, immediately after, before `valid_until`):
+ * - BTC->asset (`wantAsset`): `wallet.send({ address, amount: Number(fundAmount), extensions: [extension] })`
+ * - asset->BTC or asset->asset (`offerAsset`): `wallet.send({ address, amount: Number(carrierSats), assets: [{ assetId: offerAsset, amount: fundAmount }], extensions: [extension] })`
+ */
+export async function requestArkadeSwap(
+    wallet: IWallet,
+    arkServerUrl: string,
+    transport: RfqTransport,
+    params: {
+        /** Asset the trader deposits; omit when depositing BTC. */
+        offerAsset?: asset.AssetId;
+        /** Asset the trader wants; omit when wanting BTC. */
+        wantAsset?: asset.AssetId;
+        /** Atomic units of whichever leg `amountSide` names. */
+        amount: bigint | number | string;
+        amountSide?: "from" | "to";
+        /** Bounds the side the SOLVER chose — the named side is echoed back verbatim,
+         * so asserting it proves nothing and an unbounded caller funds what it is asked. */
+        maxFromAmount?: bigint | number | string;
+        minToAmount?: bigint | number | string;
+        rfqId?: string;
+        /** Co-signer key override (33-byte compressed hex); see `createOffer`. */
+        emulatorPubkey?: string;
+        now?: number;
+    },
+): Promise<{
+    rfqId: string;
+    quote: RfqQuote;
+    pair: string;
+    /** The trader's OWN derivation — the only address to fund. */
+    address: string;
+    /** What the deposit must carry: the quote's `from_amount`. Sats for a BTC
+     * deposit, asset units for an asset deposit (plus a dust carrier). */
+    fundAmount: bigint;
+    /** Dust sats to attach to an asset deposit; 0n for a BTC deposit. */
+    carrierSats: bigint;
+    /** The covenant's scriptPubKey, for watching the deposit and its spend. */
+    swapPkScript: Uint8Array;
+    /** The encoded offer. Persist this — it is the only input `cancelOffer`
+     * needs, and the restore scan reads it back off the funding tx. */
+    offerHex: string;
+    /** Ready for `wallet.send`'s `extensions`. */
+    extension: { type: number; payload: Uint8Array };
+}> {
+    if (!params.wantAsset && !params.offerAsset) {
+        throw new Error("set at least one of wantAsset or offerAsset; BTC-to-BTC is not a swap");
+    }
+    const rfqId = params.rfqId ?? newRfqId();
+    const amountSide = params.amountSide ?? "from";
+    const [makerAddress, makerPublicKey] = await Promise.all([
+        wallet.getAddress(),
+        wallet.identity.xOnlyPublicKey(),
+    ]);
+    const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
+    const pair = rfqPair(
+        params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
+        params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
+    );
+    const quote = await transport.requestQuote(
+        arkadeSwapRequest({
+            rfqId,
+            ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
+            ...(params.wantAsset !== undefined ? { wantAsset: params.wantAsset } : {}),
+            amount: params.amount,
+            amountSide,
+            makerPkScript,
+            makerPublicKey,
+        }),
+    );
+    if (quote.pair !== pair) {
+        throw new Error(`solver quoted ${JSON.stringify(quote.pair)}, not the requested ${pair}`);
+    }
+    assertArkadeFundable({ quote, ...(params.now !== undefined ? { now: params.now } : {}) });
+    const terms = offerTermsFromQuote(quote, {
+        ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
+        ...(params.wantAsset !== undefined ? { wantAsset: params.wantAsset } : {}),
+    });
+    const quoted = amountSide === "from" ? quote.from_amount : quote.to_amount;
+    if (BigInt(quoted).toString() !== canonicalAssetAmount(params.amount)) {
+        throw new Error(
+            `quote ${amountSide}_amount ${quoted} does not match the requested ${canonicalAssetAmount(params.amount)}`,
+        );
+    }
+    if (params.maxFromAmount !== undefined) {
+        const cap = BigInt(canonicalAssetAmount(params.maxFromAmount));
+        if (BigInt(quote.from_amount) > cap) {
+            throw gateError(
+                "quote_amount_rejected",
+                `quote from_amount ${quote.from_amount} exceeds maxFromAmount ${cap}`,
+            );
+        }
+    }
+    if (params.minToAmount !== undefined) {
+        const floorAmount = BigInt(canonicalAssetAmount(params.minToAmount));
+        if (BigInt(quote.to_amount) < floorAmount) {
+            throw gateError(
+                "quote_amount_rejected",
+                `quote to_amount ${quote.to_amount} is under minToAmount ${floorAmount}`,
+            );
+        }
+    }
+    const offer = await createOffer(wallet, arkServerUrl, {
+        wantAmount: terms.wantAmount,
+        ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
+        ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),
+        ...(params.emulatorPubkey !== undefined ? { emulatorPubkey: params.emulatorPubkey } : {}),
+    });
+    verifyOfferAddress(quote, offer);
+    const fundAmount = BigInt(quote.from_amount);
+    return {
+        rfqId,
+        quote,
+        pair,
+        address: offer.address,
+        fundAmount,
+        carrierSats: params.offerAsset !== undefined ? quoteCarrierSats(quote) : 0n,
+        swapPkScript: offer.swapPkScript,
+        offerHex: offer.offerHex,
+        extension: offer.extension,
+    };
+}
 
 // ── Onchain corridor: off-board (arkade->onchain) and on-board wire ─────────
 
@@ -1190,8 +1594,10 @@ export const lightningReceiveRequest = (input: {
     payoutAddress: string;
     /** Trader's x-only arkade key — the covenant's `receiver` role. */
     payoutPubkey: Uint8Array;
-    /** `P` sealed to covclaimd, base64 — `sealClaimPacket(...).ciphertext`. */
-    claimPacket: string;
+    /** `P` sealed to covclaimd, base64 — `sealClaimPacket(...).ciphertext`.
+     * Omitted when there is no covclaimd to seal to; the field is then left off
+     * the wire entirely, since the solver refuses an empty packet. */
+    claimPacket?: string;
     amount: number;
     amountSide: "from" | "to";
 }): Record<string, unknown> => ({
@@ -1205,7 +1611,7 @@ export const lightningReceiveRequest = (input: {
         payment_hash: input.paymentHash,
         payout_address: input.payoutAddress,
         payout_pubkey: hex.encode(input.payoutPubkey),
-        claim_packet: input.claimPacket,
+        ...(input.claimPacket === undefined ? {} : { claim_packet: input.claimPacket }),
     },
 });
 
@@ -1223,8 +1629,9 @@ export const onchainReceiveRequest = (input: {
     payoutPubkey: Uint8Array;
     /** Trader's x-only L1 key for the HTLC's refund leaf. */
     refundPubkey: Uint8Array;
-    /** `P` sealed to covclaimd, base64 — `sealClaimPacket(...).ciphertext`. */
-    claimPacket: string;
+    /** `P` sealed to covclaimd, base64. Omitted when there is none to seal to —
+     * see {@link lightningReceiveRequest}. */
+    claimPacket?: string;
     amount: number;
     amountSide: "from" | "to";
 }): Record<string, unknown> => ({
@@ -1236,7 +1643,7 @@ export const onchainReceiveRequest = (input: {
     amount: input.amount,
     profile: {
         payment_hash: input.paymentHash,
-        claim_packet: input.claimPacket,
+        ...(input.claimPacket === undefined ? {} : { claim_packet: input.claimPacket }),
         refund_pubkey: hex.encode(input.refundPubkey),
         payout_address: input.payoutAddress,
         payout_pubkey: hex.encode(input.payoutPubkey),
@@ -1282,6 +1689,7 @@ export function deriveOnchainSend(input: {
     refundLocktime: number;
     htlcLocktime: number;
     minConfirmations: number;
+    expectedAmount: number;
 } {
     const { quote } = input;
     const profile = quote.profile ?? {};
@@ -1339,6 +1747,7 @@ export function deriveOnchainSend(input: {
         refundLocktime,
         htlcLocktime,
         minConfirmations,
+        expectedAmount: quoteSats(quote.to_amount, "to_amount"),
     };
 }
 
@@ -1386,6 +1795,8 @@ export async function requestOnchainSend(
     /** The user's OWN arkade lockup derivation — the only address to fund. */
     address: string;
     fundAmount: number;
+    /** What the solver's L1 fill must carry — persist it with the record. */
+    expectedAmount: number;
     swapPkScript: Uint8Array;
     /** The arkade covenant itself — the record's `lockup` for
      * `RfqSwapManager`, same role as {@link requestLightningSend}'s. */
@@ -1495,7 +1906,8 @@ export async function requestOnchainSend(
         rfqId,
         quote,
         address: derived.address,
-        fundAmount: quote.from_amount,
+        fundAmount: quoteSats(quote.from_amount, "from_amount"),
+        expectedAmount: quoteSats(quote.to_amount, "to_amount"),
         swapPkScript: derived.swapPkScript,
         script: derived.script,
         refundAddress,
@@ -1514,7 +1926,10 @@ export async function requestOnchainSend(
  * not reach for it: a BOLT11 profile carries no `amountSide`, so it makes the
  * same two comparisons against the invoice instead. */
 const assertQuotedAmount = (quote: RfqQuote, amountSide: "from" | "to", amount: number): void => {
-    const quoted = amountSide === "from" ? quote.from_amount : quote.to_amount;
+    const quoted =
+        amountSide === "from"
+            ? quoteSats(quote.from_amount, "from_amount")
+            : quoteSats(quote.to_amount, "to_amount");
     if (quoted !== amount) {
         throw new Error(
             `quote ${amountSide === "from" ? "from_amount" : "to_amount"} ${quoted} ` +
@@ -1645,7 +2060,10 @@ export const assertReceivable = (input: {
             `a payment at the deadline would leave under ${minClaimWindow}s to claim before the solver's refund opens`,
         );
     }
-    if (input.maxPayAmount !== undefined && input.quote.from_amount > input.maxPayAmount) {
+    if (
+        input.maxPayAmount !== undefined &&
+        quoteSats(input.quote.from_amount, "from_amount") > input.maxPayAmount
+    ) {
         throw gateError(
             "price_too_high",
             `quote asks ${input.quote.from_amount} sats, above the ${input.maxPayAmount} ceiling`,
@@ -1830,8 +2248,10 @@ export async function requestLightningReceive(
          * {@link resolveEmulatorPubkey}. */
         emulatorPubkey?: string;
         /** covclaimd's 33-byte compressed pubkey (from its own info endpoint)
-         * — the claim packet seals to it and only it can ever read `P` early. */
-        covclaimdPubkey: Uint8Array;
+         * — the claim packet seals to it and only it can ever read `P` early.
+         * Unset where no covclaimd is deployed: nothing is sealed and no packet
+         * is sent. Never substitute a throwaway key — nobody could open it. */
+        covclaimdPubkey?: Uint8Array;
         /** The caller's own BOLT11 decoder, applied to the SOLVER's invoice.
          * Required: an optional verifier is one integrators skip, and this is
          * the check whose absence loses the whole payment. */
@@ -1886,10 +2306,12 @@ export async function requestLightningReceive(
         new RestArkProvider(arkServerUrl).getInfo(),
         wallet.getAddress(),
     ]);
-    const claimPacket = await sealClaimPacket({
-        preimage,
-        covclaimdPubkey: params.covclaimdPubkey,
-    });
+    const claimPacket = params.covclaimdPubkey
+        ? await sealClaimPacket({
+              preimage,
+              covclaimdPubkey: params.covclaimdPubkey,
+          })
+        : undefined;
 
     const quote = await transport.requestQuote(
         lightningReceiveRequest({
@@ -1897,7 +2319,7 @@ export async function requestLightningReceive(
             paymentHash,
             payoutAddress,
             payoutPubkey,
-            claimPacket: claimPacket.ciphertext,
+            claimPacket: claimPacket?.packet,
             amount: params.amount,
             amountSide: params.amountSide,
         }),
@@ -1938,8 +2360,8 @@ export async function requestLightningReceive(
         rfqId,
         quote,
         invoice: derived.invoice,
-        payAmount: quote.from_amount,
-        expectedAmount: quote.to_amount,
+        payAmount: quoteSats(quote.from_amount, "from_amount"),
+        expectedAmount: quoteSats(quote.to_amount, "to_amount"),
         invoiceExpiresAt: payDeadline,
         address: derived.address,
         swapPkScript: derived.swapPkScript,
@@ -2061,8 +2483,9 @@ export async function requestOnchainReceive(
         emulatorPubkey?: string;
         /** Trader's x-only L1 key for the HTLC's refund leaf. */
         refundPubkey: Uint8Array;
-        /** covclaimd's 33-byte compressed pubkey — see {@link requestLightningReceive}. */
-        covclaimdPubkey: Uint8Array;
+        /** covclaimd's 33-byte compressed pubkey, unset where none is deployed
+         * — see {@link requestLightningReceive}. */
+        covclaimdPubkey?: Uint8Array;
         rfqId?: string;
     },
 ): Promise<{
@@ -2101,10 +2524,12 @@ export async function requestOnchainReceive(
         new RestArkProvider(arkServerUrl).getInfo(),
         wallet.getAddress(),
     ]);
-    const claimPacket = await sealClaimPacket({
-        preimage,
-        covclaimdPubkey: params.covclaimdPubkey,
-    });
+    const claimPacket = params.covclaimdPubkey
+        ? await sealClaimPacket({
+              preimage,
+              covclaimdPubkey: params.covclaimdPubkey,
+          })
+        : undefined;
 
     const quote = await transport.requestQuote(
         onchainReceiveRequest({
@@ -2113,7 +2538,7 @@ export async function requestOnchainReceive(
             payoutAddress,
             payoutPubkey,
             refundPubkey: params.refundPubkey,
-            claimPacket: claimPacket.ciphertext,
+            claimPacket: claimPacket?.packet,
             amount: params.amount,
             amountSide: params.amountSide,
         }),
@@ -2157,8 +2582,8 @@ export async function requestOnchainReceive(
         rfqId,
         quote,
         address: derived.address,
-        fundAmount: quote.from_amount,
-        expectedAmount: quote.to_amount,
+        fundAmount: quoteSats(quote.from_amount, "from_amount"),
+        expectedAmount: quoteSats(quote.to_amount, "to_amount"),
         swapPkScript: derived.swapPkScript,
         script: derived.script,
         htlc: derived.htlc,

@@ -1,6 +1,6 @@
 import type { PaymentRail, RouterContext } from "../types";
 import { arkTarget } from "../targets";
-import { assertNoAssets, assetsOf, resolveSendAmount } from "../amount";
+import { assertNoAssets, assetsOf, resolveSendAmount, selectionOf } from "../amount";
 import { makeHandle } from "../handle";
 
 /**
@@ -23,6 +23,7 @@ export function arkRail(): PaymentRail {
             const address = arkTarget(req.raw)!;
             assertNoAssets("ark", req);
             const amt = resolveSendAmount("ark", req.raw, req.amount);
+            const selectedVtxos = selectionOf(req);
             return {
                 railId: "ark",
                 amount: amt,
@@ -30,7 +31,13 @@ export function arkRail(): PaymentRail {
                 total: amt,
                 send: async () =>
                     makeHandle("ark", async (emit) => {
-                        const txid = await ctx.wallet.send({ address, amount: amt });
+                        // Only `SendParams` carries a selection.
+                        const txid = selectedVtxos
+                            ? await ctx.wallet.send({
+                                  recipients: [{ address, amount: amt }],
+                                  selectedVtxos,
+                              })
+                            : await ctx.wallet.send({ address, amount: amt });
                         const result = { railId: "ark", txid };
                         emit({ status: "settled", result });
                         return result;

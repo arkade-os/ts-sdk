@@ -36,11 +36,8 @@ function countRows(db: IDBDatabase, store: string): Promise<number> {
 }
 
 describe("IndexedDB schema", () => {
-    // The shared wallet/contract schema is pinned at v3 and must NOT carry the
-    // intent-persistence stores: upgrading the SDK must never migrate an
-    // existing user's database. This is the inertness guarantee.
-    it("keeps the shared schema at v3 without the intent/virtualtx stores", async () => {
-        expect(DB_VERSION).toBe(3);
+    it("keeps the shared schema at v4 without the intent/virtualtx stores", async () => {
+        expect(DB_VERSION).toBe(4);
         const db = await openDatabase("schema-shared-inert-test", DB_VERSION, initDatabase);
         const names = Array.from(db.objectStoreNames);
         expect(names).not.toContain("intents");

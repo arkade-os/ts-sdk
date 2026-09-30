@@ -4,6 +4,7 @@ import {
     assertSendableAmount,
     assetsOf,
     resolveAssetAmount,
+    selectionOf,
     tryResolveSendAmount,
 } from "../amount";
 import { makeHandle } from "../handle";
@@ -30,6 +31,7 @@ export function arkAssetRail(): PaymentRail {
             // A stated amount is validated, never defaulted: `0` is not "pick one".
             if (req.amount !== undefined) assertSendableAmount("ark-asset", req.amount);
             const carrier = tryResolveSendAmount(req.raw, req.amount) ?? ASSET_CARRIER_SATS;
+            const selectedVtxos = selectionOf(req);
             return {
                 railId: "ark-asset",
                 amount: carrier,
@@ -38,11 +40,10 @@ export function arkAssetRail(): PaymentRail {
                 assets: { delivered: asset, spent: asset },
                 send: async () =>
                     makeHandle("ark-asset", async (emit) => {
-                        const txid = await ctx.wallet.send({
-                            address,
-                            amount: carrier,
-                            assets: [asset],
-                        });
+                        const recipient = { address, amount: carrier, assets: [asset] };
+                        const txid = selectedVtxos
+                            ? await ctx.wallet.send({ recipients: [recipient], selectedVtxos })
+                            : await ctx.wallet.send(recipient);
                         const result = { railId: "ark-asset", txid };
                         emit({ status: "settled", result });
                         return result;

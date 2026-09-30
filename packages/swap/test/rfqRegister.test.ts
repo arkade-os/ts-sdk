@@ -83,6 +83,7 @@ state.arkInfo.signerPubkey = hex.encode(SERVER);
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
 const REFUND_LOCKTIME = NOW + 60 * 24 * 3600;
+const REFUND_WITHOUT_RECEIVER_DELAY = REFUND_LOCKTIME - NOW;
 const HTLC_LOCKTIME = NOW + 30 * 24 * 3600;
 
 const PAYMENT_HASH = "ab".repeat(32);
@@ -103,6 +104,7 @@ const lightningTransport = (): RfqTransport => ({
             serverPubkey: SERVER,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
+            refundWithoutReceiverDelay: REFUND_WITHOUT_RECEIVER_DELAY,
             emulatorPubkey: EMULATOR_PUBKEY,
             senderPubkey: hex.decode(profile.client_refund_pubkey as string),
             receiverPkScript: RECEIVER_PK_SCRIPT,
@@ -121,6 +123,7 @@ const lightningTransport = (): RfqTransport => ({
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
                 lockup_address: script.address("tark", SERVER).encode(),
+                refund_without_receiver_delay: REFUND_WITHOUT_RECEIVER_DELAY,
             },
         } satisfies RfqQuote;
     },

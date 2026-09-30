@@ -153,6 +153,21 @@ describe("arkAssetRail", () => {
         expect(result).toEqual({ railId: "ark-asset", txid: "the-txid" });
     });
 
+    it("spends exactly the inputs the request names", async () => {
+        const send = vi.fn(async () => "the-txid");
+        const selectedVtxos = [{ txid: "bb".repeat(32), vout: 1, value: 5000 }] as never;
+        const quote = await arkAssetRail().quote(
+            { raw: ARK_ADDR, assets: [USDX], selectedVtxos },
+            ctx(send),
+        );
+        await (await quote.send()).settled();
+
+        expect(send).toHaveBeenCalledWith({
+            recipients: [{ address: ARK_ADDR, amount: ASSET_CARRIER_SATS, assets: [USDX] }],
+            selectedVtxos,
+        });
+    });
+
     it("refuses a malformed asset at quote time with a named error", async () => {
         await expect(
             arkAssetRail().quote({ raw: ARK_ADDR, assets: [USDX, USDX] }, ctx()),
@@ -170,7 +185,10 @@ describe("the BTC-only rails refuse an asset rather than dropping it", () => {
     it("onchain drops itself — an Arkade asset has no L1 form to offboard to", async () => {
         const btc = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
         expect(
-            await onchainRail().available?.({ raw: btc, amount: 1000, assets: [USDX] }, ctx()),
+            await onchainRail({ feeInfo: async () => ({}) as any }).available?.(
+                { raw: btc, amount: 1000, assets: [USDX] },
+                ctx(),
+            ),
         ).toBe(false);
     });
 });

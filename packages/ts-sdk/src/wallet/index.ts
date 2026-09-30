@@ -395,6 +395,7 @@ export interface WalletBalance {
      * Immediately spendable offchain balance — what generic selection would
      * pick, so nothing counted here can be refused by `send`:
      * `settled + preconfirmed - gated - intentLocked`.
+     * A dust carrier is reserved if any assets are held on outputs comprising this balance.
      */
     available: number;
     /**
@@ -735,7 +736,7 @@ export interface Status {
  * @deprecated Use the canonical facts on {@link VirtualCoin} — `isSwept`, `isPreconfirmed`,
  * `isSpent`, `expiresAt`, `expiresAtHeight`, `commitmentTxIds`, `spentBy`, `settledBy` — and the
  * capability predicates {@link canSpendOffchain}, {@link canRecoverOnchain},
- * {@link hasTerminalSpend}, {@link isPastExpiry}. `state` collapses independent facts into one
+ * {@link isVtxoSpent}, {@link isPastExpiry}. `state` collapses independent facts into one
  * lossy label; this object is retained only as a backward-compatible projection.
  */
 export interface VirtualStatus {
@@ -800,7 +801,7 @@ export interface Coin extends Outpoint {
  * {@link IndexerProvider} and {@link WalletRepository} implementations may hand back coins without
  * them. The SDK normalizes every incoming coin, so coins it returns always carry the facts that are
  * determinable; do not read these fields off a coin the SDK has not returned to you — use
- * {@link canSpendOffchain} / {@link canRecoverOnchain} / {@link hasTerminalSpend} /
+ * {@link canSpendOffchain} / {@link canRecoverOnchain} / {@link isVtxoSpent} /
  * {@link isPastExpiry}, which normalize defensively.
  *
  * @see Coin
@@ -878,14 +879,24 @@ export interface TxKey {
     arkTxid: string;
 }
 
-/** The categories the history builder itself assigns. */
-export type BuiltinTxTag = "offchain" | "boarding" | "exit" | "batch";
+/**
+ * The categories the history builder itself assigns.
+ *
+ * Four of them name the mechanism that moved the coin. `"gated"` names the
+ * counterparty instead: an offchain row facing a contract row of this wallet's
+ * that generic spending is closed on — a swap covenant, a lockup — which is the
+ * same money {@link WalletBalance.gated} reports. History reads such a contract
+ * as an external party, so the movement is a real send or receive rather than
+ * change, and the tag is what lets a consumer tell "into my own escrow" from
+ * "to a stranger" instead of the movement arriving unattributed.
+ */
+export type BuiltinTxTag = "offchain" | "boarding" | "exit" | "batch" | "gated";
 
 /**
  * The category the history builder assigns to a transaction. The `(string & {})`
  * arm keeps the union open — apps and resolvers can introduce their own
  * categories without a breaking change — while preserving editor autocomplete
- * for the built-in four.
+ * for the built-in ones.
  */
 export type TxTag = BuiltinTxTag | (string & {});
 
@@ -964,6 +975,7 @@ export {
     getAllNormalizedVtxos,
     getNormalizedVtxos,
     hasTerminalSpend,
+    isVtxoSpent,
     isExpired,
     isPastExpiry,
     isRecoverable,
@@ -1010,6 +1022,19 @@ export type GetVtxosFilter = {
      * `Unroll.prepareUnrollTransaction`, the flag's main consumer, does.
      */
     withUnrolled?: boolean;
+};
+
+export type GetSpendableVtxosFilter = GetVtxosFilter & {
+    /** Exclude contracts retained for history from this spendable read. */
+    watchedOnly?: boolean;
+    /** Query only contracts whose handler permits generic spending. */
+    genericallySpendableOnly?: boolean;
+
+    /** Maximum age of a successful sync reused by this read, in milliseconds. Default: 0. */
+    maxSyncAgeMs?: number;
+
+    /** Reject repository fallback when the selected contracts could not be synced. */
+    requireSynced?: boolean;
 };
 
 /**
@@ -1183,10 +1208,10 @@ export interface IReadonlyWallet {
      * Both exclusion sets are derived from one contract snapshot, so they cannot
      * disagree about which VTXOs exist.
      *
-     * @param filter - Same flags, same defaults, as {@link getVtxos}
-     * @see GetVtxosFilter
+     * @param filter - Same coin flags and defaults as {@link getVtxos}, with opt-in contract scopes
+     * @see GetSpendableVtxosFilter
      */
-    getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
+    getSpendableVtxos(filter?: GetSpendableVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
 
     /** @returns Onchain boarding inputs tracked by the wallet. */
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
@@ -1217,3 +1242,8 @@ export interface IReadonlyWallet {
      */
     clear(): Promise<void>;
 }
+
+export {
+    registerWalletRestoreHook,
+    type WalletRestoreHook,
+} from "./restoreHooks";

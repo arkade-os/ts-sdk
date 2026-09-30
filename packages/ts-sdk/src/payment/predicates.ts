@@ -17,10 +17,11 @@ export const isLightningInvoice = (raw: string): boolean =>
 /**
  * True for an LNURL or a Lightning address (`user@host`).
  *
- * TODO(lnurl): no rail consumes this yet — LNURL / Lightning-address routing is
- * planned future work. The predicate is exported ahead of the rail so consumers
- * can classify these targets today; until the rail lands, `route()` throws
- * "no rail for" on them. Keep the export (do not flag as unused).
+ * No rail here consumes it, and that is the layering rather than a gap:
+ * routing an LNURL needs an LNURL client, so the rails ship from
+ * `@arkade-os/lnurl-client/arkade` (`lnurlRails`) and are registered by the
+ * app, as the solver rails from `@arkade-os/swap` are. With none registered,
+ * `route()` throws "no rail for" on these targets.
  */
 export const isLnurl = (raw: string): boolean =>
     /^lnurl/i.test(raw) || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw);

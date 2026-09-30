@@ -6,7 +6,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
-import { PaymentRouter, onchainRail, type RouterContext } from "@arkade-os/sdk";
+import { PaymentRouter, onchainRail, type FeeInfo, type RouterContext } from "@arkade-os/sdk";
 import {
     SOLVER_ONCHAIN_RAIL,
     solverOnchainRail,
@@ -49,6 +49,7 @@ const negotiated = (fundAmount: number, toAmount: number) =>
         address: "tark1lockup",
         fundAmount,
         quote: {
+            pair: "arkade:BTC->onchain:BTC",
             from_amount: fundAmount,
             to_amount: toAmount,
             valid_until: NOW() + 3600,
@@ -253,13 +254,13 @@ describe("solverOnchainRail.available", () => {
 
 describe("the router drops this rail rather than failing the payment", () => {
     /** A request the collaborative-exit rail can price without a live wallet. */
-    const arkProvider = { getInfo: async () => ({ fees: {} }) };
+    const feeInfo = async () => ({}) as FeeInfo;
     const routerCtx = (rail: ReturnType<typeof solverOnchainRail>) =>
         new PaymentRouter({
-            wallet: { arkProvider } as never,
+            wallet: {} as never,
             prefs: { priority: [SOLVER_ONCHAIN_RAIL, "onchain"] },
         })
-            .use(onchainRail())
+            .use(onchainRail({ feeInfo }))
             .use(rail);
 
     it("ranks the solver route first when a card takes the send", async () => {

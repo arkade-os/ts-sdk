@@ -73,14 +73,14 @@ import { RawWitness } from "@scure/btc-signer";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 
-import type { Network } from "../networks";
-import { DEFAULT_NETWORK, resolveEmulatorPubkey } from "../networks";
+import type { Network, NetworkName } from "../networks";
+import { DEFAULT_NETWORK, getNetwork, networks, resolveEmulatorPubkey } from "../networks";
 import type { ArkProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
 import type { Identity } from "../identity";
 import type { VirtualCoin } from "../wallet";
-import { getNormalizedVtxos, hasTerminalSpend } from "../wallet";
+import { getNormalizedVtxos, isVtxoSpent } from "../wallet";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
 import { toXOnly } from "../utils/keys";
@@ -147,6 +147,7 @@ export {
     type Program,
     type ProgramKeys,
     type SignerRef,
+    type TweakedSigner,
     type TapscriptSegment,
     type WitnessRef,
 } from "./program";
@@ -248,7 +249,10 @@ export interface ArkadeConnectOptions {
     indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
     /** Signer for paths that require a user signature; optional for watch-only. */
     identity?: Identity;
-    /** Network for address derivation; defaults to the SDK default. */
+    /**
+     * Network for address derivation. Defaults to the network the server
+     * reports on `getInfo` — or the SDK default when the server names none.
+     */
     network?: Network;
     /**
      * Co-sign with this emulator key (33-byte compressed hex) instead of the
@@ -332,7 +336,16 @@ export class Arkade {
         const info = await opts.arkade.getInfo();
         const serverKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
         const checkpoint = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
-        const network = opts.network ?? DEFAULT_NETWORK;
+        // The server says which network it is on — use it for address
+        // derivation unless the caller overrides, so a test-network server
+        // no longer yields mainnet-prefixed contract addresses. A server
+        // that names no network (or one this SDK does not know) keeps the
+        // documented default.
+        const network =
+            opts.network ??
+            (Object.hasOwn(networks, info.network)
+                ? getNetwork(info.network as NetworkName)
+                : DEFAULT_NETWORK);
 
         // The emulator is optional — only covenant contracts need it.
         //
@@ -545,9 +558,7 @@ export class ArkadeContract<P extends Program = Program> {
                 // Not `canSpendOffchain`: that would also drop swept coins,
                 // which this accessor has always returned. Only the exited ones
                 // are new, and they are spendable by nothing offchain.
-                return (withVtxos?.vtxos ?? []).filter(
-                    (v) => !hasTerminalSpend(v) && !v.isUnrolled,
-                );
+                return (withVtxos?.vtxos ?? []).filter((v) => !isVtxoSpent(v) && !v.isUnrolled);
             }
         }
         if (!this.client.indexer) {
@@ -560,7 +571,7 @@ export class ArkadeContract<P extends Program = Program> {
         // Same guard as the manager branch above, kept alongside the server-side
         // ask rather than instead of it: what the server calls spendable is its
         // answer, not a fact this accessor may lean on.
-        return vtxos.filter((v) => !hasTerminalSpend(v) && !v.isUnrolled);
+        return vtxos.filter((v) => !isVtxoSpent(v) && !v.isUnrolled);
     }
 
     /** Total spendable balance (requires an indexer). */

@@ -72,7 +72,9 @@ localStorage adapter to write:
         useCache,
     });
     ```
-    (The `network`-card filtering and registry-URL lookup stay wallet concerns.)
+    (The `network`-card filtering stays a wallet concern. The registry URL is now optional:
+    `discoverMarkets` follows the network's published default unless `registryUrl` overrides it,
+    so a caller no longer has to supply one.)
     The markets cache moved out of localStorage into the repository, so the old
     `swapMarkets-*` entries are orphaned — one cold refetch, and the data migration in §3
     can delete them alongside the swap keys.
@@ -101,9 +103,8 @@ three existing stores are untouched), and the wallet writes the records.
 - **At boot**, `getAllRfqSwaps()`, then per record `lockupContractParams(contractManager,
   record.lockupAddress)` and `rebuildRfqSwap(record, params)`, and hand the results to
   `RfqSwapManager.start`.
-- **Prune** with `shouldRetainRfqSwap(record, now)` → `removeRfqSwap(record.rfqId)`. `now` is unix
-  **seconds** (`Math.floor(Date.now() / 1000)`); milliseconds against a seconds window retires every
-  terminal record after ~43 minutes.
+- **Keep terminal history** and load only active records for monitoring. The legacy
+  `shouldRetainRfqSwap`/`removeRfqSwap` path is an explicit data deletion choice, not a boot step.
 
 ### How to fill `profile`, per corridor
 

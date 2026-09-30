@@ -1,3 +1,24 @@
 pnpm exec biome format config
+
+# `...[HEAD]` selects no projects inside a git worktree, where `.git` is a file
+# rather than a directory, so the two filtered steps below exit 0 having run
+# nothing. An empty selection is a broken gate, not "nothing to do".
+selected=$(pnpm --filter="...[HEAD]" ls --depth -1 --parseable 2>/dev/null)
+probe_status=$?
+projects=$(git ls-files -- '*/package.json' | sed 's#/package.json$##' | tr '\n' '|' | sed 's/|$//')
+
+# A failed probe is not an empty selection; let the real steps below report it.
+if [ "$probe_status" -eq 0 ] && [ -z "$selected" ] && [ -n "$projects" ] &&
+	git diff --cached --name-only | grep -qE "^($projects)/"; then
+	echo "pre-commit: staged changes are inside a workspace package, but" >&2
+	echo "  pnpm --filter=\"...[HEAD]\" selected no projects, so lint and" >&2
+	echo "  test:unit below would run nothing." >&2
+	echo "" >&2
+	echo "  Run the gate yourself before committing:" >&2
+	echo "    pnpm -r lint && pnpm -r build && pnpm -r test:unit" >&2
+	echo "  then commit with --no-verify, or commit from the main checkout." >&2
+	exit 1
+fi
+
 pnpm --filter="...[HEAD]" run --if-present lint
 pnpm --filter="...[HEAD]" run --if-present test:unit

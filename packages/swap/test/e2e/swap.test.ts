@@ -18,6 +18,7 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    RestArkProvider,
     RestIndexerProvider,
     SingleKey,
     Wallet,
@@ -35,7 +36,7 @@ import {
     type Tx,
 } from "../../src";
 
-const ARK_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 // mempool serves the Esplora REST API under `/api`; the root path is the HTML UI
 const ESPLORA_API_URL = "http://localhost:3000/api";
 const arkdExec = "docker exec -t arkd";
@@ -55,19 +56,34 @@ const execCommand = (command: string): string => {
     return result;
 };
 
-const waitFor = async (
-    fn: () => Promise<boolean>,
-    { timeout = 30_000, interval = 500 } = {},
-): Promise<void> => {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        if (await fn()) return;
-        await new Promise((r) => setTimeout(r, interval));
-    }
-    throw new Error("timeout in waitFor");
+// expect.poll would do, but it refuses to run outside a test (the beforeAll
+// faucet wait needs this too); vi.waitFor polls anywhere. vi.waitFor retries
+// ANY throw until the deadline, so a real error from `fn` (stack down, HTTP
+// 500) would burn the whole timeout: capture it, stop polling, rethrow at
+// once — only a `false` (not ready yet) may spin.
+const waitFor = (fn: () => Promise<boolean>, timeout = 30_000): Promise<void> => {
+    let fatal: { err: unknown } | undefined;
+    return vi
+        .waitFor(
+            async () => {
+                if (fatal) return;
+                let ready: boolean;
+                try {
+                    ready = await fn();
+                } catch (err) {
+                    fatal = { err };
+                    return;
+                }
+                if (!ready) throw new Error("timeout in waitFor");
+            },
+            { timeout, interval: 500 },
+        )
+        .then(() => {
+            if (fatal) throw fatal.err;
+        });
 };
 
-const indexer = new RestIndexerProvider(ARK_URL);
+const indexer = new RestIndexerProvider(OPERATOR_URL);
 const repository = new InMemoryAssetSwapRepository();
 let wallet: Wallet;
 // the key the covenants are funded against — restore classifies each spend by
@@ -77,7 +93,7 @@ let operatorPubkey: Uint8Array;
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: ARK_URL,
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -113,7 +129,7 @@ describe("maker-side swap loop (regtest)", () => {
 
     it("derives, funds, and restores a pending offer from chain data alone", async () => {
         // no override — asserts the default pin matches the regtest stack
-        offer = await createOffer(wallet, ARK_URL, {
+        offer = await createOffer(wallet, OPERATOR_URL, {
             wantAmount: WANT_AMOUNT,
             wantAsset,
         });
@@ -220,7 +236,7 @@ describe("maker-side swap loop (regtest)", () => {
         // outpoint, so the escrow marker must not close the one spend route the
         // maker actually owns. A future tightening that gates explicit inputs
         // would strand every offer deposit, and would fail here.
-        const cancelTxid = await cancelOffer(wallet, ARK_URL, restoredOfferHex, {
+        const cancelTxid = await cancelOffer(wallet, OPERATOR_URL, restoredOfferHex, {
             repository,
             fundingTxid,
             swapAddress: offer.address,
@@ -258,7 +274,7 @@ describe("maker-side swap loop (regtest)", () => {
         });
     }, 120_000);
 
-    it("drives status from the wallet's own spend event, with no restore call", async () => {
+    it("resolves the swap as cancelled from the wallet's own spend event, with no restore call", async () => {
         // Phase 3 end to end, and the half no unit test can reach: registration
         // makes the covenant watched, the watcher's SSE delivers `vtxo_spent`,
         // and the record resolves without anyone scanning history. A second
@@ -275,13 +291,13 @@ describe("maker-side swap loop (regtest)", () => {
         const updates: AssetSwap[] = [];
         const watcher = await watchOfferSwaps({
             wallet,
-            arkServerUrl: ARK_URL,
+            arkServerUrl: OPERATOR_URL,
             repository: swapRepository,
             onUpdate: (swap) => updates.push(swap),
         });
 
         try {
-            const second = await createOffer(wallet, ARK_URL, {
+            const second = await createOffer(wallet, OPERATOR_URL, {
                 wantAmount: WANT_AMOUNT + BigInt(1),
                 wantAsset,
             });
@@ -312,7 +328,7 @@ describe("maker-side swap loop (regtest)", () => {
                 createdAt: Date.now(),
             });
 
-            await cancelOffer(wallet, ARK_URL, second.offerHex, {
+            await cancelOffer(wallet, OPERATOR_URL, second.offerHex, {
                 repository: elsewhere,
                 fundingTxid: secondFundingTxid,
                 swapAddress: second.address,

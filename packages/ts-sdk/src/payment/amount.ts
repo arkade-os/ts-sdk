@@ -1,5 +1,5 @@
 import { BIP21 } from "../utils/bip21";
-import type { Asset } from "../index";
+import type { Asset, NormalizedExtendedVirtualCoin } from "../index";
 import type { PaymentRequest } from "./types";
 
 /** Throw unless `amt` is a positive integer number of satoshis. */
@@ -51,6 +51,22 @@ export function assertNoAssets(railId: string, req: PaymentRequest): void {
         throw new Error(
             `${railId}: cannot deliver ${assets.map((a) => a.assetId).join(", ")} ` +
                 `— this rail moves BTC only`,
+        );
+    }
+}
+
+/** The inputs a request names. An EMPTY array is still a selection, covering nothing. */
+export function selectionOf(req: PaymentRequest): NormalizedExtendedVirtualCoin[] | undefined {
+    return req.selectedVtxos;
+}
+
+/** For a rail whose counterparty funds the spend: ignoring a named input set
+ *  would spend coins the caller had promised elsewhere, so refuse instead. */
+export function assertNoSelection(railId: string, req: PaymentRequest): void {
+    if (selectionOf(req) !== undefined) {
+        throw new Error(
+            `${railId}: cannot spend a caller-chosen input set (selectedVtxos) ` +
+                `— this rail does not choose the coins it spends`,
         );
     }
 }

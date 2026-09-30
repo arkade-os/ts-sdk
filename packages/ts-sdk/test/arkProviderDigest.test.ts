@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { RestArkProvider, DigestMismatchError } from "../src/providers/ark";
+import { jsonResponse } from "./helpers/response";
 
 const SIGNER = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
 function okInfo(digest: string, signerPubkey: string = SIGNER) {
-    return { ok: true, json: async () => ({ signerPubkey, digest }) };
+    return jsonResponse({ signerPubkey, digest });
 }
 
 /** A rejected non-/info response whose body carries the given marker. */

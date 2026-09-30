@@ -18,7 +18,7 @@
  *
  * Every shape below is the client half of a schema that already exists and is
  * already strict. The source of truth is `arkade-os/intent-solver` at
- * `9751a1c`:
+ * `6e6eac6`:
  *
  * - `packages/solver-corridors-evm/src/wire/evmPayloads.ts` — the two
  *   `.strict()` request schemas and the two quote payload builders.
@@ -51,7 +51,7 @@
  * exact. `String(aBigint)` is already the canonical form for a non-negative
  * value: digits only, no separator, no exponent, no leading zero. So encoding
  * needs no formatter, and the only real work is on the way IN — see {@link
- * evmAmountFromWire}, which refuses a JSON number outright.
+ * evmAmountFromWire}, which refuses a JSON number and values outside uint256.
  *
  * The SATS side of both corridors stays a JSON `number`, matching the four BTC
  * corridors and the solver's own schemas. § 2.1 makes those strings too; that
@@ -83,6 +83,8 @@ const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
  * misprices by eighteen orders of magnitude.
  */
 const TOKEN_AMOUNT = /^(0|[1-9][0-9]*)$/;
+const MAX_UINT256 = (1n << 256n) - 1n;
+const MAX_UINT256_DECIMAL = MAX_UINT256.toString();
 
 /** The two directional pair spellings, LOWERCASE token only — the solver's
  * `evmDirectionOf`, restated. */
@@ -158,7 +160,9 @@ export const evmTokenOf = (pair: string): string | null => {
  * which field was wrong.
  */
 export const evmAmountToWire = (units: bigint): string => {
+    if (typeof units !== "bigint") throw new Error("token amount must be a bigint");
     if (units < 0n) throw new Error(`token amount may not be negative, got ${units}`);
+    if (units > MAX_UINT256) throw new Error(`token amount must fit uint256, got ${units}`);
     return units.toString();
 };
 
@@ -185,6 +189,12 @@ export const evmAmountFromWire = (value: unknown, field: string): bigint => {
     }
     if (!TOKEN_AMOUNT.test(value)) {
         throw new Error(`${field} is not a canonical decimal amount: ${JSON.stringify(value)}`);
+    }
+    if (
+        value.length > MAX_UINT256_DECIMAL.length ||
+        (value.length === MAX_UINT256_DECIMAL.length && value > MAX_UINT256_DECIMAL)
+    ) {
+        throw new Error(`${field} exceeds uint256`);
     }
     return BigInt(value);
 };
@@ -225,6 +235,7 @@ export const evmSendRequest = (input: {
     amountSats: number;
 }): Record<string, unknown> => {
     assertPositiveInteger(input.amountSats, "amountSats");
+    assertHash32(input.paymentHash, "paymentHash");
     return {
         v: 1,
         type: "rfq_request",
@@ -281,6 +292,7 @@ export const evmReceiveRequest = (input: {
     payoutPubkey: Uint8Array;
 }): Record<string, unknown> => {
     assertPositiveInteger(input.evmTimeoutBlock, "evmTimeoutBlock");
+    assertHash32(input.paymentHash, "paymentHash");
     // Zero is a legal ENCODING and not a legal amount, which is why the check
     // belongs here and not in `evmAmountToWire`: `"0"` is canonical per § 2.1
     // and the codec has to keep emitting and reading it, while a lock of no
@@ -394,16 +406,8 @@ export interface EvmReceiveQuoteProfile extends EvmQuoteProfileCommon {
     evm_claim_address: string;
 }
 
-/**
- * A quote for `arkade:BTC->ethereum:<token>`.
- *
- * `from_amount` and `to_amount` are in DIFFERENT ASSETS — sats in, token
- * atomic units out — so they are not comparable as numbers, and the spread
- * between them is not a fee. What a fee ceiling needs on a cross-asset pair is
- * a reference rate of the caller's own; `assertFundable`'s `maxFee` takes one,
- * and `maxFee.referenceRate` is `to`-units per `from`-unit, which on this
- * direction means **token atomic units per sat**.
- */
+/** Negotiation-only quote; `assertFundable` refuses EVM pairs until local
+ * contract, finality, and deadline verification is implemented. */
 export interface EvmSendQuote {
     v: 1;
     type: "rfq_quote";
@@ -421,10 +425,7 @@ export interface EvmSendQuote {
     [key: string]: unknown;
 }
 
-/** A quote for `ethereum:<token>->arkade:BTC`. `maxFee.referenceRate` on this
- * direction is **sats per token atomic unit**, the `to`-per-`from` convention
- * again — the reciprocal of the send leg's, and the easiest thing here to get
- * wrong by a factor of the token's decimals. */
+/** Negotiation-only quote; see {@link EvmSendQuote}. */
 export interface EvmReceiveQuote {
     v: 1;
     type: "rfq_quote";
@@ -459,34 +460,36 @@ export type EvmRfqQuote = EvmSendQuote | EvmReceiveQuote;
  * solver may extend a quote without a version bump, and a client that refused
  * the extension would be the one that broke.
  *
- * Pass the token AND the negotiation you asked for. A quote naming a different
- * token is a different market, and comparing the pair is the only way to
- * notice. `rfqId` is required rather than optional for the reason `expectQuote`
- * checks it: on a shared relay every one of a solver's events arrives on the
- * same subscription, so nothing but this id distinguishes the answer to THIS
- * negotiation from the answer to another one — and an optional check is one a
- * caller forgets exactly when several are in flight, which is the only time it
- * matters.
+ * Bind the expected token, RFQ id, payment hash, chain id, and exact-in amount.
+ * Hash and chain checks protect the swap identity; the amount check prevents
+ * accepting terms different from the request.
  *
  * **Takes `unknown`, and pass a transport's result straight in.**
- * `RfqTransport.requestQuote` is typed `Promise<RfqQuote>`, which is not
- * accurate for an EVM quote — `RfqQuote` declares both amounts `number`, and
- * on this corridor one of them is a decimal string. The transport does not
- * inspect them, so the value is right and only the type is wrong; running it
- * through here is what makes the two agree again. Do not read `to_amount` off
- * the transport's return value directly: it types as a `number`, it is a
- * string, and `+` on it concatenates.
+ * `RfqTransport.requestQuote` is typed `Promise<RfqQuote>`. The shared type
+ * allows `number | string` for BTC and asset corridors, while this reader
+ * narrows the EVM token leg to a canonical string and sats to a number. Pass
+ * the transport result through here before reading either amount.
  */
 export const readEvmSendQuote = (
     payload: unknown,
-    expected: { tokenAddress: string; rfqId: string },
+    expected: {
+        tokenAddress: string;
+        rfqId: string;
+        paymentHash: string;
+        chainId: number;
+        amountSats: number;
+    },
 ): EvmSendQuote => {
+    assertHash32(expected.paymentHash, "expected.paymentHash");
+    assertPositiveInteger(expected.chainId, "expected.chainId");
+    assertPositiveInteger(expected.amountSats, "expected.amountSats");
     const { quote, profile } = readEvmQuoteEnvelope(
         payload,
         evmSendPair(expected.tokenAddress),
         expected.rfqId,
     );
     readCommonProfile(profile);
+    assertQuoteBindings(profile, expected.paymentHash, expected.chainId);
     assertHex(profile.receiver_pk_script, "profile.receiver_pk_script");
     // Required, not optional. A send quote without it is one this client can
     // neither verify nor claim — see `EvmSendQuoteProfile.evm_refund_address`.
@@ -502,8 +505,11 @@ export const readEvmSendQuote = (
     // the amount is retrieved later, from the returned quote, via
     // `evmQuoteTokenAmount`. Returning it here would hand callers a second,
     // divergeable copy of a number the quote already carries.
-    evmAmountFromWire(quote.to_amount, "to_amount");
+    assertPositiveTokenAmount(quote.to_amount, "to_amount");
     assertPositiveInteger(quote.from_amount, "from_amount");
+    if (quote.from_amount !== expected.amountSats) {
+        throw new Error("quote from_amount does not match the requested sats amount");
+    }
     return quote as unknown as EvmSendQuote;
 };
 
@@ -511,21 +517,35 @@ export const readEvmSendQuote = (
  * readEvmSendQuote} for what this does and does not promise. */
 export const readEvmReceiveQuote = (
     payload: unknown,
-    expected: { tokenAddress: string; rfqId: string },
+    expected: {
+        tokenAddress: string;
+        rfqId: string;
+        paymentHash: string;
+        chainId: number;
+        evmAmount: bigint;
+    },
 ): EvmReceiveQuote => {
+    assertHash32(expected.paymentHash, "expected.paymentHash");
+    assertPositiveInteger(expected.chainId, "expected.chainId");
+    if (expected.evmAmount <= 0n) throw new Error("expected.evmAmount must be positive");
+    evmAmountToWire(expected.evmAmount);
     const { quote, profile } = readEvmQuoteEnvelope(
         payload,
         evmReceivePair(expected.tokenAddress),
         expected.rfqId,
     );
     readCommonProfile(profile);
+    assertQuoteBindings(profile, expected.paymentHash, expected.chainId);
     assertHex(profile.solver_refund_pk_script, "profile.solver_refund_pk_script");
     assertEvmAddress(
         asString(profile.evm_claim_address, "profile.evm_claim_address"),
         "profile.evm_claim_address",
     );
     // Called for the throw, not the value — see the send reader above.
-    evmAmountFromWire(quote.from_amount, "from_amount");
+    const quotedAmount = assertPositiveTokenAmount(quote.from_amount, "from_amount");
+    if (quotedAmount !== expected.evmAmount) {
+        throw new Error("quote from_amount does not match the requested token amount");
+    }
     assertPositiveInteger(quote.to_amount, "to_amount");
     return quote as unknown as EvmReceiveQuote;
 };
@@ -568,13 +588,13 @@ const assertEvmAddress = (value: string, field: string): string => {
 };
 
 const assertPositiveInteger = (value: unknown, field: string): void => {
-    if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
         throw new Error(`${field} must be a positive integer, got ${String(value)}`);
     }
 };
 
 const assertNonNegativeInteger = (value: unknown, field: string): void => {
-    if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
         throw new Error(`${field} must be a non-negative integer, got ${String(value)}`);
     }
 };
@@ -609,6 +629,25 @@ const assertHash32 = (value: unknown, field: string): void => {
     }
 };
 
+const assertPositiveTokenAmount = (value: unknown, field: string): bigint => {
+    const amount = evmAmountFromWire(value, field);
+    if (amount === 0n) throw new Error(`${field} must be positive`);
+    return amount;
+};
+
+const assertQuoteBindings = (
+    profile: Record<string, unknown>,
+    paymentHash: string,
+    chainId: number,
+): void => {
+    if (profile.payment_hash !== paymentHash) {
+        throw new Error("quote payment_hash does not match the request");
+    }
+    if (profile.evm_chain_id !== chainId) {
+        throw new Error("quote evm_chain_id does not match the expected chain");
+    }
+};
+
 const asString = (value: unknown, field: string): string => {
     if (typeof value !== "string") {
         throw new Error(`${field} must be a string, got ${String(value)}`);
@@ -623,6 +662,7 @@ const readEvmQuoteEnvelope = (
 ): { quote: Record<string, unknown>; profile: Record<string, unknown> } => {
     if (!payload || typeof payload !== "object") throw new Error("EVM quote is not an object");
     const quote = payload as Record<string, unknown>;
+    if (quote.v !== 1) throw new Error(`expected EVM quote version 1, got ${String(quote.v)}`);
     if (quote.type !== "rfq_quote") {
         throw new Error(`expected an rfq_quote, got ${String(quote.type)}`);
     }

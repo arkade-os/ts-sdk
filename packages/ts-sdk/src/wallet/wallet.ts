@@ -34,7 +34,7 @@ import {
     fetchVtxoCreatedAtByTxid,
     getAllNormalizedVtxos,
     getNormalizedVtxos,
-    hasTerminalSpend,
+    isVtxoSpent,
     isVirtualCoin,
     normalizeVtxo,
     parseLegacyExpiry,
@@ -53,6 +53,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     GetNewAddressesOptions,
     IAssetManager,
     IReadonlyAssetManager,
@@ -78,6 +79,7 @@ import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { classifyAgainstSignerSet, signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
 import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "./batchExpiry";
 import type { BatchExpiryPolicy } from "./batchExpiry";
+import { runWalletRestoreHooks } from "./restoreHooks";
 import {
     assertValidServerUnrollScript,
     resolveCheckpointExitDelayPolicy,
@@ -118,6 +120,7 @@ import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import {
     assertRecipientArkAddress,
     extendCoinWithTapscript,
+    getDustAmount,
     validateRecipients,
     type RecipientAddressContext,
 } from "./utils";
@@ -155,7 +158,11 @@ import { contractHandlers } from "../contracts/handlers";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
-import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoOwnership";
+import {
+    validateVtxosForScript,
+    saveVtxosForContract,
+    vtxoOutpoint,
+} from "../contracts/vtxoOwnership";
 import {
     WalletReceiveRotator,
     buildReceiveContract,
@@ -172,10 +179,21 @@ import {
 } from "./hdWalletCapable";
 import { deriveDescriptorLeafPubKey, identityDescriptor } from "../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
-import { CandidateDeps, Contract, ContractWithVtxos, DiscoveryDeps } from "../contracts/types";
+import {
+    CandidateDeps,
+    Contract,
+    ContractWithVtxos,
+    DiscoveryDeps,
+    GetContractsFilter,
+    isContractVtxoEvent,
+} from "../contracts/types";
 import {
     gateExclusion,
     gatedContracts,
+    gatedFrom,
+    isContractGenericallySpendable,
+    isGatedVtxo,
+    type GatedContracts,
     logExcludedVtxos,
     outpointExclusion,
     type VtxoExclusion,
@@ -423,7 +441,7 @@ export function filterSnapshotVtxos(
             if (vtxo.isUnrolled) {
                 return !!f.withUnrolled;
             }
-            if (hasTerminalSpend(vtxo)) {
+            if (isVtxoSpent(vtxo)) {
                 return false;
             }
             if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
@@ -1279,12 +1297,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /** @inheritdoc */
-    async getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
-        const snapshot = await this.contractSnapshot();
+    async getSpendableVtxos(
+        filter?: GetSpendableVtxosFilter,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
+        const snapshot = await this.contractSnapshot(filter, {
+            unspentOnly: !filter?.withUnrolled,
+        });
         const vtxos = filterSnapshotVtxos(snapshot, filter, this._pendingSpendOutpoints);
         const { gated, pendingRecovery } = this.spendabilityView(snapshot);
         const selectable = vtxos.filter(
-            (vtxo) => !gated.has(vtxo.script) && !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
+            (vtxo) =>
+                !isGatedVtxo(vtxo, gated) && !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
         );
         const unlocked = await spendableVtxosExcludingLocked(selectable, this.intentRepository);
         logExcludedVtxos("getSpendableVtxos", vtxos, [
@@ -1305,7 +1328,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 "getSpendableVtxos",
                 snapshot
                     .flatMap((contract) => contract.vtxos)
-                    .filter((vtxo) => vtxo.isUnrolled && !hasTerminalSpend(vtxo)),
+                    .filter((vtxo) => vtxo.isUnrolled && !isVtxoSpent(vtxo)),
                 [() => UNROLLED_REASON],
             );
         }
@@ -1401,9 +1424,32 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * otherwise the gate and the pending-recovery set answer about two different
      * points in time, and each read costs another sync.
      */
-    protected async contractSnapshot(): Promise<ContractWithVtxos[]> {
+    protected async contractSnapshot(
+        filter?: GetSpendableVtxosFilter,
+        options?: { unspentOnly?: boolean },
+    ): Promise<ContractWithVtxos[]> {
         const contractManager = await this.getContractManager();
-        return contractManager.getContractsWithVtxos();
+        const scope: GetContractsFilter | undefined = filter?.watchedOnly
+            ? { watch: ["watched", "awaiting-funds"] }
+            : undefined;
+        let query = scope;
+        if (filter?.genericallySpendableOnly) {
+            const scripts = (await contractManager.getContracts(scope))
+                .filter(isContractGenericallySpendable)
+                .map((contract) => contract.script);
+            if (scripts.length === 0) {
+                if (filter.requireSynced) {
+                    throw new Error("No generically spendable contracts to sync");
+                }
+                return [];
+            }
+            query = { ...scope, script: scripts };
+        }
+        return contractManager.getContractsWithVtxos(query, undefined, {
+            maxSyncAgeMs: filter?.maxSyncAgeMs,
+            unspentOnly: options?.unspentOnly,
+            requireSynced: filter?.requireSynced,
+        });
     }
 
     /**
@@ -1411,11 +1457,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * {@link getSpendableVtxos} and the balance answer about the same instant.
      */
     private spendabilityView(snapshot: readonly ContractWithVtxos[]): {
-        gated: ReturnType<typeof gatedContracts>;
+        gated: GatedContracts;
         pendingRecovery: ReadonlySet<string>;
     } {
         return {
-            gated: gatedContracts(snapshot.map((_) => _.contract)),
+            gated: gatedFrom(snapshot),
             pendingRecovery: this.selectPendingRecovery(snapshot),
         };
     }
@@ -1435,8 +1481,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return {
             now: { timestamp: new Date() },
             isPendingRecovery: (vtxo) => pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
-            isGenericallySpendable: (vtxo) => !gated.has(vtxo.script),
+            isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
+            dustCarrier: getDustAmount(this),
         };
     }
 
@@ -1479,22 +1526,28 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Return wallet transaction history derived from Arkade state and boarding transactions.
      */
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const contractManager = await this.getContractManager();
-        const response = await contractManager.getContractsWithVtxos();
-        const allVtxos = response.flatMap((_) => _.vtxos);
-
-        const { boardingTxs, commitmentsToIgnore } = await this.getBoardingTxs();
+        // Independent: one syncs against the indexer, the other reads the
+        // onchain provider. `getBalance` pairs its two reads the same way.
+        const [snapshot, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
+            this.contractSnapshot(),
+            this.getBoardingTxs(),
+        ]);
+        const allVtxos = snapshot.flatMap((_) => _.vtxos);
 
         // Best-effort: a retryable indexer failure yields a partial map, not a
         // failed read; terminal failures still propagate.
         const resolveTxCreatedAt = (txids: string[]) =>
             fetchVtxoCreatedAtByTxid(this.indexerProvider, txids);
 
+        // The gate off the same snapshot the coins came from, so both answer
+        // about one instant — see `buildTransactionHistory`'s `gatedScripts` for
+        // why history needs it at all.
         return buildTransactionHistory(
             allVtxos,
             boardingTxs,
             commitmentsToIgnore,
             resolveTxCreatedAt,
+            gatedFrom(snapshot),
         );
     }
 
@@ -1739,26 +1792,28 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     async getBoardingUtxosForSigners(allowedSigners: Set<string>): Promise<BoardingUtxoGroup[]> {
         const tapscripts = await this.getBoardingTapscripts(allowedSigners);
-        const groups: BoardingUtxoGroup[] = [];
-        for (const tapscript of tapscripts) {
-            const address = tapscript.onchainAddress(this.network);
-            const coins = await this.onchainProvider.getCoins(address);
-            const utxos = coins.map((utxo) => extendCoinWithTapscript(tapscript, utxo));
-            // Save boarding inputs using unified repository, keyed by the
-            // address the UTXOs actually sit on.
-            await this.walletRepository.saveUtxos(address, utxos);
-            groups.push({
-                tapscript,
-                // Normalize so the group key matches the axis/contract x-only
-                // form regardless of how the tapscript's key was stored.
-                serverPubKey: toXOnlySignerHex(hex.encode(tapscript.options.serverPubKey)),
-                // Per-row CSV delay decoded from THIS tapscript's exit leaf —
-                // not the wallet's current boarding timelock, which a signer
-                // rotation may have changed.
-                csvTimelock: CSVMultisigTapscript.decode(hex.decode(tapscript.exitScript)).params
-                    .timelock,
-                coins: utxos,
-            });
+        const addresses = tapscripts.map((tapscript) => tapscript.onchainAddress(this.network));
+        const groups: BoardingUtxoGroup[] = await Promise.all(
+            tapscripts.map(async (tapscript, i) => {
+                const coins = await this.onchainProvider.getCoins(addresses[i]);
+                const utxos = coins.map((utxo) => extendCoinWithTapscript(tapscript, utxo));
+                return {
+                    tapscript,
+                    // Normalize so the group key matches the axis/contract x-only
+                    // form regardless of how the tapscript's key was stored.
+                    serverPubKey: toXOnlySignerHex(hex.encode(tapscript.options.serverPubKey)),
+                    // Per-row CSV delay decoded from THIS tapscript's exit leaf —
+                    // not the wallet's current boarding timelock, which a signer
+                    // rotation may have changed.
+                    csvTimelock: CSVMultisigTapscript.decode(hex.decode(tapscript.exitScript))
+                        .params.timelock,
+                    coins: utxos,
+                };
+            }),
+        );
+        // Saved only once every fetch has succeeded, so a failure leaves no write in flight.
+        for (const [i, group] of groups.entries()) {
+            await this.walletRepository.saveUtxos(addresses[i], group.coins);
         }
         return groups;
     }
@@ -1912,7 +1967,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             let annotationQueue: Promise<void> = Promise.resolve();
 
             indexerStopFunc = cm.onContractEvent((event) => {
-                if (event.type !== "vtxo_received" && event.type !== "vtxo_spent") {
+                if (!isContractVtxoEvent(event)) {
                     return;
                 }
                 if (event.contract.type !== "default" && event.contract.type !== "delegate") {
@@ -3266,7 +3321,10 @@ export class Wallet
                 `restore: gapLimit must be a positive integer (got ${String(opts?.gapLimit)})`,
             );
         }
-        this._restoreInFlight = this._runRestore(gapLimit).finally(() => {
+        this._restoreInFlight = (async () => {
+            await this._runRestore(gapLimit);
+            await runWalletRestoreHooks(this);
+        })().finally(() => {
             this._restoreInFlight = undefined;
         });
         return this._restoreInFlight;
@@ -3962,7 +4020,10 @@ export class Wallet
                 amount += utxo.value - inputFee.satoshis;
             }
 
-            const vtxos = await this.getSpendableVtxos({ withRecoverable: true });
+            const vtxos = await this.getSpendableVtxos({
+                withRecoverable: true,
+                genericallySpendableOnly: true,
+            });
 
             // Cap the VTXOs per settlement to stay under the server's
             // intent-size limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its
@@ -4373,6 +4434,7 @@ export class Wallet
         for (const input of inputs) {
             // boarding input, we need to sign the settlement tx
             if (!isVirtualCoin(input)) {
+                let matched = false;
                 for (let i = 0; i < settlementPsbt.inputsLength; i++) {
                     const settlementInput = settlementPsbt.getInput(i);
 
@@ -4404,7 +4466,18 @@ export class Wallet
                         throw new Error(await this.unsignableBoardingInputError(input, script));
                     }
                     hasBoardingUtxos = true;
+                    matched = true;
                     break;
+                }
+
+                // Skipping it silently would settle the forfeits and leave this
+                // input behind. Arknotes reach this branch too — they carry no
+                // vtxo script — but spend no commitment input, so they are not
+                // the omission this speaks about.
+                if (!matched && !(input instanceof ArkNote)) {
+                    throw new Error(
+                        `boarding input ${input.txid}:${input.vout} is not an input of the commitment tx`,
+                    );
                 }
 
                 continue;
@@ -4729,15 +4802,17 @@ export class Wallet
         }
     }
 
-    /**
-     * @internal Sign an on-chain boarding exit / sweep transaction, routing
-     * each input to the correct key by its `witnessUtxo.script`: the identity
-     * for index-0 / static boarding, the per-index descriptor for a rotated
-     * boarding UTXO (plan §6-III.3). Used by
-     * {@link VtxoManager.sweepExpiredBoardingUtxos}; without it, the
-     * unilateral exit of a rotated boarding UTXO would be signed with the
-     * wrong (index-0) key and rejected.
-     */
+    async signInputsByWitnessScript(tx: Transaction): Promise<Transaction> {
+        const signed = await this._signerRouter.sign(
+            tx,
+            this.inputSigningJobsFromWitnessUtxos(tx),
+            {
+                onUnknownScript: "sign",
+            },
+        );
+        return signed as Transaction;
+    }
+
     async signOnchainBoardingTx(tx: Transaction): Promise<Transaction> {
         const signed = await this._signerRouter.sign(tx, this.inputSigningJobsFromWitnessUtxos(tx));
         return signed as Transaction;
@@ -5241,7 +5316,7 @@ export class Wallet
         const unclaimed: ArkadeCashUnclaimedVtxo[] = [];
 
         for (const vtxo of vtxos) {
-            if (hasTerminalSpend(vtxo)) {
+            if (isVtxoSpent(vtxo)) {
                 unclaimed.push(cashReport(vtxo, "already-spent"));
             } else if (vtxo.isUnrolled) {
                 // Exited onchain. The thin sweep is an offchain spend, so it
@@ -5512,6 +5587,7 @@ export class Wallet
         if (!selectedVtxos) {
             virtualCoins = await this.getSpendableVtxos({
                 withRecoverable: false,
+                genericallySpendableOnly: true,
             });
         }
 
@@ -5551,6 +5627,18 @@ export class Wallet
                 }
             }
         } else {
+            // Index asset candidates once. A wallet with many VTXOs and several
+            // asset recipients must not scan the full inventory for each asset
+            // or linearly search every already-selected input on each pass.
+            const coinsByAsset = new Map<string, NormalizedExtendedVirtualCoin[]>();
+            for (const coin of virtualCoins) {
+                for (const assetId of new Set(coin.assets?.map((asset) => asset.assetId))) {
+                    const coins = coinsByAsset.get(assetId) ?? [];
+                    coins.push(coin);
+                    coinsByAsset.set(assetId, coins);
+                }
+            }
+            const selectedOutpoints = new Set<string>();
             // select assets
             for (const recipient of recipients) {
                 if (!recipient.assets) {
@@ -5573,9 +5661,8 @@ export class Wallet
                         assetChanges.delete(receiverAsset.assetId);
                     }
 
-                    const availableCoins = virtualCoins.filter(
-                        (c) =>
-                            !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
+                    const availableCoins = (coinsByAsset.get(receiverAsset.assetId) ?? []).filter(
+                        (coin) => !selectedOutpoints.has(vtxoOutpoint(coin)),
                     );
 
                     const { selected, totalAssetAmount } = selectCoinsWithAsset(
@@ -5586,6 +5673,7 @@ export class Wallet
 
                     for (const coin of selected) {
                         selectedCoins.push(coin);
+                        selectedOutpoints.add(vtxoOutpoint(coin));
                         // asset coins contain btc, subtract from total amount to select
                         btcAmountToSelect -= coin.value;
                         // coin may contain other assets, add them to asset changes
@@ -5611,7 +5699,7 @@ export class Wallet
             // select remaining btc
             if (btcAmountToSelect > 0) {
                 const availableCoins = virtualCoins.filter(
-                    (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
+                    (coin) => !selectedOutpoints.has(vtxoOutpoint(coin)),
                 );
                 const { inputs: btcCoins } = selectVirtualCoins(availableCoins, btcAmountToSelect);
 
@@ -5626,6 +5714,7 @@ export class Wallet
                 }
 
                 selectedCoins = [...selectedCoins, ...btcCoins];
+                for (const coin of btcCoins) selectedOutpoints.add(vtxoOutpoint(coin));
             }
         }
 
@@ -5650,23 +5739,79 @@ export class Wallet
             );
         }
 
-        // enforce minimum change amount when there are asset changes
-        if (assetChanges.size > 0 && changeAmount < Number(this.dustAmount)) {
-            if (selectedVtxos) {
-                // Asset change needs a change output at or above dust, and this path
-                // may not reach for a coin the caller did not name.
-                throw new Error(
-                    `send({ selectedVtxos }): ${changeAmount} sats of change cannot carry ` +
-                        `${assetChanges.size} asset change(s), needs ${this.dustAmount}`,
-                );
-            }
+        if (selectedVtxos && assetChanges.size > 0 && changeAmount < Number(this.dustAmount)) {
+            // Asset change needs a change output at or above dust, and this path
+            // may not reach for a coin the caller did not name.
+            throw new Error(
+                `send({ selectedVtxos }): ${changeAmount} sats of change cannot carry ` +
+                    `${assetChanges.size} asset change(s), needs ${this.dustAmount}`,
+            );
+        }
+
+        const vtxoMinAmount =
+            changeAmount > 0 || assetChanges.size > 0
+                ? ((await this.arkProvider.getInfo()).vtxoMinAmount ?? 0n)
+                : 0n;
+        if (selectedVtxos && changeAmount > 0 && BigInt(changeAmount) < vtxoMinAmount) {
+            throw new Error(
+                `send({ selectedVtxos }): ${changeAmount} sats of change is below ` +
+                    `the operator minimum of ${vtxoMinAmount} sats`,
+            );
+        }
+
+        const selectedOutpoints = new Set(selectedCoins.map(vtxoOutpoint));
+        // A positive change output must meet the operator's VTXO minimum.
+        // Asset change also needs at least dust to carry the asset packet.
+        // Adding a BTC coin can introduce assets, so recheck after each selection.
+        while (
+            !selectedVtxos &&
+            ((changeAmount > 0 && BigInt(changeAmount) < vtxoMinAmount) ||
+                (assetChanges.size > 0 && BigInt(changeAmount) < this.dustAmount))
+        ) {
+            const minimumChange =
+                assetChanges.size > 0 && this.dustAmount > vtxoMinAmount
+                    ? this.dustAmount
+                    : vtxoMinAmount;
             const availableCoins = virtualCoins.filter(
-                (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
+                (coin) => !selectedOutpoints.has(vtxoOutpoint(coin)),
             );
-            const { inputs: extraCoins } = selectVirtualCoins(
-                availableCoins,
-                Number(this.dustAmount) - changeAmount,
-            );
+            let extraCoins: ExtendedVirtualCoin[];
+            try {
+                ({ inputs: extraCoins } = selectVirtualCoins(
+                    availableCoins,
+                    Number(minimumChange) - changeAmount,
+                ));
+            } catch (error) {
+                if (!(error instanceof Error) || error.message !== "Insufficient funds") {
+                    throw error;
+                }
+                // If the balance cannot produce valid change, an exact BTC-only
+                // subset can still pay without a change output.
+                if (recipients.every((r) => r.assets.length === 0)) {
+                    const plainCoins = virtualCoins.filter((coin) => !coin.assets?.length);
+                    const exact = plainCoins.find((coin) => coin.value === totalBtcOutput);
+                    let exactCoins = exact ? [exact] : undefined;
+                    if (!exactCoins) {
+                        const byAmount = new Map<number, NormalizedExtendedVirtualCoin>();
+                        for (const coin of plainCoins) {
+                            const partner = byAmount.get(totalBtcOutput - coin.value);
+                            if (partner) {
+                                exactCoins = [partner, coin];
+                                break;
+                            }
+                            byAmount.set(coin.value, coin);
+                        }
+                    }
+                    if (exactCoins) {
+                        selectedCoins = exactCoins;
+                        assetChanges.clear();
+                        totalBtcSelected = totalBtcOutput;
+                        changeAmount = 0;
+                        break;
+                    }
+                }
+                throw new Error(`Cannot form minimum change amount of ${minimumChange} sats`);
+            }
 
             for (const coin of extraCoins) {
                 if (coin.assets) {
@@ -5678,6 +5823,7 @@ export class Wallet
             }
 
             selectedCoins = [...selectedCoins, ...extraCoins];
+            for (const coin of extraCoins) selectedOutpoints.add(vtxoOutpoint(coin));
             totalBtcSelected += extraCoins.reduce((sum, c) => sum + c.value, 0);
             changeAmount = totalBtcSelected - totalBtcOutput;
         }
@@ -5994,18 +6140,33 @@ export class Wallet
                 ),
         };
 
-        return submitOffchainTx(this.arkProvider, offchainTx, signer, {
-            // Mark pending before submitting — if we crash between submit and
-            // finalize, the next init recovers via finalizePendingTxs.
-            beforeSubmit: () => this.setPendingTxFlag(true),
-            afterFinalize: async () => {
-                try {
-                    await this.setPendingTxFlag(false);
-                } catch (error) {
-                    console.error("Failed to clear pending tx flag:", error);
-                }
+        return submitOffchainTx(
+            this.arkProvider,
+            offchainTx,
+            signer,
+            {
+                // Mark pending before submitting — if we crash between submit and
+                // finalize, the next init recovers via finalizePendingTxs.
+                beforeSubmit: () => this.setPendingTxFlag(true),
+                afterFinalize: async () => {
+                    try {
+                        await this.setPendingTxFlag(false);
+                    } catch (error) {
+                        console.error("Failed to clear pending tx flag:", error);
+                    }
+                },
             },
-        });
+            {
+                // Deprecated keys too: a vtxo built before a rotation is still
+                // spent under the signer its leaf names.
+                verifyServerSignatures: {
+                    serverPubkey: this._arkServerPublicKey,
+                    deprecatedServerPubkeys: [...this._deprecatedSigners.keys()].map((h) =>
+                        hex.decode(h),
+                    ),
+                },
+            },
+        );
     }
 
     // mark virtual outputs as spent, save change outputs if any.

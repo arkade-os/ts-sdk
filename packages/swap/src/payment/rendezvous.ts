@@ -2,9 +2,9 @@
  * Choosing which solver to negotiate with. Both send corridors pick a card the
  * same way and differ only in the payout-side corridor they look for.
  */
-import { selectMarkets, sideLimits, type DiscoveredMarket } from "@arkade-os/solver-discovery";
+import { sideLimits, type DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { hex } from "@scure/base";
-import { BTC_ASSET_ID } from "../store";
+import { marketAssetId, marketCorridor } from "../marketShape";
 
 const XONLY_HEX = /^[0-9a-f]{64}$/;
 
@@ -69,12 +69,16 @@ export const solverRendezvous = (
     // Corridor AND asset: both rails negotiate the hard-coded `arkade:BTC`
     // pair, so a corridor-only match bounds sats against another asset's
     // limits and burns — and leaks — a negotiation the solver refuses.
-    const candidates = selectMarkets(markets, {
-        baseId: BTC_ASSET_ID,
-        quoteId: BTC_ASSET_ID,
-        baseCorridor: "arkade",
-        quoteCorridor: payoutCorridor,
-    });
+    const quoteCorridor = payoutCorridor === "lightning" ? "bolt11" : "bitcoin";
+    const isBtc = (id: string | undefined): boolean =>
+        id === "btc" || /^\w+:[^/]+\/slip44:(?:0|1)$/.test(id ?? "");
+    const candidates = markets.filter(
+        (market) =>
+            marketCorridor(market, "base") === "arkade" &&
+            marketCorridor(market, "quote") === quoteCorridor &&
+            isBtc(marketAssetId(market, "base")) &&
+            isBtc(marketAssetId(market, "quote")),
+    );
 
     for (const market of candidates) {
         const rendezvous = rendezvousOf(market, pinned);

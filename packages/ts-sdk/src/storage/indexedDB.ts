@@ -1,15 +1,16 @@
 import type { StorageAdapter } from "./index";
-import { DB_VERSION } from "../repositories/indexedDB/db";
 
 /**
  * @deprecated Use repository implementations via `StorageConfig` instead.
  */
 export class IndexedDBStorageAdapter implements StorageAdapter {
     private dbName: string;
-    private version: number;
+    private version?: number;
     private db: IDBDatabase | null = null;
 
-    constructor(dbName: string, version: number = DB_VERSION) {
+    // Without `version`, opens at the DB's current version: tracking the wallet
+    // schema's DB_VERSION would upgrade databases this adapter does not own.
+    constructor(dbName: string, version?: number) {
         this.dbName = dbName;
         this.version = version;
     }

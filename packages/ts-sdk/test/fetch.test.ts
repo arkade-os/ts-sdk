@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { baseFetch, fetch, FetchError } from "../src/utils/fetch";
+import { jsonResponse } from "./helpers/response";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -73,7 +74,7 @@ describe("baseFetch", () => {
     });
 
     it("passes a resolving Response through unchanged", async () => {
-        const response = { ok: true, status: 200 } as unknown as Response;
+        const response = jsonResponse({});
         vi.stubGlobal(
             "fetch",
             vi.fn(async () => response),
@@ -120,7 +121,7 @@ describe("Ark-server fetch wrapper", () => {
     });
 
     it("passes a resolving Response through unchanged", async () => {
-        const response = { ok: true } as unknown as Response;
+        const response = jsonResponse({});
         vi.stubGlobal(
             "fetch",
             vi.fn(async () => response),

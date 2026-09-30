@@ -34,10 +34,11 @@
 import { base64, hex } from "@scure/base";
 import {
     ArkAddress,
+    isContractVtxoEvent,
     RestIndexerProvider,
     Transaction,
-    type ContractEvent,
     type ContractVtxo,
+    type ContractVtxoEvent,
     type IWallet,
 } from "@arkade-os/sdk";
 import { RETIRABLE, retireOfferContract } from "./coverage";
@@ -103,9 +104,9 @@ export interface WatchOfferSwapsParams {
  * registered covenant is watched, so only registered offers produce events.
  * Offers funded before registration existed stay on the restore scan.
  *
- * This depends on the wallet's contract event transport. In Node, callers must
- * provide an `EventSource` implementation or use a runtime where it is enabled;
- * otherwise live updates do not arrive and restore remains the fallback.
+ * *Live* updates depend on the wallet's contract event transport. In Node,
+ * callers must provide an `EventSource` implementation or use a runtime where
+ * it is enabled. The start-up pass needs none of it.
  */
 export async function watchOfferSwaps({
     wallet,
@@ -151,49 +152,82 @@ export async function watchOfferSwaps({
         }
     };
 
-    const handleSpend = async (event: Extract<ContractEvent, { type: "vtxo_spent" }>) => {
-        if (event.contract.metadata?.kind !== OFFER_CONTRACT_KIND) return;
-
-        for (const vtxo of event.vtxos) {
+    /** `known` must be the FULL list: {@link retireOfferContract} reads liveness off it. */
+    const resolveSpends = async (
+        contractScript: string,
+        vtxos: ContractVtxo[],
+        { at, known }: { at?: number; known?: AssetSwap[] } = {},
+    ) => {
+        // repository v1 has no indexed lookup, so each `find` costs O(history)
+        let swaps = known ?? (await getAssetSwaps(repository));
+        for (const vtxo of vtxos) {
             const spentTxid = vtxo.arkTxId || vtxo.spentBy;
             if (!spentTxid) continue;
-            // Identical offers share one script and are told apart by the
-            // deposit that funded them. Repository v1 has no indexed lookup, so
-            // this is O(history) per spend event; add a query API if offer
-            // event volume makes this hot.
-            const swap = (await getAssetSwaps(repository)).find(
-                (s) => s.fundingTxid === vtxo.txid && s.swapPkScript === event.contractScript,
+            const swap = swaps.find(
+                (s) => s.fundingTxid === vtxo.txid && s.swapPkScript === contractScript,
             );
             if (!swap) continue;
 
             const kind: SpendKind = await classify(swap, vtxo, spentTxid);
-            const changes = spendUpdate(swap, { txid: spentTxid, kind, at: event.timestamp });
+            const changes = spendUpdate(swap, { txid: spentTxid, kind, at });
             if (!changes) continue;
 
             // notify only on a write that landed: `onUpdate` is documented as
             // firing after the change is persisted, and a consumer that caches
             // from it would otherwise run ahead of the store
-            const { persisted, swaps } = await updateAssetSwapBestEffort(
+            const { persisted, swaps: written } = await updateAssetSwapBestEffort(
                 repository,
                 swap.id,
                 changes,
             );
-            // a lost write must not retire: the next restore scan still
-            // believes this deposit is live
+            // a lost write must not retire, nor carry its optimistic merge:
+            // the store still holds the old record and later deposits see that
             if (!persisted) continue;
+            swaps = written;
             onUpdate?.({ ...swap, ...changes });
-            // `swaps` is the post-update view, so the liveness check sees this
-            // record's new status without a third read
             if (changes.status && RETIRABLE.includes(changes.status)) {
-                await retireOfferContract(manager, swaps, event.contractScript);
+                await retireOfferContract(manager, swaps, contractScript);
             }
         }
     };
 
+    const handleSpend = async (event: Extract<ContractVtxoEvent, { type: "vtxo_spent" }>) => {
+        if (event.contract.metadata?.kind !== OFFER_CONTRACT_KIND) return;
+        await resolveSpends(event.contractScript, event.vtxos, { at: event.timestamp });
+    };
+
+    /**
+     * Answer, once, what became of every deposit no event ever reported:
+     * `ContractManager.initialize` reconciles before it installs its watcher
+     * callback and `create` awaits it, so no subscriber can observe the boot
+     * sync. Passes no `at` — the manager's view carries no spend time, and
+     * `Date.now()` would record the scan as the completion.
+     */
+    const resolveOpenSwaps = async () => {
+        const swaps = await getAssetSwaps(repository);
+        const open = swaps.filter((s) => !TERMINAL.includes(s.status));
+        if (open.length === 0) return;
+        const script = [...new Set(open.map((s) => s.swapPkScript))];
+        for (const { contract, vtxos } of await manager.getContractsWithVtxos({ script })) {
+            if (contract.metadata?.kind !== OFFER_CONTRACT_KIND) continue;
+            // one read serves every contract: a swap carries one script, so a
+            // write under another contract is never the record this one seeks
+            await resolveSpends(
+                contract.script,
+                vtxos.filter((v) => v.isSpent),
+                { known: swaps },
+            );
+        }
+    };
+
     const unsubscribe = manager.onContractEvent((event) => {
-        if (event.type !== "vtxo_spent") return;
+        // An offer is an owned contract; a watched script has no `metadata`.
+        if (!isContractVtxoEvent(event) || event.type !== "vtxo_spent") return;
         enqueue(() => handleSpend(event));
     });
+    // enqueued rather than awaited: the pass must not read before the
+    // subscription is installed, or a spend landing mid-pass falls between them
+    enqueue(resolveOpenSwaps);
 
     return {
         stop: unsubscribe,

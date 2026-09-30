@@ -38,6 +38,14 @@ describe("lightningRail", () => {
         expect(await r.available?.({ raw: INVOICE }, ctx(withLimits(1000, 100_000)))).toBe(false);
     });
 
+    it("drops itself when the request names its own inputs, and refuses if reached", async () => {
+        const req = { raw: INVOICE, selectedVtxos: [] as any };
+        const swaps = { getLimits: vi.fn(), getFees: vi.fn() };
+        expect(await lightningRail().available?.(req, ctx(swaps))).toBe(false);
+        await expect(lightningRail().quote(req, ctx(swaps))).rejects.toThrow(/selectedVtxos/i);
+        expect(swaps.getLimits).not.toHaveBeenCalled();
+    });
+
     it("available() defers an amountless / undecodable invoice to quote()", async () => {
         const getLimits = vi.fn();
         expect(await lightningRail().available?.({ raw: "lnbc1invalid" }, ctx({ getLimits }))).toBe(

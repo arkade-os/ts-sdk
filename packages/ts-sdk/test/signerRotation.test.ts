@@ -8,6 +8,7 @@ import {
 } from "../src/wallet/signerRotation";
 import type { ArkInfo, DeprecatedSigner } from "../src/providers/ark";
 import { RestArkProvider } from "../src/providers/ark";
+import { jsonResponse } from "./helpers/response";
 
 const ACTIVE = "aa".repeat(32);
 const DEPRECATED_A = "bb".repeat(32);
@@ -125,12 +126,7 @@ describe("RestArkProvider.getInfo - deprecated signer parsing", () => {
     const stubInfo = (body: Record<string, unknown>) => {
         vi.stubGlobal(
             "fetch",
-            vi.fn().mockResolvedValue({
-                ok: true,
-                statusText: "OK",
-                json: () => Promise.resolve(body),
-                text: () => Promise.resolve(""),
-            }),
+            vi.fn(async () => jsonResponse(body, { statusText: "OK" })),
         );
     };
 

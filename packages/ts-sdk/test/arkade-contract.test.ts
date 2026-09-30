@@ -272,6 +272,66 @@ describe("arkade.Arkade / ArkadeContract", () => {
         expect(overridden.address).not.toBe(defaulted.address);
     });
 
+    describe("network resolution", () => {
+        const program = {
+            version: 0,
+            params: ["server"],
+            functions: { exit: { tapscript: { signers: ["$server"] } } },
+        } satisfies arkade.Program;
+
+        function arkProviderReporting(serverKey: Uint8Array, network?: string) {
+            const checkpointTapscript = hex.encode(
+                CSVMultisigTapscript.encode({
+                    timelock: { type: "blocks", value: 10n },
+                    pubkeys: [serverKey],
+                }).script,
+            );
+            return {
+                async getInfo() {
+                    return {
+                        signerPubkey: "02" + hex.encode(serverKey),
+                        checkpointTapscript,
+                        network,
+                    } as any;
+                },
+                async submitTx(): Promise<any> {
+                    throw new Error("not used");
+                },
+                async finalizeTx() {},
+            };
+        }
+
+        it("uses the server's network when none is passed", async () => {
+            const ark = await arkade.Arkade.connect({
+                arkade: arkProviderReporting(server, "signet"),
+            });
+            expect(ark.network.name).toBe("signet");
+            expect(ark.contract(program).address.startsWith("tark1")).toBe(true);
+        });
+
+        it("lets an explicit network override the server's", async () => {
+            const ark = await arkade.Arkade.connect({
+                arkade: arkProviderReporting(server, "bitcoin"),
+                network: networks.regtest,
+            });
+            expect(ark.contract(program).address.startsWith("tark1")).toBe(true);
+        });
+
+        it("keeps the SDK default when the server names no network", async () => {
+            const ark = await arkade.Arkade.connect({
+                arkade: arkProviderReporting(server, ""),
+            });
+            expect(ark.contract(program).address.startsWith("ark1")).toBe(true);
+        });
+
+        it("treats an inherited property name as no network", async () => {
+            const ark = await arkade.Arkade.connect({
+                arkade: arkProviderReporting(server, "constructor"),
+            });
+            expect(ark.contract(program).address.startsWith("ark1")).toBe(true);
+        });
+    });
+
     it("resolveAsm substitutes $params and passes opcodes through", () => {
         const bytes = arkade.resolveAsm(["HASH160", "$hash", "EQUAL"], { hash: HASH });
         // HASH160 (0xa9) <push20> <hash> EQUAL (0x87)

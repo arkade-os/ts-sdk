@@ -50,7 +50,12 @@ const negotiated = (fundAmount: number) =>
         rfqId: "rfq-ln-1",
         address: "tark1lockup",
         fundAmount,
-        quote: { from_amount: fundAmount, to_amount: 100_000, valid_until: NOW() + 3600 },
+        quote: {
+            pair: "arkade:BTC->lightning:BTC",
+            from_amount: fundAmount,
+            to_amount: 100_000,
+            valid_until: NOW() + 3600,
+        },
         secrets: {},
         script: {},
     }) as unknown as Awaited<SolverLightningSend>;
@@ -356,6 +361,7 @@ describe("the gates are re-run before anything is spent", () => {
         rfqStub = vi.fn(async () => ({
             ...negotiated(101_500),
             quote: {
+                pair: "arkade:BTC->lightning:BTC",
                 from_amount: 101_500,
                 to_amount: 100_000,
                 valid_until: validUntil,
@@ -390,5 +396,15 @@ describe("the gates are re-run before anything is spent", () => {
         const { quote, send } = await quoted(facts(), NOW() - 1);
         await expect((await quote.send()).settled()).rejects.toThrow(/quote expired/);
         expect(send).not.toHaveBeenCalled();
+    });
+
+    it("states the earlier of the quote validity and the invoice expiry", async () => {
+        const soonInvoice = facts({ expiresAt: NOW() + 60 });
+        const { quote } = await quoted(soonInvoice, NOW() + 3600);
+        expect(quote.validUntil).toBe(soonInvoice.expiresAt);
+
+        const soonQuote = NOW() + 30;
+        const { quote: other } = await quoted(facts(), soonQuote);
+        expect(other.validUntil).toBe(soonQuote);
     });
 });

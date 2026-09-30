@@ -1,4 +1,4 @@
-import type { IWallet, Recipient } from ".";
+import type { IReadonlyWallet, Recipient } from ".";
 import {
     ArkAddress,
     type Coin,
@@ -23,8 +23,10 @@ export const DUST_AMOUNT = 546; // sats
 export const FALLBACK_WALLET_DUST_AMOUNT = 330n;
 
 /** Extracts the dust amount from the wallet, defaulting to the fallback dust threshold. */
-export function getDustAmount(wallet: IWallet): bigint {
-    return "dustAmount" in wallet ? (wallet.dustAmount as bigint) : FALLBACK_WALLET_DUST_AMOUNT;
+export function getDustAmount(wallet: IReadonlyWallet | undefined): bigint {
+    return wallet && "dustAmount" in wallet
+        ? (wallet.dustAmount as bigint)
+        : FALLBACK_WALLET_DUST_AMOUNT;
 }
 
 /**

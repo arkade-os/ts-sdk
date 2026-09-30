@@ -9,87 +9,148 @@ const arkAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fi
 
 const fees = { intentFee: {}, txFeeRate: "1" };
 
-const ctx = (
-    wallet: Partial<Record<string, any>>,
-    feeInfo: Record<string, any> = fees,
-): RouterContext => ({
-    wallet: {
-        arkProvider: { getInfo: vi.fn().mockResolvedValue({ fees: feeInfo }) },
-        ...wallet,
-    } as any,
+const ctx = (wallet: Partial<Record<string, any>> = {}): RouterContext => ({
+    wallet: { getAddress: async () => arkAddr, ...wallet } as any,
     prefs: {},
 });
+
+const rail = (feeInfo: Record<string, any> = fees) =>
+    onchainRail({ feeInfo: async () => feeInfo as any });
 
 describe("onchainRail (collaborative exit)", () => {
     let offboard: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
-        offboard = vi.spyOn(Ramps.prototype, "offboard").mockResolvedValue("txEXIT");
+        offboard = vi.spyOn(Ramps.prototype, "offboardExact").mockResolvedValue("txEXIT");
     });
     afterEach(() => {
         offboard.mockRestore();
     });
 
     it("matches a bare BTC address and the on-chain part of a BIP21 URI", () => {
-        const r = onchainRail();
+        const r = rail();
         expect(r.match({ raw: btcAddr }, ctx({}))).toBe(true);
         expect(r.match({ raw: `bitcoin:${btcAddr}?ark=${arkAddr}` }, ctx({}))).toBe(true);
     });
 
     it("does not match an ark address or a bolt11 invoice", () => {
-        const r = onchainRail();
+        const r = rail();
         expect(r.match({ raw: arkAddr }, ctx({}))).toBe(false);
         expect(r.match({ raw: "lnbc10n1pjexample" }, ctx({}))).toBe(false);
     });
 
     it("offboards the amount to the BTC address and surfaces the txid", async () => {
         const c = ctx({});
-        const q = await onchainRail().quote({ raw: btcAddr, amount: 1000 }, c);
+        const q = await rail().quote({ raw: btcAddr, amount: 1000 }, c);
         const h = await q.send();
 
         expect(await h.settled()).toMatchObject({ railId: "onchain", txid: "txEXIT" });
         expect(offboard).toHaveBeenCalledTimes(1);
-        expect(offboard).toHaveBeenCalledWith(btcAddr, fees, 1000n);
+        expect(offboard).toHaveBeenCalledWith({
+            destinationAddress: btcAddr,
+            feeInfo: fees,
+            amount: 1000n,
+        });
     });
 
     it("falls back to the BIP21-encoded amount (BTC) converted to sats", async () => {
-        const q = await onchainRail().quote({ raw: `bitcoin:${btcAddr}?amount=0.00001` }, ctx({}));
+        const q = await rail().quote({ raw: `bitcoin:${btcAddr}?amount=0.00001` }, ctx());
         expect(q.amount).toBe(1000);
         await q.send().then((h) => h.settled());
-        expect(offboard).toHaveBeenCalledWith(btcAddr, fees, 1000n);
+        expect(offboard).toHaveBeenCalledWith({
+            destinationAddress: btcAddr,
+            feeInfo: fees,
+            amount: 1000n,
+        });
     });
 
-    it("grosses the offboard amount up so the recipient receives exactly `amount`", async () => {
-        // Ramps.offboard deducts the output fee from the amount it is handed, so
-        // the rail must hand it `amount + fee` to stay receiver-exact like the
-        // other rails. A 1% fee is amount-dependent, so the gross-up is a
-        // fixpoint: 10000 -> 10100 (fee 101, one sat short) -> 10102 (fee 102).
+    it("prices the exit on the destination amount, so the recipient is exact on any schedule", async () => {
+        // 1% of 10_000 is 100, not the 102 a fixpoint on the gross lands on.
         const feeInfo = { intentFee: { onchainOutput: "amount * 0.01" }, txFeeRate: "1" };
-        const q = await onchainRail().quote({ raw: btcAddr, amount: 10_000 }, ctx({}, feeInfo));
+        const q = await rail(feeInfo).quote({ raw: btcAddr, amount: 10_000 }, ctx());
 
         expect(q.amount).toBe(10_000); // what the recipient receives
-        expect(q.fee).toBe(102);
-        expect(q.total).toBe(10_102); // what leaves the wallet
+        expect(q.fee).toBe(100);
+        expect(q.total).toBe(10_100); // what leaves the wallet
 
         await q.send().then((h) => h.settled());
-        expect(offboard).toHaveBeenCalledWith(btcAddr, feeInfo, 10_102n);
+        expect(offboard).toHaveBeenCalledWith({
+            destinationAddress: btcAddr,
+            feeInfo,
+            amount: 10_000n,
+        });
     });
 
     it("reports an amount-independent offboard fee on the quote", async () => {
         const feeInfo = { intentFee: { onchainOutput: "200.0" }, txFeeRate: "1" };
-        const q = await onchainRail().quote({ raw: btcAddr, amount: 1000 }, ctx({}, feeInfo));
+        const q = await rail(feeInfo).quote({ raw: btcAddr, amount: 1000 }, ctx());
 
         expect(q).toMatchObject({ amount: 1000, fee: 200, total: 1200 });
         await q.send().then((h) => h.settled());
-        expect(offboard).toHaveBeenCalledWith(btcAddr, feeInfo, 1200n);
+        expect(offboard).toHaveBeenCalledWith({
+            destinationAddress: btcAddr,
+            feeInfo,
+            amount: 1000n,
+        });
+    });
+
+    it("offboards exactly the inputs the request names", async () => {
+        const selectedVtxos = [{ txid: "aa".repeat(32), vout: 0, value: 5000 }] as any;
+        const q = await rail().quote({ raw: btcAddr, amount: 1000, selectedVtxos }, ctx());
+        await q.send().then((h) => h.settled());
+
+        expect(offboard).toHaveBeenCalledWith({
+            destinationAddress: btcAddr,
+            feeInfo: fees,
+            amount: 1000n,
+            vtxos: selectedVtxos,
+        });
+    });
+
+    it("prices the per-input fees and the change output once the inputs are named", async () => {
+        const feeInfo = {
+            intentFee: { onchainOutput: "200.0", offchainInput: "7.0", offchainOutput: "50.0" },
+            txFeeRate: "1",
+        };
+        const selectedVtxos = [
+            { txid: "aa".repeat(32), vout: 0, value: 5000, createdAt: new Date(0) },
+            { txid: "bb".repeat(32), vout: 0, value: 5000, createdAt: new Date(0) },
+        ] as any;
+
+        const q = await rail(feeInfo).quote({ raw: btcAddr, amount: 1000, selectedVtxos }, ctx());
+
+        expect(q.amount).toBe(1000); // what the recipient receives
+        // 200 exit + 7 per input + 50 for the change the other 8_786 sats ride back on.
+        expect(q.fee).toBe(264);
+        expect(q.total).toBe(1264);
+    });
+
+    it("leaves the input fees out of the quote when no inputs are named", async () => {
+        const feeInfo = {
+            intentFee: { onchainOutput: "200.0", offchainInput: "7.0" },
+            txFeeRate: "1",
+        };
+        const q = await rail(feeInfo).quote({ raw: btcAddr, amount: 1000 }, ctx());
+
+        expect(q).toMatchObject({ amount: 1000, fee: 200, total: 1200 });
     });
 
     it("rejects a non-positive or fractional amount up front", async () => {
-        await expect(onchainRail().quote({ raw: btcAddr, amount: 0 }, ctx({}))).rejects.toThrow(
+        await expect(rail().quote({ raw: btcAddr, amount: 0 }, ctx())).rejects.toThrow(
             /invalid amount/i,
         );
-        await expect(onchainRail().quote({ raw: btcAddr, amount: 1.5 }, ctx({}))).rejects.toThrow(
+        await expect(rail().quote({ raw: btcAddr, amount: 1.5 }, ctx())).rejects.toThrow(
             /invalid amount/i,
+        );
+    });
+
+    // Types do not bind JS callers, and a rail that builds without a fee source
+    // would fail mid-payment instead — the router does not re-rank after a throw.
+    it("refuses to build without a usable fee source", () => {
+        expect(() => (onchainRail as any)()).toThrow(/feeInfo source is required/i);
+        expect(() => (onchainRail as any)({})).toThrow(/feeInfo source is required/i);
+        expect(() => (onchainRail as any)({ feeInfo: "nope" })).toThrow(
+            /feeInfo source is required/i,
         );
     });
 });

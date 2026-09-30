@@ -80,15 +80,17 @@ funds an offer should keep cancelling within reach.
    offers always derive identical swap addresses — the program JSONs are hashed into the address,
    so their bytes are frozen (guarded by a golden test).
 2. **`markets`** — solver discovery and pricing guardrails: `discoverMarkets` (1-hour cached
-   registry fetch with stale-cache fallback), `findMarket`, `validatePlan` (balance, both-side
+   registry fetch with stale-cache fallback; it follows the network's published index unless
+   `registryUrl` overrides it), `findMarket`, `validatePlan` (balance, both-side
    limits, BTC-leg dust), `QUOTE_OPTIONS`, and `makeCachedFeedFetch` for rate-limited price feeds.
 3. **`store`** — the persisted `AssetSwap` records (`getAssetSwaps`/`addAssetSwap`/
    `updateAssetSwap`), thin helpers over an `AssetSwapRepository`. Read failures degrade to an
    empty list; write failures throw so pre-funding records can be retried before money is sent.
-4. **`restore`** — `restoreAssetSwaps` rebuilds lost records by scanning sent virtual txs for
-   offer packets and binding each funding vtxo to its spend. Incremental: answered txids are
-   remembered in the repository (`getScannedTxids`/`markTxidsScanned`) so nothing is fetched
-   twice.
+4. **`restore`** — `registerAssetSwapRestore` attaches durable swap recovery to an explicit
+   `wallet.restore()`. The underlying `restoreAssetSwapRepository` / `restoreAssetSwaps` scan sent
+   virtual txs for offer packets and bind each funding vtxo to its spend. The scan remains
+   available directly for ordinary startup and later reconciliation; answered txids are remembered
+   in the repository (`getScannedTxids`/`markTxidsScanned`) so nothing is fetched twice.
 5. **`watch`** — `watchOfferSwaps` drives swap status from the wallet's own contract events, so a
    fill shows up without re-running a scan. Registration is what makes it possible: only a
    registered covenant is watched. See "Live status" below.
@@ -120,6 +122,56 @@ uncached discovery.
 
 Neither subpath adds a dependency: they take the SDK's structural `SQLExecutor` / `RealmLike`
 handles, so you pass the database you already opened.
+
+### Restore an imported wallet
+
+Register swap recovery before the application calls the core wallet's explicit `restore()`:
+
+```ts
+import {
+    IndexedDbAssetSwapRepository,
+    registerAssetSwapRestore,
+} from "@arkade-os/swap";
+
+const repository = new IndexedDbAssetSwapRepository();
+const unregisterSwapRestore = registerAssetSwapRestore(wallet, {
+    arkServerUrl,
+    repository,
+    onResult: ({ changes, coverageError }) => {
+        if (coverageError) console.warn("Swap coverage was incomplete", coverageError);
+        console.info(`Restored or updated ${changes.length} swaps`);
+    },
+});
+
+await wallet.restore();
+```
+
+Core address, contract, history, and balance recovery finishes before the swap scan starts. The
+helper reads the recovered wallet history, normalizes it for the scan, rebuilds durable records,
+and repairs covenant coverage. Registering it again on the same wallet replaces the prior
+registration through the stable `arkade-os:asset-swap` hook ID, so setup is idempotent. Call
+`unregisterSwapRestore()` when that integration no longer owns the wallet.
+
+A direct `Wallet` exposes the indexer and current Ark server key the helper needs. A proxy or
+custom `IWallet` that does not expose them must pass both explicitly:
+
+```ts
+registerAssetSwapRestore(serviceWorkerWallet, {
+    arkServerUrl,
+    repository,
+    indexer,
+    serverPubkey,
+});
+```
+
+`coverageError` is result-level: records were already persisted, so the helper still delivers the
+complete result to `onResult` and a later restore can retry coverage safely. Scan, persistence, or
+`onResult` failures reject the hook; `wallet.restore()` reports hook failures through its
+`AggregateError` after attempting the other registered hooks.
+
+Keep calling `restoreAssetSwapRepository` directly during ordinary startup or when history may
+arrive later. Hooks run only during an explicit `wallet.restore()`, and the repository cursor makes
+the manual reconciliation idempotent against records the hook already rebuilt.
 
 All four carry both record types: asset swaps and the monitored RFQ swaps
 (`saveRfqSwap` / `getRfqSwap` / `getAllRfqSwaps` / `removeRfqSwap`). Each keeps them in a store of their own — a
@@ -319,7 +371,7 @@ message anywhere: **acceptance is funding**.
   reference solver serves the Lightning pair today.
 
 ```ts
-import { httpTransport, requestLightningSend } from "@arkade-os/swap";
+import { httpTransport, requestLightningSend, SwapRefusal } from "@arkade-os/swap";
 
 // invoice facts from YOUR OWN decoder — the module takes facts, not a decoder
 const swap = await requestLightningSend(wallet, arkServerUrl, httpTransport(solverUrl), {
@@ -342,9 +394,21 @@ The trust model is the offer side's, applied to quotes: only `solver_pubkey`,
 parameter is the trader's own data, and anything address-shaped from the solver is compare-only
 (`AddressMismatch` means refuse-to-fund). The emulator key is neither: as above, it is a
 per-network pin inside the SDK, not solver data.
-Refusals carry a closed reason set (`SwapRefusal`); unknown reasons are a generic decline. The
-`swap-lightning-send.program.json` bytes are frozen the same way the offer programs are — a
-golden test pins the compiled leaves and scriptPubKey to the reference solver's exact script.
+Refusals carry a closed reason set (`SwapRefusal`). A solver may also return a recognised
+`error_code` with client-safe context. The error exposes these as `errorCode`, `field`, `actual`,
+`expected`, `limit`, and `unit`, and includes useful numeric context in its message. Match
+`errorCode` for a specific remedy while treating `reason` as the compatible fallback:
+
+```ts
+if (error instanceof SwapRefusal && error.errorCode === "invoice_cltv_too_large") {
+    console.error(`Invoice CLTV is ${error.actual} blocks; solver limit is ${error.limit}`);
+}
+```
+
+Unknown diagnostic codes and fields stay generic. `RFQ_REFUSAL_ERROR_CODES` and
+`isRfqRefusalErrorCode` expose the accepted vocabulary. The `swap-lightning-send.program.json`
+bytes are frozen the same way the offer programs are — a golden test pins the compiled leaves and
+scriptPubKey to the reference solver's exact script.
 
 Transports are symmetric-outbound: `httpTransport` (POST `/v1/swap`, GET `/v1/rfq/<rfq_id>`),
 `relayTransport` (the dev broker framing), and `nostrRfqTransport` — the production one a
@@ -474,9 +538,9 @@ runs before signing — `P` reaches the Ark server at submit — and is skipped 
 have already partially claimed (`partiallyClaimed`), where `P` is public anyway. The push itself is
 core's `signAndSubmitOffchainTx` plus `claimWithPreimageIdentity`, with `verifyServerSignatures`
 on: the server's countersignature is checked per input, against the leaf the local build spends,
-before finalizing. Until covclaimd's
-reference vectors are cross-checked, the `sealClaimPacket` test vector is pinned from this
-implementation and marked provisional (`TODO(claim-packet-vectors)`).
+before finalizing. The `sealClaimPacket` vector is cross-checked against
+covclaimd's own `preimage.Decrypt`, and the TLV framing against its `DeserializeClaim`, so both
+are pinned by the reference implementation rather than by this one.
 
 `RfqSwapManager` drives the lightning-receive leg too, as `kind: "lightning_receive"` records
 carrying `expectedAmount` and wired to a `claimLockup` callback (`pushClaim`, with `expectedAmount`
@@ -613,7 +677,7 @@ from it, and a swap carrying only `lockupPkScript` is refused rather than pushed
 ### Let the manager own the records
 
 Give `RfqSwapManager` a `repository` and it persists RFQ swaps itself — the restore loop, the
-retention pass and every write, none of which a consumer has to compose:
+restore pass and every write, none of which a consumer has to compose:
 
 ```ts
 const manager = new RfqSwapManager({
@@ -623,9 +687,8 @@ const manager = new RfqSwapManager({
 });
 manager.setCallbacks({ refundArkade, claimLockup });
 
-// Rebuild what was stored: retention first, then each record's covenant from
-// its own contract row, then `rebuildRfqSwap`. No caller input at all.
-const { restored, failed, pruned } = await manager.restoreFromRepository();
+// Restore active swaps from bounded state pages; terminal history stays stored.
+const { restored, failed } = await manager.restoreFromRepository();
 await manager.start();
 
 // A NEW swap arrives with the request-time half a live record cannot carry.
@@ -649,14 +712,26 @@ An origin whose `kind` or `lockupAddress` is not this swap's is refused at that 
 same reason: the write that would catch it happens a pass later, with the funding broadcast.
 `start(swaps)` applies the same rule and is otherwise unchanged. Restored swaps carry their own.
 
-`restoreFromRepository` returns three disjoint lists, and every stored record is in exactly one.
-A record that cannot be rebuilt — no contract row (`LockupContractMissing`), covenant params that
-do not derive the funded address, a corridor with no handler — lands in `failed` with its error and
-stays in the store; it never strands the others and it is never silently dropped. `pruned` names
-what retention removed: terminal and more than `RFQ_SWAP_RETENTION_SECONDS` past `updatedAt`, never
-`needs_counterparty`. Retention runs first, so a retired record costs no contract lookup on its way
-out; `pruneRetiredSwaps()` is public for a process that wants it on its own cadence. Pass
-`{ params }` to take covenants from somewhere other than the contract store.
+`restoreFromRepository` returns active swaps in `restored` and active records that cannot be rebuilt
+in `failed`. Terminal history remains in the repository; `waitForSwapCompletion(rfqId)` reads one
+terminal record on demand, regardless of age. Pass `{ includeTerminal: true }` for the previous
+all-record restore result, which can use substantial memory. Built-in backends page active states by
+`rfqId`; custom repositories without `getRfqSwapsPage` retain the all-record fallback. A record
+that cannot be rebuilt — no contract row (`LockupContractMissing`), mismatched covenant params, or
+missing corridor handler — stays in the store and never strands the others. The legacy explicit
+`pruneRetiredSwaps()` method remains for callers that choose to delete history. Pass `{ params }`
+to take covenants from somewhere other than the contract store.
+
+For a bounded history read, call `getRfqSwapsPage(state, afterId, limit)` on a built-in repository.
+Pages are ordered by `rfqId` within one state; the cursor is exclusive and the limit is 1–500.
+`rfqSwapActivityInputsPage({ repository, indexer }, state, afterId, limit)` projects one such page
+with at most 16 concurrent indexer fallbacks. For date-filtered history, use
+`rfqSwapActivityInputsSincePage({ repository, indexer }, state, since, cursor, limit)`, where `since`
+is inclusive Unix seconds and the returned cursor combines `updatedAt` and `rfqId`.
+`getAllRfqSwaps()`, `rfqSwapActivityInputs()`, and the
+wallet's full `getActivityHistory()` still return complete arrays and should not be used for million-row
+history displays. IndexedDB upgrades its RFQ store from version 3 to 4 to add the page index; the
+upgrade preserves records but an older package opening that same database name cannot roll back.
 
 **Two sinks, and both gate.** With a repository wired the canonical `RfqSwapRecord` is written
 first, then `saveSwap` if one is installed, and the pass counts as persisted only when both
@@ -818,7 +893,7 @@ Notes from before 0.0.1, kept for consumers who tracked the branch.
 - **The repository interface is at version `4`.** It gained
   `getRfqSwap(rfqId): Promise<RfqSwapRecord | undefined>` — every backend is already keyed by
   `rfqId`, so a consumer updating one record no longer scans them all. A miss returns `undefined`;
-  retention prunes terminal records, so absence is ordinary. All four in-tree backends implement it
+  a record can be absent after an explicit removal. All four in-tree backends implement it
   and `DB_VERSION` is unchanged; a custom implementor adds the two-line read and bumps its own
   `version` to `4`.
 - **`RfqSwapOrigin` gained `fundingArkTxid?`** — the ark transaction that funded the lockup. It is
@@ -994,17 +1069,12 @@ scanned? })` — the server key is required because a spend is classified by reb
     `VHTLCV2ContractHandler.serializeParams(script.options)` and pass that instead; either way the
     params are checked against the record's `lockupAddress` before a swap is handed back, so the wrong
     row fails at restore rather than at refund time. **Superseded** for a consumer that wires
-    `RfqSwapManagerDeps.repository`: `restoreFromRepository()` is this loop, over every stored
-    record, with retention in front of it.
+    `RfqSwapManagerDeps.repository`: `restoreFromRepository()` rebuilds
+    active records from state pages. Pass `includeTerminal: true` for the all-record result.
 
-- **Pruning is the consumer's unless the manager holds the repository.** `shouldRetainRfqSwap(record,
-  now)` answers whether a record is still worth keeping — live swaps and `needs_counterparty`
-  always, terminal ones for `RFQ_SWAP_RETENTION_SECONDS` (30 days) after `updatedAt`. Sweep with it
-  at boot and pass the rejects to `removeRfqSwap`; skip it and a hot wallet's `rfqSwaps` store grows
-  without bound. `now` is **unix seconds**, the unit `RfqSwap.updatedAt` carries — `Date.now()` would
-  retire every terminal record after ~43 minutes. **Superseded** for a consumer that wires
-  `RfqSwapManagerDeps.repository`: `pruneRetiredSwaps()` is that sweep, and
-  `restoreFromRepository()` runs it first.
+- **RFQ history is durable.** Restore reads only active states in pages and leaves terminal records
+  stored. The older `pruneRetiredSwaps()` and `shouldRetainRfqSwap` APIs remain only for callers who
+  explicitly choose deletion; their time arguments are Unix seconds.
 - **A write that gates something irreversible throws; one that follows it does not.**
   `addAssetSwap` and `updateAssetSwap` throw on a failed read or write — nothing irreversible may
   happen until the record is durable, which is why `cancelOffer` writes its `cancelling` marker

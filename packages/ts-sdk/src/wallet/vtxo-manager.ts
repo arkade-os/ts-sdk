@@ -10,7 +10,7 @@ import {
 import {
     canRecoverOnchain,
     canSpendOffchain,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     normalizeVtxo,
     resolveTimeHeight,
@@ -23,6 +23,7 @@ import { ArkInfo, ArkProvider, SettlementEvent } from "../providers/ark";
 import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
 import type { ExtendedContractVtxo } from "../contracts/types";
+import { isContractVtxoEvent } from "../contracts/types";
 import {
     classifyAgainstSignerSet,
     isCooperativelyMigratable,
@@ -77,7 +78,7 @@ export function selectPendingRecoveryOutpoints(
             // Exited coins are excluded: their remedy is `completeUnroll`,
             // not a signer rotation, and reporting them here would blame the
             // rotation for a coin the user took onchain themselves.
-            if (!hasTerminalSpend(v) && !v.isSwept && !v.isUnrolled) {
+            if (!isVtxoSpent(v) && !v.isSwept && !v.isUnrolled) {
                 out.add(`${v.txid}:${v.vout}`);
             }
         }
@@ -1580,7 +1581,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return [];
         }
 
-        const vtxos = await this.wallet.getSpendableVtxos({ withRecoverable: true });
+        const vtxos = await this.wallet.getSpendableVtxos({
+            withRecoverable: true,
+            genericallySpendableOnly: true,
+        });
 
         // Resolve threshold: method param > settlementConfig (seconds→ms) > renewalConfig > default
         let threshold: number;
@@ -2351,8 +2355,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // report over-counts migratable value and announces the coin as
             // recovering through the sweep path, which will never happen.
             const live = vtxos.filter((v) => !v.isUnrolled);
-            const recoverable = live.filter((v) => v.isSwept && !hasTerminalSpend(v));
-            const spendable = live.filter((v) => !hasTerminalSpend(v) && !v.isSwept);
+            const recoverable = live.filter((v) => v.isSwept && !isVtxoSpent(v));
+            const spendable = live.filter((v) => !isVtxoSpent(v) && !v.isSwept);
 
             const value = spendable.reduce((sum, v) => sum + v.value, 0);
 
@@ -2765,7 +2769,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             ]);
 
             const stopWatching = contractManager.onContractEvent((event) => {
-                if (event.type !== "vtxo_received") {
+                // A watched script's outputs are not ours to renew or delegate.
+                if (event.type !== "vtxo_received" || !isContractVtxoEvent(event)) {
                     return;
                 }
 

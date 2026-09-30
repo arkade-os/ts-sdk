@@ -135,6 +135,7 @@ export function solverOnchainRail(deps: SolverOnchainRailDeps): PaymentRail {
                 amount,
                 fee: swap.fundAmount - amount,
                 total: swap.fundAmount,
+                validUntil: swap.quote.valid_until,
                 meta: {
                     rfqId: swap.rfqId,
                     validUntil: swap.quote.valid_until,

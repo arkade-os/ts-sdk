@@ -18,6 +18,8 @@ import {
     bestMarket,
     discover,
     isNetwork,
+    marketLegKey,
+    registryIndexUrl,
     sideLimits,
     type DiscoveredMarket,
     type LocalCardInput,
@@ -27,6 +29,7 @@ import {
 } from "@arkade-os/solver-discovery";
 import { isSubdust } from "@arkade-os/sdk";
 import type { AssetSwapRepository, MarketsCacheEntry } from "./repository";
+import { marketAssetId } from "./marketShape";
 import { BTC_ASSET_ID } from "./store";
 
 /** Shared quote options so every quote path agrees.
@@ -106,8 +109,8 @@ const MARKETS_CACHE_TTL_MS = 60 * 60 * 1000;
 
 const isMarketShaped = (m: unknown): m is DiscoveredMarket => {
     const market = m as Partial<DiscoveredMarket> | null;
+    if (!market) return false;
     return (
-        typeof market?.pair === "string" &&
         typeof market.base_asset?.id === "string" &&
         typeof market.quote_asset?.id === "string" &&
         typeof market.quote_asset.decimals === "number"
@@ -126,7 +129,11 @@ const readMarketsCache = async (
         const entry = await repository.getCachedMarkets(network, registry);
         if (!Array.isArray(entry?.markets) || typeof entry?.fetchedAt !== "number")
             return undefined;
-        return entry.markets.every(isMarketShaped) ? entry : undefined;
+        const markets = entry.markets.filter(isMarketShaped);
+        // An empty cache is authoritative. A non-empty cache with no readable
+        // markets is malformed and should be replaced by a fresh fetch.
+        if (entry.markets.length > 0 && markets.length === 0) return undefined;
+        return { ...entry, markets };
     } catch {
         return undefined;
     }
@@ -134,7 +141,11 @@ const readMarketsCache = async (
 
 export interface DiscoverMarketsOptions {
     network: Network;
-    /** The network's solver registry index URL; no registry means no markets. */
+    /** Overrides the registry this network publishes by default. Omit (or pass
+     * `undefined`) to follow `@arkade-os/solver-discovery`'s per-network
+     * default index, which the library can move in a release without a client
+     * change; this package never hardcodes the URL. The markets cache is keyed
+     * by the URL actually followed, default included. */
     registryUrl: string | undefined;
     /** Backs the 1-hour markets cache and its stale fallback. Omit for a
      * one-shot discovery that always hits the registry. */
@@ -155,9 +166,11 @@ export interface DiscoverMarketsOptions {
 }
 
 /**
- * Markets from the network's solver registry; [] when none is configured.
- * Registry content changes rarely, so results are cached for an hour and a
- * stale cache backstops an unreachable registry (quotes stay live either way).
+ * Markets from this network's solver registry — the caller's `registryUrl` when
+ * given, else the network's published default. Only an unrecognised network
+ * yields []. Registry content changes rarely, so results are cached for an hour
+ * and a stale cache backstops an unreachable registry (quotes stay live either
+ * way).
  */
 export const discoverMarkets = async (
     options: DiscoverMarketsOptions,
@@ -171,12 +184,17 @@ export const discoverMarkets = async (
         fetchImpl,
         useCache = true,
     } = options;
-    if (!registry || !isNetwork(network)) return [];
-    const cached = repository && (await readMarketsCache(repository, network, registry));
+    if (!isNetwork(network)) return [];
+    // undefined follows the network's published default; [] would opt out of
+    // it. Derive the cache key from the same list, so a defaulted fetch is
+    // keyed by the URL `discover()` actually reads and never a second copy.
+    const registries = registry ? [registry] : undefined;
+    const registryKey = registries?.[0] ?? registryIndexUrl(network);
+    const cached = repository && (await readMarketsCache(repository, network, registryKey));
     if (useCache && cached && Date.now() - cached.fetchedAt < MARKETS_CACHE_TTL_MS)
         return cached.markets;
     const { markets, sources, warnings } = await discover({
-        registries: [registry],
+        registries,
         localCards,
         network,
         fetchImpl,
@@ -188,7 +206,7 @@ export const discoverMarkets = async (
     if (!reachable && cached) return cached.markets;
     if (reachable && repository) {
         try {
-            await repository.saveCachedMarkets(network, registry, {
+            await repository.saveCachedMarkets(network, registryKey, {
                 markets,
                 fetchedAt: Date.now(),
             });
@@ -208,10 +226,35 @@ export const findMarket = (
     toId: string,
 ): { market: DiscoveredMarket | null; give: Side } | undefined => {
     if (fromId === toId) return undefined;
-    const givingBase = bestMarket(markets, { baseId: fromId, quoteId: toId, wantSide: "quote" });
+    const resolveMarketId = (id: string): string => {
+        for (const market of markets) {
+            for (const side of ["base", "quote"] as const) {
+                const asset = side === "base" ? market.base_asset : market.quote_asset;
+                if (asset.id === id) return marketLegKey(market, side);
+                const canonical = marketAssetId(market, side) ?? "";
+                const matchesBtc =
+                    id === BTC_ASSET_ID && /^arkade:[^/]+\/slip44:(?:0|1)$/.test(canonical);
+                const matchesAsset =
+                    /^[0-9a-f]{68}$/.test(id) && canonical.endsWith(`/asset:${id}`);
+                if (matchesBtc || matchesAsset) return marketLegKey(market, side);
+            }
+        }
+        return id;
+    };
+    const resolvedFrom = resolveMarketId(fromId);
+    const resolvedTo = resolveMarketId(toId);
+    const givingBase = bestMarket(markets, {
+        baseId: resolvedFrom,
+        quoteId: resolvedTo,
+        wantSide: "quote",
+    });
     if (givingBase) return { market: givingBase, give: "base" };
     return {
-        market: bestMarket(markets, { baseId: toId, quoteId: fromId, wantSide: "base" }),
+        market: bestMarket(markets, {
+            baseId: resolvedTo,
+            quoteId: resolvedFrom,
+            wantSide: "base",
+        }),
         give: "quote",
     };
 };

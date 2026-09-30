@@ -6,6 +6,7 @@ import {
     ArkTransaction,
     ExtendedCoin,
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     GetNewAddressesOptions,
     NewAddress,
     StorageConfig,
@@ -38,6 +39,7 @@ import type {
     AddressAllocationCapable,
 } from "../hdWalletCapable";
 import { resolveDescriptorSigner } from "../hdWalletCapable";
+import { runWalletRestoreHooks } from "../restoreHooks";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { setupServiceWorker } from "../../worker/browser/utils";
@@ -53,6 +55,9 @@ import {
     RequestAnnotateVtxos,
     RequestGetContracts,
     RequestGetContractsWithVtxos,
+    RequestWatchScript,
+    RequestUnwatchScript,
+    RequestGetWatchedScripts,
     RequestGetContractSyncState,
     RequestGetStatus,
     RequestGetSpendablePaths,
@@ -76,6 +81,7 @@ import {
     ResponseGetBoardingUtxos,
     ResponseGetContracts,
     ResponseGetContractsWithVtxos,
+    ResponseGetWatchedScripts,
     ResponseGetContractSyncState,
     ResponseGetStatus,
     ResponseGetSpendablePaths,
@@ -147,6 +153,7 @@ import type {
     ContractWithVtxos,
     GetContractsFilter,
     PathSelection,
+    WatchedScript,
 } from "../../contracts";
 import type {
     ContractSyncState,
@@ -220,6 +227,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     GET_TRANSACTION_HISTORY: 20_000,
     GET_CONTRACTS: 20_000,
     GET_CONTRACTS_WITH_VTXOS: 20_000,
+    GET_WATCHED_SCRIPTS: 10_000,
     ANNOTATE_VTXOS: 20_000,
     GET_SPENDABLE_PATHS: 20_000,
     GET_ALL_SPENDING_PATHS: 20_000,
@@ -258,6 +266,10 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     SIGN_TRANSACTION: 30_000,
     CREATE_CONTRACT: 30_000,
     UPDATE_CONTRACT: 30_000,
+    // Registering a watch is an in-memory map write plus one subscription
+    // update — no indexer round trip on the request path.
+    WATCH_SCRIPT: 10_000,
+    UNWATCH_SCRIPT: 10_000,
     DELETE_CONTRACT: 10_000,
     REFRESH_VTXOS: 30_000,
     REFRESH_OUTPOINTS: 30_000,
@@ -279,6 +291,7 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_SPENDABLE_VTXOS",
     "GET_CONTRACTS",
     "GET_CONTRACTS_WITH_VTXOS",
+    "GET_WATCHED_SCRIPTS",
     "ANNOTATE_VTXOS",
     "GET_SPENDABLE_PATHS",
     "GET_ALL_SPENDING_PATHS",
@@ -1158,7 +1171,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      * and falling back to `GET_VTXOS` there would silently spend ungated coins.
      * Fail closed — loud and recoverable — rather than make the gate advisory.
      */
-    async getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+    async getSpendableVtxos(
+        filter?: GetSpendableVtxosFilter,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
         const message: RequestGetSpendableVtxos = {
             id: getRandomId(),
             tag: this.messageTag,
@@ -1168,7 +1183,18 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            return (response as ResponseGetSpendableVtxos).payload.vtxos.map(normalizeVtxo);
+            const payload = (response as ResponseGetSpendableVtxos).payload;
+            if (
+                (filter?.watchedOnly ||
+                    filter?.genericallySpendableOnly ||
+                    filter?.requireSynced) &&
+                payload.filterApplied !== true
+            ) {
+                throw new Error(
+                    "Service worker does not support the requested contract scope or freshness check",
+                );
+            }
+            return payload.vtxos.map(normalizeVtxo);
         } catch (error) {
             throw new Error(`Failed to get spendable vtxos: ${error}`);
         }
@@ -1280,21 +1306,79 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
-            async getContractsWithVtxos(filter: GetContractsFilter): Promise<ContractWithVtxos[]> {
+            async getContractsWithVtxos(
+                filter?: GetContractsFilter,
+                _pageSize?: number,
+                options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
+            ): Promise<ContractWithVtxos[]> {
                 const message: RequestGetContractsWithVtxos = {
                     type: "GET_CONTRACTS_WITH_VTXOS",
                     id: getRandomId(),
                     tag: messageTag,
-                    payload: { filter },
+                    payload: { filter, options },
                 };
                 try {
                     const response = await sendContractMessage(message);
+                    if (
+                        options?.requireSynced &&
+                        (response as ResponseGetContractsWithVtxos).payload.filterApplied !== true
+                    ) {
+                        throw new Error(
+                            "Service worker does not support the requested freshness check",
+                        );
+                    }
                     // A best-effort sync ran on the worker; it may have degraded
                     // to repository data or recovered — refresh the cached view.
                     await refreshSyncState();
                     return (response as ResponseGetContractsWithVtxos).payload.contracts;
                 } catch (e) {
                     throw new Error("Failed to get contracts with vtxos");
+                }
+            },
+
+            async watchScript(
+                script: string | string[],
+                options?: { label?: string },
+            ): Promise<void> {
+                const message: RequestWatchScript = {
+                    type: "WATCH_SCRIPT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script, label: options?.label },
+                };
+                try {
+                    await sendContractMessage(message);
+                } catch (e) {
+                    throw new Error("Failed to watch script");
+                }
+            },
+
+            async unwatchScript(script: string | string[]): Promise<void> {
+                const message: RequestUnwatchScript = {
+                    type: "UNWATCH_SCRIPT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script },
+                };
+                try {
+                    await sendContractMessage(message);
+                } catch (e) {
+                    throw new Error("Failed to unwatch script");
+                }
+            },
+
+            async getWatchedScripts(): Promise<WatchedScript[]> {
+                const message: RequestGetWatchedScripts = {
+                    type: "GET_WATCHED_SCRIPTS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: {},
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetWatchedScripts).payload.scripts;
+                } catch (e) {
+                    throw new Error("Failed to get watched scripts");
                 }
             },
 
@@ -1575,6 +1659,7 @@ export class ServiceWorkerWallet
     public readonly identity: Identity;
     private readonly _assetManager: IAssetManager;
     private readonly hasDelegate: boolean;
+    private _restoreInFlight?: Promise<void>;
 
     protected constructor(
         public readonly serviceWorker: ServiceWorker,
@@ -1914,6 +1999,17 @@ export class ServiceWorkerWallet
      * reconstructed here so callers can inspect `.errors`.
      */
     async restore(opts?: { gapLimit?: number }): Promise<void> {
+        if (this._restoreInFlight) return this._restoreInFlight;
+        this._restoreInFlight = (async () => {
+            await this._restoreWorkerWallet(opts);
+            await runWalletRestoreHooks(this);
+        })().finally(() => {
+            this._restoreInFlight = undefined;
+        });
+        return this._restoreInFlight;
+    }
+
+    private async _restoreWorkerWallet(opts?: { gapLimit?: number }): Promise<void> {
         const message: RequestRestoreWallet = {
             id: getRandomId(),
             tag: this.messageTag,

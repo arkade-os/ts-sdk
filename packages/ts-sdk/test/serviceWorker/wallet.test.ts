@@ -20,6 +20,7 @@ import {
 } from "../../src/wallet/serviceWorker/wallet-message-handler";
 import { MESSAGE_BUS_NOT_INITIALIZED, ServiceWorkerTimeoutError } from "../../src/worker/errors";
 import { DEFAULT_ARKADE_SERVER_URL } from "../../src/networks";
+import { registerWalletRestoreHook } from "../../src/wallet/restoreHooks";
 
 type MessageHandler = (event: { data: any }) => void;
 
@@ -212,21 +213,62 @@ describe("ServiceWorkerReadonlyWallet", () => {
         // The gate reads contract-row metadata, which exists only inside the
         // worker — so this cannot be a main-thread filter over GET_VTXOS.
         const vtxos = [{ txid: "tx", vout: 0, value: 1, virtualStatus: { state: "settled" } }];
+        const filters: unknown[] = [];
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "GET_SPENDABLE_VTXOS") return null;
+            filters.push(message.payload.filter);
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "SPENDABLE_VTXOS",
+                payload: { vtxos, filterApplied: true },
+            };
+        });
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await expect(
+            wallet.getSpendableVtxos({
+                watchedOnly: true,
+                genericallySpendableOnly: true,
+                maxSyncAgeMs: 60_000,
+                requireSynced: true,
+            }),
+        ).resolves.toMatchObject([{ txid: "tx" }]);
+        expect(filters).toEqual([
+            {
+                watchedOnly: true,
+                genericallySpendableOnly: true,
+                maxSyncAgeMs: 60_000,
+                requireSynced: true,
+            },
+        ]);
+    });
+
+    it("rejects scoped reads from a worker that ignores contract scopes", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
             message.type === "GET_SPENDABLE_VTXOS"
                 ? {
                       id: message.id,
                       tag: messageTag,
                       type: "SPENDABLE_VTXOS",
-                      payload: { vtxos },
+                      payload: { vtxos: [] },
                   }
                 : null,
         );
-
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        await expect(wallet.getSpendableVtxos()).resolves.toMatchObject([{ txid: "tx" }]);
+        await expect(wallet.getSpendableVtxos({ watchedOnly: true })).rejects.toThrow(
+            "does not support the requested contract scope",
+        );
+        await expect(wallet.getSpendableVtxos({ genericallySpendableOnly: true })).rejects.toThrow(
+            "does not support the requested contract scope",
+        );
+        await expect(wallet.getSpendableVtxos({ requireSynced: true })).rejects.toThrow(
+            "does not support the requested contract scope or freshness check",
+        );
     });
 
     it("fails closed against a worker that predates the message", async () => {
@@ -340,7 +382,27 @@ describe("ServiceWorkerReadonlyWallet", () => {
             } as any),
         ).resolves.toEqual(contract);
         await expect(manager.getContracts()).resolves.toEqual(contracts);
-        await expect(manager.getContractsWithVtxos({} as any)).resolves.toEqual(contractsWithVtxos);
+        await expect(
+            manager.getContractsWithVtxos({} as any, undefined, {
+                maxSyncAgeMs: 60_000,
+                unspentOnly: true,
+            }),
+        ).resolves.toEqual(contractsWithVtxos);
+        await expect(
+            manager.getContractsWithVtxos({} as any, undefined, { requireSynced: true }),
+        ).rejects.toThrow("Failed to get contracts with vtxos");
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "GET_CONTRACTS_WITH_VTXOS",
+                payload: { filter: {}, options: { maxSyncAgeMs: 60_000, unspentOnly: true } },
+            }),
+        );
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "GET_CONTRACTS_WITH_VTXOS",
+                payload: expect.objectContaining({ options: { requireSynced: true } }),
+            }),
+        );
         await expect(manager.updateContract("c1", { label: "new" })).resolves.toEqual(contract);
         await expect(manager.deleteContract("c1")).resolves.toBeUndefined();
         await expect(manager.getSpendablePaths({ contractScript: "c1" } as any)).resolves.toEqual(
@@ -734,6 +796,92 @@ describe("ServiceWorkerWallet", () => {
 
         const wallet = createSWWallet(serviceWorker as any, messageTag);
         await expect(wallet.restore()).rejects.toThrow("boom");
+    });
+
+    it("runs local hooks after worker recovery", async () => {
+        const events: string[] = [];
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "RESTORE_WALLET") return null;
+            events.push("worker");
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "RESTORE_WALLET_SUCCESS",
+            };
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "local",
+            restore: async (restoredWallet) => {
+                expect(restoredWallet).toBe(wallet);
+                events.push("hook");
+            },
+        });
+
+        await wallet.restore();
+
+        unregister();
+        expect(events).toEqual(["worker", "hook"]);
+    });
+
+    it("coalesces worker recovery through local hook completion", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "RESTORE_WALLET") return null;
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "RESTORE_WALLET_SUCCESS",
+            };
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        let releaseHook = () => undefined;
+        const hookGate = new Promise<void>((resolve) => {
+            releaseHook = resolve;
+        });
+        const hook = vi.fn(async () => hookGate);
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "delayed",
+            restore: hook,
+        });
+
+        const first = wallet.restore();
+        await vi.waitFor(() => expect(hook).toHaveBeenCalledOnce());
+        const second = wallet.restore();
+        releaseHook();
+        await Promise.all([first, second]);
+
+        unregister();
+        expect(hook).toHaveBeenCalledOnce();
+        expect(
+            serviceWorker.postMessage.mock.calls.filter(
+                ([message]) => message.type === "RESTORE_WALLET",
+            ),
+        ).toHaveLength(1);
+    });
+
+    it("skips local hooks when worker recovery fails", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "RESTORE_WALLET") return null;
+            return {
+                id: message.id,
+                tag: messageTag,
+                error: new Error("worker failed"),
+            };
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        const hook = vi.fn(async () => undefined);
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "must-not-run",
+            restore: hook,
+        });
+
+        await expect(wallet.restore()).rejects.toThrow("worker failed");
+
+        unregister();
+        expect(hook).not.toHaveBeenCalled();
     });
 });
 

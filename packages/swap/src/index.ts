@@ -1,11 +1,15 @@
 export {
     createOffer,
     cancelOffer,
+    fillOffer,
+    restoreOfferCoverage,
     encodeOffer,
     decodeOffer,
     offerVtxoScript,
     swapPrograms,
+    ASSET_CARRIER_SATS,
     OFFER_PACKET_TYPE,
+    type FillFunding,
     type Offer,
 } from "./offer";
 export {
@@ -17,6 +21,15 @@ export {
     type DiscoverMarketsOptions,
     type PlanError,
 } from "./markets";
+export {
+    MARKET_CORRIDORS,
+    isRfqMarket,
+    marketAssetId,
+    marketCorridor,
+    marketPairLabel,
+    type MarketCorridor,
+    type MarketLike,
+} from "./marketShape";
 export {
     BTC_ASSET_ID,
     getAssetSwaps,
@@ -36,8 +49,20 @@ export {
     type AssetSwapRepository,
     type MarketsCacheEntry,
     InMemoryAssetSwapRepository,
+    RFQ_SWAP_MAX_PAGE_SIZE,
+    type RfqHistoryCursor,
 } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
+export {
+    restoreAssetSwapRepository,
+    type AssetSwapRestoreChange,
+    type RestoreAssetSwapRepositoryOptions,
+    type RestoreAssetSwapRepositoryResult,
+} from "./restoreRepository";
+export {
+    registerAssetSwapRestore,
+    type RegisterAssetSwapRestoreOptions,
+} from "./registerRestore";
 // The corridor handlers and their registry are internal — see `rfqCorridor.ts`
 // for why. What a consumer writes into `RfqSwapOrigin.profile` is these: every
 // corridor's keys through `rfqSecretsProfile`, then whatever its own leg adds.
@@ -95,24 +120,31 @@ export {
     LIGHTNING_SEND_PAIR,
     MIN_CLAIM_WINDOW_SECONDS,
     MIN_HEADROOM_SECONDS,
+    RFQ_REFUSAL_ERROR_CODES,
     RFQ_TERMINAL_STATES,
     SOLO_REFUND_HEADROOM_SECONDS,
     AddressMismatch,
     SwapRefusal,
     arkadeAssetLeg,
     arkadeSwapRequest,
+    assertArkadeFundable,
     assertFundable,
     assertReceivable,
+    canonicalAssetAmount,
     deriveLightningReceive,
     deriveOnchainReceive,
     httpTransport,
+    isRfqRefusalErrorCode,
     lightningReceiveRequest,
     lightningSendRequest,
     lightningSendVtxoScript,
     newRfqId,
+    normalizeMakerPkScript,
+    normalizeMakerPublicKey,
     offerTermsFromQuote,
     receiveVtxoScript,
     relayTransport,
+    requestArkadeSwap,
     requestLightningReceive,
     requestLightningSend,
     rfqPair,
@@ -120,13 +152,17 @@ export {
     unilateralRefundDelay,
     unilateralRefundWithoutReceiverDelay,
     verifyLockupAddress,
+    verifyOfferAddress,
     verifyReceiveInvoice,
     type InvoiceFacts,
     type LightningReceiveTreeParams,
     type LightningSendTreeParams,
     type RelaySocket,
     type RfqQuote,
+    type RfqRefusalDetail,
+    type RfqRefusalErrorCode,
     type RfqRefusalReason,
+    type RfqRefusalUnit,
     type RfqStatus,
     type RfqTransport,
 } from "./rfq";
@@ -191,7 +227,25 @@ export {
     requestOnchainReceive,
     requestOnchainSend,
 } from "./rfq";
-export { sealClaimPacket, type ClaimPacketInput, type SealedClaimPacket } from "./claimPacket";
+export {
+    appendArkadeScript,
+    CLAIM_PACKET_TYPE,
+    type ClaimPacketInput,
+    claimPacketShape,
+    type ClaimPacketShape,
+    sealClaimPacket,
+    SEALED_CIPHERTEXT_LENGTH,
+    type SealedClaimPacket,
+} from "./claimPacket";
+export {
+    CovclaimdRevealError,
+    covclaimdClient,
+    revealClaimPacket,
+    revealFieldsFromScript,
+    type CovclaimdClient,
+    type CovclaimdInfo,
+    type RevealParams,
+} from "./reveal";
 export {
     LockupAmountMismatchError,
     awaitLockupFunding,
@@ -215,11 +269,11 @@ export {
     readLockupFate,
     refundIfUnresolved,
     type LockupFate,
+    type LockupContractSource,
     type LockupSpend,
     type LockupSpendIndexer,
     type LockupVtxo,
     type RefundArkProvider,
-    type RefundIndexer,
     type RefundOutcome,
 } from "./refund";
 export { arkadeRefunder, type ArkadeRefunderDeps } from "./arkadeRefunder";
@@ -235,6 +289,7 @@ export {
     type LockupContractWriter,
 } from "./lockupContract";
 export {
+    RFQ_SWAP_ACTIVE_STATES,
     RFQ_SWAP_TERMINAL_STATES,
     RfqSwapManager,
     RfqSwapOriginRequired,
@@ -263,7 +318,11 @@ export {
 } from "./swapManager";
 export {
     rfqSwapActivityInputs,
+    rfqSwapActivityInputsPage,
+    rfqSwapActivityInputsSincePage,
     swapActivityResolver,
     type RfqSwapActivityDeps,
+    type RfqSwapActivityPage,
+    type RfqSwapDatedActivityPage,
     type SwapActivityInput,
 } from "./activity";

@@ -1,4 +1,4 @@
-import { PaymentRouter, arkAssetRail, arkRail, onchainRail } from "@arkade-os/sdk";
+import { PaymentRouter, arkAssetRail, arkRail, onchainRail, walletFeeSource } from "@arkade-os/sdk";
 import type { Wallet } from "@arkade-os/sdk";
 import type { ArkadeSwaps } from "../arkade-swaps";
 import { lightningRail } from "./lightning";
@@ -44,7 +44,7 @@ export function createDefaultPaymentRouter(wallet: Wallet, swaps: ArkadeSwaps): 
     })
         .use(arkRail())
         .use(arkAssetRail())
-        .use(onchainRail())
+        .use(onchainRail({ feeInfo: walletFeeSource(wallet) }))
         .use(lightningRail())
         .use(onchainSwapRail());
 }

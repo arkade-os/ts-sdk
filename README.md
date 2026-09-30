@@ -74,6 +74,10 @@ pnpm run release:dry-run -- sdk patch   # Preview the plan without changing file
 pnpm run release:cleanup                # Restore manifests, delete local tags
 ```
 
+`workspace:*` dependencies are replaced with the workspace package's exact version when a package
+is published. If a dependent starts using a newly released SDK API, release the SDK first and the
+dependent second; otherwise the dependent can be published with an older, incompatible SDK pin.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for all targets, bump types, prerelease flags, and cleanup
 behavior.
 

@@ -27,6 +27,7 @@ import type { Coin, VirtualCoin } from "../src/wallet";
 import { MockEventSource } from "./mocks/eventSource";
 import { timelockToSequence } from "../src/utils/timelock";
 import { DEFAULT_ARKADE_SERVER_URL } from "../src/networks";
+import { jsonResponse, textResponse } from "./helpers/response";
 
 // Mock fetch
 const { mockFetch } = vi.hoisted(() => ({
@@ -83,10 +84,7 @@ describe("Wallet", () => {
         ];
 
         it("should calculate balance from coins", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockUTXOs),
-            });
+            mockFetch.mockResolvedValueOnce(jsonResponse(mockUTXOs));
 
             const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
@@ -135,44 +133,30 @@ describe("Wallet", () => {
             // fetch sequence above is unchanged.
 
             mockFetch
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () =>
-                        Promise.resolve({
-                            signerPubkey: mockServerKeyHex,
-                            forfeitPubkey: mockServerKeyHex,
-                            batchExpiry: BigInt(144),
-                            unilateralExitDelay: BigInt(144),
-                            boardingExitDelay: BigInt(144),
-                            roundInterval: BigInt(144),
-                            network: "mutinynet",
-                            forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
-                            checkpointTapscript:
-                                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
-                        }),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve(mockUTXOs),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ vtxos: [] }),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ subscriptionId: "sub-1" }),
-                })
+                .mockResolvedValueOnce(
+                    jsonResponse({
+                        signerPubkey: mockServerKeyHex,
+                        forfeitPubkey: mockServerKeyHex,
+                        batchExpiry: BigInt(144),
+                        unilateralExitDelay: BigInt(144),
+                        boardingExitDelay: BigInt(144),
+                        roundInterval: BigInt(144),
+                        network: "mutinynet",
+                        forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                        checkpointTapscript:
+                            "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+                    }),
+                )
+                .mockResolvedValueOnce(jsonResponse(mockUTXOs))
+                .mockResolvedValueOnce(jsonResponse({ vtxos: [] }))
+                .mockResolvedValueOnce(jsonResponse({ subscriptionId: "sub-1" }))
                 .mockImplementationOnce((url: string) => {
                     // Extract the script from the request URL so the
                     // mock response matches the wallet's actual script.
                     const params = new URLSearchParams(url.split("?")[1]);
                     const script = params.getAll("scripts")[0];
                     mockServerResponse.vtxos[0].script = script;
-                    return Promise.resolve({
-                        ok: true,
-                        json: () => Promise.resolve(mockServerResponse),
-                    });
+                    return Promise.resolve(jsonResponse(mockServerResponse));
                 });
 
             const wallet = await Wallet.create({
@@ -206,10 +190,7 @@ describe("Wallet", () => {
         ];
 
         it("should return coins from provider", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockUTXOs),
-            });
+            mockFetch.mockResolvedValueOnce(jsonResponse(mockUTXOs));
 
             const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
@@ -309,14 +290,8 @@ describe("Wallet", () => {
             const mockFeeRate = 3;
             const mockTxId = hex.encode(new Uint8Array(32).fill(1));
 
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockUTXOs),
-            });
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({ "1": mockFeeRate }),
-            });
+            mockFetch.mockResolvedValueOnce(jsonResponse(mockUTXOs));
+            mockFetch.mockResolvedValueOnce(jsonResponse({ "1": mockFeeRate }));
 
             const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
@@ -341,18 +316,9 @@ describe("Wallet", () => {
         it("should send funds when change amount is below dust", async () => {
             const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockUTXOs),
-            });
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({ "1": mockFeeRate }),
-            });
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                text: () => Promise.resolve(mockTxId),
-            });
+            mockFetch.mockResolvedValueOnce(jsonResponse(mockUTXOs));
+            mockFetch.mockResolvedValueOnce(jsonResponse({ "1": mockFeeRate }));
+            mockFetch.mockResolvedValueOnce(textResponse(mockTxId));
 
             expect(
                 await wallet.send({
@@ -365,18 +331,9 @@ describe("Wallet", () => {
         it("should send amount with correct fees", async () => {
             const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockUTXOs),
-            });
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({ "1": mockFeeRate }),
-            });
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                text: () => Promise.resolve(mockTxId),
-            });
+            mockFetch.mockResolvedValueOnce(jsonResponse(mockUTXOs));
+            mockFetch.mockResolvedValueOnce(jsonResponse({ "1": mockFeeRate }));
+            mockFetch.mockResolvedValueOnce(textResponse(mockTxId));
 
             expect(
                 await wallet.send({
@@ -405,18 +362,9 @@ describe("Wallet", () => {
             const feeRate = 10;
 
             const mockCalls = () => {
-                mockFetch.mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve(coins),
-                });
-                mockFetch.mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ "1": feeRate }),
-                });
-                mockFetch.mockResolvedValueOnce({
-                    ok: true,
-                    text: () => Promise.resolve("txid_mock"),
-                });
+                mockFetch.mockResolvedValueOnce(jsonResponse(coins));
+                mockFetch.mockResolvedValueOnce(jsonResponse({ "1": feeRate }));
+                mockFetch.mockResolvedValueOnce(textResponse("txid_mock"));
             };
 
             // 1. Send to Native Segwit Address (tb1q...)
@@ -473,18 +421,9 @@ describe("Wallet", () => {
                 },
             ];
 
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(coins),
-            });
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({ "1": feeRate }),
-            });
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                text: () => Promise.resolve("txid_mock"),
-            });
+            mockFetch.mockResolvedValueOnce(jsonResponse(coins));
+            mockFetch.mockResolvedValueOnce(jsonResponse({ "1": feeRate }));
+            mockFetch.mockResolvedValueOnce(textResponse("txid_mock"));
 
             await expect(
                 wallet.send({
@@ -492,6 +431,138 @@ describe("Wallet", () => {
                     amount: sendAmount,
                 }),
             ).resolves.toBeDefined();
+        });
+    });
+
+    describe("offchain send minimum change", () => {
+        const tapscript = new DefaultVtxo.Script({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        });
+        const address = tapscript.address("ark", TEST_SERVER_PUB_KEY).encode();
+
+        function sendWithCoins(values: number[], minimum: bigint, assetIndices: number[] = []) {
+            const coins = values.map((value, index) => ({
+                txid: index.toString(16).padStart(64, "0"),
+                vout: 0,
+                value,
+                virtualStatus: { state: "preconfirmed", batchExpiry: index + 1 },
+                ...(assetIndices.includes(index)
+                    ? { assets: [{ assetId: "a".repeat(68), amount: 1n }] }
+                    : {}),
+            }));
+            const submit = vi.fn().mockResolvedValue("txid");
+            const thisArg: any = {
+                offchainTapscript: tapscript,
+                arkServerPublicKey: TEST_SERVER_PUB_KEY,
+                serverUnrollScript: {},
+                network: { hrp: "ark" },
+                dustAmount: 330n,
+                recipientAddressContext: () => ({
+                    hrp: "ark",
+                    signerSet: { active: hex.encode(TEST_SERVER_PUB_KEY), deprecated: new Map() },
+                }),
+                arkProvider: { getInfo: vi.fn().mockResolvedValue({ vtxoMinAmount: minimum }) },
+                getSpendableVtxos: vi.fn().mockResolvedValue(coins),
+                _submitOffchainSpend: submit,
+            };
+            return { thisArg, submit, coins };
+        }
+
+        async function send(thisArg: any, amount: number, selectedVtxos?: any[]) {
+            return (Wallet.prototype as any)._sendImpl.call(thisArg, {
+                recipients: [{ address, amount }],
+                selectedVtxos,
+            });
+        }
+
+        it("adds another coin when a Lightning funding send would create change below the operator minimum", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([616, 400], 330n);
+
+            await send(thisArg, 505);
+
+            expect(submit).toHaveBeenCalledOnce();
+            expect(submit.mock.calls[0][0].map((coin: { txid: string }) => coin.txid)).toEqual(
+                coins.map((coin) => coin.txid),
+            );
+            expect(
+                submit.mock.calls[0][1].map((output: { amount: bigint }) => output.amount),
+            ).toEqual([505n, 511n]);
+        });
+
+        it("keeps an exact payment free of change", async () => {
+            const { thisArg, submit } = sendWithCoins([505, 400], 330n);
+
+            await send(thisArg, 505);
+
+            expect(submit.mock.calls[0][1]).toHaveLength(1);
+            expect(submit.mock.calls[0][0]).toHaveLength(1);
+        });
+
+        it("uses an exact pair if adding every coin still cannot meet the minimum", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([300, 220, 200], 330n);
+
+            await send(thisArg, 500);
+
+            expect(submit.mock.calls[0][0].map((coin: { txid: string }) => coin.txid)).toEqual([
+                coins[0].txid,
+                coins[2].txid,
+            ]);
+            expect(
+                submit.mock.calls[0][1].map((output: { amount: bigint }) => output.amount),
+            ).toEqual([500n]);
+        });
+
+        it("tops up zero BTC change when selected assets still need a minimum-sized output", async () => {
+            const { thisArg, submit } = sendWithCoins([505, 330, 200], 500n, [0]);
+
+            await send(thisArg, 505);
+
+            expect(thisArg.arkProvider.getInfo).toHaveBeenCalledOnce();
+            expect(submit.mock.calls[0][0]).toHaveLength(3);
+            expect(
+                submit.mock.calls[0][1]
+                    .slice(0, 2)
+                    .map((output: { amount: bigint }) => output.amount),
+            ).toEqual([505n, 530n]);
+        });
+
+        it("uses an exact BTC-only coin instead of an asset coin with unusable change", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([616, 505], 1000n, [0]);
+
+            await send(thisArg, 505);
+
+            expect(submit.mock.calls[0][0].map((coin: { txid: string }) => coin.txid)).toEqual([
+                coins[1].txid,
+            ]);
+            expect(submit.mock.calls[0][1]).toHaveLength(1);
+        });
+
+        it("preserves subdust change when the operator advertises no minimum", async () => {
+            const { thisArg, submit } = sendWithCoins([616], 0n);
+
+            await send(thisArg, 505);
+
+            expect(submit.mock.calls[0][1][1].amount).toBe(111n);
+        });
+
+        it("fails before submission if no valid change can be formed", async () => {
+            const { thisArg, submit } = sendWithCoins([616], 330n);
+
+            await expect(send(thisArg, 505)).rejects.toThrow("minimum change amount of 330 sats");
+            expect(submit).not.toHaveBeenCalled();
+        });
+
+        it("does not add inputs when the caller selected them", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([616, 400], 330n);
+            thisArg.logUngatedInputs = vi.fn();
+
+            await expect(send(thisArg, 505, [coins[0]])).rejects.toThrow(
+                "111 sats of change is below the operator minimum of 330 sats",
+            );
+            expect(thisArg.getSpendableVtxos).not.toHaveBeenCalled();
+            expect(submit).not.toHaveBeenCalled();
         });
     });
 
@@ -522,14 +593,12 @@ describe("Wallet", () => {
         };
 
         it("should initialize with ark provider when configured", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () =>
-                    Promise.resolve({
-                        ...mockArkInfo,
-                        vtxoTreeExpiry: mockArkInfo.batchExpiry,
-                    }),
-            });
+            mockFetch.mockResolvedValueOnce(
+                jsonResponse({
+                    ...mockArkInfo,
+                    vtxoTreeExpiry: mockArkInfo.batchExpiry,
+                }),
+            );
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
@@ -544,10 +613,7 @@ describe("Wallet", () => {
         });
 
         it("should return intentFee config as strings", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockArkInfo),
-            });
+            mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
 
             const provider = new RestArkProvider("http://localhost:7070");
             const info = await provider.getInfo();
@@ -578,14 +644,8 @@ describe("Wallet", () => {
 
         it("should convert Wallet to ReadonlyWallet", async () => {
             mockFetch
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve(mockArkInfo),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ vtxos: [] }),
-                });
+                .mockResolvedValueOnce(jsonResponse(mockArkInfo))
+                .mockResolvedValueOnce(jsonResponse({ vtxos: [] }));
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
@@ -611,14 +671,8 @@ describe("Wallet", () => {
 
         it("should not have sendBitcoin method on ReadonlyWallet type", async () => {
             mockFetch
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve(mockArkInfo),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ vtxos: [] }),
-                });
+                .mockResolvedValueOnce(jsonResponse(mockArkInfo))
+                .mockResolvedValueOnce(jsonResponse({ vtxos: [] }));
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
@@ -657,34 +711,18 @@ describe("Wallet", () => {
             // and the background VtxoManager init doesn't matter.
             mockFetch.mockImplementation((url: string) => {
                 if (url.includes("/v1/info")) {
-                    return Promise.resolve({
-                        ok: true,
-                        json: () => Promise.resolve(mockArkInfo),
-                    });
+                    return Promise.resolve(jsonResponse(mockArkInfo));
                 }
                 if (url.includes("/script/subscribe")) {
-                    return Promise.resolve({
-                        ok: true,
-                        json: () => Promise.resolve({ subscriptionId: "sub-1" }),
-                    });
+                    return Promise.resolve(jsonResponse({ subscriptionId: "sub-1" }));
                 }
                 if (url.includes("/address/") && url.includes("/utxo")) {
-                    return Promise.resolve({
-                        ok: true,
-                        json: () => Promise.resolve(mockUTXOs),
-                    });
+                    return Promise.resolve(jsonResponse(mockUTXOs));
                 }
                 if (url.includes("/vtxos")) {
-                    return Promise.resolve({
-                        ok: true,
-                        json: () => Promise.resolve({ vtxos: [] }),
-                    });
+                    return Promise.resolve(jsonResponse({ vtxos: [] }));
                 }
-                return Promise.resolve({
-                    ok: true,
-                    json: () => Promise.resolve({}),
-                    text: () => Promise.resolve(""),
-                });
+                return Promise.resolve(jsonResponse({}));
             });
 
             const wallet = await Wallet.create({
@@ -1568,10 +1606,7 @@ describe("ReadonlyWallet", () => {
         // Create readonly identity
         const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
 
-        mockFetch.mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(mockArkInfo),
-        });
+        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
@@ -1593,10 +1628,7 @@ describe("ReadonlyWallet", () => {
         const compressedPubKey = await key.compressedPublicKey();
         const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
 
-        mockFetch.mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(mockArkInfo),
-        });
+        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
@@ -1636,34 +1668,18 @@ describe("ReadonlyWallet", () => {
         // Route by URL to keep ordering assumptions out of the test.
         mockFetch.mockImplementation((url: string) => {
             if (url.includes("/v1/info")) {
-                return Promise.resolve({
-                    ok: true,
-                    json: () => Promise.resolve(mockArkInfo),
-                });
+                return Promise.resolve(jsonResponse(mockArkInfo));
             }
             if (url.includes("/script/subscribe")) {
-                return Promise.resolve({
-                    ok: true,
-                    json: () => Promise.resolve({ subscriptionId: "sub-1" }),
-                });
+                return Promise.resolve(jsonResponse({ subscriptionId: "sub-1" }));
             }
             if (url.includes("/address/") && url.includes("/utxo")) {
-                return Promise.resolve({
-                    ok: true,
-                    json: () => Promise.resolve(mockUTXOs),
-                });
+                return Promise.resolve(jsonResponse(mockUTXOs));
             }
             if (url.includes("/vtxos")) {
-                return Promise.resolve({
-                    ok: true,
-                    json: () => Promise.resolve({ vtxos: [] }),
-                });
+                return Promise.resolve(jsonResponse({ vtxos: [] }));
             }
-            return Promise.resolve({
-                ok: true,
-                json: () => Promise.resolve({}),
-                text: () => Promise.resolve(""),
-            });
+            return Promise.resolve(jsonResponse({}));
         });
 
         const readonlyWallet = await ReadonlyWallet.create({
@@ -1683,10 +1699,7 @@ describe("ReadonlyWallet", () => {
         const compressedPubKey = await key.compressedPublicKey();
         const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
 
-        mockFetch.mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(mockArkInfo),
-        });
+        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
@@ -2119,7 +2132,10 @@ describe("Wallet._settleImpl", () => {
             ).rejects.toBe(sentinel);
 
             expect(getCaptured()!.map((v: any) => v.txid)).toEqual(["vtxo-7000-1", "vtxo-5000-0"]);
-            expect(thisArg.getSpendableVtxos).toHaveBeenCalled();
+            expect(thisArg.getSpendableVtxos).toHaveBeenCalledWith({
+                withRecoverable: true,
+                genericallySpendableOnly: true,
+            });
         });
 
         it("caps the number of auto-selected VTXOs at MAX_VTXOS_PER_SETTLEMENT", async () => {

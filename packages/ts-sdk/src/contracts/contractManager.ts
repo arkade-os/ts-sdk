@@ -18,7 +18,9 @@ import {
     PathContext,
     PathSelection,
     ExtendedContractVtxo,
+    WatchedScript,
     hasCandidates,
+    isContractVtxoEvent,
     isDiscoverable,
     watchStateOf,
 } from "./types";
@@ -29,6 +31,7 @@ import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import {
     getAllNormalizedVtxos,
     getNormalizedVtxos,
+    isVtxoSpent,
     isVirtualCoin,
     normalizeVtxo,
     type NormalizedExtendedVirtualCoin,
@@ -37,6 +40,7 @@ import {
     deriveContractTapscripts,
     extendVirtualCoinForContract,
     type ContractTapscriptCache,
+    type ContractTapscripts,
 } from "../wallet/utils";
 import { UnannotatableInputError } from "./spendability";
 import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
@@ -48,7 +52,9 @@ import {
     getSyncCursor,
 } from "../utils/syncCursors";
 import {
+    applyRecordedSpends,
     getVtxosForContract,
+    inVtxoWriteOrder,
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
@@ -91,6 +97,12 @@ function toWatchOnlyContract(params: CreateContractParams): Contract {
     return { ...params, state: params.state ?? "active", createdAt: Date.now() };
 }
 
+type TapscriptMemo = Map<
+    string,
+    { key: string; handler: ContractHandler<unknown>; tapscripts: ContractTapscripts }
+>;
+const TAPSCRIPT_MEMO_MAX_ENTRIES = 1024;
+
 /**
  * Which of `vtxos`' contracts this runtime can annotate, with the tapscripts
  * built along the way and a reason for each that it cannot.
@@ -110,6 +122,7 @@ function toWatchOnlyContract(params: CreateContractParams): Contract {
 function annotatableIn(
     scriptToContract: ReadonlyMap<string, Contract>,
     vtxos: readonly { script: string }[],
+    memo?: TapscriptMemo,
 ): { scripts: Set<string>; cache: ContractTapscriptCache; failures: Map<string, string> } {
     const scripts = new Set<string>();
     const cache: ContractTapscriptCache = new Map();
@@ -118,7 +131,26 @@ function annotatableIn(
         const contract = scriptToContract.get(script);
         if (!contract) continue; // not ours; dropped by the caller's filter
         try {
-            cache.set(script, deriveContractTapscripts(contract));
+            // Pure in (type, params) under one handler; a swapped or removed handler must re-derive.
+            const key = `${contract.type}\u0000${script}\u0000${JSON.stringify(contract.params)}`;
+            const handler = contractHandlers.get(contract.type);
+            const hit = memo?.get(script);
+            let tapscripts: ContractTapscripts;
+            if (hit && hit.key === key && hit.handler === handler) {
+                tapscripts = hit.tapscripts;
+                memo!.delete(script);
+                memo!.set(script, hit);
+            } else {
+                memo?.delete(script);
+                tapscripts = deriveContractTapscripts(contract);
+                if (handler && memo) {
+                    memo.set(script, { key, handler, tapscripts });
+                    if (memo.size > TAPSCRIPT_MEMO_MAX_ENTRIES) {
+                        memo.delete(memo.keys().next().value!);
+                    }
+                }
+            }
+            cache.set(script, tapscripts); // aliases the memo; extendVtxoFromContract clones before use
             scripts.add(script);
         } catch (err) {
             failures.set(
@@ -319,6 +351,13 @@ export interface IContractManager extends Disposable {
     createContract(params: CreateContractParams): Promise<Contract>;
 
     /**
+     * {@link createContract} for a set, one indexer round trip instead of N.
+     * Optional so adding it breaks no implementer of this public interface
+     * (`serviceWorker/wallet.ts` proxies each method over wire): fall back.
+     */
+    createContracts?(paramsList: CreateContractParams[]): Promise<Contract[]>;
+
+    /**
      * List contracts with optional filters.
      *
      * @example
@@ -333,8 +372,14 @@ export interface IContractManager extends Disposable {
      * List contracts and their current virtual outputs.
      *
      * If no filter is provided, returns all contracts with their virtual outputs.
+     * `unspentOnly` omits spent VTXOs from the repository result; it
+     * does not narrow the provider sync or change the full-history default.
      */
-    getContractsWithVtxos(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
+    getContractsWithVtxos(
+        filter?: GetContractsFilter,
+        pageSize?: number,
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
+    ): Promise<ContractWithVtxos[]>;
 
     /**
      * Latest provider-sync health (online vs. degraded to repository data).
@@ -550,6 +595,45 @@ export interface IContractManager extends Disposable {
     scanContracts(opts: ScanContractsOptions): Promise<ScanResult>;
 
     /**
+     * Report VTXO activity at `script` without registering it as a contract,
+     * and without the wallet owning it. Activity arrives as
+     * {@link ContractEvent} `vtxo_received` / `vtxo_spent` without the
+     * `contract` — narrow with {@link isContractVtxoEvent};
+     * nothing is persisted and the outputs never enter the wallet's balance,
+     * renewal or recovery paths.
+     *
+     * At-least-once, and re-announces on restart — the registration is
+     * in-memory, so there is no baseline to diff a restart against.
+     * Deduplicate by outpoint, and tolerate a `vtxo_spent` with no
+     * preceding `vtxo_received` — an output can be created and spent
+     * inside one gap in the stream. Re-registering a watched script is a
+     * no-op, so a caller may re-derive its whole set on a timer.
+     *
+     * Reports **spendable** outputs: a preconfirmed one counts, so a fresh
+     * funding is not missed, but one already recoverable or swept is not
+     * reported.
+     *
+     * Takes one script or a set. A set costs one subscription update and one
+     * indexer read however many scripts it carries, which is the difference
+     * between registering and re-registering cheaply and paying N round trips
+     * — what a service watching an address per payment does on every restart.
+     *
+     * Optional so adding it does not break an embedder with its own
+     * `IContractManager`; both shipped implementations provide it for real.
+     */
+    watchScript?(script: string | string[], options?: { label?: string }): Promise<void>;
+
+    /** Stop watching a script registered via {@link watchScript}. Takes one or
+     *  a set, and rebuilds the subscription once either way. */
+    unwatchScript?(script: string | string[]): Promise<void>;
+
+    /**
+     * Every script registered via {@link watchScript}. Async for the same
+     * reason {@link isWatching} is: a service worker answers over the bus.
+     */
+    getWatchedScripts?(): Promise<WatchedScript[]>;
+
+    /**
      * Whether the underlying watcher is currently active.
      */
     isWatching(): Promise<boolean>;
@@ -655,6 +739,15 @@ export interface ContractManagerConfig {
      * and a path query is not worth failing over a provider hiccup.
      */
     chainTip?: () => Promise<{ height: number; time: number } | undefined>;
+
+    /**
+     * How stale {@link ContractManager.getContractsWithVtxos} may let its
+     * opportunistic sync be before repeating it. `0` (default) repeats it every
+     * call. A send syncs, selects, then submits, so its coins are already one
+     * submit latency stale; this widens that bound by this value, and is
+     * therefore a budget rather than a free saving.
+     */
+    vtxoSyncMaxAgeMs?: number;
 }
 
 /**
@@ -759,6 +852,8 @@ export type CreateContractParams = Omit<Contract, "createdAt" | "state"> & {
 export class ContractManager implements IContractManager {
     private config: ContractManagerConfig;
     private watcher: ContractWatcher;
+    /** Per-sync tapscript caches start empty; this outlives them. Consumers only ever see clones. */
+    private readonly tapscriptMemo: TapscriptMemo = new Map();
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
@@ -766,6 +861,7 @@ export class ContractManager implements IContractManager {
     private syncDegradedReason?: string;
     /** Epoch-ms of the last successful provider sync, if any. */
     private lastSyncedAt?: number;
+    private syncedAtByScript = new Map<string, number>();
     /** Last chain tip read, with the epoch-ms it was read at. @see currentChainTip */
     private chainTipCache?: { height: number; time: number; at: number };
     /** In-flight chain tip read, so concurrent cache misses share one. */
@@ -827,14 +923,31 @@ export class ContractManager implements IContractManager {
               };
     }
 
+    /** @see ContractManagerConfig.vtxoSyncMaxAgeMs — for factory-built managers. */
+    setVtxoSyncMaxAge(maxAgeMs: number): void {
+        this.config.vtxoSyncMaxAgeMs = maxAgeMs;
+    }
+
     private markSyncOnline(): void {
         this.lastSyncedAt = Date.now();
-        // An unannotatable contract outlives an otherwise-successful sync: the
-        // operator is reachable and every other contract is current, but this
-        // wallet still cannot read that one, and its VTXOs stopped being
-        // refreshed. Reporting it here is what keeps the skip from being
-        // silent — `getSyncState()` is the channel apps already watch.
-        this.syncDegradedReason = this.annotationDegradedReason();
+        this.syncDegradedReason = this.syncGapReason();
+    }
+
+    /**
+     * Why a sync that just succeeded still has not covered everything it should
+     * have. Both reasons outlive the sync that failed to cover them, so neither
+     * is discharged by the next one succeeding — which is the point: a wallet
+     * that reported itself current while the look-ahead band sat behind the
+     * watermark, or while a contract could not be annotated, would be claiming
+     * coverage it never had. `getSyncState()` is the channel apps already watch.
+     */
+    private syncGapReason(): string | undefined {
+        const annotations = this.annotationDegradedReason();
+        const owedRefill = this.lookAheadRefillOwed
+            ? "the look-ahead band is behind the allocation watermark, so a funded address inside it is not being watched yet"
+            : undefined;
+        const reasons = [annotations, owedRefill].filter((r): r is string => r !== undefined);
+        return reasons.length === 0 ? undefined : reasons.join("; ");
     }
 
     /** Contracts a sync could not annotate, as `script → reason`. */
@@ -887,9 +1000,23 @@ export class ContractManager implements IContractManager {
 
         // Register the speculative band BEFORE the boot sync, so newly watched
         // window scripts get their full-history catch-up first and the delta
-        // sync below then covers the whole watched set. Retryable failures are
-        // already swallowed inside (degraded state); terminal ones propagate.
-        await this.scheduleLookAheadDrain();
+        // sync below then covers the whole watched set.
+        //
+        // A retryable failure here must not end the wallet's startup: the
+        // wallet can run on what it already holds. But the band is now behind
+        // the allocation watermark, so a funded address inside it would go
+        // unregistered and the balance would under-report — record that as an
+        // owed refill rather than dropping it. `handleContractEvent` pays the
+        // debt on the next event, which is also the proof the transport is back,
+        // and `syncGapReason` keeps `getSyncState()` honest until it is paid.
+        // Terminal failures still propagate: nothing retries those.
+        try {
+            await this.scheduleLookAheadDrain();
+        } catch (err) {
+            if (!isRetryableProviderError(err)) throw err;
+            this.lookAheadRefillOwed = true;
+            this.markSyncDegraded(err);
+        }
 
         // Best-effort boot sync: a retryable indexer/operator failure must not
         // fail construction. Record degraded state and continue with repository
@@ -1220,6 +1347,46 @@ export class ContractManager implements IContractManager {
             await this.watcher.addContract(contract);
         }
         return contract;
+    }
+
+    /**
+     * `createContract`'s step order, fetch batched: persist all, hydrate once,
+     * then watch. Hydrating first keeps it equivalent — the watcher seeds from
+     * the repository, so an unhydrated row reads as all-new. A part-way failure
+     * still watches what it wrote; a retry reports those rows as existing.
+     */
+    async createContracts(paramsList: CreateContractParams[]): Promise<Contract[]> {
+        if (paramsList.length === 0) return [];
+        return this.watcher.withCoalescedSubscription(async () => {
+            const upserted = [];
+            try {
+                for (const params of paramsList) upserted.push(await this.upsertContract(params));
+            } catch (err) {
+                // not hydrated: that can fail too, and would take the watch with it
+                for (const u of upserted) {
+                    if (!u.persisted) continue;
+                    await this.watcher
+                        .addContract(u.contract)
+                        .catch((e) =>
+                            console.error(`ContractManager: ${u.contract.script} left dark`, e),
+                        );
+                }
+                throw err;
+            }
+
+            const fresh = upserted.filter((u) => u.persisted).map((u) => u.contract);
+            if (fresh.length > 0) {
+                try {
+                    await this.fetchContractVxosFromIndexer(fresh);
+                    this.markSyncOnline();
+                } catch (err) {
+                    if (!isRetryableProviderError(err)) throw err;
+                    this.markSyncDegraded(err);
+                }
+                for (const contract of fresh) await this.watcher.addContract(contract);
+            }
+            return upserted.map((u) => u.contract);
+        });
     }
 
     /**
@@ -1604,23 +1771,54 @@ export class ContractManager implements IContractManager {
     async getContractsWithVtxos(
         filter?: GetContractsFilter,
         pageSize?: number,
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
     ): Promise<ContractWithVtxos[]> {
+        if (
+            options?.maxSyncAgeMs !== undefined &&
+            (!Number.isSafeInteger(options.maxSyncAgeMs) || options.maxSyncAgeMs < 0)
+        ) {
+            throw new Error("maxSyncAgeMs must be a non-negative safe integer");
+        }
         const contracts = await this.getContracts(filter);
         // Best-effort opportunistic sync: on a retryable indexer/operator
         // failure, serve repository state rather than failing the read. The
         // failed sync writes no partial state and does not advance the cursor
         // (targeted subset queries never do). Terminal failures still propagate.
-        try {
-            await this.syncContracts({ contracts, pageSize });
-            this.markSyncOnline();
-        } catch (err) {
-            if (!isRetryableProviderError(err)) throw err;
-            this.markSyncDegraded(err);
+        if (
+            this.syncedWithin(
+                contracts,
+                options?.maxSyncAgeMs ??
+                    (options?.requireSynced ? 0 : (this.config.vtxoSyncMaxAgeMs ?? 0)),
+            )
+        ) {
+            // Skipping the fetch must not skip the demotion it carries: that
+            // half is repository-only, and an `awaiting-funds` contract left
+            // undemoted keeps a watch it no longer needs.
+            await this.demoteFundedAwaitingContracts(contracts);
+        } else {
+            try {
+                await this.syncContracts({ contracts, pageSize });
+                this.markSyncOnline();
+            } catch (err) {
+                if (!isRetryableProviderError(err)) throw err;
+                this.markSyncDegraded(err);
+                if (options?.requireSynced) {
+                    throw new Error("Spendable VTXO read requires an online contract sync", {
+                        cause: err,
+                    });
+                }
+            }
         }
-        const vtxos = await this.getVtxosForContracts(contracts);
+        const vtxos = await this.getVtxosForContracts(contracts, options);
+        const vtxosByScript = new Map<string, ExtendedContractVtxo[]>();
+        for (const vtxo of vtxos) {
+            const group = vtxosByScript.get(vtxo.contractScript) ?? [];
+            group.push(vtxo);
+            vtxosByScript.set(vtxo.contractScript, group);
+        }
         return contracts.map((contract) => ({
             contract,
-            vtxos: vtxos.filter((vtxo) => vtxo.contractScript === contract.script),
+            vtxos: vtxosByScript.get(contract.script)?.slice() ?? [],
         }));
     }
 
@@ -1665,6 +1863,7 @@ export class ContractManager implements IContractManager {
         const { scripts, failures } = annotatableIn(
             new Map(contracts.map((contract) => [contract.script, contract])),
             vtxos,
+            this.tapscriptMemo,
         );
         // A script with no contract row at all fails the same way, and with the
         // same consequence, so it belongs in the same refusal.
@@ -1866,6 +2065,7 @@ export class ContractManager implements IContractManager {
      */
     async deleteContract(script: string): Promise<void> {
         await this.config.contractRepository.deleteContract(script);
+        this.tapscriptMemo.delete(script);
         await this.watcher.removeContract(script);
     }
 
@@ -2082,7 +2282,14 @@ export class ContractManager implements IContractManager {
             if (contract) {
                 await saveVtxosForContract(this.config.walletRepository, contract, addressVtxos);
             } else {
-                await this.config.walletRepository.saveVtxos(address, addressVtxos);
+                // Unreachable today: every `address` came from `contracts`. Guarded
+                // so it cannot become a silent bypass if that mapping is loosened.
+                await inVtxoWriteOrder(this.config.walletRepository, async () =>
+                    this.config.walletRepository.saveVtxos(
+                        address,
+                        applyRecordedSpends(this.config.walletRepository, addressVtxos),
+                    ),
+                );
             }
         }
     }
@@ -2092,6 +2299,21 @@ export class ContractManager implements IContractManager {
      */
     async isWatching(): Promise<boolean> {
         return this.watcher.isCurrentlyWatching();
+    }
+
+    /** @see IContractManager.watchScript */
+    async watchScript(script: string | string[], options?: { label?: string }): Promise<void> {
+        await this.watcher.addWatchedScript(script, options);
+    }
+
+    /** @see IContractManager.unwatchScript */
+    async unwatchScript(script: string | string[]): Promise<void> {
+        await this.watcher.removeWatchedScript(script);
+    }
+
+    /** @see IContractManager.getWatchedScripts */
+    async getWatchedScripts(): Promise<WatchedScript[]> {
+        return this.watcher.getWatchedScripts();
     }
 
     /**
@@ -2125,11 +2347,15 @@ export class ContractManager implements IContractManager {
         try {
             switch (event.type) {
                 // Delta-sync only the changed virtual outputs for this contract.
+                // The guard below is the ownership boundary: a watch-only script
+                // reports these same types, so it must precede `syncContracts`.
                 case "vtxo_received":
+                    if (!isContractVtxoEvent(event)) break;
                     await this.syncContracts({ contracts: [event.contract] });
                     this.markSyncOnline();
                     break;
                 case "vtxo_spent":
+                    if (!isContractVtxoEvent(event)) break;
                     await this.syncContracts({ contracts: [event.contract] });
                     this.markSyncOnline();
                     if (this.config.onVtxosSpent) {
@@ -2148,6 +2374,11 @@ export class ContractManager implements IContractManager {
                     // is monotonic so this never rewinds the cursor. The refill
                     // first, so catch-up-pending window entries retry their
                     // full-history sync without waiting for a restart.
+                    //
+                    // Freshness is dropped before that, not after: it is a claim
+                    // that events were arriving, and a reset says they were not
+                    // for an unknown stretch. The reconcile below re-earns it.
+                    this.syncedAtByScript.clear();
                     await this.scheduleLookAheadDrain();
                     await this.reconcileWatched();
                     this.markSyncOnline();
@@ -2162,20 +2393,34 @@ export class ContractManager implements IContractManager {
         this.emitEvent(event);
     }
 
-    private async getVtxosForContracts(contracts: Contract[]): Promise<ExtendedContractVtxo[]> {
-        const res = await Promise.all(
-            contracts.map((contract) =>
-                getVtxosForContract(this.config.walletRepository, contract).then((vtxos) =>
-                    vtxos.map(
-                        (vtxo): ExtendedContractVtxo => ({
-                            ...vtxo,
-                            contractScript: contract.script,
-                        }),
+    private async getVtxosForContracts(
+        contracts: Contract[],
+        options?: { unspentOnly?: boolean },
+    ): Promise<ExtendedContractVtxo[]> {
+        if (contracts.length === 0) return [];
+        let rows: ExtendedContractVtxo[];
+        if (this.config.walletRepository.getVtxosForScripts) {
+            const byScript = new Set(contracts.map((contract) => contract.script));
+            rows = (await this.config.walletRepository.getVtxosForScripts([...byScript], options))
+                .filter((vtxo) => vtxo.script !== undefined && byScript.has(vtxo.script))
+                .map((vtxo) => ({ ...normalizeVtxo(vtxo), contractScript: vtxo.script! }));
+        } else {
+            const res = await Promise.all(
+                contracts.map((contract) =>
+                    getVtxosForContract(this.config.walletRepository, contract).then((vtxos) =>
+                        vtxos.map(
+                            (vtxo): ExtendedContractVtxo => ({
+                                ...vtxo,
+                                contractScript: contract.script,
+                            }),
+                        ),
                     ),
                 ),
-            ),
-        );
-        return res.flat();
+            );
+            rows = res.flat();
+        }
+        // Custom repositories may ignore the optional query hint.
+        return options?.unspentOnly ? rows.filter((vtxo) => !isVtxoSpent(vtxo)) : rows;
     }
 
     /**
@@ -2228,9 +2473,25 @@ export class ContractManager implements IContractManager {
             await advanceSyncCursor(this.config.walletRepository, cutoff);
         }
 
+        // A narrowed window saw less than a normal sync would have, so claiming
+        // freshness from it would let a later read skip on evidence never held.
+        if (options.window === undefined) {
+            for (const contract of contracts) {
+                this.syncedAtByScript.set(contract.script, requestStartedAt);
+            }
+        }
+
         await this.demoteFundedAwaitingContracts(contracts);
 
         return result;
+    }
+
+    private syncedWithin(contracts: Contract[], maxAgeMs: number): boolean {
+        if (maxAgeMs <= 0) return false;
+        const floor = Date.now() - maxAgeMs;
+        return contracts.every(
+            (contract) => (this.syncedAtByScript.get(contract.script) ?? 0) >= floor,
+        );
     }
 
     /**
@@ -2287,7 +2548,11 @@ export class ContractManager implements IContractManager {
 
         // Share the annotation path with external callers so the two entry
         // points can't drift.
-        const { scripts: annotatable, cache, failures } = annotatableIn(scriptToContract, vtxos);
+        const {
+            scripts: annotatable,
+            cache,
+            failures,
+        } = annotatableIn(scriptToContract, vtxos, this.tapscriptMemo);
         this.recordAnnotationFailures(annotatable, failures);
         const owned = vtxos.filter((v) => annotatable.has(v.script));
         const annotated = await this.annotateVtxos(owned, cache);
@@ -2432,7 +2697,11 @@ export class ContractManager implements IContractManager {
         // populated by the indexer, then share the annotation path with
         // external callers via annotateVtxos so the two entry points can't
         // drift.
-        const { scripts: annotatable, cache, failures } = annotatableIn(scriptToContract, vtxos);
+        const {
+            scripts: annotatable,
+            cache,
+            failures,
+        } = annotatableIn(scriptToContract, vtxos, this.tapscriptMemo);
         this.recordAnnotationFailures(annotatable, failures);
         const owned = vtxos.filter((v) => annotatable.has(v.script));
         const annotated = await this.annotateVtxos(owned, cache);

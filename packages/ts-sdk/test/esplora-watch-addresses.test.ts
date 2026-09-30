@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EsploraProvider } from "../src";
 import type { ExplorerTransaction } from "../src/providers/onchain";
+import { jsonResponse } from "./helpers/response";
 
 const { mockFetch } = vi.hoisted(() => ({
     mockFetch: vi.fn(),
@@ -60,7 +61,7 @@ function deferred<T>() {
     return { promise, resolve, reject };
 }
 
-const okJson = (data: unknown) => ({ ok: true, json: () => Promise.resolve(data) });
+const okJson = (data: unknown) => jsonResponse(data);
 
 /** The cheap change probe (`/address/{a}`), as opposed to the history below it. */
 const isProbeUrl = (url: string) => /\/address\/[^/]+$/.test(url);
@@ -172,15 +173,18 @@ describe("EsploraProvider.watchAddresses", () => {
             const stop = await provider.watchAddresses(["addr1"], () => {});
 
             // Now hold the fallback's own fetch open.
-            const pending = deferred<ReturnType<typeof okJson>>();
-            mockFetch.mockReturnValue(pending.promise);
+            const pending = deferred<void>();
+            mockFetch.mockImplementation(async () => {
+                await pending.promise;
+                return okJson([]);
+            });
 
             const errorHandled = FakeWebSocket.instances[0].dispatch("error");
             await flush(); // poll() is now suspended on the initial fetch
 
             stop();
 
-            pending.resolve(okJson([]));
+            pending.resolve();
             await errorHandled;
             await flush();
 
@@ -188,7 +192,7 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("starts at most one poll loop when the websocket errors repeatedly", async () => {
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
 
             const provider = new EsploraProvider("http://localhost:3000");
             const stop = await provider.watchAddresses(["addr1"], () => {});
@@ -214,7 +218,7 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("does not start polling when the websocket errors after stop()", async () => {
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
 
             const provider = new EsploraProvider("http://localhost:3000");
             const stop = await provider.watchAddresses(["addr1"], () => {});
@@ -230,7 +234,7 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("stops delivering callbacks after stop()", async () => {
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
             const callback = vi.fn();
 
             const provider = new EsploraProvider("http://localhost:3000");
@@ -250,12 +254,12 @@ describe("EsploraProvider.watchAddresses", () => {
             // it found on startup as "already known", so a deposit arriving
             // during the outage — after the socket died, before polling began —
             // was seeded as old and never reported at all.
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
             const callback = vi.fn();
             const provider = new EsploraProvider("http://localhost:3000");
             await provider.watchAddresses(["addr1"], callback);
 
-            mockFetch.mockResolvedValue(okJson([confirmedTx("during-outage")]));
+            mockFetch.mockImplementation(async () => okJson([confirmedTx("during-outage")]));
             await FakeWebSocket.instances[0].dispatch("error");
             await flush();
 
@@ -266,7 +270,7 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("does not report transactions that predate the watch", async () => {
-            mockFetch.mockResolvedValue(okJson([confirmedTx("old")]));
+            mockFetch.mockImplementation(async () => okJson([confirmedTx("old")]));
             const callback = vi.fn();
             const provider = new EsploraProvider("http://localhost:3000");
             await provider.watchAddresses(["addr1"], callback);
@@ -278,7 +282,7 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("does not re-report a transaction the socket already delivered", async () => {
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
             const callback = vi.fn();
             const provider = new EsploraProvider("http://localhost:3000");
             await provider.watchAddresses(["addr1"], callback);
@@ -290,7 +294,7 @@ describe("EsploraProvider.watchAddresses", () => {
             expect(callback).toHaveBeenCalledTimes(1);
 
             // The socket dies and the fallback sees the same tx in history.
-            mockFetch.mockResolvedValue(okJson([confirmedTx("aa")]));
+            mockFetch.mockImplementation(async () => okJson([confirmedTx("aa")]));
             await FakeWebSocket.instances[0].dispatch("error");
             await flush();
 
@@ -302,14 +306,14 @@ describe("EsploraProvider.watchAddresses", () => {
             // paying two watched addresses comes back twice in a single batch.
             // Boarding makes that ordinary: the watch covers the current and
             // historical rotated addresses at once.
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
             const callback = vi.fn();
             const provider = new EsploraProvider("http://localhost:3000", {
                 forcePolling: true,
             });
             await provider.watchAddresses(["addr1", "addr2"], callback);
 
-            mockFetch.mockResolvedValue(okJson([confirmedTx("pays-both")]));
+            mockFetch.mockImplementation(async () => okJson([confirmedTx("pays-both")]));
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
 
             expect(callback).toHaveBeenCalledTimes(1);
@@ -317,7 +321,7 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("reports a socket transaction listed under two addresses only once", async () => {
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
             const callback = vi.fn();
             const provider = new EsploraProvider("http://localhost:3000");
             await provider.watchAddresses(["addr1", "addr2"], callback);
@@ -344,7 +348,7 @@ describe("EsploraProvider.watchAddresses", () => {
             // not be silent: a deposit going unreported is exactly the thing an
             // operator needs told.
             mockFetch.mockRejectedValueOnce(new Error("explorer down"));
-            mockFetch.mockResolvedValue(okJson([confirmedTx("arrived-in-the-gap")]));
+            mockFetch.mockImplementation(async () => okJson([confirmedTx("arrived-in-the-gap")]));
             const callback = vi.fn();
             const provider = new EsploraProvider("http://localhost:3000");
             await provider.watchAddresses(["addr1"], callback);
@@ -360,7 +364,7 @@ describe("EsploraProvider.watchAddresses", () => {
 
         it("keeps watching when the creation-time baseline fetch fails", async () => {
             mockFetch.mockRejectedValueOnce(new Error("explorer down"));
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
             const callback = vi.fn();
             const provider = new EsploraProvider("http://localhost:3000");
 
@@ -697,7 +701,7 @@ describe("EsploraProvider.watchAddresses", () => {
 
     describe("websocket reconnect", () => {
         const watch = async () => {
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
             const provider = new EsploraProvider("http://localhost:3000");
             const stop = await provider.watchAddresses(["addr1"], () => {});
             mockFetch.mockClear(); // discount the creation-time baseline
@@ -759,8 +763,11 @@ describe("EsploraProvider.watchAddresses", () => {
             const provider = new EsploraProvider("http://localhost:3000");
             await provider.watchAddresses(["addr1"], () => {});
 
-            const pending = deferred<ReturnType<typeof okJson>>();
-            mockFetch.mockReturnValue(pending.promise);
+            const pending = deferred<void>();
+            mockFetch.mockImplementation(async () => {
+                await pending.promise;
+                return okJson([]);
+            });
 
             const errorHandled = FakeWebSocket.instances[0].dispatch("error");
             await flush(); // the poll cycle is now suspended on its fetch
@@ -768,7 +775,7 @@ describe("EsploraProvider.watchAddresses", () => {
             await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
             await FakeWebSocket.instances[1].dispatch("open");
 
-            pending.resolve(okJson([]));
+            pending.resolve();
             await errorHandled;
             await flush();
 
@@ -786,8 +793,11 @@ describe("EsploraProvider.watchAddresses", () => {
             const provider = new EsploraProvider("http://localhost:3000");
             await provider.watchAddresses(["addr1"], () => {});
 
-            const pending = deferred<ReturnType<typeof okJson>>();
-            mockFetch.mockReturnValue(pending.promise);
+            const pending = deferred<void>();
+            mockFetch.mockImplementation(async () => {
+                await pending.promise;
+                return okJson([]);
+            });
 
             const errorHandled = FakeWebSocket.instances[0].dispatch("error");
             await flush();
@@ -797,7 +807,7 @@ describe("EsploraProvider.watchAddresses", () => {
             await reconnected.dispatch("open");
             await reconnected.dispatch("error"); // fails again straight away
 
-            pending.resolve(okJson([]));
+            pending.resolve();
             await errorHandled;
             await flush();
 
@@ -805,7 +815,7 @@ describe("EsploraProvider.watchAddresses", () => {
             // (Counting probes rather than timers: a pending reconnect is a
             // legitimate timer too, so a raw count would conflate the two.)
             mockFetch.mockClear();
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
             await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
             expect(probeCount()).toBe(1);
         });
@@ -814,7 +824,7 @@ describe("EsploraProvider.watchAddresses", () => {
             // A sandboxed context can make `new WebSocket(...)` throw outright
             // (SecurityError), which is a different entry point to the fallback
             // than an `error` event on a constructed socket.
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
             let throwOnConstruct = true;
             (globalThis as any).WebSocket = class extends FakeWebSocket {
                 constructor(url: string) {
@@ -839,7 +849,7 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("delivers messages received on a reconnected socket", async () => {
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
             const callback = vi.fn();
             const provider = new EsploraProvider("http://localhost:3000");
             await provider.watchAddresses(["addr1"], callback);
@@ -913,7 +923,7 @@ describe("EsploraProvider.watchAddresses", () => {
         const polling = () => new EsploraProvider("http://localhost:3000", { forcePolling: true });
 
         it("does not report transactions that already existed when polling began", async () => {
-            mockFetch.mockResolvedValue(okJson([confirmedTx("old")]));
+            mockFetch.mockImplementation(async () => okJson([confirmedTx("old")]));
             const callback = vi.fn();
 
             await polling().watchAddresses(["addr1"], callback);
@@ -923,12 +933,14 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("reports a transaction that appears after the baseline pass", async () => {
-            mockFetch.mockResolvedValue(okJson([confirmedTx("old")]));
+            mockFetch.mockImplementation(async () => okJson([confirmedTx("old")]));
             const callback = vi.fn();
 
             await polling().watchAddresses(["addr1"], callback);
 
-            mockFetch.mockResolvedValue(okJson([confirmedTx("old"), confirmedTx("new")]));
+            mockFetch.mockImplementation(async () =>
+                okJson([confirmedTx("old"), confirmedTx("new")]),
+            );
             await vi.advanceTimersByTimeAsync(15_000);
 
             expect(callback).toHaveBeenCalledTimes(1);
@@ -968,7 +980,7 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("warns when it degrades from websocket to HTTP polling", async () => {
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
 
             const provider = new EsploraProvider("http://localhost:3000");
             await provider.watchAddresses(["addr1"], () => {});
@@ -983,7 +995,7 @@ describe("EsploraProvider.watchAddresses", () => {
 
     describe("coalescing", () => {
         it("shares a single websocket between concurrent watchers on the same address set", async () => {
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
 
             const provider = new EsploraProvider("http://localhost:3000");
             await provider.watchAddresses(["addr1", "addr2"], () => {});
@@ -993,7 +1005,7 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("fans websocket messages out to every subscriber", async () => {
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
             const first = vi.fn();
             const second = vi.fn();
 
@@ -1012,7 +1024,7 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("keeps the shared watcher alive until the last subscriber stops", async () => {
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
 
             const provider = new EsploraProvider("http://localhost:3000");
             const stopFirst = await provider.watchAddresses(["addr1"], () => {});
@@ -1027,7 +1039,7 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("ignores a repeated stop() from the same subscriber", async () => {
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
 
             const provider = new EsploraProvider("http://localhost:3000");
             const stopFirst = await provider.watchAddresses(["addr1"], () => {});
@@ -1043,7 +1055,7 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("opens a fresh watcher after the previous one was fully released", async () => {
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
 
             const provider = new EsploraProvider("http://localhost:3000");
             const stop = await provider.watchAddresses(["addr1"], () => {});
@@ -1065,7 +1077,7 @@ describe("EsploraProvider.watchAddresses", () => {
         });
 
         it("does not share between different address sets", async () => {
-            mockFetch.mockResolvedValue(okJson([]));
+            mockFetch.mockImplementation(async () => okJson([]));
 
             const provider = new EsploraProvider("http://localhost:3000");
             await provider.watchAddresses(["addr1"], () => {});
