@@ -176,14 +176,16 @@ export async function getNormalizedVtxos(
 /** Everything a script query can filter on, minus the cursor this reader owns. */
 export type VtxoScriptQuery = Omit<GetVtxosOptions, "scripts" | "outpoints" | "pageIndex">;
 
+const SCRIPT_CHUNK_CONCURRENCY = 4;
+
 /**
  * Read every virtual output for an arbitrary number of scripts.
  *
  * @remarks
  * Scripts travel in the query string, so a wallet-derived list must be chunked
- * at {@link SCRIPT_QUERY_CHUNK_SIZE} or the request `414`s. Chunks run
- * sequentially — that pacing is the point, since this path can now run wide —
- * and each is paged to exhaustion, so callers cannot silently receive page one.
+ * at {@link SCRIPT_QUERY_CHUNK_SIZE} or the request `414`s. Bounded concurrency
+ * cuts serial latency without letting a large wallet flood the indexer; each
+ * chunk is paged to exhaustion.
  */
 export async function getAllNormalizedVtxos(
     provider: Pick<IndexerProvider, "getVtxos">,
@@ -193,8 +195,13 @@ export async function getAllNormalizedVtxos(
     const { pageSize = DEFAULT_PAGE_SIZE, ...filters } = opts;
     const all: NormalizedVirtualCoin[] = [];
 
+    const chunks: string[][] = [];
     for (let i = 0; i < scripts.length; i += SCRIPT_QUERY_CHUNK_SIZE) {
-        const chunk = scripts.slice(i, i + SCRIPT_QUERY_CHUNK_SIZE);
+        chunks.push(scripts.slice(i, i + SCRIPT_QUERY_CHUNK_SIZE));
+    }
+
+    const fetchChunk = async (chunk: string[]): Promise<NormalizedVirtualCoin[]> => {
+        const result: NormalizedVirtualCoin[] = [];
         let pageIndex = 0;
         let hasMore = true;
 
@@ -205,7 +212,7 @@ export async function getAllNormalizedVtxos(
                 pageIndex,
                 pageSize,
             });
-            all.push(...vtxos);
+            result.push(...vtxos);
 
             // A short page means the last one: providers that omit `page`
             // entirely are treated as unpaged.
@@ -213,6 +220,14 @@ export async function getAllNormalizedVtxos(
             pageIndex++;
             if (hasMore) await new Promise((r) => setTimeout(r, 500));
         }
+        return result;
+    };
+
+    for (let i = 0; i < chunks.length; i += SCRIPT_CHUNK_CONCURRENCY) {
+        const batch = await Promise.all(
+            chunks.slice(i, i + SCRIPT_CHUNK_CONCURRENCY).map(fetchChunk),
+        );
+        for (const result of batch) all.push(...result);
     }
 
     return all;
@@ -265,7 +280,7 @@ export async function fetchVtxoCreatedAtByTxid(
  * it was consumed. Mirrors NArk's `ArkVtxo.IsSpent()`. The location axis is {@link canSweepOnchain},
  * which the two capability predicates below subtract instead.
  */
-export function hasTerminalSpend(vtxo: VirtualCoin): boolean {
+export function isVtxoSpent(vtxo: VirtualCoin): boolean {
     const n = normalizeVtxo(vtxo);
     return !!n.isSpent || !!n.spentBy || !!n.settledBy;
 }
@@ -294,7 +309,7 @@ export function isPastExpiry(vtxo: VirtualCoin, now: TimeHeight): boolean {
 /** Whether a virtual output can be spent in an offchain transaction. The send/coin-selection test. */
 export function canSpendOffchain(vtxo: VirtualCoin, now: TimeHeight): boolean {
     const n = normalizeVtxo(vtxo);
-    return !hasTerminalSpend(n) && !n.isUnrolled && !(n.isSwept || isPastExpiry(n, now));
+    return !isVtxoSpent(n) && !n.isUnrolled && !(n.isSwept || isPastExpiry(n, now));
 }
 
 /**
@@ -303,7 +318,7 @@ export function canSpendOffchain(vtxo: VirtualCoin, now: TimeHeight): boolean {
  */
 export function canRecoverOnchain(vtxo: VirtualCoin, now: TimeHeight): boolean {
     const n = normalizeVtxo(vtxo);
-    return !hasTerminalSpend(n) && !n.isUnrolled && (n.isSwept || isPastExpiry(n, now));
+    return !isVtxoSpent(n) && !n.isUnrolled && (n.isSwept || isPastExpiry(n, now));
 }
 
 /**
@@ -319,7 +334,7 @@ export function canRecoverOnchain(vtxo: VirtualCoin, now: TimeHeight): boolean {
  */
 export function canSweepOnchain(vtxo: VirtualCoin): boolean {
     const n = normalizeVtxo(vtxo);
-    return !hasTerminalSpend(n) && !!n.isUnrolled;
+    return !isVtxoSpent(n) && !!n.isUnrolled;
 }
 
 // --- fee estimation ----------------------------------------------------------------------------

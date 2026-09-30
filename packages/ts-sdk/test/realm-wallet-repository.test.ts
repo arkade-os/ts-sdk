@@ -5,7 +5,7 @@ import { RealmWalletRepository } from "../src/repositories/realm/walletRepositor
 import type { ExtendedVirtualCoin, ExtendedCoin, ArkTransaction, TxType } from "../src/wallet";
 import type { TapLeafScript } from "../src/script/base";
 import type { WalletState } from "../src/repositories/walletRepository";
-import { hasTerminalSpend } from "../src/wallet/vtxo";
+import { isVtxoSpent } from "../src/wallet/vtxo";
 
 // ── Mock Realm ──────────────────────────────────────────────────────────
 // A lightweight in-memory mock that simulates the Realm API surface
@@ -429,7 +429,7 @@ describe("RealmWalletRepository", () => {
 
             // The fixture is preconfirmed, so the derivation says "not spent".
             expect(retrieved.isSpent).toBe(false);
-            expect(hasTerminalSpend(retrieved)).toBe(false);
+            expect(isVtxoSpent(retrieved)).toBe(false);
         });
 
         it("preserves terminal spend for a VTXO stored with a null is_spent column", async () => {
@@ -442,7 +442,7 @@ describe("RealmWalletRepository", () => {
 
             expect(retrieved.isSpent).toBe(false);
             expect(retrieved.spentBy).toBe("spent-by-tx");
-            expect(hasTerminalSpend(retrieved)).toBe(true);
+            expect(isVtxoSpent(retrieved)).toBe(true);
         });
     });
 

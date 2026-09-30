@@ -452,7 +452,7 @@ describe("findLockupVtxos", () => {
     });
 
     it("drops a terminally spent output beside its live sibling", async () => {
-        // A consumed output cannot back any refund push, and `hasTerminalSpend`
+        // A consumed output cannot back any refund push, and `isVtxoSpent`
         // unions every spend fact the manager's normalized row carries — so the
         // fake fills all three in and one alone must not drop out.
         const script = swapScript();
@@ -903,7 +903,7 @@ describe("readLockupFate", () => {
     });
 
     it("reads a settled-only output as spent, not as money still sitting there", async () => {
-        // The third spend fact, carried by the SDK's `hasTerminalSpend` and by
+        // The third spend fact, carried by the SDK's `isVtxoSpent` and by
         // nothing else here: `settledBy` with no `spentBy` and no `isSpent`
         // means the output was renewed away, and a `spentBy`-only test would
         // call the empty lockup `open`.

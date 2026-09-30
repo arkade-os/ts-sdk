@@ -101,7 +101,15 @@ describe("getAllNormalizedVtxos", () => {
 
         await getAllNormalizedVtxos(indexer, scripts(CAP + 1), { pageSize: 2 });
 
-        expect(calls.map((c) => c.pageIndex)).toEqual([0, 1, 0, 1]);
+        const byChunk = new Map<string, number[]>();
+        for (const call of calls) {
+            const key = call.scripts[0];
+            byChunk.set(key, [...(byChunk.get(key) ?? []), call.pageIndex]);
+        }
+        expect([...byChunk.values()]).toEqual([
+            [0, 1],
+            [0, 1],
+        ]);
         expect(widest(calls)).toBeLessThanOrEqual(CAP);
     });
 
@@ -109,6 +117,27 @@ describe("getAllNormalizedVtxos", () => {
         const { indexer, calls } = recordingIndexer();
         expect(await getAllNormalizedVtxos(indexer, [])).toEqual([]);
         expect(calls).toHaveLength(0);
+    });
+
+    it("bounds concurrent chunks while returning results in script order", async () => {
+        const indexer = createMockIndexerProvider();
+        let active = 0;
+        let peak = 0;
+        (indexer.getVtxos as any).mockImplementation(
+            async ({ scripts: chunk }: { scripts: string[] }) => {
+                active++;
+                peak = Math.max(peak, active);
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                active--;
+                return { vtxos: chunk.map((script) => vtxoFor(script, 0)) };
+            },
+        );
+
+        const all = scripts(CAP * 9);
+        const result = await getAllNormalizedVtxos(indexer, all);
+
+        expect(peak).toBe(4);
+        expect(result.map((v) => v.script)).toEqual(all);
     });
 });
 

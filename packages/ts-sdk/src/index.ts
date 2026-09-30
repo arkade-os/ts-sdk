@@ -106,6 +106,7 @@ import {
     VirtualCoin,
     TxKey,
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     TapLeaves,
     StorageConfig,
     isSubdust,
@@ -113,7 +114,7 @@ import {
     canRecoverOnchain,
     canSpendOffchain,
     canSweepOnchain,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     isVirtualCoin,
     TimeHeight,
@@ -815,7 +816,7 @@ export {
     canRecoverOnchain,
     canSpendOffchain,
     canSweepOnchain,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     isVirtualCoin,
     // Contracts
@@ -966,6 +967,7 @@ export type {
     TreePartialSigs,
     // Wallet types
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     BoardingUtxoGroup,
     ArkadeCashClaimResult,
     ArkadeCashUnclaimedReason,
