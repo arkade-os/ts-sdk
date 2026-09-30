@@ -3,12 +3,17 @@ import { hex } from "@scure/base";
 import { ArkAddress } from "../src";
 import { IndexedDBWalletRepository } from "../src/repositories/indexedDB/walletRepository";
 import { openDatabase, closeDatabase } from "../src/repositories/indexedDB/manager";
-import { initDatabase, STORE_VTXOS, DB_VERSION } from "../src/repositories/indexedDB/schema";
+import {
+    initDatabase,
+    STORE_VTXOS,
+    DB_VERSION,
+    unspentFlag,
+} from "../src/repositories/indexedDB/schema";
 import { isVtxoSpent } from "../src/wallet/vtxo";
-import type { ExtendedVirtualCoin } from "../src/wallet";
+import type { ExtendedVirtualCoin, VirtualCoin } from "../src/wallet";
 
-// `unspentOnly` reads skip rows the `spentBy`/`settledBy` indexes prove are
-// terminal. The oracle for every case is the same method's full-history read,
+// `unspentOnly` reads come from the `scriptUnspent` index. The oracle for
+// every case is the same method's full-history read,
 // deserialized and folded by the production dedup, then filtered by the public
 // predicate — if skipping a row ever changes the answer, these fail.
 
@@ -57,7 +62,7 @@ async function seed(rows: Row[]): Promise<{ repo: IndexedDBWalletRepository; nam
     await new Promise<void>((resolve, reject) => {
         const tx = db.transaction([STORE_VTXOS], "readwrite");
         const store = tx.objectStore(STORE_VTXOS);
-        for (const r of rows) store.put(r);
+        for (const r of rows) store.put({ ...r, ...unspentFlag(r as unknown as VirtualCoin) });
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
     });
@@ -184,39 +189,32 @@ describe("IndexedDB unspentOnly reads", () => {
         }
     });
 
-    it("leaves spent history unread, and bulk-reads when nothing can be skipped", async () => {
-        const deep: Row[] = [row(A, "live", { spentBy: "" })];
+    it("reads the unspent index and candidate txids, never the script history", async () => {
+        const rows: Row[] = [row(A, "live", { spentBy: "" })];
         for (let i = 0; i < 40; i++) {
-            deep.push(row(A, `spent-${i}`, { isSpent: true, spentBy: `spender-${i}` }));
+            rows.push(row(A, `spent-${i}`, { isSpent: true, spentBy: `spender-${i}` }));
         }
-        const allLive: Row[] = Array.from({ length: 12 }, (_, i) =>
-            row(A, `live-${i}`, { spentBy: "" }),
-        );
-
-        for (const [rows, expectPerRowGets] of [
-            [deep, true],
-            [allLive, false],
-        ] as const) {
-            const { repo, name } = await seed(rows);
-            const db = await openDatabase(name, DB_VERSION, initDatabase);
-            const proto = Object.getPrototypeOf(
-                db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS),
-            ) as { get: (...args: unknown[]) => unknown };
-            const original = proto.get;
-            let gets = 0;
-            proto.get = function (this: unknown, ...args: unknown[]) {
-                gets++;
-                return original.apply(this, args);
-            };
-            try {
-                await expectMatchesOracle(repo, [SCRIPT_A]);
-            } finally {
-                proto.get = original;
-                await closeDatabase(name);
-                await repo[Symbol.asyncDispose]();
-            }
-            expect(gets > 0).toBe(expectPerRowGets);
+        const { repo, name } = await seed(rows);
+        const db = await openDatabase(name, DB_VERSION, initDatabase);
+        const proto = Object.getPrototypeOf(
+            db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS).index("script"),
+        ) as { getAll: (...args: unknown[]) => unknown };
+        const original = proto.getAll;
+        const indexes: string[] = [];
+        proto.getAll = function (this: IDBIndex, ...args: unknown[]) {
+            indexes.push(this.name);
+            return original.apply(this, args);
+        };
+        try {
+            const live = await repo.getVtxosForScripts([SCRIPT_A], { unspentOnly: true });
+            expect(live.map((v) => v.txid)).toEqual(["live"]);
+            expect(live[0]).not.toHaveProperty("unspent");
+        } finally {
+            proto.getAll = original;
+            await closeDatabase(name);
+            await repo[Symbol.asyncDispose]();
         }
+        expect(indexes).toEqual(["scriptUnspent", "txid"]);
     });
 
     it("keeps the single-script read delegating with master's empty-script behaviour", async () => {

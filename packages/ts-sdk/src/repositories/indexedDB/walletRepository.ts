@@ -14,7 +14,7 @@ import {
 } from "./db";
 import { awaitTransaction, deleteByIndex, getAllByIndexValues, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
-import { initDatabase } from "./schema";
+import { initDatabase, unspentFlag } from "./schema";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
@@ -73,7 +73,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
             const store = transaction.objectStore(STORE_VTXOS);
             for (const vtxo of vtxos) {
                 const serialized: SerializedVtxo = serializeVtxo(vtxo);
-                store.put({ address, ...serialized });
+                store.put({ address, ...serialized, ...unspentFlag(vtxo) });
             }
             await awaitTransaction(transaction);
         } catch (error) {
@@ -107,7 +107,11 @@ export class IndexedDBWalletRepository implements WalletRepository {
         try {
             const db = await this.getDB();
             const rows = options?.unspentOnly
-                ? await this.readUnspentCandidates(db, unique)
+                ? await getAllByIndexValues<RawVtxoRow>(
+                      this.vtxoStore(db),
+                      "scriptUnspent",
+                      unique.map((script) => [script, 1]),
+                  )
                 : await getAllByIndexValues<RawVtxoRow>(this.vtxoStore(db), "script", unique);
 
             const selected = new Set(unique);
@@ -117,6 +121,16 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 const key = `${row.script}:${row.txid}:${row.vout}`;
                 const existing = byOutpoint.get(key);
                 if (!existing || shouldReplaceVtxo(existing, row)) byOutpoint.set(key, row);
+            }
+            if (options?.unspentOnly && byOutpoint.size > 0) {
+                // A newer terminal copy in another address bucket is not in the index.
+                const txids = [...new Set([...byOutpoint.values()].map((row) => row.txid))];
+                const store = this.vtxoStore(db);
+                for (const row of await getAllByIndexValues<RawVtxoRow>(store, "txid", txids)) {
+                    const key = `${row.script}:${row.txid}:${row.vout}`;
+                    const existing = byOutpoint.get(key);
+                    if (existing && shouldReplaceVtxo(existing, row)) byOutpoint.set(key, row);
+                }
             }
 
             const result: ExtendedVirtualCoin[] = [];
@@ -133,54 +147,6 @@ export class IndexedDBWalletRepository implements WalletRepository {
             console.error("Failed to get VTXOs for scripts:", error);
             throw error;
         }
-    }
-
-    // Candidates for an `unspentOnly` read: keyed, not cloned, so spent history
-    // is never read. Strictly negative — a non-empty `spentBy`/`settledBy` proves
-    // a terminal row, an unset one costs a read and never hides a coin.
-    // (`isSpent` indexes nothing: booleans are invalid IndexedDB keys.)
-    private async readUnspentCandidates(db: IDBDatabase, scripts: string[]): Promise<RawVtxoRow[]> {
-        const keyStore = this.vtxoStore(db);
-        const nonEmpty = IDBKeyRange.lowerBound("", true);
-        const [spentBy, settledBy, ...perScript] = await Promise.all([
-            promisifyRequest<IDBValidKey[]>(keyStore.index("spentBy").getAllKeys(nonEmpty)),
-            promisifyRequest<IDBValidKey[]>(keyStore.index("settledBy").getAllKeys(nonEmpty)),
-            ...scripts.map((script) =>
-                promisifyRequest<IDBValidKey[]>(keyStore.index("script").getAllKeys(script)),
-            ),
-        ]);
-        const terminal = new Set<string>();
-        for (const key of spentBy) terminal.add(primaryKeyId(key));
-        for (const key of settledBy) terminal.add(primaryKeyId(key));
-
-        const wanted: IDBValidKey[] = [];
-        let total = 0;
-        for (const keys of perScript) {
-            total += keys.length;
-            const byOutpoint = new Map<string, IDBValidKey[]>();
-            for (const key of keys) {
-                const [, txid, vout] = key as [string, string, number];
-                const group = byOutpoint.get(`${txid}:${vout}`);
-                if (group) group.push(key);
-                else byOutpoint.set(`${txid}:${vout}`, [key]);
-            }
-            for (const group of byOutpoint.values()) {
-                // Whole group: a duplicate's terminal copy must be able to win.
-                if (group.length > 1 || !terminal.has(primaryKeyId(group[0]))) {
-                    wanted.push(...group);
-                }
-            }
-        }
-
-        const skipped = total - wanted.length;
-        if (skipped < wanted.length) {
-            return getAllByIndexValues<RawVtxoRow>(this.vtxoStore(db), "script", scripts);
-        }
-        const rowStore = this.vtxoStore(db);
-        const rows = await Promise.all(
-            wanted.map((key) => promisifyRequest<RawVtxoRow | undefined>(rowStore.get(key))),
-        );
-        return rows.filter((row): row is RawVtxoRow => row !== undefined);
     }
 
     private vtxoStore(db: IDBDatabase): IDBObjectStore {
@@ -335,18 +301,14 @@ export class IndexedDBWalletRepository implements WalletRepository {
 // Post-migration every row has `script`, but the backfill is idempotent: if a
 // legacy row is ever read before the upgrade-path completes, derive `script`
 // from `address` the same way the indexer would have populated it.
-function deserializeVtxoWithBackfill(o: SerializedVtxo & { address: string }): ExtendedVirtualCoin {
+function deserializeVtxoWithBackfill({ unspent: _unspent, ...o }: RawVtxoRow): ExtendedVirtualCoin {
     if (!o.script) {
         o = { ...o, script: scriptFromArkAddress(o.address) };
     }
     return deserializeVtxo(o);
 }
 
-type RawVtxoRow = SerializedVtxo & { address: string };
-
-function primaryKeyId(key: IDBValidKey): string {
-    return (key as IDBValidKey[]).join("\u0000");
-}
+type RawVtxoRow = SerializedVtxo & { address: string; unspent?: 1 };
 
 function isCanonicalRow(row: RawVtxoRow): boolean {
     try {
