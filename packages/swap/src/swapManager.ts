@@ -993,6 +993,7 @@ export class RfqSwapManager {
      * restating.
      *
      * This legacy deletion API is explicit; normal restore preserves history.
+     * It loads every stored record: no backend offers indexed deletion for it.
      */
     async pruneRetiredSwaps(): Promise<string[]> {
         const repository = this.deps.repository;
@@ -1469,6 +1470,7 @@ export class RfqSwapManager {
     private async pollSwap(swap: RfqSwap): Promise<void> {
         if (this.inProgress.has(swap.rfqId)) return;
         if (!this.monitored.has(swap.rfqId)) return;
+        // Before the slot wait: overlapping sweeps must skip queued swaps too.
         this.inProgress.add(swap.rfqId);
         const release = await this.acquirePollSlot();
         try {

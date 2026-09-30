@@ -99,7 +99,7 @@ export interface AssetSwapRepository extends AsyncDisposable {
         after: RfqHistoryCursor | undefined,
         limit: number,
     ): Promise<RfqSwapRecord[]>;
-    /** Drop one, once it is past retention — see `shouldRetainRfqSwap`. */
+    /** Drop one record. Only explicit pruning calls this; restore keeps history. */
     removeRfqSwap(rfqId: string): Promise<void>;
 
     /** Sent txids already checked for offer packets (see restore.ts). */

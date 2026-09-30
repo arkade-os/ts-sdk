@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { RfqSwapManager, type RfqSwap } from "../src/swapManager";
+import { describe, expect, it, vi } from "vitest";
+import { RfqSwapManager, type RfqSwap, type SwapContractRegistry } from "../src/swapManager";
 import type { LockupSpendIndexer } from "../src/refund";
+
+const contracts = { onContractEvent: () => () => {} } as unknown as SwapContractRegistry;
 
 describe("RfqSwapManager polling at scale", () => {
     it("bounds full-sweep indexer requests without skipping live swaps", async () => {
@@ -27,7 +29,7 @@ describe("RfqSwapManager polling at scale", () => {
             createdAt: 1,
             updatedAt: 1,
         })) as RfqSwap[];
-        const manager = new RfqSwapManager({ indexer }, { now: () => 1_800_000_000 });
+        const manager = new RfqSwapManager({ indexer, contracts }, { now: () => 1_800_000_000 });
 
         await manager.start(swaps);
         await manager.stop();
@@ -62,14 +64,11 @@ describe("RfqSwapManager polling at scale", () => {
             createdAt: 1,
             updatedAt: 1,
         })) as RfqSwap[];
-        const manager = new RfqSwapManager({ indexer }, { now: () => 1_800_000_000 });
+        const manager = new RfqSwapManager({ indexer, contracts }, { now: () => 1_800_000_000 });
 
         const starting = manager.start(swaps);
         try {
-            for (let i = 0; i < 100 && active < 16; i++) {
-                await new Promise((resolve) => setTimeout(resolve, 1));
-            }
-            expect(active).toBe(16);
+            await vi.waitFor(() => expect(active).toBe(16));
             const overlapping = manager.poll();
             await new Promise((resolve) => setTimeout(resolve, 10));
             expect(peak).toBe(16);
