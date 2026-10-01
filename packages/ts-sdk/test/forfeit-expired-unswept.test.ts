@@ -11,12 +11,13 @@ import { toVirtualStatus } from "../src/wallet/vtxo";
 import { Transaction } from "../src/utils/transaction";
 import { networks } from "../src/networks";
 import type { TapLeafScript } from "../src/script/base";
-import type { ExtendedVirtualCoin } from "../src/wallet";
+import type { ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
 import type { BatchFinalizationEvent } from "../src/providers/ark";
 
 const NETWORK = networks.regtest;
 
 const PAST = new Date("2026-01-01T00:00:00.000Z");
+const FUTURE = new Date("2027-01-01T00:00:00.000Z");
 const DELEGATE_AT = new Date("2026-06-01T00:00:00.000Z");
 
 const key = (seed: number) => schnorr.getPublicKey(new Uint8Array(32).fill(seed));
@@ -71,52 +72,52 @@ function vtxoInput(
     } as unknown as ExtendedVirtualCoin;
 }
 
+const vtxoScript = new DefaultVtxo.Script({
+    pubKey: PUBKEY,
+    serverPubKey: SERVER_PUBKEY,
+    csvTimelock: CSV_TIMELOCK,
+});
+
+function commitmentEvent(): BatchFinalizationEvent {
+    const tx = new Transaction({ allowUnknownOutputs: true });
+    tx.addOutput({ script: new Uint8Array([0x51]), amount: 5_000n });
+    return {
+        id: "batch-1",
+        commitmentTx: base64.encode(tx.toPSBT()),
+    } as BatchFinalizationEvent;
+}
+
+const connectorsGraph = () => ({
+    leaves: () => [
+        {
+            id: "cc".repeat(32),
+            getOutput: () => ({ amount: 450n, script: pkScript(ONCHAIN_ADDRESS) }),
+        },
+    ],
+});
+
+async function finalize(input: ExtendedVirtualCoin) {
+    const thisArg: any = {
+        network: NETWORK,
+        dustAmount: 1_000n,
+        arkProvider: { submitSignedForfeitTxs: vi.fn(async () => {}) },
+        _signerRouter: { sign: vi.fn(async (tx: Transaction) => tx) },
+    };
+
+    await (Wallet.prototype as any).handleSettlementFinalizationEvent.call(
+        thisArg,
+        commitmentEvent(),
+        [input],
+        pkScript(ONCHAIN_ADDRESS),
+        [],
+        connectorsGraph(),
+        undefined,
+    );
+
+    return thisArg;
+}
+
 describe("settlement forfeits a VTXO past expiry that is not swept", () => {
-    const vtxoScript = new DefaultVtxo.Script({
-        pubKey: PUBKEY,
-        serverPubKey: SERVER_PUBKEY,
-        csvTimelock: CSV_TIMELOCK,
-    });
-
-    function commitmentEvent(): BatchFinalizationEvent {
-        const tx = new Transaction({ allowUnknownOutputs: true });
-        tx.addOutput({ script: new Uint8Array([0x51]), amount: 5_000n });
-        return {
-            id: "batch-1",
-            commitmentTx: base64.encode(tx.toPSBT()),
-        } as BatchFinalizationEvent;
-    }
-
-    const connectorsGraph = () => ({
-        leaves: () => [
-            {
-                id: "cc".repeat(32),
-                getOutput: () => ({ amount: 450n, script: pkScript(ONCHAIN_ADDRESS) }),
-            },
-        ],
-    });
-
-    async function finalize(input: ExtendedVirtualCoin) {
-        const thisArg: any = {
-            network: NETWORK,
-            dustAmount: 1_000n,
-            arkProvider: { submitSignedForfeitTxs: vi.fn(async () => {}) },
-            _signerRouter: { sign: vi.fn(async (tx: Transaction) => tx) },
-        };
-
-        await (Wallet.prototype as any).handleSettlementFinalizationEvent.call(
-            thisArg,
-            commitmentEvent(),
-            [input],
-            pkScript(ONCHAIN_ADDRESS),
-            [],
-            connectorsGraph(),
-            undefined,
-        );
-
-        return thisArg;
-    }
-
     it("submits exactly one forfeit, spending that VTXO", async () => {
         const input = vtxoInput(vtxoScript);
 
@@ -198,5 +199,100 @@ describe("delegation forfeits a VTXO past expiry that is not swept", () => {
 
     it("sends no delegate forfeit for a swept VTXO", async () => {
         expect(await delegateForfeits(vtxoInput(vtxoScript, { isSwept: true }))).toHaveLength(0);
+    });
+
+    it("sends no delegate forfeit for an unrolled VTXO", async () => {
+        expect(await delegateForfeits(vtxoInput(vtxoScript, { isUnrolled: true }))).toHaveLength(0);
+    });
+});
+
+describe("settle refreshes the swept state of expired inputs", () => {
+    const STOP = "stop-before-intent";
+
+    function harness(opts: {
+        fresh?: ExtendedVirtualCoin[];
+        refreshOutpoints?: () => Promise<void>;
+    }) {
+        const refreshOutpoints = vi.fn(opts.refreshOutpoints ?? (async () => {}));
+        const captured: ExtendedCoin[][] = [];
+        const thisArg: any = {
+            network: NETWORK,
+            getAddress: vi.fn(async () => ARK_ADDRESS),
+            getContractManager: vi.fn(async () => ({ refreshOutpoints })),
+            getVtxos: vi.fn(async () => opts.fresh ?? []),
+            logUngatedInputs: vi.fn(async () => {}),
+            makeRegisterIntentSignature: vi.fn(async (inputs: ExtendedCoin[]) => {
+                captured.push(inputs);
+                throw new Error(STOP);
+            }),
+            makeDeleteIntentSignature: vi.fn(async () => ({})),
+        };
+        return { thisArg, refreshOutpoints, captured };
+    }
+
+    async function settle(
+        inputs: ExtendedVirtualCoin[],
+        opts: { fresh?: ExtendedVirtualCoin[]; refreshOutpoints?: () => Promise<void> } = {},
+    ) {
+        const h = harness(opts);
+
+        await expect(
+            (Wallet.prototype as any)._settleImpl.call(h.thisArg, {
+                inputs,
+                outputs: [{ address: ONCHAIN_ADDRESS, amount: 10_000n }],
+            }),
+        ).rejects.toThrow(STOP);
+
+        return h;
+    }
+
+    it("marks an input the operator already swept, so no forfeit is built for it", async () => {
+        const input = vtxoInput(vtxoScript);
+
+        const { refreshOutpoints, captured } = await settle([input], {
+            fresh: [vtxoInput(vtxoScript, { isSwept: true })],
+        });
+
+        expect(refreshOutpoints).toHaveBeenCalledWith([{ txid: input.txid, vout: input.vout }]);
+        const refreshed = captured[0][0] as ExtendedVirtualCoin;
+        expect(refreshed.isSwept).toBe(true);
+
+        const thisArg = await finalize(refreshed);
+        expect(thisArg.arkProvider.submitSignedForfeitTxs).not.toHaveBeenCalled();
+    });
+
+    it("still forfeits an input the refresh reports unswept", async () => {
+        const { refreshOutpoints, captured } = await settle([vtxoInput(vtxoScript)], {
+            fresh: [vtxoInput(vtxoScript)],
+        });
+
+        expect(refreshOutpoints).toHaveBeenCalled();
+        const refreshed = captured[0][0] as ExtendedVirtualCoin;
+        expect(refreshed.isSwept).toBe(false);
+
+        const thisArg = await finalize(refreshed);
+        expect(thisArg.arkProvider.submitSignedForfeitTxs).toHaveBeenCalledTimes(1);
+    });
+
+    it("makes no call when no input is past expiry", async () => {
+        const { thisArg, refreshOutpoints } = await settle([
+            vtxoInput(vtxoScript, { expiresAt: FUTURE }),
+        ]);
+
+        expect(thisArg.getContractManager).not.toHaveBeenCalled();
+        expect(refreshOutpoints).not.toHaveBeenCalled();
+    });
+
+    it("settles with the cached inputs when the refresh throws", async () => {
+        const input = vtxoInput(vtxoScript);
+
+        const { refreshOutpoints, captured } = await settle([input], {
+            refreshOutpoints: async () => {
+                throw new Error("indexer down");
+            },
+        });
+
+        expect(refreshOutpoints).toHaveBeenCalled();
+        expect(captured[0][0]).toBe(input);
     });
 });

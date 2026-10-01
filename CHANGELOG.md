@@ -18,7 +18,10 @@ style and have not been backfilled.
   the batch with `missing forfeit transactions`. Settlement, delegation
   and Arkade batches now decide with `requiresForfeit`, mirroring arkd's
   `Vtxo.RequiresForfeit()`: only swept or unrolled VTXOs skip the
-  forfeit, whatever their expiry.
+  forfeit, whatever their expiry. Because the delta sync never revisits
+  a coin swept after its cursor, `settle` now refreshes the swept state
+  of expired inputs before deciding, so an already-swept VTXO is not
+  given a forfeit the operator allocated no connector for.
 
 - **`programFromArtifact` reads time-based CSV literals.** A literal
   relative timelock in an `arkadec` artifact is the encoded BIP68

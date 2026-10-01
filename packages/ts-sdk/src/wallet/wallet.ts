@@ -35,6 +35,7 @@ import {
     getAllNormalizedVtxos,
     getNormalizedVtxos,
     isVtxoSpent,
+    isPastExpiry,
     isVirtualCoin,
     normalizeVtxo,
     parseLegacyExpiry,
@@ -450,6 +451,45 @@ export function filterSnapshotVtxos(
             }
             return true;
         });
+}
+
+/**
+ * Refresh the swept state of settle inputs already past their batch expiry. The delta sync windows
+ * on `created_at`, so it never revisits a coin the operator swept after the cursor passed it, and a
+ * stale `isSwept: false` makes {@link requiresForfeit} build a forfeit the operator allocated no
+ * connector for. Best-effort: cached inputs are kept on failure.
+ */
+async function refreshSweptStateOfExpiredInputs(
+    wallet: Pick<ReadonlyWallet, "getContractManager" | "getVtxos">,
+    inputs: ExtendedCoin[],
+): Promise<ExtendedCoin[]> {
+    const now = { timestamp: new Date() };
+    const suspects = inputs.filter(
+        (input): input is ExtendedCoin & VirtualCoin =>
+            isVirtualCoin(input) && !normalizeVtxo(input).isSwept && isPastExpiry(input, now),
+    );
+    if (suspects.length === 0) return inputs;
+
+    try {
+        const manager = await wallet.getContractManager();
+        await manager.refreshOutpoints(suspects.map(({ txid, vout }) => ({ txid, vout })));
+        const suspectKeys = new Set(suspects.map((v) => `${v.txid}:${v.vout}`));
+        const fresh = await wallet.getVtxos({ withRecoverable: true });
+        const sweptNow = new Set(
+            fresh
+                .filter((v) => v.isSwept && suspectKeys.has(`${v.txid}:${v.vout}`))
+                .map((v) => `${v.txid}:${v.vout}`),
+        );
+        if (sweptNow.size === 0) return inputs;
+        return inputs.map((input) =>
+            isVirtualCoin(input) && sweptNow.has(`${input.txid}:${input.vout}`)
+                ? { ...input, isSwept: true }
+                : input,
+        );
+    } catch (e) {
+        console.error("Error refreshing swept state before settle:", e);
+        return inputs;
+    }
 }
 
 /**
@@ -4098,6 +4138,11 @@ export class Wallet
                 outputs: [output],
             };
         }
+
+        params = {
+            ...params,
+            inputs: await refreshSweptStateOfExpiredInputs(this, params.inputs),
+        };
 
         const onchainOutputIndexes: number[] = [];
         const outputs: TransactionOutput[] = [];
