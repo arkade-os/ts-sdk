@@ -117,23 +117,6 @@ export function selectCoinsWithAsset(
     return { selected, totalAssetAmount };
 }
 
-export function computeAssetChange(
-    inputAssets: Map<string, bigint>,
-    outputAssets: Map<string, bigint>,
-): Map<string, bigint> {
-    const change = new Map<string, bigint>();
-
-    for (const [assetId, inputAmount] of inputAssets) {
-        const outputAmount = outputAssets.get(assetId) ?? 0n;
-        const changeAmount = inputAmount - outputAmount;
-        if (changeAmount > 0n) {
-            change.set(assetId, changeAmount);
-        }
-    }
-
-    return change;
-}
-
 export function selectedCoinsToAssetInputs(selectedCoins: VirtualCoin[]): Map<number, Asset[]> {
     const assetInputs = new Map<number, Asset[]>();
 

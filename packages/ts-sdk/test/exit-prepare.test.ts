@@ -43,6 +43,21 @@ async function fixture(opts?: { coins?: { value: number }[] }) {
     const shared = treePsbt(1);
     const leaf = treePsbt(2);
 
+    const contractRepo = new InMemoryContractRepository();
+    await contractRepo.saveContract({
+        id: "exit-fixture",
+        type: "default",
+        params: {
+            pubKey: `tr(${hex.encode(owner)})`,
+            serverPubKey: `tr(${hex.encode(owner)})`,
+            csvTimelock: timelockToSequence(timelock).toString(),
+        },
+        script: hex.encode(vtxoScript.pkScript),
+        address: pay.address!,
+        state: "active",
+        createdAt: Date.now(),
+    } as any);
+
     const chains = {
         [leaf.txid]: [
             {
@@ -98,7 +113,8 @@ async function fixture(opts?: { coins?: { value: number }[] }) {
             }),
         },
         onchainProvider,
-        contractRepository: new InMemoryContractRepository(),
+        contractRepository: contractRepo,
+        signInputsByWitnessScript: async (tx: Transaction) => identity.sign(tx),
         getVtxos: async () => [vtxo],
     };
     const onchainWallet = {

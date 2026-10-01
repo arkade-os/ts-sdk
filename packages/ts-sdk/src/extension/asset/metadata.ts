@@ -1,7 +1,7 @@
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
 import { Bytes, compareBytes } from "@scure/btc-signer/utils.js";
-import { BufferReader, BufferWriter } from "../utils";
+import { BufferReader, BufferWriter, hexOrThrow } from "../utils";
 
 /**
  * Metadata represents a key-value pair.
@@ -23,13 +23,7 @@ export class Metadata {
 
     /** Decode metadata from its hex string form. */
     static fromString(s: string): Metadata {
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(s);
-        } catch {
-            throw new Error("invalid metadata format, must be hex");
-        }
-        return Metadata.fromBytes(buf);
+        return Metadata.fromBytes(hexOrThrow(s, "invalid metadata format, must be hex"));
     }
 
     /** Decode metadata from its serialized bytes. */
@@ -109,13 +103,7 @@ export class MetadataList {
 
     /** Create a metadata list from its hex string form. */
     static fromString(s: string): MetadataList {
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(s);
-        } catch {
-            throw new Error("invalid metadata list format");
-        }
-        return MetadataList.fromBytes(buf);
+        return MetadataList.fromBytes(hexOrThrow(s, "invalid metadata list format"));
     }
 
     /** Decode a metadata list from its serialized bytes. */

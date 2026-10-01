@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
@@ -115,17 +115,18 @@ describe("offer contract registration", () => {
     // On amount_side "to" the payout is echoed back verbatim, so the named-side
     // check passes by construction and from_amount is whatever the solver asked.
     it("refuses an exact-out quote whose from_amount exceeds the caller's cap", async () => {
+        const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
         const expected = await createOffer(wallet, {
             wantAmount: BigInt(50_000),
             wantAsset: testAsset,
             emulatorPubkey,
         });
         const rfqId = "33".repeat(32);
-        const pair = `arkade:BTC->arkade:${testAsset}`;
+        const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
         const gouging: RfqTransport = {
             requestQuote: vi.fn(async () => ({
-                v: 1,
-                type: "rfq_quote",
+                v: 1 as const,
+                type: "rfq_quote" as const,
                 rfq_id: rfqId,
                 pair,
                 // 1000x a fair deposit, while to_amount echoes the request.
@@ -142,6 +143,7 @@ describe("offer contract registration", () => {
             close: vi.fn(async () => undefined),
         };
         const request = {
+            offerAsset,
             wantAsset: testAsset,
             amount: 50_000n,
             amountSide: "to" as const,
@@ -184,8 +186,8 @@ describe("offer contract registration", () => {
         const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
         const transport: RfqTransport = {
             requestQuote: vi.fn(async () => ({
-                v: 1,
-                type: "rfq_quote",
+                v: 1 as const,
+                type: "rfq_quote" as const,
                 rfq_id: rfqId,
                 pair,
                 from_amount: "700",
@@ -228,8 +230,8 @@ describe("offer contract registration", () => {
         const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
         const quoteWith = (carrier?: string): RfqTransport => ({
             requestQuote: vi.fn(async () => ({
-                v: 1,
-                type: "rfq_quote",
+                v: 1 as const,
+                type: "rfq_quote" as const,
                 rfq_id: rfqId,
                 pair,
                 from_amount: "700",

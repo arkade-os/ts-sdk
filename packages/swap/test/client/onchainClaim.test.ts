@@ -250,6 +250,7 @@ const onchainSendRecord = async () => {
         network: "regtest",
         htlcAddress: htlc.address,
         minConfirmations: 1,
+        expectedAmount: 99_152,
         payoutPkScript: hex.encode(payoutPkScript),
     };
     return {
@@ -297,6 +298,7 @@ describe("the wallet-backed default claim", () => {
             wallet,
             repository,
             corridors,
+            network: async () => "regtest",
             operator: fakeOperator(),
             indexer: fakeIndexer({ vtxos: [{ txid: "99".repeat(32), vout: 0, spentBy: "" }] }),
             contracts,
@@ -328,6 +330,7 @@ describe("the wallet-backed default claim", () => {
             wallet,
             repository,
             corridors,
+            network: async () => "regtest",
             operator: fakeOperator(),
             indexer: fakeIndexer({ vtxos: [{ txid: "99".repeat(32), vout: 0, spentBy: "" }] }),
             contracts,
@@ -358,6 +361,7 @@ describe("the wallet-backed default claim", () => {
             wallet,
             repository,
             corridors,
+            network: async () => "regtest",
             operator: fakeOperator(),
             indexer: fakeIndexer({ vtxos: [{ txid: "99".repeat(32), vout: 0, spentBy: "" }] }),
             contracts,

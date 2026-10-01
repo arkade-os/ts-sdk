@@ -5,9 +5,8 @@ import { ServerResponseMismatchError } from "../providers/errors";
 export const isRegtest = (network: Network): boolean => network.bech32 === "bcrt";
 
 /**
- * Nominal seconds per block, used only to compare a block-typed timelock
- * against a wall-clock floor. Coarse by design: under the default policies
- * block-typed values are only accepted on regtest.
+ * Nominal seconds per block, only for comparing a block-typed timelock against a wall-clock
+ * floor. Coarse by design: default policies accept block-typed values only on regtest.
  */
 export const NOMINAL_BLOCK_SECONDS = 600n;
 
@@ -15,22 +14,14 @@ export const NOMINAL_BLOCK_SECONDS = 600n;
 export type TimelockFloorPolicy = {
     /** Minimum wall-clock delay in seconds, after normalization. */
     minSeconds: bigint;
-    /**
-     * Reject block-typed timelocks. Mirrors arkd, which allows block-typed
-     * relative locktimes only on regtest.
-     */
+    /** Reject block-typed timelocks (arkd allows them only on regtest). */
     requireSeconds: boolean;
 };
 
 /**
- * Type a bare wire value the way the protocol does: >= 512 is seconds, below is
- * blocks.
- *
- * Only for values that arrive without a type of their own (e.g. a
- * `BatchStartedEvent.batchExpiry` integer). A timelock decoded from a script
- * carries its own BIP-68 disable-flag-derived type — pass that straight to
- * {@link assertTimelockInPolicy} instead, since a block-typed value there can
- * legitimately exceed 512 and re-deriving would misread it as seconds.
+ * Type a bare wire value the protocol way: >= 512 is seconds, below is blocks. Only for untyped
+ * values (e.g. `BatchStartedEvent.batchExpiry`); a script-decoded timelock carries its BIP-68
+ * type and can be block-typed above 512, so pass it to {@link assertTimelockInPolicy} directly.
  */
 export const toTimelock = (value: bigint): RelativeTimelock => ({
     value,
@@ -41,14 +32,9 @@ export const toSeconds = (t: RelativeTimelock): bigint =>
     t.type === "seconds" ? t.value : t.value * NOMINAL_BLOCK_SECONDS;
 
 /**
- * Check an already-typed server-supplied relative timelock against `policy`.
- *
- * `label` names the value in thrown messages (e.g. `"batch expiry"`,
- * `"checkpoint exit delay"`) and `overrideOption` names the wallet-config
- * option that lowers this particular floor (e.g. `"minBatchExpirySeconds"`), so
- * callers share this one implementation without losing message specificity. A
- * floor rejection quotes the value that would accept the timelock alongside the
- * option name, so acting on the message needs nothing the message did not say.
+ * Check an already-typed server-supplied relative timelock against `policy`. `label` names the
+ * value in messages; `overrideOption` names the wallet-config option that lowers this floor, and
+ * a floor rejection quotes the value that would pass.
  *
  * @throws {ServerResponseMismatchError} if the timelock is out of policy.
  */
@@ -59,9 +45,7 @@ export function assertTimelockInPolicy(
     overrideOption: string,
 ): RelativeTimelock {
     if (policy.requireSeconds && timelock.type === "blocks") {
-        // No override named here on purpose: `requireSeconds` is not settable
-        // through the wallet config, so only the floor half of this policy is
-        // something a caller can act on.
+        // No override named: `requireSeconds` is not settable through wallet config.
         throw new ServerResponseMismatchError(
             `${label} rejected: block-typed timelocks are not accepted (got ${timelock.value})`,
         );
@@ -80,8 +64,7 @@ export function assertTimelockInPolicy(
 }
 
 /**
- * Type a bare server-supplied timelock value with {@link toTimelock}, then
- * check it against `policy`.
+ * {@link toTimelock} then {@link assertTimelockInPolicy}.
  *
  * @throws {ServerResponseMismatchError} if the value is out of policy.
  */

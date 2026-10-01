@@ -8,9 +8,11 @@ import {
     serializeAssets,
     deserializeAssets,
     SerializedTapLeaf,
+    createdAtToIso,
 } from "../serialization";
 import { scriptFromArkAddress } from "../scriptFromAddress";
-import { isVtxoForScript } from "../../contracts/vtxoOwnership";
+import { checkSaveVtxosForScript } from "../../contracts/vtxoOwnership";
+import { isVtxoSpent } from "../../wallet/vtxo";
 import { RealmLike } from "./types";
 
 /**
@@ -76,12 +78,7 @@ export class RealmWalletRepository implements WalletRepository {
                         intentCb: s.intentTapLeafScript.cb,
                         intentS: s.intentTapLeafScript.s,
                         statusJson: JSON.stringify(s.status),
-                        createdAt:
-                            typeof s.createdAt === "string"
-                                ? s.createdAt
-                                : s.createdAt instanceof Date
-                                  ? s.createdAt.toISOString()
-                                  : new Date(s.createdAt).toISOString(),
+                        createdAt: createdAtToIso(s.createdAt),
                         isUnrolled: s.isUnrolled ?? false,
                         isSpent: s.isSpent === undefined ? null : s.isSpent,
                         isSwept: s.isSwept === undefined ? null : s.isSwept,
@@ -90,11 +87,7 @@ export class RealmWalletRepository implements WalletRepository {
                             ? JSON.stringify(s.commitmentTxIds)
                             : null,
                         expiresAt:
-                            s.expiresAt === undefined
-                                ? null
-                                : s.expiresAt instanceof Date
-                                  ? s.expiresAt.toISOString()
-                                  : new Date(s.expiresAt).toISOString(),
+                            s.expiresAt === undefined ? null : new Date(s.expiresAt).toISOString(),
                         expiresAtHeight: s.expiresAtHeight ?? null,
                         spentBy: s.spentBy ?? null,
                         settledBy: s.settledBy ?? null,
@@ -110,11 +103,7 @@ export class RealmWalletRepository implements WalletRepository {
     }
 
     async deleteVtxos(address: string): Promise<void> {
-        await this.ensureInit();
-        this.realm.write(() => {
-            const toDelete = this.realm.objects("ArkVtxo").filtered("address == $0", address);
-            this.realm.delete(toDelete);
-        });
+        return this.deleteWhere("ArkVtxo", "address", address);
     }
 
     async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
@@ -123,26 +112,35 @@ export class RealmWalletRepository implements WalletRepository {
         return [...results].map(vtxoObjectToDomain);
     }
 
-    async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
-        if (!key.address) {
-            throw new Error("RealmWalletRepository requires an address");
-        }
-        for (const vtxo of vtxos) {
-            if (!isVtxoForScript(vtxo, key.script)) {
-                throw new Error(
-                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`,
-                );
+    async getVtxosForScripts(
+        scripts: string[],
+        options?: { unspentOnly?: boolean },
+    ): Promise<ExtendedVirtualCoin[]> {
+        const unique = [...new Set(scripts)].filter(Boolean);
+        if (unique.length === 0) return [];
+        await this.ensureInit();
+        const rows: ExtendedVirtualCoin[] = [];
+        for (let i = 0; i < unique.length; i += 64) {
+            const chunk = unique.slice(i, i + 64);
+            const scriptsQuery = `(${chunk.map((_, index) => `script == $${index}`).join(" OR ")})`;
+            const query = options?.unspentOnly
+                ? `${scriptsQuery} AND (isSpent == null OR isSpent == $${chunk.length}) AND (spentBy == null OR spentBy == $${chunk.length + 1}) AND (settledBy == null OR settledBy == $${chunk.length + 1})`
+                : scriptsQuery;
+            const results = this.realm.objects("ArkVtxo").filtered(query, ...chunk, false, "");
+            for (const row of results) {
+                const vtxo = vtxoObjectToDomain(row);
+                if (!options?.unspentOnly || !isVtxoSpent(vtxo)) rows.push(vtxo);
             }
         }
-        return this.saveVtxos(key.address, vtxos);
+        return rows;
+    }
+
+    async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
+        return this.saveVtxos(checkSaveVtxosForScript("RealmWalletRepository", key, vtxos), vtxos);
     }
 
     async deleteVtxosForScript(script: string): Promise<void> {
-        await this.ensureInit();
-        this.realm.write(() => {
-            const toDelete = this.realm.objects("ArkVtxo").filtered("script == $0", script);
-            this.realm.delete(toDelete);
-        });
+        return this.deleteWhere("ArkVtxo", "script", script);
     }
 
     // ── UTXO management ────────────────────────────────────────────────
@@ -181,11 +179,7 @@ export class RealmWalletRepository implements WalletRepository {
     }
 
     async deleteUtxos(address: string): Promise<void> {
-        await this.ensureInit();
-        this.realm.write(() => {
-            const toDelete = this.realm.objects("ArkUtxo").filtered("address == $0", address);
-            this.realm.delete(toDelete);
-        });
+        return this.deleteWhere("ArkUtxo", "address", address);
     }
 
     // ── Transaction history ────────────────────────────────────────────
@@ -223,11 +217,13 @@ export class RealmWalletRepository implements WalletRepository {
     }
 
     async deleteTransactions(address: string): Promise<void> {
+        return this.deleteWhere("ArkTransaction", "address", address);
+    }
+
+    private async deleteWhere(objectType: string, field: string, value: string): Promise<void> {
         await this.ensureInit();
         this.realm.write(() => {
-            const toDelete = this.realm
-                .objects("ArkTransaction")
-                .filtered("address == $0", address);
+            const toDelete = this.realm.objects(objectType).filtered(`${field} == $0`, value);
             this.realm.delete(toDelete);
         });
     }

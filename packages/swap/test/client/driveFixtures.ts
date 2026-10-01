@@ -173,6 +173,7 @@ export const OFFER: Offer = {
 };
 
 export const OFFER_SCRIPT = hex.encode(OFFER.swapPkScript);
+export const OFFER_ADDRESS = offerContract(OFFER_BINDING, OPERATOR).address(HRP, OPERATOR).encode();
 
 /** The funding transaction: the covenant output plus the offer packet. */
 export const offerFunding = (): { psbt: string; txid: string } => {
@@ -189,7 +190,7 @@ export const offerFunding = (): { psbt: string; txid: string } => {
 /** The deposit at the offer's script, in whatever state the scan should read. */
 export const offerDeposit = (
     txid: string,
-    facts: Pick<FakeVtxo, "isSwept" | "isSpent"> = {},
+    facts: Partial<Pick<FakeVtxo, "isSwept" | "isSpent" | "spentBy" | "arkTxId">> = {},
 ): FakeVtxo => ({
     txid,
     vout: 0,
@@ -201,6 +202,21 @@ export const offerDeposit = (
     isSwept: false,
     ...facts,
 });
+
+/** A spend of the offer deposit via the named covenant leaf, which is what `classifySpend` reads. */
+export const offerSpend = (
+    deposit: { txid: string; vout: number },
+    via: "cancel" | "fulfill" | "exit" = "cancel",
+): { psbt: string; txid: string } => {
+    const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
+    tx.addInput({
+        txid: hex.decode(deposit.txid),
+        index: deposit.vout,
+        tapLeafScript: [offerContract(OFFER_BINDING, OPERATOR).functionByName(via)!.tapLeafScript],
+    });
+    tx.addOutput({ script: PAYOUT, amount: 90_000n });
+    return { psbt: base64.encode(tx.toPSBT()), txid: tx.id };
+};
 
 /** A v2 offer record. `offerHex` is never decoded by anything under test here —
  * only the watcher's spend classifier reads it, and these tests drive the
@@ -232,6 +248,8 @@ export const offerRecord = (over: Partial<OfferSwapRecord> = {}): OfferSwapRecor
 export interface FakeContracts extends SwapContractRegistry {
     readonly rows: CreateContractParams[];
     readonly watchStates: [script: string, state: string][];
+    /** What `getContractsWithVtxos` serves at every lockup — `findLockupVtxos`'s only view of the funding. */
+    readonly funded: FakeFunded[];
     emit(event: ContractEvent): void;
 }
 
@@ -247,10 +265,14 @@ export const fakeContracts = (
         metadata: { genericallySpendable: false, kind: SWAP_LOCKUP_CONTRACT_KIND },
     }));
     const watchStates: [string, string][] = [];
+    const funded: FakeFunded[] = [];
     const handlers = new Set<(event: ContractEvent) => void>();
+    const matching = (filter?: { script?: string }) =>
+        rows.filter((r) => filter?.script === undefined || r.script === filter.script);
     return {
         rows,
         watchStates,
+        funded,
         emit: (event: ContractEvent) => {
             for (const handler of handlers) handler(event);
         },
@@ -258,8 +280,21 @@ export const fakeContracts = (
             if (!rows.some((r) => r.script === row.script)) rows.push(row);
             return { ...row, state: "active", createdAt: 0 } as never;
         },
-        getContracts: async (filter?: { script?: string }) =>
-            rows.filter((r) => filter?.script === undefined || r.script === filter.script) as never,
+        getContracts: async (filter?: { script?: string }) => matching(filter) as never,
+        getContractsWithVtxos: async (filter?: { script?: string }) =>
+            matching(filter).map((row) => ({
+                contract: { ...row, state: "active", createdAt: 0 },
+                vtxos: funded.map((v) => ({
+                    txid: v.txid,
+                    vout: v.vout,
+                    value: v.value,
+                    isSwept: !!v.recoverable,
+                    isSpent: false,
+                    isPreconfirmed: false,
+                    isUnrolled: false,
+                    spentBy: "",
+                })),
+            })) as never,
         setContractWatchState: async (script: string, state: string) => {
             watchStates.push([script, state]);
         },
@@ -297,29 +332,17 @@ export type FakeIndexer = LockupSpendIndexer & { vtxoCalls: number };
 
 /**
  * A scripted indexer, typed against the production seam so a change to
- * `LockupSpendIndexer` breaks this at compile time.
- *
- * The filters are honoured rather than ignored: `findLockupVtxos` makes the
- * spendable and recoverable reads separately and merges them, so a fake that
- * answered the same set twice would report every output as both and hide the
- * dedup entirely.
+ * `LockupSpendIndexer` breaks this at compile time. It answers the fate read
+ * only; lockup funding is `fakeContracts`' `funded`.
  */
 export const fakeIndexer = (
-    state: {
-        vtxos?: FakeVtxo[];
-        funded?: FakeFunded[];
-        txs?: { txid: string; psbt: string }[];
-        fail?: boolean;
-    } = {},
+    state: { vtxos?: FakeVtxo[]; txs?: { txid: string; psbt: string }[]; fail?: boolean } = {},
 ): FakeIndexer => {
     const indexer = {
         vtxoCalls: 0,
-        async getVtxos(filter?: { spendableOnly?: boolean; recoverableOnly?: boolean }) {
+        async getVtxos() {
             indexer.vtxoCalls += 1;
             if (state.fail) throw new Error("indexer unreachable");
-            const funded = state.funded ?? [];
-            if (filter?.spendableOnly) return { vtxos: funded.filter((v) => !v.recoverable) };
-            if (filter?.recoverableOnly) return { vtxos: funded.filter((v) => v.recoverable) };
             return { vtxos: state.vtxos ?? [] };
         },
         async getVirtualTxs(txids: string[]) {

@@ -2,13 +2,12 @@ import * as musig2 from "../musig2";
 import { Script } from "@scure/btc-signer/script.js";
 import { SigHash, Transaction } from "@scure/btc-signer/transaction.js";
 import { hex } from "@scure/base";
-import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
 import { TxTree } from "./txTree";
 
 export const ErrMissingVtxoGraph = new Error("missing vtxo graph");
-export const ErrMissingAggregateKey = new Error("missing aggregate key");
 
 export type Musig2PublicNonce = Pick<musig2.Nonces, "pubNonce">;
 export type TreeNonces = Map<string, Musig2PublicNonce>;
@@ -196,42 +195,6 @@ export class TreeSignerSession implements SignerSession {
                 sortKeys: true,
             },
         );
-    }
-}
-
-// Helper function to validate tree signatures
-export async function validateTreeSigs(
-    finalAggregatedKey: Uint8Array,
-    sharedOutputAmount: bigint,
-    vtxoTree: TxTree,
-): Promise<void> {
-    // Iterate through each level of the tree
-    for (const g of vtxoTree.iterator()) {
-        // Parse the transaction
-        const input = g.root.getInput(0);
-
-        // Check if input has signature
-        if (!input.tapKeySig) {
-            throw new Error("unsigned tree input");
-        }
-
-        // Get the previous output information
-        const prevout = getPrevOutput(finalAggregatedKey, vtxoTree, sharedOutputAmount, g.root);
-
-        // Calculate the message that was signed
-        const message = g.root.preimageWitnessV1(
-            0, // always first input
-            [prevout.script],
-            SigHash.DEFAULT,
-            [prevout.amount],
-        );
-
-        // Verify the signature
-        const isValid = schnorr.verify(input.tapKeySig, message, finalAggregatedKey);
-
-        if (!isValid) {
-            throw new Error("invalid signature");
-        }
     }
 }
 

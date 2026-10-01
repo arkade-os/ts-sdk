@@ -33,7 +33,12 @@ const regtest = (args: string): string =>
         encoding: "utf8",
         cwd: REPO_ROOT,
         timeout: 120_000,
-    }).trim();
+    })
+        .split("\n")
+        // The pinned regtest CLI prints its override banner before passthrough output.
+        .filter((line) => !line.includes("Loading overrides from"))
+        .join("\n")
+        .trim();
 
 /** `bitcoin-cli getblockchaininfo`, for the node's own median-time-past. */
 const chainInfo = (): { blocks: number; mediantime: number } =>

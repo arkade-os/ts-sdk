@@ -107,11 +107,7 @@ function defaultCandidatesAt(
         (opts) => new DefaultVtxo.Script(opts),
     ).map((c) => ({
         type: "default",
-        params: {
-            pubKey: hex.encode(c.pubKey),
-            serverPubKey: hex.encode(c.serverPubKey),
-            csvTimelock: timelockToSequence(c.csvTimelock).toString(),
-        },
+        params: DefaultContractHandler.serializeParams(c),
         script: c.scriptHex,
         address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
     }));

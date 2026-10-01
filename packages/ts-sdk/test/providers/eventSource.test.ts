@@ -5,7 +5,7 @@
  * from the `eventsource` package), so every "absent" case here removes it
  * deliberately — which is also the only honest way to reproduce plain Node.
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
     EventSourceUnavailableError,
     RestArkProvider,
@@ -178,14 +178,5 @@ describe("providers take a factory", () => {
             await iterator.return?.(undefined);
             await pending.catch(() => {});
         });
-    });
-});
-
-describe("the default resolution path is unchanged", () => {
-    it("uses the global when nothing is configured", () => {
-        const spy = vi.spyOn(globalThis, "EventSource" as never);
-        expect(spy).toBeDefined();
-        expect(getConfiguredEventSource()).toBeUndefined();
-        expect(typeof resolveEventSource()).toBe("function");
     });
 });

@@ -5,8 +5,6 @@ import { aggregateKeys } from "../musig2";
 import { TxTree } from "./txTree";
 import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
 
-export const ErrInvalidSettlementTx = (tx: string) =>
-    new Error(`invalid settlement transaction: ${tx}`);
 export const ErrInvalidSettlementTxOutputs = new Error("invalid settlement transaction outputs");
 export const ErrEmptyTree = new Error("empty tree");
 export const ErrNumberOfInputs = new Error("invalid number of inputs");

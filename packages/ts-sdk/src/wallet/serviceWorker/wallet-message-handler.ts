@@ -30,6 +30,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetNewAddressesOptions,
+    GetSpendableVtxosFilter,
     GetVtxosFilter,
     IssuanceParams,
     IssuanceResult,
@@ -46,7 +47,7 @@ import { DelegateInfo } from "../../providers/delegate";
 import {
     canSpendOffchain,
     fetchVtxoCreatedAtByTxid,
-    hasTerminalSpend,
+    isVtxoSpent,
     type NormalizedExtendedVirtualCoin,
     type NormalizedVtxoPage,
 } from "../vtxo";
@@ -56,7 +57,8 @@ import {
     Wallet,
     type ProviderConnectionState,
 } from "../wallet";
-import { computeOffchainBalance } from "../balance";
+import { computeOffchainBalance, toWalletBalance } from "../balance";
+import { getDustAmount } from "../utils";
 import { isHDAllocationCapable, isHDWalletCapable } from "../hdWalletCapable";
 import { gatedFrom, isGatedVtxo } from "../../contracts/spendability";
 import type {
@@ -254,11 +256,11 @@ export type ResponseGetVtxos = ResponseEnvelope & {
 
 export type RequestGetSpendableVtxos = RequestEnvelope & {
     type: "GET_SPENDABLE_VTXOS";
-    payload: { filter?: GetVtxosFilter };
+    payload: { filter?: GetSpendableVtxosFilter };
 };
 export type ResponseGetSpendableVtxos = ResponseEnvelope & {
     type: "SPENDABLE_VTXOS";
-    payload: { vtxos: Awaited<ReturnType<IWallet["getSpendableVtxos"]>> };
+    payload: { vtxos: Awaited<ReturnType<IWallet["getSpendableVtxos"]>>; filterApplied?: boolean };
 };
 
 export type RequestGetBoardingUtxos = RequestEnvelope & {
@@ -340,11 +342,14 @@ export type ResponseGetContracts = ResponseEnvelope & {
 
 export type RequestGetContractsWithVtxos = RequestEnvelope & {
     type: "GET_CONTRACTS_WITH_VTXOS";
-    payload: { filter?: GetContractsFilter };
+    payload: {
+        filter?: GetContractsFilter;
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean };
+    };
 };
 export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     type: "CONTRACTS_WITH_VTXOS";
-    payload: { contracts: ContractWithVtxos[] };
+    payload: { contracts: ContractWithVtxos[]; filterApplied?: boolean };
 };
 
 function unsupportedByManager(method: string): Error {
@@ -353,20 +358,20 @@ function unsupportedByManager(method: string): Error {
 
 export type RequestWatchScript = RequestEnvelope & {
     type: "WATCH_SCRIPT";
-    payload: { script: string; label?: string };
+    payload: { script: string | string[]; label?: string };
 };
 export type ResponseWatchScript = ResponseEnvelope & {
     type: "SCRIPT_WATCHED";
-    payload: { script: string };
+    payload: { script: string | string[] };
 };
 
 export type RequestUnwatchScript = RequestEnvelope & {
     type: "UNWATCH_SCRIPT";
-    payload: { script: string };
+    payload: { script: string | string[] };
 };
 export type ResponseUnwatchScript = ResponseEnvelope & {
     type: "SCRIPT_UNWATCHED";
-    payload: { script: string };
+    payload: { script: string | string[] };
 };
 
 export type RequestGetWatchedScripts = RequestEnvelope & {
@@ -1276,16 +1281,13 @@ export class WalletMessageHandler
                     };
                 }
                 case "GET_SPENDABLE_VTXOS": {
-                    if (!this.readonlyWallet) {
-                        throw new WalletNotInitializedError();
-                    }
                     const vtxos = await this.readonlyWallet.getSpendableVtxos(
                         message.payload.filter,
                     );
                     return this.tagged({
                         id,
                         type: "SPENDABLE_VTXOS",
-                        payload: { vtxos },
+                        payload: { vtxos, filterApplied: true },
                     });
                 }
                 case "GET_BOARDING_UTXOS": {
@@ -1369,11 +1371,15 @@ export class WalletMessageHandler
                 }
                 case "GET_CONTRACTS_WITH_VTXOS": {
                     const manager = await this.readonlyWallet.getContractManager();
-                    const contracts = await manager.getContractsWithVtxos(message.payload.filter);
+                    const contracts = await manager.getContractsWithVtxos(
+                        message.payload.filter,
+                        undefined,
+                        message.payload.options,
+                    );
                     return this.tagged({
                         id,
                         type: "CONTRACTS_WITH_VTXOS",
-                        payload: { contracts },
+                        payload: { contracts, filterApplied: true },
                     });
                 }
                 case "WATCH_SCRIPT": {
@@ -1806,17 +1812,6 @@ export class WalletMessageHandler
         const pendingOutpoints =
             this.readonlyWallet?.pendingRecoveryOutpointsIn(snapshot) ?? new Set<string>();
 
-        // boarding
-        let confirmed = 0;
-        let unconfirmed = 0;
-        for (const utxo of boardingUtxos) {
-            if (utxo.status.confirmed) {
-                confirmed += utxo.value;
-            } else {
-                unconfirmed += utxo.value;
-            }
-        }
-
         const gated = gatedFrom(snapshot);
         const unlocked = new Set(
             (
@@ -1824,33 +1819,16 @@ export class WalletMessageHandler
             ).map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
         );
 
-        const totalBoarding = confirmed + unconfirmed;
         // No chain tip: this is an offline-first read.
         const offchain = computeOffchainBalance(allVtxos, {
             now: { timestamp: new Date() },
             isPendingRecovery: (vtxo) => pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
             isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
+            dustCarrier: getDustAmount(this.readonlyWallet),
         });
 
-        return {
-            boarding: {
-                confirmed,
-                unconfirmed,
-                total: totalBoarding,
-            },
-            settled: offchain.settled,
-            preconfirmed: offchain.preconfirmed,
-            available: offchain.available,
-            gated: offchain.gated,
-            intentLocked: offchain.intentLocked,
-            recoverable: offchain.recoverable,
-            pendingRecovery: offchain.pendingRecovery,
-            unrolled: offchain.unrolled,
-            total: totalBoarding + offchain.total,
-            assets: offchain.assets,
-            availableAssets: offchain.availableAssets,
-        };
+        return toWalletBalance(boardingUtxos, offchain);
     }
     private async getAllBoardingUtxos(): Promise<ExtendedCoin[]> {
         if (!this.readonlyWallet) return [];
@@ -2163,7 +2141,7 @@ export class WalletMessageHandler
             if (v.isUnrolled) {
                 return withUnrolled;
             }
-            if (hasTerminalSpend(v)) {
+            if (isVtxoSpent(v)) {
                 return false;
             }
             if (includeRecoverable) {

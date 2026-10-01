@@ -9,21 +9,20 @@ import { isRfqSwapTerminal, type RfqSwapState } from "./swapManager";
 import { ACTIVITY_TOKEN, corridorOutcome } from "./client/outcome";
 import type { LockupSpendIndexer } from "./refund";
 import { rfqCorridorHandlers } from "./rfqCorridor";
-// Side-effecting, as in `rfqRecord.ts`: the handlers this reads register
-// themselves on import, and nothing here should rely on another module having
-// pulled them in first.
+// Side-effecting: the handlers read below register themselves on import.
 import "./rfqCorridors";
-import type { AssetSwapRepository } from "./repository";
+import {
+    assertRfqSwapPageLimit,
+    assertRfqSwapSince,
+    type AssetSwapRepository,
+    type RfqHistoryCursor,
+} from "./repository";
 import { normalizeRfqSwapRecord, type RfqSwapRecord } from "./rfqRecord";
 
 /**
  * One swap, flattened to what grouping needs: an identity, a corridor, an
- * outcome, and every Arkade transaction that belongs to it.
- *
- * Deliberately not a stored swap record itself — resolution should stay
- * testable with plain data rather than a repository. {@link rfqSwapActivityInputs}
- * derives these from the record store and, where a record cannot answer, the
- * funding lockup's VTXOs.
+ * outcome, and every Arkade transaction that belongs to it. Plain data, not a stored record, so
+ * resolution is testable without a repository.
  */
 export interface SwapActivityInput {
     rfqId: string;
@@ -41,21 +40,9 @@ const LABELS: Record<SwapActivityInput["kind"], string> = {
 };
 
 /**
- * How a swap reads as an activity token — a PROJECTION of the client's
- * {@link Outcome}, not a second table.
- *
- * This file used to key a `Record<RfqSwapState, string>` off the raw state and
- * handle `lightning_receive` + `refunded` beside it, by hand, because the raw
- * state alone cannot tell a send leg's refund (the money coming back) from a
- * receive leg's (the incoming payment never arriving). The client's outcome
- * vocabulary already draws that line — `refunded` against `lapsed` — and
- * already keys on the corridor kind, so the special case disappears rather than
- * being restated: `lostReceive` is what `lapsed` projects to.
- *
- * Exhaustiveness is stronger than before, and in both directions: the
- * translation is total over `RfqSwapState` × lockup owner, and
- * {@link ACTIVITY_TOKEN} is total over `Outcome`, so a new protocol state or a
- * new outcome is a compile error rather than a blank row.
+ * How a swap reads as an activity token: a projection of the client's {@link Outcome}, which
+ * already distinguishes a send leg's refund (`refunded`) from a receive leg's lost payment
+ * (`lapsed`, projected to `lostReceive`) — the raw state alone cannot.
  */
 const outcomeToken = (kind: SwapActivityInput["kind"], state: RfqSwapState): string =>
     ACTIVITY_TOKEN[corridorOutcome(kind, state)];
@@ -63,13 +50,9 @@ const outcomeToken = (kind: SwapActivityInput["kind"], state: RfqSwapState): str
 /**
  * Group each RFQ swap's transactions into one activity carrying its outcome.
  *
- * Without this a failed swap renders as two unrelated rows: the send that
- * funded the lockup, and the receive when the covenant refunds. Grouping by
- * `rfqId` collapses them into one activity, and the amount comes out correct
- * by netting, not by `buildActivities`'s same-key change exclusion — that
- * rule only fires when one txid is both sent and received, and funding and
- * refund are different txids. Summing the signed amounts
- * (`-funding + refund ≈ -fees`) is what does the work here.
+ * Without this a failed swap renders as two unrelated rows (funding send, covenant refund). The
+ * amount comes out right by netting signed amounts (`-funding + refund ≈ -fees`), not by
+ * `buildActivities`'s same-txid change exclusion, since funding and refund are different txids.
  *
  * `prepare` loads once and `resolve` stays pure and synchronous, as the SDK's
  * `ActivityResolver` contract requires.
@@ -100,11 +83,6 @@ export function swapActivityResolver(deps: {
                     groupId: `swap:${swap.rfqId}`,
                     label: LABELS[swap.kind],
                     kind: "swap",
-                    // `"lost"` for a receive leg that ended `refunded` comes out
-                    // of the translation rather than out of a branch here: that
-                    // leg has no trader-side refund, every non-claim leaf of its
-                    // covenant is the solver's, and the client's `lapsed` is
-                    // that fact.
                     outcome: outcomeToken(swap.kind, swap.state),
                     metadata: { rfqId: swap.rfqId, swapKind: swap.kind },
                 },
@@ -115,15 +93,15 @@ export function swapActivityResolver(deps: {
 
 /** @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface RfqSwapActivityDeps {
-    repository: Pick<AssetSwapRepository, "getAllRfqSwaps">;
+    repository: Pick<
+        AssetSwapRepository,
+        "getAllRfqSwaps" | "getRfqSwapsPage" | "getRfqSwapsUpdatedPage"
+    >;
     /**
      * Consulted only for what a record cannot answer: a record written before
      * `fundingTxid` existed, and the counterparty's spend on a swap that
-     * ended without a refund of ours.
-     *
-     * Optional because the stored fields are the primary source — cheaper, and
-     * they work offline, which is the resolver's whole posture. An indexer that
-     * throws costs that record its extra txids and nothing else.
+     * ended without a refund of ours. Optional because stored fields are the primary, offline
+     * source; an indexer that throws costs that record its extra txids and nothing else.
      */
     indexer?: LockupSpendIndexer;
 }
@@ -132,14 +110,9 @@ export interface RfqSwapActivityDeps {
  * Every stored RFQ swap, flattened into what {@link swapActivityResolver}
  * groups on.
  *
- * The txids come from four places, in order of preference: the record's own
- * `fundingTxid` and `refundTxid`, the corridor's `activityTxids` (the
- * receive leg's Arkade claim, the onchain leg's L1 one), and — only when the
- * first two cannot answer — one read of the lockup's VTXOs.
- *
- * A missing txid costs an activity a row, never a wrong one: a swap that
- * contributes fewer txids simply leaves those transactions ungrouped, which is
- * what they already are.
+ * Txids come from the record's `fundingTxid`/`refundTxid`, the corridor's `activityTxids`, the
+ * manager's `lockupSpendTxids`, and only then one lockup VTXO read. A missing txid leaves that
+ * transaction ungrouped, never misgrouped.
  */
 export async function rfqSwapActivityInputs(
     deps: RfqSwapActivityDeps,
@@ -148,29 +121,109 @@ export async function rfqSwapActivityInputs(
     return Promise.all(records.map((record) => activityInputOf(record, deps.indexer)));
 }
 
+/** @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
+export interface RfqSwapActivityPage {
+    inputs: SwapActivityInput[];
+    nextCursor?: string;
+}
+
+/** @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
+export async function rfqSwapActivityInputsPage(
+    deps: RfqSwapActivityDeps,
+    state: RfqSwapState,
+    afterId: string | undefined,
+    limit: number,
+): Promise<RfqSwapActivityPage> {
+    assertRfqSwapPageLimit(limit);
+    const page = deps.repository.getRfqSwapsPage;
+    if (!page) throw new Error("repository does not support paged RFQ activity reads");
+    const records = await page.call(deps.repository, state, afterId, limit);
+    if (records.length > limit) throw new Error("getRfqSwapsPage exceeded its requested limit");
+    let cursor = afterId ?? "";
+    for (const record of records) {
+        if (record.state !== state || record.rfqId <= cursor) {
+            throw new Error("getRfqSwapsPage returned an unordered or mismatched page");
+        }
+        cursor = record.rfqId;
+    }
+    const inputs = await projectActivityInputs(records, deps.indexer);
+    return {
+        inputs,
+        ...(records.length === limit && records.length > 0 ? { nextCursor: cursor } : {}),
+    };
+}
+
+/** @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
+export interface RfqSwapDatedActivityPage {
+    inputs: SwapActivityInput[];
+    nextCursor?: RfqHistoryCursor;
+}
+
+/** @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
+export async function rfqSwapActivityInputsSincePage(
+    deps: RfqSwapActivityDeps,
+    state: RfqSwapState,
+    since: number,
+    after: RfqHistoryCursor | undefined,
+    limit: number,
+): Promise<RfqSwapDatedActivityPage> {
+    assertRfqSwapPageLimit(limit);
+    assertRfqSwapSince(since);
+    const page = deps.repository.getRfqSwapsUpdatedPage;
+    if (!page) throw new Error("repository does not support date-filtered RFQ history pages");
+    const records = await page.call(deps.repository, state, since, after, limit);
+    if (records.length > limit)
+        throw new Error("getRfqSwapsUpdatedPage exceeded its requested limit");
+    let cursor = after;
+    for (const record of records) {
+        if (
+            record.state !== state ||
+            record.updatedAt < since ||
+            (cursor &&
+                (record.updatedAt < cursor.updatedAt ||
+                    (record.updatedAt === cursor.updatedAt && record.rfqId <= cursor.rfqId)))
+        ) {
+            throw new Error("getRfqSwapsUpdatedPage returned an unordered or mismatched page");
+        }
+        cursor = { updatedAt: record.updatedAt, rfqId: record.rfqId };
+    }
+    return {
+        inputs: await projectActivityInputs(records, deps.indexer),
+        ...(records.length === limit && cursor ? { nextCursor: cursor } : {}),
+    };
+}
+
+async function projectActivityInputs(
+    records: RfqSwapRecord[],
+    indexer?: LockupSpendIndexer,
+): Promise<SwapActivityInput[]> {
+    const inputs: SwapActivityInput[] = [];
+    for (let i = 0; i < records.length; i += 16) {
+        inputs.push(
+            ...(await Promise.all(
+                records.slice(i, i + 16).map((record) => activityInputOf(record, indexer)),
+            )),
+        );
+    }
+    return inputs;
+}
+
 async function activityInputOf(
     stored: RfqSwapRecord,
     indexer?: LockupSpendIndexer,
 ): Promise<SwapActivityInput> {
-    // Reads straight off the repository, so a record written before the txid
-    // fields were renamed reaches this untouched by the manager.
+    // Read straight off the repository, so pre-rename txid fields are normalized here.
     const record = normalizeRfqSwapRecord(stored);
     const txids = new Set<string>();
     if (record.fundingTxid) txids.add(record.fundingTxid);
     if (record.refundTxid) txids.add(record.refundTxid);
     const handler = rfqCorridorHandlers.getOrThrow(record.kind);
     for (const txid of handler.activityTxids?.(record.profile) ?? []) txids.add(txid);
-    // The manager stamps these from the chain read that ended the swap, which
-    // is why this field exists at all: without it the counterparty's spend
-    // costs a lockup read per terminal swap, on the path least able to afford
-    // one. Drained before the fallback below, so a record that already knows
-    // never reaches the network.
+    // Stamped by the manager so a terminal swap needn't cost a lockup read here.
     for (const txid of record.lockupSpendTxids ?? []) txids.add(txid);
 
-    // The counterparty's spend is what ended a swap the trader did not refund
-    // itself — a solver claim on a send leg, a solver reclaim on a receive one.
-    // Unknown only when neither the trader's own refund nor the manager's stamp
-    // names it.
+    // The counterparty's spend (solver claim on send, solver reclaim on receive), unknown only
+    // when neither our refund nor the manager's stamp names it.
     const spendUnknown =
         isRfqSwapTerminal(record.state) && !record.refundTxid && !record.lockupSpendTxids?.length;
     if (indexer && (!record.fundingTxid || spendUnknown)) {
@@ -183,8 +236,7 @@ async function activityInputOf(
 }
 
 /** One read of everything at the lockup: the transactions that funded it, and
- * the ark transactions that spent it. Ask-the-indexer, don't-trust-local-state
- * — the same posture `readLockupFate` establishes, and the same seam. */
+ * the ark transactions that spent it. */
 async function lockupTxids(
     indexer: LockupSpendIndexer,
     record: RfqSwapRecord,
@@ -200,16 +252,13 @@ async function lockupTxids(
         const { vtxos } = await indexer.getVtxos({ scripts: [script] });
         const out: string[] = [];
         for (const vtxo of vtxos ?? []) {
-            // The transaction that CREATED the output is the funding.
             if (wantFunding) out.push(vtxo.txid);
-            // `spentBy` names the checkpoint; `arkTxId` names the ark
-            // transaction, which is the one history carries.
+            // `spentBy` names the checkpoint; history carries the ark tx.
             if (vtxo.arkTxId) out.push(vtxo.arkTxId);
         }
         return out;
     } catch {
-        // Offline-first: fewer txids, never a throw that sinks every other
-        // record's activity along with this one's.
+        // Offline-first: one record's failure must not sink every other record's activity.
         return [];
     }
 }

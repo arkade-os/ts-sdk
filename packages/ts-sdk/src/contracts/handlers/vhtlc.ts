@@ -9,12 +9,16 @@ import {
     PathSelection,
     TapscriptDeriving,
 } from "../types";
-import { assertVhtlcSpendableNow, isCltvSatisfied, isCsvSpendable, resolveRole } from "./helpers";
+import {
+    assertVhtlcSpendableNow,
+    deriveVhtlcTapscripts,
+    selectVhtlcPath,
+    vhtlcAllSpendingPaths,
+    vhtlcSpendablePaths,
+} from "./helpers";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
 
-/**
- * Typed parameters for VHTLC contracts.
- */
+/** Typed parameters for VHTLC contracts. */
 export interface VHTLCContractParams {
     sender: Uint8Array;
     receiver: Uint8Array;
@@ -81,119 +85,24 @@ export const VHTLCContractHandler: ContractHandler<VHTLCContractParams, VHTLC.Sc
     },
 
     /**
-     * Select spending path based on context.
-     *
-     * Role is determined from `context.role` or by matching
-     * `context.walletDescriptor`
-     * against sender/receiver in contract params.
+     * Select spending path based on context. Role comes from `context.role` or from matching
+     * `context.walletDescriptor` against sender/receiver.
      */
     selectPath(
         script: VHTLC.Script,
         contract: Contract,
         context: PathContext,
     ): PathSelection | null {
-        const role = resolveRole(contract, context);
-        const preimage = contract.params?.preimage;
-        const refundLocktime = BigInt(contract.params.refundLocktime);
-
-        if (!role) {
-            return null;
-        }
-
-        if (context.collaborative) {
-            if (role === "receiver" && preimage) {
-                return {
-                    leaf: script.claim(),
-                    extraWitness: [hex.decode(preimage)],
-                };
-            }
-
-            if (role === "sender" && isCltvSatisfied(context, refundLocktime)) {
-                return {
-                    leaf: script.refundWithoutReceiver(),
-                };
-            }
-
-            return null;
-        }
-
-        // Unilateral paths
-        if (role === "receiver" && preimage) {
-            const sequence = Number(contract.params.claimDelay);
-            if (!isCsvSpendable(context, sequence)) return null;
-            return {
-                leaf: script.unilateralClaim(),
-                extraWitness: [hex.decode(preimage)],
-                sequence,
-            };
-        }
-
-        if (role === "sender") {
-            const sequence = Number(contract.params.refundNoReceiverDelay);
-            if (!isCsvSpendable(context, sequence)) return null;
-            return {
-                leaf: script.unilateralRefundWithoutReceiver(),
-                sequence,
-            };
-        }
-
-        return null;
+        return selectVhtlcPath(script, contract, context);
     },
 
-    /**
-     * Get all possible spending paths (no timelock checks).
-     *
-     * Role is determined from `context.role` or by matching
-     * `context.walletDescriptor`
-     * against sender/receiver in contract params.
-     */
+    /** All possible spending paths (no timelock checks); role as in {@link selectPath}. */
     getAllSpendingPaths(
         script: VHTLC.Script,
         contract: Contract,
         context: PathContext,
     ): PathSelection[] {
-        const role = resolveRole(contract, context);
-        const paths: PathSelection[] = [];
-
-        if (!role) {
-            return paths;
-        }
-
-        const preimage = contract.params?.preimage;
-
-        if (context.collaborative) {
-            // Collaborative paths (no timelock checks)
-            if (role === "receiver" && preimage) {
-                paths.push({
-                    leaf: script.claim(),
-                    extraWitness: [hex.decode(preimage)],
-                });
-            }
-            if (role === "sender") {
-                paths.push({
-                    leaf: script.refundWithoutReceiver(),
-                });
-            }
-        } else {
-            // Unilateral paths (no timelock checks)
-            if (role === "receiver" && preimage) {
-                const sequence = Number(contract.params.claimDelay);
-                paths.push({
-                    leaf: script.unilateralClaim(),
-                    extraWitness: [hex.decode(preimage)],
-                    sequence,
-                });
-            }
-            if (role === "sender") {
-                const sequence = Number(contract.params.refundNoReceiverDelay);
-                paths.push({
-                    leaf: script.unilateralRefundWithoutReceiver(),
-                    sequence,
-                });
-            }
-        }
-
-        return paths;
+        return vhtlcAllSpendingPaths(script, contract, context);
     },
 
     getSpendablePaths(
@@ -201,52 +110,7 @@ export const VHTLCContractHandler: ContractHandler<VHTLCContractParams, VHTLC.Sc
         contract: Contract,
         context: PathContext,
     ): PathSelection[] {
-        const role = resolveRole(contract, context);
-        const paths: PathSelection[] = [];
-
-        if (!role) {
-            return paths;
-        }
-
-        const preimage = contract.params?.preimage;
-        const refundLocktime = BigInt(contract.params.refundLocktime);
-
-        if (context.collaborative) {
-            if (role === "receiver" && preimage) {
-                paths.push({
-                    leaf: script.claim(),
-                    extraWitness: [hex.decode(preimage)],
-                });
-            }
-            if (role === "sender" && isCltvSatisfied(context, refundLocktime)) {
-                paths.push({
-                    leaf: script.refundWithoutReceiver(),
-                });
-            }
-            return paths;
-        }
-
-        if (role === "receiver" && preimage) {
-            const sequence = Number(contract.params.claimDelay);
-            if (isCsvSpendable(context, sequence)) {
-                paths.push({
-                    leaf: script.unilateralClaim(),
-                    extraWitness: [hex.decode(preimage)],
-                    sequence,
-                });
-            }
-        }
-        if (role === "sender") {
-            const sequence = Number(contract.params.refundNoReceiverDelay);
-            if (isCsvSpendable(context, sequence)) {
-                paths.push({
-                    leaf: script.unilateralRefundWithoutReceiver(),
-                    sequence,
-                });
-            }
-        }
-
-        return paths;
+        return vhtlcSpendablePaths(script, contract, context);
     },
 
     /**
@@ -259,70 +123,38 @@ export const VHTLCContractHandler: ContractHandler<VHTLCContractParams, VHTLC.Sc
     },
 
     /**
-     * Never. A live VHTLC is escrow: the counterparty's claim leaf is armed,
-     * and generic selection — send, settle, renewal, offboard — would move the
-     * lockup out from under a swap the counterparty is still entitled to
-     * complete, or race a claim already in flight.
+     * Never. A live VHTLC is escrow: generic selection (send, settle, renewal, offboard) would
+     * move the lockup out from under a swap the counterparty may still complete, or race a claim.
      *
-     * Two narrow reasons, and neither is "spending this would destroy the
-     * VTXO". It would not: the leaf {@link deriveTapscripts} stamps is
-     * `refundWithoutReceiver` — `CLTV[sender, server]`, the sender's OWN
-     * refund, which the server rejects until `refundLocktime` matures. The
-     * reasons are that an escrowed lockup must not count toward the
-     * `available` balance bucket, and that generic RENEWAL must not silently
-     * execute a refund the caller never asked for — `runPeriodicSettle` selects
-     * through `getSpendableVtxos`, which this gate filters, and it runs
-     * unprompted whenever a wallet is built without an explicit
-     * `settlementConfig`.
+     * The stamped leaf is the sender's own CLTV refund, so this is not about destroying the
+     * VTXO: an escrowed lockup must not count toward the `available` balance, and generic
+     * renewal (`runPeriodicSettle`, unprompted without an explicit `settlementConfig`) must not
+     * silently execute a refund nobody asked for.
      *
-     * **Inseparable from {@link deriveTapscripts}.** Deriving the leaf without
-     * closing the gate hands generic renewal an escrow it had never been
-     * offered before; before that method existed the answer here was
-     * unobservable, so the two only ever made sense together.
-     *
-     * Recovery is filtered on {@link assertSpendableNow}, not on this: the gate
-     * is permanent, and applying it there would strand a matured lockup.
+     * **Inseparable from {@link deriveTapscripts}**: deriving the leaf without closing this gate
+     * hands renewal an escrow. Recovery filters on {@link assertSpendableNow} instead; this
+     * permanent gate would strand a matured lockup.
      */
     isGenericallySpendable: () => false,
 
     /**
      * The annotation leaf stamped onto every VTXO locked to this contract.
      *
-     * **Without this the contract is unusable, not merely unoptimized.**
-     * `deriveContractTapscripts` falls back to `script.forfeit()` for any
-     * handler that does not implement {@link TapscriptDeriving}, and no VHTLC
-     * script version has a `forfeit()` — `VtxoScript` does not define one and
-     * `VHTLC.BaseScript` does not add one. The fallback therefore threw
-     * `legacy.forfeit is not a function`, `annotatableIn` caught it, and
-     * `fetchContractVtxosBulk` dropped this contract's VTXOs before they were
-     * persisted. The row existed and was watched while its balance stayed
-     * permanently invisible, and `getSyncState()` reported `degraded` forever.
+     * **Required, not an optimization.** Without it `deriveContractTapscripts` falls back to
+     * `script.forfeit()`, which no VHTLC script has, so the contract's VTXOs are dropped before
+     * persisting: balance invisible, `getSyncState()` degraded forever.
      *
-     * `refundWithoutReceiver` is the leaf, for both roles the annotation
-     * serves, because it is the only collaborative path this wallet can
-     * actually satisfy as the sender — the same conclusion `selectPath`
-     * reaches, kept in step with it deliberately. The claim leaves belong to
-     * the receiver and need a preimage the sender does not have; `refund` and
-     * `unilateralRefund` both need the counterparty's signature, which this
-     * protocol has no message to ask for. V1 has no covenant leaves at all.
+     * `refundWithoutReceiver` is the only collaborative path this wallet can satisfy as sender
+     * (kept in step with `selectPath`): the claim leaves need the preimage, and `refund` /
+     * `unilateralRefund` need a counterparty signature the protocol can't request. V1 has no
+     * covenant leaves.
      *
-     * **It carries a CLTV, and callers must respect it.** A settlement built
-     * on this leaf is only valid once `refundLocktime` has matured, so a
-     * recovery round that sweeps this VTXO early is rejected by the server.
-     * Nothing in this handler can enforce that, because the annotation is
-     * derived per contract and knows no clock; `recoverVtxos` filters on
-     * {@link assertSpendableNow} for it.
-     *
-     * **Role-blind.** A receiver's row gets the same leaf, which names keys that
-     * wallet does not hold, so it is satisfiable only by the wallet holding the
-     * lockup's `sender` key and fails at intent registration for anyone else.
+     * **It carries a CLTV**: a settlement on it is rejected until `refundLocktime` matures, and
+     * the per-contract annotation knows no clock, so `recoverVtxos` filters on
+     * {@link assertSpendableNow}. **Role-blind**: a receiver's row gets the same leaf, satisfiable
+     * only by the `sender` key holder; anyone else fails at intent registration.
      */
     deriveTapscripts(script: VHTLC.Script): DerivedContractTapscripts {
-        const leaf = script.refundWithoutReceiver();
-        return {
-            forfeitTapLeafScript: leaf,
-            intentTapLeafScript: leaf,
-            tapTree: script.encode(),
-        };
+        return deriveVhtlcTapscripts(script);
     },
 };

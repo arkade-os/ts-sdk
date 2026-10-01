@@ -2,34 +2,19 @@
  * Asset identity for the v2 client: CAIP-19 with the rail as the CAIP-2
  * namespace — `<rail>:<network>/<asset-ns>:<reference>`.
  *
- * The rail is the namespace rather than the settlement chain because sameness
- * across rails is then a comparison on the asset part instead of a shared
- * string: `arkade:bitcoin/slip44:0` and `bitcoin:bitcoin/slip44:0` are one BTC
- * on two rails, and nothing has to agree on a single id for them. Arkade has no
- * CAIP-2 namespace and no bitcoin-chain identity to nest under, so
- * `bip122:…/arkade:…` would assert a relationship it does not have.
- *
- * These ids parse under CAIP-19 and resolve under no published namespace spec:
- * `arkade`, `bitcoin` and `bolt11` are registered in no CASA registry. That is
- * the price of naming rails instead of chains, and it costs nothing here — this
- * module is the grammar, and what an id *means* is the alias layer's job.
+ * Rail, not settlement chain, as namespace: cross-rail sameness becomes a comparison on the asset
+ * part (`arkade:bitcoin/slip44:0` vs `bitcoin:bitcoin/slip44:0`), and `bip122:…/arkade:…` would
+ * assert a relationship Arkade does not have. These ids parse under CAIP-19 but `arkade`,
+ * `bitcoin` and `bolt11` are in no CASA registry; meaning is the alias layer's job.
  */
 import { asset, networks, type NetworkName } from "@arkade-os/sdk";
 
 /**
- * A CAIP-2 namespace this client can spell. Closed rather than open to the
- * CAIP-2 character class, so a rail nobody implements is a parse failure here
- * rather than a lookup miss three layers down.
+ * A CAIP-2 namespace this client can spell. Closed, so an unimplemented rail fails at parse.
  *
- * `bolt11` is lightning: CAIP-2 caps a namespace at eight characters, which
- * `lightning` overruns, and floors it at three, which `ln` misses. It names the
- * instrument the rail carries today; BOLT12 is a separate corridor when it
- * ships.
- *
- * `eip155` is grammar and nothing else. §9's EVM corridor is deferred, and §9
- * exists to prove the seams hold, so its own examples have to parse; the
- * refusal belongs where a route is chosen, not where a string is read, and the
- * alias layer is where it happens.
+ * `bolt11` is lightning: CAIP-2 namespaces are 3-8 chars, which `lightning` and `ln` miss. BOLT12
+ * will be a separate corridor. `eip155` is grammar only: the EVM corridor is deferred, and refusal
+ * belongs where a route is chosen (the alias layer), not where a string is read.
  */
 export const RAILS = ["arkade", "bitcoin", "bolt11", "eip155"] as const;
 export type Rail = (typeof RAILS)[number];
@@ -39,16 +24,11 @@ export const BITCOIN_RAILS = ["arkade", "bitcoin", "bolt11"] as const;
 export type BitcoinRail = (typeof BITCOIN_RAILS)[number];
 
 /**
- * The network half of a bitcoin-family chain part: core's own
- * {@link NetworkName}, because the wallet is the only source of the network —
- * v2 accepts no server URL anywhere — and this is the vocabulary a wallet
- * resolves to.
+ * The network half of a bitcoin-family chain part: core's own {@link NetworkName}, since the
+ * wallet is the only source of the network.
  *
- * It is one wider than discovery's `NETWORKS`, which omits `testnet`. That
- * difference belongs to the alias layer and not to the grammar: an asset on
- * testnet exists whether or not anyone publishes a market index for it, so
- * amputating the identity to match the index would make a network the SDK fully
- * supports unnameable.
+ * Wider than discovery's `NETWORKS` (which omits `testnet`): an asset on testnet exists whether or
+ * not a market index covers it.
  */
 export type NetworkRef = NetworkName;
 
@@ -57,19 +37,12 @@ type BitcoinAssetId<R extends BitcoinRail> = `${R}:${NetworkRef}/${string}:${str
 /**
  * A public asset id.
  *
- * A template literal type and not `string`, which is what makes the other three
- * asset spellings in this package — core's 68-hex `asset.AssetId#toString()`,
- * discovery's `AssetInfo.id`, the RFQ leg's `arkade:BTC` — a compile error in a
- * slot that wants a public id, rather than a wrong pair string three layers
- * down. The rail parameter carries that further: `AssetId<"arkade">` accepts no
- * `bitcoin:` string, which is what makes an endpoint whose corridor and asset
- * disagree a compile error (see `route.ts`).
+ * A template literal type, so the package's other asset spellings (core's 68-hex id, discovery's
+ * `AssetInfo.id`, the RFQ leg's `arkade:BTC`) are compile errors here, and `AssetId<"arkade">`
+ * accepts no `bitcoin:` string (see `route.ts`).
  *
- * Deliberately not branded — `client.quote({ give: "arkade:bitcoin/slip44:0" })`
- * must stay writable, and the spec's own examples are written that way — so the
- * shape is what the type checks and {@link parseAssetId} is the gate for
- * everything else. A value out of a record or off the wire is a `string`: parse
- * it, never cast it.
+ * Deliberately not branded, so `client.quote({ give: "arkade:bitcoin/slip44:0" })` stays writable.
+ * A value from a record or the wire is a `string`: parse it with {@link parseAssetId}, never cast.
  */
 export type AssetId<R extends Rail = Rail> = R extends BitcoinRail
     ? BitcoinAssetId<R>
@@ -114,10 +87,8 @@ export type AssetIdRefusal =
 /**
  * A string that is not a public asset id.
  *
- * Not a member of the §7 `SwapError` taxonomy, and deliberately so: that
- * taxonomy is the client surface's, thrown by a verb before value moves, and
- * this is a codec refusing its input before a swap exists at all. Core's own
- * `AssetId.fromBytes` sets the same precedent.
+ * Not in the §7 `SwapError` taxonomy on purpose: that is thrown by verbs before value moves; this
+ * is a codec refusing input before a swap exists (as core's `AssetId.fromBytes` does).
  */
 export class AssetIdError extends Error {
     readonly reason: AssetIdRefusal;
@@ -131,22 +102,16 @@ export class AssetIdError extends Error {
 }
 
 /**
- * The asset namespaces this client spells, and the reference form each takes.
- *
- * Closed for the same reason the rail set is: the parser *is* the vocabulary,
- * and an id nothing downstream can map is a lookup miss dressed as an id. The
- * per-namespace form is what makes `arkade:bitcoin/asset:notahex` a parse
- * failure rather than an unserved RFQ pair.
+ * The asset namespaces this client spells, and the reference form each takes. Closed like the
+ * rail set, so `arkade:bitcoin/asset:notahex` is a parse failure, not an unserved RFQ pair.
  */
 const REFERENCE_RULE = {
     slip44: /^(0|[1-9][0-9]{0,9})$/,
     /** The 68-lowercase-hex identity form; `asset.AssetId` then re-validates it. */
     asset: /^[0-9a-f]{68}$/,
     /**
-     * Reserved for §9. Lowercase, never EIP-55: a checksum belongs on an
-     * address a human types, and an id here comes out of the alias table or a
-     * market card. Mixed case would be two spellings of one asset comparing
-     * unequal in a pair string, a record and a cache key.
+     * Reserved for §9. Lowercase, never EIP-55: mixed case would be two spellings of one asset
+     * comparing unequal in a pair string, a record and a cache key.
      */
     erc20: /^0x[0-9a-f]{40}$/,
 } as const satisfies Record<string, RegExp>;
@@ -169,16 +134,11 @@ export const isNetworkRef = (value: string): value is NetworkRef => Object.hasOw
 /**
  * Parse an id, or refuse it.
  *
- * Total over strings and throwing rather than returning a result, because every
- * caller in the client either has an id or has nothing to do: an unparsed id
- * has no route, no market and no leg.
+ * @throws {AssetIdError} with a stable {@link AssetIdRefusal} `reason`.
  */
 export const parseAssetId = (value: string): ParsedAssetId => {
-    // Every identity in this system is compared byte for byte and nothing folds
-    // at the comparison — the RFQ pair, the markets cache key, the store's
-    // asset fields. Refusing rather than lowercasing keeps a caller's checksum
-    // intact and stays the loosenable direction: accepting-and-folding can be
-    // added later without breaking anyone, the reverse cannot.
+    // Identities are compared byte for byte everywhere (RFQ pair, cache key, store). Refusing
+    // rather than folding keeps a checksum intact and stays loosenable later; the reverse is not.
     if (/[A-Z]/.test(value)) {
         throw new AssetIdError(
             "uppercase",
@@ -191,9 +151,8 @@ export const parseAssetId = (value: string): ParsedAssetId => {
         throw new AssetIdError("malformed", value, "expected <rail>:<network>/<asset-ns>:<ref>");
     }
     if (value.indexOf("/", slash + 1) >= 0) {
-        // CAIP-19 allows a trailing `/<token_id>` for non-fungibles. Nothing in
-        // v2 has one, and accepting a segment no layer reads would let two ids
-        // for one asset both parse.
+        // CAIP-19's `/<token_id>`: nothing reads it, and accepting it would let two ids for one
+        // asset both parse.
         throw new AssetIdError(
             "token_id_unsupported",
             value,
@@ -301,17 +260,9 @@ export const assetPartOf = (id: AssetId): AssetPart => {
 /**
  * Whether two ids name the same asset on (possibly) different rails.
  *
- * This is the whole reason the rail is the namespace: BTC's sameness is the
- * shared `slip44:0`, a comparison, where a single cross-rail id would have made
- * it a string both sides had to already agree on.
- *
- * The rail is the *only* half sameness drops. The CAIP-2 reference still has to
- * agree: `arkade:regtest/slip44:0` and `bitcoin:bitcoin/slip44:0` share a coin
- * type and nothing else — regtest BTC settles nothing on mainnet — and an ERC-20
- * contract address repeats verbatim across every chain that copied the token, so
- * the asset part alone would make USDT-on-mainnet the same asset as its address
- * twin on another chain. Comparing references across rail families is safe on a
- * plain string: a bitcoin network name is never a decimal chain id.
+ * Only the rail is dropped; the CAIP-2 reference must still agree. Otherwise regtest BTC would
+ * equal mainnet BTC, and an ERC-20 address copied across chains would equal its twin. Comparing
+ * references across rail families is safe: a bitcoin network name is never a decimal chain id.
  */
 export const sameAsset = (a: AssetId, b: AssetId): boolean => {
     const left = parseAssetId(a);
@@ -325,24 +276,16 @@ export const sameAsset = (a: AssetId, b: AssetId): boolean => {
 
 /** BTC on a bitcoin-family rail: the same coin, named once per rail. */
 export const btcOn = <R extends BitcoinRail>(rail: R, network: NetworkRef): AssetId<R> =>
-    // The checker will not resolve the conditional against an unbound `R`; the
-    // assertion is confined to this expression and never reaches a call site.
+    // TS won't resolve the conditional against an unbound `R`; the cast stays in this expression.
     `${rail}:${network}/${BTC_ASSET_PART}` as AssetId<R>;
 
 /**
  * An Arkade-issued asset.
  *
- * Takes `asset.AssetId` rather than a hex string for the reason `arkadeAssetLeg`
- * does (`rfq.ts:111`): `hex.decode` accepts uppercase where `hex.encode` emits
- * only lowercase, so the parameter type is what enforces the case rule, and a
- * value that reached us as `A1B2…` leaves here as `a1b2…`.
- *
- * The reference is that identity verbatim — 68 lowercase hex, `toString()`'s
- * own output. The spec's prose spells it `<genesis_txid>.<idx>`, which is what
- * those bytes mean, not a second encoding: the identity is implemented in seven
- * places across three repos and pinned by `asset.ASSET_ID_VECTORS` precisely
- * because every disagreement between sites fails silently, so this layer adds
- * no eighth spelling.
+ * Takes `asset.AssetId`, not hex: `hex.decode` accepts uppercase but `toString()` emits lowercase,
+ * so the type enforces the case rule. The reference is that 68-hex identity verbatim, pinned by
+ * `asset.ASSET_ID_VECTORS` across repos; adding a `<genesis_txid>.<idx>` spelling would be one
+ * more silently-disagreeing site.
  */
 export const arkadeAsset = (network: NetworkRef, id: asset.AssetId): AssetId<"arkade"> =>
     `arkade:${network}/${ARKADE_ASSET_NAMESPACE}:${id.toString()}`;

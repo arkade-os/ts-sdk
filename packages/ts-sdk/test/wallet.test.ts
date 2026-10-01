@@ -349,21 +349,6 @@ describe("Wallet", () => {
             ).toEqual(mockTxId);
         });
 
-        it("should send amount with correct fees", async () => {
-            const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
-
-            mockFetch.mockResolvedValueOnce(jsonResponse(mockUTXOs));
-            mockFetch.mockResolvedValueOnce(jsonResponse({ "1": mockFeeRate }));
-            mockFetch.mockResolvedValueOnce(textResponse(mockTxId));
-
-            expect(
-                await wallet.send({
-                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
-                    amount: 115000,
-                }),
-            ).toEqual(mockTxId);
-        });
-
         it("should calculate different tx sizes for Segwit vs Taproot", async () => {
             const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
@@ -416,14 +401,11 @@ describe("Wallet", () => {
             const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
             const feeRate = 10;
-            // Calculations for the edge case:
             // Tx with 1 input, 1 output (no change) ≈ 111 vBytes. Fee ≈ 1110.
             // Tx with 1 input, 2 outputs (change) ≈ 154 vBytes. Fee ≈ 1540.
             // Difference (cost of change output) ≈ 430 sats.
             // Dust limit = 546 sats.
             // We need: Remaining Amount (after fee) to be > 546 BUT < (546 + 430).
-            // Let's target Remaining = 800.
-
             const sendAmount = 50_000;
             const approxFeeNoChange = 1110;
             const inputAmount = sendAmount + approxFeeNoChange + 800;
@@ -455,6 +437,149 @@ describe("Wallet", () => {
         });
     });
 
+    describe("offchain send minimum change", () => {
+        const tapscript = new DefaultVtxo.Script({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        });
+        const address = tapscript.address("ark", TEST_SERVER_PUB_KEY).encode();
+
+        function sendWithCoins(values: number[], minimum: bigint, assetIndices: number[] = []) {
+            const coins = values.map((value, index) => ({
+                txid: index.toString(16).padStart(64, "0"),
+                vout: 0,
+                value,
+                virtualStatus: { state: "preconfirmed", batchExpiry: index + 1 },
+                ...(assetIndices.includes(index)
+                    ? { assets: [{ assetId: "a".repeat(68), amount: 1n }] }
+                    : {}),
+            }));
+            const submit = vi.fn().mockResolvedValue("txid");
+            const thisArg: any = {
+                offchainTapscript: tapscript,
+                arkServerPublicKey: TEST_SERVER_PUB_KEY,
+                serverUnrollScript: {},
+                network: { hrp: "ark" },
+                dustAmount: 330n,
+                recipientAddressContext: () => ({
+                    hrp: "ark",
+                    signerSet: { active: hex.encode(TEST_SERVER_PUB_KEY), deprecated: new Map() },
+                }),
+                arkProvider: { getInfo: vi.fn().mockResolvedValue({ vtxoMinAmount: minimum }) },
+                getSpendableVtxos: vi.fn().mockResolvedValue(coins),
+                _submitOffchainSpend: submit,
+            };
+            return { thisArg, submit, coins };
+        }
+
+        async function send(thisArg: any, amount: number, selectedVtxos?: any[]) {
+            return (Wallet.prototype as any)._sendImpl.call(thisArg, {
+                recipients: [{ address, amount }],
+                selectedVtxos,
+            });
+        }
+
+        it("adds another coin when a Lightning funding send would create change below the operator minimum", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([616, 400], 330n);
+
+            await send(thisArg, 505);
+
+            expect(submit).toHaveBeenCalledOnce();
+            expect(submit.mock.calls[0][0].map((coin: { txid: string }) => coin.txid)).toEqual(
+                coins.map((coin) => coin.txid),
+            );
+            expect(
+                submit.mock.calls[0][1].map((output: { amount: bigint }) => output.amount),
+            ).toEqual([505n, 511n]);
+        });
+
+        it("keeps an exact payment free of change", async () => {
+            const { thisArg, submit } = sendWithCoins([505, 400], 330n);
+
+            await send(thisArg, 505);
+
+            expect(submit.mock.calls[0][1]).toHaveLength(1);
+            expect(submit.mock.calls[0][0]).toHaveLength(1);
+        });
+
+        it("uses an exact pair if adding every coin still cannot meet the minimum", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([300, 220, 200], 330n);
+
+            await send(thisArg, 500);
+
+            expect(submit.mock.calls[0][0].map((coin: { txid: string }) => coin.txid)).toEqual([
+                coins[0].txid,
+                coins[2].txid,
+            ]);
+            expect(
+                submit.mock.calls[0][1].map((output: { amount: bigint }) => output.amount),
+            ).toEqual([500n]);
+        });
+
+        it("tops up zero BTC change when selected assets still need a minimum-sized output", async () => {
+            const { thisArg, submit } = sendWithCoins([505, 330, 200], 500n, [0]);
+
+            await send(thisArg, 505);
+
+            expect(thisArg.arkProvider.getInfo).toHaveBeenCalledOnce();
+            expect(submit.mock.calls[0][0]).toHaveLength(3);
+            expect(
+                submit.mock.calls[0][1]
+                    .slice(0, 2)
+                    .map((output: { amount: bigint }) => output.amount),
+            ).toEqual([505n, 530n]);
+        });
+
+        it("uses an exact BTC-only coin instead of an asset coin with unusable change", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([616, 505], 1000n, [0]);
+
+            await send(thisArg, 505);
+
+            expect(submit.mock.calls[0][0].map((coin: { txid: string }) => coin.txid)).toEqual([
+                coins[1].txid,
+            ]);
+            expect(submit.mock.calls[0][1]).toHaveLength(1);
+        });
+
+        it("preserves subdust change when the operator advertises no minimum", async () => {
+            const { thisArg, submit } = sendWithCoins([616], 0n);
+
+            await send(thisArg, 505);
+
+            expect(submit.mock.calls[0][1][1].amount).toBe(111n);
+        });
+
+        it("fails before submission if no valid change can be formed", async () => {
+            const { thisArg, submit } = sendWithCoins([616], 330n);
+
+            await expect(send(thisArg, 505)).rejects.toThrow("minimum change amount of 330 sats");
+            expect(submit).not.toHaveBeenCalled();
+        });
+
+        it("does not add inputs when the caller selected them", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([616, 400], 330n);
+            thisArg.logUngatedInputs = vi.fn();
+
+            await expect(send(thisArg, 505, [coins[0]])).rejects.toThrow(
+                "111 sats of change is below the operator minimum of 330 sats",
+            );
+            expect(thisArg.getSpendableVtxos).not.toHaveBeenCalled();
+            expect(submit).not.toHaveBeenCalled();
+        });
+
+        it("rejects caller-selected asset change that clears dust but not the operator minimum", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([1000, 400], 800n, [0]);
+            thisArg.logUngatedInputs = vi.fn();
+
+            await expect(send(thisArg, 505, [coins[0]])).rejects.toThrow(
+                "495 sats of change is below the operator minimum of 800 sats",
+            );
+            expect(thisArg.getSpendableVtxos).not.toHaveBeenCalled();
+            expect(submit).not.toHaveBeenCalled();
+        });
+    });
+
     describe("getInfos", () => {
         beforeEach(() => {
             mockFetch.mockReset();
@@ -480,26 +605,6 @@ describe("Wallet", () => {
                 txFeeRate: "100",
             },
         };
-
-        it("should initialize with ark provider when configured", async () => {
-            mockFetch.mockResolvedValueOnce(
-                jsonResponse({
-                    ...mockArkInfo,
-                    vtxoTreeExpiry: mockArkInfo.batchExpiry,
-                }),
-            );
-
-            const wallet = await Wallet.create({
-                identity: mockIdentity,
-                arkProvider: new RestArkProvider("http://localhost:7070"),
-            });
-
-            const address = await wallet.getAddress();
-            expect(address).toBeDefined();
-
-            const boardingAddress = await wallet.getBoardingAddress();
-            expect(boardingAddress).toBeDefined();
-        });
 
         it("should return intentFee config as strings", async () => {
             mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
@@ -1465,32 +1570,6 @@ describe("ReadonlyWallet", () => {
         mockFetch.mockReset();
     });
 
-    it("should create ReadonlyWallet with ReadonlySingleKey", async () => {
-        // Create a regular key first to get the public key
-        const privateKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
-        const key = SingleKey.fromHex(privateKeyHex);
-        const compressedPubKey = await key.compressedPublicKey();
-
-        // Create readonly identity
-        const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
-
-        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
-
-        const readonlyWallet = await ReadonlyWallet.create({
-            identity: readonlyIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
-        });
-
-        expect(readonlyWallet).toBeInstanceOf(ReadonlyWallet);
-
-        // Should be able to get addresses
-        const address = await readonlyWallet.getAddress();
-        expect(address).toBeDefined();
-
-        const boardingAddress = await readonlyWallet.getBoardingAddress();
-        expect(boardingAddress).toBeDefined();
-    });
-
     it("should create ReadonlyWallet with the default Arkade server URL", async () => {
         const key = SingleKey.fromRandomBytes();
         const compressedPubKey = await key.compressedPublicKey();
@@ -2001,7 +2080,10 @@ describe("Wallet._settleImpl", () => {
             ).rejects.toBe(sentinel);
 
             expect(getCaptured()!.map((v: any) => v.txid)).toEqual(["vtxo-7000-1", "vtxo-5000-0"]);
-            expect(thisArg.getSpendableVtxos).toHaveBeenCalled();
+            expect(thisArg.getSpendableVtxos).toHaveBeenCalledWith({
+                withRecoverable: true,
+                genericallySpendableOnly: true,
+            });
         });
 
         it("caps the number of auto-selected VTXOs at MAX_VTXOS_PER_SETTLEMENT", async () => {

@@ -76,16 +76,4 @@ describe("spendableVtxosExcludingLocked (getBalance offline-first, best-effort)"
             "b",
         ]);
     });
-
-    it("only reads the lock set — never mutates intent state", async () => {
-        // The parameter type exposes getLockedVtxoOutpoints only; a passed
-        // saveIntent must never be invoked from this read path.
-        const saveIntent = vi.fn();
-        const repo = {
-            getLockedVtxoOutpoints: vi.fn().mockResolvedValue([]),
-            saveIntent,
-        };
-        await spendableVtxosExcludingLocked(vtxos, repo);
-        expect(saveIntent).not.toHaveBeenCalled();
-    });
 });

@@ -97,6 +97,7 @@ import {
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    NormalizedExtendedVirtualCoin,
     WalletBalance,
     SendBitcoinParams,
     SettleParams,
@@ -105,6 +106,7 @@ import {
     VirtualCoin,
     TxKey,
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     TapLeaves,
     StorageConfig,
     isSubdust,
@@ -112,7 +114,7 @@ import {
     canRecoverOnchain,
     canSpendOffchain,
     canSweepOnchain,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     isVirtualCoin,
     TimeHeight,
@@ -176,7 +178,7 @@ import {
 import { createAssetPacket, selectCoinsWithAsset } from "./wallet/asset";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSession";
-import { DustChangeError, Ramps } from "./wallet/ramps";
+import { DustChangeError, OversizedChangeError, Ramps } from "./wallet/ramps";
 import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import type {
@@ -610,6 +612,7 @@ export {
     OnchainWallet,
     Ramps,
     DustChangeError,
+    OversizedChangeError,
     VtxoManager,
     classifyContractSigner,
     classifyAgainstSignerSet,
@@ -813,7 +816,7 @@ export {
     canRecoverOnchain,
     canSpendOffchain,
     canSweepOnchain,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     isVirtualCoin,
     // Contracts
@@ -874,6 +877,7 @@ export type {
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    NormalizedExtendedVirtualCoin,
     WalletBalance,
     SendBitcoinParams,
     SettleParams,
@@ -963,6 +967,7 @@ export type {
     TreePartialSigs,
     // Wallet types
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     BoardingUtxoGroup,
     ArkadeCashClaimResult,
     ArkadeCashUnclaimedReason,

@@ -1,26 +1,11 @@
 /**
- * The RFQ backend: one addressed request per route, verified before it is
- * returned and persisted by nobody.
+ * The RFQ backend: one addressed request per route, verified before it is returned and persisted by
+ * nobody. Three routes cross a corridor and lock a VHTLC; the fourth (arkade->arkade) derives an
+ * offer covenant instead. No contract registration, record or funding here — `accept()` does that,
+ * reusing the covenant derived here via {@link RfqPreparation}.
  *
- * Four routes share one shape — provision what the covenant binds, build the
- * request, send it to the one solver the card names, verify the reply, derive
- * the covenant locally — and differ only in which fields the profile carries
- * and which covenant comes out. Three cross a corridor and lock a VHTLC; the
- * fourth has both endpoints on arkade and derives an offer covenant instead.
- * That is a settlement difference, not a second market structure: the request,
- * the responder check, the pair check and the expiry rule are the same on all
- * four.
- *
- * What is deliberately NOT here is everything v1's `request*` entrypoints do
- * after that: no contract registration, no record, no funding. `quote()` returns
- * terms; `accept()` (M4) is what makes any of it durable, and the covenant this
- * derived is handed forward on {@link RfqPreparation} so it is derived once
- * rather than twice.
- *
- * The responder check runs BEFORE the request rather than after the reply. An
- * attestation is a property of the wire, not of the answer, so it is knowable
- * up front — and the thing the check exists to prevent is disclosing an invoice
- * and an amount to a transport that cannot say who is listening.
+ * The responder check runs BEFORE the request: what it prevents is disclosing an invoice and an
+ * amount to a transport that cannot say who is listening.
  */
 import { hex } from "@scure/base";
 import {
@@ -110,14 +95,9 @@ interface CommonPreparation extends NegotiatedPreparation {
 }
 
 /**
- * What `accept()` inherits from a quote.
- *
- * Held in memory by the client, keyed by quote id, and written nowhere: M3's
- * boundary is that `quote()` persists nothing. It exists so the covenant a
- * quote was verified against is the covenant that gets funded — re-deriving it
- * at accept from the stored quote would be a second derivation of the same tree,
- * and two derivations that can disagree is the failure this package guards
- * against everywhere else.
+ * What `accept()` inherits from a quote, held in memory by quote id and written nowhere. It makes
+ * the covenant the quote was verified against the one that gets funded; re-deriving at accept
+ * would be a second derivation that could disagree.
  */
 export type RfqPreparation = CorridorRfqPreparation | AssetRfqPreparation;
 
@@ -163,12 +143,12 @@ export type CorridorRfqPreparation =
           readonly secrets: ProvisionedClaimSecret;
           readonly refundAddress: string;
           readonly fundAmount: bigint;
+          /** What the solver's HTLC must carry — the claim refuses less. */
+          readonly expectedAmount: bigint;
           /** The L1 claim key, provisioned by the wallet like every other key. */
           readonly payoutKey: ProvisionedKey;
-          /** Where the claim PAYS — the take endpoint's own address, encoded.
-           * Distinct from {@link payoutKey}, which only AUTHORISES the claim:
-           * the claim's output is the spender's choice and the resolved
-           * destination is the only thing that names it. */
+          /** Where the claim PAYS — the take endpoint's address, encoded. Distinct from
+           * {@link payoutKey}, which only AUTHORISES the claim. */
           readonly payoutPkScript: Uint8Array;
           readonly htlc: OnchainHtlc;
           readonly htlcParams: OnchainHtlcParams;
@@ -192,12 +172,8 @@ export interface RfqQuoteInput {
     /** Live, per section 6: a snapshot binds a covenant to a key that may have rotated. */
     readonly info: ArkadeInfo;
     /**
-     * The corridor modules, unresolved.
-     *
-     * The set rather than two dep records, because resolution is what refuses a
-     * dep overridden to nothing — and a route that never touches lightning must
-     * not resolve its decoder to find that out. Each arm below asks for exactly
-     * the corridors it uses.
+     * The corridor modules, unresolved: resolution refuses a dep overridden to nothing, so each
+     * route resolves only the corridors it uses.
      */
     readonly corridors: CorridorSet;
     readonly transport: AttestingRfqTransport;
@@ -222,13 +198,22 @@ interface CovenantInputs {
     readonly hrp: string;
 }
 
+const lockupOf = (derived: {
+    readonly address: string;
+    readonly script: CommonPreparation["lockup"]["script"];
+    readonly swapPkScript: Uint8Array;
+}): CommonPreparation["lockup"] => ({
+    address: derived.address,
+    script: derived.script,
+    pkScript: derived.swapPkScript,
+});
+
 const covenantInputs = (input: RfqQuoteInput): CovenantInputs => {
     const network = networkFromArkadeInfo(input.info);
     const arkade = input.corridors.get("arkade").deps;
     return {
         operatorPubkey: toXOnly(hex.decode(input.info.signerPubkey), "ark signer key"),
-        // The per-network pin the arkade module already resolved, never a key
-        // the operator reports about itself: this one ends up in a covenant leaf
+        // The resolved per-network pin, never operator-reported: it lands in a covenant leaf
         // that decides who can move the funds.
         emulatorPubkey: toXOnly(hex.decode(arkade.emulatorPubkey), "emulator signer key"),
         claimDelay: unilateralClaimDelay(Number(input.info.unilateralExitDelay)),
@@ -237,13 +222,11 @@ const covenantInputs = (input: RfqQuoteInput): CovenantInputs => {
 };
 
 /**
- * Who the claim packet is sealed to, or `undefined` where no covclaimd is
- * deployed — in which case no packet is sent and claiming the lockup before the
- * quote's `refund_locktime` is the trader's own job.
+ * Who the claim packet is sealed to, or `undefined` where no covclaimd is deployed (then no
+ * packet is sent and claiming before `refund_locktime` is the trader's job).
  *
- * Never seal to a minted throwaway key: an undecryptable packet is
- * indistinguishable on the wire from a working one, so covclaimd would decline
- * it with a Debug line and claim nothing. An absent field fails loudly instead.
+ * Never seal to a throwaway key: an undecryptable packet looks like a working one on the wire,
+ * and covclaimd would silently claim nothing.
  */
 const sealingKey = (deps: LightningCorridorDeps): Uint8Array | undefined => {
     const configured = deps.covclaimd?.pubkey;
@@ -257,8 +240,7 @@ const sealingKey = (deps: LightningCorridorDeps): Uint8Array | undefined => {
     return key;
 };
 
-/** The amount a corridor request names, refusing the route that needs one and
- * was given none. */
+/** The pinned amount, or a refusal for a route that needs one. */
 const pinnedFor = (input: RfqQuoteInput): PinnedAmount => {
     if (input.amount === undefined) {
         throw new Error(`a ${input.route} quote needs an amount and the side it pins`);
@@ -269,10 +251,8 @@ const pinnedFor = (input: RfqQuoteInput): PinnedAmount => {
 export const quoteViaRfq = async (
     input: RfqQuoteInput,
 ): Promise<{ quote: Quote; preparation: RfqPreparation }> => {
-    // Before anything is disclosed: the transport must be able to say who
-    // answers on it, and the key it is checked against must come from a card a
-    // registry served rather than from the local cache, which authenticates
-    // nothing it stores.
+    // Before anything is disclosed. The expected key must come from a registry-served card, not
+    // the local cache, which authenticates nothing it stores.
     verifyResponder({
         attested: input.transport.attestedResponder,
         expected: input.market.discoveryPubkey,
@@ -444,18 +424,14 @@ const quoteLightningSend = async (
 ): Promise<{ quote: Quote; preparation: RfqPreparation }> => {
     const invoice = input.endpoints.take.instrument;
     if (invoice?.kind !== "invoice" || invoice.amount === undefined) {
-        // The corridor's parse refuses an amountless invoice on a send — the
-        // invoice IS the amount pin there — so an instrument without one has
-        // not been through it.
+        // The corridor's parse refuses amountless send invoices, so this one bypassed it.
         throw new Error("a lightning send is quoted against the amountful invoice it pays");
     }
     const pair = rfqPairFor(input.legs.give, input.legs.take);
     const rfqId = newRfqId();
 
-    // This leg is one we fund, so all it needs is the key that refunds it. No
-    // preimage: a lightning send's P belongs to the payee. One address read
-    // inside `provisionRefundKey`, so the quote's refund address and the
-    // covenant's refund script cannot come from two different rotations.
+    // A leg we fund needs only the refund key (P belongs to the payee). One address read, so
+    // the refund address and refund script cannot come from two different rotations.
     const secrets = await provisionRefundKey(input.wallet);
 
     const wire = await input.transport.requestQuote(
@@ -468,8 +444,7 @@ const quoteLightningSend = async (
     );
     verifyPair(wire.pair, pair);
     const parsed = parseRfqQuote(wire);
-    // The BOLT11 profile is exact-out, so the invoice IS the pin: `to_amount`
-    // is the invoice verbatim and `from_amount` adds the corridor's fee.
+    // Exact-out: `to_amount` is the invoice verbatim and `from_amount` adds the fee.
     verifySendInvoice({ invoiced: invoice.amount, give: parsed.give, take: parsed.take });
 
     const covenant = covenantInputs(input);
@@ -518,11 +493,7 @@ const quoteLightningSend = async (
             card: input.candidate.card,
             rfqId,
             wire: parsed,
-            lockup: {
-                address: derived.address,
-                script: derived.script,
-                pkScript: derived.swapPkScript,
-            },
+            lockup: lockupOf(derived),
             contractParams: derived.contractParams,
             secrets,
             refundAddress: secrets.address,
@@ -556,9 +527,7 @@ const quoteLightningReceive = async (
                 payoutAddress,
                 payoutPubkey: secrets.pubkey,
                 claimPacket: claimPacket?.packet,
-                // Placeholder: the v1 builders type this field `number`, and the
-                // wire adapter re-encodes it as the canonical decimal string.
-                // Encoding it here as well would put the decision in two places.
+                // Placeholder: `withCanonicalAmount` writes the canonical decimal string.
                 amount: 0,
                 amountSide: toRfqAmountSide(pinned.on),
             }),
@@ -576,14 +545,10 @@ const quoteLightningReceive = async (
             paymentHash,
             payoutPubkey: secrets.pubkey,
             payoutAddress,
-            operatorPubkey: covenant.operatorPubkey,
-            emulatorPubkey: covenant.emulatorPubkey,
-            claimDelay: covenant.claimDelay,
-            hrp: covenant.hrp,
+            ...covenant,
         }),
     );
-    // The one field the trader hands to a third party, and the only attack on
-    // this corridor with no on-chain trace.
+    // The invoice is handed to a third party: the only attack here with no on-chain trace.
     const { payDeadline } = verifyReceiveInvoiceFacts({
         invoice: derived.invoice,
         decode: lightning.decode,
@@ -599,17 +564,13 @@ const quoteLightningReceive = async (
     });
     verifyQuoteTtl({
         quoteId: input.quoteId,
-        // The hold invoice's window is minutes where the quote's is an hour, so
-        // the deadline that binds this leg is the earlier of the two — which is
-        // what `payDeadline` already is.
+        // The hold invoice's window (minutes) binds, not the quote's (an hour).
         expiresAt: payDeadline,
         now: input.now,
         floorSeconds: input.policy?.quoteTtlFloorSeconds,
     });
 
-    // The give leg's instrument IS the artifact: the supply law says the quote
-    // provides the non-wallet give instrument, and on this route that is the
-    // solver's hold invoice.
+    // The give leg's instrument IS the artifact: the solver's hold invoice.
     const artifact = { kind: "invoice", bolt11: derived.invoice } as const;
     return {
         quote: {
@@ -643,11 +604,7 @@ const quoteLightningReceive = async (
             card: input.candidate.card,
             rfqId,
             wire: parsed,
-            lockup: {
-                address: derived.address,
-                script: derived.script,
-                pkScript: derived.swapPkScript,
-            },
+            lockup: lockupOf(derived),
             contractParams: derived.contractParams,
             secrets,
             payoutAddress,
@@ -666,27 +623,16 @@ const quoteOnchainSend = async (
         throw new Error("an onchain send is quoted against the L1 address it pays");
     }
     const l1Network = l1NetworkFromArk(input.info.network);
-    // Before the request, per `l1ScriptForAddress`: a destination the claim
-    // cannot pay to must be refused while nothing has been negotiated, not at
-    // claim time with a funded lockup already on the table.
+    // Refuse an unpayable destination before negotiating, not at claim time with funds locked.
     const payoutPkScript = l1ScriptForAddress(destination.address, l1Network);
     const pair = rfqPairFor(input.legs.give, input.legs.take);
     const rfqId = newRfqId();
 
-    // **The claim fee is this leg's whole subtlety, and the take pin is
-    // recipient-EXACT.** `claimOnchainFill` pays the claim's miner fee out of
-    // the HTLC output (`payout = utxo.amount - fee`), so the solver locking
-    // `pinned.value` would deliver `pinned.value - fee` to the recipient —
-    // this quote would be reporting a fee it does not charge and short-paying
-    // by a number the caller never saw. What the recipient pinned is what the
-    // recipient must NET, so when the take side is pinned and the corridor can
-    // price the claim ({@link OnchainCorridorDeps.claimFeeRateSatVb}), the
-    // solver is asked for `pinned.value + claimFee` instead — the same
-    // arithmetic the `onchain-swap` payment rail runs (`inputFor`), against
-    // the same rate the default claim will spend. With no rate resolvable the
-    // exchange stays verbatim: no gross-up, no default claim, and no fee this
-    // side invents for the caller. The give-pinned case is untouched: it pins
-    // what WE fund, and the take leg is the solver's to size.
+    // **The take pin is recipient-EXACT.** The claim's miner fee comes out of the HTLC output
+    // (`payout = utxo.amount - fee`), so with a take pin and a resolvable
+    // {@link OnchainCorridorDeps.claimFeeRateSatVb} the solver is asked for
+    // `pinned.value + claimFee` (same arithmetic as the `onchain-swap` rail). No rate: verbatim,
+    // no invented fee. A give pin is untouched: the take leg is the solver's to size.
     const onchain = input.corridors.get("onchain").deps;
     const claimFee =
         pinned.on === "take" && onchain.claimFeeRateSatVb !== undefined
@@ -695,23 +641,15 @@ const quoteOnchainSend = async (
                   claimVsize: onchain.claimVsize,
               })
             : undefined;
-    // What the SOLVER is shown, and what the reply is verified against. The
-    // gross-up is OUR side of the deal, so it rides inside the pin both on
-    // the wire and in `verifyQuotedAmount` — a solver answering the grossed
-    // request verbatim passes, and one repricing either fails that check or,
-    // in the degenerate end, the dust floor below. The recipient's own number
-    // never reaches the wire: with it would come a solver who knows what to
-    // short us by.
+    // What the SOLVER is shown and the reply is verified against. The recipient's own number
+    // never reaches the wire: a solver who knew it would know what to short us by.
     const quoted: PinnedAmount =
         claimFee === undefined
             ? pinned
             : { on: pinned.on, value: pinned.value + claimFee, source: pinned.source };
 
-    // Two keys, both the wallet's: the claim secret carries P and the covenant's
-    // sender role, and the L1 HTLC's claim leaf binds a key the wallet can sign
-    // with later. Asking twice is what keeps them distinct on a wallet that
-    // allocates per artifact — and minting one here instead is exactly what the
-    // key-provisioning rule forbids.
+    // Two wallet keys: the claim secret (P, covenant sender role) and the L1 HTLC claim key.
+    // Asking twice keeps them distinct; minting one here is what key provisioning forbids.
     const secrets = await provisionClaimSecret(input.wallet);
     const payoutKey = await provisionRefundKey(input.wallet);
     const paymentHash = hex.encode(secrets.paymentHash);
@@ -727,27 +665,17 @@ const quoteOnchainSend = async (
                 amount: 0,
                 amountSide: toRfqAmountSide(pinned.on),
             }),
-            // The grossed pin, when one is active — see above. The solver's
-            // obligation is the HTLC amount; the recipient's own amount is
-            // that minus the claim's fee.
             quoted.value,
         ),
     );
     verifyPair(wire.pair, pair);
     const parsed = parseRfqQuote(wire);
-    // Verified against the pin the solver was SHOWN. On a take-pinned quote
-    // with a fee rate active that is the grossed value: the take leg must be
-    // `pinned + claimFee` exactly, and the negative-spread guard still
-    // compares the two wire legs against each other, unchanged.
+    // Against the pin the solver was SHOWN (grossed when a claim fee is active).
     verifyQuotedAmount({ pair, pinned: quoted, give: parsed.give, take: parsed.take });
 
     if (claimFee !== undefined) {
-        // What the recipient NETS: the HTLC the solver locks, minus the claim
-        // this wallet will broadcast to take it. With a cooperative solver
-        // this is exactly `pinned.value` — the check below is for the rest.
-        // `buildHtlcClaim` applies this same floor at claim time, with the
-        // lockup funded and the only way out a refund; applied here it is a
-        // refusal before anything moves (the rail's `quote()` does the same).
+        // What the recipient NETS. `buildHtlcClaim` applies this floor only at claim time, when
+        // the only way out is a refund; here it refuses before anything moves.
         const payout = parsed.take - claimFee;
         if (payout < ONCHAIN_DUST_SATS) {
             throw new Error(
@@ -764,10 +692,7 @@ const quoteOnchainSend = async (
             quote: wire,
             paymentHash,
             payoutPubkey: payoutKey.pubkey,
-            operatorPubkey: covenant.operatorPubkey,
-            emulatorPubkey: covenant.emulatorPubkey,
-            claimDelay: covenant.claimDelay,
-            hrp: covenant.hrp,
+            ...covenant,
             l1Network,
             refundAddress: payoutKey.address,
             senderPubkey: secrets.pubkey,
@@ -790,18 +715,10 @@ const quoteOnchainSend = async (
         floorSeconds: input.policy?.quoteTtlFloorSeconds,
     });
 
-    // The recipient-exact restatement, mirroring the `onchain-swap` rail's
-    // `receiverExact`: when a claim fee is active the take leg the QUOTE
-    // reports is the HTLC minus it — what the recipient actually nets — and
-    // `fee` carries both halves of the cost, the solver's spread and the
-    // claim the trader pays out of the payout. The invariant `give = take +
-    // fee` holds on both arms of the conditional, which is why the wire's
-    // grossed take leg never reaches the record: `parsed.take - claimFee`
-    // plus `spread + claimFee` sums to `parsed.give` exactly. With no fee
-    // rate the two collapse to the verbatim legs they always were.
-    const reportedTake = claimFee === undefined ? parsed.take : parsed.take - claimFee;
-    const reportedFee =
-        claimFee === undefined ? parsed.give - parsed.take : parsed.give - parsed.take + claimFee;
+    // Recipient-exact restatement (as the rail's `receiverExact`): take is what the recipient
+    // nets and `fee` is spread + claim fee, so `give = take + fee` holds either way.
+    const reportedTake = parsed.take - (claimFee ?? 0n);
+    const reportedFee = parsed.give - parsed.take + (claimFee ?? 0n);
 
     return {
         quote: {
@@ -816,9 +733,7 @@ const quoteOnchainSend = async (
             market: input.market,
             solver: parsed.solver,
             expiresAt: parsed.validUntil,
-            // Read off the derivation and not off the wire: the field is
-            // optional there, a solver may carry it in the profile instead, and
-            // the derivation is what settles which one this covenant used.
+            // Off the derivation, not the wire: it settles which locktime this covenant used.
             refundLocktime: derived.refundLocktime,
             fee: { amount: reportedFee, asset: input.endpoints.give.asset },
         },
@@ -828,14 +743,12 @@ const quoteOnchainSend = async (
             card: input.candidate.card,
             rfqId,
             wire: parsed,
-            lockup: {
-                address: derived.address,
-                script: derived.script,
-                pkScript: derived.swapPkScript,
-            },
+            lockup: lockupOf(derived),
             secrets,
             refundAddress: payoutKey.address,
             fundAmount: parsed.give,
+            // Gross, not `reportedTake`: netting would accept an HTLC short by the fee.
+            expectedAmount: parsed.take,
             payoutKey,
             payoutPkScript,
             htlc: derived.htlc,

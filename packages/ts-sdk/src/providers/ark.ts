@@ -493,6 +493,26 @@ export class RestArkProvider implements ArkProvider {
         );
     }
 
+    private async postJson(
+        url: string,
+        body: unknown,
+        failureMessage: (errorText: string, response: Response) => string,
+    ): Promise<Response> {
+        const response = await this.authedFetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            handleError(errorText, failureMessage(errorText, response));
+        }
+        return response;
+    }
+
     async getInfo(): Promise<ArkadeInfo> {
         const url = `${this.serverUrl}/v1/info`;
         // Wait + report (see rateGate): shares an origin, and a limiter, with
@@ -593,21 +613,14 @@ export class RestArkProvider implements ArkProvider {
         signedCheckpointTxs: string[];
     }> {
         const url = `${this.serverUrl}/v1/tx/submit`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        const response = await this.postJson(
+            url,
+            {
                 signedArkTx,
                 checkpointTxs,
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to submit virtual transaction: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to submit virtual transaction: ${errorText}`,
+        );
 
         const data = await response.json();
         return {
@@ -619,42 +632,28 @@ export class RestArkProvider implements ArkProvider {
 
     async finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void> {
         const url = `${this.serverUrl}/v1/tx/finalize`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        await this.postJson(
+            url,
+            {
                 arkTxid,
                 finalCheckpointTxs,
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to finalize offchain transaction: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to finalize offchain transaction: ${errorText}`,
+        );
     }
 
     async registerIntent(intent: SignedIntent<Intent.RegisterMessage>): Promise<string> {
         const url = `${this.serverUrl}/v1/batch/registerIntent`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        const response = await this.postJson(
+            url,
+            {
                 intent: {
                     proof: intent.proof,
                     message: Intent.encodeMessage(intent.message),
                 },
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to register intent: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to register intent: ${errorText}`,
+        );
 
         const data = await response.json();
         return data.intentId;
@@ -662,61 +661,40 @@ export class RestArkProvider implements ArkProvider {
 
     async deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/deleteIntent`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        await this.postJson(
+            url,
+            {
                 intent: {
                     proof: intent.proof,
                     message: Intent.encodeMessage(intent.message),
                 },
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to delete intent: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to delete intent: ${errorText}`,
+        );
     }
 
     async confirmRegistration(intentId: string): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/ack`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        await this.postJson(
+            url,
+            {
                 intentId,
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to confirm registration: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to confirm registration: ${errorText}`,
+        );
     }
 
     async submitTreeNonces(batchId: string, pubkey: string, nonces: TreeNonces): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/tree/submitNonces`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        await this.postJson(
+            url,
+            {
                 batchId,
                 pubkey,
                 treeNonces: encodeMusig2Nonces(nonces),
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to submit tree nonces: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to submit tree nonces: ${errorText}`,
+        );
     }
 
     async submitTreeSignatures(
@@ -725,22 +703,15 @@ export class RestArkProvider implements ArkProvider {
         signatures: TreePartialSigs,
     ): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/tree/submitSignatures`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        await this.postJson(
+            url,
+            {
                 batchId,
                 pubkey,
                 treeSignatures: encodeMusig2Signatures(signatures),
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to submit tree signatures: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to submit tree signatures: ${errorText}`,
+        );
     }
 
     async submitSignedForfeitTxs(
@@ -748,21 +719,14 @@ export class RestArkProvider implements ArkProvider {
         signedCommitmentTx?: string,
     ): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/submitForfeitTxs`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        await this.postJson(
+            url,
+            {
                 signedForfeitTxs: signedForfeitTxs,
                 signedCommitmentTx: signedCommitmentTx,
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to submit forfeit transactions: ${response.statusText}`);
-        }
+            },
+            (_, res) => `Failed to submit forfeit transactions: ${res.statusText}`,
+        );
     }
 
     getEventStream(signal: AbortSignal, topics: string[]): AsyncIterableIterator<SettlementEvent> {
@@ -935,23 +899,16 @@ export class RestArkProvider implements ArkProvider {
 
     async getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]> {
         const url = `${this.serverUrl}/v1/tx/pending`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        const response = await this.postJson(
+            url,
+            {
                 intent: {
                     proof: intent.proof,
                     message: Intent.encodeMessage(intent.message),
                 },
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to get pending transactions: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to get pending transactions: ${errorText}`,
+        );
 
         const data = await response.json();
         return data.pendingTxs;
@@ -1243,35 +1200,6 @@ namespace ProtoTypes {
         arkTx?: TxNotificationData;
         sweepTx?: TxNotificationData;
         heartbeat?: Heartbeat;
-    }
-
-    // Legacy types for backward compatibility
-    export interface EventData {
-        batchStarted?: BatchStartedEvent;
-        batchFailed?: BatchFailed;
-        batchFinalization?: BatchFinalizationEvent;
-        batchFinalized?: BatchFinalizedEvent;
-        treeSigningStarted?: TreeSigningStartedEvent;
-        treeNoncesAggregated?: TreeNoncesAggregatedEvent;
-        treeTx?: TreeTxEvent;
-        treeSignature?: TreeSignatureEvent;
-    }
-
-    export interface TransactionData {
-        commitmentTx?: {
-            txid: string;
-            tx: string;
-            spentVtxos: VtxoData[];
-            spendableVtxos: VtxoData[];
-            checkpointTxs?: Record<string, { txid: string; tx: string }>;
-        };
-        arkTx?: {
-            txid: string;
-            tx: string;
-            spentVtxos: VtxoData[];
-            spendableVtxos: VtxoData[];
-            checkpointTxs?: Record<string, { txid: string; tx: string }>;
-        };
     }
 }
 

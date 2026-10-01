@@ -104,6 +104,7 @@ const CURATED_ROOT: readonly string[] = [
     "MarketRef",
     "CardMarketRef",
     "AuctionMarketRef",
+    "RestoredMarketRef",
     "AuctionProvenance",
     "MarketBackend",
     "Market",
@@ -273,7 +274,10 @@ const ADVANCED_ONLY: readonly string[] = [
     "rfqRecordOf",
     "splitRecords",
     "applyOfferSpend",
-    "withOfferStatus",
+    "withDepositFate",
+    "fateMoved",
+    "restoredOfferRecord",
+    "DepositFate",
     "withRfqState",
     // cancel plumbing
     "cancelSwap",
@@ -435,8 +439,9 @@ describe("the curated root boundary", () => {
     it("keeps ./advanced a superset of the root's client vocabulary", () => {
         // One specifier per flow: an advanced consumer imports the drive and
         // the verbs from the same subpath.
+        const declaredIn = moduleOf(ROOT_ENTRY);
         const missing = [...root].filter(
-            (n) => !advanced.has(n) && moduleOf(ROOT_ENTRY).get(n)?.startsWith("src/client/"),
+            (n) => !advanced.has(n) && declaredIn.get(n)?.startsWith("src/client/"),
         );
         expect(missing).toEqual([]);
     });
@@ -573,6 +578,7 @@ describe("the @deprecated pointers", () => {
         "CrossAssetSwap",
         "LightningReceiveContractParams",
         "LightningSendContractParams",
+        "LockupContractSource",
         "LockupFate",
         "LockupParams",
         "LockupSpend",
@@ -581,7 +587,6 @@ describe("the @deprecated pointers", () => {
         "OfferSwapWatcher",
         "PersistableRfqSwap",
         "PlanError",
-        "RefundIndexer",
         "RelaySocket",
         "RestoreIndexer",
         "RfqClaimSecretProjection",

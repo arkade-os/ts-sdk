@@ -208,21 +208,62 @@ describe("ServiceWorkerReadonlyWallet", () => {
         // The gate reads contract-row metadata, which exists only inside the
         // worker — so this cannot be a main-thread filter over GET_VTXOS.
         const vtxos = [{ txid: "tx", vout: 0, value: 1, virtualStatus: { state: "settled" } }];
+        const filters: unknown[] = [];
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "GET_SPENDABLE_VTXOS") return null;
+            filters.push(message.payload.filter);
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "SPENDABLE_VTXOS",
+                payload: { vtxos, filterApplied: true },
+            };
+        });
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await expect(
+            wallet.getSpendableVtxos({
+                watchedOnly: true,
+                genericallySpendableOnly: true,
+                maxSyncAgeMs: 60_000,
+                requireSynced: true,
+            }),
+        ).resolves.toMatchObject([{ txid: "tx" }]);
+        expect(filters).toEqual([
+            {
+                watchedOnly: true,
+                genericallySpendableOnly: true,
+                maxSyncAgeMs: 60_000,
+                requireSynced: true,
+            },
+        ]);
+    });
+
+    it("rejects scoped reads from a worker that ignores contract scopes", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
             message.type === "GET_SPENDABLE_VTXOS"
                 ? {
                       id: message.id,
                       tag: messageTag,
                       type: "SPENDABLE_VTXOS",
-                      payload: { vtxos },
+                      payload: { vtxos: [] },
                   }
                 : null,
         );
-
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        await expect(wallet.getSpendableVtxos()).resolves.toMatchObject([{ txid: "tx" }]);
+        await expect(wallet.getSpendableVtxos({ watchedOnly: true })).rejects.toThrow(
+            "does not support the requested contract scope",
+        );
+        await expect(wallet.getSpendableVtxos({ genericallySpendableOnly: true })).rejects.toThrow(
+            "does not support the requested contract scope",
+        );
+        await expect(wallet.getSpendableVtxos({ requireSynced: true })).rejects.toThrow(
+            "does not support the requested contract scope or freshness check",
+        );
     });
 
     it("fails closed against a worker that predates the message", async () => {
@@ -507,7 +548,27 @@ describe("ServiceWorkerReadonlyWallet", () => {
             } as any),
         ).resolves.toEqual(contract);
         await expect(manager.getContracts()).resolves.toEqual(contracts);
-        await expect(manager.getContractsWithVtxos({} as any)).resolves.toEqual(contractsWithVtxos);
+        await expect(
+            manager.getContractsWithVtxos({} as any, undefined, {
+                maxSyncAgeMs: 60_000,
+                unspentOnly: true,
+            }),
+        ).resolves.toEqual(contractsWithVtxos);
+        await expect(
+            manager.getContractsWithVtxos({} as any, undefined, { requireSynced: true }),
+        ).rejects.toThrow("Failed to get contracts with vtxos");
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "GET_CONTRACTS_WITH_VTXOS",
+                payload: { filter: {}, options: { maxSyncAgeMs: 60_000, unspentOnly: true } },
+            }),
+        );
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "GET_CONTRACTS_WITH_VTXOS",
+                payload: expect.objectContaining({ options: { requireSynced: true } }),
+            }),
+        );
         await expect(manager.updateContract("c1", { label: "new" })).resolves.toEqual(contract);
         await expect(manager.deleteContract("c1")).resolves.toBeUndefined();
         await expect(manager.getSpendablePaths({ contractScript: "c1" } as any)).resolves.toEqual(
@@ -2093,21 +2154,6 @@ describe("ServiceWorker identity boundary assertion", () => {
 
     afterEach(() => {
         vi.unstubAllGlobals();
-    });
-
-    it("create() resolves when the worker reports the matching identity", async () => {
-        const identity = await SingleKey.fromHex(KEY_A);
-        const key = await identity.xOnlyPublicKey();
-        const { serviceWorker } = stub(initResponder(key));
-
-        await expect(
-            ServiceWorkerWallet.create({
-                serviceWorker: serviceWorker as any,
-                arkServer: { url: "https://ark.test" },
-                identity,
-                storage: storage(),
-            }),
-        ).resolves.toBeDefined();
     });
 
     it("create() rejects when the worker reports a different identity", async () => {

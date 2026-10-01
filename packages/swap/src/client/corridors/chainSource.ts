@@ -1,30 +1,14 @@
 /**
  * The onchain corridor's default {@link ChainSource}.
  *
- * `ChainSource` has shipped since the onchain corridor did and nothing has ever
- * implemented it: its own doc assigns the esplora-backed one to the caller, and
- * the only implementations in the tree are scripted test fakes. §6's
- * "Arkade-provided chain source" is that gap, and this closes it.
+ * Built from an esplora URL, not the wallet's provider: `onchainProvider` exists only on the
+ * concrete `Wallet`, never on `IWallet`, which every swap entry point takes. The default URL is
+ * `ESPLORA_URL[network]`.
  *
- * Built from an esplora base URL rather than from the wallet's provider,
- * because there is no such thing to reach: `onchainProvider` is a field of
- * `BaseWalletConfig` and of the concrete `Wallet`, never of `IWallet` /
- * `IReadonlyWallet` — core states the rule at `vtxo-manager.ts` — and every
- * swap entry point takes the interface. So the URL is what the override
- * replaces, and its default is `ESPLORA_URL[network]` off the same live info
- * read every corridor makes.
- *
- * Three of the four methods adapt core's `OnchainProvider`. The fourth does
- * not, and the difference is a *contract* gap rather than a missing endpoint:
- * `getMtp` must answer median-time-past, `OnchainProvider.getChainTip` promises
- * no more than "block time", and the two shipped implementations disagree —
- * Esplora answers `tip[0].mediantime`, Electrum answers the header's nTime. A
- * source that forwarded `getChainTip().time` would therefore be right on one
- * backend and wrong on the other, and being wrong here is not a rounding error:
- * `classifyOnchainHtlc` returns `refundable` once MTP reaches the HTLC's
- * locktime, `nextOnchainAction` turns that into `claim_window_closed`, and an
- * MTP that runs high abandons a still-live L1 claim. So the tip is read off
- * `/blocks` here, where `mediantime` is named explicitly.
+ * `getMtp` does not forward `OnchainProvider.getChainTip().time`: that promises only "block time",
+ * and Esplora answers `mediantime` while Electrum answers the header's nTime. An MTP that runs high
+ * makes `classifyOnchainHtlc` report `refundable` early and abandons a still-live L1 claim, so the
+ * tip is read off `/blocks`, where `mediantime` is explicit.
  */
 import { hex } from "@scure/base";
 import * as btc from "@scure/btc-signer";
@@ -53,27 +37,18 @@ const addressOfScript = (script: Uint8Array, network: AddressParams): string =>
     btc.Address(network).encode(btc.OutScript.decode(script));
 
 /**
- * A {@link ChainSource} over an arbitrary L1 backend.
- *
- * Separate from {@link esploraChainSource} so the adapter's logic — the
- * confirmations arithmetic, the script-to-address encode, the missing-spender
- * fallback — is exercisable without a server, and so a caller with its own
- * `OnchainProvider` can reuse it.
+ * A {@link ChainSource} over an arbitrary L1 backend, so a caller with its own `OnchainProvider`
+ * can reuse the adapter logic, and tests can run it without a server.
  */
 export const chainSourceOver = (
     backend: ChainSourceBackend,
     network: AddressParams,
 ): ChainSource => {
     /**
-     * The spender of an outpoint when `/outspends` did not name it.
-     *
-     * Some deployments answer `{spent: true}` with no `txid` —
-     * `mempool.arkade.sh`, which is `ESPLORA_URL.bitcoin` — so the spend is
-     * recovered the way core recovers a boarding output's: scan the spent
-     * output's own address history for the transaction whose vin names this
-     * outpoint. The address comes from the `pkScript` the interface hands over,
-     * which is why that parameter is on `getSpendingTx` at all — the outpoint
-     * alone would cost a second fetch of the funding transaction to decode.
+     * The spender of an outpoint when `/outspends` did not name it: some deployments
+     * (`mempool.arkade.sh`, i.e. `ESPLORA_URL.bitcoin`) answer `{spent: true}` with no `txid`, so
+     * scan the output's address history for the vin naming this outpoint. This is why
+     * `getSpendingTx` takes `pkScript`.
      */
     const spenderFromVins = async (
         txid: string,
@@ -87,8 +62,7 @@ export const chainSourceOver = (
             return undefined;
         }
         for (const tx of await backend.provider.getTransactions(address)) {
-            // `vin` is optional on the interface: the electrum provider omits
-            // inputs entirely, in which case this fallback simply finds nothing.
+            // The electrum provider omits `vin` entirely; the fallback then finds nothing.
             if ((tx.vin ?? []).some((input) => input.txid === txid && input.vout === vout)) {
                 return tx.txid;
             }
@@ -98,8 +72,6 @@ export const chainSourceOver = (
 
     return {
         async getScriptUtxos(pkScript: Uint8Array): Promise<ChainUtxo[]> {
-            // `getCoins` is address-keyed where this is script-keyed, and the
-            // encode is why the adapter needs a network at all.
             const address = addressOfScript(pkScript, network);
             const [coins, tip] = await Promise.all([
                 backend.provider.getCoins(address),
@@ -108,11 +80,8 @@ export const chainSourceOver = (
             return coins.map((coin) => ({
                 txid: coin.txid,
                 vout: coin.vout,
-                // `Coin.value` is `number` sats; the HTLC's is `bigint`.
                 amount: BigInt(coin.value),
-                // `Coin` carries a height, never a depth, so the tip is the
-                // second half of the answer. A confirmed coin is one deep, not
-                // zero — the block it landed in counts.
+                // A confirmed coin is one deep, not zero: its own block counts.
                 confirmations:
                     coin.status.confirmed && coin.status.block_height !== undefined
                         ? Math.max(0, tip.height - coin.status.block_height + 1)
@@ -128,8 +97,7 @@ export const chainSourceOver = (
             const outspends = await backend.provider.getTxOutspends(txid);
             const outspend = outspends[vout];
             if (!outspend?.spent) return null;
-            // `||`, not `??`: the electrum provider uses `txid: ""` as its
-            // unspent sentinel, and an empty string is not a spender either.
+            // `||`, not `??`: the electrum provider uses `txid: ""` as its unspent sentinel.
             const spender = outspend.txid || (await spenderFromVins(txid, vout, pkScript));
             if (!spender) return null;
             return { txHex: hex.encode(await backend.provider.getRawTransaction(spender)) };
@@ -146,11 +114,8 @@ export const chainSourceOver = (
 };
 
 /**
- * Tip height and median-time-past off Esplora's `/blocks`.
- *
- * `/blocks` rather than `/blocks/tip`, for the reason core already records:
- * the latter is not part of the Esplora spec — electrs serves it as an alias,
- * a strict backend like mempool answers an empty array.
+ * Tip height and median-time-past off Esplora's `/blocks`. Not `/blocks/tip`: that is not in the
+ * Esplora spec (electrs aliases it, mempool answers an empty array).
  */
 export const esploraTip = async (esploraUrl: string, fetchImpl?: typeof fetch): Promise<L1Tip> => {
     const response = await (fetchImpl ?? fetch)(`${esploraUrl}/blocks`);
@@ -167,8 +132,7 @@ export const esploraTip = async (esploraUrl: string, fetchImpl?: typeof fetch): 
         typeof tip.mediantime !== "number" ||
         !(tip.mediantime > 0)
     ) {
-        // Fail rather than substitute: a tip time standing in for MTP is the
-        // exact substitution this function exists to prevent.
+        // Never substitute tip time for MTP; that is what this function exists to prevent.
         throw new Error(`esplora returned no usable chain tip for ${esploraUrl}`);
     }
     return { height: tip.height, mtp: tip.mediantime };

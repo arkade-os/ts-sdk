@@ -8,12 +8,15 @@ import {
     serializeAssets,
     deserializeAssets,
     SerializedTapLeaf,
+    createdAtToIso,
 } from "../serialization";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { legacyVtxoFacts } from "../legacyVtxoFacts";
 import { SQLExecutor } from "./types";
 import { runInTransaction } from "./transaction";
-import { isVtxoForScript } from "../../contracts/vtxoOwnership";
+import { sanitizeTablePrefix } from "./prefix";
+import { checkSaveVtxosForScript } from "../../contracts/vtxoOwnership";
+import { isVtxoSpent } from "../../wallet/vtxo";
 
 interface SQLiteWalletRepositoryOptions {
     /** Table name prefix (default: "ark_") */
@@ -44,7 +47,7 @@ export class SQLiteWalletRepository implements WalletRepository {
         private readonly db: SQLExecutor,
         options?: SQLiteWalletRepositoryOptions,
     ) {
-        this.prefix = sanitizePrefix(options?.prefix ?? "ark_");
+        this.prefix = sanitizeTablePrefix(options?.prefix ?? "ark_");
         this.tables = {
             vtxos: `${this.prefix}vtxos`,
             utxos: `${this.prefix}utxos`,
@@ -112,6 +115,12 @@ export class SQLiteWalletRepository implements WalletRepository {
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_script ON ${this.tables.vtxos} (script)`,
         );
         await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_live_script ON ${this.tables.vtxos} (script)
+             WHERE (is_spent IS NULL OR is_spent = 0)
+               AND (spent_by IS NULL OR spent_by = '')
+               AND (settled_by IS NULL OR settled_by = '')`,
+        );
+        await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}utxos_address ON ${this.tables.utxos} (address)`,
         );
         await this.db.run(
@@ -122,13 +131,15 @@ export class SQLiteWalletRepository implements WalletRepository {
     /**
      * Bring the `vtxos` table to the current schema (v1 = `script` NOT NULL).
      *
-     * Three cases:
+     * Four cases:
      *   - Fresh install: create the v1 schema directly.
      *   - Legacy install without a `script` column: add it, backfill from
      *     `address`, then rebuild the table with NOT NULL (SQLite cannot add
      *     the NOT NULL constraint in place).
      *   - Legacy install with a nullable `script` column: backfill the NULLs
      *     and rebuild.
+     *   - 0.4.x install: `script` is already NOT NULL but `virtual_status_json
+     *     NOT NULL` is still there, and `saveVtxos` no longer writes it.
      *
      * The backfill derives `script` from the Ark address, matching what the
      * indexer would have returned — new rows from the indexer always carry a
@@ -178,10 +189,11 @@ export class SQLiteWalletRepository implements WalletRepository {
             // there to read. Without the copy a swept row comes back `isSwept: false`, spendable,
             // until the first indexer sync. Runs before the rebuild below, whose INSERT…SELECT
             // carries these columns across.
-            if (addedCanonicalColumns && cols.some((c) => c.name === "virtual_status_json")) {
+            const hasLegacyBlob = cols.some((c) => c.name === "virtual_status_json");
+            if (addedCanonicalColumns && hasLegacyBlob) {
                 await this.backfillCanonicalVtxoColumns();
             }
-            if (scriptCol && scriptCol.notnull === 1) {
+            if (scriptCol && scriptCol.notnull === 1 && !hasLegacyBlob) {
                 // Already on v1 schema.
                 return;
             }
@@ -357,21 +369,13 @@ export class SQLiteWalletRepository implements WalletRepository {
                     s.intentTapLeafScript.cb,
                     s.intentTapLeafScript.s,
                     JSON.stringify(s.status),
-                    typeof s.createdAt === "string"
-                        ? s.createdAt
-                        : s.createdAt instanceof Date
-                          ? s.createdAt.toISOString()
-                          : new Date(s.createdAt).toISOString(),
+                    createdAtToIso(s.createdAt),
                     s.isUnrolled ? 1 : 0,
                     s.isSpent === undefined ? null : s.isSpent ? 1 : 0,
                     s.isSwept === undefined ? null : s.isSwept ? 1 : 0,
                     s.isPreconfirmed === undefined ? null : s.isPreconfirmed ? 1 : 0,
                     s.commitmentTxIds ? JSON.stringify(s.commitmentTxIds) : null,
-                    s.expiresAt === undefined
-                        ? null
-                        : s.expiresAt instanceof Date
-                          ? s.expiresAt.toISOString()
-                          : new Date(s.expiresAt).toISOString(),
+                    s.expiresAt === undefined ? null : new Date(s.expiresAt).toISOString(),
                     s.expiresAtHeight ?? null,
                     s.spentBy ?? null,
                     s.settledBy ?? null,
@@ -398,18 +402,34 @@ export class SQLiteWalletRepository implements WalletRepository {
         return rows.map(vtxoRowToDomain);
     }
 
+    async getVtxosForScripts(
+        scripts: string[],
+        options?: { unspentOnly?: boolean },
+    ): Promise<ExtendedVirtualCoin[]> {
+        if (scripts.length === 0) return [];
+        await this.ensureInit();
+        const unique = [...new Set(scripts)];
+        const result: ExtendedVirtualCoin[] = [];
+        for (let i = 0; i < unique.length; i += 500) {
+            const chunk = unique.slice(i, i + 500);
+            const rows = await this.db.all<VtxoRow>(
+                `SELECT * FROM ${this.tables.vtxos} WHERE script IN (${chunk.map(() => "?").join(",")})${
+                    options?.unspentOnly
+                        ? " AND (is_spent IS NULL OR is_spent = 0) AND (spent_by IS NULL OR spent_by = '') AND (settled_by IS NULL OR settled_by = '')"
+                        : ""
+                }`,
+                chunk,
+            );
+            const decoded = rows.map(vtxoRowToDomain);
+            result.push(
+                ...(options?.unspentOnly ? decoded.filter((vtxo) => !isVtxoSpent(vtxo)) : decoded),
+            );
+        }
+        return result;
+    }
+
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
-        if (!key.address) {
-            throw new Error("SQLiteWalletRepository requires an address");
-        }
-        for (const vtxo of vtxos) {
-            if (!isVtxoForScript(vtxo, key.script)) {
-                throw new Error(
-                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`,
-                );
-            }
-        }
-        return this.saveVtxos(key.address, vtxos);
+        return this.saveVtxos(checkSaveVtxosForScript("SQLiteWalletRepository", key, vtxos), vtxos);
     }
 
     async deleteVtxosForScript(script: string): Promise<void> {
@@ -594,17 +614,6 @@ interface WalletStateRow {
     key: string;
     settings_json: string | null;
     last_sync_time: number | null;
-}
-
-const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
-
-function sanitizePrefix(prefix: string): string {
-    if (!SAFE_PREFIX.test(prefix)) {
-        throw new Error(
-            `Invalid table prefix "${prefix}": only letters, digits, and underscores are allowed`,
-        );
-    }
-    return prefix;
 }
 
 // ── Row → Domain converters ────────────────────────────────────────────

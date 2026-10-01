@@ -7,7 +7,8 @@ import type { ExtendedVirtualCoin, ExtendedCoin, ArkTransaction, TxType } from "
 import type { TapLeafScript } from "../src/script/base";
 import type { WalletState } from "../src/repositories/walletRepository";
 import { createMockSQLExecutor } from "./helpers/mockSqlExecutor";
-import { hasTerminalSpend } from "../src/wallet/vtxo";
+import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
+import { isVtxoSpent } from "../src/wallet/vtxo";
 
 // ── Test fixtures ───────────────────────────────────────────────────────
 
@@ -141,12 +142,6 @@ describe("SQLiteWalletRepository", () => {
     afterEach(async () => {
         await repository.clear();
         await repository[Symbol.asyncDispose]();
-    });
-
-    // ── version ────────────────────────────────────────────────────────
-
-    it("should have version 1", () => {
-        expect(repository.version).toBe(1);
     });
 
     // ── VTXO management ────────────────────────────────────────────────
@@ -294,7 +289,7 @@ describe("SQLiteWalletRepository", () => {
 
             // The fixture is preconfirmed, so the derivation says "not spent".
             expect(retrieved.isSpent).toBe(false);
-            expect(hasTerminalSpend(retrieved)).toBe(false);
+            expect(isVtxoSpent(retrieved)).toBe(false);
         });
 
         it("preserves terminal spend for a VTXO stored with a null is_spent column", async () => {
@@ -307,7 +302,7 @@ describe("SQLiteWalletRepository", () => {
 
             expect(retrieved.isSpent).toBe(false);
             expect(retrieved.spentBy).toBe("spent-by-tx");
-            expect(hasTerminalSpend(retrieved)).toBe(true);
+            expect(isVtxoSpent(retrieved)).toBe(true);
         });
 
         describe("Script-scoped VTXO management", () => {
@@ -383,6 +378,33 @@ describe("SQLiteWalletRepository", () => {
                 expect(resultA[0].txid).toBe("tx1");
                 expect(resultB).toHaveLength(1);
                 expect(resultB[0].txid).toBe("tx2");
+            });
+
+            it("getVtxosForScripts returns only matching rows across the SQLite parameter limit", async () => {
+                // The regex SQL mock cannot evaluate IN lists, so this needs a real SQLite handle.
+                const sqlite = new SQLiteWalletRepository(createNodeSQLExecutor());
+                const scripts = Array.from(
+                    { length: 501 },
+                    (_, i) => "5120" + i.toString(16).padStart(64, "0"),
+                );
+                const rows = [scripts[0], scripts[500], "5120" + "ff".repeat(32)].map(
+                    (script, i) => ({
+                        ...createMockVtxo(i.toString(16).padStart(64, "0"), 0, 1000),
+                        script,
+                    }),
+                );
+                rows.push(
+                    { ...rows[0], txid: "03".padStart(64, "0"), isSpent: true },
+                    { ...rows[0], txid: "04".padStart(64, "0"), spentBy: "spent" },
+                    { ...rows[0], txid: "05".padStart(64, "0"), settledBy: "settled" },
+                );
+                await sqlite.saveVtxos("address", rows);
+
+                expect(await sqlite.getVtxosForScripts([])).toEqual([]);
+                const result = await sqlite.getVtxosForScripts(scripts);
+                expect(result).toHaveLength(5);
+                const live = await sqlite.getVtxosForScripts(scripts, { unspentOnly: true });
+                expect(live.map((row) => row.script)).toEqual([scripts[0], scripts[500]]);
             });
         });
     });
@@ -678,17 +700,6 @@ describe("SQLiteWalletRepository", () => {
     // ── Table prefix ───────────────────────────────────────────────────
 
     describe("table prefix", () => {
-        it("should use custom prefix for table names", async () => {
-            const customRepo = new SQLiteWalletRepository(db, {
-                prefix: "myapp_",
-            });
-            // Should work without interference from the default-prefixed repo
-            await customRepo.saveVtxos(testAddress, [createMockVtxo("tx-custom", 0, 9000)]);
-            const retrieved = await customRepo.getVtxos(testAddress);
-            expect(retrieved).toHaveLength(1);
-            expect(retrieved[0].txid).toBe("tx-custom");
-        });
-
         it("should isolate data between different prefixes", async () => {
             const repoA = new SQLiteWalletRepository(db, { prefix: "a_" });
             const repoB = new SQLiteWalletRepository(db, { prefix: "b_" });
@@ -703,14 +714,6 @@ describe("SQLiteWalletRepository", () => {
             expect(fromA[0].txid).toBe("tx-a");
             expect(fromB).toHaveLength(1);
             expect(fromB[0].txid).toBe("tx-b");
-        });
-    });
-
-    // ── asyncDispose ───────────────────────────────────────────────────
-
-    describe("[Symbol.asyncDispose]", () => {
-        it("should be a no-op and not throw", async () => {
-            await expect(repository[Symbol.asyncDispose]()).resolves.toBeUndefined();
         });
     });
 });

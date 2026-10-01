@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { AssetRefType } from "./types";
 import { AssetId } from "./assetId";
-import { BufferReader, BufferWriter } from "../utils";
+import { BufferReader, BufferWriter, hexOrThrow } from "../utils";
 
 type AssetRefByID = {
     type: AssetRefType.ByID;
@@ -31,22 +31,15 @@ export class AssetRef {
         return this.ref.type;
     }
 
-    /**
-     * Create an asset reference that points to a specific asset id.
-     *
-     * @param assetId - Asset id referenced by this pointer
-     * @returns Asset reference by id
-     * @see fromGroupIndex
-     */
+    /** Reference a specific asset id. @see fromGroupIndex */
     static fromId(assetId: AssetId): AssetRef {
         return new AssetRef({ type: AssetRefType.ByID, assetId });
     }
 
     /**
-     * Create an asset reference that points to another asset group by index.
+     * Reference another asset group in the packet.
      *
      * @param groupIndex - Zero-based asset group index in the packet
-     * @returns Asset reference by group index
      * @see fromId
      */
     static fromGroupIndex(groupIndex: number): AssetRef {
@@ -54,28 +47,18 @@ export class AssetRef {
     }
 
     /**
-     * Decode an asset reference from its hex string form.
+     * Decode an asset reference from hex.
      *
-     * @param s - Hex-encoded asset reference
-     * @returns Decoded asset reference
      * @throws Error if the string is not valid hex or does not encode a valid asset reference
      * @see toString
      */
     static fromString(s: string): AssetRef {
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(s);
-        } catch {
-            throw new Error("invalid asset ref format, must be hex");
-        }
-        return AssetRef.fromBytes(buf);
+        return AssetRef.fromBytes(hexOrThrow(s, "invalid asset ref format, must be hex"));
     }
 
     /**
      * Decode an asset reference from its serialized bytes.
      *
-     * @param buf - Serialized asset reference bytes
-     * @returns Decoded asset reference
      * @throws Error if the buffer is empty or malformed
      */
     static fromBytes(buf: Uint8Array): AssetRef {
@@ -86,33 +69,21 @@ export class AssetRef {
         return AssetRef.fromReader(reader);
     }
 
-    /**
-     * Serialize the asset reference to raw bytes.
-     *
-     * @returns Serialized asset reference bytes
-     * @see fromBytes
-     */
+    /** Serialize to raw bytes. @see fromBytes */
     serialize(): Uint8Array {
         const writer = new BufferWriter();
         this.serializeTo(writer);
         return writer.toBytes();
     }
 
-    /**
-     * Encode the asset reference to a hex string.
-     *
-     * @returns Hex-encoded asset reference
-     * @see fromString
-     */
+    /** Encode to hex. @see fromString */
     toString(): string {
         return hex.encode(this.serialize());
     }
 
     /**
-     * Decode an asset reference from a binary reader.
+     * Decode an asset reference from a reader positioned at one.
      *
-     * @param reader - Reader positioned at an asset reference
-     * @returns Decoded asset reference
      * @throws Error if the type is unknown or the reader does not contain enough bytes
      */
     static fromReader(reader: BufferReader): AssetRef {
@@ -142,12 +113,7 @@ export class AssetRef {
         return ref;
     }
 
-    /**
-     * Serialize the asset reference into an existing binary writer.
-     *
-     * @param writer - Writer to append the asset reference to
-     * @see serialize
-     */
+    /** Append the serialized reference to `writer`. @see serialize */
     serializeTo(writer: BufferWriter): void {
         writer.writeByte(this.ref.type);
 

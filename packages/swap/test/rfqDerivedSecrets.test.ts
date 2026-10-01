@@ -14,6 +14,7 @@ import {
     ArkAddress,
     DescriptorIdentity,
     HDDescriptorProvider,
+    HDWalletCapable,
     InMemoryWalletRepository,
     MnemonicIdentity,
     SingleKey,
@@ -67,7 +68,7 @@ const REFUND_WITHOUT_RECEIVER_DELAY = REFUND_LOCKTIME - NOW;
 const HTLC_LOCKTIME = NOW + 30 * 24 * 3600;
 
 /** A wallet backed by the real allocator and the real deterministic signer. */
-const hdWallet = async (): Promise<IWallet> => {
+const hdWallet = async (): Promise<IWallet & HDWalletCapable> => {
     const identity = MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false });
     const provider = await HDDescriptorProvider.create(identity, new InMemoryWalletRepository());
     return {
@@ -83,7 +84,7 @@ const hdWallet = async (): Promise<IWallet> => {
         advanceSigningDescriptorWatermark: async () => {},
         signerForDescriptor: async (descriptor: string) =>
             new DescriptorIdentity({ descriptor, signer: provider, base: identity }),
-    } as unknown as IWallet;
+    } as unknown as IWallet & HDWalletCapable;
 };
 
 const STATIC_WALLET_KEY = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
@@ -380,13 +381,7 @@ describe("requestLightningSend on an HD wallet", () => {
 
         // The covenant is bound to the allocated key, so the pubkey the solver
         // was given has to be the descriptor's.
-        const signer = await (
-            wallet as never as {
-                signerForDescriptor: (
-                    d: string,
-                ) => Promise<{ xOnlyPublicKey: () => Promise<Uint8Array> }>;
-            }
-        ).signerForDescriptor(result.secrets.descriptor);
+        const signer = await wallet.signerForDescriptor(result.secrets.descriptor);
         expect(hex.encode(result.senderPubkey)).toBe(hex.encode(await signer.xOnlyPublicKey()));
     });
 
@@ -491,7 +486,7 @@ describe("requestOnchainSend on an HD wallet", () => {
                 }),
             ).toEqual(preimage);
 
-            const signer = await wallet.signerForDescriptor!(result.secrets.descriptor);
+            const signer = await wallet.signerForDescriptor(result.secrets.descriptor);
             expect(hex.encode(result.senderPubkey)).toBe(hex.encode(await signer.xOnlyPublicKey()));
             // A P the wallet did not derive cannot be re-derived, HD descriptor
             // or not — so the record must carry it. The flag is what callers

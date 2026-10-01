@@ -69,8 +69,8 @@ export namespace Intent {
 
         if (ins.length == 0) throw new Error("intent proof requires at least one input");
         const inputs = ins.map(prepareCoinAsIntentProofInput);
-        if (!validateInputs(inputs)) throw new Error("invalid inputs");
-        if (!validateOutputs(outputs)) throw new Error("invalid outputs");
+        validateInputs(inputs);
+        validateOutputs(outputs);
 
         // Create the initial transaction to spend.
         const toSpend = craftToSpendTx(message, inputs[0].witnessUtxo.script);
@@ -187,9 +187,8 @@ function validateInput(input: TransactionInput): input is ValidatedTxInput {
     return true;
 }
 
-function validateInputs(inputs: TransactionInput[]): inputs is ValidatedTxInput[] {
+function validateInputs(inputs: TransactionInput[]): asserts inputs is ValidatedTxInput[] {
     inputs.forEach(validateInput);
-    return true;
 }
 
 function validateOutput(output: TransactionOutput): output is ValidatedTxOutput {
@@ -198,9 +197,8 @@ function validateOutput(output: TransactionOutput): output is ValidatedTxOutput 
     return true;
 }
 
-function validateOutputs(outputs: TransactionOutput[]): outputs is ValidatedTxOutput[] {
+function validateOutputs(outputs: TransactionOutput[]): asserts outputs is ValidatedTxOutput[] {
     outputs.forEach(validateOutput);
-    return true;
 }
 
 /**

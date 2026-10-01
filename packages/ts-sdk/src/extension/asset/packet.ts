@@ -2,7 +2,7 @@ import { hex } from "@scure/base";
 import type { ExtensionPacket } from "../packet";
 import { AssetRefType } from "./types";
 import { AssetGroup } from "./assetGroup";
-import { BufferReader, BufferWriter } from "../utils";
+import { BufferReader, BufferWriter, hexOrThrow } from "../utils";
 
 /**
  * Packet represents a collection of asset groups.
@@ -35,13 +35,7 @@ export class Packet implements ExtensionPacket {
         if (!s) {
             throw new Error("missing packet data");
         }
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(s);
-        } catch {
-            throw new Error("invalid packet format, must be hex");
-        }
-        return Packet.fromBytes(buf);
+        return Packet.fromBytes(hexOrThrow(s, "invalid packet format, must be hex"));
     }
 
     /**

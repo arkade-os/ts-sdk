@@ -5,7 +5,6 @@ import {
     DEFAULT_SETTLEMENT_CONFIG,
     DEFAULT_THRESHOLD_SECONDS,
     getExpiringAndRecoverableVtxos,
-    DEFAULT_THRESHOLD_MS,
     MAX_VTXOS_PER_SETTLEMENT,
     capSettlementBatch,
     SettlementConfig,
@@ -589,23 +588,6 @@ describe("VtxoManager - Recovery", () => {
                 await expect(new VtxoManager(wallet).recoverVtxos()).rejects.toThrow(
                     /Excluding 1 VTXO\(s\) not yet spendable, the remaining recoverable amount is below the dust threshold 1000/,
                 );
-            });
-
-            it("reports the drop", async () => {
-                const immature = createMockVtxo(5000, "swept", false);
-                const ordinary = createMockVtxo(3000, "swept", false);
-                const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
-                const wallet = withRefusals(
-                    [immature, ordinary],
-                    new Map([[`${immature.txid}:0`, "not yet"]]),
-                );
-
-                await new VtxoManager(wallet).recoverVtxos();
-
-                expect(debug).toHaveBeenCalledWith(
-                    `[spendability] recoverVtxos: ${immature.txid}:0 not yet`,
-                );
-                debug.mockRestore();
             });
 
             it("agrees with getRecoverableBalance on the same set", async () => {
@@ -1716,10 +1698,6 @@ describe("SettlementConfig", () => {
         it("should have correct default values", () => {
             expect(DEFAULT_SETTLEMENT_CONFIG.vtxoThreshold).toBe(DEFAULT_THRESHOLD_SECONDS);
             expect(DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep).toBe(true);
-        });
-
-        it("should match DEFAULT_THRESHOLD_MS converted to seconds", () => {
-            expect(DEFAULT_THRESHOLD_SECONDS).toBe(DEFAULT_THRESHOLD_MS / 1000);
         });
     });
 

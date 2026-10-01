@@ -18,6 +18,7 @@ import {
     SingleKey,
     Transaction,
     getArkPsbtFields,
+    getNetwork,
     type ArkProvider,
 } from "@arkade-os/sdk";
 
@@ -28,7 +29,11 @@ import {
     claimReceiveLockup,
     pushClaim,
 } from "../src/claim";
-import { LockupNeedsRecoveryError, type LockupVtxo, type RefundIndexer } from "../src/refund";
+import {
+    LockupNeedsRecoveryError,
+    type LockupContractSource,
+    type LockupVtxo,
+} from "../src/refund";
 
 const priv = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(priv(fill));
@@ -56,12 +61,12 @@ const swapScript = () =>
         payoutPkScript: p2tr(key(5)),
     });
 
-const CHECKPOINT_TAPSCRIPT = hex.encode(
-    CSVMultisigTapscript.encode({
-        timelock: { type: "blocks", value: BigInt(144) },
-        pubkeys: [key(3)],
-    }).script,
-);
+const checkpointTapscriptOf = (
+    timelock: { type: "blocks" | "seconds"; value: bigint },
+    pubkey: Uint8Array = key(3),
+): string => hex.encode(CSVMultisigTapscript.encode({ timelock, pubkeys: [pubkey] }).script);
+
+const CHECKPOINT_TAPSCRIPT = checkpointTapscriptOf({ type: "blocks", value: BigInt(144) });
 
 const VTXOS: LockupVtxo[] = [
     { txid: "11".repeat(32), vout: 0, value: 60_000, recoverable: false },
@@ -76,7 +81,7 @@ type FakeOperator = ArkProvider & {
     finalized: { txid: string; checkpoints: string[] }[];
 };
 
-/** The Ark server's own key — key(3) in the covenant above. */
+/** The Arkade operator's own key — key(3) in the covenant above. */
 const OPERATOR_SIGNER = SingleKey.fromPrivateKey(priv(3));
 
 const operatorCosign = async (psbt: string): Promise<string> =>
@@ -86,6 +91,7 @@ const operatorCosign = async (psbt: string): Promise<string> =>
  * those signatures before finalizing, so a mute fake would prove nothing. */
 const fakeOperator = (
     over: {
+        checkpointTapscript?: string;
         checkpointsFor?: (submitted: string[]) => string[];
         /** Answer without countersigning, as a server that never signed. */
         cosign?: boolean;
@@ -98,7 +104,11 @@ const fakeOperator = (
     return {
         submitted,
         finalized,
-        getInfo: async () => ({ checkpointTapscript: CHECKPOINT_TAPSCRIPT }),
+        getInfo: async () => ({
+            checkpointTapscript: over.checkpointTapscript ?? CHECKPOINT_TAPSCRIPT,
+            network: "regtest",
+            forfeitPubkey: hex.encode(key(3)),
+        }),
         submitTx: async (tx: string, checkpoints: string[]) => {
             submitted.push({ tx, checkpoints });
             const answered = over.checkpointsFor ? over.checkpointsFor(checkpoints) : checkpoints;
@@ -163,18 +173,19 @@ describe("pushClaim", () => {
         // different payload than the one submitted.
         const contract = swapScript();
         let fieldPresentAtSignTime = false;
-        const probe = {
-            ...RECEIVER,
-            sign: async (tx: InstanceType<typeof Transaction>, inputIndexes?: number[]) => {
-                const indexes =
-                    inputIndexes ?? Array.from({ length: tx.inputsLength }, (_, i) => i);
-                for (const index of indexes) {
-                    fieldPresentAtSignTime ||=
-                        getArkPsbtFields(tx, index, ConditionWitness).length > 0;
-                }
-                return RECEIVER.sign(tx, inputIndexes);
+        const probe: SingleKey = Object.create(RECEIVER, {
+            sign: {
+                value: async (tx: InstanceType<typeof Transaction>, inputIndexes?: number[]) => {
+                    const indexes =
+                        inputIndexes ?? Array.from({ length: tx.inputsLength }, (_, i) => i);
+                    for (const index of indexes) {
+                        fieldPresentAtSignTime ||=
+                            getArkPsbtFields(tx, index, ConditionWitness).length > 0;
+                    }
+                    return RECEIVER.sign(tx, inputIndexes);
+                },
             },
-        };
+        });
         await pushClaim(fakeOperator(), {
             contract: contract,
             receiver: probe,
@@ -229,7 +240,7 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(LockupAmountMismatchError);
-        // `P` reaches the Ark server at submit, so this is the whole guarantee.
+        // `P` reaches the Arkade operator at submit, so this is the whole guarantee.
         expect(operator.submitted).toHaveLength(0);
     });
 
@@ -377,25 +388,83 @@ describe("pushClaim", () => {
             }),
         ).rejects.toThrow(/nothing to claim/);
     });
+
+    describe("the checkpoint script the operator hands out is gated", () => {
+        // Refusing after submit has already published `P`, so both refusals precede signing.
+        const claim = (operator: FakeOperator) =>
+            pushClaim(operator, {
+                contract: swapScript(),
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+                vtxos: VTXOS,
+                destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
+            });
+
+        it("refuses a checkpoint exit delay below the network's floor", async () => {
+            const operator = fakeOperator({
+                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(1) }),
+            });
+            await expect(claim(operator)).rejects.toThrow(/checkpoint exit delay rejected/);
+            expect(operator.submitted).toEqual([]);
+        });
+
+        it("refuses a checkpoint pinned to a key other than the advertised forfeit key", async () => {
+            const operator = fakeOperator({
+                checkpointTapscript: checkpointTapscriptOf(
+                    { type: "blocks", value: BigInt(144) },
+                    key(4),
+                ),
+            });
+            await expect(claim(operator)).rejects.toThrow(
+                /does not match the advertised forfeitPubkey/,
+            );
+            expect(operator.submitted).toEqual([]);
+        });
+
+        it("floors against the caller's pinned network, not the one the operator names", async () => {
+            // The operator names regtest, whose floor admits this block-typed script: only the pin rejects it.
+            const operator = fakeOperator();
+            await expect(
+                pushClaim(operator, {
+                    contract: swapScript(),
+                    receiver: RECEIVER,
+                    preimage: PREIMAGE,
+                    vtxos: VTXOS,
+                    destinationPkScript: DESTINATION_PK_SCRIPT,
+                    expectedAmount: EXPECTED_AMOUNT,
+                    network: getNetwork("bitcoin"),
+                }),
+            ).rejects.toThrow(/checkpoint exit delay rejected/);
+            expect(operator.submitted).toEqual([]);
+        });
+    });
 });
 
 describe("awaitLockupFunding + claimReceiveLockup", () => {
-    const indexerOver = (rounds: LockupVtxo[][]): RefundIndexer => {
+    const contractsOver = (rounds: LockupVtxo[][]): LockupContractSource => {
         let calls = 0;
         return {
-            getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => {
-                // The real findLockupVtxos asks both filters; only the
-                // spendable answer carries the live lockup.
-                if (opts?.recoverableOnly) return { vtxos: [] };
-                return { vtxos: rounds[Math.min(calls++, rounds.length - 1)]! };
-            },
-        } as unknown as RefundIndexer;
+            getContractsWithVtxos: async () => [
+                {
+                    contract: {
+                        script: "5120",
+                        type: "vhtlc-v2",
+                        params: {},
+                        address: "ark1lockup",
+                        state: "active",
+                        createdAt: 1,
+                    },
+                    vtxos: rounds[Math.min(calls++, rounds.length - 1)]!,
+                },
+            ],
+        } as unknown as LockupContractSource;
     };
 
     it("waits for the lockup, then claims it in one call", async () => {
-        const indexer = indexerOver([[], VTXOS]);
+        const contracts = contractsOver([[], VTXOS]);
         const operator = fakeOperator();
-        const result = await claimReceiveLockup(indexer, operator, {
+        const result = await claimReceiveLockup(contracts, operator, {
             contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
@@ -403,6 +472,7 @@ describe("awaitLockupFunding + claimReceiveLockup", () => {
             destinationPkScript: DESTINATION_PK_SCRIPT,
             expectedAmount: EXPECTED_AMOUNT,
             pollMs: 1,
+            vtxos: VTXOS,
         });
         expect(operator.submitted).toHaveLength(1);
         expect(result.amount).toBe(100_000);
@@ -410,7 +480,7 @@ describe("awaitLockupFunding + claimReceiveLockup", () => {
 
     it("times out with a stable reason when the lockup never lands", async () => {
         await expect(
-            awaitLockupFunding(indexerOver([[]]), swapScript().pkScript, {
+            awaitLockupFunding(contractsOver([[]]), swapScript().pkScript, {
                 pollMs: 1,
                 deadline: Math.floor(Date.now() / 1000) - 1,
             }),

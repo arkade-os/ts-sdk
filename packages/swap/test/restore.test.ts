@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { asset, Extension, Transaction, UnknownPacket } from "@arkade-os/sdk";
+import {
+    ArkAddress,
+    asset,
+    Extension,
+    Transaction,
+    UnknownPacket,
+    type IWallet,
+} from "@arkade-os/sdk";
 import { encodeOffer, offerContract, Offer, OFFER_PACKET_TYPE } from "../src/offer";
+import { InMemoryAssetSwapRepository } from "../src/repository";
+import { restoreAssetSwapRepository } from "../src/restoreRepository";
 import {
     classifyDepositSpend,
     classifySpend,
@@ -388,7 +397,7 @@ describe("restoreAssetSwaps", () => {
             [{}, "pending"],
             [{ isSwept: true }, "recoverable"],
         ]) {
-            const vtxo = depositVtxo(offer, funding.txid, extra);
+            const vtxo = depositVtxo(offer, funding.txid, extra as Record<string, unknown>);
             const indexer = makeIndexer([funding], [vtxo]);
             const {
                 restored: [restored],
@@ -557,6 +566,44 @@ describe("restoreAssetSwaps", () => {
         expect(result.scannedTxids).not.toContain(lastTxid);
         expect(new Set(result.scannedTxids)).toEqual(new Set(firstChunk.map((f) => f.txid)));
     });
+
+    it("names the covenant's own address when given the network prefix", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const txs = [walletTx(funding.txid, "sent")];
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+
+        const named = await restoreAssetSwaps(indexer, txs, new Set(), {
+            operatorPubkey: OPERATOR_KEY,
+            hrp: "tark",
+        });
+        expect(named.restored[0]?.swapAddress).toBe(
+            offerContract(offer, OPERATOR_KEY).address("tark", OPERATOR_KEY).encode(),
+        );
+        expect((await scan(indexer, txs)).restored[0]?.swapAddress).toBe("");
+    });
+
+    it("leaves a deposit unresolved when the operator key does not rebuild the funded script", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const txs = [walletTx(funding.txid, "sent")];
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+        const rotated = key("99");
+
+        const result = await restoreAssetSwaps(indexer, txs, new Set(), {
+            operatorPubkey: rotated,
+            hrp: "tark",
+        });
+        expect(result).toEqual({ restored: [], scannedTxids: [] });
+
+        const swept = makeIndexer([funding], [depositVtxo(offer, funding.txid, { isSwept: true })]);
+        expect(
+            await restoreAssetSwaps(swept, txs, new Set(), {
+                operatorPubkey: rotated,
+                hrp: "tark",
+            }),
+        ).toEqual({ restored: [], scannedTxids: [] });
+    });
 });
 
 describe("restoreAssetSwaps — reopening records the scan left pending", () => {
@@ -696,5 +743,31 @@ describe("restoreAssetSwaps — reopening records the scan left pending", () => 
         const result = await reask(indexer, [record(offer, funding.txid)]);
 
         expect(result.restored).toMatchObject([{ status: "recoverable" }]);
+    });
+});
+
+describe("restoreAssetSwapRepository", () => {
+    // Through the entry point, not the scan: the prefix it derives is what an empty
+    // `swapAddress` costs — cancel() then pins the CURRENT operator key, not the funded one.
+    const wallet = {
+        getAddress: async () => new ArkAddress(OPERATOR_KEY, MAKER_KEY, "tark").encode(),
+    } as unknown as IWallet;
+
+    it("names a rebuilt record's covenant address, so cancel keeps the funded operator key", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+
+        const { changes } = await restoreAssetSwapRepository({
+            wallet,
+            indexer,
+            repository: new InMemoryAssetSwapRepository(),
+            txs: [walletTx(funding.txid, "sent")],
+            operatorPubkey: OPERATOR_KEY,
+        });
+
+        expect(changes[0]?.current.swapAddress).toBe(
+            offerContract(offer, OPERATOR_KEY).address("tark", OPERATOR_KEY).encode(),
+        );
     });
 });

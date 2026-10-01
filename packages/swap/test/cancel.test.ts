@@ -176,11 +176,11 @@ describe("cancelOffer guards", () => {
                 repository: new InMemoryAssetSwapRepository(),
             }),
         ).rejects.toThrow("no spendable VTXO");
-        expect(state.connectOptions?.contractManager).toBe(contractManager);
+        expect(state.connectOptions!.contractManager).toBe(contractManager);
         // the point of dropping arkServerUrl: the client reads and broadcasts
         // over THIS wallet's connection, not one built from a URL beside it
-        expect(state.connectOptions?.indexer).toBe(arkadeReader);
-        expect(state.connectOptions?.arkade).toMatchObject({
+        expect(state.connectOptions!.indexer).toBe(arkadeReader);
+        expect(state.connectOptions!.arkade).toMatchObject({
             submitTx: arkadeBroadcaster.submitTx,
             finalizeTx: arkadeBroadcaster.finalizeTx,
         });

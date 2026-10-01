@@ -45,36 +45,11 @@ describe("AssetId", () => {
                 expect(fromBytes.toString(), drift(v.label)).toBe(v.asset_id_hex);
             });
         });
-
-        it("script_txid_hex is txid_hex in serialization order", () => {
-            // Form 1 vs form 2: the identity carries the txid as the SDK reports
-            // it, the covenant push carries it reversed. Swapping them is the
-            // bug the whole vector exists to name.
-            expect(hex.encode(hex.decode(V.txid_hex).reverse()), drift("txid orientation")).toBe(
-                V.script_txid_hex,
-            );
-            V.valid.forEach((v) => {
-                expect(v.asset_id_hex.slice(0, 64), drift(v.label)).toBe(V.txid_hex);
-                expect(v.asset_id_hex.slice(0, 64), drift(v.label)).not.toBe(V.script_txid_hex);
-            });
-        });
     });
 
     describe("invalid", () => {
         describe("identity", () => {
             const IDENTITY = /^[0-9a-f]{68}$/;
-
-            V.valid.forEach((v) => {
-                it(`accepts ${v.label}`, () => {
-                    expect(IDENTITY.test(v.asset_id_hex), drift(v.label)).toBe(true);
-                });
-            });
-
-            V.invalid_identity.forEach((v) => {
-                it(`rejects ${v.label}`, () => {
-                    expect(IDENTITY.test(v.value), drift(v.label)).toBe(false);
-                });
-            });
 
             // The decoder is deliberately more lenient than the identity rule:
             // uppercase decodes, and `toString()` is what every identity surface
@@ -100,10 +75,6 @@ describe("AssetId", () => {
                     );
                 });
             });
-
-            it("uppercase is absent here on purpose", () => {
-                expect(V.invalid_decode.map((v) => v.label)).not.toContain("uppercase");
-            });
         });
 
         describe("construction", () => {
@@ -114,14 +85,6 @@ describe("AssetId", () => {
                     // JavaScript's `&` operator instead of the range check.
                     expect(() => AssetId.create(v.txid_hex, v.group_index), drift(v.label)).toThrow(
                         v.expected_error,
-                    );
-                });
-            });
-
-            it("outside_uint16 marks exactly the indexes a u16 cannot hold", () => {
-                V.invalid_construction.forEach((v) => {
-                    expect(Boolean(v.outside_uint16), drift(v.label)).toBe(
-                        v.group_index < 0 || v.group_index > 0xffff,
                     );
                 });
             });

@@ -205,6 +205,9 @@ integration no longer owns the wallet. A proxy or custom `IWallet` must also pas
 `serverPubkey` when it does not expose them. Keep calling `restoreAssetSwapRepository` directly
 during ordinary startup: hooks run only for an explicit `wallet.restore()`.
 
+The client's own records need none of this: `client.ready` rebuilds a record for every offer
+deposit the store has no record for. Such a record carries `market: { kind: "restored" }`.
+
 ## Runtime requirements
 
 The one global the core requires is `crypto.getRandomValues`. Node and browsers have it; React

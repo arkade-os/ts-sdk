@@ -118,15 +118,18 @@ async function seededWallet(opts?: {
     intents?: InMemoryIntentRepository;
     signing?: boolean;
     indexerProvider?: IndexerProvider;
+    minimal?: boolean;
 }) {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
 
-    const rows = [
-        contract(ESCROW_SCRIPT, "arkade"),
-        contract(MARKED_SCRIPT, "arkade", { genericallySpendable: true }),
-        contract(UNKNOWN_SCRIPT, "not-a-registered-type"),
-    ];
+    const rows = opts?.minimal
+        ? []
+        : [
+              contract(ESCROW_SCRIPT, "arkade"),
+              contract(MARKED_SCRIPT, "arkade", { genericallySpendable: true }),
+              contract(UNKNOWN_SCRIPT, "not-a-registered-type"),
+          ];
     for (const row of rows) {
         await contractRepository.saveContract(row);
         await walletRepository.saveVtxos(row.address, [
@@ -225,6 +228,115 @@ describe("ContractHandler.isGenericallySpendable", () => {
 });
 
 describe("getSpendableVtxos", () => {
+    it("fails closed when a synced scoped read has no eligible contracts", async () => {
+        const { wallet } = await seededWallet();
+        const manager = await wallet.getContractManager();
+        vi.spyOn(manager, "getContracts").mockResolvedValue([]);
+
+        await expect(
+            wallet.getSpendableVtxos({ genericallySpendableOnly: true, requireSynced: true }),
+        ).rejects.toThrow("No generically spendable contracts to sync");
+        await expect(wallet.getSpendableVtxos({ genericallySpendableOnly: true })).resolves.toEqual(
+            [],
+        );
+    });
+
+    it("can require a successful provider sync before returning funding inputs", async () => {
+        const { wallet } = await seededWallet();
+        await expect(wallet.getSpendableVtxos({ requireSynced: true })).rejects.toThrow(
+            "requires an online contract sync",
+        );
+    });
+
+    it("accepts an online bounded-age funding read", async () => {
+        const indexer = onlineIndexer([]);
+        const getVtxos = vi.spyOn(indexer, "getVtxos");
+        const { wallet } = await seededWallet({ indexerProvider: indexer, minimal: true });
+        await wallet.getSpendableVtxos({ requireSynced: true });
+        getVtxos.mockClear();
+
+        await expect(
+            wallet.getSpendableVtxos({ maxSyncAgeMs: 60_000, requireSynced: true }),
+        ).resolves.toHaveLength(1);
+        expect(getVtxos).not.toHaveBeenCalled();
+    });
+
+    it("does not reuse the manager's default sync age for a required read", async () => {
+        const indexer = onlineIndexer([]);
+        const getVtxos = vi.spyOn(indexer, "getVtxos");
+        const { wallet } = await seededWallet({ indexerProvider: indexer });
+        const manager = await wallet.getContractManager();
+        expect((await manager.getContracts()).length).toBeGreaterThan(0);
+        await wallet.getSpendableVtxos({ requireSynced: true });
+        manager.setVtxoSyncMaxAge(60_000);
+        getVtxos.mockClear();
+        getVtxos.mockRejectedValue(new ProviderUnavailableError("operator down"));
+
+        await expect(wallet.getSpendableVtxos({ requireSynced: true })).rejects.toThrow(
+            "requires an online contract sync",
+        );
+        expect(getVtxos).toHaveBeenCalled();
+    });
+
+    it("can limit indexer queries to generically spendable contracts", async () => {
+        const indexer = onlineIndexer([vtxo(MARKED_SCRIPT, 10_000)]);
+        const getVtxos = vi.spyOn(indexer, "getVtxos");
+        const { wallet, defaultScript } = await seededWallet({ indexerProvider: indexer });
+
+        getVtxos.mockClear();
+        const selected = await wallet.getSpendableVtxos({ genericallySpendableOnly: true });
+        expect(scriptsOf(selected)).toEqual([defaultScript, MARKED_SCRIPT].sort());
+        const scopedQuery = getVtxos.mock.calls
+            .map(([options]) => options?.scripts ?? [])
+            .find((scripts) => scripts.includes(defaultScript) && scripts.includes(MARKED_SCRIPT));
+        expect(scopedQuery?.sort()).toEqual([defaultScript, MARKED_SCRIPT].sort());
+
+        getVtxos.mockClear();
+        expect(scriptsOf(await wallet.getSpendableVtxos())).toEqual(scriptsOf(selected));
+        expect(getVtxos.mock.calls.flatMap(([options]) => options?.scripts ?? [])).toContain(
+            ESCROW_SCRIPT,
+        );
+    });
+
+    it("can exclude retained contracts from a funding read without changing default reads", async () => {
+        const indexer = onlineIndexer([vtxo(MARKED_SCRIPT, 10_000)]);
+        const getVtxos = vi.spyOn(indexer, "getVtxos");
+        const { wallet, contractRepository, defaultScript } = await seededWallet({
+            indexerProvider: indexer,
+        });
+        const [marked] = await contractRepository.getContracts({ script: MARKED_SCRIPT });
+        await contractRepository.saveContract({ ...marked, watch: "retained" });
+
+        getVtxos.mockClear();
+        expect(scriptsOf(await wallet.getSpendableVtxos({ watchedOnly: true }))).toEqual([
+            defaultScript,
+        ]);
+        expect(getVtxos.mock.calls.flatMap(([options]) => options?.scripts ?? [])).not.toContain(
+            MARKED_SCRIPT,
+        );
+
+        getVtxos.mockClear();
+        expect(
+            scriptsOf(
+                await wallet.getSpendableVtxos({
+                    watchedOnly: true,
+                    genericallySpendableOnly: true,
+                }),
+            ),
+        ).toEqual([defaultScript]);
+        expect(getVtxos.mock.calls.flatMap(([options]) => options?.scripts ?? [])).toEqual([
+            defaultScript,
+        ]);
+
+        getVtxos.mockClear();
+        expect(scriptsOf(await wallet.getSpendableVtxos())).toEqual(
+            [defaultScript, MARKED_SCRIPT].sort(),
+        );
+        expect(getVtxos.mock.calls.flatMap(([options]) => options?.scripts ?? [])).toContain(
+            MARKED_SCRIPT,
+        );
+    });
+
     it("drops gated contracts while getVtxos keeps them", async () => {
         const { wallet, defaultScript } = await seededWallet();
 
@@ -326,7 +438,7 @@ describe("getSpendableVtxos", () => {
         );
         await expect(wallet.getBalance()).resolves.toMatchObject({
             total: 70_000,
-            available: 50_000,
+            available: 49_000,
         });
         // Its already-persisted funds stay owned and reported — only the
         // refresh of them is skipped.
@@ -350,8 +462,9 @@ describe("getSpendableVtxos", () => {
 
 describe("getBalance", () => {
     /**
-     * `settled + preconfirmed === available + gated + intentLocked`, and the
-     * five owned buckets sum to `total` — which is what catches a bucket added
+     * `settled + preconfirmed === available + gated + intentLocked + carrier`,
+     * where `carrier` is the one dust carrier that leaves `available` whenever an asset is available;
+     * and the five owned buckets sum to `total` — which is what catches a bucket added
      * without being counted, or counted twice.
      */
     const expectSplit = (balance: {
@@ -365,9 +478,11 @@ describe("getBalance", () => {
         unrolled: number;
         total: number;
         boarding: { total: number };
+        availableAssets: unknown[];
     }) => {
+        const carrier = balance.available > 0 && balance.availableAssets.length > 0 ? 1000 : 0;
         expect(balance.settled + balance.preconfirmed).toBe(
-            balance.available + balance.gated + balance.intentLocked,
+            balance.available + balance.gated + balance.intentLocked + carrier,
         );
         expect(balance.total).toBe(
             balance.boarding.total +
@@ -400,8 +515,9 @@ describe("getBalance", () => {
         // 40k own + 10k escrow + 10k marked + 10k unknown-type
         expect(balance.settled).toBe(70_000);
         expect(balance.total).toBe(70_000);
-        // …minus the escrowed and the unknown-type contract.
-        expect(balance.available).toBe(50_000);
+        // …minus the escrowed and the unknown-type contract, and minus the one
+        // dust carrier the available assets ride on.
+        expect(balance.available).toBe(49_000);
         expect(balance.gated).toBe(20_000);
         expect(balance.intentLocked).toBe(0);
         expectSplit(balance);
@@ -433,7 +549,7 @@ describe("getBalance", () => {
         expect(balance.total).toBe(95_000);
         expect(balance.settled).toBe(70_000);
         expect(balance.preconfirmed).toBe(0);
-        expect(balance.available).toBe(50_000);
+        expect(balance.available).toBe(49_000);
         expect(balance.recoverable).toBe(0);
         expect(balance.pendingRecovery).toBe(0);
         expectSplit(balance);
@@ -463,7 +579,7 @@ describe("getBalance", () => {
     });
 
     it("drops an unrolled-AND-spent VTXO from every bucket", async () => {
-        // The `hasTerminalSpend` guard in the bucketer is what does this: the
+        // The `isVtxoSpent` guard in the bucketer is what does this: the
         // filter now hands unrolled coins over WITHOUT testing spend first.
         const { wallet, walletRepository, defaultScript } = await seededWallet();
         await walletRepository.saveVtxos(await wallet.getAddress(), [
@@ -520,7 +636,7 @@ describe("getBalance", () => {
         const balance = await wallet.getBalance();
         expect(balance.gated).toBe(20_000);
         expect(balance.intentLocked).toBe(0);
-        expect(balance.available).toBe(50_000);
+        expect(balance.available).toBe(49_000);
         expectSplit(balance);
     });
 
@@ -532,7 +648,7 @@ describe("getBalance", () => {
         const balance = await wallet.getBalance();
         expect(balance.intentLocked).toBe(40_000);
         expect(balance.gated).toBe(20_000);
-        expect(balance.available).toBe(10_000); // only MARKED_SCRIPT survives
+        expect(balance.available).toBe(9_000); // only MARKED_SCRIPT survives, minus its carrier
         expectSplit(balance);
     });
 
@@ -659,7 +775,10 @@ describe("spending sites consume the accessor", () => {
         const manager = new VtxoManager(wallet as never);
 
         await expect(manager.getExpiringVtxos()).resolves.toEqual([]);
-        expect(wallet.getSpendableVtxos).toHaveBeenCalled();
+        expect(wallet.getSpendableVtxos).toHaveBeenCalledWith({
+            withRecoverable: true,
+            genericallySpendableOnly: true,
+        });
     });
 
     it("offboard does not see gated VTXOs", async () => {
@@ -673,7 +792,11 @@ describe("spending sites consume the accessor", () => {
                 txFeeRate: "1",
             }),
         ).rejects.toThrow();
-        expect(wallet.getSpendableVtxos).toHaveBeenCalled();
+        expect(wallet.getSpendableVtxos).toHaveBeenCalledWith({
+            withRecoverable: true,
+            withUnrolled: false,
+            genericallySpendableOnly: true,
+        });
     });
 });
 
@@ -886,7 +1009,7 @@ describe("a contract whose handler rejects its stored params", () => {
     it("does not fail the reads of every other contract", async () => {
         const { wallet, defaultScript } = await withBrokenContract();
 
-        await expect(wallet.getBalance()).resolves.toMatchObject({ available: 50_000 });
+        await expect(wallet.getBalance()).resolves.toMatchObject({ available: 49_000 });
         expect(scriptsOf(await wallet.getSpendableVtxos())).toEqual(
             [defaultScript, MARKED_SCRIPT].sort(),
         );

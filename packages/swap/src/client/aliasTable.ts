@@ -1,17 +1,9 @@
 /**
- * The alias table, filled from discovery.
+ * The alias table, filled from discovery: the inverse of `toDiscoveryLeg`, mapping a card's
+ * corridor and `AssetInfo` back to the public id a caller may write, plus its ticker.
  *
- * M1 declared {@link AssetAliasTable} and left it injected: the alias layer owns
- * no network, and the table's only real source is the market index, which is
- * this milestone's. So this is the inverse of `toDiscoveryLeg` -- a card's
- * corridor and `AssetInfo` back up to the public id a caller may write, plus the
- * ticker that id answers to.
- *
- * Tickers are display metadata on a card and identity nowhere, which is why the
- * table carries both and `canonicalAssetId` refuses a ticker that names two
- * assets rather than picking one. Rows are deduplicated by id and ticker, so a
- * ticker listed by nine solvers for the same asset is one row and not an
- * ambiguity.
+ * Tickers are display metadata, never identity, so `canonicalAssetId` refuses a ticker naming two
+ * assets. Rows dedupe by id and ticker, so nine solvers listing one asset is one row.
  */
 import type { DiscoveredMarket, Side } from "@arkade-os/solver-discovery";
 import { BTC_ASSET_ID } from "../store";
@@ -31,11 +23,8 @@ import { corridorOfRail, railOfCorridor, type Corridor } from "./corridor";
 const ARKADE_ASSET_IDENTITY = /^[0-9a-f]{68}$/;
 
 /**
- * The public id for one side of a card.
- *
- * `undefined` where the pair is not expressible as a public id: an
- * arkade-issued asset on lightning or L1, which no corridor carries, and an id
- * that is neither BTC nor the identity form.
+ * The public id for one side of a card, or `undefined` when not expressible: an arkade-issued
+ * asset on lightning or L1, or an id that is neither BTC nor the identity form.
  */
 export const publicAssetId = (
     corridor: Corridor,
@@ -77,15 +66,9 @@ export const aliasTableFrom = (
 /**
  * The table narrowed to one rail.
  *
- * Q12 gives BTC one id per rail, so `"BTC"` names three assets the moment a
- * snapshot carries a corridor market — and the alias layer refuses a colliding
- * ticker rather than guessing, which is the right rule and would make the
- * spec's own `exchange({ give: "BTC", ... })` unresolvable if the table were
- * consulted whole. A ticker is therefore resolved on the leg's own rail: the
- * leg's corridor is already fixed by the destination, by `via`, or by being the
- * wallet's side, so the scope is a fact rather than a preference. Collisions
- * WITHIN a rail — two arkade assets both called `USDT` — still refuse, which is
- * the case the rule exists for.
+ * BTC has one id per rail (Q12), so a whole-table lookup of `"BTC"` would collide and refuse. The
+ * leg's rail is already fixed (by destination, `via`, or being the wallet's side), so resolving on
+ * it is a fact, not a preference. Collisions within a rail (two arkade `USDT`s) still refuse.
  */
 export const scopedToRail = (table: AssetAliasTable, rail: Rail): AssetAliasTable => ({
     network: table.network,

@@ -36,6 +36,9 @@ export enum BIP21Error {
  */
 const ARK_HRP = /^(?:t?ark|T?ARK)/;
 
+/** BIP21 grammar has no exponent, and `String(1e-7)` is "1e-7". */
+const formatAmount = (btc: number): string => btc.toFixed(8).replace(/\.?0+$/, "");
+
 export class BIP21 {
     /**
      * Create a BIP21 URI from the provided parameters.
@@ -60,7 +63,7 @@ export class BIP21 {
                 if (amount < 0) {
                     continue;
                 }
-                queryParams[key] = value;
+                queryParams[key] = formatAmount(amount);
             } else if (key === "ark") {
                 // Validate Arkade address format
                 if (typeof value === "string" && ARK_HRP.test(value)) {

@@ -1,12 +1,16 @@
 import type { RealmLike } from "@arkade-os/sdk/repositories/realm";
 import {
     marketsCacheKey,
+    assertRfqSwapPageLimit,
+    assertRfqSwapSince,
     type AssetSwapRepository,
     type MarketsCacheEntry,
+    type RfqHistoryCursor,
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
 import type { SwapRecord } from "../../client/record";
+import type { RfqSwapState } from "../../rfqSwapState";
 
 const SWAPS = "ArkadeAssetSwap";
 const RFQ_SWAPS = "ArkadeRfqSwap";
@@ -86,6 +90,56 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
         return [...this.realm.objects<{ data: string }>(RFQ_SWAPS)].map(
             (o) => JSON.parse(o.data) as RfqSwapRecord,
         );
+    }
+
+    async getRfqSwapsPage(
+        state: RfqSwapState,
+        afterId: string | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        const rows = this.realm
+            .objects<{ data: string }>(RFQ_SWAPS)
+            .filtered("state == $0 AND rfqId > $1", state, afterId ?? "")
+            .sorted("rfqId");
+        const page: RfqSwapRecord[] = [];
+        for (const row of rows) {
+            page.push(JSON.parse(row.data) as RfqSwapRecord);
+            if (page.length === limit) break;
+        }
+        return page;
+    }
+
+    async getRfqSwapsUpdatedPage(
+        state: RfqSwapState,
+        since: number,
+        after: RfqHistoryCursor | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        assertRfqSwapSince(since);
+        const rows = after
+            ? this.realm
+                  .objects<{ data: string }>(RFQ_SWAPS)
+                  .filtered(
+                      "state == $0 AND updatedAt >= $1 AND (updatedAt > $2 OR (updatedAt == $2 AND rfqId > $3))",
+                      state,
+                      since,
+                      after.updatedAt,
+                      after.rfqId,
+                  )
+            : this.realm
+                  .objects<{ data: string }>(RFQ_SWAPS)
+                  .filtered("state == $0 AND updatedAt >= $1", state, since);
+        const page: RfqSwapRecord[] = [];
+        for (const row of rows.sorted([
+            ["updatedAt", false],
+            ["rfqId", false],
+        ])) {
+            page.push(JSON.parse(row.data) as RfqSwapRecord);
+            if (page.length === limit) break;
+        }
+        return page;
     }
 
     async removeRfqSwap(rfqId: string): Promise<void> {

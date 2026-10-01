@@ -71,9 +71,6 @@ export function serializeSigningIdentity(identity: Identity): SerializedSigningI
     if (identity instanceof SeedIdentity) {
         return serializeSeedOwnedSigningIdentity(identity);
     }
-    if (identity instanceof SingleKey) {
-        return { type: "single-key", privateKey: identity.toHex() };
-    }
     if (hasToHex(identity)) {
         return { type: "single-key", privateKey: identity.toHex() };
     }

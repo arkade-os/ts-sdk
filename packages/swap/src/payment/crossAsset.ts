@@ -9,6 +9,7 @@
 import type { DiscoveredMarket, OfferPlan, Side } from "@arkade-os/solver-discovery";
 import type { Asset, PaymentRail, RouteQuote, RouterContext } from "@arkade-os/sdk";
 import {
+    ASSET_CARRIER_SATS,
     arkTarget,
     asset as assetExt,
     assetsOf,
@@ -64,8 +65,6 @@ export interface CrossAssetRailDeps {
     carrierSats?: number;
     emulatorPubkey?: string;
 }
-
-const DEFAULT_CARRIER_SATS = 330;
 
 const parseAssetId = (assetId: string): assetExt.AssetId | undefined => {
     try {
@@ -138,7 +137,7 @@ export function crossAssetRail(deps: CrossAssetRailDeps): PaymentRail {
                 );
             }
             const depositSats = Number(plan.deposit.atomic);
-            const carrier = deps.carrierSats ?? DEFAULT_CARRIER_SATS;
+            const carrier = deps.carrierSats ?? ASSET_CARRIER_SATS;
 
             return {
                 railId: CROSS_ASSET_RAIL,

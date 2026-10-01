@@ -35,7 +35,9 @@ const pending = (id: string, overrides: Partial<AssetSwap> = {}): AssetSwap => (
     ...overrides,
 });
 
-const wallet = { identity: {} } as IWallet;
+const WALLET_ADDRESS =
+    "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65wq0wnmwgr4nglzx999xqx7xahllp4gfh6638wkrjt5tl3k7c8vy6frzj2";
+const wallet = { identity: {}, getAddress: async () => WALLET_ADDRESS } as unknown as IWallet;
 const indexer = {} as RestoreIndexer;
 const txs = [{ type: "sent", redeemTxid: "new" }] as Tx[];
 const operatorPubkey = new Uint8Array(32);
@@ -71,7 +73,12 @@ describe("restoreAssetSwapRepository", () => {
             indexer,
             txs,
             new Set(["open", "settled"]),
-            { operatorPubkey, scanned: new Set(["open", "settled"]), reopen: [open] },
+            {
+                operatorPubkey,
+                scanned: new Set(["open", "settled"]),
+                reopen: [open],
+                hrp: "tark",
+            },
         );
     });
 
@@ -162,7 +169,7 @@ describe("restoreAssetSwapRepository", () => {
         } as unknown as AssetSwap;
         await repository.saveSwap(onchain);
         mocks.restoreAssetSwaps.mockResolvedValue({ restored: [], scannedTxids: [] });
-        mocks.restoreOfferCoverage.mockRejectedValue(new Error("Ark server unavailable"));
+        mocks.restoreOfferCoverage.mockRejectedValue(new Error("Arkade operator unavailable"));
 
         const result = await run(repository);
 

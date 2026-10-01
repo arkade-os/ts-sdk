@@ -1,37 +1,9 @@
 /**
- * The v2 client, as far as M3 takes it: `resolve()` and `quote()`.
+ * The v2 client. `resolve()` and `quote()` touch nothing durable (no watcher, drive, record or
+ * funding); `accept()` persists and registers with the drive ({@link createSwapDrive}).
  *
- * Everything a caller used to assemble by hand happens behind these two calls —
- * the destination parse, the corridor pair, the market lookup, the transport to
- * the card's rendezvous, the amount encoding, the covenant derivation and the
- * four-and-one checks over the reply. What does NOT happen is anything durable
- * or irreversible: `quote()` opens no watcher, arms no drive, writes no record
- * and funds nothing. It returns terms and stops.
- *
- * Construction stays synchronous and INERT. It touches no network, no wallet
- * and no repository: the operator read, the corridor deps, the market index and
- * — from M5 — the restore-read are all driven by the first call that needs
- * them, which for the drive is the first `await client.ready`. That is what
- * lets a client be built in a component body and only cost something when
- * somebody asks it a question, and what keeps a missing dep for a corridor
- * nobody uses from being a construction failure.
- *
- * The drive is composed onto that, not folded into it. `resolve()` and
- * `quote()` are unchanged and still touch nothing durable; `accept()` gained one
- * thing — it registers the swap it just persisted — and everything else the
- * lifecycle needs lives behind {@link createSwapDrive}.
- *
- * From M7 the three verbs hang off the same object: `pay`, `receive` and
- * `exchange` are `quote` -> fee ceiling -> `accept` and nothing else, and they
- * add no capability — everything they call was already here. What they add is
- * the ceiling; what they subtract is vocabulary.
- *
- * From M6 the surface closes: `cancel`, `swaps`, `markets`, and `ClientDisposed`
- * enforced across every member after disposal. Disposal is terminal; what the
- * terminal gate refuses is a NEW act, and an `Unsubscribe` already handed out
- * stays callable as a no-op — disposal drops every listener, so the closure has
- * nothing left to do, and refusing it would turn correct React-effect teardown
- * into a throw.
+ * Construction is synchronous and INERT — no network, wallet or repository — so a client can be
+ * built in a component body, and a missing dep for an unused corridor is not a construction error.
  */
 import { hex } from "@scure/base";
 import type { IWallet } from "@arkade-os/sdk";
@@ -81,26 +53,14 @@ import { cardMarketOf, marketBackendOf, marketKeyOf, usableMarkets, type Market 
 import { nostrTransportFactory, type RfqTransportFactory } from "./transport";
 
 export interface SwapClientConfig {
-    /**
-     * The wallet, and through it the operator: server info, chain reads and
-     * broadcast all come from it, and no server URL is accepted anywhere.
-     */
+    /** The wallet, and through it the operator: server info, chain reads and broadcast all come from
+     * it; no server URL is accepted anywhere. */
     readonly wallet: IWallet;
     /**
-     * Storage: the accept records, the markets cache, the restore-scan cursor.
-     *
-     * One seam for all three — the arkade corridor's `repository` override
-     * defaults to this object, so a client cannot write records to one store
-     * and read its cache from another.
-     *
-     * No implicit default, and never an in-memory fallback: silently losing
-     * active swaps is the thing a storage default exists to prevent. A browser
-     * consumer passes `IndexedDbAssetSwapRepository`, a Node consumer imports
-     * `@arkade-os/swap/node` for the file-backed SQLite default, and a test
-     * passes `InMemoryAssetSwapRepository` — explicitly, which is the only way
-     * ephemeral storage is available. `accept()` without one is
-     * `MissingCorridorDep("arkade", "repository")`; `quote()` and `resolve()`
-     * work without one, since neither persists anything.
+     * Storage for accept records, the markets cache and the restore-scan cursor. No implicit default
+     * and never an in-memory fallback: silently losing active swaps is what it must prevent.
+     * Browser: `IndexedDbAssetSwapRepository`; Node: `@arkade-os/swap/node`; tests:
+     * `InMemoryAssetSwapRepository`. Without one, `accept()` throws `MissingCorridorDep`.
      */
     readonly repository?: AssetSwapRepository;
     readonly discovery?: DiscoveryConfig;
@@ -112,39 +72,22 @@ export interface SwapClientConfig {
     /** Overrides the wallet's own connection; for tests and a second operator. */
     readonly operator?: SwapOperator;
     readonly fetchImpl?: typeof fetch;
-    /**
-     * How a card's rendezvous is opened. Defaults to the card's Nostr transport,
-     * which is the only shipped one that can attest who answered — an injected
-     * transport that attests nobody fails the responder check rather than
-     * quietly quoting against an unauthenticated wire.
-     */
+    /** How a card's rendezvous is opened. Defaults to the card's Nostr transport, the only shipped
+     * one that attests who answered; a transport that attests nobody fails the responder check. */
     readonly transportFor?: RfqTransportFactory;
 }
 
 export interface SwapClient {
     /**
-     * The restore-read, and — when it armed — the first pass after it.
-     *
-     * There is no required `start()`. Construction stays inert and this is what
-     * drives the one read of the repository; under `drive: "auto"` the read arms
-     * the loop when it finds live work, and the first `accept()` arms it when it
-     * does not. A resumed swap may already be past a deadline, which is why
-     * arming runs one pass immediately rather than waiting out an interval.
-     *
-     * **Rejects only when the repository itself is unreadable.** A client that
-     * cannot read its own records cannot drive them safely. Everything
-     * per-record resolves this and surfaces through the normal channels instead:
-     * a corrupt record is filtered, a swap that will not rebuild reports off its
-     * record, and a first pass that finds a swept lockup reports
-     * `needs_recovery` through {@link onUpdate}.
+     * The restore-read, and — when it armed — the first pass after it. Under `drive: "auto"` the
+     * read arms the loop on live work; arming runs a pass immediately since a resumed swap may be
+     * past a deadline. **Rejects only when the repository is unreadable**; per-record problems
+     * surface through {@link onUpdate}.
      */
     readonly ready: Promise<void>;
 
     /**
-     * Arm the drive. Idempotent, and required only by `drive: "manual"`.
-     *
-     * Double arming is a no-op, so a React double-mount and two concurrent
-     * callers are both safe.
+     * Arm the drive. Idempotent (React double-mount safe); required only by `drive: "manual"`.
      *
      * @throws {SwapDriveRefusedError} under `drive: "readonly"`, which actuates
      *   nothing — silence would leave two contradictory instructions standing.
@@ -152,53 +95,30 @@ export interface SwapClient {
     start(): Promise<void>;
 
     /**
-     * Release the live resources this instance owns, and stay reusable.
-     *
-     * Timers cleared, the contract subscription dropped, in-flight actions left
-     * to run to completion, and outstanding work left where it is: stop/start is
-     * a pause, not a cancellation. What is NOT undone is durable — the records
-     * stay, and so do the wallet's contract registrations, because dropping one
+     * Release live resources and stay reusable: a pause, not a cancellation. In-flight actions run to
+     * completion; records and the wallet's contract registrations stay, because dropping one
      * unwatches a funded lockup.
      */
     stop(): Promise<void>;
 
     /**
-     * Terminal cleanup: {@link stop} plus draining what is in flight, dropping
-     * every listener, and making the instance terminal.
-     *
-     * It drains rather than returning while a refund push is mid-flight —
-     * nothing in this package takes an `AbortSignal`, so the alternative is
-     * calling an instance terminal while it is still moving money. Durable swap
-     * records, contract registrations and recovery metadata all survive it: a
-     * new client restores and resumes from them, and an injected repository is
-     * never closed — the client closes only a connection it opened itself.
-     *
-     * From M6 every other member refuses with {@link ClientDisposed} afterwards.
-     * The two exceptions are teardown, and for one reason: refusing a cleanup
-     * call turns correct teardown into a throw. A second dispose is a no-op, and
-     * so is an {@link Unsubscribe} this client already handed out.
+     * Terminal cleanup: {@link stop}, drain in-flight work (nothing takes an `AbortSignal`), drop
+     * every listener. Durable state survives; an injected repository is never closed. Afterwards
+     * members refuse with {@link ClientDisposed}, except teardown: a second dispose and an issued
+     * {@link Unsubscribe} are no-ops, so React-effect teardown never throws.
      */
     [Symbol.asyncDispose](): Promise<void>;
 
     /**
-     * Every outcome transition, in one vocabulary for both families.
-     *
-     * Subscribing replays the current outcome of every swap this client knows,
-     * then streams transitions. Delivery is idempotent per `(swapId, outcome)`,
-     * and because the outcome is DERIVED rather than stored the key is the
-     * derived one — so the legal `claimed -> claimable` backslide, which
-     * produces `funded` twice, is delivered once.
+     * Every outcome transition, both families. Replays every known swap's current outcome, then
+     * streams. Idempotent per derived `(swapId, outcome)`, so the legal `claimed -> claimable`
+     * backslide (`funded` twice) is delivered once.
      */
     onUpdate(fn: (update: SwapUpdate) => void): Unsubscribe;
 
     /**
-     * Recover a swap whose value was swept, then run one immediate pass.
-     *
-     * The recovery round itself is the wallet's — this package deliberately
-     * builds none — and it takes no outpoints: it reads the whole wallet, drops
-     * what it cannot settle, and caps the batch, deferring the overflow. So a
-     * settlement txid is not success, and this re-reads the named lockup to
-     * answer whether THIS swap's outputs were included.
+     * Recover a swap whose value was swept, then run one pass. The wallet's recovery round takes no
+     * outpoints and may defer outputs, so this re-reads the lockup to answer for THIS swap.
      *
      * @throws {SwapDriveRefusedError} under `drive: "readonly"`; for a lockup
      *   still inside its refund window, where a round including it can fail the
@@ -208,20 +128,9 @@ export interface SwapClient {
     recover(swapId: AssetSwapId): Promise<RecoveryResult>;
 
     /**
-     * Cancel an asset swap: take back an unfilled offer's deposit.
-     *
-     * Defined only for asset swaps and typed that way — an HTLC corridor swap
-     * has phases instead, and its exits are a claim or a refund. The id arrives
-     * tagged (`offer:<quoteId>` / `rfq:<quoteId>`), so a corridor id refuses on
-     * the parse with no repository read, and an offer id no record backs refuses
-     * after the one read this call needed anyway.
-     *
-     * Cancel races a fill. When the deposit is already spent, the spending
-     * transaction is reconciled against the covenant's leaves and the outcome
-     * is `filled` rather than a throw — v1's documented throw-means-completed
-     * behaviour was a trap. A spend the local rebuild cannot classify is
-     * `needs_recovery`: value moved and the client cannot name how, which is
-     * what {@link recover} drives.
+     * Cancel an asset swap: take back an unfilled offer's deposit (HTLC corridor swaps exit by claim
+     * or refund). Cancel races a fill: an already-spent deposit answers `filled` rather than
+     * throwing; a spend the rebuild cannot classify is `needs_recovery`.
      *
      * @throws {NotCancellable} for a corridor-tagged id, or an id no record backs.
      * @throws {MissingCorridorDep} when the client was given no repository.
@@ -230,32 +139,17 @@ export interface SwapClient {
     cancel(swapId: AssetSwapId): Promise<{ outcome: CancelOutcome }>;
 
     /**
-     * Every swap this client wrote — both families, live and ended.
-     *
-     * One read over the uniform v2 keyspace, projected through the same
-     * derivation the drive publishes: the drive's live answer where it holds the
-     * record, the no-live-state projection otherwise. Membership is therefore
-     * independent of `start()` and of drive mode. A record that will not decode
-     * is skipped rather than fatal. **The v2 keyspace is never pruned** — the
-     * store grows for the life of the wallet, which this method documents
-     * rather than hides.
-     *
-     * The filter is in-memory; the scope is the v2 client's own history. v1-era
-     * rows in the `swaps` and `rfqSwaps` keyspaces are not part of the answer —
-     * they belong to `/protocol`'s re-exported readers.
+     * Every swap this client wrote — both families, live and ended — projected through the drive's
+     * derivation, so membership is independent of `start()` and drive mode. Undecodable records are
+     * skipped. **The v2 keyspace is never pruned.** v1-era rows (`swaps`, `rfqSwaps`) are excluded;
+     * they belong to `/protocol`'s readers.
      */
     swaps(filter?: SwapFilter): Promise<Swap[]>;
 
     /**
-     * The markets a `quote()` could be priced against, as {@link Market} — one
-     * shape with what `Quote.market` references. The escape hatch for a caller
-     * picking a market for a custom `quote()`: it reads the same card the quote
-     * will cite, and the same filters the routing read applies, so it cannot
-     * offer one `quote()` would then refuse. Never required.
-     *
-     * Reads the snapshot the way `quote()` does and not the way `resolve()`
-     * does — fetching when there is none in hand — because this is what a
-     * caller reaches for BEFORE quoting.
+     * The markets a `quote()` could be priced against, in the `Quote.market` shape and under the same
+     * filters, so it cannot offer one `quote()` would refuse. Fetches when no snapshot is in hand, as
+     * `quote()` does, since callers reach for it BEFORE quoting.
      *
      * @throws {DiscoverySnapshotUnavailable} when the fetch leaves it with
      *   nothing either.
@@ -263,30 +157,18 @@ export interface SwapClient {
     markets(): Promise<Market[]>;
 
     /**
-     * The route, the market that would price it, and what the active snapshot
-     * serves — without disclosing anything to anybody.
-     *
-     * Network-free against injected or cached discovery data, which is the point
-     * of having it: application policy gets to veto before an RFQ round trip
-     * discloses an invoice or an amount.
+     * The route, the market that would price it, and what the active snapshot serves — disclosing
+     * nothing. Network-free against injected or cached discovery data, so application policy can
+     * veto before an RFQ round trip discloses an invoice or amount.
      */
     resolve(input: QuoteInput): Promise<RouteResolution>;
     /** Verified, binding terms. Nothing is persisted, funded or watched. */
     quote(input: QuoteInput): Promise<Quote>;
     /**
-     * Make the quote durable, then move the value.
-     *
-     * One ordering, on every route: the record and its secrets are at rest
-     * before anything irreversible, and the funding txid is a later best-effort
-     * write. Idempotent by quote id and only by quote id — a second call with
-     * the same quote returns or resumes the stored swap and never mints a
-     * second invoice or funds a second time.
-     *
-     * Does not arm a drive loop or a watcher: this returns once the record is
-     * durable. On `lightning -> arkade` that means a durable invoice the payer
-     * can be shown — which is the point of the ordering, since showing one
-     * whose claim secret is still in memory is what buys a lockup nobody can
-     * claim.
+     * Make the quote durable, then move the value: record and secrets are at rest before anything
+     * irreversible. Idempotent by quote id — never a second invoice or a second funding. Returns
+     * once durable: an invoice shown while its claim secret is only in memory buys an unclaimable
+     * lockup.
      *
      * @throws {QuoteExpired} past `quote.expiresAt`; the client never re-quotes.
      * @throws {InsufficientFunds} before the persist, on funding routes only.
@@ -295,16 +177,9 @@ export interface SwapClient {
      */
     accept(quote: Quote): Promise<Swap>;
     /**
-     * Pay a destination: a bolt11, a `bc1…`, or a plain Arkade address.
-     *
-     * One call for §5's whole pay box. `quote` → fee ceiling → `accept`, with
-     * the amount taken as what the recipient gets; an amount-bearing invoice
-     * pins it already, so passing one beside it is `AmountMismatch`.
-     *
-     * A plain Arkade address is **not** a swap and does not become one: it
-     * settles through `wallet.send` and answers `{ kind: "payment", txid }`,
-     * which is why the return is a union. Rejecting it would put the same
-     * branch in every product that has one pay box.
+     * Pay a bolt11, a `bc1…`, or a plain Arkade address: `quote` → fee ceiling → `accept`, the amount
+     * being what the recipient gets. A plain Arkade address is **not** a swap: it settles through
+     * `wallet.send` and answers `{ kind: "payment", txid }`, hence the union.
      *
      * @throws {MaxFeeExceeded} when the quoted fee is over `maxFee` or
      *   `policy.maxFee`, whichever is tighter — before anything is funded.
@@ -312,18 +187,9 @@ export interface SwapClient {
     pay(destination: string, options?: PayOptions): Promise<PayResult>;
 
     /**
-     * Ask for an incoming payment, and get back the artifact to show its payer.
-     *
-     * Returns only after `accept()` has persisted, which is the point: an
-     * invoice shown to a payer while its claim secret is still in memory buys a
-     * lockup nobody can claim. The artifact is non-optional on the return type
-     * for the same reason — a receive has one by construction.
-     *
-     * Generic over `via` so the artifact's shape follows the corridor the
-     * caller named — `receive({ via: "lightning" })` answers the invoice arm
-     * and `.artifact.bolt11` needs no `kind` check. See
-     * {@link ReceiveArtifact} for why the tie lives here and not on
-     * `Artifact`.
+     * Ask for an incoming payment and get back the artifact to show its payer. Returns only after
+     * `accept()` persisted (see {@link accept}). Generic over `via` so the artifact's shape follows
+     * the corridor named; see {@link ReceiveArtifact}.
      *
      * @throws {MaxFeeExceeded} as {@link pay} does.
      */
@@ -339,13 +205,8 @@ export interface SwapClient {
     exchange(options: ExchangeOptions): Promise<Swap>;
 
     /**
-     * What the quote with this id derived — the covenant, the keys, the wire
-     * reply.
-     *
-     * Process-local and deliberately not durable: M3 persists nothing, and M4's
-     * `accept()` is what turns this into a record. It exists so the covenant a
-     * quote was verified against is the one that gets funded, rather than a
-     * second derivation of the same tree.
+     * What the quote with this id derived — covenant, keys, wire reply. Process-local, not durable;
+     * it exists so the covenant a quote was verified against is the one funded, not a re-derivation.
      */
     preparationOf(id: QuoteId): QuotePreparation | undefined;
 }
@@ -356,13 +217,7 @@ export interface SwapFilter {
     readonly outcome?: Outcome;
 }
 
-/**
- * How many quotes' derivations are kept.
- *
- * Bounded because a quote UI re-quotes on every keystroke and each one carries a
- * covenant; the oldest are dropped, and dropping one costs a re-quote rather
- * than anything durable — there is nothing durable here to lose.
- */
+/** Bounded because a quote UI re-quotes per keystroke; dropping one costs only a re-quote. */
 const PREPARATIONS_HELD = 64;
 
 const mintQuoteId = (): QuoteId => hex.encode(crypto.getRandomValues(new Uint8Array(16)));
@@ -372,37 +227,17 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
     const operator = config.operator ?? walletOperator(wallet);
     const feed: FeedFetch = feedFetch(config.fetchImpl ?? fetch);
     const preparations = new Map<QuoteId, QuotePreparation>();
-    // The wallet's own reader, built once: the drive's observation seam and the
-    // cancel path's fill-race read share it, so both see the same chain.
+    // shared by the drive and cancel's fill-race read, so both see the same chain
     const indexer = walletLockupIndexer(wallet);
 
-    /**
-     * Disposal is terminal, and M6 closes the gate over the whole method set —
-     * which is possible only now that the set is closed.
-     *
-     * The drive already refuses the four members it owns (`start`, `onUpdate`,
-     * `recover`, `adopt`); this covers the ones it never sees — the quote path,
-     * `stop`, the record reads and cancel — so no member is left answering after
-     * disposal. What the gate refuses is a NEW act: a second dispose and an
-     * {@link Unsubscribe} already handed out are teardown, and both are no-ops,
-     * because disposal has already dropped every listener and refusing a
-     * cleanup call would turn correct React-effect teardown into a throw.
-     *
-     * The promise-returning members reject rather than throwing synchronously —
-     * they are declared `Promise<...>` and a caller is entitled to `.catch()`
-     * them — while `ready`, `onUpdate` and `preparationOf` throw where they
-     * stand. A getter handing back a rejected promise nobody awaited would be
-     * an unhandled rejection.
-     */
+    /** The terminal gate for members the drive does not gate itself. `ready` throws rather than
+     * returning a rejected promise nobody awaited (an unhandled rejection). */
     let disposed = false;
     const ensureLive = (method: string): void => {
         if (disposed) throw new ClientDisposed(method);
     };
 
-    // Built eagerly and inert: the drive touches nothing until its own `ready`
-    // is awaited, and it takes the corridor set as a thunk precisely so
-    // constructing it costs no operator read. The indexer is the wallet's own
-    // reader — this client accepts no server URL and no provider anywhere.
+    // lazy and inert: the corridor set is a thunk so constructing the drive costs no operator read
     let drive: SwapDrive | undefined;
     const driving = (): SwapDrive =>
         (drive ??= createSwapDrive({
@@ -410,6 +245,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             operator,
             ...(config.repository === undefined ? {} : { repository: config.repository }),
             corridors: async () => (await resolved()).corridors,
+            network: async () => (await resolved()).base.networkName,
             ...(config.policy?.drive === undefined ? {} : { mode: config.policy.drive }),
             indexer,
         }));
@@ -417,16 +253,12 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
     let context:
         | Promise<{ base: CorridorBase; corridors: CorridorSet; discovery: DiscoveryIndex }>
         | undefined;
-    /** A rejected init is not cached. The read behind it is the reachable-or-not
-     * kind — an operator that cannot be reached and no persisted snapshot to
-     * fall back on — and caching that rejection would strand the client for its
-     * whole lifetime over one unreachable moment. Same rule as the sqlite
-     * repository's `ensureInit`. */
+    /** A rejected init is not cached: it means an unreachable operator with no persisted snapshot,
+     * and caching it would strand the client over one unreachable moment. */
     const resolved = () =>
         (context ??= (async () => {
-            // Not `requireLive`: a parse derives no covenant, and `resolve()`
-            // answers offline. Every covenant derivation makes its own live read
-            // before it binds anything — see `quote()` below.
+            // not `requireLive`: a parse derives no covenant; every covenant derivation makes its
+            // own live read (see `quote()`)
             const base = await resolveCorridorBase({
                 wallet,
                 operator,
@@ -463,10 +295,8 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
 
     const remember = (id: QuoteId, preparation: QuotePreparation): void => {
         preparations.set(id, preparation);
-        while (preparations.size > PREPARATIONS_HELD) {
-            const oldest = preparations.keys().next();
-            if (oldest.done) break;
-            preparations.delete(oldest.value);
+        if (preparations.size > PREPARATIONS_HELD) {
+            preparations.delete(preparations.keys().next().value!);
         }
     };
 
@@ -481,12 +311,9 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             const { corridors, discovery } = await resolved();
             let resolvedRoute = await route(input, "quote");
 
-            // The responder check pins against the card's `discovery_pubkey`,
-            // and a card read back out of the cache carries that field
-            // unvalidated. So an addressed quote re-pins the card from the
-            // registry first. If the registry cannot be reached the stale
-            // snapshot still comes back and the check refuses it — which is the
-            // fail-closed half of the same rule, not a second one.
+            // The responder check pins against the card's `discovery_pubkey`, which a cached card
+            // carries unvalidated, so re-pin from the registry. If unreachable, the stale snapshot
+            // comes back and the check refuses it (fail closed).
             if (resolvedRoute.market?.backend === "rfq" && !resolvedRoute.snapshot.ref.live) {
                 await discovery.load({ refresh: true });
                 resolvedRoute = await route(input, "quote");
@@ -510,11 +337,8 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 throw new Error("a resolved market must carry its card's provenance");
             }
 
-            // Dep resolution happens when a route first touches a corridor, and
-            // this is that moment: a dep overridden to nothing is
-            // `MissingCorridorDep` here, before anything is disclosed or funded,
-            // and a corridor this route does not touch is never resolved at all.
-            // Both legs, because the arkade one is a leg of every route.
+            // Deps resolve when a route first touches a corridor: a dep overridden to nothing is
+            // `MissingCorridorDep` here, before anything is disclosed or funded.
             corridors.get(resolvedRoute.legs.give.corridor);
             corridors.get(resolvedRoute.legs.take.corridor);
 
@@ -542,16 +366,12 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 return quote;
             }
 
-            // Every covenant derivation reads live: a snapshot binds the tree to
-            // a signer key the operator may no longer co-sign for, and an
-            // unreachable operator is `OperatorUnreachable` here, before funding.
+            // live: a snapshot could bind the tree to a signer key the operator no longer co-signs
+            // for; an unreachable operator is `OperatorUnreachable` here, before funding
             const info = await liveArkadeInfo(wallet, { requireLive: true });
             const rendezvous = market.card.discovery_pubkey;
             if (rendezvous === undefined) {
-                // Unreachable: `eligibleMarkets` drops a corridor card with no
-                // rendezvous and an asset card without one prices from its feed
-                // above, precisely so this is never a transport built against an
-                // empty key.
+                // unreachable: `eligibleMarkets` drops a corridor card with no rendezvous, and an asset card without one prices from its feed
                 throw new Error(`card ${market.card.solver} names no discovery key to address`);
             }
             const transport = await (config.transportFor ?? nostrTransportFactory)({
@@ -579,9 +399,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 remember(quoteId, preparation);
                 return quote;
             } finally {
-                // One negotiation, one transport: the reply has landed or it has
-                // not, and holding a relay subscription open past that is a
-                // resource this call owns and nothing else will close.
+                // one negotiation, one transport; nothing else would close the relay subscription
                 await transport.close().catch(() => {});
             }
         },
@@ -590,9 +408,8 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             ensureLive("accept");
             const { corridors } = await resolved();
             const drive = driving();
-            // Before the persist, not after: the restore is what indexes the
-            // stored records, and an accept that resumed one the drive had not
-            // read would register a second live swap for the same lockup.
+            // before the persist: the restore indexes stored records, and resuming one the drive
+            // had not read would register a second live swap for the same lockup
             await drive.ready;
             const preparation = preparations.get(quote.id);
             return acceptQuote({
@@ -608,21 +425,16 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
 
         cancel: async (swapId) => {
             ensureLive("cancel");
-            // The tag parse is the refusal: a corridor id answers `NotCancellable`
-            // with no repository read, which is the point of the prefix. An id
-            // that arrives untagged takes the one read the tagged form takes.
+            // the tag parse is the refusal: a corridor id needs no repository read
             if (familyOfSwapId(swapId) === "rfq") throw new NotCancellable(swapId);
             const repository = config.repository;
             if (repository === undefined) {
                 throw new MissingCorridorDep("arkade", "repository");
             }
             const drive = driving();
-            // Before the read, for `accept()`'s reason: the restore is what
-            // indexes the stored records, and a gate written onto a record the
-            // drive had never read would emit into an empty registry.
+            // before the read, for `accept()`'s reason: a gate written onto a record the drive never
+            // read would emit into an empty registry
             await drive.ready;
-            // The one read, and the only one: what comes back is what the gate
-            // is written from, so nothing re-reads it downstream.
             const record = await repository.getSwapRecord(quoteIdOfSwapId(swapId));
             if (record === undefined || record.family !== "offer") {
                 throw new NotCancellable(swapId);
@@ -654,15 +466,10 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         markets: async () => {
             ensureLive("markets");
             const { discovery } = await resolved();
-            // `load`, as `quote()` reads it and not as `resolve()` does: the
-            // escape hatch is what a caller reaches for BEFORE quoting, so a
-            // client that has never routed anything must not answer with a
-            // refusal it would not have given the quote.
+            // `load`, as `quote()` reads it: a never-routed client must not refuse where the quote
+            // would not
             const snapshot = await discovery.load();
-            // One shape with `Quote.market`: the same card a quote will cite,
-            // key for key and snapshot for snapshot. The filter is the routing
-            // read's own, so the hatch cannot offer a card `quote()` would then
-            // refuse — a disallowed registry, or an unaddressable corridor card.
+            // the routing read's own filter, so this cannot offer a card `quote()` would refuse
             return usableMarkets(snapshot, config.policy).map((card) =>
                 cardMarketOf(card, snapshot.ref, marketKeyOf(card), marketBackendOf(card)),
             );
@@ -692,9 +499,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             ensureLive("ready");
             return driving().ready;
         },
-        // `async`, so the refusal is a rejection rather than a synchronous
-        // throw: these are declared `Promise<void>` and a caller is entitled to
-        // `.catch()` them.
+        // `async` so the refusal is a rejection, as the `Promise<void>` signature promises
         start: async () => {
             ensureLive("start");
             return driving().start();
@@ -706,8 +511,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         [Symbol.asyncDispose]: async () => {
             if (disposed) return;
             disposed = true;
-            // Only a drive that exists: construction is inert, and building one
-            // to dispose it would be the one thing a never-driven client pays.
+            // only a drive that exists: never build one just to dispose it
             await drive?.dispose();
         },
         onUpdate: (fn) => {
@@ -720,11 +524,8 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         },
     };
 
-    /**
-     * What the verbs call: the client's own gated members, not the raw helpers,
-     * so a verb inherits `quote`'s market re-pin and `accept`'s
-     * restore-before-persist rather than reimplementing either.
-     */
+    /** The client's own gated members, so a verb inherits `quote`'s re-pin and `accept`'s
+     * restore-before-persist. */
     const verbs: VerbDeps = {
         wallet,
         quote: (input) => client.quote(input),

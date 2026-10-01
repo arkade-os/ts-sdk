@@ -31,6 +31,7 @@ import type { AssetSwapRepository } from "../../src/repository";
 import {
     AFTER,
     BEFORE,
+    OFFER_ADDRESS,
     OFFER_SCRIPT,
     OPERATOR,
     PAYMENT_HASH,
@@ -50,6 +51,7 @@ import {
     offerDeposit,
     offerFunding,
     offerRecord,
+    offerSpend,
     type FakeContracts,
     type FakeFunded,
     type FakeVtxo,
@@ -155,6 +157,7 @@ const build = async (
         ...(over.claim === undefined ? {} : { claim: over.claim }),
     });
     const contracts = over.contracts ?? fakeContracts([SEND_LOCKUP, RECEIVE_LOCKUP]);
+    contracts.funded.push(...(over.funded ?? []));
     const { wallet, recoveries } = fakeWallet({
         contracts,
         identity: over.identity ?? SENDER,
@@ -165,10 +168,10 @@ const build = async (
         wallet,
         repository,
         corridors,
+        network: async () => "regtest",
         operator: fakeOperator(over.gate),
         indexer: fakeIndexer({
             ...(over.vtxos === undefined ? {} : { vtxos: over.vtxos }),
-            ...(over.funded === undefined ? {} : { funded: over.funded }),
             ...(over.txs === undefined ? {} : { txs: over.txs }),
             ...(over.indexerFails ? { fail: true } : {}),
         }),
@@ -242,7 +245,9 @@ describe("the record bridge", () => {
         const record = signable({ fundingTxid: "aa".repeat(32) });
         const h = await build({
             records: [record],
-            now: AFTER,
+            // Past the empty-lockup wait, not just past the locktime: inside it
+            // the manager holds for a late settlement instead of settling.
+            now: AFTER + REFUND_MTP_LAG_SECONDS,
             vtxos: unspent(),
             // An empty lockup: the refunder answers `null` without signing, and
             // the manager settles the swap `refunded`. What is under test is
@@ -279,6 +284,7 @@ describe("the lifecycle", () => {
             wallet,
             operator: fakeOperator(),
             corridors: fakeCorridors(),
+            network: async () => "regtest",
             indexer: fakeIndexer(),
             now: () => BEFORE,
         });
@@ -299,6 +305,7 @@ describe("the lifecycle", () => {
             operator: fakeOperator(),
             repository,
             corridors: fakeCorridors(),
+            network: async () => "regtest",
             indexer: fakeIndexer(),
             now: () => BEFORE,
         });
@@ -318,6 +325,7 @@ describe("the lifecycle", () => {
             operator: fakeOperator(),
             repository,
             corridors: fakeCorridors(),
+            network: async () => "regtest",
             indexer: fakeIndexer({ vtxos: unspent() }),
             contracts,
             now: () => BEFORE,
@@ -694,6 +702,7 @@ describe("the offer half", () => {
             operator: fakeOperator(),
             repository,
             corridors: fakeCorridors(),
+            network: async () => "regtest",
             indexer: fakeIndexer({
                 txs: [funding],
                 vtxos: [offerDeposit(funding.txid, { isSwept: true })],
@@ -736,6 +745,7 @@ describe("the offer half", () => {
             operator: fakeOperator(),
             repository,
             corridors: fakeCorridors(),
+            network: async () => "regtest",
             indexer: fakeIndexer({
                 txs: [funding],
                 vtxos: [offerDeposit(funding.txid)],
@@ -763,6 +773,113 @@ describe("the offer half", () => {
         const h = await build({ records: [offerRecord()] });
         expect(h.drive.swap("o1")?.outcome).toBe("accepted");
         await h.drive.dispose();
+    });
+
+    /** The construction restore over a store that has never seen `funding`. */
+    const restoreOver = async (
+        records: OfferSwapRecord[],
+        funding: { txid: string; psbt: string },
+        deposit: FakeVtxo,
+    ) => {
+        const repository = memoryRepository();
+        for (const record of records) await repository.saveSwapRecord(record);
+        const contracts = fakeContracts([]);
+        const { wallet } = fakeWallet({
+            contracts,
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+        });
+        const seen: SwapUpdate[] = [];
+        const drive = createSwapDrive({
+            wallet,
+            operator: fakeOperator(),
+            repository,
+            corridors: fakeCorridors(),
+            network: async () => "regtest",
+            indexer: fakeIndexer({ txs: [funding], vtxos: [deposit] }),
+            contracts,
+            now: () => BEFORE,
+            pollIntervalMs: 10 * 60 * 1000,
+        });
+        drive.onUpdate((update) => seen.push(update));
+        await drive.ready;
+        await drive.idle();
+        return { drive, repository, seen };
+    };
+
+    it("rebuilds a record for a deposit no record claims", async () => {
+        const funding = offerFunding();
+        const { drive, repository, seen } = await restoreOver(
+            [],
+            funding,
+            offerDeposit(funding.txid),
+        );
+
+        const stored = (await repository.getSwapRecord(funding.txid)) as OfferSwapRecord;
+        expect(stored).toMatchObject({
+            id: funding.txid,
+            family: "offer",
+            status: "pending",
+            fundingTxid: funding.txid,
+            swapPkScript: OFFER_SCRIPT,
+            swapAddress: OFFER_ADDRESS,
+            give: { asset: "arkade:regtest/slip44:0", amount: "100000" },
+            take: { asset: `arkade:regtest/asset:${"f1".repeat(34)}`, amount: "5000" },
+            market: { kind: "restored", backend: "feed" },
+            createdAt: 1_700_000_000,
+        });
+        // live: replayed, and left off the cursor
+        expect(drive.swap(funding.txid)?.outcome).toBe("open");
+        expect(seen.map((u) => quoteIdOfSwapId(u.swap.id))).toContain(funding.txid);
+        expect(await repository.getScannedTxids()).toEqual(new Set());
+        await drive.dispose();
+    });
+
+    it("answers a rebuilt deposit once it has nothing left to move", async () => {
+        const funding = offerFunding();
+        const { drive, repository } = await restoreOver(
+            [],
+            funding,
+            offerDeposit(funding.txid, { isSwept: true }),
+        );
+        expect(drive.swap(funding.txid)?.outcome).toBe("needs_recovery");
+        expect(await repository.getScannedTxids()).toEqual(new Set([funding.txid]));
+        await drive.dispose();
+    });
+
+    it("stamps a funded record that never got its txid instead of rebuilding it beside it", async () => {
+        const funding = offerFunding();
+        const { drive, repository } = await restoreOver(
+            [offerRecord({ swapPkScript: OFFER_SCRIPT })],
+            funding,
+            offerDeposit(funding.txid),
+        );
+
+        const stored = (await repository.getSwapRecord("o1")) as OfferSwapRecord;
+        expect(stored.fundingTxid).toBe(funding.txid);
+        expect(await repository.getSwapRecord(funding.txid)).toBeUndefined();
+        expect(await repository.getAllSwapRecords()).toHaveLength(1);
+        expect(drive.swap("o1")?.outcome).toBe("open");
+        await drive.dispose();
+    });
+
+    it("writes pending over a stored cancelling when the deposit is still unspent", async () => {
+        const funding = offerFunding();
+        const { drive, repository } = await restoreOver(
+            [
+                offerRecord({
+                    fundingTxid: funding.txid,
+                    swapPkScript: OFFER_SCRIPT,
+                    status: "cancelling",
+                }),
+            ],
+            funding,
+            offerDeposit(funding.txid),
+        );
+        expect((await repository.getSwapRecord("o1")) as OfferSwapRecord).toMatchObject({
+            status: "pending",
+        });
+        expect(drive.swap("o1")?.outcome).toBe("open");
+        await drive.dispose();
     });
 });
 
@@ -832,6 +949,29 @@ describe("recover()", () => {
     it("refuses an id it holds no record for", async () => {
         const h = await build();
         await expect(h.drive.recover("nope")).rejects.toMatchObject({ reason: "unknown-swap" });
+        await h.drive.dispose();
+    });
+
+    it("re-answers a recovered offer deposit the cursor had already answered", async () => {
+        const funding = offerFunding();
+        const vtxos = [offerDeposit(funding.txid, { isSwept: true })];
+        const txs = [funding];
+        const h = await build({
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            vtxos,
+            txs,
+            contracts: fakeContracts([]),
+        });
+        expect(h.drive.swap(funding.txid)?.outcome).toBe("needs_recovery");
+        expect(await h.repository.getScannedTxids()).toEqual(new Set([funding.txid]));
+
+        const spend = offerSpend({ txid: funding.txid, vout: 0 });
+        txs.push(spend);
+        vtxos[0] = offerDeposit(funding.txid, { isSpent: true, spentBy: spend.txid });
+
+        const result = await h.drive.recover(funding.txid);
+        expect(result.recovered).toBe(true);
+        expect(h.drive.swap(funding.txid)?.outcome).toBe("cancelled");
         await h.drive.dispose();
     });
 });
@@ -929,6 +1069,7 @@ describe("the settlement receipt", () => {
             operator: fakeOperator(),
             repository,
             corridors: fakeCorridors(),
+            network: async () => "regtest",
             indexer: { getVtxos, getVirtualTxs } as never,
             contracts,
             now: () => BEFORE,

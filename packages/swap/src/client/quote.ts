@@ -1,18 +1,10 @@
 /**
- * What a quote is: the order, fully resolved, plus the provenance that says who
- * priced it and where that card came from.
+ * What a quote is: the order, fully resolved, plus the provenance that says who priced it and
+ * where that card came from. Types only — the quote path assembles these, `accept()` consumes
+ * them.
  *
- * M1 named these shapes and left them to whichever milestone decided their
- * semantics; this is that milestone, so `QuoteId`, `QuoteInput`, `Quote`,
- * `MarketRef` and `AuctionProvenance` are declared here rather than beside the
- * types they are built out of. Nothing in this module has behaviour — the quote
- * path assembles these, `accept()` (M4) consumes them.
- *
- * The one rule worth restating at the top: a `Quote` is binding terms plus the
- * evidence for them. Every field is either something the caller must act on
- * (the two obligations, the artifact, the deadline) or something they must be
- * able to audit afterwards (the market, the solver, the checks that passed).
- * Nothing internal rides along — no covenant, no secret, no transport.
+ * A `Quote` is binding terms plus the evidence for them: every field is something the caller must
+ * act on or be able to audit. Nothing internal rides along (no covenant, secret or transport).
  */
 import type { AssetId } from "./assetId";
 import type { AmountOn } from "./rfqAmount";
@@ -21,30 +13,20 @@ import type { Hex, Pubkey } from "./primitives";
 import type { Artifact, Instrument, Route } from "./route";
 
 /**
- * A quote's identity, minted by the client at quote time.
- *
- * Client-minted everywhere, not just where the wire offers no id: a feed-priced
- * offer quote has no solver-minted id at all, and `accept()` is idempotent by
- * quote id *and only* by quote id (§3.2), so an identity that exists on one
- * backend and not the other could not carry that rule. An alias rather than a
- * brand, matching `Hex` and `Pubkey` beside it.
+ * A quote's identity, minted by the client at quote time on every backend: feed-priced quotes
+ * have no solver id, and `accept()` is idempotent by quote id *only* (§3.2).
  */
 export type QuoteId = string;
 
 /**
- * A caller's spelling of an asset: a public id, or a ticker the alias layer
- * canonicalizes against the registry.
- *
- * `AssetId | (string & {})` rather than `string`, so an editor still completes
- * the id form and a mistyped id still shows up as one — `AssetId | string`
- * collapses to `string` and takes both with it.
+ * A caller's spelling of an asset: a public id, or a ticker the alias layer canonicalizes against
+ * the registry. `(string & {})` rather than `string` keeps editor completion of the id form.
  */
 export type AssetRef = AssetId | (string & {});
 
 /**
- * Everything a caller supplies. §4's bottom line: two asset ids or one
- * destination string, one amount, which side it pins, and — on receives, where
- * no instrument exists yet — a corridor.
+ * Everything a caller supplies: two asset ids or one destination string, one amount, which side
+ * it pins, and — on receives, where no instrument exists yet — a corridor.
  */
 export interface QuoteInput {
     /** Omitted when the route determines it: the give leg is the wallet's. */
@@ -70,14 +52,11 @@ export interface SnapshotRef {
     /** Unix ms the markets were read from their sources. */
     readonly fetchedAt: number;
     /**
-     * The registry answered in this read, so the cards are registry-served
-     * rather than replayed out of local storage.
+     * The registry answered in this read (cards are not replayed from local storage).
      *
-     * `false` is not an error: a stale snapshot still resolves and still prices
-     * a feed-priced quote — it is marked, not refused. What it cannot do is
-     * supply the key an addressed RFQ's responder is checked against, because
-     * that field is unvalidated cache content (`isMarketShaped` revalidates
-     * four fields and trusts the rest).
+     * `false` is marked, not refused: a stale snapshot still prices a feed-priced quote. It cannot
+     * supply the key an addressed RFQ's responder is checked against, because cached cards are
+     * only partly revalidated (`isMarketShaped`).
      */
     readonly live: boolean;
     /** How the markets were obtained. */
@@ -87,25 +66,17 @@ export interface SnapshotRef {
 }
 
 /**
- * Which card priced a quote, and from which registry.
- *
- * A union rather than a bag of optionals, because §10's published RFQ is the
- * one place the sentence "the market picks the backend" stops: a quote closed
- * out of an open auction has a market *key* and no card behind it, so every
- * card-derived field is absent at once rather than one at a time. Sizing that
- * arm now costs a discriminant and keeps the addressed arm total.
+ * Which card priced a quote, and from which registry. A union because an auction-closed quote
+ * (§10) has a market key and no card, and a restored record has neither.
  */
-export type MarketRef = CardMarketRef | AuctionMarketRef;
+export type MarketRef = CardMarketRef | AuctionMarketRef | RestoredMarketRef;
 
 export interface CardMarketRef {
     readonly kind: "card";
     /**
-     * The canonical market key, `<corridor>:<id>/<corridor>:<id>`, derived under
-     * rfq-protocol.md §2's leg order — arkade first when exactly one leg is
-     * arkade, lexicographic otherwise — and never read off the card's own
-     * base/quote order. The two agree for every card the registry's reducer
-     * validated, and a card published outside it is exactly where the silent
-     * miss lives.
+     * The canonical market key, `<corridor>:<id>/<corridor>:<id>`, under rfq-protocol.md §2's leg
+     * order — arkade first when exactly one leg is arkade, lexicographic otherwise — never the
+     * card's own base/quote order (see `marketKeyOf`).
      */
     readonly key: string;
     readonly backend: MarketBackend;
@@ -128,13 +99,15 @@ export interface AuctionMarketRef {
     readonly backend: "rfq";
 }
 
+/** A record rebuilt from the funding tx after a restore: no card stands behind it. */
+export interface RestoredMarketRef {
+    readonly kind: "restored";
+    readonly backend: "feed";
+}
+
 /**
- * One bid seen in a published auction (§10, Q9).
- *
- * Typed against ts-sdk #777's shipped draft rather than invented: a bid is a
- * counter-amount on the leg the client did not fix, attributed to the event key
- * that signed it — which is NOT the covenant's `solver_pubkey`, a role key the
- * quote fills from a different field.
+ * One bid seen in a published auction (§10, Q9): a counter-amount on the leg the client did not
+ * fix, attributed to the event key that signed it — NOT the covenant's `solver_pubkey`.
  */
 export interface RankedBid {
     /** The event key that signed the bid. Attribution, not a covenant role. */
@@ -146,10 +119,8 @@ export interface RankedBid {
 }
 
 /**
- * The auction a published-RFQ quote was closed out of (§10, Q9).
- *
- * Reserved and inert: `quote()` never populates it, and Q9 froze the name so
- * the shape it will take cannot be occupied by something else in the meantime.
+ * The auction a published-RFQ quote was closed out of (§10, Q9). Reserved and inert: `quote()`
+ * never populates it.
  */
 export interface AuctionProvenance {
     /** The market key the open request was tagged with. */
@@ -169,11 +140,8 @@ export interface QuoteLeg {
 }
 
 /**
- * The order, fully resolved.
- *
- * Both amounts are exact obligations with the fee already inside them, which is
- * what `fee` restates rather than adds: it is the spread, precomputed, so a
- * verb (M7) can compare it to a ceiling without re-deriving it from a price.
+ * The order, fully resolved. Both amounts are exact obligations with the fee already inside;
+ * `fee` restates the spread rather than adding to it.
  */
 export interface Quote {
     readonly id: QuoteId;
@@ -195,13 +163,8 @@ export interface Quote {
      * wire expiry to inherit, so the client mints one from the feed's freshness. */
     readonly expiresAt: number;
     /**
-     * Corridor routes: when the trader's value comes back if the swap does not
-     * complete.
-     *
-     * Optional on the type because an asset swap has no refund clock at all —
-     * an offer covenant never expires — and non-optional in practice on every
-     * corridor route, where the wire's own field is optional and the client
-     * refuses a quote without it.
+     * Corridor routes: when the trader's value comes back if the swap does not complete. Absent on
+     * asset swaps (an offer covenant never expires); corridor quotes without it are refused.
      */
     readonly refundLocktime?: number;
     /** The one thing a counterparty must see, when this route has one. */
@@ -211,12 +174,9 @@ export interface Quote {
 }
 
 /**
- * An endpoint as `resolve()` can answer for it, before any disclosure.
- *
- * Not an `Endpoint`: that type's instrument is non-optional, deliberately, and a
- * receive leg has none until the quote returns — the instrument IS the artifact
- * the solver mints. Absence here means exactly that one thing, because the
- * wallet case is spelled `{ kind: "wallet" }` rather than left out.
+ * An endpoint as `resolve()` can answer for it, before any disclosure. Not an `Endpoint`, whose
+ * instrument is required: a receive leg has none until the quote returns (the instrument IS the
+ * artifact the solver mints).
  */
 export interface ResolvedEndpoint {
     readonly corridor: Corridor;
@@ -230,24 +190,16 @@ export interface PinnedAmount {
     readonly value: bigint;
     readonly on: AmountOn;
     /**
-     * What pinned it, for the diagnostic an `AmountMismatch` carries.
-     *
-     * `"destination"` covers the two shapes a destination pins an amount in —
-     * an amount-bearing bolt11 and a BIP21 `amount=` — so the message names the
-     * destination's pin rather than pretending the caller supplied it.
+     * What pinned it, for an `AmountMismatch` diagnostic. `"destination"` covers an
+     * amount-bearing bolt11 and a BIP21 `amount=`.
      */
     readonly source: "caller" | "destination";
 }
 
 /**
- * What `resolve()` answers: the route's shape, the market that would price it,
- * and what the active snapshot actually serves.
- *
- * `eligible` is reported alongside rather than folded into an error because
- * zero is not a failure of resolution: the destination parsed, the corridor pair
- * is implemented, and nothing about the route is wrong — there is simply no
- * market for it on this snapshot. `quote()` is where that becomes
- * `UnsupportedRoute`, since a quote cannot proceed past market selection.
+ * What `resolve()` answers: the route's shape, the market that would price it, and what the
+ * active snapshot serves. `eligible: 0` is not a resolution failure; `quote()` is where it becomes
+ * `UnsupportedRoute`.
  */
 export interface RouteResolution {
     readonly give: ResolvedEndpoint;

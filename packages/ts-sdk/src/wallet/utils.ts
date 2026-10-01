@@ -1,4 +1,4 @@
-import type { IWallet, Recipient } from ".";
+import type { IReadonlyWallet, Recipient } from ".";
 import {
     ArkAddress,
     type Coin,
@@ -12,7 +12,6 @@ import { contractHandlers } from "../contracts/handlers";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
 import { VtxoScript } from "../script/base";
-import type { ReadonlyWallet } from "./wallet";
 import { classifyAgainstSignerSet, type SignerSet } from "./signerRotation";
 import { hex } from "@scure/base";
 import { Bytes } from "@scure/btc-signer/utils.js";
@@ -23,8 +22,10 @@ export const DUST_AMOUNT = 546; // sats
 export const FALLBACK_WALLET_DUST_AMOUNT = 330n;
 
 /** Extracts the dust amount from the wallet, defaulting to the fallback dust threshold. */
-export function getDustAmount(wallet: IWallet): bigint {
-    return "dustAmount" in wallet ? (wallet.dustAmount as bigint) : FALLBACK_WALLET_DUST_AMOUNT;
+export function getDustAmount(wallet: IReadonlyWallet | undefined): bigint {
+    return wallet && "dustAmount" in wallet
+        ? (wallet.dustAmount as bigint)
+        : FALLBACK_WALLET_DUST_AMOUNT;
 }
 
 /**
@@ -47,19 +48,6 @@ export function extendCoinWithTapscript(
         intentTapLeafScript: boardingTapscript.forfeit(),
         tapTree: boardingTapscript.encode(),
     };
-}
-
-/**
- * Annotate a boarding {@link Coin} with the wallet's *current* boarding
- * tapscript. Kept for callers that only ever deal with the current boarding
- * address; the multi-address spending path uses {@link extendCoinWithTapscript}
- * with the per-UTXO tapscript instead.
- */
-export function extendCoin(
-    wallet: { boardingTapscript: ReadonlyWallet["boardingTapscript"] },
-    utxo: Coin,
-): ExtendedCoin {
-    return extendCoinWithTapscript(wallet.boardingTapscript, utxo);
 }
 
 /**
@@ -202,15 +190,6 @@ function resolveContract(
 export function getRandomId(): string {
     const randomValue = crypto.getRandomValues(new Uint8Array(16));
     return hex.encode(randomValue);
-}
-
-export function isValidArkAddress(address: string): boolean {
-    try {
-        ArkAddress.decode(address);
-        return true;
-    } catch (e) {
-        return false;
-    }
 }
 
 type ValidatedRecipient = Required<Omit<Recipient, "extensions" | "tapTree">> & {

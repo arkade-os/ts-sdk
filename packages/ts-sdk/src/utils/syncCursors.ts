@@ -6,17 +6,12 @@ export const SAFETY_LAG_MS = 30_000;
 /** Overlap window so boundary virtual outputs are never missed. */
 export const OVERLAP_MS = 24 * 60 * 60 * 1000;
 
-/**
- * Per-repository mutex that serializes wallet-state mutations so that
- * concurrent read-modify-write cycles never silently overwrite
- * each other's changes.
- */
+/** Per-repository mutex serializing wallet-state read-modify-write cycles. */
 const walletStateLocks = new WeakMap<WalletRepository, Promise<void>>();
 
 /**
- * Atomically read, mutate, and persist wallet state.
- * All callers that modify wallet state should go through this helper
- * to avoid lost-update races between interleaved async operations.
+ * Atomically read, mutate, and persist wallet state. Every wallet-state writer must go through
+ * this to avoid lost updates between interleaved async operations.
  */
 export async function updateWalletState(
     repo: WalletRepository,
@@ -36,14 +31,9 @@ export async function updateWalletState(
 }
 
 /**
- * Settings key that gates interpretation of the `lastSyncTime` field.
- *
- * The `lastSyncTime` column existed pre-PR with a different semantic
- * (wall-clock at sync completion, written by the buggy sync loop this
- * PR fixes). On upgrade we cannot trust any pre-existing value, so the
- * cursor is only honoured after the first successful post-upgrade
- * advance writes this marker into the `settings` JSON blob. Reusing
- * `settings` avoids any schema migration.
+ * Settings key gating `lastSyncTime`. Older versions wrote that field with a different meaning
+ * (wall-clock at sync completion), so it is only trusted once an advance has written this marker.
+ * Stored in the `settings` blob to avoid a schema migration.
  */
 const CURSOR_MIGRATED_KEY = "vtxoCursorMigrated";
 
@@ -52,12 +42,8 @@ function hasMigrationMarker(state: WalletState | null | undefined): boolean {
 }
 
 /**
- * Read the global high-water mark for VTXO indexer syncs.
- *
- * Returns `0` when:
- *  - the wallet has never been synced (bootstrap case), or
- *  - the stored `lastSyncTime` was written by pre-PR code and is not
- *    safe to reuse under the new semantics (see {@link CURSOR_MIGRATED_KEY}).
+ * Read the global high-water mark for VTXO indexer syncs; `0` when never synced or the stored
+ * value predates {@link CURSOR_MIGRATED_KEY}.
  */
 export async function getSyncCursor(repo: WalletRepository): Promise<number> {
     const state = await repo.getWalletState();
@@ -66,15 +52,9 @@ export async function getSyncCursor(repo: WalletRepository): Promise<number> {
 }
 
 /**
- * Advance the global cursor after a successful full-scope delta sync.
- *
- * Clamped with `Math.max` against the current value so concurrent syncs
- * that finish out of order can't rewind the cursor: `lastUpdatedAt` is
- * captured before each sync enters the `updateWalletState` mutex, and
- * the later-started sync would otherwise overwrite the earlier-captured
- * one with a smaller value. The legacy value is discarded on the first
- * advance if the migration marker is absent so pre-PR data doesn't
- * survive the upgrade.
+ * Advance the global cursor after a successful full-scope delta sync. `Math.max`-clamped because
+ * `lastUpdatedAt` is captured before entering the mutex, so out-of-order finishes would rewind
+ * it. A legacy (unmarked) value is discarded rather than compared against.
  */
 export async function advanceSyncCursor(
     repo: WalletRepository,
@@ -93,12 +73,7 @@ export async function advanceSyncCursor(
     });
 }
 
-/**
- * Remove the sync cursor, forcing a full re-bootstrap on next sync.
- *
- * Also clears the migration marker so any stored `lastSyncTime` is
- * treated as untrusted on the next read.
- */
+/** Remove the sync cursor and its migration marker, forcing a full re-bootstrap on next sync. */
 export async function clearSyncCursor(repo: WalletRepository): Promise<void> {
     await updateWalletState(repo, (state) => {
         const { [CURSOR_MIGRATED_KEY]: _, ...restSettings } = state.settings ?? {};
@@ -111,11 +86,8 @@ export async function clearSyncCursor(repo: WalletRepository): Promise<void> {
 }
 
 /**
- * Compute the `after` lower-bound for a delta sync query.
- *
- * No upper bound (`before`) is applied to the query so that freshly
- * created virtual outputs are never excluded. The safety lag is applied only
- * when advancing the cursor (see @see cursorCutoff).
+ * Compute the `after` lower-bound for a delta sync query. No `before` bound, so fresh virtual
+ * outputs are never excluded; the safety lag applies only to {@link cursorCutoff}.
  */
 export function computeSyncWindow(cursor: number): { after: number } {
     const after = Math.max(0, cursor - OVERLAP_MS);
@@ -123,14 +95,9 @@ export function computeSyncWindow(cursor: number): { after: number } {
 }
 
 /**
- * The safe high-water mark for cursor advancement.
- * Lags behind real-time by @see SAFETY_LAG_MS so that virtual outputs still
- * being indexed are re-queried on the next sync.
- *
- * When `requestStartedAt` is provided the cutoff is frozen to the
- * request start rather than wall-clock at commit time, preventing
- * long-running paginated fetches from advancing the cursor past the
- * data they actually observed.
+ * Safe high-water mark for cursor advancement, lagging by {@link SAFETY_LAG_MS} so outputs still
+ * being indexed are re-queried. Anchor to `requestStartedAt` so a long paginated fetch can't
+ * advance past the data it actually observed.
  */
 export function cursorCutoff(requestStartedAt?: number): number {
     return (requestStartedAt ?? Date.now()) - SAFETY_LAG_MS;

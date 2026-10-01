@@ -1,35 +1,19 @@
 /**
- * Discovery, and the three states one `DiscoveredMarket[]` used to collapse.
+ * Discovery, separating the three states `discoverMarkets` collapses into one array:
  *
- * `discoverMarkets` answers one array for three different situations: no
- * registry configured (or a network with no published index), a stale cache
- * served because every source failed, and a reachable registry that lists
- * nothing. They are not the same answer and they do not deserve the same
- * behaviour, so this module separates them and carries the difference on the
- * snapshot rather than in a comment:
+ * - **No data at all** (no registry, unindexed network, or unreachable with nothing
+ *   cached) is {@link DiscoverySnapshotUnavailable}.
+ * - **A stale cache** resolves and prices, but is `live: false` and cannot supply the
+ *   key an addressed RFQ's responder is checked against.
+ * - **Reachable and empty** is an ordinary snapshot; `quote()` turns an empty eligible
+ *   set into `UnsupportedRoute`.
  *
- * - **No data at all** — no registry, an unindexed network, or an unreachable
- *   one with nothing cached — is {@link DiscoverySnapshotUnavailable}. There is
- *   no route state for "resolved against nothing".
- * - **A stale cache** resolves and prices, and is marked stale. It is still a
- *   snapshot; what it cannot do is supply the key an addressed RFQ's responder
- *   is checked against (see `live` below).
- * - **Reachable and empty** is a snapshot like any other, with no markets in it.
- *   The route resolves; `quote()` is where an empty eligible set becomes
- *   `UnsupportedRoute`.
+ * Wraps `discover()` directly for its per-source outcomes; the cache entry and key are
+ * shared with v1's `discoverMarkets`.
  *
- * It wraps discovery rather than `discoverMarkets`, and the reason is the same
- * separation: `discover()` reports per-source outcomes and `discoverMarkets`
- * spends them on the way out. `discoverMarkets` itself is untouched — the
- * wallet's own wrapper around it keeps working — and the cache is the same
- * entry under the same key, so a v1 read warms a v2 quote and back.
- *
- * The cache is also a trust boundary. `isMarketShaped` revalidates four fields
- * on read and trusts the rest, `discovery_pubkey` and `transports` included, and
- * those two are precisely what an addressed RFQ addresses itself to. So a cached
- * card is revalidated here against every field this client depends on, and a
- * snapshot that came out of the cache is marked `live: false` — the responder
- * check refuses to pin against cache content whatever its shape.
+ * The cache is a trust boundary: v1's `isMarketShaped` trusts `discovery_pubkey` and
+ * `transports`, exactly what an addressed RFQ targets, so cached cards are revalidated
+ * here in full and never pin a responder.
  */
 import {
     MAX_RELAYS,
@@ -50,15 +34,8 @@ import { DiscoverySnapshotUnavailable } from "./errors";
 import type { SnapshotRef } from "./quote";
 
 /**
- * The default solver registry index per network, derived the way
- * `ESPLORA_URL[network]` is for the onchain chain source: the wallet reports a
- * network, and the client asks the reference registry's index for it.
- *
- * Every indexed network has an entry — the registry's CI publishes a per-network
- * index (possibly an empty one) for each, so a caller with nothing but `wallet`
- * and `repository` discovers against the same curation the ecosystem reads. An
- * explicit `registryUrl` overrides the default; `null` opts out of a registry
- * entirely.
+ * The default solver registry index per network (the registry's CI publishes one,
+ * possibly empty, for each). An explicit `registryUrl` overrides it; `null` opts out.
  */
 export const REGISTRY_URL: Record<IndexedNetwork, string> = {
     bitcoin: "https://arkade-os.github.io/solver-registry/bitcoin.json",
@@ -72,22 +49,16 @@ export const REGISTRY_URL: Record<IndexedNetwork, string> = {
  * and an injected snapshot needs no registry at all. */
 export interface DiscoveryConfig {
     /**
-     * The network's solver registry index URL.
-     *
-     * Absent means the network default ({@link REGISTRY_URL}), which an explicit
-     * URL overrides — a self-hosted registry, a fixture, or a pinned fork.
-     * `null` is the deliberate opt-out: no registry is asked for anything,
-     * which — without an injected snapshot — is the unavailable case and not an
-     * empty market set.
+     * The network's solver registry index URL. Absent means {@link REGISTRY_URL}; `null`
+     * opts out, which without an injected snapshot is the unavailable case, not an empty
+     * market set.
      */
     readonly registryUrl?: string | null;
     /** Locally pinned solver cards, merged with the registry's. */
     readonly localCards?: readonly LocalCardInput[];
     /**
-     * Markets to resolve against without touching the network.
-     *
-     * Caller-supplied and therefore trusted the way config is: an injected
-     * snapshot can pin an RFQ responder, where a cached one cannot.
+     * Markets to resolve against without touching the network. Trusted like config: an
+     * injected snapshot can pin an RFQ responder, a cached one cannot.
      */
     readonly snapshot?: readonly DiscoveredMarket[];
     /** Overrides the network the wallet reports. For tests and multi-network hosts. */
@@ -133,13 +104,9 @@ const isCorridorField = (value: unknown): boolean =>
     value === undefined || (CORRIDORS as readonly string[]).includes(value as string);
 
 /**
- * Whether a card read back out of the cache is one this client may act on.
- *
- * Wider than `isMarketShaped`, and deliberately so: that predicate guards the
- * v1 pricing path, which reads asset ids and decimals, where this one guards a
- * path that also addresses a solver over a rendezvous the card names. A stored
- * entry outlives the schema that wrote it AND the storage it sits in, so every
- * field the client depends on is re-checked rather than four of them.
+ * Whether a card read back out of the cache is one this client may act on. Stricter
+ * than v1's `isMarketShaped` because this path also addresses a solver over the
+ * rendezvous the card names, so every field the client depends on is re-checked.
  */
 export const isUsableCard = (value: unknown): value is DiscoveredMarket => {
     const card = value as Partial<DiscoveredMarket> | null;
@@ -162,9 +129,7 @@ export const isUsableCard = (value: unknown): value is DiscoveredMarket => {
         const id = marketAssetId(card, side);
         if (id === undefined || (!isAssetId(id) && !LEGACY_ASSET_ID.test(id))) return false;
     }
-    // A corridor market is addressed, not just priced: without a key to encrypt
-    // to and a relay to reach, it is a card no quote can be requested from —
-    // and both fields are exactly what the old read trusted.
+    // An RFQ market needs a key to encrypt to and a relay to reach.
     if (isRfqMarket(card)) {
         if (typeof card.discovery_pubkey !== "string" || !HEX_64.test(card.discovery_pubkey)) {
             return false;
@@ -183,13 +148,10 @@ const readCache = async (
     try {
         const entry = await repository.getCachedMarkets(network, registry);
         if (!Array.isArray(entry?.markets) || typeof entry?.fetchedAt !== "number") return;
-        // Card by card rather than all-or-nothing: one card whose schema moved
-        // should cost that card, not every market on the network.
+        // Card by card: one card whose schema moved costs only that card.
         const markets = entry.markets.filter(isUsableCard);
         return { markets, fetchedAt: entry.fetchedAt };
     } catch {
-        // A missing, malformed or unreadable cache reads as a miss, exactly as
-        // the v1 read does — the refetch overwrites it.
         return undefined;
     }
 };
@@ -205,18 +167,12 @@ export interface DiscoveryIndexInput {
 /**
  * One client's view of the market index.
  *
- * Holds at most one snapshot and hands the same one back until it ages out or a
- * caller asks for a refresh, so a `resolve()` and the `quote()` after it agree
- * on what the market was — two loads a second apart returning different cards
- * would make the resolution the caller vetoed a different one from the quote
- * they got.
+ * Holds one snapshot until it ages out or a refresh is asked for, so a `resolve()` and
+ * the `quote()` after it agree on what the market was.
  */
 export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
     const config = input.config ?? {};
     const network = config.network ?? input.network;
-    // Explicit config wins, `null` disables, and absent falls back to the
-    // network's default registry — the same shape as `ESPLORA_URL[network]`
-    // for the onchain chain source.
     const registry =
         config.registryUrl === undefined
             ? isIndexedNetwork(network)
@@ -260,8 +216,7 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
             markets: cached.markets,
             ref: {
                 fetchedAt: cached.fetchedAt,
-                // The cards were read back out of local storage, whatever their
-                // age: nothing here can attest that a registry ever served them.
+                // Whatever its age: nothing attests a registry ever served these cards.
                 live: false,
                 source: "cache",
                 registry: url,
@@ -288,8 +243,7 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
 
         const { network: indexed, registry: url } = sources();
         if (!indexed || !url) {
-            // Nothing to fetch from. The cache is keyed by registry, so there is
-            // nothing to fall back to either.
+            // The cache is keyed by registry, so there is no fallback either.
             return unavailable(whyUnavailable());
         }
 
@@ -301,9 +255,8 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
         });
         if (result.warnings.length) config.logger?.("solver discovery:", ...result.warnings);
 
-        // Reachable is per-source and not per-market: a registry that answers
-        // with an empty index is authoritative about there being no market,
-        // which is a different fact from not having answered.
+        // A registry answering with an empty index is authoritative about there being no
+        // market, unlike one that did not answer.
         if (result.sources.some((source) => source.ok)) {
             const fetchedAt = Date.now();
             held = {
@@ -317,7 +270,7 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
                         fetchedAt,
                     });
                 } catch {
-                    // Best effort, as in v1: a lost cache write costs one refetch.
+                    // Best effort: a lost cache write costs one refetch.
                 }
             }
             return held;

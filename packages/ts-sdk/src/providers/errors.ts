@@ -22,13 +22,10 @@ export const ArkErrorName = {
     INVALID_TX_FILTER: "INVALID_TX_FILTER",
     TX_FILTERS_LIMIT_EXCEEDED: "TX_FILTERS_LIMIT_EXCEEDED",
     /**
-     * A CLTV closure was spent before its absolute locktime matured. Raised only by
-     * `submitTx` (never `finalizeTx`), with metadata
-     * `{ locktime, current_locktime, type: "height" | "time" }`.
-     *
-     * Self-healing, so defer and retry rather than fail: the server matures a
-     * seconds-locktime against the **chain tip block's timestamp**, not its wall clock,
-     * so a spend attempted promptly at maturity is rejected until a later block lands.
+     * A CLTV closure was spent before its absolute locktime matured. `submitTx` only, with
+     * metadata `{ locktime, current_locktime, type: "height" | "time" }`. Self-healing, so defer
+     * and retry: the server matures a seconds-locktime against the **chain tip block's
+     * timestamp**, not wall clock, so a prompt spend is rejected until a later block lands.
      */
     FORFEIT_CLOSURE_LOCKED: "FORFEIT_CLOSURE_LOCKED",
 } as const;
@@ -36,12 +33,9 @@ export const ArkErrorName = {
 export type ArkErrorName = (typeof ArkErrorName)[keyof typeof ArkErrorName];
 
 /**
- * Type guard for a structured {@link ArkError}, optionally narrowing to a specific
- * `name`. Prefer it over comparing `err.name` literals.
- *
- * `name` accepts only cataloged {@link ArkErrorName} values; to branch on a name the
- * catalog does not cover, either add it there or compare `err.name` after guarding
- * with the one-argument form.
+ * Type guard for a structured {@link ArkError}, optionally narrowing to a cataloged
+ * {@link ArkErrorName}; for an uncataloged name, add it there or compare `err.name` after the
+ * one-argument form.
  *
  * @example
  * if (isArkError(maybeArkError(err), ArkErrorName.DIGEST_MISMATCH)) { ... }
@@ -51,23 +45,18 @@ export function isArkError(error: unknown, name?: ArkErrorName): error is ArkErr
 }
 
 /**
- * Which remote dependency an availability failure refers to. Used to label the
- * {@link ProviderUnavailableError} message and the wallet's
- * `ProviderConnectionState`; it is deliberately *not* carried as a structured
- * field on the error, since custom `Error` own-properties do not survive the
- * service-worker `postMessage` boundary. Structured clone keeps `message`,
- * `stack` and `cause`, drops own-properties, and normalizes a custom `name` to
- * `"Error"` — only the built-in error names survive it.
+ * Which remote dependency an availability failure refers to; labels the
+ * {@link ProviderUnavailableError} message and `ProviderConnectionState`. Deliberately *not* a
+ * field on the error: structured clone across the service-worker `postMessage` boundary keeps
+ * `message`, `stack` and `cause` but drops own-properties and normalizes a custom `name` to
+ * `"Error"`.
  */
 export type ProviderKind = "arkade" | "indexer";
 
 /**
- * A remote provider (Arkade operator or its indexer) is temporarily
- * unreachable. This is a *retryable* condition — transport failure, request
- * timeout, or a 5xx/429-style temporary HTTP response — as opposed to a
- * terminal configuration/authorization/schema error, which stays a plain
- * `Error`/{@link ArkError}. The original low-level error is preserved as
- * {@link Error.cause}.
+ * A remote provider (Arkade operator or its indexer) is temporarily unreachable: transport
+ * failure, timeout, or a 5xx/429. Retryable, unlike terminal config/auth/schema errors, which
+ * stay a plain `Error`/{@link ArkError}. The low-level error is kept as {@link Error.cause}.
  */
 export class ProviderUnavailableError extends Error {
     /** Always `true`: this error type only ever wraps retryable conditions. */
@@ -80,16 +69,11 @@ export class ProviderUnavailableError extends Error {
 }
 
 /**
- * A response does not reconcile with what the SDK submitted or already
- * validated — a checkpoint tx whose txid is not among those submitted, a
- * commitment tx that differs from the one validated at tree signing. Terminal
- * rather than retryable: the two are equal by construction in a well-formed
- * exchange, so the same request would produce the same outcome.
- *
- * Neither own-properties nor a custom `name` cross the service-worker
- * `postMessage` boundary (see {@link ProviderKind}), so `retryable` and `name`
- * are in-process conveniences and every distinguishing detail belongs in
- * `message` — the one field a consumer past the boundary can still branch on.
+ * A response doesn't reconcile with what the SDK submitted or validated (a checkpoint txid not
+ * among those submitted, a commitment tx differing from the one validated at tree signing).
+ * Terminal: the two are equal by construction in a well-formed exchange. `retryable` and `name`
+ * don't cross the SW boundary (see {@link ProviderKind}), so every distinguishing detail belongs
+ * in `message`.
  */
 export class ServerResponseMismatchError extends Error {
     readonly retryable = false;
@@ -101,23 +85,14 @@ export class ServerResponseMismatchError extends Error {
 }
 
 /**
- * Throw a typed {@link ProviderUnavailableError} for a temporary HTTP response
- * (429 rate-limit or any 5xx), otherwise return. `fetch()` resolves — rather
- * than rejects — on HTTP error status, so status-code classification has to live
- * at each provider's non-2xx branch, not in the transport wrapper. 4xx and other
- * responses are left to the caller to treat as terminal.
+ * Throw a {@link ProviderUnavailableError} for a temporary HTTP response (429 or 5xx), else
+ * return. Lives at each provider's non-2xx branch because `fetch()` resolves on HTTP errors.
  *
- * Status alone is not enough to classify an arkd response, though: arkd sits
- * behind grpc-gateway, which maps application-level gRPC errors onto HTTP status
- * codes across the whole range — gRPC INTERNAL becomes HTTP 500, for instance. So
- * a 5xx does not by itself mean the operator is unavailable: a 500 whose body
- * carries a structured arkd error (e.g. `INTERNAL_ERROR (0): ...already registered
- * by another intent`) is a deliberate, terminal rejection that must reach the
- * caller as an {@link ArkError}, never be retried. When `body` is provided and
- * decodes to a structured arkd error, this returns without throwing; classify by
- * status only for a bodyless call or a non-structured body (a bare proxy/gateway
- * failure). Mirrors NArk's BuildVersionHandler, which branches on body content,
- * not status.
+ * Status alone can't classify arkd: behind grpc-gateway, gRPC INTERNAL becomes HTTP 500, so a 500
+ * whose `body` decodes to a structured arkd error (e.g. `INTERNAL_ERROR (0): ...already
+ * registered by another intent`) is a terminal rejection that must reach the caller as an
+ * {@link ArkError}, never be retried; such a body returns without throwing. NArk parity:
+ * BuildVersionHandler branches on body content, not status.
  */
 export function throwIfHttpUnavailable(
     response: Response,
@@ -133,10 +108,9 @@ export function throwIfHttpUnavailable(
 }
 
 /**
- * Map a transport-level {@link FetchError} (server unreachable) to a typed
- * {@link ProviderUnavailableError}, preserving the original as `cause`; return
- * any other error unchanged. Returns the error to `throw` rather than throwing,
- * so a `catch` block can `throw toProviderUnavailable(err, kind)`.
+ * Map a transport-level {@link FetchError} to a {@link ProviderUnavailableError} (original as
+ * `cause`); other errors pass through. Returns rather than throws, for
+ * `throw toProviderUnavailable(err, kind)`.
  */
 export function toProviderUnavailable(err: unknown, kind: ProviderKind): unknown {
     if (err instanceof FetchError) {
@@ -181,11 +155,9 @@ export function maybeArkError(error: any): ArkError | undefined {
             }
         }
 
-        // Fallback: arkd's guard interceptors (build-version, digest) run outside
-        // the error-detail converter, so their REST errors arrive with an empty
-        // `details[]` and the structured name only in the top-level message, as
-        // "NAME (code): human message". Recover the name and code so callers can
-        // still branch on the error name (metadata is unavailable on this path).
+        // Fallback: arkd's guard interceptors (build-version, digest) bypass the error-detail
+        // converter, so `details[]` is empty and the name appears only in the top-level message
+        // as "NAME (code): human message" (no metadata on this path).
         if (typeof decoded.message === "string") {
             const m = decoded.message.match(/^([A-Z][A-Z0-9_]*) \((\d+)\): ([\s\S]*)$/);
             if (m) return new ArkError(Number(m[2]), m[3], m[1]);

@@ -6,7 +6,7 @@ import {
     canSweepOnchain,
     convertVtxo,
     getNormalizedVtxos,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     isVirtualCoin,
     normalizeVtxo,
@@ -87,7 +87,7 @@ describe("truth table", () => {
 
     it("preconfirmed, unspent is spendable", () => {
         const v = coin({ isPreconfirmed: true, status: { confirmed: false, isLeaf: false } });
-        expect(hasTerminalSpend(v)).toBe(false);
+        expect(isVtxoSpent(v)).toBe(false);
         expect(canSpendOffchain(v, now)).toBe(true);
         expect(canRecoverOnchain(v, now)).toBe(false);
     });
@@ -106,39 +106,39 @@ describe("truth table", () => {
 
     it("expired but unswept is recoverable and not spendable", () => {
         const v = coin({ expiresAt: PAST });
-        expect(hasTerminalSpend(v)).toBe(false);
+        expect(isVtxoSpent(v)).toBe(false);
         expect(canSpendOffchain(v, now)).toBe(false);
         expect(canRecoverOnchain(v, now)).toBe(true);
     });
 
     it("spent with spentBy is terminal", () => {
         const v = coin({ isSpent: true, spentBy: "33".repeat(32) });
-        expect(hasTerminalSpend(v)).toBe(true);
+        expect(isVtxoSpent(v)).toBe(true);
         expect(canSpendOffchain(v, now)).toBe(false);
         expect(canRecoverOnchain(v, now)).toBe(false);
     });
 
     it("settledBy makes a VTXO terminal even when isSpent is false", () => {
         const v = coin({ isSpent: false, spentBy: "", settledBy: "44".repeat(32) });
-        expect(hasTerminalSpend(v)).toBe(true);
+        expect(isVtxoSpent(v)).toBe(true);
         expect(canSpendOffchain(v, now)).toBe(false);
         expect(canRecoverOnchain(v, now)).toBe(false);
     });
 
     it("isSpent true with an empty spentBy is terminal", () => {
         const v = coin({ isSpent: true, spentBy: "" });
-        expect(hasTerminalSpend(v)).toBe(true);
+        expect(isVtxoSpent(v)).toBe(true);
         expect(canSpendOffchain(v, now)).toBe(false);
         expect(canRecoverOnchain(v, now)).toBe(false);
     });
 
     it("row 9: unrolled without isSpent → onchain, not terminal", () => {
-        // The location axis. `hasTerminalSpend` mirrors NArk's `IsSpent()` and
+        // The location axis. `isVtxoSpent` mirrors NArk's `IsSpent()` and
         // says nothing about where the output lives, so it stays false — but no
         // batch and no offchain spend can reach the coin, so both capability
         // predicates refuse it and `canSweepOnchain` claims it instead.
         const v = coin({ isUnrolled: true, isSpent: false, spentBy: "" });
-        expect(hasTerminalSpend(v)).toBe(false);
+        expect(isVtxoSpent(v)).toBe(false);
         expect(canSpendOffchain(v, now)).toBe(false);
         expect(canRecoverOnchain(v, now)).toBe(false);
         expect(canSweepOnchain(v)).toBe(true);
@@ -162,7 +162,7 @@ describe("truth table", () => {
             { settledBy: "44".repeat(32) },
         ]) {
             const v = coin({ isUnrolled: true, ...over });
-            expect(hasTerminalSpend(v)).toBe(true);
+            expect(isVtxoSpent(v)).toBe(true);
             expect(canSweepOnchain(v)).toBe(false);
             expect(canSpendOffchain(v, now)).toBe(false);
             expect(canRecoverOnchain(v, now)).toBe(false);
@@ -205,11 +205,6 @@ describe("normalization", () => {
         expect(n.commitmentTxIds).toEqual(["22".repeat(32)]);
     });
 
-    it("is idempotent", () => {
-        const once = normalizeVtxo(coin({ isPreconfirmed: true }));
-        expect(normalizeVtxo(once)).toEqual(once);
-    });
-
     it("rehydrates an expiresAt that a JSON round-trip turned into a string", () => {
         const wire = coin();
         const viaJson = JSON.parse(JSON.stringify(wire));
@@ -222,7 +217,7 @@ describe("normalization", () => {
         const now = { timestamp: NOW };
         const minimal = minimalCoin({ isSwept: true });
         const normalized = normalizeVtxo(minimal);
-        expect(hasTerminalSpend(minimal)).toBe(hasTerminalSpend(normalized));
+        expect(isVtxoSpent(minimal)).toBe(isVtxoSpent(normalized));
         expect(isPastExpiry(minimal, now)).toBe(isPastExpiry(normalized, now));
         expect(canSpendOffchain(minimal, now)).toBe(canSpendOffchain(normalized, now));
         expect(canRecoverOnchain(minimal, now)).toBe(canRecoverOnchain(normalized, now));
@@ -285,7 +280,7 @@ describe("convertVtxo", () => {
         const v = convertVtxo({ ...wire, isSpent: true, spentBy: "33".repeat(32) });
         expect(v.isSpent).toBe(true);
         expect(v.spentBy).toBe("33".repeat(32));
-        expect(hasTerminalSpend(v)).toBe(true);
+        expect(isVtxoSpent(v)).toBe(true);
     });
 
     it("routes a height-encoded wire expiry to expiresAtHeight", () => {

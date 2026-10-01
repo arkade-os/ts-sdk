@@ -61,6 +61,7 @@ export async function prepare(opts: ExitOptions): Promise<ExitPackage> {
                 feeRate,
                 network: wallet.network,
                 identity: wallet.identity,
+                signer: (tx) => wallet.signInputsByWitnessScript(tx),
             });
             activeOutpoints.add(outpoint);
             sweepSteps.push({
@@ -88,6 +89,12 @@ export async function prepare(opts: ExitOptions): Promise<ExitPackage> {
         throw new Error("no exitable vtxos (all skipped)");
     }
 
+    // Totals reflect what actually made it into the package.
+    const stepFees = steps.reduce((s, x) => s + x.stepFee, 0);
+    const activeInfos = layout.infos.filter((i) => !i.skipped);
+    const sweepFees = activeInfos.reduce((s, i) => s + (i.sweepFee ?? 0), 0);
+    const recovered = activeInfos.reduce((s, i) => s + (i.value ?? 0) - (i.sweepFee ?? 0), 0);
+
     // Graph mode: transport only the tx graph + sweeps. No splitter, no
     // pre-signed children — the executor funds and signs the CPFP bumps at
     // execution time from its own fee wallet.
@@ -98,11 +105,6 @@ export async function prepare(opts: ExitOptions): Promise<ExitPackage> {
             parentHex: step.parent.hex,
             forVtxos: step.node.forVtxos.filter((v) => activeOutpoints.has(v)),
         }));
-
-        const stepFees = steps.reduce((s, x) => s + x.stepFee, 0);
-        const activeInfos = layout.infos.filter((i) => !i.skipped);
-        const sweepFees = activeInfos.reduce((s, i) => s + (i.sweepFee ?? 0), 0);
-        const recovered = activeInfos.reduce((s, i) => s + (i.value ?? 0) - (i.sweepFee ?? 0), 0);
 
         return {
             version: 1,
@@ -220,11 +222,7 @@ export async function prepare(opts: ExitOptions): Promise<ExitPackage> {
         await onchainWallet.provider.broadcastTransaction(signedSplitter.hex);
     }
 
-    // 4. Totals reflect what actually made it into the package.
-    const stepFees = steps.reduce((s, x) => s + x.stepFee, 0);
-    const activeInfos = layout.infos.filter((i) => !i.skipped);
-    const sweepFees = activeInfos.reduce((s, i) => s + (i.sweepFee ?? 0), 0);
-    const recovered = activeInfos.reduce((s, i) => s + (i.value ?? 0) - (i.sweepFee ?? 0), 0);
+    // 4. Totals.
     const fundingRequired = splitterFee + steps.reduce((s, x) => s + x.funding, 0);
 
     return {

@@ -1,18 +1,12 @@
 /**
  * Expo background task entrypoint — `@arkade-os/sdk/wallet/expo/background`.
  *
- * This subpath is the **only** module in the package that touches
- * `expo-task-manager` / `expo-background-task`. It is split out from
- * `/wallet/expo` on purpose: those packages have no web platform and
- * are declared as optional peer dependencies, so importing them from
- * `/wallet/expo` would regress react-native-web / Node consumers who
- * only need the foreground APIs.
- *
- * The imports are static (not lazy `require()`) because Metro's static
- * dependency collector cannot see modules hidden behind `__require()`
- * in the ESM build — without static imports the packages never enter
- * the bundle graph and resolution fails at runtime. See
- * https://github.com/arkade-os/ts-sdk/issues/486 for details.
+ * The **only** module touching `expo-task-manager` / `expo-background-task`:
+ * those optional peers have no web platform, so importing them from
+ * `/wallet/expo` would break react-native-web / Node consumers of the
+ * foreground APIs. Imports are static, not lazy `require()`, because Metro's
+ * collector can't see modules behind `__require()` in the ESM build
+ * (https://github.com/arkade-os/ts-sdk/issues/486).
  *
  * Consumers install the peers in their Expo app:
  *   npx expo install expo-task-manager expo-background-task
@@ -63,14 +57,11 @@ export interface DefineBackgroundTaskOptions {
 }
 
 /**
- * Define the Expo background task handler.
- *
- * **Must be called at module/global scope** (before React mounts) so
- * Expo's TaskManager can resume the task on cold start.
+ * Define the Expo background task handler. **Must be called at module/global
+ * scope** (before React mounts) so TaskManager can resume the task on cold start.
  *
  * Pair with @see registerExpoBackgroundTask to activate the OS
- * scheduler — `ExpoWallet.setup()` no longer registers the task for
- * you.
+ * scheduler — `ExpoWallet.setup()` does not register the task for you.
  *
  * @example
  * ```ts
@@ -102,8 +93,7 @@ export function defineExpoBackgroundTask(
         try {
             const config = await taskQueue.loadConfig<PersistedBackgroundConfig>();
             if (!config) {
-                // No config persisted yet — ExpoWallet.setup() hasn't run.
-                // Nothing to do.
+                // ExpoWallet.setup() hasn't run yet.
                 return BackgroundTask.BackgroundTaskResult.Success;
             }
 
@@ -170,11 +160,8 @@ export async function registerExpoBackgroundTask(
 }
 
 /**
- * Unregister the background task from the OS scheduler.
- *
- * `ExpoWallet.dispose()` does **not** call this — the OS-level task
- * lifecycle is the consumer's responsibility, matching the explicit
- * `register` step.
+ * Unregister the background task from the OS scheduler. `ExpoWallet.dispose()`
+ * does **not** call this: the OS-level lifecycle is the consumer's, like `register`.
  */
 export async function unregisterExpoBackgroundTask(taskName: string): Promise<void> {
     await BackgroundTask.unregisterTaskAsync(taskName);

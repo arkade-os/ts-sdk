@@ -1,7 +1,11 @@
-import { fetch, buildVersion, sdkVersion } from "../utils/fetch";
+import { baseFetch, fetch } from "../utils/fetch";
 
 /**
- * Dynamically imports expo/fetch with fallback to standard fetch.
+ * Dynamically imports expo/fetch, falling back to {@link baseFetch}.
+ *
+ * Adds no headers of its own: both Expo providers share this function but reach
+ * different origins, so each passes its own per request.
+ *
  * @returns A fetch function suitable for SSE streaming
  */
 export async function getExpoFetch(options?: { requireExpo?: boolean }): Promise<typeof fetch> {
@@ -10,13 +14,7 @@ export async function getExpoFetch(options?: { requireExpo?: boolean }): Promise
     try {
         const expoFetchModule = await import("expo/fetch");
         console.debug("Using expo/fetch for streaming");
-        const expoFetchWithHeader = (input: RequestInfo, init?: RequestInit) => {
-            const headers = new Headers(init?.headers);
-            headers.set("X-Build-Version", buildVersion);
-            headers.set("X-SDK-VERSION", sdkVersion);
-            return expoFetchModule.fetch(input, { ...init, headers });
-        };
-        return expoFetchWithHeader as unknown as typeof fetch;
+        return expoFetchModule.fetch as unknown as typeof fetch;
     } catch (error) {
         if (requireExpo) {
             throw new Error(
@@ -30,7 +28,7 @@ export async function getExpoFetch(options?: { requireExpo?: boolean }): Promise
                 "Streaming may not be fully supported in some environments.",
             error,
         );
-        return fetch;
+        return baseFetch;
     }
 }
 
@@ -62,9 +60,8 @@ export async function* sseStreamIterator<T>(
                 ...headers,
             },
             // Required, not just for cancellation: `getExpoFetch` falls back to
-            // the Ark `fetch` wrapper, which routes through `baseFetch` and so
-            // bounds any read that brings no signal of its own. Drop this and
-            // the stream is truncated at READ_TIMEOUT_MS.
+            // `baseFetch`, which bounds any read that brings no signal of its
+            // own. Drop this and the stream is truncated at READ_TIMEOUT_MS.
             signal: fetchController.signal,
         });
 

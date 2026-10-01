@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { BufferReader, BufferWriter } from "../utils";
+import { BufferReader, BufferWriter, hexOrThrow } from "../utils";
 
 /**
  * AssetOutput references a real transaction output and specify the amount in satoshis.
@@ -27,13 +27,7 @@ export class AssetOutput {
 
     /** Decode an asset output from its hex string form. */
     static fromString(s: string): AssetOutput {
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(s);
-        } catch {
-            throw new Error("invalid asset output format, must be hex");
-        }
-        return AssetOutput.fromBytes(buf);
+        return AssetOutput.fromBytes(hexOrThrow(s, "invalid asset output format, must be hex"));
     }
 
     /** Decode an asset output from its serialized bytes. */
@@ -122,13 +116,7 @@ export class AssetOutputs {
         if (!s || s.length === 0) {
             throw new Error("missing asset outputs");
         }
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(s);
-        } catch {
-            throw new Error("invalid asset outputs format, must be hex");
-        }
-        const reader = new BufferReader(buf);
+        const reader = new BufferReader(hexOrThrow(s, "invalid asset outputs format, must be hex"));
         return AssetOutputs.fromReader(reader);
     }
 
