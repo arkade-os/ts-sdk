@@ -134,6 +134,24 @@ export function intentRepositoryConformance(
             await expect(r.getIntentsPage(undefined, { limit: 501 })).rejects.toThrow(RangeError);
         });
 
+        it("pages an intentTxIds lookup and still applies the other filters", async () => {
+            const r = await make();
+            for (const id of ["b", "a", "c", "d"]) {
+                await r.saveIntent(
+                    intent(id, { state: id === "c" ? "cancelled" : "waiting_for_batch" }),
+                );
+            }
+            const filter = {
+                intentTxIds: ["d", "c", "a", "missing", "a"],
+                states: ["waiting_for_batch" as const],
+            };
+            const first = await r.getIntentsPage(filter, { limit: 1 });
+            expect(first.items.map((i) => i.intentTxId)).toEqual(["a"]);
+            const second = await r.getIntentsPage(filter, { limit: 1, after: first.nextCursor });
+            expect(second.items.map((i) => i.intentTxId)).toEqual(["d"]);
+            expect(second.nextCursor).toBeUndefined();
+        });
+
         it("locks exactly the non-terminal intents, including batch_in_progress", async () => {
             const r = await make();
             // batch_in_progress locks in TS but NOT in NArk EF storage — the TS

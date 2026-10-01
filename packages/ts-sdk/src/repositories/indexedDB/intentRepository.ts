@@ -55,6 +55,19 @@ export class IndexedDBIntentRepository implements IntentRepository {
         assertPageRequest(page);
         const db = await this.getDB();
         const store = db.transaction([STORE_INTENTS], "readonly").objectStore(STORE_INTENTS);
+        if (filter?.intentTxIds) {
+            const keys = [...new Set(filter.intentTxIds)]
+                .filter((id) => page.after === undefined || id > page.after)
+                .sort();
+            const intents = await Promise.all(
+                keys.map((id) => promisifyRequest<ArkIntent | undefined>(store.get(id))),
+            );
+            return pageResult(
+                intents.filter((i): i is ArkIntent => !!i && intentMatchesFilter(i, filter)),
+                page.limit,
+                (intent) => intent.intentTxId,
+            );
+        }
         const range =
             page.after === undefined ? undefined : IDBKeyRange.lowerBound(page.after, true);
         const request = store.openCursor(range);
