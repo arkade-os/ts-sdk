@@ -11,6 +11,15 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Settlement forfeits a VTXO past expiry that the operator has not
+  swept.** The forfeit-skip decision read `canRecoverOnchain`, which is
+  true for any VTXO past its wall-clock expiry, so renewing one whose
+  batch output the operator never swept sent no forfeit and arkd failed
+  the batch with `missing forfeit transactions`. Settlement, delegation
+  and Arkade batches now decide with `requiresForfeit`, mirroring arkd's
+  `Vtxo.RequiresForfeit()`: only swept or unrolled VTXOs skip the
+  forfeit, whatever their expiry.
+
 - **`programFromArtifact` reads time-based CSV literals.** A literal
   relative timelock in an `arkadec` artifact is the encoded BIP68
   sequence, but the reader tagged every literal as a block count, so a

@@ -38,6 +38,7 @@ import {
     isVirtualCoin,
     normalizeVtxo,
     parseLegacyExpiry,
+    requiresForfeit,
     resolveTimeHeight,
     toBatchExpiry,
     toOffchainInputFeeParams,
@@ -4485,11 +4486,8 @@ export class Wallet
                 continue;
             }
 
-            if (
-                canRecoverOnchain(input, { timestamp: new Date() }) ||
-                isSubdust({ value: input.value }, this.dustAmount)
-            ) {
-                // recoverable or subdust coin, we don't need to create a forfeit tx
+            if (!requiresForfeit(input) || isSubdust({ value: input.value }, this.dustAmount)) {
+                // swept, unrolled or subdust coin, we don't need to create a forfeit tx
                 continue;
             }
 
