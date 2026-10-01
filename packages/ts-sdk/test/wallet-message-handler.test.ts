@@ -2292,7 +2292,14 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 20000,
             virtualStatus: { state: "swept" },
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [preconfirmed, settled, swept]);
+        const spent = createMockExtendedVtxo({
+            txid: "dd".repeat(32),
+            value: 10000,
+            virtualStatus: { state: "settled" },
+            isSpent: true,
+            spentBy: "ee".repeat(32),
+        });
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [preconfirmed, settled, swept, spent]);
 
         const finalizeSpy = vi.fn().mockResolvedValue({ pending: [], finalized: [] });
         (updater as any).wallet = {
@@ -2304,9 +2311,11 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
         expect(finalizeSpy).toHaveBeenCalledOnce();
         const vtxosArg = finalizeSpy.mock.calls[0][0];
-        // Should exclude swept and settled VTXOs
-        expect(vtxosArg).toHaveLength(1);
-        expect(vtxosArg[0].txid).toBe("aa".repeat(32));
+        // Excludes unspent settled and swept VTXOs; a spent one still needs the full read
+        expect(vtxosArg.map((vtxo: { txid: string }) => vtxo.txid).sort()).toEqual([
+            "aa".repeat(32),
+            "dd".repeat(32),
+        ]);
     });
 
     it("boarding cache refresh fans out over the boarding-address set (plan §6-IV.2)", async () => {
