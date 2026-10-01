@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import {
     DefaultVtxo,
@@ -78,6 +78,25 @@ describe("onchain coin rows", () => {
         expect(await walletRepository.getUtxos(script.onchainAddress(networks.regtest))).toEqual([
             legacy,
         ]);
+    });
+
+    it("skips a contract whose handler is not registered", async () => {
+        const walletRepository = new InMemoryWalletRepository();
+        const contractRepository = new InMemoryContractRepository();
+        await contractRepository.saveContract({
+            ...boarding,
+            type: "unregistered",
+            scope: "onchain",
+            script: "51".repeat(17),
+        });
+        await contractRepository.saveContract(boarding);
+        await walletRepository.saveUtxos(script.onchainAddress(networks.regtest), [
+            extendCoinWithTapscript(script, coin),
+        ]);
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        const deps = { walletRepository, contractRepository, network: networks.regtest };
+        expect(await migrateLegacyUtxos(deps)).toBe(1);
     });
 
     it("keeps existing wallet settings when marking the migration done", async () => {

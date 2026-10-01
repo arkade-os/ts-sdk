@@ -1,4 +1,4 @@
-import type { Coin, ExtendedVirtualCoin } from "../wallet";
+import type { Coin, ExtendedVirtualCoin, VirtualCoin } from "../wallet";
 import type { Network } from "../networks";
 import type { VtxoScript } from "../script/base";
 import type { ContractRepository } from "../repositories/contractRepository";
@@ -20,6 +20,14 @@ function createScript(contract: Contract): VtxoScript {
 
 export function onchainAddressOf(contract: Contract, network: Network): string {
     return createScript(contract).onchainAddress(network);
+}
+
+/** A contract's rows minus its onchain coins, which the offchain readers report elsewhere. */
+export function offchainRows<T extends Pick<VirtualCoin, "isUnrolled">>(
+    contract: Pick<Contract, "type" | "scope">,
+    vtxos: T[],
+): T[] {
+    return isOnchainScoped(contract) ? vtxos.filter((v) => !v.isUnrolled) : vtxos;
 }
 
 /** Same shape as the boarding rows `getBoardingTxs` synthesizes for history. */
@@ -66,6 +74,10 @@ export async function migrateLegacyUtxos(deps: {
     let migrated = 0;
     for (const contract of await contractRepository.getContracts()) {
         if (!isOnchainScoped(contract)) continue;
+        if (!contractHandlers.has(contract.type)) {
+            console.warn("Skipping legacy utxos of a contract with no handler", contract.type);
+            continue;
+        }
         const tapscript = createScript(contract);
         const legacy = await walletRepository.getUtxos(tapscript.onchainAddress(network));
         if (legacy.length === 0) continue;

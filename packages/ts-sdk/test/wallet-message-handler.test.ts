@@ -1849,6 +1849,35 @@ describe("WalletMessageHandler repo-backed reads", () => {
         });
     });
 
+    it("GET_BALANCE and history skip onchain coin rows of an onchain-scoped contract", async () => {
+        const boardingScript = "51".repeat(17);
+        const boardingAddress = "boarding-ark-address";
+        setupHandler([
+            { type: "boarding", params: {}, script: boardingScript, address: boardingAddress },
+        ]);
+        const onchainRow = createMockExtendedVtxo({
+            txid: "bb".repeat(32),
+            value: 50000,
+            script: boardingScript,
+            isSpent: false,
+            isUnrolled: true,
+        });
+        await walletRepo.saveVtxosForScript({ script: boardingScript, address: boardingAddress }, [
+            onchainRow,
+        ]);
+
+        const balance = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_BALANCE",
+        } as any);
+        expect(balance).toMatchObject({ payload: { unrolled: 0, total: 0 } });
+        const history = (await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_TRANSACTION_HISTORY",
+        } as any)) as any;
+        expect(history.payload.transactions).toEqual([]);
+    });
+
     it("GET_BALANCE reports an unrolled swept VTXO as unrolled, not recoverable", async () => {
         setupHandler();
         const settled = createMockExtendedVtxo({

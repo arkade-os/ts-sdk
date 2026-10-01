@@ -155,7 +155,7 @@ import type {
     CreateContractParams,
 } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
-import { migrateLegacyUtxos } from "../contracts/onchainCoins";
+import { migrateLegacyUtxos, offchainRows } from "../contracts/onchainCoins";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
@@ -1448,11 +1448,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
             query = { ...scope, script: scripts };
         }
-        return contractManager.getContractsWithVtxos(query, undefined, {
+        const snapshot = await contractManager.getContractsWithVtxos(query, undefined, {
             maxSyncAgeMs: filter?.maxSyncAgeMs,
             unspentOnly: options?.unspentOnly,
             requireSynced: filter?.requireSynced,
         });
+        return snapshot.map((entry) => ({
+            ...entry,
+            vtxos: offchainRows(entry.contract, entry.vtxos),
+        }));
     }
 
     /**

@@ -10,6 +10,8 @@ import { DefaultContractHandler } from "../../src/contracts/handlers/default";
 import { isDiscoverable } from "../../src/contracts/types";
 import { timelockToSequence } from "../../src/utils/timelock";
 import { extendCoinWithTapscript } from "../../src/wallet/utils";
+import { toOnchainCoinRow } from "../../src/contracts/onchainCoins";
+import { saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
 import { hex } from "@scure/base";
 
 // Valid secp256k1 server pubkey (33-byte compressed, generator point) and a
@@ -280,6 +282,54 @@ describe("boarding contract: legacy utxos migration at boot", () => {
         await expect(wallet.getContractManager()).resolves.toBeDefined();
         const state = await wallet.walletRepository.getWalletState();
         expect(state?.settings?.legacyUtxosMigrated).toBeUndefined();
+    });
+
+    it("counts a migrated boarding coin once in balance and history", async () => {
+        const { wallet, onchainProvider } = await makeWallet();
+        const address = wallet.boardingTapscript.onchainAddress(wallet.network);
+        await wallet.walletRepository.saveUtxos(address, [
+            extendCoinWithTapscript(wallet.boardingTapscript, legacyCoin),
+        ]);
+        onchainProvider.getCoins.mockImplementation(async (a: string) =>
+            a === address ? [legacyCoin] : [],
+        );
+        onchainProvider.getTransactions.mockImplementation(async (a: string) =>
+            a === address
+                ? [
+                      {
+                          txid: legacyCoin.txid,
+                          vin: [],
+                          vout: [{ scriptpubkey_address: address, value: legacyCoin.value }],
+                          status: { confirmed: true, block_time: 1 },
+                      },
+                  ]
+                : [],
+        );
+        onchainProvider.getTxOutspends.mockResolvedValue([{ spent: false, txid: "" }]);
+
+        await wallet.getContractManager();
+
+        const balance = await wallet.getBalance();
+        expect(balance.boarding.total).toBe(legacyCoin.value);
+        expect(balance.unrolled).toBe(0);
+        expect(balance.total).toBe(legacyCoin.value);
+        const history = await wallet.getTransactionHistory();
+        expect(history).toHaveLength(1);
+        expect(history[0].key.boardingTxid).toBe(legacyCoin.txid);
+    });
+
+    it("still counts an unrolled VTXO on a default contract as unrolled", async () => {
+        const { wallet } = await makeWallet();
+        const manager = await wallet.getContractManager();
+        const [contract] = await manager.getContracts({ type: ["default"] });
+        const tapscript = contractHandlers.get("default")!.createScript(contract.params);
+        await saveVtxosForContract(wallet.walletRepository, contract, [
+            toOnchainCoinRow(legacyCoin, contract, tapscript),
+        ]);
+
+        const balance = await wallet.getBalance();
+        expect(balance.unrolled).toBe(legacyCoin.value);
+        expect(balance.total).toBe(legacyCoin.value);
     });
 });
 

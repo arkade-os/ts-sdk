@@ -68,6 +68,7 @@ import {
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
 } from "../../contracts/vtxoOwnership";
+import { offchainRows } from "../../contracts/onchainCoins";
 import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
 
 export class WalletNotInitializedError extends Error {
@@ -2191,7 +2192,12 @@ export class WalletMessageHandler
         for (const contract of contracts) {
             snapshot.push({
                 contract,
-                vtxos: addVtxos(await getVtxosForContract(this.walletRepository, contract)),
+                vtxos: addVtxos(
+                    offchainRows(
+                        contract,
+                        await getVtxosForContract(this.walletRepository, contract),
+                    ),
+                ),
             });
         }
 
