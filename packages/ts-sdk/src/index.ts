@@ -225,6 +225,8 @@ import type {
 import {
     RestArkProvider,
     DigestMismatchError,
+    OnchainCosignUnsupportedError,
+    OnchainCosignRejectedError,
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
@@ -645,6 +647,8 @@ export {
     RestArkProvider,
     CachingArkProvider,
     DigestMismatchError,
+    OnchainCosignUnsupportedError,
+    OnchainCosignRejectedError,
     FetchError,
     READ_TIMEOUT_MS,
     RestIndexerProvider,

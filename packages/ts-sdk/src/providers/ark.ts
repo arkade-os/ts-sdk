@@ -38,6 +38,20 @@ export class DigestMismatchError extends Error {
     }
 }
 
+export class OnchainCosignUnsupportedError extends Error {
+    constructor() {
+        super("Arkade server does not support onchain cosigning");
+        this.name = "OnchainCosignUnsupportedError";
+    }
+}
+
+export class OnchainCosignRejectedError extends Error {
+    constructor(readonly serverMessage: string) {
+        super(`Arkade server refused to cosign onchain tx: ${serverMessage}`);
+        this.name = "OnchainCosignRejectedError";
+    }
+}
+
 /** Output requested during settlement or transaction submission. */
 export type Output = {
     /** Destination address, either onchain or Arkade (offchain). */
@@ -280,6 +294,9 @@ export interface ArkProvider {
     /** Fetch Arkade server configuration and fee settings. */
     getInfo(): Promise<ArkInfo>;
 
+    /** Cosign and broadcast an onchain tx spending server-cosigned UTXOs; returns the txid. */
+    cosignOnchainTx(psbtB64: string): Promise<string>;
+
     /** Submit a signed Arkade transaction and its checkpoint transactions. */
     submitTx(
         signedArkTx: string,
@@ -369,6 +386,7 @@ export class RestArkProvider implements ArkProvider {
      * so arkd can reject stale client configuration.
      */
     private _digest = "";
+    private _onchainCosignUnsupported = false;
     private _hasServerInfo = false;
     private _suppressNextGetInfoChangeEmit = false;
 
@@ -456,7 +474,8 @@ export class RestArkProvider implements ArkProvider {
         // rejecting the request — terminal, even when grpc-gateway renders it as a
         // 5xx. Only a non-structured 429/5xx (a bare proxy/gateway failure) is a
         // retryable availability condition.
-        if (!arkError) throwIfHttpUnavailable(response, "arkade");
+        // 501 (gRPC UNIMPLEMENTED) is permanent, not an availability failure.
+        if (!arkError && response.status !== 501) throwIfHttpUnavailable(response, "arkade");
         if (!isArkError(arkError, ArkErrorName.DIGEST_MISMATCH)) return response;
         // arkd rejected this request because our cached server info is stale
         // (e.g. the operator rotated its signer). Mirror NArk's BuildVersionHandler
@@ -593,6 +612,26 @@ export class RestArkProvider implements ArkProvider {
             finalArkTx: data.finalArkTx,
             signedCheckpointTxs: data.signedCheckpointTxs,
         };
+    }
+
+    async cosignOnchainTx(psbtB64: string): Promise<string> {
+        if (this._onchainCosignUnsupported) throw new OnchainCosignUnsupportedError();
+        const response = await this.authedFetch(`${this.serverUrl}/v1/tx/onchain/cosign`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tx: psbtB64 }),
+        });
+        if (response.status === 404 || response.status === 501) {
+            this._onchainCosignUnsupported = true;
+            throw new OnchainCosignUnsupportedError();
+        }
+        if (!response.ok) {
+            const text = await response.text();
+            const arkError = maybeArkError(new Error(text));
+            throw new OnchainCosignRejectedError(arkError?.message ?? text);
+        }
+        const data = await response.json();
+        return data.txid;
     }
 
     async finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void> {

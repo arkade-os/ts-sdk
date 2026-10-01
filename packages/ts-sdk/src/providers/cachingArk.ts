@@ -78,6 +78,10 @@ export class CachingArkProvider implements ArkProvider {
         return this.inner.submitTx(signedArkTx, checkpointTxs);
     }
 
+    cosignOnchainTx(psbtB64: string) {
+        return this.inner.cosignOnchainTx(psbtB64);
+    }
+
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]) {
         return this.inner.finalizeTx(arkTxid, finalCheckpointTxs);
     }
