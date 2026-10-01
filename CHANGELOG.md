@@ -21,6 +21,17 @@ style and have not been backfilled.
   refused when the artifact is read. `$param` operands are still bound
   as block counts. (#1012)
 
+### Performance
+
+- **`getVtxos` and `getBalance` no longer read spent history.** Both
+  loaded every stored VTXO row, spent ones included, and dropped the
+  spent ones in memory. They now ask the repository for unspent rows
+  only, the read `getSpendableVtxos` already uses, which IndexedDB
+  serves from the `scriptUnspent` index. Results are unchanged:
+  `getVtxos` still reads spent rows when `withUnrolled` is set, because
+  an unrolled coin is returned even when spent, and the balance buckets
+  already skip every spent coin.
+
 ## [0.4.77] - 2026-09-30
 
 ### Breaking Changes
