@@ -53,6 +53,9 @@ export type ContractWatchState =
      */
     | "retained";
 
+/** Which layer(s) a contract's coins live on. */
+export type ContractScope = "offchain" | "onchain" | "both";
+
 /**
  * A contract's watch state, defaulting rows written before the field
  * existed — including retired (`inactive`) receive addresses — to
@@ -128,6 +131,9 @@ export interface Contract {
      * @see ContractWatchState
      */
     watch?: ContractWatchState;
+
+    /** Layers this contract's coins live on. Absent ⇒ the handler's `defaultScope`, else `"offchain"`. */
+    scope?: ContractScope;
 
     /** Unix timestamp in milliseconds when this contract was created. */
     createdAt: number;
@@ -263,6 +269,9 @@ export interface PathContext {
 export interface ContractHandler<P = Record<string, unknown>, S extends VtxoScript = VtxoScript> {
     /** Contract type managed by this handler. */
     readonly type: string;
+
+    /** Scope of contracts of this type that don't set {@link Contract.scope}. */
+    readonly defaultScope?: ContractScope;
 
     /**
      * Create the VtxoScript from serialized parameters.

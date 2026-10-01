@@ -69,6 +69,7 @@ export type BoardingContractParams = DefaultContractParams;
 export const BoardingContractHandler: ContractHandler<BoardingContractParams, DefaultVtxo.Script> &
     Discoverable = {
     type: "boarding",
+    defaultScope: "onchain",
 
     createScript(params: Record<string, string>): DefaultVtxo.Script {
         return DefaultContractHandler.createScript(params);

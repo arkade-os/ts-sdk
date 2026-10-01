@@ -1,4 +1,5 @@
-import { Contract, ContractState, ContractWatchState } from "../../contracts/types";
+import { scopeOf } from "../../contracts/scope";
+import { Contract, ContractScope, ContractState, ContractWatchState } from "../../contracts/types";
 import { ContractFilter, ContractRepository } from "../contractRepository";
 import { SQLExecutor } from "./types";
 
@@ -17,7 +18,7 @@ interface SQLiteContractRepositoryOptions {
  * The consumer owns the SQLExecutor lifecycle — `[Symbol.asyncDispose]` is a no-op.
  */
 export class SQLiteContractRepository implements ContractRepository {
-    readonly version = 2 as const;
+    readonly version = 3 as const;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly table: string;
@@ -51,7 +52,8 @@ export class SQLiteContractRepository implements ContractRepository {
                 expires_at INTEGER,
                 label TEXT,
                 metadata_json TEXT,
-                watch TEXT
+                watch TEXT,
+                scope TEXT
             )
         `);
 
@@ -59,6 +61,7 @@ export class SQLiteContractRepository implements ContractRepository {
         // column existed keeps every row and reads back as "watched" —
         // the coverage those rows have today.
         await this.addColumnIfMissing("watch", "TEXT");
+        await this.addColumnIfMissing("scope", "TEXT");
 
         await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}contracts_type ON ${this.table} (type)`,
@@ -106,7 +109,10 @@ export class SQLiteContractRepository implements ContractRepository {
         }
 
         const rows = await this.db.all<ContractRow>(sql, params);
-        return rows.map(contractRowToDomain);
+        const contracts = rows.map(contractRowToDomain);
+        return filter?.scope === undefined
+            ? contracts
+            : contracts.filter((c) => [filter.scope!].flat().includes(scopeOf(c)));
     }
 
     async saveContract(contract: Contract): Promise<void> {
@@ -114,9 +120,9 @@ export class SQLiteContractRepository implements ContractRepository {
         await this.db.run(
             `INSERT OR REPLACE INTO ${this.table}
                 (script, address, type, state, params_json,
-                 created_at, label, metadata_json, watch)
+                 created_at, label, metadata_json, watch, scope)
              VALUES (?, ?, ?, ?, ?,
-                     ?, ?, ?, ?)`,
+                     ?, ?, ?, ?, ?)`,
             [
                 contract.script,
                 contract.address,
@@ -127,6 +133,7 @@ export class SQLiteContractRepository implements ContractRepository {
                 contract.label ?? null,
                 contract.metadata ? JSON.stringify(contract.metadata) : null,
                 contract.watch ?? null,
+                contract.scope ?? null,
             ],
         );
     }
@@ -190,6 +197,7 @@ interface ContractRow {
     label: string | null;
     metadata_json: string | null;
     watch: string | null;
+    scope: string | null;
 }
 
 // ── Row → Domain converter ──────────────────────────────────────────────
@@ -223,6 +231,9 @@ function contractRowToDomain(row: ContractRow): Contract {
     }
     if (row.watch !== null && row.watch !== undefined) {
         contract.watch = row.watch as ContractWatchState;
+    }
+    if (row.scope !== null && row.scope !== undefined) {
+        contract.scope = row.scope as ContractScope;
     }
 
     return contract;

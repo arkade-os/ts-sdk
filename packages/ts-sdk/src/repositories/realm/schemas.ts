@@ -103,6 +103,7 @@ export const ArkContractSchema = {
         label: "string?",
         metadataJson: "string?",
         watch: { type: "string", optional: true, indexed: true },
+        scope: "string?",
     },
 } as const;
 
@@ -209,6 +210,8 @@ export const ArkExperimentalRealmSchemas = [
  *   - v3: ArkContract.watch added (nullable). No data migration: a row
  *     without one reads as `watched`, which is the coverage every
  *     existing contract has today.
+ *   - v4: ArkContract.scope added (nullable). No data migration: a row
+ *     without one resolves via the handler's default scope.
  *
  * The intent/virtualtx schemas ({@link ArkExperimentalRealmSchemas}) are NOT
  * counted here: they are experimental and inert, so they never move the
@@ -216,7 +219,7 @@ export const ArkExperimentalRealmSchemas = [
  * intent-schema migration steps (guarded per-schema) for consumers who opt in
  * and bump their own version.
  */
-export const ARK_REALM_SCHEMA_VERSION = 3;
+export const ARK_REALM_SCHEMA_VERSION = 4;
 
 /**
  * Run every Arkade schema migration applicable to the open Realm.

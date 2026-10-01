@@ -1,12 +1,12 @@
 import { ContractFilter, ContractRepository } from "../contractRepository";
-import { Contract, watchStateOf } from "../../contracts";
+import { Contract, scopeOf, watchStateOf } from "../../contracts";
 
 /**
  * In-memory implementation of ContractRepository.
  * Data is ephemeral and scoped to the instance.
  */
 export class InMemoryContractRepository implements ContractRepository {
-    readonly version = 2 as const;
+    readonly version = 3 as const;
     private readonly contractData = new Map<string, unknown>();
     private readonly collections = new Map<string, unknown[]>();
     private readonly contractsByScript = new Map<string, Contract>();
@@ -39,7 +39,8 @@ export class InMemoryContractRepository implements ContractRepository {
                 matches(contract.script, filter.script) &&
                 matches(contract.state, filter.state) &&
                 matches(contract.type, filter.type) &&
-                matches(watchStateOf(contract), filter.watch)
+                matches(watchStateOf(contract), filter.watch) &&
+                matches(scopeOf(contract), filter.scope)
             ) {
                 results.push(contract);
             }
