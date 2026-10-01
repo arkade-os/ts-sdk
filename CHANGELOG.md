@@ -32,6 +32,16 @@ style and have not been backfilled.
   an unrolled coin is returned even when spent, and the balance buckets
   already skip every spent coin.
 
+- **The service worker's balance and coin reads skip spent history too.**
+  `GET_BALANCE`, and `GET_VTXOS` unless unrolled coins are requested, now
+  read unspent rows only. These back `ServiceWorkerWallet.getBalance` and
+  `getVtxos`, which do not go through the `Wallet` methods above. Rows
+  under one contract script give the same result as before. One legacy
+  case changes: a stale copy of an outpoint stored under a different
+  script used to be counted or hidden depending on which contract the
+  worker read first; it is now counted whenever its own row is unspent,
+  as `getSpendableVtxos` already does.
+
 ## [0.4.77] - 2026-09-30
 
 ### Breaking Changes

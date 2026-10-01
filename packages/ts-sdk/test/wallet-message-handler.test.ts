@@ -1735,6 +1735,41 @@ describe("WalletMessageHandler repo-backed reads", () => {
         ]);
     });
 
+    it("GET_BALANCE and GET_VTXOS read no spent rows unless unrolled coins are asked for", async () => {
+        setupHandler();
+        const settled = { value: 50000, virtualStatus: { state: "settled" as const } };
+        const live = createMockExtendedVtxo({ ...settled, txid: "aa".repeat(32) });
+        const spent = createMockExtendedVtxo({
+            ...settled,
+            txid: "bb".repeat(32),
+            isSpent: true,
+            spentBy: "cc".repeat(32),
+        });
+        const exited = createMockExtendedVtxo({
+            ...settled,
+            txid: "dd".repeat(32),
+            isSpent: true,
+            spentBy: "ee".repeat(32),
+            isUnrolled: true,
+        });
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [live, spent, exited]);
+        const reads = vi.spyOn(walletRepo, "getVtxosForScripts");
+        const send = (id: string, type: string, payload?: unknown) =>
+            updater.handleMessage({ ...baseMessage(id), type, payload } as any);
+
+        await send("1", "GET_BALANCE");
+        await send("2", "GET_VTXOS", { filter: { withRecoverable: true } });
+        const rowsRead = (await Promise.all(reads.mock.results.map((result) => result.value)))
+            .flat()
+            .map((vtxo) => vtxo.txid);
+        expect(rowsRead).toContain(live.txid);
+        expect(rowsRead).not.toContain(spent.txid);
+
+        const unrolled = await send("3", "GET_VTXOS", { filter: { withUnrolled: true } });
+        expect((unrolled as any).payload.vtxos.map((v: any) => v.txid)).toContain(exited.txid);
+        reads.mockRestore();
+    });
+
     it("GET_VTXOS surfaces unrolled VTXOs the spend-axis tests would have dropped", async () => {
         setupHandler();
         const exitedSwept = createMockExtendedVtxo({
