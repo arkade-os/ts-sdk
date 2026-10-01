@@ -1,17 +1,9 @@
-import { Script } from "@scure/btc-signer";
 import { Bytes } from "@scure/btc-signer/utils.js";
-import {
-    CLTVMultisigTapscript,
-    ConditionCSVMultisigTapscript,
-    ConditionMultisigTapscript,
-    CSVMultisigTapscript,
-    MultisigTapscript,
-    RelativeTimelock,
-} from "./tapscript";
+import { RelativeTimelock } from "./tapscript";
 import { hex } from "@scure/base";
-import { TapLeafScript, VtxoScript } from "./base";
-import { ArkadeScript, type ArkadeScriptType } from "../arkade/script";
-import { computeArkadeScriptPublicKey } from "../arkade/tweak";
+import { TapLeafScript } from "./base";
+import { ArkadeProgramScript } from "../arkade/program";
+import { vhtlcBinding, type VhtlcVersion } from "./vhtlcProgram";
 
 /** Virtual Hash Time Lock Contract (VHTLC) namespace. */
 export namespace VHTLC {
@@ -149,16 +141,16 @@ export namespace VHTLC {
         };
     }
 
+    /** Compile options to a Program binding — what {@link Script} / {@link ScriptV2} compile. */
+    export const binding = vhtlcBinding;
+
     /**
-     * Shared construction and accessors for every VHTLC script version. The
-     * only thing that varies between versions is which preimage-condition
-     * fragment `claim`/`unilateralClaim`/`nonInteractiveClaim` are built
-     * from — everything else (the multisig/timelock leaves, the
-     * non-interactive covenant leaves, the accessor methods) is identical,
-     * so versions are expressed as thin subclasses over one builder rather
-     * than as separate, independently-maintained copies of this class.
+     * Shared construction and accessors for every VHTLC script version.
+     *
+     * Compiles through {@link ArkadeProgramScript} from {@link vhtlcBinding} —
+     * V1/V2 is which Program the binding builds, not a parallel encoder.
      */
-    abstract class BaseScript extends VtxoScript {
+    abstract class BaseScript extends ArkadeProgramScript {
         readonly options: Options;
         readonly claimScript: string;
         readonly refundScript: string;
@@ -173,139 +165,41 @@ export namespace VHTLC {
         readonly nonInteractiveRefundWithoutReceiverScript?: string;
         readonly nonInteractiveRefundWithoutReceiverArkadeScript?: Bytes;
 
-        protected constructor(options: Options, preimageCondition: (hash: Bytes) => Bytes) {
+        protected constructor(options: Options, version: VhtlcVersion) {
             validateOptions(options);
-
-            const {
-                sender,
-                receiver,
-                server,
-                preimageHash,
-                refundLocktime,
-                unilateralClaimDelay,
-                unilateralRefundDelay,
-                unilateralRefundWithoutReceiverDelay,
-            } = options;
-
-            // The one leaf-condition fragment `claim`, `unilateralClaim`, and
-            // (when present) `nonInteractiveClaim` all reuse below — computed
-            // once so all three can never drift from one another within the
-            // same script version.
-            const conditionScript = preimageCondition(preimageHash);
-
-            const claimScript = ConditionMultisigTapscript.encode({
-                conditionScript,
-                pubkeys: [receiver, server],
-            }).script;
-
-            const refundScript = MultisigTapscript.encode({
-                pubkeys: [sender, receiver, server],
-            }).script;
-
-            const refundWithoutReceiverScript = CLTVMultisigTapscript.encode({
-                absoluteTimelock: refundLocktime,
-                pubkeys: [sender, server],
-            }).script;
-
-            const unilateralClaimScript = ConditionCSVMultisigTapscript.encode({
-                conditionScript,
-                timelock: unilateralClaimDelay,
-                pubkeys: [receiver],
-            }).script;
-
-            const unilateralRefundScript = CSVMultisigTapscript.encode({
-                timelock: unilateralRefundDelay,
-                pubkeys: [sender, receiver],
-            }).script;
-
-            const unilateralRefundWithoutReceiverScript = CSVMultisigTapscript.encode({
-                timelock: unilateralRefundWithoutReceiverDelay,
-                pubkeys: [sender],
-            }).script;
-
-            const scripts = [
-                claimScript,
-                refundScript,
-                refundWithoutReceiverScript,
-                unilateralClaimScript,
-                unilateralRefundScript,
-                unilateralRefundWithoutReceiverScript,
-            ];
-
-            let arkadeScriptNic: Bytes | undefined;
-            let nonInteractiveClaimScript: Bytes | undefined;
-            let arkadeScriptNir: Bytes | undefined;
-            let nonInteractiveRefundScript: Bytes | undefined;
-            let nonInteractiveRefundWithoutReceiverScript: Bytes | undefined;
-            const covenants = options.nonInteractiveParameters;
-            if (covenants) {
-                arkadeScriptNic = enforcePayToMaybeAsset(covenants.receiverPkScript, options.asset);
-                nonInteractiveClaimScript = ConditionMultisigTapscript.encode({
-                    conditionScript,
-                    pubkeys: [
-                        server,
-                        computeArkadeScriptPublicKey(covenants.emulatorPubkey, arkadeScriptNic),
-                    ],
-                }).script;
-                scripts.push(nonInteractiveClaimScript);
-
-                arkadeScriptNir = enforcePayToMaybeAsset(covenants.senderPkScript, options.asset);
-                // Derived ONCE and shared by both refund covenant leaves. They
-                // pin the same destination, so they must commit to the same
-                // key; computing it twice would make that a coincidence rather
-                // than a guarantee.
-                const nirCosigner = computeArkadeScriptPublicKey(
-                    covenants.emulatorPubkey,
-                    arkadeScriptNir,
-                );
-                // No timelock: server + receiver together can release this
-                // immediately, same as `refund` above, just without needing
-                // the sender's own signature — the covenant is what still
-                // guarantees the payout can only reach the sender.
-                nonInteractiveRefundScript = MultisigTapscript.encode({
-                    pubkeys: [server, receiver, nirCosigner],
-                }).script;
-                scripts.push(nonInteractiveRefundScript);
-
-                if (covenants.legacy !== "preTimelockedRefund") {
-                    // The same tier `refundWithoutReceiver` reaches, reached
-                    // without the sender: their signature is replaced by the
-                    // covenant, exactly as `nonInteractiveRefund` replaces it
-                    // in `refund`. Last in `scripts`, because leaf order fixes
-                    // the merkle root and every earlier leaf must keep its
-                    // position.
-                    nonInteractiveRefundWithoutReceiverScript = CLTVMultisigTapscript.encode({
-                        absoluteTimelock: refundLocktime,
-                        pubkeys: [server, nirCosigner],
-                    }).script;
-                    scripts.push(nonInteractiveRefundWithoutReceiverScript);
-                }
-            }
-
-            super(scripts);
+            const { program, args, keys } = vhtlcBinding(options, version);
+            super(program, args, keys);
 
             this.options = options;
-            this.claimScript = hex.encode(claimScript);
-            this.refundScript = hex.encode(refundScript);
-            this.refundWithoutReceiverScript = hex.encode(refundWithoutReceiverScript);
-            this.unilateralClaimScript = hex.encode(unilateralClaimScript);
-            this.unilateralRefundScript = hex.encode(unilateralRefundScript);
-            this.unilateralRefundWithoutReceiverScript = hex.encode(
-                unilateralRefundWithoutReceiverScript,
+            this.claimScript = hex.encode(this.functionByName("claim")!.leafScript);
+            this.refundScript = hex.encode(this.functionByName("refund")!.leafScript);
+            this.refundWithoutReceiverScript = hex.encode(
+                this.functionByName("refundWithoutReceiver")!.leafScript,
             );
-            if (nonInteractiveClaimScript) {
-                this.nonInteractiveClaimScript = hex.encode(nonInteractiveClaimScript);
-                this.nonInteractiveClaimArkadeScript = arkadeScriptNic;
+            this.unilateralClaimScript = hex.encode(
+                this.functionByName("unilateralClaim")!.leafScript,
+            );
+            this.unilateralRefundScript = hex.encode(
+                this.functionByName("unilateralRefund")!.leafScript,
+            );
+            this.unilateralRefundWithoutReceiverScript = hex.encode(
+                this.functionByName("unilateralRefundWithoutReceiver")!.leafScript,
+            );
+
+            const nic = this.functionByName("nonInteractiveClaim");
+            if (nic?.arkadeScript) {
+                this.nonInteractiveClaimScript = hex.encode(nic.leafScript);
+                this.nonInteractiveClaimArkadeScript = nic.arkadeScript;
             }
-            if (nonInteractiveRefundScript) {
-                this.nonInteractiveRefundScript = hex.encode(nonInteractiveRefundScript);
-                this.nonInteractiveRefundArkadeScript = arkadeScriptNir;
+            const nir = this.functionByName("nonInteractiveRefund");
+            if (nir?.arkadeScript) {
+                this.nonInteractiveRefundScript = hex.encode(nir.leafScript);
+                this.nonInteractiveRefundArkadeScript = nir.arkadeScript;
             }
-            if (nonInteractiveRefundWithoutReceiverScript) {
-                this.nonInteractiveRefundWithoutReceiverScript = hex.encode(
-                    nonInteractiveRefundWithoutReceiverScript,
-                );
-                this.nonInteractiveRefundWithoutReceiverArkadeScript = arkadeScriptNir;
+            const nirwor = this.functionByName("nonInteractiveRefundWithoutReceiver");
+            if (nirwor?.arkadeScript) {
+                this.nonInteractiveRefundWithoutReceiverScript = hex.encode(nirwor.leafScript);
+                this.nonInteractiveRefundWithoutReceiverArkadeScript = nirwor.arkadeScript;
             }
         }
 
@@ -483,24 +377,20 @@ export namespace VHTLC {
      */
     export class Script extends BaseScript {
         constructor(options: Options) {
-            super(options, preimageConditionScript);
+            super(options, "v1");
         }
     }
 
     /**
-     * Same leaf ladder as {@link Script}, built with {@link
-     * preimageConditionScriptV2} instead of {@link preimageConditionScript}
-     * for every leaf that gates on the preimage (`claim`, `unilateralClaim`,
-     * and, when present, `nonInteractiveClaim`) — see that function's doc
-     * comment for what differs and why. A distinct class rather than a flag
-     * on {@link Script}: the two produce different script bytes (and so
-     * different addresses) for the same participant keys, and keeping them
-     * as separate types makes that a compile-time-visible choice at every
-     * call site instead of a runtime option that's easy to get wrong.
+     * Same leaf ladder as {@link Script}, with a BOLT3-style `OP_SIZE 32
+     * OP_EQUALVERIFY` prefix on every preimage-gated leaf (`claim`,
+     * `unilateralClaim`, and `nonInteractiveClaim`). A distinct class rather
+     * than a flag on {@link Script}: the two produce different script bytes
+     * (and so different addresses) for the same participant keys.
      */
     export class ScriptV2 extends BaseScript {
         constructor(options: Options) {
-            super(options, preimageConditionScriptV2);
+            super(options, "v2");
         }
     }
 
@@ -530,6 +420,20 @@ export namespace VHTLC {
         // dropping it.
         if (options.asset !== undefined && !options.nonInteractiveParameters) {
             throw new Error("asset has no effect without nonInteractiveParameters");
+        }
+        if (options.asset !== undefined) {
+            if (options.asset.txid.length !== 32) {
+                throw new Error(`asset txid must be 32 bytes, got ${options.asset.txid.length}`);
+            }
+            if (
+                !Number.isInteger(options.asset.groupIndex) ||
+                options.asset.groupIndex < 0 ||
+                options.asset.groupIndex > 0xffff
+            ) {
+                throw new Error(
+                    `asset group index must be an integer in [0, 65535], got ${options.asset.groupIndex}`,
+                );
+            }
         }
 
         if (options.nonInteractiveParameters) {
@@ -613,201 +517,8 @@ export namespace VHTLC {
     }
 }
 
-function preimageConditionScript(preimageHash: Bytes): Bytes {
-    return Script.encode(["HASH160", preimageHash, "EQUAL"]);
-}
-
-/**
- * Same as {@link preimageConditionScript}, plus an explicit length check on
- * the witness item before it's hashed: `OP_SIZE 32 OP_EQUALVERIFY` ahead of
- * the `OP_HASH160` check, the same prefix real-world HTLC scripts (e.g.
- * BOLT3's) carry for the same reason — the claim leaf otherwise accepts any
- * witness value whose HASH160 matches, regardless of length, and this
- * contract's preimage is always exactly 32 bytes by construction. Used by
- * {@link VHTLC.ScriptV2} for every leaf gated on the preimage.
- */
-function preimageConditionScriptV2(preimageHash: Bytes): Bytes {
-    return Script.encode(["SIZE", 32, "EQUALVERIFY", "HASH160", preimageHash, "EQUAL"]);
-}
-
-/**
- * A v1 P2TR pkScript is exactly `OP_1 <32-byte-program>` (0x51 0x20 ...) — 34
- * bytes total. Length alone isn't enough: any other 34-byte value (e.g.
- * {@link ArkAddress.subdustPkScript}'s `OP_RETURN <32 bytes>`, or a P2WSH
- * script) has the same length but a different witness version, and
- * `enforcePayTo` below trusts byte 2 onward as the taproot program
- * unconditionally.
- */
 function isP2trPkScript(pkScript: Bytes): boolean {
     return pkScript.length === 34 && pkScript[0] === 0x51 && pkScript[1] === 0x20;
 }
 
-/**
- * The covenant: "this input's output pays the given P2TR script, value >=
- * input". Shared by every leaf {@link VHTLC.Options.nonInteractiveParameters}
- * builds — only the destination and the tier it gates differ.
- *
- * `PUSHCURRENTINPUTINDEX` as the output index is not an assumption about how
- * the Ark round pairs inputs with outputs — the covenant imposes the pairing
- * on the spender. Whatever index a spending tx places this input at, the
- * output at that same index must pay the destination at least the input's
- * value, or the ArkadeScript fails and the server never co-signs. A tx with no
- * output at that index fails the same way: the leaf is unsatisfiable, not
- * fooled. Index alignment is therefore a *liveness* obligation on whoever
- * assembles the spend (the solver, for both leaves — this SDK never builds
- * them; its own aggregate refund uses the interactive leaf precisely because
- * it lacks this per-index constraint, see `refund.ts`), never a safety
- * assumption.
- *
- * WHY `>= input` AND NOT `>= the quoted amount`. This bound is CONSERVATION,
- * not agreement: it says the spend may not skim, and says nothing about what
- * any quote promised. That is deliberate, on both leaves, and it is a question
- * worth answering here because the covenant reads like the natural place to
- * pin a quote and is not.
- *
- *  - A QUOTE IS NOT THE COVENANT'S TO KNOW. Pinning one compiles it into the
- *    leaf, hence into the emulator key, hence into the ADDRESS. Re-quoting
- *    would move the address of a contract that may already be funded.
- *  - MISFUNDING IS THE SENDER'S EXPOSURE. They chose the amount. A lockup that
- *    over- or underpays the quote is theirs to have created, and the
- *    counterparty's protection is to decline it — refuse the swap and let it
- *    refund — which is an application-layer decision, taken where a quote
- *    actually lives, and revisable without moving anyone's address.
- *  - NOTHING IS CLAIMED WITHOUT THE PREIMAGE. Both covenant leaves sit behind
- *    the hash condition, so an underfunded lockup cannot be claimed out from
- *    under the counterparty on the covenant's say-so. The covenant's job is to
- *    stop a spend that satisfies the condition from redirecting the value; it
- *    is not to adjudicate whether the trade was fair.
- *
- * So a funding gate that compares a lockup against its quote belongs in the
- * consumer, not here. `lightning-swap-service`'s `lockupIsFunded` is that gate.
- */
-/**
- * The sat half of both covenants: the output at this input's index is P2TR,
- * pays `destinationPkScript`, and carries at least the input's value.
- *
- * ONE COPY, shared by {@link enforcePayTo} and {@link enforcePayToAsset}. The
- * asset covenant used to restate these tokens inline under a comment promising
- * they matched "byte-for-byte" — a promise nothing enforced, and one that an
- * option added to one and forgotten on the other would have broken silently.
- */
-function satClause(destinationPkScript: Bytes): ArkadeScriptType {
-    return [
-        "PUSHCURRENTINPUTINDEX",
-        "DUP",
-        "INSPECTOUTPUTSCRIPTPUBKEY",
-        1,
-        "EQUALVERIFY",
-        destinationPkScript.subarray(2),
-        "EQUALVERIFY",
-        "INSPECTOUTPUTVALUE",
-        "PUSHCURRENTINPUTINDEX",
-        "INSPECTINPUTVALUE",
-        "GREATERTHANOREQUAL",
-    ];
-}
-
-function enforcePayTo(destinationPkScript: Bytes): Bytes {
-    // validateOptions already checked this for both current call sites — kept
-    // here too, since this covenant is the one place a wrong destination
-    // becomes irreversible (a mis-typed leaf, unlike a rejected constructor
-    // call, only surfaces once someone tries to spend it).
-    if (!isP2trPkScript(destinationPkScript)) {
-        throw new Error("invalid P2TR script");
-    }
-    return ArkadeScript.encode(satClause(destinationPkScript));
-}
-
-/**
- * {@link enforcePayTo} for a contract denominated in an Arkade ASSET: the same
- * covenant, plus "carries at least the input's amount of exactly this one
- * asset".
- *
- * The sat covenant is this one's TAIL, restated inline below, so an asset
- * contract enforces everything a sat contract does and never less.  That
- * matters because an asset-carrying VTXO carries sats too: a covenant
- * constraining only the asset would let a spend strip the sats, and the
- * sat-only covenant lets a spend strip the ASSET -- the loss this exists to
- * prevent.
- *
- * Two opcode details decide whether it is safe, and the intuitive reading gets
- * both wrong:
- *
- *  - A canonical Asset ID is TWO stack items, `asset_txid` then `asset_gidx`.
- *    Pushing it as one 32-byte blob encodes cleanly and fails only at spend
- *    time, once the contract is already funded.
- *  - `INSPECTOUTASSETLOOKUP` pushes `amount 1`, or `0 0` when the asset is
- *    ABSENT.  The `VERIFY` after each lookup pops that success flag and is
- *    load-bearing, not defensive: without it an output carrying NONE of the
- *    asset reports amount 0, `0 >= 0` passes, and the stripping spend succeeds
- *    anyway.  Applied to the input lookup too, so an input whose asset is
- *    undeclared cannot compare `0 >= 0` either.
- *
- * `INSPECTOUTASSETCOUNT == 1` bounds the output to the single asset bound, so
- * nothing can be injected alongside it.  Deliberately strict: a covenant that
- * is too permissive cannot be tightened once funds are locked to it, while a
- * strict one can be relaxed in a later contract version.
- */
-function enforcePayToAsset(
-    destinationPkScript: Bytes,
-    asset: { txid: Bytes; groupIndex: number },
-): Bytes {
-    if (!isP2trPkScript(destinationPkScript)) {
-        throw new Error("invalid P2TR script");
-    }
-    if (asset.txid.length !== 32) {
-        throw new Error(`asset txid must be 32 bytes, got ${asset.txid.length}`);
-    }
-    if (!Number.isInteger(asset.groupIndex) || asset.groupIndex < 0 || asset.groupIndex > 0xffff) {
-        throw new Error(
-            `asset group index must be an integer in [0, 65535], got ${asset.groupIndex}`,
-        );
-    }
-    // REVERSED, once, here. `asset.txid` is the id in CANONICAL order -- the
-    // leading 32 bytes of the serialized Asset ID, which arkd's `serializeTxHash`
-    // already reversed "to match the canonical txid format". The introspection
-    // opcodes match against WIRE order, which is those bytes reversed back. Push
-    // the canonical bytes unflipped and the lookup reports the asset ABSENT
-    // (`0 0`), so the covenant fails and the contract it guards is unspendable. Nothing in the failure says so: the emulator returns only
-    // `OP_VERIFY failed`, and returns it whatever the amount comparison says.
-    // Established on regtest against a real minted asset, by elimination against
-    // a passing BTC-only control.
-    //
-    // A copy rather than an in-place reverse: the caller's id is theirs.
-    const inspectionTxid = Uint8Array.from(asset.txid).reverse();
-    return ArkadeScript.encode([
-        // The output carries at least as much of the asset as the input did.
-        // Output index is the input's -- the same index alignment the sat
-        // covenant relies on, and the same liveness obligation on whoever
-        // assembles the spend.
-        "PUSHCURRENTINPUTINDEX",
-        inspectionTxid,
-        asset.groupIndex,
-        "INSPECTOUTASSETLOOKUP",
-        "VERIFY", // PRESENT on the output, not merely "zero of it"
-        "PUSHCURRENTINPUTINDEX",
-        inspectionTxid,
-        asset.groupIndex,
-        "INSPECTINASSETLOOKUP",
-        "VERIFY", // ...and on the input, so the comparison means something
-        "GREATERTHANOREQUAL",
-        "VERIFY",
-        // Exactly one asset out: nothing injected alongside the one bound.
-        "PUSHCURRENTINPUTINDEX",
-        "INSPECTOUTASSETCOUNT",
-        1,
-        "EQUALVERIFY",
-        // ...then the sat covenant, the same tokens `enforcePayTo` emits.
-        ...satClause(destinationPkScript),
-    ]);
-}
-
-/** Pick the covenant this contract's denomination calls for. */
-function enforcePayToMaybeAsset(
-    destinationPkScript: Bytes,
-    asset: { txid: Bytes; groupIndex: number } | undefined,
-): Bytes {
-    return asset === undefined
-        ? enforcePayTo(destinationPkScript)
-        : enforcePayToAsset(destinationPkScript, asset);
-}
+export { vhtlcBinding, type VhtlcBinding, type VhtlcVersion } from "./vhtlcProgram";

@@ -43,6 +43,11 @@ export {
 } from "./batch";
 export { programFromArtifact, isContractArtifact, type ContractArtifact } from "./artifact";
 export {
+    compileOnchainHtlc,
+    ONCHAIN_HTLC_PROGRAM,
+    type OnchainHtlcProgramParams,
+} from "./onchainHtlc";
+export {
     ArkadeProgramScript,
     stringifyArtifact,
     serializeArkadeContractParams,
