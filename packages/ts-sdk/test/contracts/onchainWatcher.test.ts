@@ -10,6 +10,7 @@ import {
 import { OnchainContractWatcher } from "../../src/contracts/onchainWatcher";
 import { toOnchainCoinRow } from "../../src/contracts/onchainCoins";
 import { saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
+import { updateWalletState } from "../../src/utils/syncCursors";
 import { timelockToSequence } from "../../src/utils/timelock";
 import {
     createDefaultContractParams,
@@ -188,6 +189,30 @@ describe("ContractManager.syncOnchain", () => {
         const [row] = await walletRepository.getVtxosForScript!(boarding.script);
         expect(row.spentBy).toBe("ee".repeat(32));
         expect((await pendingOf(walletRepository))[`${coin.txid}:1`].spender).toBe("ee".repeat(32));
+        manager.dispose();
+    });
+
+    it("keeps a concurrent wallet-state write made while marking", async () => {
+        const { manager, walletRepository } = await setup(async () => [coin]);
+        await manager.syncOnchain();
+        const read = walletRepository.getWalletState.bind(walletRepository);
+        let other: Promise<void> | undefined;
+        vi.spyOn(walletRepository, "getWalletState").mockImplementation(async () => {
+            const state = await read();
+            if (!other) {
+                other = updateWalletState(walletRepository, (s) => ({
+                    ...s,
+                    settings: { ...s.settings, cursorProbe: 1 },
+                }));
+                await new Promise((r) => setTimeout(r, 5));
+            }
+            return state;
+        });
+        await manager.markOnchainSpendPending([{ txid: coin.txid, vout: 1 }], spender);
+        await other;
+        const settings = (await read())?.settings;
+        expect(settings?.cursorProbe).toBe(1);
+        expect(settings?.onchainPendingSpends[`${coin.txid}:1`].spender).toBe(spender);
         manager.dispose();
     });
 

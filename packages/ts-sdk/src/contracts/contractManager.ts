@@ -50,6 +50,7 @@ import {
     computeSyncWindow,
     cursorCutoff,
     getSyncCursor,
+    updateWalletState,
 } from "../utils/syncCursors";
 import {
     applyRecordedSpends,
@@ -2389,12 +2390,12 @@ export class ContractManager implements IContractManager {
             }
 
             const { height } = await onchainProvider.getChainTip();
-            const pending = await this.readPendingSpends();
-            for (const v of rows) {
-                pending[vtxoOutpoint(v)] = { spender: txid, height, script: v.contractScript };
-            }
             // State first: an entry without a marked row releases harmlessly.
-            await this.writePendingSpends(pending);
+            await this.updatePendingSpends((pending) => {
+                for (const v of rows) {
+                    pending[vtxoOutpoint(v)] = { spender: txid, height, script: v.contractScript };
+                }
+            });
             for (const contract of contracts) {
                 const marked = rows
                     .filter((v) => v.contractScript === contract.script)
@@ -2410,11 +2411,16 @@ export class ContractManager implements IContractManager {
         return { ...state?.settings?.[ONCHAIN_PENDING_SPENDS_KEY] };
     }
 
-    private async writePendingSpends(pending: Record<string, OnchainPendingSpend>): Promise<void> {
-        const state = (await this.config.walletRepository.getWalletState()) ?? {};
-        await this.config.walletRepository.saveWalletState({
-            ...state,
-            settings: { ...state.settings, [ONCHAIN_PENDING_SPENDS_KEY]: pending },
+    private updatePendingSpends(
+        mutate: (pending: Record<string, OnchainPendingSpend>) => void,
+    ): Promise<void> {
+        return updateWalletState(this.config.walletRepository, (state) => {
+            const pending = { ...state.settings?.[ONCHAIN_PENDING_SPENDS_KEY] };
+            mutate(pending);
+            return {
+                ...state,
+                settings: { ...state.settings, [ONCHAIN_PENDING_SPENDS_KEY]: pending },
+            };
         });
     }
 
@@ -2441,7 +2447,7 @@ export class ContractManager implements IContractManager {
                 ((c.state === "active" && isOnchainScoped(c)) || owners.has(c.script)),
         );
         const wanted = scripts && new Set(scripts);
-        const before = JSON.stringify(pending);
+        const before = Object.keys(pending);
         let tip: Promise<{ height: number }> | undefined;
         const tipHeight = async () => (await (tip ??= onchainProvider.getChainTip())).height;
         for (const contract of targets) {
@@ -2458,7 +2464,12 @@ export class ContractManager implements IContractManager {
                 console.warn(`[contracts] onchain sync failed for ${contract.script}`, e);
             }
         }
-        if (JSON.stringify(pending) !== before) await this.writePendingSpends(pending);
+        const settled = before.filter((key) => !(key in pending));
+        if (settled.length > 0) {
+            await this.updatePendingSpends((latest) => {
+                for (const key of settled) delete latest[key];
+            });
+        }
         if (this.disposed) return;
         await this.onchainWatcher?.setTargets(
             targets.map((c) => ({ script: c.script, address: onchainAddressOf(c, network) })),

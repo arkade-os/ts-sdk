@@ -9,6 +9,7 @@ import { contractHandlers } from "./handlers";
 import { isOnchainScoped } from "./scope";
 import type { Contract } from "./types";
 import { saveVtxosForContract } from "./vtxoOwnership";
+import { updateWalletState } from "../utils/syncCursors";
 
 const MIGRATED_KEY = "legacyUtxosMigrated";
 
@@ -88,9 +89,9 @@ export async function migrateLegacyUtxos(deps: {
         );
         migrated += legacy.length;
     }
-    await walletRepository.saveWalletState({
-        ...state,
-        settings: { ...state.settings, [MIGRATED_KEY]: true },
-    });
+    await updateWalletState(walletRepository, (latest) => ({
+        ...latest,
+        settings: { ...latest.settings, [MIGRATED_KEY]: true },
+    }));
     return migrated;
 }
