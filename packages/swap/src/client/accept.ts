@@ -430,6 +430,9 @@ const registeredAssetRecord = async (
         offerHex: preparation.offer.offerHex,
         swapAddress: preparation.offer.address,
         swapPkScript: hex.encode(preparation.offer.swapPkScript),
+        ...(preparation.carrierSats === undefined
+            ? {}
+            : { carrierSats: preparation.carrierSats.toString() }),
     };
 };
 
@@ -485,10 +488,14 @@ const fund = async (input: FundingInput, record: SwapRecord): Promise<string> =>
         const depositIsBtc = assetPartOf(record.route.give.asset) === BTC_ASSET_PART;
         return wallet.send({
             address: record.swapAddress,
-            // An asset deposit rides the SDK's dust-sat carrier; its sats amount is the default.
+            // An asset deposit rides a dust-sat carrier: the solver's published one when the record
+            // names it (the fill is priced against it), else the SDK default.
             ...(depositIsBtc
                 ? { amount: toSafeNumber(amount, "give.amount") }
                 : {
+                      ...(record.carrierSats === undefined
+                          ? {}
+                          : { amount: toSafeNumber(BigInt(record.carrierSats), "carrierSats") }),
                       assets: [
                           { assetId: toDiscoveryLeg(record.route.give.asset).assetId, amount },
                       ],

@@ -1303,7 +1303,7 @@ export const assertArkadeFundable = (input: { quote: RfqQuote; now?: number }): 
 };
 
 /** Falls back on absent AND non-positive: zero would fund an asset with no carrier. */
-const quoteCarrierSats = (quote: RfqQuote): bigint => {
+export const quoteCarrierSats = (quote: RfqQuote): bigint => {
     const published = quote.carrier_sats === undefined ? 0n : BigInt(quote.carrier_sats);
     return published > 0n ? published : ASSET_CARRIER_SATS;
 };

@@ -140,6 +140,9 @@ export interface OfferSwapRecord extends SwapRecordCommon {
     readonly swapAddress: string;
     /** The covenant's scriptPubKey, hex — the indexer's monitoring key and the reconcile's match key. */
     readonly swapPkScript: string;
+    /** Sats riding an asset deposit, decimal: the solver's published carrier, which the fill is
+     * priced against. Absent for a BTC deposit and for feed-priced swaps (the SDK default). */
+    readonly carrierSats?: string;
     readonly spentTxid?: string;
     readonly completedAt?: number;
 }

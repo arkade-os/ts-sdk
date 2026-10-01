@@ -269,6 +269,14 @@ describe("quote() refuses before it discloses anything", () => {
         expect(transport.sent).toHaveLength(0);
     });
 
+    it("refuses a card with no price feed to measure the fee against", async () => {
+        const { price_feed: _feed, price_feed_schema: _schema, ...feedless } = assetCard;
+        const { client, transport } = await setup({ snapshot: [feedless as typeof assetCard] });
+
+        await expect(client.quote(buy())).rejects.toThrow(UnsupportedRoute);
+        expect(transport.sent).toHaveLength(0);
+    });
+
     it("refuses BTC for BTC on one rail, which swaps nothing", async () => {
         const { client, transport } = await setup();
 
@@ -421,10 +429,36 @@ describe("accept() on a negotiated asset market", () => {
         const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
         expect(wallet.sent[0]).toMatchObject({
             address: stored.swapAddress,
-            // No sats amount: an asset deposit rides the SDK's dust carrier.
+            // The solver's carrier (it published none, so the SDK constant), recorded with the swap.
+            amount: 330,
             assets: [{ assetId: USD_ASSET_ID, amount: 1_000n }],
         });
-        expect(wallet.sent[0]?.amount).toBeUndefined();
+        expect(stored.carrierSats).toBe("330");
+    });
+
+    it("funds the carrier the solver published, and keeps it on the record", async () => {
+        const wallet = await acceptWallet();
+        const base = solverFor(CLOCK);
+        const { client, repository } = await setup({
+            wallet,
+            answer: async (payload) => ({ ...(await base(payload)), carrier_sats: "546" }),
+        });
+        const quote = await client.quote(sell());
+        await client.accept(quote);
+
+        const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.carrierSats).toBe("546");
+        expect(wallet.sent[0]?.amount).toBe(546);
+    });
+
+    it("attaches no carrier to a BTC deposit", async () => {
+        const wallet = await acceptWallet();
+        const { client, repository } = await setup({ wallet });
+        const quote = await client.quote(buy());
+        await client.accept(quote);
+
+        const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.carrierSats).toBeUndefined();
     });
 
     it("settles one exchange() through one RFQ round trip", async () => {

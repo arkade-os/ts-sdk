@@ -49,6 +49,7 @@ import {
     verifyOfferAddress,
     type LightningReceiveContractParams,
     type LightningSendContractParams,
+    quoteCarrierSats,
 } from "../rfq";
 import type { DiscoveryLeg } from "./aliases";
 import type { LightningCorridorDeps } from "./corridors/deps";
@@ -116,6 +117,8 @@ export interface AssetRfqPreparation extends NegotiatedPreparation {
     readonly route: "arkade->arkade";
     /** The trader's OWN derivation of the offer covenant, registered by nobody. */
     readonly offer: DerivedOffer;
+    /** The solver's carrier for an asset deposit; the deposit must carry exactly this many sats. */
+    readonly carrierSats?: bigint;
 }
 
 export type CorridorRfqPreparation =
@@ -300,6 +303,14 @@ const quoteArkadeAsset = async (
         );
     }
     const sides = assetSidesOf(input.legs);
+    // The fee is measured against the card's own feed, so a card without one is refused before the
+    // request discloses anything, not after the solver has already answered.
+    if (input.candidate.card.price_feed === undefined) {
+        throw new UnsupportedRoute(
+            `card ${input.candidate.card.solver} advertises no price feed to measure an asset swap's fee against`,
+            { give: "arkade", take: "arkade" },
+        );
+    }
     const pair = rfqPairFor(input.legs.give, input.legs.take);
     const rfqId = newRfqId();
     // One read, shared by the request and the derivation below: the profile
@@ -342,9 +353,12 @@ const quoteArkadeAsset = async (
     // rather than followed.
     verifyingDerivation(() => verifyOfferAddress(wire, offer));
 
+    // The carrier is the solver's own, so a card that charges for it prices the reference with it.
+    const carrierSats = sides.offerAsset === undefined ? undefined : quoteCarrierSats(wire);
     const reference = await quoteOffer(input.candidate.card, {
         give: input.candidate.give,
         giveAmount: parsed.give,
+        ...(carrierSats === undefined ? {} : { carrierSats }),
         ...QUOTE_OPTIONS,
         fetchImpl: input.feed.fetch,
     });
@@ -371,6 +385,7 @@ const quoteArkadeAsset = async (
             rfqId,
             wire: parsed,
             offer,
+            ...(carrierSats === undefined ? {} : { carrierSats }),
         },
     };
 };
