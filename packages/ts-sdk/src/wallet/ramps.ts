@@ -422,6 +422,7 @@ export class Ramps {
             (await this.wallet.getSpendableVtxos({
                 withRecoverable: true,
                 withUnrolled: false,
+                genericallySpendableOnly: true,
             }));
 
         const estimator = new Estimator(feeInfo?.intentFee ?? {});

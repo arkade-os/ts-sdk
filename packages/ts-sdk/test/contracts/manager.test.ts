@@ -307,6 +307,100 @@ describe("ContractManager", () => {
         expect(lastCall[0].spendableOnly).toBeUndefined();
     });
 
+    it("groups each contract's VTXOs in repository order and keeps empty contracts", async () => {
+        const walletRepo = new InMemoryWalletRepository();
+        const localManager = await ContractManager.create({
+            indexerProvider: createMockIndexerProvider(),
+            contractRepository: new InMemoryContractRepository(),
+            walletRepository: walletRepo,
+        });
+        const first = await localManager.createContract({
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "first-address",
+        });
+        const second = await localManager.createContract({
+            type: "default",
+            params: SECOND_DEFAULT_PARAMS,
+            script: SECOND_DEFAULT_SCRIPT,
+            address: "second-address",
+        });
+        const emptyParams = DefaultContractHandler.serializeParams({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: { type: "blocks", value: DefaultVtxo.Script.DEFAULT_TIMELOCK.value + 1n },
+        });
+        const empty = await localManager.createContract({
+            type: "default",
+            params: emptyParams,
+            script: hex.encode(DefaultContractHandler.createScript(emptyParams).pkScript),
+            address: "empty-address",
+        });
+        const row = (script: string, byte: string) =>
+            createMockExtendedVtxo({
+                txid: byte.repeat(32),
+                vout: 0,
+                script,
+                isSpent: false,
+                virtualStatus: { state: "settled" },
+            });
+        await walletRepo.saveVtxos(first.address, [
+            row(first.script, "aa"),
+            row(first.script, "bb"),
+        ]);
+        await walletRepo.saveVtxos(second.address, [
+            row(second.script, "cc"),
+            row(second.script, "dd"),
+        ]);
+
+        const result = await localManager.getContractsWithVtxos();
+
+        expect(result.map(({ contract }) => contract.script)).toEqual([
+            first.script,
+            second.script,
+            empty.script,
+        ]);
+        expect(result.map(({ vtxos }) => vtxos.map(({ txid }) => txid))).toEqual([
+            ["aa".repeat(32), "bb".repeat(32)],
+            ["cc".repeat(32), "dd".repeat(32)],
+            [],
+        ]);
+
+        const bulk = vi.fn(async (scripts: string[]) =>
+            [
+                row(first.script, "aa"),
+                row(first.script, "bb"),
+                { ...row(first.script, "ee"), isSpent: true },
+                row(second.script, "cc"),
+                row(second.script, "dd"),
+                row("5120" + "ff".repeat(32), "ee"),
+            ].filter((vtxo) => scripts.includes(vtxo.script!)),
+        );
+        (
+            walletRepo as InMemoryWalletRepository & { getVtxosForScripts: typeof bulk }
+        ).getVtxosForScripts = bulk;
+        const perScript = vi.spyOn(walletRepo, "getVtxosForScript");
+        const batched = await localManager.getContractsWithVtxos();
+        expect(bulk).toHaveBeenCalledTimes(1);
+        expect(perScript).not.toHaveBeenCalled();
+        expect(batched.map(({ vtxos }) => vtxos.length)).toEqual([3, 2, 0]);
+        const unspent = await localManager.getContractsWithVtxos(undefined, undefined, {
+            unspentOnly: true,
+        });
+        expect(unspent.map(({ vtxos }) => vtxos.length)).toEqual([2, 2, 0]);
+        expect(bulk).toHaveBeenLastCalledWith([first.script, second.script, empty.script], {
+            unspentOnly: true,
+        });
+
+        vi.spyOn(localManager, "getContracts").mockResolvedValue([first, first]);
+        const duplicate = await localManager.getContractsWithVtxos();
+        const secondLength = duplicate[1].vtxos.length;
+        duplicate[0].vtxos.pop();
+        expect(duplicate[1].vtxos).toHaveLength(secondLength);
+        localManager.dispose();
+    });
+
     describe("refreshVtxos includeInactive", () => {
         // Default `refreshVtxos()` syncs the watched set;
         // `includeInactive: true` widens it to every repository row,

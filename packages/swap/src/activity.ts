@@ -11,7 +11,12 @@ import type { LockupSpendIndexer } from "./refund";
 import { rfqCorridorHandlers } from "./rfqCorridor";
 // Side-effecting: the handlers read below register themselves on import.
 import "./rfqCorridors";
-import type { AssetSwapRepository } from "./repository";
+import {
+    assertRfqSwapPageLimit,
+    assertRfqSwapSince,
+    type AssetSwapRepository,
+    type RfqHistoryCursor,
+} from "./repository";
 import { normalizeRfqSwapRecord, type RfqSwapRecord } from "./rfqRecord";
 
 /**
@@ -88,7 +93,10 @@ export function swapActivityResolver(deps: {
 
 /** @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export interface RfqSwapActivityDeps {
-    repository: Pick<AssetSwapRepository, "getAllRfqSwaps">;
+    repository: Pick<
+        AssetSwapRepository,
+        "getAllRfqSwaps" | "getRfqSwapsPage" | "getRfqSwapsUpdatedPage"
+    >;
     /**
      * Consulted only for what a record cannot answer: a record written before
      * `fundingTxid` existed, and the counterparty's spend on a swap that
@@ -111,6 +119,93 @@ export async function rfqSwapActivityInputs(
 ): Promise<SwapActivityInput[]> {
     const records = await deps.repository.getAllRfqSwaps();
     return Promise.all(records.map((record) => activityInputOf(record, deps.indexer)));
+}
+
+/** @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
+export interface RfqSwapActivityPage {
+    inputs: SwapActivityInput[];
+    nextCursor?: string;
+}
+
+/** @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
+export async function rfqSwapActivityInputsPage(
+    deps: RfqSwapActivityDeps,
+    state: RfqSwapState,
+    afterId: string | undefined,
+    limit: number,
+): Promise<RfqSwapActivityPage> {
+    assertRfqSwapPageLimit(limit);
+    const page = deps.repository.getRfqSwapsPage;
+    if (!page) throw new Error("repository does not support paged RFQ activity reads");
+    const records = await page.call(deps.repository, state, afterId, limit);
+    if (records.length > limit) throw new Error("getRfqSwapsPage exceeded its requested limit");
+    let cursor = afterId ?? "";
+    for (const record of records) {
+        if (record.state !== state || record.rfqId <= cursor) {
+            throw new Error("getRfqSwapsPage returned an unordered or mismatched page");
+        }
+        cursor = record.rfqId;
+    }
+    const inputs = await projectActivityInputs(records, deps.indexer);
+    return {
+        inputs,
+        ...(records.length === limit && records.length > 0 ? { nextCursor: cursor } : {}),
+    };
+}
+
+/** @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
+export interface RfqSwapDatedActivityPage {
+    inputs: SwapActivityInput[];
+    nextCursor?: RfqHistoryCursor;
+}
+
+/** @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
+export async function rfqSwapActivityInputsSincePage(
+    deps: RfqSwapActivityDeps,
+    state: RfqSwapState,
+    since: number,
+    after: RfqHistoryCursor | undefined,
+    limit: number,
+): Promise<RfqSwapDatedActivityPage> {
+    assertRfqSwapPageLimit(limit);
+    assertRfqSwapSince(since);
+    const page = deps.repository.getRfqSwapsUpdatedPage;
+    if (!page) throw new Error("repository does not support date-filtered RFQ history pages");
+    const records = await page.call(deps.repository, state, since, after, limit);
+    if (records.length > limit)
+        throw new Error("getRfqSwapsUpdatedPage exceeded its requested limit");
+    let cursor = after;
+    for (const record of records) {
+        if (
+            record.state !== state ||
+            record.updatedAt < since ||
+            (cursor &&
+                (record.updatedAt < cursor.updatedAt ||
+                    (record.updatedAt === cursor.updatedAt && record.rfqId <= cursor.rfqId)))
+        ) {
+            throw new Error("getRfqSwapsUpdatedPage returned an unordered or mismatched page");
+        }
+        cursor = { updatedAt: record.updatedAt, rfqId: record.rfqId };
+    }
+    return {
+        inputs: await projectActivityInputs(records, deps.indexer),
+        ...(records.length === limit && cursor ? { nextCursor: cursor } : {}),
+    };
+}
+
+async function projectActivityInputs(
+    records: RfqSwapRecord[],
+    indexer?: LockupSpendIndexer,
+): Promise<SwapActivityInput[]> {
+    const inputs: SwapActivityInput[] = [];
+    for (let i = 0; i < records.length; i += 16) {
+        inputs.push(
+            ...(await Promise.all(
+                records.slice(i, i + 16).map((record) => activityInputOf(record, indexer)),
+            )),
+        );
+    }
+    return inputs;
 }
 
 async function activityInputOf(

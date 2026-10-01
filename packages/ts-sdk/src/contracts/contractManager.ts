@@ -31,6 +31,7 @@ import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import {
     getAllNormalizedVtxos,
     getNormalizedVtxos,
+    isVtxoSpent,
     isVirtualCoin,
     normalizeVtxo,
     type NormalizedExtendedVirtualCoin,
@@ -278,8 +279,13 @@ export interface IContractManager extends Disposable {
      */
     getContracts(filter?: GetContractsFilter): Promise<Contract[]>;
 
-    /** List contracts (all when no filter) with their current virtual outputs. */
-    getContractsWithVtxos(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
+    /** List contracts (all when no filter) with their current virtual outputs. `unspentOnly`
+     * omits spent VTXOs from the repository result; it does not narrow the provider sync. */
+    getContractsWithVtxos(
+        filter?: GetContractsFilter,
+        pageSize?: number,
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
+    ): Promise<ContractWithVtxos[]>;
 
     /** Latest provider-sync health. See {@link ContractSyncState}. */
     getSyncState(): ContractSyncState;
@@ -721,13 +727,16 @@ export class ContractManager implements IContractManager {
     }
 
     /** A retryable failure degrades sync state instead of propagating; terminal ones still throw. */
-    private async trySync(sync: () => Promise<unknown>): Promise<void> {
+    /** Returns the swallowed retryable error, if any. */
+    private async trySync(sync: () => Promise<unknown>): Promise<unknown> {
         try {
             await sync();
             this.markSyncOnline();
+            return undefined;
         } catch (err) {
             if (!isRetryableProviderError(err)) throw err;
             this.markSyncDegraded(err);
+            return err;
         }
     }
 
@@ -1323,19 +1332,43 @@ export class ContractManager implements IContractManager {
     async getContractsWithVtxos(
         filter?: GetContractsFilter,
         pageSize?: number,
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
     ): Promise<ContractWithVtxos[]> {
+        if (
+            options?.maxSyncAgeMs !== undefined &&
+            (!Number.isSafeInteger(options.maxSyncAgeMs) || options.maxSyncAgeMs < 0)
+        ) {
+            throw new Error("maxSyncAgeMs must be a non-negative safe integer");
+        }
         const contracts = await this.getContracts(filter);
         // Best-effort: a retryable failure serves repository state (no partial write or cursor move).
-        if (this.syncedWithin(contracts, this.config.vtxoSyncMaxAgeMs ?? 0)) {
+        if (
+            this.syncedWithin(
+                contracts,
+                options?.maxSyncAgeMs ??
+                    (options?.requireSynced ? 0 : (this.config.vtxoSyncMaxAgeMs ?? 0)),
+            )
+        ) {
             // Skipping the fetch must not skip the repository-only demotion it carries.
             await this.demoteFundedAwaitingContracts(contracts);
         } else {
-            await this.trySync(() => this.syncContracts({ contracts, pageSize }));
+            const failure = await this.trySync(() => this.syncContracts({ contracts, pageSize }));
+            if (failure && options?.requireSynced) {
+                throw new Error("Spendable VTXO read requires an online contract sync", {
+                    cause: failure,
+                });
+            }
         }
-        const vtxos = await this.getVtxosForContracts(contracts);
+        const vtxos = await this.getVtxosForContracts(contracts, options);
+        const vtxosByScript = new Map<string, ExtendedContractVtxo[]>();
+        for (const vtxo of vtxos) {
+            const group = vtxosByScript.get(vtxo.contractScript) ?? [];
+            group.push(vtxo);
+            vtxosByScript.set(vtxo.contractScript, group);
+        }
         return contracts.map((contract) => ({
             contract,
-            vtxos: vtxos.filter((vtxo) => vtxo.contractScript === contract.script),
+            vtxos: vtxosByScript.get(contract.script)?.slice() ?? [],
         }));
     }
 
@@ -1784,20 +1817,34 @@ export class ContractManager implements IContractManager {
         this.emitEvent(event);
     }
 
-    private async getVtxosForContracts(contracts: Contract[]): Promise<ExtendedContractVtxo[]> {
-        const res = await Promise.all(
-            contracts.map((contract) =>
-                getVtxosForContract(this.config.walletRepository, contract).then((vtxos) =>
-                    vtxos.map(
-                        (vtxo): ExtendedContractVtxo => ({
-                            ...vtxo,
-                            contractScript: contract.script,
-                        }),
+    private async getVtxosForContracts(
+        contracts: Contract[],
+        options?: { unspentOnly?: boolean },
+    ): Promise<ExtendedContractVtxo[]> {
+        if (contracts.length === 0) return [];
+        let rows: ExtendedContractVtxo[];
+        if (this.config.walletRepository.getVtxosForScripts) {
+            const byScript = new Set(contracts.map((contract) => contract.script));
+            rows = (await this.config.walletRepository.getVtxosForScripts([...byScript], options))
+                .filter((vtxo) => vtxo.script !== undefined && byScript.has(vtxo.script))
+                .map((vtxo) => ({ ...normalizeVtxo(vtxo), contractScript: vtxo.script! }));
+        } else {
+            const res = await Promise.all(
+                contracts.map((contract) =>
+                    getVtxosForContract(this.config.walletRepository, contract).then((vtxos) =>
+                        vtxos.map(
+                            (vtxo): ExtendedContractVtxo => ({
+                                ...vtxo,
+                                contractScript: contract.script,
+                            }),
+                        ),
                     ),
                 ),
-            ),
-        );
-        return res.flat();
+            );
+            rows = res.flat();
+        }
+        // Custom repositories may ignore the optional query hint.
+        return options?.unspentOnly ? rows.filter((vtxo) => !isVtxoSpent(vtxo)) : rows;
     }
 
     /** Sync virtual outputs for the given contracts (default: the watched set). */

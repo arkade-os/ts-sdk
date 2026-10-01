@@ -1,11 +1,6 @@
 import { IndexerProvider, SubscriptionResponse } from "../providers/indexer";
 import { VirtualCoin } from "../wallet";
-import {
-    getAllNormalizedVtxos,
-    hasTerminalSpend,
-    isPastExpiry,
-    normalizeVtxo,
-} from "../wallet/vtxo";
+import { getAllNormalizedVtxos, isVtxoSpent, isPastExpiry, normalizeVtxo } from "../wallet/vtxo";
 import { extendVirtualCoinForContract } from "../wallet/utils";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
@@ -808,7 +803,7 @@ export class ContractWatcher {
             if (target === byWatchedScript && eventType === "vtxo_received") {
                 const n = normalizeVtxo(vtxo);
                 // No chain tip here: time-based expiry only.
-                if (hasTerminalSpend(n) || n.isSwept || isPastExpiry(n, now)) continue;
+                if (isVtxoSpent(n) || n.isSwept || isPastExpiry(n, now)) continue;
             }
             let bucket = target.get(vtxo.script);
             if (!bucket) {

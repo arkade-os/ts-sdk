@@ -44,6 +44,12 @@ export interface WalletRepository extends AsyncDisposable {
      */
     getVtxosForScript?(script: string): Promise<ExtendedVirtualCoin[]>;
 
+    /** Fetch a script set without one read per contract; `unspentOnly` omits spent rows. */
+    getVtxosForScripts?(
+        scripts: string[],
+        options?: { unspentOnly?: boolean },
+    ): Promise<ExtendedVirtualCoin[]>;
+
     /**
      * Save virtual outputs for a script.
      * @optional SDK backends implement this; custom backends fall back to Tier 1.

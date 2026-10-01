@@ -10,7 +10,7 @@ import { openDatabase, closeDatabase } from "../../src/repositories/indexedDB/ma
 import {
     initDatabase,
     STORE_VTXOS,
-    backfillVtxoScripts,
+    backfillVtxoIndexFields,
     DB_VERSION,
 } from "../../src/repositories/indexedDB/schema";
 import { IndexedDBWalletRepository } from "../../src/repositories/indexedDB/walletRepository";
@@ -219,11 +219,11 @@ describe("Realm migration: runArkRealmMigrations", () => {
     });
 });
 
-describe("IndexedDB migration: backfillVtxoScripts", () => {
+describe("IndexedDB migration: backfillVtxoIndexFields", () => {
     // indexeddbshim's in-memory DB does NOT persist across `db.close()` + reopen,
     // so these tests exercise the cursor logic on a live DB rather than
     // driving it through `onupgradeneeded`. The production wiring in
-    // `initDatabase` is guarded by `oldVersion >= 1 && oldVersion < 3`; that
+    // `initDatabase` is guarded by `oldVersion >= 1 && oldVersion < 4`; that
     // predicate is plain arithmetic and not worth a separate test.
     let nameSeq = 0;
     const getUniqueDbName = () => `ark-migration-test-${Date.now()}-${nameSeq++}`;
@@ -233,6 +233,107 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
         controlBlockBytes[0] = 0xc0;
         return [TaprootControlBlock.decode(controlBlockBytes), new Uint8Array(20).fill(2)];
     }
+
+    it.each([2, 3])("upgrades a v%d database into the unspent index", async (version) => {
+        const dbName = getUniqueDbName();
+        const oldDb = await new Promise<IDBDatabase>((resolve, reject) => {
+            const request = indexedDB.open(dbName, version);
+            request.onupgradeneeded = () => {
+                const store = request.result.createObjectStore(STORE_VTXOS, {
+                    keyPath: ["address", "txid", "vout"],
+                });
+                if (version === 3) store.createIndex("script", "script", { unique: false });
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+        await new Promise<void>((resolve, reject) => {
+            const tx = oldDb.transaction([STORE_VTXOS], "readwrite");
+            const store = tx.objectStore(STORE_VTXOS);
+            const script = version === 3 ? { script: EXPECTED_PK_SCRIPT_HEX } : {};
+            store.put({ address: TEST_ARK_ADDRESS, txid: "live", vout: 0, ...script });
+            store.put({
+                address: TEST_ARK_ADDRESS,
+                txid: "spent",
+                vout: 0,
+                ...script,
+                isSpent: true,
+            });
+            store.put({
+                address: TEST_ARK_ADDRESS,
+                txid: "legacy-spent",
+                vout: 0,
+                ...script,
+                virtualStatus: { state: "spent" },
+            });
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+        oldDb.close();
+
+        const db = await openDatabase(dbName, DB_VERSION, initDatabase);
+        try {
+            expect(db.version).toBe(4);
+            const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
+            const [unspent, all] = await Promise.all(
+                [
+                    store.index("scriptUnspent").getAll([EXPECTED_PK_SCRIPT_HEX, 1]),
+                    store.index("script").getAll(EXPECTED_PK_SCRIPT_HEX),
+                ].map(
+                    (req) =>
+                        new Promise<{ txid: string }[]>((resolve, reject) => {
+                            req.onsuccess = () => resolve(req.result);
+                            req.onerror = () => reject(req.error);
+                        }),
+                ),
+            );
+            expect(unspent.map((row) => row.txid)).toEqual(["live"]);
+            expect(all).toHaveLength(3);
+        } finally {
+            await closeDatabase(dbName);
+        }
+    });
+
+    it("backfills every getAll page", async () => {
+        const dbName = getUniqueDbName();
+        const db = await openDatabase(dbName, DB_VERSION, initDatabase);
+        try {
+            await new Promise<void>((resolve, reject) => {
+                const tx = db.transaction([STORE_VTXOS], "readwrite");
+                const store = tx.objectStore(STORE_VTXOS);
+                // One live row per 1000-row page.
+                for (let i = 0; i < 2500; i++) {
+                    store.put({
+                        address: TEST_ARK_ADDRESS,
+                        txid: `tx-${String(i).padStart(4, "0")}`,
+                        vout: 0,
+                        script: EXPECTED_PK_SCRIPT_HEX,
+                        isSpent: ![0, 1500, 2499].includes(i),
+                    });
+                }
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+            await new Promise<void>((resolve, reject) => {
+                const tx = db.transaction([STORE_VTXOS], "readwrite");
+                backfillVtxoIndexFields(tx);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+            const live = await new Promise<number>((resolve, reject) => {
+                const req = db
+                    .transaction([STORE_VTXOS], "readonly")
+                    .objectStore(STORE_VTXOS)
+                    .index("scriptUnspent")
+                    .count([EXPECTED_PK_SCRIPT_HEX, 1]);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+            expect(live).toBe(3);
+        } finally {
+            await closeDatabase(dbName);
+        }
+    });
 
     it("backfills script on legacy rows missing it", async () => {
         const dbName = getUniqueDbName();
@@ -257,7 +358,7 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
             // on `oncomplete`.
             await new Promise<void>((resolve, reject) => {
                 const tx = db.transaction([STORE_VTXOS], "readwrite");
-                backfillVtxoScripts(tx);
+                backfillVtxoIndexFields(tx);
                 tx.oncomplete = () => resolve();
                 tx.onerror = () => reject(tx.error);
             });
@@ -298,7 +399,7 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
 
             await new Promise<void>((resolve, reject) => {
                 const tx = db.transaction([STORE_VTXOS], "readwrite");
-                backfillVtxoScripts(tx);
+                backfillVtxoIndexFields(tx);
                 tx.oncomplete = () => resolve();
                 tx.onerror = () => reject(tx.error);
             });
@@ -467,7 +568,7 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
 
             await new Promise<void>((resolve, reject) => {
                 const tx = db.transaction([STORE_VTXOS], "readwrite");
-                backfillVtxoScripts(tx);
+                backfillVtxoIndexFields(tx);
                 tx.oncomplete = () => resolve();
                 tx.onerror = () => reject(tx.error);
             });

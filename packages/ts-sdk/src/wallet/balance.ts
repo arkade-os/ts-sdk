@@ -1,6 +1,6 @@
 import type { Asset, ExtendedCoin, WalletBalance } from ".";
 import type { NormalizedExtendedVirtualCoin, TimeHeight } from "./vtxo";
-import { canRecoverOnchain, canSpendOffchain, hasTerminalSpend } from "./vtxo";
+import { canRecoverOnchain, canSpendOffchain, isVtxoSpent } from "./vtxo";
 
 /**
  * The offchain half of {@link WalletBalance}, bucketed from one VTXO snapshot.
@@ -93,7 +93,7 @@ export function computeOffchainBalance(
     for (const vtxo of vtxos) {
         // Load-bearing: `Wallet.getBalance` passes `withUnrolled: true`, so unrolled coins arrive
         // without a terminal-spend check and this is what drops the spent ones.
-        if (hasTerminalSpend(vtxo)) continue;
+        if (isVtxoSpent(vtxo)) continue;
         addAssets(owned, vtxo);
 
         // Must precede `isPendingRecovery`: with `selectPendingRecoveryOutpoints`' own exclusion,

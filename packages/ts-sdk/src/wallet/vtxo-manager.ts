@@ -10,7 +10,7 @@ import {
 import {
     canRecoverOnchain,
     canSpendOffchain,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     normalizeVtxo,
     resolveTimeHeight,
@@ -70,7 +70,7 @@ export function selectPendingRecoveryOutpoints(
         }
         for (const v of vtxos) {
             // Exited coins are excluded: their remedy is `completeUnroll`, not a rotation.
-            if (!hasTerminalSpend(v) && !v.isSwept && !v.isUnrolled) {
+            if (!isVtxoSpent(v) && !v.isSwept && !v.isUnrolled) {
                 out.add(`${v.txid}:${v.vout}`);
             }
         }
@@ -1233,7 +1233,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return [];
         }
 
-        const vtxos = await this.wallet.getSpendableVtxos({ withRecoverable: true });
+        const vtxos = await this.wallet.getSpendableVtxos({
+            withRecoverable: true,
+            genericallySpendableOnly: true,
+        });
 
         // Not `??`: a runtime `null` must still reach isVtxoExpiringSoon's default guard.
         const threshold = thresholdMs !== undefined ? thresholdMs : this.configuredThresholdMs();
@@ -1858,8 +1861,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // sets but are counted on EXPIRED rows (recoverableCount) as funds in flight.
             // Exited coins belong in no bucket: `completeUnroll` is their only remedy.
             const live = vtxos.filter((v) => !v.isUnrolled);
-            const recoverable = live.filter((v) => v.isSwept && !hasTerminalSpend(v));
-            const spendable = live.filter((v) => !hasTerminalSpend(v) && !v.isSwept);
+            const recoverable = live.filter((v) => v.isSwept && !isVtxoSpent(v));
+            const spendable = live.filter((v) => !isVtxoSpent(v) && !v.isSwept);
 
             const value = spendable.reduce((sum, v) => sum + v.value, 0);
 

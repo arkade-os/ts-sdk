@@ -36,7 +36,7 @@ import {
     assertValidServerUnrollScript,
     buildOffchainTx,
     getArkPsbtFields,
-    hasTerminalSpend,
+    isVtxoSpent,
     matchServerCheckpoints,
     networkFromArkadeInfo,
     resolveCheckpointExitDelayPolicy,
@@ -178,7 +178,7 @@ export class LockupNeedsRecoveryError extends Error {
  * All of them, not the first: a lockup funded in several sends would otherwise be partly
  * stranded. Visible is not refundable: see {@link LockupVtxo.recoverable}.
  *
- * **Unrolled and terminally spent outputs are dropped** (`hasTerminalSpend`, the wallet's own
+ * **Unrolled and terminally spent outputs are dropped** (`isVtxoSpent`, the wallet's own
  * spend gate): nothing offchain can reach them and `LockupVtxo` could not say so.
  * {@link readLockupFate} reports exits as `exited`; this drop is the second line of defence.
  *
@@ -198,7 +198,7 @@ export async function findLockupVtxos(
     const out: LockupVtxo[] = [];
     for (const vtxo of row?.vtxos ?? []) {
         if (vtxo.isUnrolled) continue;
-        if (hasTerminalSpend(vtxo)) continue;
+        if (isVtxoSpent(vtxo)) continue;
         const key = `${vtxo.txid}:${vtxo.vout}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -297,7 +297,7 @@ export async function readLockupFate(
     const all = vtxos ?? [];
     if (all.length === 0) return { fate: "unknown" };
 
-    const exited = all.filter((vtxo) => vtxo.isUnrolled && !hasTerminalSpend(vtxo));
+    const exited = all.filter((vtxo) => vtxo.isUnrolled && !isVtxoSpent(vtxo));
     if (exited.length > 0) {
         return {
             fate: "exited",
@@ -309,7 +309,7 @@ export async function readLockupFate(
     let everySpendNamed = true;
     for (const vtxo of all) {
         // Not `spentBy` alone: the wire permits `isSpent: true` with an EMPTY `spentBy`.
-        if (!hasTerminalSpend(vtxo)) return { fate: "open" };
+        if (!isVtxoSpent(vtxo)) return { fate: "open" };
         // Truthiness, not presence: an unnamed `spentBy` is "". When set it names the
         // CHECKPOINT tx, which carries the lockup leaf's witness (the ark tx spends the
         // checkpoint, so it is the wrong place to look).

@@ -602,7 +602,7 @@ export interface Coin extends Outpoint {
  * `commitmentTxIds`) are optional because custom {@link IndexerProvider} /
  * {@link WalletRepository} implementations may omit them. Coins the SDK returns are normalized;
  * for any other coin use {@link canSpendOffchain} / {@link canRecoverOnchain} /
- * {@link hasTerminalSpend} / {@link isPastExpiry}, which normalize defensively.
+ * {@link isVtxoSpent} / {@link isPastExpiry}, which normalize defensively.
  *
  * @see Coin
  */
@@ -757,7 +757,7 @@ export {
     convertVtxo,
     getAllNormalizedVtxos,
     getNormalizedVtxos,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     isVirtualCoin,
     normalizeVtxo,
@@ -797,6 +797,19 @@ export type GetVtxosFilter = {
      * test {@link canSweepOnchain} before acting on the result.
      */
     withUnrolled?: boolean;
+};
+
+export type GetSpendableVtxosFilter = GetVtxosFilter & {
+    /** Exclude contracts retained for history from this spendable read. */
+    watchedOnly?: boolean;
+    /** Query only contracts whose handler permits generic spending. */
+    genericallySpendableOnly?: boolean;
+
+    /** Maximum age of a successful sync reused by this read, in milliseconds. Default: 0. */
+    maxSyncAgeMs?: number;
+
+    /** Reject repository fallback when the selected contracts could not be synced. */
+    requireSynced?: boolean;
 };
 
 /**
@@ -994,10 +1007,10 @@ export interface IReadonlyWallet {
      * pending-recovery funds and intent-locked outpoints (all from one contract snapshot). Every
      * implicit coin selection reads this; `getVtxos` stays the raw reporting/recovery read.
      *
-     * @param filter - Same flags, same defaults, as {@link getVtxos}
-     * @see GetVtxosFilter
+     * @param filter - Same coin flags and defaults as {@link getVtxos}, with opt-in contract scopes
+     * @see GetSpendableVtxosFilter
      */
-    getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
+    getSpendableVtxos(filter?: GetSpendableVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
 
     /** @returns Onchain boarding inputs tracked by the wallet. */
     getBoardingUtxos(): Promise<ExtendedCoin[]>;

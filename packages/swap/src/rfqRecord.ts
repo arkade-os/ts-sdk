@@ -34,7 +34,8 @@ export type LockupParams = Record<string, string>;
 
 /**
  * How long a retired swap's record is kept, in SECONDS (the unit of `RfqSwap.updatedAt`).
- * Terminal records are history the wallet's own tx history cannot reconstruct.
+ * Terminal records are history the wallet's own tx history cannot reconstruct; only the
+ * explicit prune API drops them, restore keeps them.
  */
 /** @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const RFQ_SWAP_RETENTION_SECONDS = 30 * 24 * 60 * 60;

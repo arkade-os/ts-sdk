@@ -70,6 +70,7 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
 
         const virtualCoins = await this.wallet.getSpendableVtxos({
             withRecoverable: false,
+            genericallySpendableOnly: true,
         });
 
         const controlAssetRef = params.controlAssetId
@@ -164,6 +165,7 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
 
         const virtualCoins = await this.wallet.getSpendableVtxos({
             withRecoverable: false,
+            genericallySpendableOnly: true,
         });
 
         const assetChanges = new Map<string, bigint>();
@@ -269,6 +271,7 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
 
         const virtualCoins = await this.wallet.getSpendableVtxos({
             withRecoverable: false,
+            genericallySpendableOnly: true,
         });
 
         const assetChanges = new Map<string, bigint>();

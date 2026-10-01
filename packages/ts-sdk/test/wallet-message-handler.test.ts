@@ -2280,13 +2280,24 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const response = await updater.handleMessage({
             ...baseMessage(),
             type: "GET_SPENDABLE_VTXOS",
-            payload: { filter: { withRecoverable: false } },
+            payload: {
+                filter: {
+                    withRecoverable: false,
+                    watchedOnly: true,
+                    genericallySpendableOnly: true,
+                },
+            },
         } as any);
 
         expect((updater as any).readonlyWallet.getSpendableVtxos).toHaveBeenCalledWith({
             withRecoverable: false,
+            watchedOnly: true,
+            genericallySpendableOnly: true,
         });
-        expect(response).toMatchObject({ type: "SPENDABLE_VTXOS", payload: { vtxos } });
+        expect(response).toMatchObject({
+            type: "SPENDABLE_VTXOS",
+            payload: { vtxos, filterApplied: true },
+        });
     });
 
     it("GET_VTXOS deduplicates across wallet and contract addresses", async () => {
