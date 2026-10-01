@@ -8,8 +8,16 @@ import {
     networks,
 } from "../../src";
 import { OnchainContractWatcher } from "../../src/contracts/onchainWatcher";
+import { toOnchainCoinRow } from "../../src/contracts/onchainCoins";
+import { saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
 import { timelockToSequence } from "../../src/utils/timelock";
-import { createMockIndexerProvider } from "./helpers";
+import {
+    createDefaultContractParams,
+    createMockIndexerProvider,
+    TEST_DEFAULT_ARK_ADDRESS,
+    TEST_DEFAULT_SCRIPT,
+    testDefaultScript,
+} from "./helpers";
 
 describe("OnchainContractWatcher", () => {
     it("subscribes to target addresses and reports the touched scripts", async () => {
@@ -75,16 +83,22 @@ const coin = {
     status: { confirmed: true, block_height: 200, block_time: 1_700_000_000 },
 };
 
-async function setup(getCoins: () => Promise<any[]>) {
+const spender = "dd".repeat(32);
+const pendingOf = async (repo: InMemoryWalletRepository) =>
+    (await repo.getWalletState())?.settings?.onchainPendingSpends ?? {};
+
+async function setup(
+    getCoins: () => Promise<any[]>,
+    outspends: any[] = [{ spent: false }, { spent: true, txid: "cc".repeat(32) }],
+) {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
     await contractRepository.saveContract(boarding);
+    const tip = { height: 300 };
     const onchainProvider = {
         getCoins: vi.fn(getCoins),
-        getTxOutspends: vi.fn(async () => [
-            { spent: false },
-            { spent: true, txid: "cc".repeat(32) },
-        ]),
+        getTxOutspends: vi.fn(async () => outspends),
+        getChainTip: vi.fn(async () => ({ ...tip, time: 0, hash: "" })),
         watchAddresses: vi.fn(async () => () => {}),
     } as any;
     const manager = await ContractManager.create({
@@ -94,7 +108,7 @@ async function setup(getCoins: () => Promise<any[]>) {
         onchainProvider,
         network: networks.regtest,
     });
-    return { manager, walletRepository, onchainProvider };
+    return { manager, walletRepository, contractRepository, onchainProvider, tip };
 }
 
 describe("ContractManager.syncOnchain", () => {
@@ -124,20 +138,139 @@ describe("ContractManager.syncOnchain", () => {
         manager.dispose();
     });
 
-    it("keeps a pending spend across re-syncs and survives a getCoins failure", async () => {
-        const getCoins = vi
-            .fn()
-            .mockResolvedValueOnce([coin])
-            .mockResolvedValueOnce([coin])
-            .mockRejectedValue(new Error("down"));
+    it("survives a getCoins failure", async () => {
+        const getCoins = vi.fn().mockResolvedValueOnce([coin]).mockRejectedValue(new Error("down"));
         const { manager, walletRepository } = await setup(getCoins);
         await manager.syncOnchain();
-        await manager.markOnchainSpendPending([{ txid: coin.txid, vout: 1 }], "dd".repeat(32));
-        await manager.syncOnchain();
         await expect(manager.syncOnchain()).resolves.toBeUndefined();
-
-        const rows = await walletRepository.getVtxosForScript!(boarding.script);
-        expect(rows[0]).toMatchObject({ isSpent: false, spentBy: "dd".repeat(32) });
+        expect(await walletRepository.getVtxosForScript!(boarding.script)).toHaveLength(1);
         manager.dispose();
+    });
+
+    it("keeps a pending spend for 5 blocks and releases it at 6", async () => {
+        const { manager, walletRepository, tip } = await setup(async () => [coin]);
+        await manager.syncOnchain();
+        await manager.markOnchainSpendPending([{ txid: coin.txid, vout: 1 }], spender);
+        expect(await pendingOf(walletRepository)).toEqual({
+            [`${coin.txid}:1`]: { spender, height: 300, script: boarding.script },
+        });
+
+        tip.height = 305;
+        await manager.syncOnchain();
+        let [row] = await walletRepository.getVtxosForScript!(boarding.script);
+        expect(row).toMatchObject({ isSpent: false, spentBy: spender });
+
+        tip.height = 306;
+        await manager.syncOnchain();
+        [row] = await walletRepository.getVtxosForScript!(boarding.script);
+        expect(row).toMatchObject({ isSpent: false, spentBy: "" });
+        expect(await pendingOf(walletRepository)).toEqual({});
+        manager.dispose();
+    });
+
+    it("confirms a pending spend once the coin is spent onchain", async () => {
+        const getCoins = vi.fn().mockResolvedValueOnce([coin]).mockResolvedValue([]);
+        const { manager, walletRepository } = await setup(getCoins, [{}, { spent: true }]);
+        await manager.syncOnchain();
+        await manager.markOnchainSpendPending([{ txid: coin.txid, vout: 1 }], spender);
+        await manager.syncOnchain();
+        const [row] = await walletRepository.getVtxosForScript!(boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: spender });
+        expect(await pendingOf(walletRepository)).toEqual({});
+        manager.dispose();
+    });
+
+    it("re-marking replaces the spender", async () => {
+        const { manager, walletRepository } = await setup(async () => [coin]);
+        await manager.syncOnchain();
+        await manager.markOnchainSpendPending([{ txid: coin.txid, vout: 1 }], spender);
+        await manager.markOnchainSpendPending([{ txid: coin.txid, vout: 1 }], "ee".repeat(32));
+        const [row] = await walletRepository.getVtxosForScript!(boarding.script);
+        expect(row.spentBy).toBe("ee".repeat(32));
+        expect((await pendingOf(walletRepository))[`${coin.txid}:1`].spender).toBe("ee".repeat(32));
+        manager.dispose();
+    });
+
+    it("rejects unknown outpoints without writing", async () => {
+        const { manager, walletRepository } = await setup(async () => [coin]);
+        await manager.syncOnchain();
+        await expect(
+            manager.markOnchainSpendPending(
+                [
+                    { txid: coin.txid, vout: 1 },
+                    { txid: "ff".repeat(32), vout: 0 },
+                ],
+                spender,
+            ),
+        ).rejects.toThrow(`${"ff".repeat(32)}:0`);
+        const [row] = await walletRepository.getVtxosForScript!(boarding.script);
+        expect(row.spentBy).toBe("");
+        expect(await pendingOf(walletRepository)).toEqual({});
+        manager.dispose();
+    });
+
+    it("reconciles a pending row on an offchain-scoped contract", async () => {
+        const getCoins = vi.fn().mockResolvedValue([]);
+        const { manager, walletRepository, contractRepository, onchainProvider } = await setup(
+            getCoins,
+            [{}, { spent: true, txid: "cc".repeat(32) }],
+        );
+        const unrolled = {
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: TEST_DEFAULT_ARK_ADDRESS,
+            state: "inactive" as const,
+            createdAt: 0,
+        };
+        await contractRepository.saveContract(unrolled);
+        await saveVtxosForContract(walletRepository, unrolled, [
+            toOnchainCoinRow(coin, unrolled, testDefaultScript),
+        ]);
+        await manager.markOnchainSpendPending([{ txid: coin.txid, vout: 1 }], spender);
+
+        await manager.syncOnchain();
+        expect(onchainProvider.getCoins).toHaveBeenCalledWith(
+            testDefaultScript.onchainAddress(networks.regtest),
+        );
+        const [row] = await walletRepository.getVtxosForScript!(TEST_DEFAULT_SCRIPT);
+        expect(row).toMatchObject({ isSpent: true, spentBy: "cc".repeat(32) });
+        expect(await pendingOf(walletRepository)).toEqual({});
+        manager.dispose();
+    });
+
+    it("logs instead of rejecting when a watcher-triggered sync fails", async () => {
+        const unhandled = vi.fn();
+        process.on("unhandledRejection", unhandled);
+        const error = vi.spyOn(console, "error").mockImplementation(() => {});
+        try {
+            const { manager, contractRepository, onchainProvider } = await setup(async () => []);
+            let push: (txs: any[]) => void = () => {};
+            onchainProvider.watchAddresses
+                .mockImplementationOnce(async (_a: string[], cb: any) => {
+                    push = cb;
+                    return () => {};
+                })
+                .mockRejectedValue(new Error("ws down"));
+            await manager.syncOnchain();
+
+            const other = new DefaultVtxo.Script({
+                pubKey,
+                serverPubKey,
+                csvTimelock: { type: "blocks", value: 145n },
+            });
+            await contractRepository.saveContract({
+                ...boarding,
+                script: hex.encode(other.pkScript),
+            });
+            push([{ txid: "t", vin: [], vout: [] }]);
+            await vi.waitFor(() => expect(error).toHaveBeenCalled());
+            await new Promise((r) => setTimeout(r, 10));
+            expect(unhandled).not.toHaveBeenCalled();
+            manager.dispose();
+        } finally {
+            process.off("unhandledRejection", unhandled);
+            error.mockRestore();
+        }
     });
 });
