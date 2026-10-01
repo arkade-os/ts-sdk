@@ -11,6 +11,7 @@ import type { Wallet } from "../wallet";
 import { getNormalizedVtxos } from "../vtxo";
 import { buildExitDag, DagNode, topoSortByDeps } from "./chain";
 import { createExitChainResolver } from "./resolver";
+import { txInputTxids } from "./repositorySource";
 import { CHILD_DUST_AMOUNT } from "../../utils/anchor";
 import { finalizeVirtualTx } from "./finalizeVirtualTx";
 import { ExitPathError, ResolvedExitPath, resolveUnilateralPath } from "./path";
@@ -196,26 +197,14 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
     // inputs diverge (an ARK tx spends a checkpoint output, not its logical
     // parent), and the sequential executor deadlocks unless a step's inputs
     // are already onchain when it is reached.
-    const parentInputTxids = (tx: Transaction): string[] => {
-        const ids: string[] = [];
-        for (let i = 0; i < tx.inputsLength; i++) {
-            const txid = tx.getInput(i).txid;
-            if (txid) ids.push(hex.encode(txid));
-        }
-        return ids;
-    };
     const steps = topoSortByDeps(
         rawSteps,
         (s) => s.parent.id,
-        (s) => parentInputTxids(s.parent),
+        (s) => txInputTxids(s.parent),
     );
 
-    // Per-VTXO sweep resolution. The wallet's key has to come along: a handler that cannot place
-    // the wallet among a contract's parties answers wrongly in one of two ways — VHTLC offers no
-    // path at all, so the coin is silently skipped as unexitable, while the Arkade handler drops
-    // its signer filter and offers leaves this wallet cannot sign, one of which the shortest-delay
-    // pick below would pre-sign. Raw x-only hex is what the rest of the SDK passes as the
-    // descriptor (see `assertSpendableNow`); `resolveRole` accepts it alongside `tr(...)`.
+    // Per-VTXO sweep resolution; why the wallet key must come along: see `prepareUnrollTransaction`
+    // in unroll.ts (here a VHTLC coin would be silently skipped as unexitable).
     const walletDescriptor = hex.encode(await wallet.identity.xOnlyPublicKey());
     const infos: ExitVtxoInfo[] = [];
     const sweeps: ExitSweepPlan[] = [];

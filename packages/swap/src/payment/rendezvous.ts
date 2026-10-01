@@ -66,9 +66,8 @@ export const solverRendezvous = (
     // A 33-byte compressed key encodes to 66 hex and would otherwise pass as
     // x-only. Neither rail re-derives the pin, so this is the only place both
     // fail closed.
-    const encoded = fallbackEmulatorPubkey ? hex.encode(fallbackEmulatorPubkey) : undefined;
-    if (encoded !== undefined && !XONLY_HEX.test(encoded)) return undefined;
-    const pinned = encoded;
+    const pinned = fallbackEmulatorPubkey ? hex.encode(fallbackEmulatorPubkey) : undefined;
+    if (pinned !== undefined && !XONLY_HEX.test(pinned)) return undefined;
 
     // Corridor AND asset: both rails negotiate the hard-coded `arkade:BTC`
     // pair, so a corridor-only match bounds sats against another asset's

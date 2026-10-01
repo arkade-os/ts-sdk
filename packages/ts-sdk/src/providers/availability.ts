@@ -16,11 +16,6 @@ import { ProviderUnavailableError } from "./errors";
  *
  * Everything else (4xx, invalid JSON, schema violations, network mismatch,
  * unsupported network) is terminal and returns `false`.
- *
- * NOTE (Step 2, Scope 2): this classifies the errors currently produced by the
- * boot-critical `getInfo` path. Normalizing the indexer's per-branch
- * `!res.ok` throws and the remaining Ark RPC methods into
- * {@link ProviderUnavailableError} is the broader Scope-2 work still pending.
  */
 export function isRetryableProviderError(error: unknown): boolean {
     return (

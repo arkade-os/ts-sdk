@@ -49,21 +49,7 @@ const STORES: readonly [name: string, options?: IDBObjectStoreParameters][] = [
     [STORE_MARKETS],
 ];
 
-/**
- * @param oldVersion the version being upgraded FROM, 0 on a fresh install.
- * @param transaction the upgrade transaction — the only way to read or rewrite
- * existing rows during a migration.
- *
- * Both unused today: every version so far has only added an object store, and
- * `createObjectStore` needs neither — version 3's v2-record store included,
- * which is why the v1 and v2 histories being disjoint matters. It is what keeps
- * this migration from being the one that rewrites rows. Named rather than
- * dropped because the next migration may not be additive, and a signature that
- * takes them is what makes "cursor over the rows and rewrite them" a local
- * change here.
- */
-function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTransaction | null) {
-    void oldVersion;
+function initDatabase(db: IDBDatabase, _oldVersion: number, transaction: IDBTransaction | null) {
     for (const [name, options] of STORES) {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, options);
     }

@@ -1,9 +1,8 @@
-import { DB_VERSION, STORE_CONTRACTS } from "./db";
 import { Contract, watchStateOf } from "../../contracts";
 import { ContractFilter, ContractRepository } from "../contractRepository";
 import { awaitTransaction, getAllByIndexValues, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
-import { initDatabase } from "./schema";
+import { DB_VERSION, initDatabase, STORE_CONTRACTS } from "./schema";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 
 /**

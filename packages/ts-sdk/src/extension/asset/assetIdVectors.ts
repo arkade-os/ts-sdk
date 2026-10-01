@@ -7,15 +7,9 @@ import raw from "./assetIdVectors.json";
  * Shipped from `src/` rather than `test/` so consumers outside this package can
  * pin the same bytes: `lightning-swap-service` imports this value, while NArk
  * and go-sdk vendor the backing `assetIdVectors.json` from a pinned revision of
- * this repository.
- *
- * The encoding is implemented in seven places across three repos and every
- * disagreement between them fails silently — a flipped txid makes a covenant
- * unsatisfiable, a flipped group index resolves to a different asset, a case
- * mismatch is a routing miss. None of those name their cause, which is what
- * these vectors are for.
- *
- * @see plans/asset-id-shared-vectors.md
+ * this repository. The encoding is implemented in seven places across three
+ * repos, and every disagreement fails silently (a flipped txid makes a covenant
+ * unsatisfiable, a flipped group index resolves to a different asset).
  */
 export interface AssetIdVectors {
     readonly version: number;
@@ -76,9 +70,8 @@ function deepFreeze<T>(value: T): T {
  * The asset-id test vectors, deeply frozen.
  *
  * @remarks
- * Frozen all the way down, not just at the top: every value that matters lives
- * inside the nested arrays, and the module is a singleton — one consumer
- * mutating an entry would corrupt it for every other consumer in the process.
+ * Frozen all the way down: the module is a singleton, and one consumer mutating
+ * a nested entry would corrupt it for every other consumer in the process.
  *
  * @example
  * ```typescript

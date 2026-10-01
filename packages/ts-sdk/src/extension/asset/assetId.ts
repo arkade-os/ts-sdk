@@ -1,6 +1,6 @@
 import { hex } from "@scure/base";
 import { TX_HASH_SIZE, ASSET_ID_SIZE } from "./types";
-import { BufferReader, BufferWriter } from "../utils";
+import { BufferReader, BufferWriter, hexOrThrow } from "../utils";
 import { isZeroBytes } from "./utils";
 
 /**
@@ -25,11 +25,10 @@ export class AssetId {
     ) {}
 
     /**
-     * Create an asset id from a genesis transaction id and group index.
+     * Create a validated asset id from a genesis transaction id and group index.
      *
      * @param txid - Hex-encoded genesis transaction id
      * @param groupIndex - Asset group index within the genesis transaction
-     * @returns A validated asset id
      * @throws Error if the txid is missing, malformed, or not 32 bytes long
      * @see fromString
      */
@@ -38,12 +37,7 @@ export class AssetId {
             throw new Error("missing txid");
         }
 
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(txid);
-        } catch {
-            throw new Error("invalid txid format, must be hex");
-        }
+        const buf = hexOrThrow(txid, "invalid txid format, must be hex");
 
         if (buf.length !== TX_HASH_SIZE) {
             throw new Error(
@@ -59,26 +53,16 @@ export class AssetId {
     /**
      * Decode an asset id from its hex string representation.
      *
-     * @param s - Hex-encoded asset id
-     * @returns Decoded asset id
      * @throws Error if the string is not valid hex or does not encode a valid asset id
      * @see toString
      */
     static fromString(s: string): AssetId {
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(s);
-        } catch {
-            throw new Error("invalid asset id format, must be hex");
-        }
-        return AssetId.fromBytes(buf);
+        return AssetId.fromBytes(hexOrThrow(s, "invalid asset id format, must be hex"));
     }
 
     /**
      * Decode an asset id from its serialized bytes.
      *
-     * @param buf - Serialized asset id bytes
-     * @returns Decoded asset id
      * @throws Error if the buffer length is invalid
      */
     static fromBytes(buf: Uint8Array): AssetId {
@@ -97,7 +81,6 @@ export class AssetId {
     /**
      * Serialize the asset id to raw bytes.
      *
-     * @returns Serialized asset id bytes
      * @see fromBytes
      */
     serialize(): Uint8Array {
@@ -109,7 +92,6 @@ export class AssetId {
     /**
      * Encode the asset id to a hex string.
      *
-     * @returns Hex-encoded asset id
      * @see fromString
      */
     toString(): string {
@@ -131,10 +113,8 @@ export class AssetId {
     }
 
     /**
-     * Decode an asset id from a binary reader.
+     * Decode an asset id from a binary reader positioned at one.
      *
-     * @param reader - Reader positioned at an asset id
-     * @returns Decoded asset id
      * @throws Error if the reader does not contain enough bytes
      */
     static fromReader(reader: BufferReader): AssetId {
@@ -155,7 +135,6 @@ export class AssetId {
     /**
      * Serialize the asset id into an existing binary writer.
      *
-     * @param writer - Writer to append the asset id to
      * @see serialize
      */
     serializeTo(writer: BufferWriter): void {

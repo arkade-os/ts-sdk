@@ -1,29 +1,14 @@
 /**
- * The feed-priced backend: an arkade-to-arkade asset swap, priced from the
- * card's own feed with no round trip to anybody.
+ * The feed-priced backend: an arkade-to-arkade asset swap, priced from the card's own feed with no
+ * round trip. The market picks the backend (both legs on arkade → feed, otherwise RFQ).
  *
- * The market picks the backend — a card with both legs on arkade prices from
- * its feed, and one with a leg off it is negotiated over RFQ — so nothing here
- * is a client switch. What this module owns are the two things the offer path
- * has never had an answer for.
+ * **The margin.** `QUOTE_OPTIONS` (`safetyBps: 0`), not `quoteOffer`'s default 50: price drift
+ * between quote and fill is the solver's risk, not the trader's to prepay, and a cushion would
+ * inflate the fee that `maxFee` ceilings are compared against.
  *
- * **The margin.** `quoteOffer` defaults `safetyBps` to 50, the package exports
- * `QUOTE_OPTIONS = { safetyBps: 0 }` and the wallet passes it, and the v1 facade
- * passes neither — so one card priced two different offers depending on which
- * path built it. `Quote.fee` is one number with one definition, so this picks:
- * the package constant, no cushion. A safety margin is a pre-payment against
- * price drift between quote and fill, and that drift is the solver's risk to
- * manage rather than the trader's to prepay; charging it would also inflate the
- * fee a verb's `maxFee` ceiling is compared against, which is a ceiling on what
- * the trader pays, not on what the client padded.
- *
- * **The expiry.** §3.1 makes `expiresAt` non-optional and a feed-priced quote
- * has no `valid_until` to inherit — `OfferPlan` carries no expiry at all. The
- * only staleness bound in the whole path is the feed cache's TTL, so that is
- * what the quote's life is minted from: the moment the feed value was actually
- * read from upstream, plus the TTL. A quote whose price is thirty seconds old
- * expires when the price does, which is the honest bound; the policy floor then
- * applies to a number the client chose rather than one a solver asserted.
+ * **The expiry.** `expiresAt` is required but `OfferPlan` carries none, so it is minted from the
+ * feed cache: the time the value was actually read upstream, plus the TTL — the quote expires when
+ * its price does.
  */
 import {
     computeWantAmount,
@@ -42,13 +27,8 @@ import { assembleRoute } from "./resolve";
 import type { PinnedAmount } from "./quote";
 import { verifyQuoteTtl } from "./verify";
 
-/**
- * How long a feed value is reused, and therefore how long a quote priced from
- * one lives.
- *
- * The same number in both roles on purpose: a quote is only as fresh as the
- * price behind it, and two TTLs would let a quote outlive the value it quoted.
- */
+/** How long a feed value is reused, and so how long a quote priced from it lives — one number, so a
+ * quote cannot outlive the value it quoted. */
 export const FEED_TTL_MS = 30_000;
 
 /** A fetch that caches feed values, and remembers when each was really read. */
@@ -59,13 +39,8 @@ export interface FeedFetch {
 }
 
 /**
- * The client's feed fetcher.
- *
- * The upstream probe sits INSIDE the cache rather than around it, which is what
- * makes `fetchedAt` mean what it says: the cache calls through only on a miss,
- * so the recorded time is the age of the value that was served, not the time it
- * was served. Wrapping the other way would restamp every cache hit as fresh and
- * hand back a quote whose expiry outlived its price.
+ * The client's feed fetcher. The probe sits INSIDE the cache, so `fetchedAt` is the age of the value
+ * served, not the time it was served; the other way round would restamp every hit as fresh.
  */
 export const feedFetch = (base: typeof fetch = fetch): FeedFetch => {
     const at = new Map<string, number>();
@@ -76,7 +51,7 @@ export const feedFetch = (base: typeof fetch = fetch): FeedFetch => {
     return { fetch: makeCachedFeedFetch(FEED_TTL_MS, probe), fetchedAt: (url) => at.get(url) };
 };
 
-/** What `accept()` (M4) needs back from a feed-priced quote. */
+/** What `accept()` needs back from a feed-priced quote. */
 export interface OfferPreparation {
     readonly backend: "feed";
     readonly card: DiscoveredMarket;
@@ -103,8 +78,7 @@ export const quoteFromFeed = async (
 ): Promise<{ quote: Quote; preparation: OfferPreparation }> => {
     const { candidate, amount } = input;
     if (amount === undefined) {
-        // No invoice exists on this route to pin one, so the caller is the only
-        // possible source. Caller input, not a swap-boundary refusal.
+        // no invoice on this route can pin one; caller input, not a swap-boundary refusal
         throw new Error("an asset swap needs an amount and the side it pins");
     }
 
@@ -115,11 +89,8 @@ export const quoteFromFeed = async (
         fetchImpl: input.feed.fetch,
     });
 
-    // The pair check, on the backend that has no wire pair to compare: the plan
-    // that came back must price the two legs that were asked for. It is the same
-    // invariant `expectQuote` enforces over the RFQ string — a quote for another
-    // market is not this market's quote — reached through the only identity a
-    // plan carries, its two asset ids.
+    // the pair check `expectQuote` does over the RFQ string, via the plan's only identity: its two
+    // asset ids — a quote for another market is not this market's quote
     verifyPlanLegs(plan, input.legs, candidate.give);
 
     const expiresAt = feedExpiry(candidate.card, input.feed, input.now);
@@ -150,14 +121,8 @@ export const quoteFromFeed = async (
 };
 
 /**
- * The spread, in the units the trader receives.
- *
- * Denominated on the take leg because that is where it is exact: the two legs
- * of an asset swap carry different assets, so a fee stated in give units would
- * be this subtraction divided by the price — a rounding introduced for the sake
- * of a denomination nobody asked for. What it measures is the concession: what
- * the same deposit would have bought at the feed price with no fee at all,
- * minus what the plan actually pays out.
+ * The spread in take-leg units, where it is exact (give units would need a division by price): what
+ * the deposit would buy at the feed price with no fee, minus what the plan pays out.
  */
 const spreadOf = (plan: OfferPlan): bigint => {
     const fair = computeWantAmount({
@@ -174,8 +139,7 @@ const spreadOf = (plan: OfferPlan): bigint => {
 /** When the price behind this card was read, plus the TTL it is good for. */
 const feedExpiry = (card: DiscoveredMarket, feed: FeedFetch, now: number): number => {
     const readAt = card.price_feed === undefined ? undefined : feed.fetchedAt(card.price_feed);
-    // A same-asset corridor market fetches nothing — its price is identically 1
-    // — so there is no feed age to inherit and the quote's life starts now.
+    // a same-asset market fetches nothing (price is identically 1), so its life starts now
     const from = readAt === undefined ? now : Math.floor(readAt / 1000);
     return from + FEED_TTL_MS / 1000;
 };

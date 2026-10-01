@@ -1,6 +1,23 @@
 import { ChainTx, ChainTxType } from "../../providers/indexer";
 import { OnchainProvider } from "../../providers/onchain";
+import { ChainedTxType } from "../../repositories/virtualTxRepository";
 import { ExitChainResolver } from "./resolver";
+
+/** ChainTxType (indexer string enum) → ChainedTxType (repo numeric enum). */
+export function chainTxTypeToChainedExit(t: ChainTxType): ChainedTxType {
+    switch (t) {
+        case ChainTxType.COMMITMENT:
+            return ChainedTxType.Commitment;
+        case ChainTxType.ARK:
+            return ChainedTxType.Ark;
+        case ChainTxType.TREE:
+            return ChainedTxType.Tree;
+        case ChainTxType.CHECKPOINT:
+            return ChainedTxType.Checkpoint;
+        default:
+            return ChainedTxType.Unspecified;
+    }
+}
 
 export type DagNode = {
     txid: string;

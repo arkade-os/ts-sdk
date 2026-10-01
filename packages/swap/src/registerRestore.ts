@@ -21,7 +21,7 @@ export interface RegisterAssetSwapRestoreOptions {
     onResult?: (result: RestoreAssetSwapRepositoryResult) => void | Promise<void>;
 }
 
-const toRestoreTx = (tx: ArkTransaction): Tx => ({
+export const toRestoreTx = (tx: ArkTransaction): Tx => ({
     type: tx.type.toLowerCase(),
     redeemTxid: tx.key.arkTxid,
     boardingTxid: tx.key.boardingTxid,

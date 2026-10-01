@@ -1,6 +1,6 @@
 import { hex } from "@scure/base";
 import { AssetInputType, TX_HASH_SIZE } from "./types";
-import { BufferReader, BufferWriter } from "../utils";
+import { BufferReader, BufferWriter, hexOrThrow } from "../utils";
 import { isZeroBytes } from "./utils";
 
 type AssetInputLocal = {
@@ -49,12 +49,7 @@ export class AssetInput {
             throw new Error("missing input intent txid");
         }
 
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(txid);
-        } catch {
-            throw new Error("invalid input intent txid format, must be hex");
-        }
+        const buf = hexOrThrow(txid, "invalid input intent txid format, must be hex");
 
         if (buf.length !== TX_HASH_SIZE) {
             throw new Error("invalid input intent txid length");
@@ -72,13 +67,7 @@ export class AssetInput {
 
     /** Decode an asset input from its hex string form. */
     static fromString(s: string): AssetInput {
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(s);
-        } catch {
-            throw new Error("invalid format, must be hex");
-        }
-        return AssetInput.fromBytes(buf);
+        return AssetInput.fromBytes(hexOrThrow(s, "invalid format, must be hex"));
     }
 
     /** Decode an asset input from its serialized bytes. */
@@ -182,13 +171,7 @@ export class AssetInputs {
         if (!s || s.length === 0) {
             throw new Error("missing asset inputs");
         }
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(s);
-        } catch {
-            throw new Error("invalid asset inputs format, must be hex");
-        }
-        const reader = new BufferReader(buf);
+        const reader = new BufferReader(hexOrThrow(s, "invalid asset inputs format, must be hex"));
         return AssetInputs.fromReader(reader);
     }
 

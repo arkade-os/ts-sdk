@@ -1,113 +1,61 @@
 /**
  * The serializable projection of a monitored RFQ swap.
  *
- * {@link RfqSwap} is a live record, not a storage format: it holds derived
- * `Uint8Array`s and a `VHTLC.ScriptV2` class instance, and IndexedDB's
- * structured clone strips prototypes — a naive `store.put(swap)` round-trips a
- * script object with no methods. So a consumer stores THIS and rebuilds the
- * live record at boot.
+ * {@link RfqSwap} holds `Uint8Array`s and a `VHTLC.ScriptV2` instance, and IndexedDB's structured
+ * clone strips prototypes, so a consumer stores THIS and rebuilds the live record at boot.
  *
- * **The covenant is not stored here.** Every RFQ lockup registers a contract
- * row before its address can be funded (see `lockupContract.ts`), and that row
- * already holds the tree parameters, keyed by the script they derive — a key
- * `createContract` refuses to write unless the params reproduce it. Storing the
- * tree a second time would be two sources for one covenant, drifting apart with
- * nothing to say which is right. So {@link rebuildRfqSwap} takes the parameters
- * from its caller: `lockupContractParams` reads the row, and a consumer that
- * keeps its own copy of `VHTLCV2ContractHandler.serializeParams(...)` can pass
- * that instead.
+ * **The covenant is not stored here.** Every RFQ lockup registers a contract row (keyed by the
+ * script its params derive) before it can be funded; a second copy here would be two sources for
+ * one covenant. {@link rebuildRfqSwap} takes the params from its caller instead
+ * (`lockupContractParams`, or the consumer's own `serializeParams(...)` copy).
  *
- * What lives here is what no covenant can give back:
- *
- * - {@link RfqSwapOrigin} — the immutable request-time facts every corridor
- *   has: which corridor, which address was funded, and the corridor's own
- *   opaque {@link RfqSwapOrigin.profile}.
- * - the manager's mutable state, replaced by {@link updateRfqSwapRecord} on
- *   every pass that changed something.
- *
- * A corridor's keys live in its profile, not here — `profile.signer` and, for a
- * leg locked to a preimage, `profile.hashlock`, which carries the `sha256(P)`
- * the covenant cannot give back (it binds `hash160(P)`, one-way over it). See
- * `rfqProfileParts.ts`.
- *
- * **No record written here carries a private key.** The wallet descriptor is
- * public, and so is the per-swap salt a static wallet's preimage derives from —
- * which is what the record stores INSTEAD of P. `preimageHex` appears only when
- * the SDK's provisioned claim secret says P cannot be re-derived at all.
+ * **No record written here carries a private key.** The descriptor and the per-swap salt P derives
+ * from are public; `preimageHex` appears only when the SDK says P cannot be re-derived at all.
  */
 import { ArkAddress, VHTLCV2ContractHandler, type VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import type { LightningReceiveSwap, LightningSendSwap, OnchainSendSwap } from "./swapManager";
-// From the vocabulary module, not from `swapManager`: the manager persists
-// through this file, so a runtime edge back to it would close a cycle.
+// Not from `swapManager`: the manager persists through this file, so that edge would be a cycle.
 import { isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
 import { rfqCorridorHandlers } from "./rfqCorridor";
 import "./rfqCorridors";
 
 /**
- * The swap kinds this projection covers — all three the manager monitors.
- *
- * `onchain_send` carries an L1 half nothing else can rebuild. Its Arkade lockup
- * has a contract row like the others, but the HTLC is Bitcoin L1, not an Arkade
- * contract, so no row exists for it; and `OnchainHtlc` exposes only derived
- * values — `address`, `pkScript`, `leaves`, `controlBlocks` — never the
- * `claimKey`/`refundKey` `onchainHtlcScript` takes as inputs. So they ride in
- * that corridor's {@link RfqSwapOrigin.profile}, and without them a restored
- * swap would let its L1 refund window pass unwatched.
- *
+ * The swap kinds this projection covers — all three the manager monitors. `onchain_send`'s L1 keys
+ * ride in its profile, since no contract row or `OnchainHtlc` field can give them back.
  */
 export type PersistableRfqSwap = LightningSendSwap | LightningReceiveSwap | OnchainSendSwap;
 
 /**
- * The serialized covenant parameters a rebuild is given.
- *
- * `VHTLCV2ContractHandler`'s own wire shape — what `serializeParams` writes and
- * `createScript` reads — which is exactly what a lockup's contract row stores
- * under `params`.
- *
+ * The serialized covenant parameters a rebuild is given: `VHTLCV2ContractHandler`'s own wire shape,
+ * exactly what a lockup's contract row stores under `params`.
  */
 export type LockupParams = Record<string, string>;
 
 /**
- * How long a retired swap's record is kept, in SECONDS.
- *
- * Terminal records are history, not garbage: the covenant's spender is a
- * transaction the wallet never signed, so its own history cannot reconstruct
- * them. The legacy explicit prune API uses this window; restore preserves them.
- *
- * Seconds, not milliseconds, because that is the unit `RfqSwap.updatedAt`
- * carries; the manager stamps it from `RfqSwapManagerConfig.now`, which is
- * "wall clock, in unix seconds". Comparing it against `Date.now()` would drop
- * every terminal record after ~43 minutes.
- *
+ * How long a retired swap's record is kept, in SECONDS (the unit of `RfqSwap.updatedAt`).
+ * Terminal records are history the wallet's own tx history cannot reconstruct; only the
+ * explicit prune API drops them, restore keeps them.
  */
 /** @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const RFQ_SWAP_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 
 /** The immutable request-time half, and only what EVERY corridor has. Hex for
  * everything binary, so the record is plain JSON and survives any
- * structured-clone backend unchanged.
- *
- */
+ * structured-clone backend unchanged. */
 export interface RfqSwapOrigin {
     /**
      * Which corridor this is. Resolves the handler that owns {@link profile};
      * see `rfqCorridor.ts`.
      *
-     * The manager's own union, not an open string: `RfqSwapManager` branches on
-     * `kind` to decide what to drive, so a corridor it does not know could be
-     * persisted and rebuilt here and then never driven — which is the failure
-     * this whole file is arranged to make impossible.
+     * The manager's own union, not an open string: a kind it does not branch on would persist and
+     * rebuild here and then never be driven.
      */
     kind: PersistableRfqSwap["kind"];
 
     /**
-     * The Arkade address that was funded.
-     *
-     * Both the swap's handle on its covenant — {@link lockupContractParams}
-     * looks the contract row up by the script it decodes to — and, being taken
-     * from the entry point rather than re-derived, the check that the
-     * parameters a caller supplies belong to THIS swap.
+     * The Arkade address that was funded: the handle {@link lockupContractParams} looks the row up
+     * by, and, being taken from the entry point, the check that supplied params are THIS swap's.
      */
     lockupAddress: string;
 
@@ -115,16 +63,10 @@ export interface RfqSwapOrigin {
      * The corridor's own half, as plain JSON — written by the caller from the
      * request result, kept current by the handler's `project`.
      *
-     * Opaque here on purpose. Nothing in this file, the repository or the
-     * IndexedDB store interprets it, which is what lets a new corridor ship
-     * without touching any of them. It carries the corridor's keys as well as
-     * its state: `signer` (which wallet key signs this leg) and, on a corridor
-     * locked to a preimage, `hashlock` — see `rfqProfileParts.ts`, and write
-     * both with `rfqSecretsProfile` rather than by hand.
-     *
-     * Not a consumer scratchpad: every write merges it as `{ ...profile,
-     * ...handler.project(swap) }`, so a consumer key colliding with one the
-     * handler projects is silently overwritten on every pass.
+     * Opaque here, so a new corridor ships without touching this file or the stores. Carries the
+     * corridor's keys (`signer`, and `hashlock` with the `sha256(P)` the covenant cannot give
+     * back); write them with `rfqSecretsProfile`. Not a consumer scratchpad: every write merges
+     * `handler.project(swap)` over it.
      */
     profile: Record<string, unknown>;
 
@@ -133,12 +75,8 @@ export interface RfqSwapOrigin {
     amount?: number;
 
     /**
-     * The ark transaction that funded {@link lockupAddress}.
-     *
-     * Origin, not manager state: the caller broadcasts the funding and knows
-     * its txid, while the manager watches the lockup by script and never
-     * learns it. So it is written once at record creation, like {@link amount},
-     * and no corridor `project` emits it.
+     * The ark transaction that funded {@link lockupAddress}. Origin, not manager state: only the
+     * caller that broadcast it knows it, so it is written once and no `project` emits it.
      */
     fundingTxid?: string;
 }
@@ -150,12 +88,9 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
     createdAt: number;
     updatedAt: number;
     refundTxid?: string;
-    /** The ark transactions that spent the lockup, stamped by the manager from
-     * the chain read that ended the swap. See
-     * `RfqSwapCommon.lockupSpendTxids`. */
+    /** See `RfqSwapCommon.lockupSpendTxids`. */
     lockupSpendTxids?: string[];
-    /** The preimage that settled a Lightning send, stamped by the manager from
-     * the same chain read. See `RfqSwapCommon.settlementPreimageHex`. */
+    /** See `RfqSwapCommon.settlementPreimageHex`. */
     settlementPreimageHex?: string;
     failure?: string;
     /** Last local receive-claim error while the swap is still retryable. */
@@ -164,11 +99,8 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
 }
 
 /**
- * The txid fields under the names records already on disk carry them by; see
- * {@link normalizeRfqSwapRecord}.
- *
- * Deliberately not part of {@link RfqSwapRecord}: nothing writes them any more,
- * and declaring them there would read as a shape still in use.
+ * The txid fields under their legacy on-disk names; see {@link normalizeRfqSwapRecord}. Kept off
+ * {@link RfqSwapRecord} because nothing writes them any more.
  */
 interface LegacyRfqSwapTxids {
     fundingArkTxid?: string;
@@ -185,31 +117,16 @@ function renameLegacyClaimTxid(profile: Record<string, unknown>): Record<string,
 /**
  * A stored record read under the current field names.
  *
- * Four fields were renamed after `0.0.9`: `fundingArkTxid`, `refundArkTxid`,
- * `lockupSpendArkTxids`, and the receive corridor's `profile.claimArkTxid`. All
- * four arrived together with record persistence itself in `0.0.8`, so `0.0.8`
- * and `0.0.9` are the only versions that ever wrote them. Backends store the
- * record WHOLE, so such a store still holds the old names on disk and the
- * current code reads every one of them as `undefined`.
- *
- * Called by every function here that takes a record, so a consumer needs no
- * boot-time migration of its own; and because the old keys never reach the
- * object handed back, the next write persists the record without them.
- *
- * What it buys, in descending order of sharpness: a receive leg with a partial
- * claim already out keeps its `claimTxid`, so the value gate stays disarmed
- * rather than re-blocking the rest of a lockup whose preimage is public;
- * `refunded` swaps report an outcome txid again; and activity answers from the
- * record instead of falling back to a lockup read per query. It is NOT a
- * re-refund fix — `refunded` is terminal, and `restoreFromRepository` puts a
- * terminal record straight into `finished` without ever driving it.
- *
+ * `0.0.8`/`0.0.9` wrote `fundingArkTxid`, `refundArkTxid`, `lockupSpendArkTxids` and
+ * `profile.claimArkTxid`, which current code would read as `undefined`. Every function here that
+ * takes a record calls this, so no boot-time migration is needed and the next write drops the old
+ * keys. Sharpest effect: a partly claimed receive leg keeps its `claimTxid`, so the value gate
+ * stays disarmed over a public preimage.
  */
 export function normalizeRfqSwapRecord(record: RfqSwapRecord): RfqSwapRecord {
     const { fundingArkTxid, refundArkTxid, lockupSpendArkTxids, ...rest } =
         record as RfqSwapRecord & LegacyRfqSwapTxids;
-    // Only the receive corridor's profile ever carried the old name; the
-    // onchain leg has written `claimTxid` from the start.
+    // Only the receive corridor's profile ever carried the old name.
     const legacyClaim =
         record.kind === "lightning_receive" && record.profile.claimArkTxid !== undefined;
     if (!fundingArkTxid && !refundArkTxid && !lockupSpendArkTxids && !legacyClaim) return record;
@@ -226,48 +143,38 @@ export function normalizeRfqSwapRecord(record: RfqSwapRecord): RfqSwapRecord {
     };
 }
 
+/** The optional mutable fields, each written only when set — in both directions. */
+const mutableFields = (from: PersistableRfqSwap | RfqSwapRecord) => ({
+    ...(from.refundTxid ? { refundTxid: from.refundTxid } : {}),
+    ...(from.lockupSpendTxids?.length ? { lockupSpendTxids: [...from.lockupSpendTxids] } : {}),
+    ...(from.settlementPreimageHex ? { settlementPreimageHex: from.settlementPreimageHex } : {}),
+    ...(from.failure ? { failure: from.failure } : {}),
+    ...(from.claimFailure ? { claimFailure: from.claimFailure } : {}),
+    ...(from.blockedReason ? { blockedReason: from.blockedReason } : {}),
+});
+
 /**
  * The manager's mutable half, projected off a live record.
  *
- * Corridor-agnostic by construction: every field here is one `RfqSwapCommon`
- * declares, so each is on all three legs, and anything a single corridor tracks
- * goes through its handler's `project` instead — `claimTxid` included, which
- * only the receive leg has. A per-kind field lifted to here would be written by
- * this function and restored by nobody, since `rebuildRfqSwap` builds the
- * common half from `RfqSwapCommon` alone.
+ * Only `RfqSwapCommon` fields: a per-kind field lifted here would be written and restored by
+ * nobody, since `rebuildRfqSwap` builds the common half from `RfqSwapCommon` alone. Per-corridor
+ * state (e.g. `claimTxid`) goes through the handler's `project`.
  */
 const managerState = (swap: PersistableRfqSwap) => ({
     rfqId: swap.rfqId,
     state: swap.state,
     createdAt: swap.createdAt,
     updatedAt: swap.updatedAt,
-    ...(swap.refundTxid ? { refundTxid: swap.refundTxid } : {}),
-    ...(swap.lockupSpendTxids?.length ? { lockupSpendTxids: [...swap.lockupSpendTxids] } : {}),
-    ...(swap.settlementPreimageHex ? { settlementPreimageHex: swap.settlementPreimageHex } : {}),
-    ...(swap.failure ? { failure: swap.failure } : {}),
-    ...(swap.claimFailure ? { claimFailure: swap.claimFailure } : {}),
-    ...(swap.blockedReason ? { blockedReason: swap.blockedReason } : {}),
+    ...mutableFields(swap),
 });
 
 /**
  * The origin and the live swap must be halves of one swap.
  *
- * They arrive separately — the origin written from the request result, the swap
- * built by the entry point — and the record functions below are where both are
- * in hand, so that is where the pairing can be checked at all.
- *
- * Exported so `RfqSwapManager.addSwap` can run the same check at admission
- * rather than at the first write. The write happens a pass later, by which time
- * the funding is broadcast and the swap is monitored — the same argument
- * `RfqSwapOriginRequired` makes for refusing a missing origin at the door.
- *
- * Neither mismatch is loud on its own. A `kind` that disagrees runs the wrong
- * handler's `project`, which casts on kind: a receive origin projected off a
- * send swap writes `expectedAmount: undefined` OVER the value the caller just
- * supplied, deleting the gate at the moment it was being recorded. An address
- * that disagrees is quieter still — the record stores no `lockupPkScript`, so
- * {@link rebuildRfqSwap} derives one from `lockupAddress`, and the restored swap
- * watches a covenant that is not the one this swap was monitoring.
+ * Exported so `RfqSwapManager.addSwap` can check at admission, before funding is broadcast.
+ * Neither mismatch is loud: a wrong `kind` runs the wrong handler's `project`, e.g. writing
+ * `expectedAmount: undefined` over the caller's value and deleting the gate; a wrong address makes
+ * {@link rebuildRfqSwap} watch a covenant this swap never monitored.
  */
 export function assertSameSwap(origin: RfqSwapOrigin, swap: PersistableRfqSwap): void {
     if (origin.kind !== swap.kind) {
@@ -285,9 +192,7 @@ export function assertSameSwap(origin: RfqSwapOrigin, swap: PersistableRfqSwap):
     }
 }
 
-/** First write, at the moment the caller hands the swap to the manager.
- *
- */
+/** First write, at the moment the caller hands the swap to the manager. */
 export function createRfqSwapRecord(
     origin: RfqSwapOrigin,
     swap: PersistableRfqSwap,
@@ -297,8 +202,6 @@ export function createRfqSwapRecord(
     return {
         ...origin,
         ...managerState(swap),
-        // The caller wrote what only the request result knows; the handler adds
-        // what the live swap already carries.
         profile: { ...origin.profile, ...handler.project(swap) },
     };
 }
@@ -306,22 +209,16 @@ export function createRfqSwapRecord(
 /**
  * Every later write. The origin half is carried through untouched.
  *
- * The mutable half is REPLACED, not merged. `managerState` omits a key the live
- * swap no longer carries, so spreading it over the old record could only ever
- * set these fields, never clear them. The manager clears them on purpose: it
- * deletes `blockedReason` when a swap leaves `needs_counterparty` and
- * `claimFailure` when a swap becomes terminal, precisely because stale mutable
- * reasons read as live refusal or retry state.
- *
+ * The mutable half is REPLACED, not merged: `managerState` omits keys the live swap no longer
+ * carries, and the manager deliberately clears `blockedReason` and `claimFailure`, whose stale
+ * values would read as live refusal or retry state.
  */
 export function updateRfqSwapRecord(
     record: RfqSwapRecord,
     swap: PersistableRfqSwap,
 ): RfqSwapRecord {
-    // Re-checked on every write, not just the first: a manager driving several
-    // swaps hands this a record and a live swap looked up separately, and
-    // updating one swap's record from another's is exactly how a good record
-    // acquires another swap's state.
+    // Re-checked on every write: record and swap are looked up separately, and a mixed pair is how
+    // a good record acquires another swap's state.
     assertSameSwap(record, swap);
     const stored = normalizeRfqSwapRecord(record);
     const {
@@ -334,9 +231,8 @@ export function updateRfqSwapRecord(
         ...origin
     } = stored;
     const handler = rfqCorridorHandlers.getOrThrow(stored.kind);
-    // The profile MERGES rather than being replaced: `project` returns only
-    // what the manager can change, and the rest came from the request result
-    // and has no other source.
+    // The profile MERGES: `project` returns only what the manager can change; the rest has no
+    // other source.
     return {
         ...origin,
         ...managerState(swap),
@@ -347,17 +243,10 @@ export function updateRfqSwapRecord(
 /**
  * The immutable half of a stored record, on its own.
  *
- * A record IS an origin plus manager state, so `record` where an
- * {@link RfqSwapOrigin} is wanted type-checks — and is a bug. Spread into
- * {@link createRfqSwapRecord} it carries the OLD state's `failure`,
- * `blockedReason`, `claimFailure` and `refundTxid` past `managerState`, which omits
- * fields the live swap no longer has and therefore cannot clear them. That is the same
- * trap {@link updateRfqSwapRecord} strips those mutable fields to avoid; this is
- * how a caller holding only a record gets an origin that is safe to keep.
- *
- * What `RfqSwapManager.restoreFromRepository` remembers for each record it
- * rebuilds, so a later write can create the record again if the store lost it.
- *
+ * Passing a `record` where an {@link RfqSwapOrigin} is wanted type-checks but is a bug: spread into
+ * {@link createRfqSwapRecord} it carries stale `failure`/`blockedReason`/`claimFailure`/
+ * `refundTxid` that `managerState` cannot clear. `restoreFromRepository` keeps this per record so
+ * a later write can recreate a record the store lost.
  */
 export function rfqSwapOriginOf(record: RfqSwapRecord): RfqSwapOrigin {
     const stored = normalizeRfqSwapRecord(record);
@@ -373,11 +262,9 @@ export function rfqSwapOriginOf(record: RfqSwapRecord): RfqSwapOrigin {
 /**
  * The covenant a record is locked to, from parameters supplied by the caller.
  *
- * The parameters and `lockupAddress` reach the record by independent routes —
- * the row was written from the covenant, the address was taken verbatim from
- * the entry point — so requiring them to agree is what stops the wrong row, or
- * a row a field-mapped backend read back short a key, from producing a live
- * record watching a covenant nobody funded.
+ * Params and `lockupAddress` reach the record independently, so requiring them to agree stops the
+ * wrong row (or one a backend read back short a key) from yielding a swap watching an unfunded
+ * covenant.
  */
 function lockupScript(
     params: LockupParams,
@@ -395,16 +282,9 @@ function lockupScript(
 }
 
 /**
- * Rebuild the live record. Pure, and synchronous, given the covenant's
- * parameters.
- *
- * Hand the result to {@link RfqSwapManager.start}. Take `params` from the
- * lockup's contract row — {@link lockupContractParams} is the one-liner — or
- * from a copy of `VHTLCV2ContractHandler.serializeParams(script.options)` a
- * consumer keeps itself; either way they are checked against the address that
- * was actually funded, so the `lockupPkScript` this produces is the one the
- * funded lockup is keyed by.
- *
+ * Rebuild the live record, purely and synchronously, for {@link RfqSwapManager.start}. `params`
+ * (from {@link lockupContractParams} or a consumer-kept copy) are checked against the funded
+ * address.
  */
 export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): PersistableRfqSwap {
     const stored = normalizeRfqSwapRecord(record);
@@ -420,23 +300,11 @@ export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): Per
         refundLocktime: Number(script.options.refundLocktime),
         createdAt: stored.createdAt,
         updatedAt: stored.updatedAt,
-        ...(stored.refundTxid ? { refundTxid: stored.refundTxid } : {}),
-        ...(stored.lockupSpendTxids?.length
-            ? { lockupSpendTxids: [...stored.lockupSpendTxids] }
-            : {}),
-        ...(stored.settlementPreimageHex
-            ? { settlementPreimageHex: stored.settlementPreimageHex }
-            : {}),
-        ...(stored.failure ? { failure: stored.failure } : {}),
-        ...(stored.claimFailure ? { claimFailure: stored.claimFailure } : {}),
-        ...(stored.blockedReason ? { blockedReason: stored.blockedReason } : {}),
+        ...mutableFields(stored),
     };
 
-    // Corridor-agnostic from here: the handler for this record's kind supplies
-    // whatever its leg needs — `paymentHash` included, which is a hashlock's
-    // fact and not RFQ's — and this file names none of them. A kind with no
-    // handler registered throws rather than restoring a swap nothing knows how
-    // to drive.
+    // The kind's handler supplies everything leg-specific (`paymentHash` included); an unregistered
+    // kind throws rather than restoring a swap nothing can drive.
     const handler = rfqCorridorHandlers.getOrThrow(stored.kind);
     return {
         ...common,
@@ -448,17 +316,12 @@ export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): Per
 /**
  * Whether a retired swap's record should be kept.
  *
- * `needs_counterparty` is deliberately not terminal and is never dropped: the
- * money is still at the lockup, the counterparty's move is still what ends the
- * swap, and the refusal is re-checked every pass; restoring the right wallet
- * returns it to `pending`.
+ * `needs_counterparty` is not terminal and is never dropped: the money is still at the lockup and
+ * the refusal is re-checked every pass.
  *
- * @param now Current time in **unix seconds**; the same unit as
- * `RfqSwap.updatedAt`, which the manager stamps from
- * `RfqSwapManagerConfig.now`. Pass `Math.floor(Date.now() / 1000)`, never
- * `Date.now()`: milliseconds against a seconds window would retire every
- * terminal record after ~43 minutes.
- *
+ * @param now Current time in **unix seconds**, the unit of `RfqSwap.updatedAt`. Pass
+ * `Math.floor(Date.now() / 1000)`, never `Date.now()`: milliseconds against a seconds window would
+ * retire every terminal record after ~43 minutes.
  */
 export function shouldRetainRfqSwap(record: RfqSwapRecord, now: number): boolean {
     if (!isRfqSwapTerminal(record.state)) return true;

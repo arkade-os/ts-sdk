@@ -1,13 +1,12 @@
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { TapLeafScript } from "../script/base";
-import { ArkTransaction, Asset, ExtendedCoin, ExtendedVirtualCoin } from "../wallet";
+import { Asset, ExtendedCoin, ExtendedVirtualCoin } from "../wallet";
 import { normalizeVtxo, type NormalizedExtendedVirtualCoin } from "../wallet/vtxo";
 
 export type SerializedTapLeaf = { cb: string; s: string };
 export type SerializedVtxo = ReturnType<typeof serializeVtxo>;
 export type SerializedUtxo = ReturnType<typeof serializeUtxo>;
-export type SerializedTransaction = ReturnType<typeof serializeTransaction>;
 
 // `Asset.amount` is a `bigint`, which `JSON.stringify` cannot serialize
 // (`TypeError: Do not know how to serialize a BigInt`). Persist it as a
@@ -59,17 +58,20 @@ export const serializeVtxo = (v: ExtendedVirtualCoin) => ({
     assets: serializeAssets(v.assets),
 });
 
+/** Legacy rows may carry `createdAt` as a string or epoch number rather than a Date. */
+export const createdAtToIso = (createdAt: Date | string | number): string =>
+    typeof createdAt === "string"
+        ? createdAt
+        : createdAt instanceof Date
+          ? createdAt.toISOString()
+          : new Date(createdAt).toISOString();
+
 export const serializeUtxo = (u: ExtendedCoin) => ({
     ...u,
     tapTree: hex.encode(u.tapTree),
     forfeitTapLeafScript: serializeTapLeaf(u.forfeitTapLeafScript),
     intentTapLeafScript: serializeTapLeaf(u.intentTapLeafScript),
     extraWitness: u.extraWitness?.map(hex.encode),
-});
-
-export const serializeTransaction = (t: ArkTransaction) => ({
-    ...t,
-    assets: serializeAssets(t.assets),
 });
 
 export const deserializeTapLeaf = (t: SerializedTapLeaf): TapLeafScript => {
@@ -96,9 +98,4 @@ export const deserializeUtxo = (o: SerializedUtxo): ExtendedCoin => ({
     forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
     intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
     extraWitness: o.extraWitness?.map(hex.decode),
-});
-
-export const deserializeTransaction = (o: SerializedTransaction): ArkTransaction => ({
-    ...o,
-    assets: deserializeAssets(o.assets),
 });

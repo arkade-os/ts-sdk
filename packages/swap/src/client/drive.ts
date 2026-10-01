@@ -2,33 +2,26 @@
  * The drive: what makes the v2 client self-driving, and the one place the two
  * families' state becomes one {@link Outcome}.
  *
- * Two drivers sit behind one lifecycle — `RfqSwapManager` for the corridor
- * swaps and `watchOfferSwaps` for the offers — and they stay separate here, as
- * they are in v1: liveness is their union, arming is one idempotent call over
- * both, and `stop()` pays the asymmetry the facade already pays (the manager
- * stays reusable, the watcher is a one-shot unsubscribe rebuilt on the next
- * start).
+ * Two drivers behind one lifecycle: `RfqSwapManager` (corridor swaps) and `watchOfferSwaps`
+ * (offers). The manager survives `stop()`; the watcher is a one-shot unsubscribe rebuilt on the
+ * next start.
  *
- * **The poll loop is the correctness mechanism.** The contract-event
- * subscription only makes a pass run early, and that pass re-reads the lockup
- * exactly as the timer's does, so a missed, duplicated, reordered or forged
- * event costs or saves latency and nothing else. Stated as an invariant here
- * because it is what makes dropping the stream on `stop()` safe: NO OUTCOME IS
- * EVER WRITTEN FROM AN EVENT PAYLOAD.
+ * **The poll loop is the correctness mechanism.** Contract events only make a pass run early, and
+ * the pass re-reads the lockup, so a missed, duplicated or forged event costs only latency:
+ * NO OUTCOME IS EVER WRITTEN FROM AN EVENT PAYLOAD.
  *
- * **No backoff, deliberately.** The poll interval is already the retry cadence
- * and `REFUND_MTP_LAG_SECONDS` already the deadline, so a backoff on a money
- * push could only push a retry past the deadline it exists to beat.
+ * **No backoff, deliberately**: the poll interval is the retry cadence and
+ * `REFUND_MTP_LAG_SECONDS` the deadline, so a backoff could only push a money retry past it.
  *
- * What this module does NOT do is decide anything about a swap from the
- * solver's word: there is no `RfqTransport` here, exactly as there is none in
- * the manager.
+ * Nothing here trusts the solver's word: there is no `RfqTransport`.
  */
 import {
     ArkAddress,
     contractSigner,
+    getNetwork,
     identityDescriptor,
     type IWallet,
+    type Network,
     type SettlementEvent,
 } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
@@ -49,7 +42,8 @@ import { RefundNotLocallyPossibleError, senderIdentityForSwapRecord } from "../r
 import { rfqClaimDestinationOf, rfqClaimSecretOf, rfqSignerOf } from "../rfqProfileParts";
 import { rebuildRfqSwap, rfqSwapOriginOf } from "../rfqRecord";
 import { isRfqSwapTerminal } from "../rfqSwapState";
-import { restoreAssetSwaps, type Tx } from "../restore";
+import { restoreAssetSwaps } from "../restore";
+import { toRestoreTx } from "../registerRestore";
 import { preimageForSwapRecord } from "../store";
 import type { AssetSwapRepository } from "../repository";
 import {
@@ -102,28 +96,18 @@ export type DriveRefusal =
     | "readonly"
     /** No record with this id, here or in the repository. */
     | "unknown-swap"
-    /** The lockup's `refundLocktime` has not matured, so a recovery round
-     * including it would be rejected — and `recoverVtxos` settles EVERY
-     * recoverable output in one batch, so an early attempt can fail unrelated
-     * outputs with it. */
+    /** The lockup's `refundLocktime` has not matured. `recoverVtxos` settles EVERY recoverable
+     * output in one batch, so an early attempt could fail unrelated outputs too. */
     | "refund-window-open"
-    /** Nothing at this swap has been swept, so there is nothing to recover.
-     * The two `needs_counterparty` sources of `needs_recovery` land here. */
+    /** Nothing at this swap has been swept, so there is nothing to recover
+     * (includes the `needs_counterparty` sources of `needs_recovery`). */
     | "nothing-swept"
     /** This wallet exposes no VTXO manager, so no recovery round can be run. */
     | "no-recovery-support";
 
 /**
- * The drive declined, with the reason as a value.
- *
- * Not a member of §7's sixteen, and it keeps the `Error` suffix to say so —
- * `errors.ts`'s own naming rule. What it replaces is `recoverVtxos`'s bare
- * `Error("No recoverable VTXOs found")`, which is outside the taxonomy and
- * carries nothing a caller can branch on.
- *
- * M6's error-coverage pass ruled it a documented NON-member: no §7 member names
- * a drive-refusal condition, so none absorbs these four, and the suffix rule is
- * working as intended rather than marking a loose end.
+ * The drive declined, with the reason as a value a caller can branch on. Not a §7 taxonomy
+ * member, hence the `Error` suffix.
  */
 export class SwapDriveRefusedError extends Error {
     override readonly name = "SwapDriveRefusedError";
@@ -139,13 +123,9 @@ export class SwapDriveRefusedError extends Error {
 /** What {@link SwapDrive.recover} did. */
 export interface RecoveryResult {
     /**
-     * Whether THIS swap's outpoints were included in the round.
-     *
-     * A settlement txid is not success: `recoverVtxos` takes no outpoints — it
-     * reads the whole wallet, drops what `unspendableNow` refuses, then prices
-     * and caps the rest highest-value-first with the overflow deferred to the
-     * next cycle. So the named lockup is re-read afterwards and this is that
-     * read's answer.
+     * Whether THIS swap's outpoints were included in the round, per a re-read afterwards. A
+     * settlement txid is not success: `recoverVtxos` takes the whole wallet and caps the round,
+     * deferring overflow to the next cycle.
      */
     readonly recovered: boolean;
     /** The settlement the round produced, when one ran. */
@@ -166,28 +146,22 @@ export interface SwapDriveConfig {
      * `accept()` keeps its own refusal. */
     readonly repository?: AssetSwapRepository;
     /**
-     * The client's corridors, for the two deps a drive pass needs and the quote
-     * path does not: the L1 chain source and the L1 claim callback. Read
-     * through the set so resolution stays lazy — a client whose `onchain` deps
-     * are deliberately `null` and which never drives an `arkade -> onchain`
-     * swap never resolves them, which is what `MissingCorridorDep`'s boundary
-     * note requires.
+     * The client's corridors, for the L1 chain source and claim callback a drive pass needs.
+     * Lazy, so a client with `null` onchain deps that never drives `arkade -> onchain` never
+     * resolves them.
      */
     readonly corridors: () => Promise<CorridorSet>;
     /** The operator's network, for a rebuilt offer record's asset ids. Lazy like `corridors`. */
     readonly network: () => Promise<NetworkRef>;
     readonly mode?: DriveMode;
     /**
-     * How often the fallback poll pass runs. Default 5000 ms — the same
-     * interval `RfqSwapManagerConfig.pollIntervalMs` documents one layer
-     * down, and the retry cadence for the refund push after
-     * `refundLocktime`. Tune only relative to that default.
+     * How often the fallback poll pass runs. Default 5000 ms (as
+     * `RfqSwapManagerConfig.pollIntervalMs`); also the refund push's retry cadence.
      */
     readonly pollIntervalMs?: number;
     /** Unix seconds. Injected for tests. */
     readonly now?: () => number;
-    /** The Arkade observation seam. Defaults to the wallet's own reader; taken
-     * as an input so a drive test can double one without a wallet behind it. */
+    /** The Arkade observation seam; normally the wallet's own reader. */
     readonly indexer: LockupSpendIndexer;
     /** Defaults to `wallet.getContractManager()`, resolved on first arm. */
     readonly contracts?: SwapContractRegistry;
@@ -195,11 +169,9 @@ export interface SwapDriveConfig {
 
 export interface SwapDrive {
     /**
-     * The restore-read, and — when it armed — the first pass after it.
-     *
-     * Lazy: construction stays inert and the first await is what drives it.
-     * Rejects only when the repository itself is unreadable, per Q3; a corrupt
-     * record is filtered and every per-swap problem is an outcome.
+     * The restore-read, and — when it armed — the first pass after it. Lazy: the first await
+     * drives it. Rejects only when the repository itself is unreadable; a corrupt record is
+     * filtered and every per-swap problem is an outcome.
      */
     readonly ready: Promise<void>;
     start(): Promise<void>;
@@ -207,12 +179,8 @@ export interface SwapDrive {
     dispose(): Promise<void>;
     onUpdate(fn: (update: SwapUpdate) => void): Unsubscribe;
     /**
-     * Take a freshly persisted record into the drive and answer with its public
-     * form.
-     *
-     * Synchronous by design: `accept()` returns once the record is durable and
-     * does NOT await the first pass, so the registration this schedules runs
-     * behind the return.
+     * Take a freshly persisted record into the drive and answer with its public form.
+     * Synchronous: the registration it schedules runs behind `accept()`'s return.
      */
     adopt(record: SwapRecord): Swap;
     /** The public form of a record this drive holds. */
@@ -220,13 +188,8 @@ export interface SwapDrive {
     /** The outcome a record would report with no live state behind it. */
     outcomeOf(record: SwapRecord): Outcome;
     /**
-     * Take a record written OUTSIDE the drive's own loops — today, the
-     * awaited cancel call — into the registry, and emit through `onUpdate`.
-     *
-     * Cancel writes at two edges, the gate and the settlement, and the
-     * delivery channel for both is this registry: replay plus the
-     * `(swapId, outcome)` key absorb a later pass over the same record, whether
-     * or not the drive armed.
+     * Take a record written OUTSIDE the drive's own loops (today, cancel) into the registry and
+     * emit through `onUpdate`; the `(swapId, outcome)` key absorbs a later pass over it.
      */
     ingest(record: SwapRecord): void;
     recover(id: QuoteId): Promise<RecoveryResult>;
@@ -244,12 +207,8 @@ const traderClaimTxid = (swap: RfqSwap): string | undefined =>
     swap.kind === "lightning_send" ? undefined : swap.claimTxid;
 
 /**
- * Whether a stored blob is a record this drive can read at all.
- *
- * The v1 store's rule, applied to the v2 keyspace: a corrupt row is filtered
- * rather than fatal, because one unreadable record must not stop a client from
- * driving every other swap it holds. Everything checked here is something the
- * drive dereferences unconditionally.
+ * Whether a stored blob is a record this drive can read at all. A corrupt row is filtered rather
+ * than fatal, so it cannot stop every other swap; the checks cover what the drive dereferences.
  */
 export const readableRecord = (record: SwapRecord): boolean => {
     if (typeof record?.id !== "string" || record.route?.give === undefined) return false;
@@ -264,34 +223,21 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     const mode: DriveMode = config.mode ?? "auto";
     const now = config.now ?? (() => Math.floor(Date.now() / 1000));
 
-    /** Every record this drive knows, by quote id — the registry the replay and
-     * the stream are both fed from. */
+    /** Every record this drive knows, by quote id; feeds both replay and stream. */
     const records = new Map<QuoteId, SwapRecord>();
-    /** The manager's live swap per record, when it holds one. Its absence is
-     * what makes a record `accepted`/`funding` rather than the raw table's
-     * answer. */
+    /** The manager's live swap per record, when it holds one. */
     const live = new Map<QuoteId, RfqSwap>();
-    /** A refund push is in flight. Process-local, and the only source of
-     * `refunding` — which appears in neither raw machine. */
+    /** A refund push is in flight: the only source of `refunding`, in neither raw machine. */
     const refunding = new Set<QuoteId>();
     /**
-     * Outpoints a push reported swept, from `LockupNeedsRecoveryError`.
-     *
-     * The manager retries that error rather than blocking on it — recovery is
-     * something the caller can perform while the window is still open — so it
-     * never reaches a state, and without this the swept half of source 2 would
-     * report nothing. Process-local, and cleared the moment a push runs again.
+     * Outpoints a push reported swept (`LockupNeedsRecoveryError`). The manager retries that
+     * error rather than recording a state, so this is the only trace. Cleared when a push reruns.
      */
     const swept = new Map<QuoteId, readonly string[]>();
     /**
-     * Swaps a drive pass has actually run over.
-     *
-     * The boundary the three record-and-clock projections need, and it is NOT
-     * "does the manager hold this swap": `restoreFromRepository` rebuilds a
-     * swap with the state the record already carried, so a restored record
-     * arrives with the manager holding it and nothing yet read from chain.
-     * `accept()` writes `pending`, and until a pass looks at the lockup that
-     * word means only "the record says so" — which is `funding`, not `funded`.
+     * Swaps a drive pass has actually run over. NOT "the manager holds it": a restored swap is
+     * held before anything is read from chain, and until a pass looks at the lockup `pending`
+     * only means "the record says so" (`funding`, not `funded`).
      */
     const passed = new Set<QuoteId>();
     const delivered = new Map<QuoteId, Outcome>();
@@ -316,21 +262,17 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         return work;
     };
 
-    /** Serial, because two registrations racing would each read the store and
-     * arm, and the second's `start()` would find the first still resolving. */
+    /** Serial: two racing registrations would each read the store and arm. */
     const enqueue = (task: () => Promise<void>): void => {
         queue = queue.then(task).catch((error: unknown) => {
-            // A registration that failed leaves the record durable and
-            // undriven — it reports `accepted`/`funding` and the next restore
-            // picks it up — so this is reported and never rethrown into a
-            // caller who has already been handed their swap.
+            // The record stays durable and the next restore picks it up; never rethrown into a
+            // caller already handed their swap.
             console.warn("[swap] the drive could not register a swap", error);
         });
     };
 
     const idle = async (): Promise<void> => {
-        // Both can grow while they are drained — a registration arms, which
-        // polls, which pushes — so this loops rather than awaiting one snapshot.
+        // Loops: draining can add work (a registration arms, which polls, which pushes).
         do {
             await queue;
             await Promise.allSettled([...inFlight]);
@@ -351,10 +293,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     };
 
     /**
-     * Records this client cannot drive — today, an `arkade -> onchain` swap
-     * whose chain source was refused. Kept out of the manager rather than
-     * admitted to one that would fail them terminally for want of a seam the
-     * caller deliberately withheld.
+     * Records this client cannot drive (an `arkade -> onchain` swap whose chain source was
+     * refused), kept out of a manager that would fail them terminally.
      */
     const undrivable = new Set<QuoteId>();
 
@@ -363,28 +303,18 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         (bridge ??= corridorRecordStore(
             storage(),
             remember,
-            // Terminal records are readable but never driven: excluding them
-            // here is what keeps `restoreFromRepository` from rebuilding each
-            // one — a covenant derivation and a contract row lookup per
-            // record — only to file it in the manager's `finished` set. The
-            // exclusion is on the manager's read, not the record: the drive's
-            // own `records` registry keeps every readable record, and the
-            // index still learns an excluded record's `rfqId` (see
-            // `getAllRfqSwaps`), so a consumer handing its swap to the manager
-            // directly keeps resolving.
+            // Terminal records stay readable but are excluded from the manager's read, sparing
+            // a rebuild per record just to file it `finished`. The index still learns their
+            // `rfqId` (see `getAllRfqSwaps`).
             (r) => !undrivable.has(r.id) && !isRfqSwapTerminal(r.state),
         ));
 
     // ── the outcome ──────────────────────────────────────────────────────────
 
     /**
-     * The three configuration refusals, suppressed outside `drive: "auto"`.
-     *
-     * A client told never to actuate reporting every live swap as needing
-     * recovery would be reporting its own configuration back at the caller. The
-     * swap keeps its pre-action outcome — what `unblock` would restore, which is
-     * what the record can prove and not `pending` unconditionally — and the
-     * reason stays readable as `update.swap.blockedReason`.
+     * The configuration refusals, suppressed outside `drive: "auto"`: a client told not to
+     * actuate would otherwise report its own configuration back as `needs_recovery`. The swap
+     * keeps its pre-action outcome; the reason stays on `update.swap.blockedReason`.
      */
     const effectiveState = (swap: RfqSwap): RfqSwap["state"] => {
         if (mode === "auto") return swap.state;
@@ -394,26 +324,16 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     };
 
     const outcomeOfEntry = (record: SwapRecord, current?: RfqSwap): Outcome => {
-        // The offer family has no live object of its own — its watcher is
-        // event-driven over the store — so past the funding the record IS the
-        // state.
+        // Offers have no live object (the watcher works over the store): the record IS the state.
         if (record.family === "offer") return recordOutcome(record);
-        // A terminal record the restore deliberately did not rebuild has
-        // nothing live behind it, so it answers off its own stored state. This
-        // is the same cell the live path reads (`corridorOutcome` below), not
-        // the record-and-clock projection: `recordOutcome` ignores state and
-        // would report a settled swap as `funding`.
         if (current === undefined) {
+            // Not `recordOutcome` for a terminal record: it ignores state and would report a
+            // settled swap as `funding`.
             if (isRfqSwapTerminal(record.state)) return corridorOutcome(record.kind, record.state);
-            // A live record with nothing behind it has only itself and the
-            // clock to answer with.
             return recordOutcome(record);
         }
         const state = effectiveState(current);
-        // `pending` before any pass is the accept-time word, not an answer: the
-        // record says the funding was broadcast and nothing has looked at the
-        // lockup yet. Once the machine has spoken — a pass ran, or the state
-        // moved off `pending` — it is the machine that answers.
+        // `pending` before any pass is the accept-time word, not an answer.
         if (state === "pending" && !passed.has(record.id)) return recordOutcome(record);
         if (isRfqSwapTerminal(state)) return corridorOutcome(current.kind, state);
         if (
@@ -433,12 +353,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             : { family: "rfq", state: current?.state ?? record.state };
 
     /**
-     * The record's public form.
-     *
-     * The two reason strings come off the LIVE swap when there is one: the
-     * manager sets `blockedReason` and then changes state, and the state change
-     * is what this drive emits on — one write behind the record. Reading the
-     * record there would deliver `needs_recovery` with no reason, and the later
+     * The record's public form. The reason strings come off the LIVE swap: the record lags one
+     * write behind, so reading it would deliver `needs_recovery` with no reason, and the later
      * write would be swallowed by the `(swapId, outcome)` key.
      */
     const publicSwap = (record: SwapRecord, outcome: Outcome, current?: RfqSwap): Swap => {
@@ -476,9 +392,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }
     };
 
-    /** Deliver `id`'s current outcome, unless it is the one already delivered.
-     * The key is the DERIVED outcome, so the legal `claimed -> claimable`
-     * backslide — which produces `funded` twice — emits once. */
+    /** Deliver `id`'s current outcome, unless already delivered. Keyed on the DERIVED outcome,
+     * so the legal `claimed -> claimable` backslide (`funded` twice) emits once. */
     function emit(id: QuoteId): void {
         const update = updateFor(id);
         if (update === undefined) return;
@@ -495,11 +410,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         const id = bridge?.quoteIdOf(rfqId);
         if (id === undefined) return;
         live.set(id, swap);
-        // Any word from the manager about this swap means a pass ran over it.
-        // Marked HERE and not only after the poll returns, because a swap that
-        // transitions mid-pass would otherwise be projected off its record for
-        // one emission — delivering a spurious `funding` between the state it
-        // left and the one it reached.
+        // Marked HERE, not after the poll returns: a mid-pass transition would otherwise emit a
+        // spurious `funding` between the state it left and the one it reached.
         passed.add(id);
         emit(id);
     };
@@ -507,22 +419,12 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     // ── the corridor driver ──────────────────────────────────────────────────
 
     /**
-     * Held by the manager BY REFERENCE, and mutated after construction on
-     * purpose — `contracts` below, `chain` the first time an onchain record
-     * needs it (`resolveOnchain`), `repository` once there is something to
-     * restore from. None of the three is known when the manager is built, and
-     * the alternative is building it later than the callbacks it must already
-     * be reachable from.
-     *
-     * What makes it legal is that `RfqSwapManager` keeps `this.deps = deps` and
-     * reads through it at every use — where its config, one line further down
-     * the same constructor, is COPIED into a new object. That asymmetry is
-     * load-bearing and invisible from there: a refactor that snapshots deps the
-     * way config is already snapshotted takes this drive's onchain support and
-     * its restore with it, silently. The two move together or not at all.
+     * Held by the manager BY REFERENCE and mutated after construction on purpose (`contracts`,
+     * `chain`, `repository` arrive later). Legal only because `RfqSwapManager` reads `this.deps`
+     * at every use while it COPIES its config: a refactor snapshotting deps would silently break
+     * onchain support and restore here.
      */
-    // `contracts` is required by the type but filled by `contractsOf()`, which
-    // every path that can start a pass awaits first.
+    // `contracts` is filled by `contractsOf()`, which every path that can start a pass awaits.
     const managerDeps: Omit<RfqSwapManagerDeps, "contracts"> &
         Partial<Pick<RfqSwapManagerDeps, "contracts">> = { indexer };
     if (config.contracts) managerDeps.contracts = config.contracts;
@@ -543,13 +445,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     });
 
     /**
-     * The L1 seams, resolved the first time a swap that reads them appears.
-     *
-     * `CorridorPass.seams` is what decides: an `arkade -> onchain` swap declares
-     * `chain`, the other two do not, so a client whose onchain deps are
-     * deliberately refused never touches them. A refusal here is reported and
-     * the record is left undriven rather than admitted to a manager that would
-     * fail it terminally for want of a `ChainSource`.
+     * The L1 seams, resolved the first time a swap that reads them (`arkade -> onchain`) appears.
+     * A refusal is reported and the record left undriven. `null` = refused.
      */
     let onchainSeams:
         | { chain: RfqSwapManagerDeps["chain"]; claim?: RfqSwapManagerCallbacks["claimOnchain"] }
@@ -557,24 +454,10 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         | undefined;
 
     /**
-     * The wallet-backed default L1 claim, synthesized when the caller wired
-     * none and the corridor can price one.
-     *
-     * Every input is already the corridor's own: the chain source is the dep
-     * the same resolution just built, the HTLC and the payout script arrive
-     * ON the swap the manager hands back (rebuilt from the record, so they
-     * are the store's word rather than this process's memory), the preimage
-     * comes off the record through the same readers the lightning claim uses,
-     * and the signer is the wallet's payout key — provisioned at quote time
-     * by `provisionRefundKey`, which binds the identity key, so
-     * {@link identityDescriptor} is the descriptor that recovers it. No dep is
-     * invented here: the sole environment input, the fee rate, arrived
-     * resolved (or absent) on the dep record.
-     *
-     * It lives in the drive rather than in `resolveCorridorDeps` because that
-     * is the seam holding wallet, chain and record access together; dep
-     * resolution stays pure, and a synthesized callback belongs beside the
-     * other money-moving callbacks this module wires.
+     * The wallet-backed default L1 claim, synthesized when the caller wired none and the corridor
+     * can price one. HTLC and payout script come off the rebuilt swap (the store's word), the
+     * preimage via the lightning claim's readers, and the signer is the identity key that
+     * `provisionRefundKey` bound at quote time. Lives here so dep resolution stays pure.
      */
     const defaultOnchainClaim = (
         chain: NonNullable<RfqSwapManagerDeps["chain"]>,
@@ -585,23 +468,14 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             if (!record) {
                 throw new Error(`rfq swap ${swap.rfqId} has no stored record to claim from`);
             }
-            // The preimage, through the exact composition the lightning claim
-            // runs: the corridor-owned reader validates the stored hashlock,
-            // and `preimageForSwapRecord` re-derives P against it and checks
-            // the hash — one answer for "this wallet cannot produce P" on
-            // both corridors.
+            // Same composition as the lightning claim: validated hashlock, then P re-derived and
+            // hash-checked.
             const secret = rfqClaimSecretOf(record);
             if (!secret) throw new Error(`rfq swap ${swap.rfqId} carries no claim secret`);
             const preimage = await preimageForSwapRecord(wallet, secret);
 
-            // The payout key signs the HTLC's claim leaf. Quote time binds it
-            // through `provisionRefundKey` — the identity key, by that
-            // function's own contract — so the wallet resolves it back the
-            // same way. The record stored the pubkey (`profile.claimKey`) but
-            // never the descriptor, which is exactly what makes this coupling
-            // honest: identity-key provisioning is a stated invariant, and
-            // the equality check below is what turns a drift in it into a
-            // loud refusal instead of a signature the script rejects.
+            // The record stores the payout pubkey but not its descriptor; the equality check turns
+            // a drift from identity-key provisioning into a loud refusal, not a rejected signature.
             const signer = await contractSigner(wallet, await identityDescriptor(wallet.identity));
             const claimKey = record.profile.claimKey as string | undefined;
             if (typeof claimKey === "string") {
@@ -615,21 +489,12 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 }
             }
             if (!swap.payoutPkScript) {
-                // Optional on the live swap only so records predating its
-                // profile slot still restore; the claim cannot be built
-                // without it and those records predate this callback too.
+                // Optional only so older records still restore; no claim can be built without it.
                 throw new Error(`rfq swap ${swap.rfqId} carries no claim payout script`);
             }
-            // `now` is left to its wall-clock default: the manager decided
-            // WHEN to act, and the claim's own deadline check decides whether
-            // acting is still safe — two clocks, each answering its own
-            // question (the injected `now` is for the drive's windows, not
-            // for a consensus-margin probe that must hold under a test clock
-            // too).
-            // Tracked, like the refund push beside it: the broadcast is a
-            // money-moving promise the manager does not own, so `idle()` and
-            // `dispose()` must drain it rather than release the caller while
-            // it is still going out. `track` adds before the await suspends.
+            // `now` stays wall-clock: the claim's own deadline check is a consensus-margin probe,
+            // not the drive's (injectable) window clock.
+            // Tracked so `idle()`/`dispose()` drain this money-moving broadcast.
             const { txid } = await track(
                 claimOnchainFill(chain, {
                     htlc: swap.htlc,
@@ -648,9 +513,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         if (onchainSeams !== undefined) return onchainSeams !== null;
         try {
             const deps = (await corridors()).get("onchain").deps;
-            // The caller's callback wins; the default needs only the fee rate
-            // — a `claimFeeRateSatVb: null` override, or a network the floor
-            // table does not name, leaves manual mode on purpose.
+            // The caller's callback wins; with no fee rate there is no default (manual mode).
             const claim =
                 deps.claim ??
                 (deps.claimFeeRateSatVb === undefined
@@ -674,6 +537,10 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
     // ── the money-moving half ────────────────────────────────────────────────
 
+    /** The client's own resolved network, so the checkpoint gate's floor is not read off the
+     * response it is checking. @see operatorUnrollScript */
+    const pinnedNetwork = async (): Promise<Network> => getNetwork(await config.network());
+
     const claimLockup: RfqSwapManagerCallbacks["claimLockup"] = async (
         swap,
         vtxos,
@@ -696,27 +563,18 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 preimage: await preimageForSwapRecord(wallet, secret),
                 vtxos,
                 destinationPkScript: ArkAddress.decode(payoutAddress).pkScript,
-                // Passed straight through, both of them: the manager's own value
-                // check decides WHEN to act, `pushClaim`'s decides whether `P` is
-                // published, and it is the one with nothing between it and the
-                // signature.
+                // Passed through: `pushClaim`'s own value check decides whether `P` is published.
                 expectedAmount: swap.expectedAmount,
                 partiallyClaimed,
+                network: await pinnedNetwork(),
             }),
         );
     };
 
     /**
-     * Whether this wallet could refund at all, asked every pass.
-     *
-     * The only thing that clears the manager's `refundRefused` mark, which is
-     * why it is wired rather than omitted: a swap blocked before the right
-     * wallet was attached would otherwise never re-attempt in this process.
-     *
-     * `rfqSignerOf` returns `undefined` for an absent signer and THROWS for a
-     * corrupt one, and the two must not collapse — the manager treats a throw as
-     * a refusal too, but the reason it then carries is the storage error's own
-     * rather than "no local refund is possible".
+     * Whether this wallet could refund at all, asked every pass. The only thing that clears the
+     * manager's `refundRefused` mark, so attaching the right wallet later unblocks the swap.
+     * `rfqSignerOf` THROWS for a corrupt signer; that propagates, keeping the storage error.
      */
     const canRefundArkade: NonNullable<
         AvailableRfqSwapManagerCallbacks["canRefundArkade"]
@@ -747,31 +605,24 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             contracts: lockupSource,
             wallet,
             repository: corridorStore(),
+            network: pinnedNetwork,
         });
         manager.setCallbacks({
             refundArkade: async (swap) => {
                 const id = bridge?.quoteIdOf(swap.rfqId);
                 if (id !== undefined) {
-                    // A push in flight supersedes the last one's sweep report:
-                    // if these outputs are still swept, this attempt says so
-                    // again.
+                    // Supersedes the last sweep report; this attempt re-reports if still swept.
                     swept.delete(id);
                     refunding.add(id);
-                    // The push only happens inside a pass, so reaching here is
-                    // itself the evidence the record-and-clock projection was
-                    // waiting for — without this the swap would still read
-                    // `funding` while its refund was going out.
+                    // A push only happens inside a pass; else it would read `funding` mid-refund.
                     passed.add(id);
                     emit(id);
                 }
                 try {
                     return await track(push(swap));
                 } finally {
-                    // No emission here: every exit from the push moves the
-                    // manager's own state — `refunded`, a block, or a reported
-                    // failure — and each of those emits with the mark already
-                    // cleared. Emitting from the `finally` would deliver a
-                    // backslide out of `refunding` that the next line undoes.
+                    // No emission: every exit moves the manager's state, which emits; emitting here
+                    // would deliver a spurious backslide out of `refunding`.
                     if (id !== undefined) refunding.delete(id);
                 }
             },
@@ -787,19 +638,13 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     const offers = () => (offerSource ??= offerRecordSource(storage(), remember, now));
 
     /**
-     * The offer half of the construction restore: scan the wallet's sent txs
-     * and reconcile every deposit against the store. A deposit no record
-     * claims becomes a record (the store dies with its browser, the funding
-     * tx does not); a funded record `accept()` never stamped gets its txid;
-     * a known deposit gets its fate, spend included, since the watcher never
-     * sees a spend that landed while no client ran. `existingIds` is empty so
-     * every deposit is answered. A live offer's txid stays off the cursor:
-     * its answer can still change. Returns the offer records as they stand,
-     * which is what arming reads.
+     * The offer half of the restore: reconcile every deposit in the wallet's history against the
+     * store. An unclaimed deposit becomes a record (the store can die with its browser; the tx
+     * does not), an unstamped record gets its txid, and a known deposit gets its fate — spends
+     * that landed while no client ran included. A live offer's txid stays off the scan cursor.
      *
-     * `reopen` names one funding txid to re-answer even though the cursor has
-     * it: a `recoverable` deposit is not live, so its txid was marked scanned,
-     * and the pass after `recoverVtxos()` would otherwise skip it.
+     * `reopen` re-answers one scanned txid: a `recoverable` deposit is marked scanned, and the pass
+     * after `recoverVtxos()` would otherwise skip it.
      */
     const restoreOfferDeposits = async (reopen?: string): Promise<OfferSwapRecord[]> => {
         const store = storage();
@@ -809,15 +654,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             wallet.getAddress(),
             config.network(),
         ]);
-        const txs: Tx[] = history.map((tx) => ({
-            // `TxType` is `"SENT"`/`"RECEIVED"`; the scan filters on `"sent"`.
-            type: String(tx.type).toLowerCase(),
-            redeemTxid: tx.key.arkTxid,
-            ...(tx.key.boardingTxid ? { boardingTxid: tx.key.boardingTxid } : {}),
-            ...(tx.key.commitmentTxid ? { roundTxid: tx.key.commitmentTxid } : {}),
-            // The scan reads unix SECONDS; a wallet transaction carries ms.
-            ...(tx.createdAt ? { createdAt: Math.floor(tx.createdAt / 1000) } : {}),
-        }));
+        const txs = history.map(toRestoreTx);
 
         const { hrp, serverPubKey: operatorPubkey } = ArkAddress.decode(address);
         const cursor =
@@ -893,8 +730,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     };
 
     const registerCorridorSwap = async (record: CorridorSwapRecord): Promise<void> => {
-        // `readonly` discovers nothing new: it reports what the restore-read
-        // found, and admitting a swap to the manager is how a pass starts.
+        // `readonly` only reports what the restore-read found; admitting a swap starts a pass.
         if (mode === "readonly") return;
         if (!(await drivable(record))) {
             undrivable.add(record.id);
@@ -905,9 +741,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         const params = await lockupContractParams(contracts, record.lockupAddress);
         const swap = rebuildRfqSwap(stored, params);
         live.set(record.id, swap);
-        // Idempotent: `addSwap` re-admits a swap the manager already holds, and
-        // its immediate poll is the pass a resumed swap may already be past a
-        // deadline for.
+        // Idempotent; its immediate poll matters for a resumed swap already past a deadline.
         await manager.addSwap(swap, rfqSwapOriginOf(stored));
         await markPassed();
         emit(record.id);
@@ -929,26 +763,15 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
     const arm = async (): Promise<void> => {
         if (mode === "readonly" || !startRequested) return;
-        // Nothing to drive and nowhere to write: a client with no repository is
-        // legal and shipped, `ready` resolves, and `accept()` keeps its own
-        // refusal.
         if (!repository) return;
         await contractsOf();
-        // Re-run on every arm, and the seams it reads may have arrived since the
-        // last one. An offer-only client arms before any onchain record exists,
-        // so `onchainSeams` is unresolved and `claimOnchain` is absent from that
-        // first `setCallbacks` — the manager then blocks an onchain swap with
-        // `noClaimOnchainCallback`. Registering an `onchain_send` record
-        // resolves the seam and arms again, and the block lifts on the next
-        // pass. So this is not idempotent-therefore-harmless; it is how the
-        // seam gets wired at all.
+        // Re-run on EVERY arm, not redundant: an early arm lacks `claimOnchain` (the seam is
+        // unresolved until an `onchain_send` record registers), and this is how it gets wired.
         wireCallbacks();
-        // Idempotent both ways: `start()` returns without re-arming when it is
-        // already running, and the watcher is rebuilt only after a `stop()`
-        // dropped it — the one-shot unsubscribe the facade already pays for.
+        // Idempotent: `start()` no-ops when running; the watcher is rebuilt only after `stop()`.
         await manager.start();
         await markPassed();
-        if (!watcher && repository) {
+        if (!watcher) {
             watcher = await watchOfferSwaps({
                 wallet,
                 source: offers(),
@@ -959,41 +782,26 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
     const restore = async (): Promise<void> => {
         if (!repository) return;
-        // The one read `ready` may reject on: a client that cannot read its own
-        // records cannot drive them safely, so nothing proceeds from there.
+        // The one read `ready` may reject on: unreadable records cannot be driven safely.
         const all = await repository.getAllSwapRecords();
         const { corridor, offer } = splitRecords(all.filter(readableRecord));
         for (const record of [...corridor, ...offer]) records.set(record.id, record);
 
-        // Terminal records stay readable but are never driven: indexing one,
-        // probing it and rebuilding it buys nothing — the manager would file
-        // it in `finished` and no callback path a never-admitted swap can
-        // produce reaches the `rfqId -> QuoteId` index. Every readable record
-        // is already in `records` above, so `list()` and the `onUpdate` replay
-        // keep seeing settled swaps; only this driving half narrows.
+        // Terminal records stay in `records` (readable, replayed) but are never driven.
         const liveCorridor = corridor.filter((record) => !isRfqSwapTerminal(record.state));
         const store = corridorStore();
         for (const record of liveCorridor) store.index(record);
 
         if (liveCorridor.length > 0) {
-            // Driving is what reaches the wallet's contract manager and it is
-            // not the repository: a failure there — the wallet cannot hand
-            // over its manager, the registry will not rebuild — skips driving
-            // and is logged, never propagated. The records are readable and
-            // indexed above, so `swaps()` and `list()` keep working and the
-            // next `arm()` retries the same seams. As with arming below,
-            // `ready` rejects on ONE thing: a repository it cannot read.
+            // A contract-manager failure is not a repository failure: logged, never propagated
+            // into `ready`. Records stay readable and the next `arm()` retries.
             try {
                 await contractsOf();
                 for (const record of liveCorridor) {
                     if (!(await drivable(record))) undrivable.add(record.id);
                 }
                 managerDeps.repository = store;
-                // Per-record failures — a covenant that will not derive, a
-                // lockup with no contract row — come back in `failed` and are
-                // reported. A record that cannot be rebuilt still has an
-                // outcome: the drive holds no live swap for it, so it reads
-                // off the record.
+                // Per-record failures come back in `failed`; such a record reads off itself.
                 const result = await manager.restoreFromRepository();
                 for (const swap of result.restored) {
                     const id = store.quoteIdOf(swap.rfqId);
@@ -1010,53 +818,37 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             }
         }
 
-        // After the corridor half, because it is what resolves the contract
-        // registry this needs to retire settled scripts. Its answer is what
-        // arming reads: a rebuilt or moved record is live work.
+        // After the corridor half, which resolves the contract registry this needs.
         let offers = offer;
         try {
             offers = await restoreOfferDeposits();
         } catch (error) {
-            // History and the indexer, not the repository: an outage costs a
-            // deposit its record or label until the next construction, never `ready`.
+            // History/indexer outage, not the repository: never fails `ready`.
             console.warn("[swap] the offer deposit restore did not complete", error);
         }
 
-        // Before arming, so the stream carries what the READ found and not only
-        // what the first pass concluded: a record restored `needs_counterparty`
-        // that the very first pass unblocks would otherwise appear as one
-        // `funded` and the refusal would never have been visible.
+        // Before arming, so a refusal the first pass clears is still visible once.
         emitAll();
         if (mode === "auto" && (await hasLiveWork(offers))) {
             try {
                 await arm();
             } catch (error) {
-                // `ready` rejects on ONE thing: a repository it cannot read.
-                // Arming reaches the wallet's contract manager and the event
-                // stream, and neither failing is evidence about the records —
-                // the swaps stay readable and `start()` can try again.
+                // Not a repository failure, so not `ready`'s; `start()` can try again.
                 console.warn("[swap] the drive could not arm after its restore", error);
             }
         }
-        // And again after it, because the first pass moves swaps the machine
-        // itself reports no transition for: `funding -> funded` is a change in
-        // what has been OBSERVED, not in the manager's state.
+        // Again after: `funding -> funded` is an observation change with no manager transition.
         emitAll();
     };
 
     const ready = (): Promise<void> => (readyPromise ??= restore());
 
     const stop = async (): Promise<void> => {
-        // Registrations first, and this is not politeness: an adoption still on
-        // the queue would arm AFTER the stop, quietly restarting the loop the
-        // caller just released. In-flight money actions are a different case and
-        // are left to run to completion — stop/start is a pause.
+        // Registrations first: a queued adoption would otherwise arm AFTER the stop. In-flight
+        // money actions run to completion — stop/start is a pause.
         await queue;
         await manager.stop();
-        // The manager stays reusable; the watcher's `stop` is the one-shot
-        // unsubscribe, so the next `start()` builds a new one. Contract
-        // registrations are NOT undone — the rows are the wallet's, and dropping
-        // one unwatches a funded lockup.
+        // Contract rows are NOT undone: dropping one unwatches a funded lockup.
         watcher?.stop();
         await watcher?.idle();
         watcher = undefined;
@@ -1095,9 +887,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         records.set(record.id, record);
 
         if (record.family === "rfq") {
-            // Refused up front rather than handed to a round that would silently
-            // drop it — or, worse, fail the whole batch: `recoverVtxos` settles
-            // every recoverable output at once with no CLTV awareness.
+            // `recoverVtxos` has no CLTV awareness: an early attempt could fail the whole batch.
             if (now() < record.refundLocktime) {
                 throw new SwapDriveRefusedError(
                     "refund-window-open",
@@ -1105,15 +895,10 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                     id,
                 );
             }
-            // Off the record, not off a live swap: a record the drive could
-            // not rebuild has no live swap and is exactly the one a caller
-            // reaches for `recover()` with.
+            // Off the record: an unrebuildable one has no live swap and is what `recover()` is for.
             const script = hex.decode(record.lockupPkScript);
             const before = await recoverableAt(script);
             if (before.length === 0) {
-                // Two of the three `needs_recovery` sources are
-                // `needs_counterparty`, which has nothing swept: the money is at
-                // the lockup and the counterparty's move is what ends the swap.
                 throw new SwapDriveRefusedError(
                     "nothing-swept",
                     `swap ${id} has no swept outputs to recover`,
@@ -1121,8 +906,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 );
             }
             const txid = await track((await recoverer()).recoverVtxos());
-            // A settlement txid is not success: the round is capped and its
-            // overflow deferred, so the named lockup is re-read.
+            // Re-read: a settlement txid is not success (see `RecoveryResult.recovered`).
             const after = await recoverableAt(script);
             const still = new Set(after.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`));
             const recovered = before.every((vtxo) => !still.has(`${vtxo.txid}:${vtxo.vout}`));
@@ -1160,9 +944,6 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         start: async () => {
             if (disposed) throw new ClientDisposed("start");
             if (mode === "readonly") {
-                // Silence would be worse: the caller configured a client that
-                // actuates nothing and then asked it to drive, and one of the
-                // two statements has to give.
                 throw new SwapDriveRefusedError(
                     "readonly",
                     'this client is configured drive: "readonly" and will not start a drive loop',
@@ -1174,10 +955,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         },
 
         stop: async () => {
-            // Only what a restore already in flight left behind: `stop()` on a
-            // client nobody has asked a question has nothing to release, and
-            // driving a restore in order to release resources it never took
-            // would be backwards.
+            // Awaits only an in-flight restore; never starts one just to stop.
             await readyPromise?.catch(() => {});
             await stop();
         },
@@ -1186,37 +964,18 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             if (disposed) return;
             disposed = true;
             await stop();
-            // Drained, at the cost of a dispose that is not instant: nothing in
-            // this package takes an `AbortSignal`, so the alternative is
-            // returning while a refund push is mid-flight and calling the
-            // instance terminal while it is still moving money.
+            // Drained (no `AbortSignal` anywhere), so dispose never returns mid-refund-push.
             await idle();
-            // A `restore()` still in flight is in neither `queue` nor
-            // `inFlight`, so nothing above waits for it — only the facade's
-            // `stop` awaits `readyPromise`, and dispose calls the inner `stop`.
-            // Its `emitAll` can therefore deliver between `disposed = true` and
-            // this line: a listener hears from a client whose `dispose()` has
-            // not returned yet. Left as is rather than clearing first —
-            // `deliver` swallows what a listener throws, and clearing before
-            // the drain would silence the last word about a refund that was
-            // still going out.
+            // An in-flight `restore()` is not drained above and may still emit; cleared after the
+            // drain so the last word about an outgoing refund is not silenced.
             listeners.clear();
-            // No repository is closed here. Every repository reaching this
-            // client was opened by its caller — `SwapClientConfig.repository` is
-            // injected on every path today — and the client never closes what it
-            // did not open. The close belongs beside the storage default, on the
-            // milestone that adds one.
+            // No repository is closed: the caller opened it, so the caller closes it.
         },
 
         onUpdate: (fn) => {
             if (disposed) throw new ClientDisposed("onUpdate");
-            // The listener attaches FIRST, and the replay is computed from the
-            // same registry the stream is fed from. Both halves run in one
-            // synchronous turn, so a transition cannot land between them; and
-            // where one is queued behind the replay, the `(swapId, outcome)` key
-            // absorbs the overlap. Attaching second is what loses a swap
-            // silently — the shipped facade's `onUpdate` has no replay at all
-            // and hand-rolls a one-off dedupe at admit time instead.
+            // Attach FIRST, then replay, in one synchronous turn: no transition can land between
+            // them, and the `(swapId, outcome)` key absorbs overlap. Attaching second loses swaps.
             listeners.add(fn);
             for (const id of records.keys()) {
                 const update = updateFor(id);
@@ -1224,8 +983,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 delivered.set(id, update.outcome);
                 deliver(update, [fn]);
             }
-            // A subscriber is a reason to restore: without this a client whose
-            // only call is `onUpdate` would report an empty world forever.
+            // A subscriber triggers the restore, or an `onUpdate`-only client sees nothing.
             void ready().catch(() => {});
             return () => {
                 listeners.delete(fn);

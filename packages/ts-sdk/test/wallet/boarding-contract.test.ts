@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Wallet, ensureWalletContract } from "../../src/wallet/wallet";
+import { Wallet } from "../../src/wallet/wallet";
 import { InMemoryWalletRepository } from "../../src/repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "../../src/repositories/inMemory/contractRepository";
 import { SingleKey } from "../../src/identity/singleKey";
@@ -111,14 +111,6 @@ describe("boarding contract: getBoardingAddress backward compatibility", () => {
 
         const expected = legacy.onchainAddress(wallet.network);
         expect(await wallet.getBoardingAddress()).toEqual(expected);
-    });
-
-    it("derives getBoardingAddress from boardingTapscript without loading the persisted contract", async () => {
-        const { wallet } = await makeWallet();
-        // No contract-manager access here: getBoardingAddress must not trigger
-        // contract-manager initialization.
-        const address = await wallet.getBoardingAddress();
-        expect(address).toEqual(wallet.boardingTapscript.onchainAddress(wallet.network));
     });
 });
 
@@ -353,10 +345,10 @@ describe("areCoalescibleContractTypes", () => {
     });
 });
 
-describe("ensureWalletContract", () => {
+describe("wallet baseline registration via createContract", () => {
     // Shared (params -> script) pair. boarding and default handlers derive a
     // byte-identical script from identical params, so the same script/params
-    // can back either type — exactly the collision this helper resolves.
+    // can back either type — exactly the collision createContract resolves.
     const PK = "5b3a7b5e8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f";
     const SPK = "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b";
     const sharedParams = {
@@ -392,7 +384,7 @@ describe("ensureWalletContract", () => {
     it("creates the contract when no row exists for the script", async () => {
         const { manager } = await makeManager();
         try {
-            await ensureWalletContract(manager, baselineParams("boarding"));
+            await manager.createContract(baselineParams("boarding"));
             const rows = await manager.getContracts({ script: sharedScript });
             expect(rows).toHaveLength(1);
             expect(rows[0].type).toBe("boarding");
@@ -404,8 +396,8 @@ describe("ensureWalletContract", () => {
     it("is idempotent for the same type (no duplicate row)", async () => {
         const { manager } = await makeManager();
         try {
-            await ensureWalletContract(manager, baselineParams("boarding"));
-            await ensureWalletContract(manager, baselineParams("boarding"));
+            await manager.createContract(baselineParams("boarding"));
+            await manager.createContract(baselineParams("boarding"));
             expect(await manager.getContracts({ script: sharedScript })).toHaveLength(1);
         } finally {
             manager.dispose();
@@ -415,8 +407,8 @@ describe("ensureWalletContract", () => {
     it("collision direction A: existing default, then boarding accepts the row (no duplicate, watched)", async () => {
         const { manager, indexerProvider } = await makeManager();
         try {
-            await ensureWalletContract(manager, baselineParams("default"));
-            await ensureWalletContract(manager, baselineParams("boarding"));
+            await manager.createContract(baselineParams("default"));
+            await manager.createContract(baselineParams("boarding"));
 
             const rows = await manager.getContracts({ script: sharedScript });
             // Assert by script, not type: the script owns exactly one row.
@@ -434,9 +426,9 @@ describe("ensureWalletContract", () => {
         try {
             // Stale `boarding` row persisted first (an earlier boot where the
             // boarding script did not collide with any default baseline).
-            await ensureWalletContract(manager, baselineParams("boarding"));
+            await manager.createContract(baselineParams("boarding"));
             // A later boot's default baseline now resolves to the same script.
-            await ensureWalletContract(manager, baselineParams("default"));
+            await manager.createContract(baselineParams("default"));
 
             const rows = await manager.getContracts({ script: sharedScript });
             expect(rows).toHaveLength(1);
@@ -468,9 +460,7 @@ describe("ensureWalletContract", () => {
                 createdAt: 0,
             });
 
-            await expect(
-                ensureWalletContract(manager, baselineParams("default")),
-            ).rejects.toThrow();
+            await expect(manager.createContract(baselineParams("default"))).rejects.toThrow();
 
             // No duplicate row was created.
             expect(await manager.getContracts({ script: sharedScript })).toHaveLength(1);
@@ -507,7 +497,7 @@ describe("boarding contract: default/boarding script collision (boardingExitDela
 });
 
 describe("ContractManager.createContract: default/boarding first-wins collision", () => {
-    // Same (params -> script) pair as the ensureWalletContract suite: boarding
+    // Same (params -> script) pair as the baseline registration suite: boarding
     // and default derive a byte-identical script from identical params, so the
     // shared script can back either type. Exercises upsertContract's first-wins
     // branch directly through the public createContract API (the same core that

@@ -14,8 +14,10 @@ import {
     CSVMultisigTapscript,
     SingleKey,
     Transaction,
+    getNetwork,
     type ArkProvider,
     type IWallet,
+    type Network,
 } from "@arkade-os/sdk";
 
 import { lightningSendContract } from "../src/rfq";
@@ -56,7 +58,11 @@ const CHECKPOINT_TAPSCRIPT = hex.encode(
 
 const fakeOperator = (): ArkProvider =>
     ({
-        getInfo: async () => ({ checkpointTapscript: CHECKPOINT_TAPSCRIPT }),
+        getInfo: async () => ({
+            checkpointTapscript: CHECKPOINT_TAPSCRIPT,
+            network: "regtest",
+            forfeitPubkey: hex.encode(key(3)),
+        }),
         submitTx: async (tx: string, checkpoints: string[]) => ({
             arkTxid: Transaction.fromPSBT(base64.decode(tx)).id,
             finalArkTx: tx,
@@ -129,6 +135,7 @@ const refunderWith = async (
         contracts?: ReturnType<typeof fakeContracts>;
         stored?: RfqSwapRecord | null;
         wallet?: IWallet;
+        network?: () => Promise<Network>;
     } = {},
 ) => {
     const repository = new InMemoryAssetSwapRepository();
@@ -139,6 +146,7 @@ const refunderWith = async (
         contracts: input.contracts ?? fakeContracts({ unspent: FUNDED }),
         wallet: input.wallet ?? walletFor(),
         repository,
+        ...(input.network ? { network: input.network } : {}),
     });
 };
 
@@ -149,6 +157,11 @@ describe("arkadeRefunder", () => {
 
         expect(result?.amount).toBe(60_000);
         expect(result?.txid).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it("floors the checkpoint script against the caller's network, not the operator's", async () => {
+        const refund = await refunderWith({ network: async () => getNetwork("bitcoin") });
+        await expect(refund(swap())).rejects.toThrow(/checkpoint exit delay rejected/);
     });
 
     it("returns null for an empty lockup, which is not a failure", async () => {

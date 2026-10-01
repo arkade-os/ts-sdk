@@ -1,3 +1,13 @@
+import { hex } from "@scure/base";
+
+export function hexOrThrow(s: string, message: string): Uint8Array {
+    try {
+        return hex.decode(s);
+    } catch {
+        throw new Error(message);
+    }
+}
+
 export class BufferWriter {
     private buffer: number[] = [];
 

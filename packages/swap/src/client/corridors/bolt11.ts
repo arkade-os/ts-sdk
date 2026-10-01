@@ -1,60 +1,36 @@
 /**
- * The built-in BOLT11 decoder.
+ * The built-in BOLT11 decoder, producing v1's {@link InvoiceFacts}. Shipped rather than injected
+ * (NArk decides it the same way); `CorridorOverrides.lightning.decode` still overrides it.
  *
- * Shipped rather than injected, with the override kept: §4 promises the caller
- * passes a bolt11 string and the corridor decodes it, which is false for every
- * integrator under a `decodeInvoice` callback, and NArk decides it the same way
- * — `BOLT11PaymentRequest.Parse(invoice, network)` is a library decode. Core
- * still carries no bolt11 dependency; this one belongs to the swap package.
+ * - **Expiry is absolute.** The library's `expiry` is the `x` tag's RELATIVE seconds, so the
+ *   timestamp is added here, with BOLT11's 3600 s default when the tag is absent.
+ * - **Millisats convert through `bigint`**: `Number(millisats) / 1000` loses precision past 2^53.
+ * - **An amountless invoice reports `0`**, v1's spelling (gates read `<= 0`, not nullish).
  *
- * What it produces is v1's {@link InvoiceFacts}, unchanged, because that is the
- * shape `CorridorOverrides.lightning.decode` is declared in and the shape
- * `verifyReceiveInvoice` already reads. Two conversions the deleted
- * `boltz-swap` decoder made are corrected here, and a third is left to the
- * module boundary:
- *
- * - **Expiry is absolute.** The library's `expiry` getter is the `x` tag's
- *   RELATIVE seconds (its own absolute getter is overwritten by the tag loop
- *   right after it is defined), so the timestamp is added here and BOLT11's
- *   3600-second default applies when the tag is absent.
- * - **Millisats convert through `bigint`.** `Number(millisats) / 1000` loses
- *   precision past 2^53; the division happens in `bigint` and narrows after.
- * - **An amountless invoice reports `0`**, which is how v1 spells it
- *   (`verifyReceiveInvoice` gates on `amountSats <= 0`). Turning that into
- *   `amount: undefined` on the instrument, and refusing it on a send route, is
- *   the lightning module's job.
- *
- * A missing payment hash is a throw and not a `?? ""`: the `p` tag is required
- * by BOLT11, `Hex` is a bare alias, and an empty hash would typecheck onto the
- * invoice instrument and then be compared byte-for-byte downstream.
+ * A missing payment hash throws rather than `?? ""`: an empty hash would typecheck onto the
+ * instrument and then be compared byte-for-byte downstream.
  */
 import bolt11 from "light-bolt11-decoder";
 import type { InvoiceFacts } from "../../rfq";
+import { PAYMENT_HASH } from "./lightning";
 
 /** BOLT11's default expiry when an invoice carries no `x` tag. */
 export const DEFAULT_INVOICE_EXPIRY_SECONDS = 3600;
 
 /**
- * One section lookup, over a widened view of the decoder's output.
- *
- * `light-bolt11-decoder` types `sections` as a union whose arms disagree about
- * `value`, and it emits tags the union does not name at all (`description_hash`
- * is the known one). One widening at the boundary beats a cast per lookup.
+ * One section lookup over a widened view: the decoder's `sections` union disagrees about `value`
+ * and omits tags it emits (`description_hash`).
  */
 const valueOf = (decoded: { sections: readonly unknown[] }, name: string): unknown =>
     (decoded.sections as readonly { name: string; value?: unknown }[]).find(
         (section) => section.name === name,
     )?.value;
 
-/** `sha256(P)` as {@link InvoiceFacts} declares it: 64 lowercase hex chars. */
-const PAYMENT_HASH = /^[0-9a-f]{64}$/;
-
 /**
  * Decode a BOLT11 invoice into the facts the corridor needs.
  *
- * Signature-blind, like the library: nothing here proves the invoice was issued
- * by whoever offered it. What it does prove is that the payment hash the
- * corridor will compare against is the one the payer would pay to.
+ * Signature-blind, like the library: it does not prove who issued the invoice, only that the
+ * payment hash compared downstream is the one the payer would pay to.
  *
  * @throws when the string is not a decodable BOLT11 invoice, or decodes without
  *   the timestamp or payment hash BOLT11 requires.
@@ -75,9 +51,6 @@ export const decodeBolt11 = (invoice: string): InvoiceFacts => {
         throw new Error("bolt11 invoice carries no payment hash");
     }
 
-    // Absent for an amountless invoice, which BOLT11 permits and which lets a
-    // payer pay anything. `0` is how v1 spells that, and every gate above this
-    // one reads `<= 0` rather than a nullish check.
     const millisats = valueOf(decoded, "amount");
     const amountSats =
         typeof millisats === "string" ? Number(BigInt(millisats) / 1000n) : /* amountless */ 0;

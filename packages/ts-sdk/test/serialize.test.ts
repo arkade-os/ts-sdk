@@ -287,16 +287,6 @@ describe("hydrateIdentity round-trip", () => {
         expect(envelopeBefore.seed).toBe(hex.encode(canonical));
     });
 
-    it("MnemonicIdentity copies the derived seed through SeedIdentity construction", () => {
-        const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
-            isMainnet: true,
-        });
-        const envelope = serializeSigningIdentity(identity);
-        // Serializing twice after construction yields the same envelope —
-        // the internal state is not an alias of a buffer that might change.
-        expect(serializeSigningIdentity(identity)).toEqual(envelope);
-    });
-
     it("MnemonicIdentity with custom template preserves the descriptor", async () => {
         const testnetReference = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: false,

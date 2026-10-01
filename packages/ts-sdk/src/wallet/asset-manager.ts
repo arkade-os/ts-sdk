@@ -1,7 +1,9 @@
 import {
+    Asset,
     AssetDetails,
     AssetMetadata,
     BurnParams,
+    ExtendedVirtualCoin,
     IAssetManager,
     IReadonlyAssetManager,
     IssuanceParams,
@@ -108,16 +110,7 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
             const assetInputs = selectedCoinsToAssetInputs(coinSelection.inputs);
 
             for (const [assetId, amount] of assetChanges) {
-                const changeInputs: AssetInput[] = [];
-
-                // collect all inputs for the asset change
-                for (const [inputIndex, assets] of assetInputs) {
-                    for (const asset of assets) {
-                        if (asset.assetId !== assetId) continue;
-                        changeInputs.push(AssetInput.create(inputIndex, asset.amount));
-                    }
-                }
-
+                const changeInputs = inputsForAsset(assetInputs, assetId);
                 // add the change asset group
                 groups.push(
                     AssetGroup.create(
@@ -131,20 +124,11 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
             }
         }
 
-        // build transaction outputs
-        const address = await this.wallet.getAddress();
-        const outputAddress = ArkAddress.decode(address);
-        const outputs = [
-            {
-                script: outputAddress.pkScript,
-                amount: BigInt(totalBtcSelected),
-            },
-            Extension.create([Packet.create(groups)]).txOut(),
-        ];
-
-        const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(
+        const arkTxid = await submitToSelf(
+            this.wallet,
             coinSelection.inputs,
-            outputs,
+            totalBtcSelected,
+            groups,
         );
         return {
             arkTxId: arkTxid,
@@ -231,15 +215,7 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
         }
 
         const assetInputs = selectedCoinsToAssetInputs(selectedCoins);
-
-        // collect all inputs for the asset to reissue
-        const reissueInputs: AssetInput[] = [];
-        for (const [inputIndex, assets] of assetInputs) {
-            for (const asset of assets) {
-                if (asset.assetId !== params.assetId) continue;
-                reissueInputs.push(AssetInput.create(inputIndex, asset.amount));
-            }
-        }
+        const reissueInputs = inputsForAsset(assetInputs, params.assetId);
 
         // the total output amount of the asset to reissue = new + (optional) selected amount
         const totalAssetAmount = assetToReissueAmount + params.amount;
@@ -258,13 +234,7 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
 
         // for each asset change, create a new asset group
         for (const [assetId, amount] of assetChanges) {
-            const changeInputs: AssetInput[] = [];
-            for (const [inputIndex, assets] of assetInputs) {
-                for (const asset of assets) {
-                    if (asset.assetId !== assetId) continue;
-                    changeInputs.push(AssetInput.create(inputIndex, asset.amount));
-                }
-            }
+            const changeInputs = inputsForAsset(assetInputs, assetId);
             groups.push(
                 AssetGroup.create(
                     AssetId.fromString(assetId),
@@ -276,19 +246,7 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
             );
         }
 
-        // build transaction outputs
-        const address = await this.wallet.getAddress();
-        const outputAddress = ArkAddress.decode(address);
-        const outputs = [
-            {
-                script: outputAddress.pkScript,
-                amount: BigInt(totalBtcSelected),
-            },
-            Extension.create([Packet.create(groups)]).txOut(),
-        ];
-
-        const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(selectedCoins, outputs);
-        return arkTxid;
+        return submitToSelf(this.wallet, selectedCoins, totalBtcSelected, groups);
     }
 
     /**
@@ -368,13 +326,7 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
 
         // for each asset, create a new asset group
         for (const [assetId, amount] of assetChanges) {
-            const changeInputs: AssetInput[] = [];
-            for (const [inputIndex, assets] of assetInputs) {
-                for (const asset of assets) {
-                    if (asset.assetId !== assetId) continue;
-                    changeInputs.push(AssetInput.create(inputIndex, asset.amount));
-                }
-            }
+            const changeInputs = inputsForAsset(assetInputs, assetId);
             groups.push(
                 AssetGroup.create(
                     AssetId.fromString(assetId),
@@ -386,20 +338,34 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
             );
         }
 
-        // build transaction outputs
-        const address = await this.wallet.getAddress();
-        const outputAddress = ArkAddress.decode(address);
-        const outputs = [
-            {
-                script: outputAddress.pkScript,
-                amount: BigInt(totalBtcSelected),
-            },
-            Extension.create([Packet.create(groups)]).txOut(),
-        ];
-
-        const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(selectedCoins, outputs);
-        return arkTxid;
+        return submitToSelf(this.wallet, selectedCoins, totalBtcSelected, groups);
     }
+}
+
+function inputsForAsset(assetInputs: Map<number, Asset[]>, assetId: string): AssetInput[] {
+    const inputs: AssetInput[] = [];
+    for (const [inputIndex, assets] of assetInputs) {
+        for (const asset of assets) {
+            if (asset.assetId !== assetId) continue;
+            inputs.push(AssetInput.create(inputIndex, asset.amount));
+        }
+    }
+    return inputs;
+}
+
+async function submitToSelf(
+    wallet: Wallet,
+    inputs: ExtendedVirtualCoin[],
+    amount: number | bigint,
+    groups: AssetGroup[],
+): Promise<string> {
+    const outputAddress = ArkAddress.decode(await wallet.getAddress());
+    const outputs = [
+        { script: outputAddress.pkScript, amount: BigInt(amount) },
+        Extension.create([Packet.create(groups)]).txOut(),
+    ];
+    const { arkTxid } = await wallet.buildAndSubmitOffchainTx(inputs, outputs);
+    return arkTxid;
 }
 
 function castMetadata(metadata?: AssetMetadata): Metadata[] {

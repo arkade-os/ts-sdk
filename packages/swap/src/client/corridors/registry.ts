@@ -1,16 +1,10 @@
 /**
- * The registry: three modules, keyed on the corridor, and the one place a
- * destination string becomes a corridor plus an instrument.
+ * The registry: the one place a destination string becomes a corridor plus an instrument.
  *
- * Keyed on `Corridor` and not `CorridorId`, deliberately.
- * `noUncheckedIndexedAccess` is off in this workspace, so a `CorridorId`-keyed
- * record types an `eip155:` lookup as present and hands back `undefined` at
- * runtime — the EVM corridor is deferred and its absence should be a type
- * error, not a null deref three layers down.
- *
- * Internal, exactly as v1's kind-keyed registry argues: a corridor registered
- * from outside would parse, quote, persist and restore correctly and then sit
- * undriven, which is worse than not being registrable at all.
+ * Keyed on `Corridor`, not `CorridorId`: `noUncheckedIndexedAccess` is off, so a
+ * `CorridorId`-keyed record would type an `eip155:` lookup as present and return `undefined` at
+ * runtime. Internal, because an externally registered corridor would parse, quote, persist and
+ * restore, then sit undriven.
  */
 import { isLnurl } from "@arkade-os/sdk";
 import { CORRIDORS, type Corridor } from "../corridor";
@@ -36,19 +30,15 @@ export const CORRIDOR_FACTORIES = {
 } as const satisfies { [C in Corridor]: CorridorFactory<CorridorDepsByCorridor[C]> };
 
 /** What a destination resolves to: the corridor that claimed it, and how it
- * settles. No asset — no destination class carries one, since every Arkade
- * asset shares a single address form. */
+ * settles. No asset — every Arkade asset shares a single address form. */
 export interface ClaimedDestination {
     corridor: Corridor;
     instrument: Instrument;
 }
 
 /**
- * The corridors of one client, with deps resolved on first use.
- *
- * The laziness is the contract: `resolveCorridorDeps` throws
- * `MissingCorridorDep` for a dep overridden to `null`, and a missing dep for a
- * corridor nobody uses is not an error.
+ * The corridors of one client, with deps resolved lazily on first use, so a dep overridden to
+ * `null` on a corridor nobody uses is not an error.
  */
 export interface CorridorSet {
     /** The module for `corridor`, resolving and memoizing its deps on the first
@@ -76,12 +66,8 @@ export const corridorSet = (base: CorridorBase, overrides?: CorridorOverrides): 
     const get = <C extends Corridor>(corridor: C): CorridorModule<CorridorDepsByCorridor[C]> => {
         const memoized = built.get(corridor);
         if (memoized) return memoized as CorridorModule<CorridorDepsByCorridor[C]>;
-        // The `satisfies` above pins every factory to its own dep record and
-        // `resolveCorridorDeps` returns exactly that record for the same `C`.
-        // TypeScript will not correlate two indexed accesses through one type
-        // parameter, so the pairing is asserted here — at the single place it
-        // is needed, and against a `satisfies` that fails to compile if a
-        // factory and its deps ever stop agreeing.
+        // TS won't correlate two indexed accesses through one type parameter; the `satisfies`
+        // on CORRIDOR_FACTORIES is what keeps this cast honest.
         const factory = CORRIDOR_FACTORIES[corridor] as unknown as CorridorFactory<
             CorridorDepsByCorridor[C]
         >;
@@ -93,20 +79,14 @@ export const corridorSet = (base: CorridorBase, overrides?: CorridorOverrides): 
     return {
         get,
         claim(raw: string): ClaimedDestination | undefined {
-            // Which corridors this string is even the business of, decided with
-            // no deps at all: `CorridorFactory.target` is core's own classifier,
-            // the same one the module extracts with. Asking first is what keeps
-            // a `null` override on an unused corridor from throwing.
+            // Classify with no deps first, so a `null` override on an unused corridor can't throw.
             const owners = CORRIDORS.filter(
                 (corridor) => CORRIDOR_FACTORIES[corridor].target(raw) !== undefined,
             );
 
             if (owners.length === 0) {
-                // Core classifies it and no corridor serves it: leave it
-                // unclaimed, and let route resolution name it `UnsupportedRoute`
-                // — which is the fault, where "ambiguous" would not be.
+                // Unclaimed, so route resolution names it `UnsupportedRoute`, the real fault.
                 if (isLnurl(raw)) return undefined;
-                // Nothing classifies it at all — `0x…` is the realizable case.
                 throw new AmbiguousDestination(raw, "no corridor recognises this destination");
             }
 
@@ -119,12 +99,9 @@ export const corridorSet = (base: CorridorBase, overrides?: CorridorOverrides): 
             }
 
             if (claims.length > 1) {
-                // Core resolves a multi-target URI by rail priority and chooses
-                // in silence, which is safe for core: its rails are
-                // interchangeable and `RouteQuote`'s amounts are receiver-exact,
-                // so a swapped rail changes nothing the recipient gets. A route
-                // choice here changes which asset moves and against which
-                // counterparty, so it is refused instead.
+                // Core silently picks a multi-target URI's rail by priority, safe there because
+                // its rails are interchangeable. Here the choice changes which asset moves and
+                // against which counterparty, so it is refused.
                 throw new AmbiguousDestination(
                     raw,
                     `it names ${claims.map((claim) => claim.corridor).join(" and ")}, ` +
@@ -133,8 +110,7 @@ export const corridorSet = (base: CorridorBase, overrides?: CorridorOverrides): 
             }
             if (claims.length === 1) return claims[0];
             if (refusals.length > 0) throw new AmbiguousDestination(raw, refusals.join("; "));
-            // The classifier took it and the module answered neither — which
-            // only happens if a module's `target` and its `matches` disagree.
+            // Only reachable if a module's `target` and `matches` disagree.
             return undefined;
         },
     };

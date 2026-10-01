@@ -15,7 +15,9 @@ import {
 } from "../../src/repositories/indexedDB/schema";
 import { IndexedDBWalletRepository } from "../../src/repositories/indexedDB/walletRepository";
 import { SQLiteWalletRepository } from "../../src/repositories/sqlite/walletRepository";
+import { legacyVtxoFacts } from "../../src/repositories/legacyVtxoFacts";
 import type { SQLExecutor } from "../../src/repositories/sqlite/types";
+import { createMockVtxo } from "./helpers";
 
 // Deterministic Ark address to exercise the real bech32m decode path in
 // the backfill helper — using "test-address-123" everywhere else is fine
@@ -629,6 +631,9 @@ describe("SQLite migration: migrateVtxosTable", () => {
         "script TEXT, PRIMARY KEY (txid, vout)",
     );
 
+    // 0.4.x fresh install: `script` already NOT NULL, so the v1 check fires with the blob present.
+    const LEGACY_V04_SCHEMA = LEGACY_V0B_SCHEMA.replace("script TEXT,", "script TEXT NOT NULL,");
+
     function createExecutor(db: Database.Database): SQLExecutor {
         return {
             async run(sql: string, params?: unknown[]) {
@@ -673,6 +678,22 @@ describe("SQLite migration: migrateVtxosTable", () => {
                 status_json, virtual_status_json, created_at, script
             ) VALUES (?, 0, 1000, ?, '', '', '', '', '', '{}', '{}', '2024-01-01', ?)`,
         ).run(txid, address, script);
+    }
+
+    function insertV04Row(
+        db: Database.Database,
+        txid: string,
+        address: string,
+        script: string,
+        virtualStatus: Record<string, unknown>,
+    ) {
+        db.prepare(
+            `INSERT INTO ark_vtxos (
+                txid, vout, value, address, tap_tree,
+                forfeit_cb, forfeit_s, intent_cb, intent_s,
+                status_json, virtual_status_json, created_at, script
+            ) VALUES (?, 0, 1000, ?, '', '', '', '', '', '{}', ?, '2024-01-01', ?)`,
+        ).run(txid, address, JSON.stringify(virtualStatus), script);
     }
 
     function vtxosCols(db: Database.Database): Array<{ name: string; notnull: number }> {
@@ -791,6 +812,97 @@ describe("SQLite migration: migrateVtxosTable", () => {
         expect(tempTableExists(db)).toBe(false);
     });
 
+    it("rebuilds away the legacy blob so saveVtxos works (0.4.x → v1)", async () => {
+        db.exec(LEGACY_V04_SCHEMA);
+        const blob = { state: "swept", commitmentTxIds: ["c1"], batchExpiry: 1_800_000_000_000 };
+        insertV04Row(db, "legacy-swept", TEST_ARK_ADDRESS, EXPECTED_PK_SCRIPT_HEX, blob);
+
+        await repo.saveVtxos(TEST_ARK_ADDRESS, [createMockVtxo("fresh-1", 0, 2000)]);
+
+        expect(vtxosCols(db).some((c) => c.name === "virtual_status_json")).toBe(false);
+        expect(db.prepare(`SELECT txid FROM ark_vtxos ORDER BY txid`).all()).toEqual([
+            { txid: "fresh-1" },
+            { txid: "legacy-swept" },
+        ]);
+        expect(tempTableExists(db)).toBe(false);
+
+        // The blob is gone, so its state has to have reached the canonical columns first.
+        const facts = legacyVtxoFacts(JSON.stringify(blob))!;
+        expect(
+            db
+                .prepare(
+                    `SELECT is_swept, is_spent, is_preconfirmed, commitment_txids_json,
+                            expires_at, expires_at_height
+                     FROM ark_vtxos WHERE txid = 'legacy-swept'`,
+                )
+                .get(),
+        ).toEqual({
+            is_swept: facts.isSwept ? 1 : 0,
+            is_spent: facts.isSpent ? 1 : 0,
+            is_preconfirmed: facts.isPreconfirmed ? 1 : 0,
+            commitment_txids_json: JSON.stringify(facts.commitmentTxIds),
+            expires_at: facts.expiresAt!.toISOString(),
+            expires_at_height: null,
+        });
+    });
+
+    it("leaves an already-rebuilt 0.4.x table untouched on the next open", async () => {
+        db.exec(LEGACY_V04_SCHEMA);
+        insertV04Row(db, "legacy-1", TEST_ARK_ADDRESS, EXPECTED_PK_SCRIPT_HEX, { state: "swept" });
+        await repo.getWalletState();
+
+        const before = db.prepare(`SELECT rowid, * FROM ark_vtxos`).get();
+        await new SQLiteWalletRepository(executor).getWalletState();
+
+        expect(db.prepare(`SELECT rowid, * FROM ark_vtxos`).get()).toEqual(before);
+        expect(tempTableExists(db)).toBe(false);
+    });
+
+    it("keeps canonical columns a pre-fix v0.5 build already populated", async () => {
+        // The broken build added the columns but kept the blob; values written since then (e.g.
+        // an indexer sync) must survive the rebuild rather than be re-derived from the stale blob.
+        db.exec(LEGACY_V04_SCHEMA);
+        for (const [name, type] of [
+            ["is_swept", "INTEGER"],
+            ["is_preconfirmed", "INTEGER"],
+            ["commitment_txids_json", "TEXT"],
+            ["expires_at", "TEXT"],
+            ["expires_at_height", "INTEGER"],
+        ]) {
+            db.exec(`ALTER TABLE ark_vtxos ADD COLUMN ${name} ${type}`);
+        }
+        insertV04Row(db, "synced-1", TEST_ARK_ADDRESS, EXPECTED_PK_SCRIPT_HEX, {
+            state: "swept",
+            commitmentTxIds: ["stale"],
+            batchExpiry: 1_800_000_000_000,
+        });
+        db.prepare(
+            `UPDATE ark_vtxos SET is_swept = 0, is_preconfirmed = 1,
+                    commitment_txids_json = '["c2"]', expires_at = '2030-01-01T00:00:00.000Z',
+                    expires_at_height = NULL
+             WHERE txid = 'synced-1'`,
+        ).run();
+
+        await repo.saveVtxos(TEST_ARK_ADDRESS, [createMockVtxo("fresh-1", 0, 2000)]);
+
+        expect(vtxosCols(db).some((c) => c.name === "virtual_status_json")).toBe(false);
+        expect(
+            db
+                .prepare(
+                    `SELECT is_swept, is_preconfirmed, commitment_txids_json, expires_at,
+                            expires_at_height
+                     FROM ark_vtxos WHERE txid = 'synced-1'`,
+                )
+                .get(),
+        ).toEqual({
+            is_swept: 0,
+            is_preconfirmed: 1,
+            commitment_txids_json: '["c2"]',
+            expires_at: "2030-01-01T00:00:00.000Z",
+            expires_at_height: null,
+        });
+    });
+
     it("recovers canonical facts from virtual_status_json", async () => {
         // `ALTER TABLE ADD COLUMN` leaves every existing row NULL, and SQLite cannot drop the old
         // blob column — so it is still there to read. Without the copy a swept row reads
@@ -843,10 +955,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
     });
 
     it("does not re-run the facts backfill over a row it already wrote", async () => {
-        // The v1 rebuild drops the blob, so re-running is only possible on a v1 DB that kept it —
-        // and there a later column addition would otherwise let the lossier projection overwrite
-        // what an indexer sync has since corrected.
-        db.exec(LEGACY_V0B_SCHEMA.replace("script TEXT,", "script TEXT NOT NULL,"));
+        db.exec(LEGACY_V04_SCHEMA);
         db.prepare(
             `INSERT INTO ark_vtxos (
                 txid, vout, value, address, tap_tree,
@@ -860,10 +969,14 @@ describe("SQLite migration: migrateVtxosTable", () => {
             (db.prepare(`SELECT is_swept FROM ark_vtxos`).get() as { is_swept: number }).is_swept,
         ).toBe(1);
 
-        // The blob still says swept; a later sync said otherwise. Drop a canonical column so the
-        // next init re-enters the backfill, and check it leaves the corrected value alone.
+        // The blob still says swept; a later sync said otherwise. Restoring the blob and dropping
+        // a canonical column re-enters the backfill — which must not overwrite the correction.
         db.prepare(`UPDATE ark_vtxos SET is_swept = 0`).run();
         db.exec(`ALTER TABLE ark_vtxos DROP COLUMN expires_at_height`);
+        db.exec(`ALTER TABLE ark_vtxos ADD COLUMN virtual_status_json TEXT`);
+        db.prepare(`UPDATE ark_vtxos SET virtual_status_json = ?`).run(
+            JSON.stringify({ state: "swept" }),
+        );
         await new SQLiteWalletRepository(executor).getWalletState();
 
         expect(

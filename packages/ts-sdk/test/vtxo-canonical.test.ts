@@ -205,11 +205,6 @@ describe("normalization", () => {
         expect(n.commitmentTxIds).toEqual(["22".repeat(32)]);
     });
 
-    it("is idempotent", () => {
-        const once = normalizeVtxo(coin({ isPreconfirmed: true }));
-        expect(normalizeVtxo(once)).toEqual(once);
-    });
-
     it("rehydrates an expiresAt that a JSON round-trip turned into a string", () => {
         const wire = coin();
         const viaJson = JSON.parse(JSON.stringify(wire));

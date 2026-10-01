@@ -3,9 +3,7 @@ import { SignedIntent } from "./ark";
 import { baseFetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
 
-/**
- * Delegate identity and fee information returned by `getDelegateInfo`.
- */
+/** Delegate identity and fee information returned by `getDelegateInfo`. */
 export interface DelegateInfo {
     /** Delegate public key. */
     pubkey: string;
@@ -15,30 +13,23 @@ export interface DelegateInfo {
     delegateAddress: string;
 }
 
-/**
- * Optional delegate behavior flags.
- */
+/** Optional delegate behavior flags. */
 export interface DelegateOptions {
     /**
-     * Instruct the delegate not to replace an existing delegation
-     * (meaning a signed register intent and its forfeit transactions)
-     * that already includes at least one virtual output from this request.
+     * Tell the delegate not to replace an existing delegation (signed register intent + its
+     * forfeits) that already includes at least one virtual output from this request.
      *
      * @defaultValue `false`
      */
     rejectReplace?: boolean;
 }
 
-/**
- * Provider interface for remote delegation service.
- */
+/** Provider interface for a remote delegation service. */
 export interface DelegateProvider {
     /**
      * Request delegation for a signed register intent and its forfeit transactions.
      *
-     * @param intent - Signed register intent to delegate
      * @param forfeitTxs - Forfeit transactions associated with the delegation request
-     * @param options - Optional delegate behavior flags
      */
     delegate(
         intent: SignedIntent<Intent.RegisterMessage>,
@@ -46,11 +37,7 @@ export interface DelegateProvider {
         options?: DelegateOptions,
     ): Promise<void>;
 
-    /**
-     * Fetch delegate metadata such as pubkey, fee, and delegate address.
-     *
-     * @returns Delegate identity and fee information
-     */
+    /** Fetch delegate metadata: pubkey, fee, and delegate address. */
     getDelegateInfo(): Promise<DelegateInfo>;
 }
 
@@ -64,19 +51,12 @@ export interface DelegateProvider {
  * ```
  */
 export class RestDelegateProvider implements DelegateProvider {
-    /**
-     * Create a REST delegate provider targeting the given base URL.
-     *
-     * @param url - Base URL of the remote delegation service.
-     */
+    /** @param url - Base URL of the remote delegation service. */
     constructor(public url: string) {}
 
     /**
      * Submit a delegation request to the remote delegation service.
      *
-     * @param intent - Signed register intent to delegate
-     * @param forfeitTxs - Forfeit transactions associated with the delegation request
-     * @param options - Optional delegate behavior flags
      * @throws Error if the remote service rejects the request
      */
     async delegate(
@@ -109,14 +89,12 @@ export class RestDelegateProvider implements DelegateProvider {
     /**
      * Fetch delegate metadata exposed by the remote delegation service.
      *
-     * @returns Delegate identity and fee information
      * @throws Error if the remote service returns invalid data
      */
     async getDelegateInfo(): Promise<DelegateInfo> {
         /** TODO: Update later once Fulmine URL changed */
         const url = `${this.url}/v1/delegator/info`;
-        // Wait + report (see rateGate). Origin-keyed, so a delegate on its own
-        // host is throttled independently of the operator's.
+        // rateGate is origin-keyed: a delegate on its own host is throttled apart from arkd.
         const response = await rateGate.runHttp(url, () => baseFetch(url));
 
         if (!response.ok) {

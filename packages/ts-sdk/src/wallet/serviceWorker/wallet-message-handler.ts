@@ -57,7 +57,7 @@ import {
     Wallet,
     type ProviderConnectionState,
 } from "../wallet";
-import { computeOffchainBalance } from "../balance";
+import { computeOffchainBalance, toWalletBalance } from "../balance";
 import { getDustAmount } from "../utils";
 import { isHDAllocationCapable, isHDWalletCapable } from "../hdWalletCapable";
 import { gatedFrom, isGatedVtxo } from "../../contracts/spendability";
@@ -1281,9 +1281,6 @@ export class WalletMessageHandler
                     };
                 }
                 case "GET_SPENDABLE_VTXOS": {
-                    if (!this.readonlyWallet) {
-                        throw new WalletNotInitializedError();
-                    }
                     const vtxos = await this.readonlyWallet.getSpendableVtxos(
                         message.payload.filter,
                     );
@@ -1815,17 +1812,6 @@ export class WalletMessageHandler
         const pendingOutpoints =
             this.readonlyWallet?.pendingRecoveryOutpointsIn(snapshot) ?? new Set<string>();
 
-        // boarding
-        let confirmed = 0;
-        let unconfirmed = 0;
-        for (const utxo of boardingUtxos) {
-            if (utxo.status.confirmed) {
-                confirmed += utxo.value;
-            } else {
-                unconfirmed += utxo.value;
-            }
-        }
-
         const gated = gatedFrom(snapshot);
         const unlocked = new Set(
             (
@@ -1833,7 +1819,6 @@ export class WalletMessageHandler
             ).map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
         );
 
-        const totalBoarding = confirmed + unconfirmed;
         // No chain tip: this is an offline-first read.
         const offchain = computeOffchainBalance(allVtxos, {
             now: { timestamp: new Date() },
@@ -1843,24 +1828,7 @@ export class WalletMessageHandler
             dustCarrier: getDustAmount(this.readonlyWallet),
         });
 
-        return {
-            boarding: {
-                confirmed,
-                unconfirmed,
-                total: totalBoarding,
-            },
-            settled: offchain.settled,
-            preconfirmed: offchain.preconfirmed,
-            available: offchain.available,
-            gated: offchain.gated,
-            intentLocked: offchain.intentLocked,
-            recoverable: offchain.recoverable,
-            pendingRecovery: offchain.pendingRecovery,
-            unrolled: offchain.unrolled,
-            total: totalBoarding + offchain.total,
-            assets: offchain.assets,
-            availableAssets: offchain.availableAssets,
-        };
+        return toWalletBalance(boardingUtxos, offchain);
     }
     private async getAllBoardingUtxos(): Promise<ExtendedCoin[]> {
         if (!this.readonlyWallet) return [];
