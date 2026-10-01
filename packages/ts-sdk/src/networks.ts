@@ -113,6 +113,19 @@ const EMULATOR_PUBKEYS: Partial<Record<NetworkName, string>> = {
 };
 
 /**
+ * The pinned co-signer key for `network`, or `undefined` when it has none.
+ *
+ * The non-throwing counterpart to {@link defaultEmulatorPubkey}, for callers
+ * that have a value to compare against the pin and must not restate the hex —
+ * a solver card's `emulator_pubkey`, for one. A card sets that field only to
+ * advertise an explicit deviation: an absent `emulator_pubkey` means the
+ * network's canonical key, which this returns.
+ */
+export function emulatorPubkeyFor(network: Network): string | undefined {
+    return network.name ? EMULATOR_PUBKEYS[network.name] : undefined;
+}
+
+/**
  * The pinned co-signer key for `network`, as 33-byte compressed lowercase hex.
  *
  * @throws if the network carries no name, or names one with no deployed
@@ -136,7 +149,7 @@ const EMULATOR_PUBKEYS: Partial<Record<NetworkName, string>> = {
  *   the thrown message names.
  */
 export function defaultEmulatorPubkey(network: Network): string {
-    const pinned = network.name ? EMULATOR_PUBKEYS[network.name] : undefined;
+    const pinned = emulatorPubkeyFor(network);
     if (!pinned) {
         // Name the remedy, not just the refusal. Whoever hits this usually has
         // a working emulator in front of them, so a bare "not pinned" reads as

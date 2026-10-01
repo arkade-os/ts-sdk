@@ -3,6 +3,7 @@ import { hex } from "@scure/base";
 
 import {
     defaultEmulatorPubkey,
+    emulatorPubkeyFor,
     resolveEmulatorPubkey,
     networks,
     BITCOIN_EMULATOR_PUBKEY,
@@ -122,6 +123,25 @@ describe("defaultEmulatorPubkey", () => {
             expect(() => defaultEmulatorPubkey(network)).toThrow(/Arkade\.connect/);
             expect(() => defaultEmulatorPubkey(network)).toThrow(/bitcoin, mutinynet, regtest/);
         }
+    });
+});
+
+describe("emulatorPubkeyFor", () => {
+    it("returns the pinned key for each network that has a deployed emulator", () => {
+        expect(emulatorPubkeyFor(networks.bitcoin)).toBe(BITCOIN_EMULATOR_PUBKEY);
+        expect(emulatorPubkeyFor(networks.mutinynet)).toBe(MUTINYNET_EMULATOR_PUBKEY);
+        expect(emulatorPubkeyFor(networks.regtest)).toBe(REGTEST_EMULATOR_PUBKEY);
+    });
+
+    it("answers undefined, not a neighbour's key, where nothing is pinned", () => {
+        // The point of the accessor: a caller comparing an advertised card
+        // value needs "canonical or none" without catching a throw.
+        expect(emulatorPubkeyFor(networks.testnet)).toBeUndefined();
+        expect(emulatorPubkeyFor(networks.signet)).toBeUndefined();
+    });
+
+    it("answers undefined for a hand-assembled Network carrying no name", () => {
+        expect(emulatorPubkeyFor({ ...networks.bitcoin, name: undefined })).toBeUndefined();
     });
 });
 
